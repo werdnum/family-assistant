@@ -48,6 +48,12 @@ notes_table = Table(
         server_default="[]",
     ),  # JSON array of attachment UUIDs
     Column(
+        "visibility_labels",
+        Text,
+        nullable=False,
+        server_default="[]",
+    ),  # JSON array of visibility label strings
+    Column(
         "created_at",
         DateTime(timezone=True),
         default=lambda: datetime.now(UTC),

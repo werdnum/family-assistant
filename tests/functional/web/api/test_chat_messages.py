@@ -436,7 +436,7 @@ async def test_api_chat_add_note_tool(
     # Assert Database State (Note created)
     note = await db_context.notes.get_by_title(note_title)
     assert note is not None
-    assert note["content"] == note_content
+    assert note.content == note_content
 
     # Assert Message History
     # Fetch history for the conversation_id from the response

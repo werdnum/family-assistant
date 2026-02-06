@@ -283,7 +283,19 @@ async def search_documents_tool(
             query_embedding=query_embedding,
         )
 
-        # 4. Format results for LLM
+        # 4. Filter note results by visibility grants
+        if results and exec_context.visibility_grants is not None:
+            grants = exec_context.visibility_grants
+            accessible_notes = await db_context.notes.get_all(visibility_grants=grants)
+            accessible_titles = {n.title for n in accessible_notes}
+            results = [
+                res
+                for res in results
+                if res.get("source_type") != "note"
+                or res.get("title") in accessible_titles
+            ]
+
+        # 5. Format results for LLM
         if not results:
             return "No relevant documents found matching the query and filters."
 

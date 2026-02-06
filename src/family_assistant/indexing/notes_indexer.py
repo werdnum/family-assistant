@@ -69,11 +69,11 @@ class NotesIndexer:
         # --- 2. Create Document Object ---
         try:
             note_doc = NoteDocument(
-                _id=note_row["id"],
-                _title=note_row["title"],
-                _content=note_row["content"],
-                _created_at=note_row["created_at"],
-                _updated_at=note_row["updated_at"],
+                _id=note_row.id,
+                _title=note_row.title,
+                _content=note_row.content,
+                _created_at=note_row.created_at,
+                _updated_at=note_row.updated_at,
             )
         except ValueError as e:
             logger.error(f"Failed to create NoteDocument for ID {note_id}: {e}")

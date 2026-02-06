@@ -198,15 +198,15 @@ print("Script executed - note created: " + str(result))
             all_notes = await db_context.notes.get_all()
             logger.info(f"All notes after script execution: {len(all_notes)}")
             for n in all_notes:
-                logger.info(f"  Note title: '{n['title']}'")
+                logger.info(f"  Note title: '{n.title}'")
 
             # Now look for our specific note
             note = await db_context.notes.get_by_title(test_note_title)
             assert note is not None, (
-                f"Expected to find note with title '{test_note_title}'. Found notes: {[n['title'] for n in all_notes]}"
+                f"Expected to find note with title '{test_note_title}'. Found notes: {[n.title for n in all_notes]}"
             )
-            assert note["title"] == test_note_title
-            assert "scheduled script" in note["content"]
+            assert note.title == test_note_title
+            assert "scheduled script" in note.content
     finally:
         # Cleanup is handled by the task_worker_manager fixture
         pass
@@ -369,18 +369,18 @@ print("Recurring script executed - note created")
 
             # Find notes with "Recurring Script Execution" in the title
             recurring_notes = [
-                n for n in all_notes if "Recurring Script Execution" in n["title"]
+                n for n in all_notes if "Recurring Script Execution" in n.title
             ]
             assert len(recurring_notes) >= 1, (
-                f"Expected at least 1 note with 'Recurring Script Execution' in title, found {len(recurring_notes)}. All notes: {[n['title'] for n in all_notes]}"
+                f"Expected at least 1 note with 'Recurring Script Execution' in title, found {len(recurring_notes)}. All notes: {[n.title for n in all_notes]}"
             )
 
             # Get the first one by its exact title
-            note_title = recurring_notes[0]["title"]
+            note_title = recurring_notes[0].title
             note = await db_context.notes.get_by_title(note_title)
             assert note is not None, f"Could not retrieve note by title: {note_title}"
-            assert "Recurring Script Execution" in note["title"]
-            assert "unix timestamp" in note["content"]
+            assert "Recurring Script Execution" in note.title
+            assert "unix timestamp" in note.content
     finally:
         # Cleanup is handled by the task_worker_manager fixture
         logger.info("Cleanup handled by fixture")

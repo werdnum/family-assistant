@@ -233,6 +233,11 @@ mcp_config:
       env:
         GOOGLE_MAPS_API_KEY: "$GOOGLE_MAPS_API_KEY"
 
+# --- Notes Configuration ---
+# Controls default visibility labels applied to new notes.
+notes_config:
+  default_visibility_labels: ["default"]
+
 # --- Default Service Profile Configuration ---
 # Settings for the primary, default assistant behavior.
 default_profile_settings:
@@ -328,6 +333,10 @@ default_profile_settings:
   # Default list of slash commands that trigger this profile.
   # Can be overridden by individual service_profiles.
   slash_commands: []
+  # Visibility grants determine which notes a profile can see.
+  # Notes with labels that are a subset of these grants are visible.
+  # ["default"] means the profile can see notes labeled "default" and unlabeled notes.
+  visibility_grants: ["default"]
 # --- Service Profiles ---
 # Defines specific assistant profiles with potentially different configurations.
 # Provider Configuration:

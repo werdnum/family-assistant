@@ -131,7 +131,7 @@ add_or_update_note(
     async with DatabaseContext(engine=db_engine) as db_ctx:
         note = await db_ctx.notes.get_by_title("Temperature Log")
         assert note is not None
-        assert "Temperature: 22.5°C" in note["content"]
+        assert "Temperature: 22.5°C" in note.content
 
     logger.info("Script executed successfully and created note")
 
@@ -337,16 +337,16 @@ add_or_update_note(
     # Step 4: Verify both notes were created
     async with DatabaseContext(engine=db_engine) as db_ctx:
         all_notes = await db_ctx.notes.get_all()
-        note_titles = {n["title"] for n in all_notes}
+        note_titles = {n.title for n in all_notes}
 
         assert "Event Log" in note_titles
         assert "Event Details" in note_titles
 
         # Verify Event Details content
-        details_notes = [n for n in all_notes if n["title"] == "Event Details"]
+        details_notes = [n for n in all_notes if n.title == "Event Details"]
         assert len(details_notes) == 1
-        assert "Entity: sensor.multi_test" in details_notes[0]["content"]
-        assert "New State: active" in details_notes[0]["content"]
+        assert "Entity: sensor.multi_test" in details_notes[0].content
+        assert "New State: active" in details_notes[0].content
 
     logger.info("Script successfully created multiple notes")
 

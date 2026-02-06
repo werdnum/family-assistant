@@ -629,7 +629,7 @@ async def workspace_export_notes_tool(
 
         # Filter by titles if specified
         if titles:
-            notes_to_export = [n for n in all_notes if n["title"] in titles]
+            notes_to_export = [n for n in all_notes if n.title in titles]
         else:
             notes_to_export = all_notes[:max_notes]
 
@@ -638,9 +638,9 @@ async def workspace_export_notes_tool(
         exported: list[dict[str, Any]] = []
         used_filenames: set[str] = set()
         for note in notes_to_export:
-            title = note["title"]
-            content = note["content"]
-            include_in_prompt = note.get("include_in_prompt", True)
+            title = note.title
+            content = note.content
+            include_in_prompt = note.include_in_prompt
 
             # Create safe filename from title
             safe_filename = "".join(

@@ -525,7 +525,7 @@ if temp > 30 or temp < 10:
     async with DatabaseContext(engine=db_engine) as db_ctx:
         note = await db_ctx.notes.get_by_title("Temperature Log")
         assert note is not None
-        assert "22.5°C" in note["content"]
+        assert "22.5°C" in note.content
 
     # LLM should not have been called
     mock_chat_interface.send_message.assert_not_called()

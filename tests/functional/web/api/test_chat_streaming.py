@@ -423,4 +423,4 @@ async def test_api_chat_send_message_stream_with_tools(
     # Check database - note should be created
     note = await db_context.notes.get_by_title(note_title)
     assert note is not None
-    assert note["content"] == note_content
+    assert note.content == note_content

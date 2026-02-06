@@ -2,12 +2,12 @@ import logging
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, status
-from pydantic import BaseModel
 from sqlalchemy.exc import IntegrityError
 
 from family_assistant.storage.context import DatabaseContext
 from family_assistant.storage.repositories.notes import (
     DuplicateNoteError,
+    NoteModel,
     NoteNotFoundError,
 )
 from family_assistant.web.dependencies import get_db
@@ -16,16 +16,17 @@ logger = logging.getLogger(__name__)
 notes_api_router = APIRouter()
 
 
-class NoteModel(BaseModel):
-    """Schema for a note."""
+class NoteRequest(NoteModel):
+    """Schema for note create/update requests, extends NoteModel with optional original_title."""
 
-    title: str
-    content: str
-    include_in_prompt: bool = True
+    original_title: str | None = None  # For edit operations when title changes
+    # Allow None for attachment_ids and visibility_labels for request input
     attachment_ids: list[str] | None = (
         None  # None=preserve existing, []=clear, [ids]=set
     )
-    original_title: str | None = None  # For edit operations when title changes
+    visibility_labels: list[str] | None = (
+        None  # None=preserve existing, []=clear, [labels]=set
+    )
 
 
 @notes_api_router.get("/")
@@ -34,7 +35,7 @@ async def list_notes(
 ) -> list[NoteModel]:
     """Return all notes."""
     notes = await db_context.notes.get_all()
-    return [NoteModel(**note) for note in notes]
+    return notes
 
 
 @notes_api_router.get("/{title}")
@@ -45,12 +46,12 @@ async def get_note(
     note = await db_context.notes.get_by_title(title)
     if not note:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Note not found")
-    return NoteModel(**note)
+    return note
 
 
 @notes_api_router.post("/", status_code=status.HTTP_201_CREATED)
 async def create_or_update_note(
-    note: NoteModel, db_context: Annotated[DatabaseContext, Depends(get_db)]
+    note: NoteRequest, db_context: Annotated[DatabaseContext, Depends(get_db)]
 ) -> dict[str, str]:
     """Create or update a note."""
     # If original_title is provided, this is an edit operation with potential rename
@@ -62,7 +63,8 @@ async def create_or_update_note(
                 note.title,
                 note.content,
                 note.include_in_prompt,
-                note.attachment_ids,  # Always pass - empty list clears attachments
+                attachment_ids=note.attachment_ids,
+                visibility_labels=note.visibility_labels,
             )
         except NoteNotFoundError as err:
             raise HTTPException(status.HTTP_404_NOT_FOUND, str(err)) from err
@@ -81,7 +83,8 @@ async def create_or_update_note(
                 note.title,
                 note.content,
                 note.include_in_prompt,
-                attachment_ids=note.attachment_ids,  # Always pass - empty list clears attachments
+                attachment_ids=note.attachment_ids,
+                visibility_labels=note.visibility_labels,
             )
         except IntegrityError as err:
             # Handle race condition where title was taken between check and create

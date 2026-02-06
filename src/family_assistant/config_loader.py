@@ -633,6 +633,12 @@ def resolve_service_profile(
     ):
         resolved["slash_commands"] = profile_def["slash_commands"]
 
+    # Handle visibility_grants (replace if present)
+    if "visibility_grants" in profile_def and isinstance(
+        profile_def["visibility_grants"], list
+    ):
+        resolved["visibility_grants"] = profile_def["visibility_grants"]
+
     return resolved
 
 

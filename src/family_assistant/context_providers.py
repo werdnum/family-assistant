@@ -73,6 +73,7 @@ class NotesContextProvider(ContextProvider):
         get_db_context_func: Callable[[], Awaitable[DatabaseContext]],
         prompts: PromptsType,
         attachment_registry: Any = None,  # noqa: ANN401 # AttachmentRegistry | None
+        visibility_grants: set[str] | None = None,
     ) -> None:
         """
         Initializes the NotesContextProvider.
@@ -81,10 +82,12 @@ class NotesContextProvider(ContextProvider):
             get_db_context_func: An async function that returns a DatabaseContext.
             prompts: A dictionary containing prompt templates for formatting.
             attachment_registry: Optional attachment registry for fetching attachment metadata.
+            visibility_grants: If set, only notes whose labels are a subset are included.
         """
         self._get_db_context_func = get_db_context_func
         self._prompts = prompts
         self._attachment_registry = attachment_registry
+        self._visibility_grants = visibility_grants
 
     @property
     def name(self) -> str:
@@ -143,9 +146,13 @@ class NotesContextProvider(ContextProvider):
                 await self._get_db_context_func() as db_context
             ):  # Get context per call
                 # Only get notes that should be included in prompts
-                prompt_notes = await db_context.notes.get_prompt_notes()
+                prompt_notes = await db_context.notes.get_prompt_notes(
+                    visibility_grants=self._visibility_grants
+                )
                 excluded_notes_titles = (
-                    await db_context.notes.get_excluded_notes_titles()
+                    await db_context.notes.get_excluded_notes_titles(
+                        visibility_grants=self._visibility_grants
+                    )
                 )
 
                 if prompt_notes:
@@ -156,12 +163,12 @@ class NotesContextProvider(ContextProvider):
                     )
                     for note in prompt_notes:
                         note_text = note_item_format.format(
-                            title=note["title"], content=note["content"]
+                            title=note.title, content=note.content
                         )
                         notes_list_str += note_text + "\n"
 
                         # Add attachment references if present
-                        attachment_ids = note.get("attachment_ids", [])
+                        attachment_ids = note.attachment_ids
                         if attachment_ids:
                             attachment_text = await self._format_attachments(
                                 db_context, attachment_ids

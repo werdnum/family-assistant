@@ -279,6 +279,8 @@ class ToolExecutionContext:
     embedding_generator: EmbeddingGenerator | None = None  # Add embedding_generator
     indexing_source: IndexingSource | None = None  # Add indexing_source
     tools_provider: ToolsProvider | None = None  # Add tools_provider for API access
+    visibility_grants: set[str] | None = None
+    default_note_visibility_labels: list[str] | None = None
 
 
 @dataclass

@@ -39,7 +39,7 @@ async def test_add_or_update_note_append(db_engine: AsyncEngine) -> None:
         # Verify initial content
         note = await db.notes.get_by_title("Test Note")
         assert note is not None
-        assert note["content"] == "Initial content"
+        assert note.content == "Initial content"
 
         # Append to the note
         result = await add_or_update_note_tool(
@@ -54,7 +54,7 @@ async def test_add_or_update_note_append(db_engine: AsyncEngine) -> None:
         # Verify appended content
         note = await db.notes.get_by_title("Test Note")
         assert note is not None
-        assert note["content"] == "Initial content\nAppended content"
+        assert note.content == "Initial content\nAppended content"
 
         # Replace the note (not append)
         result = await add_or_update_note_tool(
@@ -69,7 +69,7 @@ async def test_add_or_update_note_append(db_engine: AsyncEngine) -> None:
         # Verify replaced content
         note = await db.notes.get_by_title("Test Note")
         assert note is not None
-        assert note["content"] == "Replaced content"
+        assert note.content == "Replaced content"
 
         # Append to non-existing note should create it
         result = await add_or_update_note_tool(
@@ -84,7 +84,7 @@ async def test_add_or_update_note_append(db_engine: AsyncEngine) -> None:
         # Verify new note content
         note = await db.notes.get_by_title("New Note")
         assert note is not None
-        assert note["content"] == "New content"
+        assert note.content == "New content"
 
 
 @pytest.mark.asyncio
@@ -128,7 +128,7 @@ async def test_append_multiple_times(db_engine: AsyncEngine) -> None:
         note = await db.notes.get_by_title("Multi Append")
         assert note is not None
         expected_content = "Line 1\nLine 2\nLine 3\nLine 4"
-        assert note["content"] == expected_content
+        assert note.content == expected_content
 
 
 @pytest.mark.asyncio
@@ -165,7 +165,7 @@ async def test_add_or_update_note_append_postgres(
         # Verify initial content
         note = await db.notes.get_by_title("Test Note PG")
         assert note is not None
-        assert note["content"] == "Initial content"
+        assert note.content == "Initial content"
 
         # Append to the note
         result = await add_or_update_note_tool(
@@ -180,4 +180,4 @@ async def test_add_or_update_note_append_postgres(
         # Verify appended content
         note = await db.notes.get_by_title("Test Note PG")
         assert note is not None
-        assert note["content"] == "Initial content\nAppended content"
+        assert note.content == "Initial content\nAppended content"
