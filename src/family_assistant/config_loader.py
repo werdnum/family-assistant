@@ -913,13 +913,13 @@ def resolve_all_service_profiles(
 def load_mcp_config(
     mcp_config_path: str | None = None,
 ) -> dict[str, Any]:  # noqa: ANN401
-    """Load MCP configuration from JSON file with environment variable expansion.
+    """Load MCP configuration from JSON file.
 
     Args:
         mcp_config_path: Path to MCP config file (uses MCP_CONFIG_PATH env)
 
     Returns:
-        The MCP configuration dictionary with env vars expanded
+        The MCP configuration dictionary
     """
     if mcp_config_path is None:
         mcp_config_path = os.getenv("MCP_CONFIG_PATH")
@@ -929,7 +929,6 @@ def load_mcp_config(
 
     mcp_config = load_json_file(mcp_config_path)
     if mcp_config:
-        mcp_config = expand_env_vars_in_dict(mcp_config)
         logger.info(f"Loaded MCP config from {mcp_config_path}")
     return mcp_config
 
