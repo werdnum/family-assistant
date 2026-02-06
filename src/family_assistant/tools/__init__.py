@@ -122,6 +122,7 @@ from family_assistant.tools.infrastructure import (
     ToolConfirmationRequired,
     ToolNotFoundError,
     ToolsProvider,
+    find_provider_by_type,
 )
 from family_assistant.tools.media_download import (
     MEDIA_DOWNLOAD_TOOLS_DEFINITION,
@@ -190,6 +191,7 @@ __all__ = [
     "CompositeToolsProvider",
     "ConfirmingToolsProvider",
     "FilteredToolsProvider",
+    "find_provider_by_type",
     "ToolNotFoundError",
     "ToolConfirmationRequired",
     "ToolConfirmationFailed",

@@ -23,6 +23,7 @@ from family_assistant.llm.messages import (
 )
 from family_assistant.processing import ProcessingService
 from family_assistant.storage.context import DatabaseContext, get_db_context
+from family_assistant.tools import MCPToolsProvider, find_provider_by_type
 from family_assistant.tools.types import ToolExecutionContext
 from family_assistant.web.confirmation_manager import web_confirmation_manager
 from family_assistant.web.dependencies import (
@@ -1481,17 +1482,31 @@ async def get_available_profiles(
         enabled_mcp_servers = []
 
         if hasattr(service, "tools_provider") and service.tools_provider:
-            # Get local tools
-            if hasattr(service.tools_provider, "local_tools_provider"):
-                local_provider = service.tools_provider.local_tools_provider
-                if local_provider and hasattr(local_provider, "available_functions"):
-                    available_tools.extend(local_provider.available_functions.keys())
+            # Get all available tools for this profile (local + MCP)
+            try:
+                # This correctly returns only allowed tools if FilteredToolsProvider is used
+                defs = await service.tools_provider.get_tool_definitions()
+                available_tools = [
+                    d.get("function", {}).get("name", "unknown") for d in defs
+                ]
+            except Exception as e:
+                logger.error(
+                    f"Error fetching tool definitions for profile {profile_id}: {e}"
+                )
 
-            # Get MCP server tools
-            if hasattr(service.tools_provider, "mcp_tools_provider"):
-                mcp_provider = service.tools_provider.mcp_tools_provider
-                if mcp_provider and hasattr(mcp_provider, "server_configs"):
-                    enabled_mcp_servers.extend(mcp_provider.server_configs.keys())
+            # Get enabled MCP servers
+            # First check explicit configuration in the profile
+            mcp_server_ids = service_config.tools_config.get("enable_mcp_server_ids")
+            if mcp_server_ids is not None:
+                enabled_mcp_servers = list(mcp_server_ids)
+            # If None, all configured servers are enabled for this profile
+            # Find the MCP provider in the chain to get the list of all configured servers
+            elif MCPToolsProvider is not None:
+                mcp_provider = find_provider_by_type(
+                    service.tools_provider, MCPToolsProvider
+                )
+                if mcp_provider:
+                    enabled_mcp_servers = list(mcp_provider.server_configs.keys())
 
         # Get description from service config or generate a fallback
         description = getattr(service_config, "description", None)

@@ -59,6 +59,12 @@ class MCPToolsProvider:
             f"Initialization pending."
         )
 
+    @property
+    # ast-grep-ignore: no-dict-any - MCP server config can have varied structure
+    def server_configs(self) -> dict[str, dict[str, Any]]:
+        """Returns the configured MCP servers."""
+        return self._mcp_server_configs
+
     async def _log_mcp_initialization_progress(
         self, stop_event: asyncio.Event, start_time: float
     ) -> None:
