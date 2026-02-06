@@ -38,7 +38,6 @@ logger = logging.getLogger(__name__)
 DEFAULT_DEFAULTS_FILE = "defaults.yaml"
 DEFAULT_CONFIG_FILE = "config.yaml"
 DEFAULT_PROMPTS_FILE = "prompts.yaml"
-DEFAULT_MCP_CONFIG_FILE = "mcp_config.json"
 
 
 @dataclass
@@ -917,13 +916,16 @@ def load_mcp_config(
     """Load MCP configuration from JSON file with environment variable expansion.
 
     Args:
-        mcp_config_path: Path to MCP config file (uses MCP_CONFIG_PATH env or default)
+        mcp_config_path: Path to MCP config file (uses MCP_CONFIG_PATH env)
 
     Returns:
         The MCP configuration dictionary with env vars expanded
     """
     if mcp_config_path is None:
-        mcp_config_path = os.getenv("MCP_CONFIG_PATH", DEFAULT_MCP_CONFIG_FILE)
+        mcp_config_path = os.getenv("MCP_CONFIG_PATH")
+
+    if not mcp_config_path:
+        return {}
 
     mcp_config = load_json_file(mcp_config_path)
     if mcp_config:
@@ -1027,9 +1029,13 @@ def load_config(
         )
 
     # 7. Load MCP config
-    mcp_config = load_mcp_config()
-    if mcp_config:
-        config_data["mcp_config"] = mcp_config
+    mcp_json_config = load_mcp_config()
+    if mcp_json_config:
+        config_data["mcp_config"] = mcp_json_config
+
+    # Ensure environment variables are expanded in mcp_config
+    # (handles both YAML defaults and JSON overrides)
+    config_data["mcp_config"] = expand_env_vars_in_dict(config_data["mcp_config"])
 
     # 8. Load indexing pipeline config from env if present
     load_indexing_pipeline_config(config_data)

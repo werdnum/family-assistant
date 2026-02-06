@@ -68,3 +68,13 @@
 #             username: "admin"
 #             password: "your_password"
 #             name: "Front Door"
+
+# --- MCP (Model Context Protocol) Servers ---
+# Configure external MCP servers. These override the defaults in defaults.yaml.
+# mcp_config:
+#   mcpServers:
+#     custom_server:
+#       command: "python"
+#       args: ["path/to/server.py"]
+#       env:
+#         API_KEY: "$CUSTOM_API_KEY"
