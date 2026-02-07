@@ -12,7 +12,14 @@ import inspect
 import json
 import logging
 import uuid
-from typing import TYPE_CHECKING, Any, Protocol, cast, get_type_hints, runtime_checkable
+from typing import (
+    TYPE_CHECKING,
+    Any,
+    Protocol,
+    cast,
+    get_type_hints,
+    runtime_checkable,
+)
 
 from family_assistant import calendar_integration
 from family_assistant.tools.attachment_utils import process_attachment_arguments

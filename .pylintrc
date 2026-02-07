@@ -81,6 +81,7 @@ disable=
     W0221,  # arguments-differ (override methods may extend parent signatures)
     W0602,  # global-variable-not-assigned (false positive when reading then assigning)
     W0611,  # unused-import (redundant - ruff handles this better without false positives)
+    W2604,  # using-generic-type-syntax-in-unsupported-version (PEP 695 required by ruff UP047)
 
 [FORMAT]
 # Maximum number of characters on a single line.
