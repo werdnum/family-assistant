@@ -68,9 +68,15 @@ updates:
           - "react*"
           - "@types/react*"
           - "@radix-ui/*"
-          - "@assistant-ui/*"
           - "@hookform/*"
           - "react-router*"
+      assistant-ui:
+        # Pre-1.0: minor bumps are breaking and require code migration.
+        # Only auto-bump patches; upgrade minors manually.
+        update-types:
+          - "patch"
+        patterns:
+          - "@assistant-ui/*"
       vitest:
         patterns:
           - "vitest"
