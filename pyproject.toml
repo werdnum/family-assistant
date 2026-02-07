@@ -111,6 +111,7 @@ dependencies = [
     "yt-dlp>=2024.0.0",
     "email-validator>=2.3.0", # Required by litellm at runtime
     "pydantic-settings>=2.10.1",
+    "pydantic-monty>=0.0.3",
 ]
 
 [project.optional-dependencies]
