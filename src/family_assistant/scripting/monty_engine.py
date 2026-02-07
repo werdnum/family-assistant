@@ -674,9 +674,17 @@ class MontyEngine:
         })
 
     def _build_resource_limits(self) -> pydantic_monty.ResourceLimits:
-        """Build Monty resource limits from config."""
+        """Build Monty resource limits from config.
+
+        Monty supports additional resource limits beyond execution time:
+        max_memory, max_allocations, max_recursion_depth, gc_interval.
+        These are set to sensible defaults here. To expose them via config,
+        add fields to StarlarkConfig or create a MontyConfig subclass.
+        """
         return pydantic_monty.ResourceLimits(
             max_duration_secs=self.config.max_execution_time,
+            max_memory=256 * 1024 * 1024,  # 256 MB
+            max_recursion_depth=100,
         )
 
     def _create_print_callback(
