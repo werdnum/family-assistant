@@ -221,7 +221,7 @@ log_event()
 
     # Verify the script created the note
     async with DatabaseContext(engine=db_engine) as db_ctx:
-        notes = await db_ctx.notes.get_all()
+        notes = await db_ctx.notes.get_all(visibility_grants=None)
         matching_notes = [n for n in notes if f"Event Log {test_run_id}" in n.title]
         assert len(matching_notes) == 1
         note = matching_notes[0]

@@ -115,7 +115,7 @@ class NotesRepository(BaseRepository):
 
     async def get_all(
         self,
-        visibility_grants: set[str] | None = None,
+        visibility_grants: set[str] | None,
     ) -> list[NoteModel]:
         """Retrieves all notes, optionally filtered by visibility grants."""
         try:
@@ -135,7 +135,7 @@ class NotesRepository(BaseRepository):
 
     async def get_prompt_notes(
         self,
-        visibility_grants: set[str] | None = None,
+        visibility_grants: set[str] | None,
     ) -> list[NoteModel]:
         """Retrieves only notes that should be included in prompts."""
         try:
@@ -161,7 +161,7 @@ class NotesRepository(BaseRepository):
 
     async def get_excluded_notes_titles(
         self,
-        visibility_grants: set[str] | None = None,
+        visibility_grants: set[str] | None,
     ) -> list[str]:
         """Retrieves titles of notes that are excluded from prompts."""
         try:
@@ -182,7 +182,7 @@ class NotesRepository(BaseRepository):
     async def get_by_id(
         self,
         note_id: int,
-        visibility_grants: set[str] | None = None,
+        visibility_grants: set[str] | None,
     ) -> NoteRow | None:
         """Retrieves a note by its ID.
 
@@ -212,7 +212,7 @@ class NotesRepository(BaseRepository):
     async def get_by_title(
         self,
         title: str,
-        visibility_grants: set[str] | None = None,
+        visibility_grants: set[str] | None,
     ) -> NoteModel | None:
         """Retrieves a specific note by its title."""
         try:
@@ -255,7 +255,7 @@ class NotesRepository(BaseRepository):
         # If append is True, fetch existing content first
         existing_note = None
         if append:
-            existing_note = await self.get_by_title(title)
+            existing_note = await self.get_by_title(title, visibility_grants=None)
             if existing_note:
                 content = existing_note.content + "\n" + content
 
@@ -265,7 +265,9 @@ class NotesRepository(BaseRepository):
                 attachment_ids_to_use = existing_note.attachment_ids
             else:
                 if not append:
-                    existing_note = await self.get_by_title(title)
+                    existing_note = await self.get_by_title(
+                        title, visibility_grants=None
+                    )
                 if existing_note:
                     attachment_ids_to_use = existing_note.attachment_ids
                 else:
@@ -432,7 +434,9 @@ class NotesRepository(BaseRepository):
         """
         try:
             # First verify the original note exists
-            existing_note = await self.get_by_title(original_title)
+            existing_note = await self.get_by_title(
+                original_title, visibility_grants=None
+            )
             if not existing_note:
                 raise NoteNotFoundError(
                     f"Cannot rename because note '{original_title}' was not found"
@@ -440,7 +444,9 @@ class NotesRepository(BaseRepository):
 
             # Check if new title conflicts with existing note (unless it's the same note)
             if new_title != original_title:
-                conflicting_note = await self.get_by_title(new_title)
+                conflicting_note = await self.get_by_title(
+                    new_title, visibility_grants=None
+                )
                 if conflicting_note:
                     raise DuplicateNoteError(
                         f"A note with title '{new_title}' already exists"

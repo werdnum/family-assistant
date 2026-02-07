@@ -535,7 +535,9 @@ async def test_notes_clearing_attachments_with_empty_list(
         )
 
         # Verify attachment was added
-        note = await db.notes.get_by_title("Note With Attachments")
+        note = await db.notes.get_by_title(
+            "Note With Attachments", visibility_grants=None
+        )
         assert note is not None
         assert len(note.attachment_ids) == 1
 
@@ -548,7 +550,9 @@ async def test_notes_clearing_attachments_with_empty_list(
         )
 
         # Verify attachments were cleared
-        note_after = await db.notes.get_by_title("Note With Attachments")
+        note_after = await db.notes.get_by_title(
+            "Note With Attachments", visibility_grants=None
+        )
         assert note_after is not None
         attachment_ids = note_after.attachment_ids
         # Handle case where attachment_ids is a JSON string
@@ -603,7 +607,7 @@ async def test_notes_preserving_attachments_when_not_specified(
         )
 
         # Verify attachment was added
-        note = await db.notes.get_by_title("Note To Preserve")
+        note = await db.notes.get_by_title("Note To Preserve", visibility_grants=None)
         assert note is not None
         assert len(note.attachment_ids) == 1
 
@@ -616,7 +620,9 @@ async def test_notes_preserving_attachments_when_not_specified(
         )
 
         # Verify attachments were preserved
-        note_after = await db.notes.get_by_title("Note To Preserve")
+        note_after = await db.notes.get_by_title(
+            "Note To Preserve", visibility_grants=None
+        )
         assert note_after is not None
         attachment_ids = note_after.attachment_ids
         # Handle case where attachment_ids is a JSON string

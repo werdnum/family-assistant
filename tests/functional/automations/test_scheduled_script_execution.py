@@ -195,13 +195,15 @@ print("Script executed - note created: " + str(result))
         # Verify the script created the note
         async with DatabaseContext(engine=db_engine) as db_context:
             # First, let's check all notes to debug
-            all_notes = await db_context.notes.get_all()
+            all_notes = await db_context.notes.get_all(visibility_grants=None)
             logger.info(f"All notes after script execution: {len(all_notes)}")
             for n in all_notes:
                 logger.info(f"  Note title: '{n.title}'")
 
             # Now look for our specific note
-            note = await db_context.notes.get_by_title(test_note_title)
+            note = await db_context.notes.get_by_title(
+                test_note_title, visibility_grants=None
+            )
             assert note is not None, (
                 f"Expected to find note with title '{test_note_title}'. Found notes: {[n.title for n in all_notes]}"
             )
@@ -364,7 +366,7 @@ print("Recurring script executed - note created")
         # Verify that the script created a note (outside the task worker context)
         async with DatabaseContext(engine=db_engine) as db_context:
             # First get all notes to find the exact title
-            all_notes = await db_context.notes.get_all()
+            all_notes = await db_context.notes.get_all(visibility_grants=None)
             logger.info(f"Total notes in database: {len(all_notes)}")
 
             # Find notes with "Recurring Script Execution" in the title
@@ -377,7 +379,9 @@ print("Recurring script executed - note created")
 
             # Get the first one by its exact title
             note_title = recurring_notes[0].title
-            note = await db_context.notes.get_by_title(note_title)
+            note = await db_context.notes.get_by_title(
+                note_title, visibility_grants=None
+            )
             assert note is not None, f"Could not retrieve note by title: {note_title}"
             assert "Recurring Script Execution" in note.title
             assert "unix timestamp" in note.content

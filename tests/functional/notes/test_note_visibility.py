@@ -28,7 +28,7 @@ async def test_create_note_with_visibility_labels(
             visibility_labels=["sensitive", "private"],
         )
 
-        note = await db.notes.get_by_title("Sensitive Info")
+        note = await db.notes.get_by_title("Sensitive Info", visibility_grants=None)
         assert note is not None
         assert note.visibility_labels == ["sensitive", "private"]
 
@@ -51,7 +51,7 @@ async def test_update_preserves_visibility_labels(
             content="Updated content",
         )
 
-        note = await db.notes.get_by_title("Labeled Note")
+        note = await db.notes.get_by_title("Labeled Note", visibility_grants=None)
         assert note is not None
         assert note.content == "Updated content"
         assert note.visibility_labels == ["sensitive"]
@@ -76,7 +76,7 @@ async def test_update_clears_visibility_labels(
             visibility_labels=[],
         )
 
-        note = await db.notes.get_by_title("Was Labeled")
+        note = await db.notes.get_by_title("Was Labeled", visibility_grants=None)
         assert note is not None
         assert note.visibility_labels == []
 
@@ -399,7 +399,7 @@ async def test_update_note_blocked_by_visibility(
 
     # Verify original content is unchanged
     async with DatabaseContext(engine=db_engine) as db:
-        note = await db.notes.get_by_title("Secret Note")
+        note = await db.notes.get_by_title("Secret Note", visibility_grants=None)
         assert note is not None
         assert note.content == "Original secret content"
 
@@ -428,7 +428,7 @@ async def test_update_note_allowed_with_grants(
         assert "successfully" in result.lower()
 
     async with DatabaseContext(engine=db_engine) as db:
-        note = await db.notes.get_by_title("Labeled Note")
+        note = await db.notes.get_by_title("Labeled Note", visibility_grants=None)
         assert note is not None
         assert note.content == "Updated content"
 
@@ -450,7 +450,7 @@ async def test_create_new_note_with_grants(
         assert "successfully" in result.lower()
 
     async with DatabaseContext(engine=db_engine) as db:
-        note = await db.notes.get_by_title("Brand New Note")
+        note = await db.notes.get_by_title("Brand New Note", visibility_grants=None)
         assert note is not None
         assert note.content == "Fresh content"
 
@@ -477,7 +477,7 @@ async def test_delete_note_blocked_by_visibility(
 
     # Verify note still exists
     async with DatabaseContext(engine=db_engine) as db:
-        note = await db.notes.get_by_title("Protected Note")
+        note = await db.notes.get_by_title("Protected Note", visibility_grants=None)
         assert note is not None
 
 
@@ -501,7 +501,7 @@ async def test_delete_note_allowed_with_grants(
         assert result["success"] is True
 
     async with DatabaseContext(engine=db_engine) as db:
-        note = await db.notes.get_by_title("Deletable Note")
+        note = await db.notes.get_by_title("Deletable Note", visibility_grants=None)
         assert note is None
 
 
@@ -550,6 +550,6 @@ async def test_new_note_gets_default_labels(
         assert "successfully" in result.lower()
 
     async with DatabaseContext(engine=db_engine) as db:
-        note = await db.notes.get_by_title("Auto Labeled")
+        note = await db.notes.get_by_title("Auto Labeled", visibility_grants=None)
         assert note is not None
         assert note.visibility_labels == ["default"]

@@ -37,7 +37,7 @@ async def test_add_or_update_note_append(db_engine: AsyncEngine) -> None:
         assert "created" in result or "updated" in result
 
         # Verify initial content
-        note = await db.notes.get_by_title("Test Note")
+        note = await db.notes.get_by_title("Test Note", visibility_grants=None)
         assert note is not None
         assert note.content == "Initial content"
 
@@ -52,7 +52,7 @@ async def test_add_or_update_note_append(db_engine: AsyncEngine) -> None:
         assert "updated" in result
 
         # Verify appended content
-        note = await db.notes.get_by_title("Test Note")
+        note = await db.notes.get_by_title("Test Note", visibility_grants=None)
         assert note is not None
         assert note.content == "Initial content\nAppended content"
 
@@ -67,7 +67,7 @@ async def test_add_or_update_note_append(db_engine: AsyncEngine) -> None:
         assert "updated" in result
 
         # Verify replaced content
-        note = await db.notes.get_by_title("Test Note")
+        note = await db.notes.get_by_title("Test Note", visibility_grants=None)
         assert note is not None
         assert note.content == "Replaced content"
 
@@ -82,7 +82,7 @@ async def test_add_or_update_note_append(db_engine: AsyncEngine) -> None:
         assert "created" in result or "updated" in result
 
         # Verify new note content
-        note = await db.notes.get_by_title("New Note")
+        note = await db.notes.get_by_title("New Note", visibility_grants=None)
         assert note is not None
         assert note.content == "New content"
 
@@ -125,7 +125,7 @@ async def test_append_multiple_times(db_engine: AsyncEngine) -> None:
             )
 
         # Verify final content
-        note = await db.notes.get_by_title("Multi Append")
+        note = await db.notes.get_by_title("Multi Append", visibility_grants=None)
         assert note is not None
         expected_content = "Line 1\nLine 2\nLine 3\nLine 4"
         assert note.content == expected_content
@@ -163,7 +163,7 @@ async def test_add_or_update_note_append_postgres(
         assert "created" in result or "updated" in result
 
         # Verify initial content
-        note = await db.notes.get_by_title("Test Note PG")
+        note = await db.notes.get_by_title("Test Note PG", visibility_grants=None)
         assert note is not None
         assert note.content == "Initial content"
 
@@ -178,6 +178,6 @@ async def test_add_or_update_note_append_postgres(
         assert "updated" in result
 
         # Verify appended content
-        note = await db.notes.get_by_title("Test Note PG")
+        note = await db.notes.get_by_title("Test Note PG", visibility_grants=None)
         assert note is not None
         assert note.content == "Initial content\nAppended content"

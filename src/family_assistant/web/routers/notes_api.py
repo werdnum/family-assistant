@@ -34,7 +34,7 @@ async def list_notes(
     db_context: Annotated[DatabaseContext, Depends(get_db)],
 ) -> list[NoteModel]:
     """Return all notes."""
-    notes = await db_context.notes.get_all()
+    notes = await db_context.notes.get_all(visibility_grants=None)
     return notes
 
 
@@ -43,7 +43,7 @@ async def get_note(
     title: str, db_context: Annotated[DatabaseContext, Depends(get_db)]
 ) -> NoteModel:
     """Return a note by title."""
-    note = await db_context.notes.get_by_title(title)
+    note = await db_context.notes.get_by_title(title, visibility_grants=None)
     if not note:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Note not found")
     return note

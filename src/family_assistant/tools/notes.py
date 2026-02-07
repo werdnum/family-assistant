@@ -53,7 +53,9 @@ async def add_or_update_note_tool(
     )
     if visible_existing is None:
         # Check if title is taken by a note the user can't see
-        any_existing = await db_context.notes.get_by_title(title)
+        any_existing = await db_context.notes.get_by_title(
+            title, visibility_grants=None
+        )
         if any_existing:
             return f"Error: Cannot modify note '{title}' - insufficient visibility permissions."
         # Truly new note - apply default labels if none specified

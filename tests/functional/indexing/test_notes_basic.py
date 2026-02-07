@@ -384,7 +384,9 @@ async def test_notes_indexing_e2e(
         # --- Assert: Verify Note Content Accessibility ---
         # Verify that the original note content is still accessible via storage
         async with DatabaseContext(engine=pg_vector_db_engine) as db:
-            retrieved_note = await db.notes.get_by_title(unique_note_title)
+            retrieved_note = await db.notes.get_by_title(
+                unique_note_title, visibility_grants=None
+            )
             assert retrieved_note is not None, "Could not retrieve original note"
             assert retrieved_note.content == TEST_NOTE_CONTENT
             logger.info("Verified original note content is still accessible")

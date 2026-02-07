@@ -625,7 +625,9 @@ async def workspace_export_notes_tool(
         await aiofiles.os.makedirs(dest_path, exist_ok=True)
 
         # Get notes from database
-        all_notes = await db_context.notes.get_all()
+        all_notes = await db_context.notes.get_all(
+            visibility_grants=exec_context.visibility_grants
+        )
 
         # Filter by titles if specified
         if titles:

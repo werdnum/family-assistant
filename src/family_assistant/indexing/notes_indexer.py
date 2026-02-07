@@ -60,7 +60,7 @@ class NotesIndexer:
         logger.info(f"Starting indexing for note ID: {note_id}")
 
         # --- 1. Fetch Note Data ---
-        note_row = await db_context.notes.get_by_id(note_id)
+        note_row = await db_context.notes.get_by_id(note_id, visibility_grants=None)
         if not note_row:
             logger.warning(f"Note {note_id} not found in database. Skipping indexing.")
             # Don't raise an error, just exit gracefully. Task will be marked 'done'.
