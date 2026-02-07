@@ -71,14 +71,22 @@ updates:
           - "@assistant-ui/*"
           - "@hookform/*"
           - "react-router*"
+      vitest:
+        patterns:
+          - "vitest"
+          - "@vitest/*"
+      tailwind:
+        patterns:
+          - "tailwindcss*"
+          - "autoprefixer*"
+          - "postcss*"
       frontend-dev-tools:
         dependency-type: "development"
         patterns:
           - "@testing-library/*"
           - "@biomejs/*"
           - "*eslint*"
-          - "vite*"
-          - "tailwindcss*"
+          - "@vitejs/*"
           - "jsdom*"
           - "@types/*"
           - "msw*"
@@ -95,11 +103,15 @@ updates:
           - "@assistant-ui/*"
           - "@hookform/*"
           - "react-router*"
+          - "vitest"
+          - "@vitest/*"
+          - "tailwindcss*"
+          - "autoprefixer*"
+          - "postcss*"
           - "@testing-library/*"
           - "@biomejs/*"
           - "*eslint*"
-          - "vite*"
-          - "tailwindcss*"
+          - "@vitejs/*"
           - "jsdom*"
           - "@types/*"
           - "msw*"
