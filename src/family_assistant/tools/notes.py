@@ -46,12 +46,18 @@ async def add_or_update_note_tool(
     db_context = exec_context.db_context
     attachment_registry = exec_context.attachment_registry
 
-    # Apply default visibility labels for new notes when none explicitly provided
+    # Enforce visibility: check if user can see existing note before allowing update
     labels_to_use = visibility_labels
-    if labels_to_use is None and exec_context.default_note_visibility_labels:
-        # Check if this is a new note (not an update)
-        existing = await db_context.notes.get_by_title(title)
-        if not existing:
+    visible_existing = await db_context.notes.get_by_title(
+        title, visibility_grants=exec_context.visibility_grants
+    )
+    if visible_existing is None:
+        # Check if title is taken by a note the user can't see
+        any_existing = await db_context.notes.get_by_title(title)
+        if any_existing:
+            return f"Error: Cannot modify note '{title}' - insufficient visibility permissions."
+        # Truly new note - apply default labels if none specified
+        if labels_to_use is None and exec_context.default_note_visibility_labels:
             labels_to_use = exec_context.default_note_visibility_labels
 
     # Validate attachment IDs if provided
@@ -351,6 +357,15 @@ async def delete_note_tool(
     # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
 ) -> dict[str, Any]:
     """Tool wrapper for delete_note."""
+    # Enforce visibility: only allow deleting notes the user can see
+    visible = await exec_context.db_context.notes.get_by_title(
+        title, visibility_grants=exec_context.visibility_grants
+    )
+    if not visible:
+        return {
+            "success": False,
+            "message": f"Note '{title}' not found.",
+        }
     deleted = await exec_context.db_context.notes.delete(title)
     return {
         "success": deleted,

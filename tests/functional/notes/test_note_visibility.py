@@ -5,6 +5,8 @@ from sqlalchemy.ext.asyncio import AsyncEngine
 from family_assistant.context_providers import NotesContextProvider
 from family_assistant.storage.context import DatabaseContext
 from family_assistant.storage.notes import notes_table
+from family_assistant.tools.notes import add_or_update_note_tool, delete_note_tool
+from family_assistant.tools.types import ToolExecutionContext
 
 
 async def cleanup_notes(engine: AsyncEngine) -> None:
@@ -348,3 +350,206 @@ async def test_context_provider_without_grants(
     combined = "\n".join(fragments)
     assert "Public Note" in combined
     assert "Sensitive Note" in combined
+
+
+def _make_tool_context(
+    db_context: DatabaseContext,
+    visibility_grants: set[str] | None = None,
+    default_note_visibility_labels: list[str] | None = None,
+) -> ToolExecutionContext:
+    return ToolExecutionContext(
+        interface_type="test",
+        conversation_id="test",
+        user_name="tester",
+        turn_id=None,
+        db_context=db_context,
+        processing_service=None,
+        clock=None,
+        home_assistant_client=None,
+        event_sources=None,
+        attachment_registry=None,
+        camera_backend=None,
+        visibility_grants=visibility_grants,
+        default_note_visibility_labels=default_note_visibility_labels,
+    )
+
+
+@pytest.mark.asyncio
+async def test_update_note_blocked_by_visibility(
+    db_engine: AsyncEngine,
+) -> None:
+    """Cannot update a note that exists but is invisible to the user."""
+    await cleanup_notes(db_engine)
+
+    async with DatabaseContext(engine=db_engine) as db:
+        await db.notes.add_or_update(
+            title="Secret Note",
+            content="Original secret content",
+            visibility_labels=["top-secret"],
+        )
+
+    async with DatabaseContext(engine=db_engine) as db:
+        ctx = _make_tool_context(db, visibility_grants={"default"})
+        result = await add_or_update_note_tool(
+            exec_context=ctx,
+            title="Secret Note",
+            content="Overwritten content",
+        )
+        assert "insufficient visibility permissions" in result.lower()
+
+    # Verify original content is unchanged
+    async with DatabaseContext(engine=db_engine) as db:
+        note = await db.notes.get_by_title("Secret Note")
+        assert note is not None
+        assert note.content == "Original secret content"
+
+
+@pytest.mark.asyncio
+async def test_update_note_allowed_with_grants(
+    db_engine: AsyncEngine,
+) -> None:
+    """Can update a note when visibility grants are sufficient."""
+    await cleanup_notes(db_engine)
+
+    async with DatabaseContext(engine=db_engine) as db:
+        await db.notes.add_or_update(
+            title="Labeled Note",
+            content="Original content",
+            visibility_labels=["sensitive"],
+        )
+
+    async with DatabaseContext(engine=db_engine) as db:
+        ctx = _make_tool_context(db, visibility_grants={"sensitive"})
+        result = await add_or_update_note_tool(
+            exec_context=ctx,
+            title="Labeled Note",
+            content="Updated content",
+        )
+        assert "successfully" in result.lower()
+
+    async with DatabaseContext(engine=db_engine) as db:
+        note = await db.notes.get_by_title("Labeled Note")
+        assert note is not None
+        assert note.content == "Updated content"
+
+
+@pytest.mark.asyncio
+async def test_create_new_note_with_grants(
+    db_engine: AsyncEngine,
+) -> None:
+    """Creating a new note works when no conflicting title exists."""
+    await cleanup_notes(db_engine)
+
+    async with DatabaseContext(engine=db_engine) as db:
+        ctx = _make_tool_context(db, visibility_grants={"default"})
+        result = await add_or_update_note_tool(
+            exec_context=ctx,
+            title="Brand New Note",
+            content="Fresh content",
+        )
+        assert "successfully" in result.lower()
+
+    async with DatabaseContext(engine=db_engine) as db:
+        note = await db.notes.get_by_title("Brand New Note")
+        assert note is not None
+        assert note.content == "Fresh content"
+
+
+@pytest.mark.asyncio
+async def test_delete_note_blocked_by_visibility(
+    db_engine: AsyncEngine,
+) -> None:
+    """Cannot delete a note that is invisible to the user."""
+    await cleanup_notes(db_engine)
+
+    async with DatabaseContext(engine=db_engine) as db:
+        await db.notes.add_or_update(
+            title="Protected Note",
+            content="Protected content",
+            visibility_labels=["admin"],
+        )
+
+    async with DatabaseContext(engine=db_engine) as db:
+        ctx = _make_tool_context(db, visibility_grants={"default"})
+        result = await delete_note_tool(title="Protected Note", exec_context=ctx)
+        assert result["success"] is False
+        assert "not found" in result["message"].lower()
+
+    # Verify note still exists
+    async with DatabaseContext(engine=db_engine) as db:
+        note = await db.notes.get_by_title("Protected Note")
+        assert note is not None
+
+
+@pytest.mark.asyncio
+async def test_delete_note_allowed_with_grants(
+    db_engine: AsyncEngine,
+) -> None:
+    """Can delete a note when visibility grants are sufficient."""
+    await cleanup_notes(db_engine)
+
+    async with DatabaseContext(engine=db_engine) as db:
+        await db.notes.add_or_update(
+            title="Deletable Note",
+            content="Will be deleted",
+            visibility_labels=["sensitive"],
+        )
+
+    async with DatabaseContext(engine=db_engine) as db:
+        ctx = _make_tool_context(db, visibility_grants={"sensitive"})
+        result = await delete_note_tool(title="Deletable Note", exec_context=ctx)
+        assert result["success"] is True
+
+    async with DatabaseContext(engine=db_engine) as db:
+        note = await db.notes.get_by_title("Deletable Note")
+        assert note is None
+
+
+@pytest.mark.asyncio
+async def test_update_note_no_grants_allows_all(
+    db_engine: AsyncEngine,
+) -> None:
+    """With visibility_grants=None (no filtering), all notes are accessible."""
+    await cleanup_notes(db_engine)
+
+    async with DatabaseContext(engine=db_engine) as db:
+        await db.notes.add_or_update(
+            title="Any Note",
+            content="Original",
+            visibility_labels=["admin"],
+        )
+
+    async with DatabaseContext(engine=db_engine) as db:
+        ctx = _make_tool_context(db, visibility_grants=None)
+        result = await add_or_update_note_tool(
+            exec_context=ctx,
+            title="Any Note",
+            content="Updated by admin",
+        )
+        assert "successfully" in result.lower()
+
+
+@pytest.mark.asyncio
+async def test_new_note_gets_default_labels(
+    db_engine: AsyncEngine,
+) -> None:
+    """New notes get default visibility labels from config."""
+    await cleanup_notes(db_engine)
+
+    async with DatabaseContext(engine=db_engine) as db:
+        ctx = _make_tool_context(
+            db,
+            visibility_grants={"default"},
+            default_note_visibility_labels=["default"],
+        )
+        result = await add_or_update_note_tool(
+            exec_context=ctx,
+            title="Auto Labeled",
+            content="Content",
+        )
+        assert "successfully" in result.lower()
+
+    async with DatabaseContext(engine=db_engine) as db:
+        note = await db.notes.get_by_title("Auto Labeled")
+        assert note is not None
+        assert note.visibility_labels == ["default"]
