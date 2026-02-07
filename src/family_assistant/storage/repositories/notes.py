@@ -5,7 +5,10 @@ import uuid
 from datetime import UTC, datetime
 from typing import Any
 
+import sqlalchemy as sa
+from pydantic import BaseModel, Field
 from sqlalchemy import delete, insert, select, update
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlalchemy.sql import functions as func
@@ -14,14 +17,46 @@ from family_assistant.storage.notes import notes_table
 from family_assistant.storage.repositories.base import BaseRepository
 
 
-def _parse_attachment_ids(value: str | None) -> list[str]:
-    """Parse attachment_ids JSON string to list."""
+class NoteModel(BaseModel):
+    """Note data returned by repository methods."""
+
+    title: str
+    content: str
+    include_in_prompt: bool = True
+    attachment_ids: list[str] = Field(default_factory=list)
+    visibility_labels: list[str] = Field(default_factory=list)
+
+
+class NoteRow(NoteModel):
+    """Full note row including database metadata, returned by get_by_id."""
+
+    id: int
+    created_at: datetime
+    updated_at: datetime
+
+
+def _parse_json_list(value: str | list[str] | None) -> list[str]:
+    """Parse a JSON string to list of strings."""
     if not value:
         return []
+    if isinstance(value, list):
+        return value
     try:
         return json.loads(value)
     except json.JSONDecodeError:
         return []
+
+
+# ast-grep-ignore: no-dict-any - dict[str, Any] from DatabaseContext.fetch_all/fetch_one
+def _row_to_note_model(row: dict[str, Any]) -> NoteModel:
+    """Convert a database row dict to a NoteModel."""
+    return NoteModel(
+        title=row["title"],
+        content=row["content"],
+        include_in_prompt=row["include_in_prompt"],
+        attachment_ids=_parse_json_list(row["attachment_ids"]),
+        visibility_labels=_parse_json_list(row["visibility_labels"]),
+    )
 
 
 class NoteNotFoundError(Exception):
@@ -39,59 +74,95 @@ class DuplicateNoteError(Exception):
 class NotesRepository(BaseRepository):
     """Repository for managing notes in the database."""
 
-    # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
-    async def get_all(self) -> list[dict[str, Any]]:
-        """Retrieves all notes."""
+    def _apply_visibility_filter(
+        self,
+        stmt: sa.Select,  # type: ignore[type-arg]  # Generic Select type params are complex with dialect-specific expressions
+        visibility_grants: set[str] | None,
+    ) -> sa.Select:  # type: ignore[type-arg]  # Generic Select type params are complex with dialect-specific expressions
+        """Apply visibility label filtering to a SELECT statement.
+
+        When visibility_grants is None, no filtering is applied (backward compat).
+        When set, only notes whose labels are a subset of the grants are returned.
+        Notes with empty labels ([]) are always visible.
+        """
+        if visibility_grants is None:
+            return stmt
+
+        grants_list = sorted(visibility_grants)
+
+        if self._db.engine.dialect.name == "postgresql":
+            grants_json = json.dumps(grants_list)
+            stmt = stmt.where(
+                sa.cast(notes_table.c.visibility_labels, JSONB).contained_by(
+                    sa.cast(sa.literal(grants_json), JSONB)
+                )
+            )
+        else:
+            # SQLite: empty labels always pass, non-empty checked with json_each
+            stmt = stmt.where(
+                sa.or_(
+                    notes_table.c.visibility_labels == "[]",
+                    ~sa.exists(
+                        sa
+                        .select(sa.literal(1))
+                        .select_from(sa.func.json_each(notes_table.c.visibility_labels))
+                        .where(sa.column("value").notin_(grants_list))
+                    ),
+                )
+            )
+
+        return stmt
+
+    async def get_all(
+        self,
+        visibility_grants: set[str] | None,
+    ) -> list[NoteModel]:
+        """Retrieves all notes, optionally filtered by visibility grants."""
         try:
             stmt = select(
                 notes_table.c.title,
                 notes_table.c.content,
                 notes_table.c.include_in_prompt,
                 notes_table.c.attachment_ids,
+                notes_table.c.visibility_labels,
             ).order_by(notes_table.c.title)
+            stmt = self._apply_visibility_filter(stmt, visibility_grants)
             rows = await self._db.fetch_all(stmt)
-            return [
-                {
-                    "title": row["title"],
-                    "content": row["content"],
-                    "include_in_prompt": row["include_in_prompt"],
-                    "attachment_ids": _parse_attachment_ids(row["attachment_ids"]),
-                }
-                for row in rows
-            ]
+            return [_row_to_note_model(row) for row in rows]
         except SQLAlchemyError as e:
             self._logger.error(f"Database error in get_all: {e}", exc_info=True)
             raise
 
-    # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
-    async def get_prompt_notes(self) -> list[dict[str, Any]]:
+    async def get_prompt_notes(
+        self,
+        visibility_grants: set[str] | None,
+    ) -> list[NoteModel]:
         """Retrieves only notes that should be included in prompts."""
         try:
             stmt = (
                 select(
                     notes_table.c.title,
                     notes_table.c.content,
+                    notes_table.c.include_in_prompt,
                     notes_table.c.attachment_ids,
+                    notes_table.c.visibility_labels,
                 )
                 .where(notes_table.c.include_in_prompt.is_(True))
                 .order_by(notes_table.c.title)
             )
+            stmt = self._apply_visibility_filter(stmt, visibility_grants)
             rows = await self._db.fetch_all(stmt)
-            return [
-                {
-                    "title": row["title"],
-                    "content": row["content"],
-                    "attachment_ids": _parse_attachment_ids(row["attachment_ids"]),
-                }
-                for row in rows
-            ]
+            return [_row_to_note_model(row) for row in rows]
         except SQLAlchemyError as e:
             self._logger.error(
                 f"Database error in get_prompt_notes: {e}", exc_info=True
             )
             raise
 
-    async def get_excluded_notes_titles(self) -> list[str]:
+    async def get_excluded_notes_titles(
+        self,
+        visibility_grants: set[str] | None,
+    ) -> list[str]:
         """Retrieves titles of notes that are excluded from prompts."""
         try:
             stmt = (
@@ -99,6 +170,7 @@ class NotesRepository(BaseRepository):
                 .where(notes_table.c.include_in_prompt.is_(False))
                 .order_by(notes_table.c.title)
             )
+            stmt = self._apply_visibility_filter(stmt, visibility_grants)
             rows = await self._db.fetch_all(stmt)
             return [row["title"] for row in rows]
         except SQLAlchemyError as e:
@@ -107,29 +179,41 @@ class NotesRepository(BaseRepository):
             )
             raise
 
-    # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
-    async def get_by_id(self, note_id: int) -> dict[str, Any] | None:
-        """
-        Retrieves a note by its ID.
+    async def get_by_id(
+        self,
+        note_id: int,
+        visibility_grants: set[str] | None,
+    ) -> NoteRow | None:
+        """Retrieves a note by its ID.
 
         Args:
             note_id: The ID of the note to retrieve
+            visibility_grants: If set, only return note if its labels are a subset
 
         Returns:
-            Dictionary containing note data or None if not found
+            NoteRow or None if not found/not accessible
         """
         query = select(notes_table).where(notes_table.c.id == note_id)
+        query = self._apply_visibility_filter(query, visibility_grants)
         row = await self._db.fetch_one(query)
         if row:
-            result = dict(row)
-            result["attachment_ids"] = _parse_attachment_ids(
-                result.get("attachment_ids")
+            return NoteRow(
+                id=row["id"],
+                title=row["title"],
+                content=row["content"],
+                include_in_prompt=row["include_in_prompt"],
+                attachment_ids=_parse_json_list(row["attachment_ids"]),
+                visibility_labels=_parse_json_list(row["visibility_labels"]),
+                created_at=row["created_at"],
+                updated_at=row["updated_at"],
             )
-            return result
         return None
 
-    # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
-    async def get_by_title(self, title: str) -> dict[str, Any] | None:
+    async def get_by_title(
+        self,
+        title: str,
+        visibility_grants: set[str] | None,
+    ) -> NoteModel | None:
         """Retrieves a specific note by its title."""
         try:
             stmt = select(
@@ -137,15 +221,12 @@ class NotesRepository(BaseRepository):
                 notes_table.c.content,
                 notes_table.c.include_in_prompt,
                 notes_table.c.attachment_ids,
+                notes_table.c.visibility_labels,
             ).where(notes_table.c.title == title)
+            stmt = self._apply_visibility_filter(stmt, visibility_grants)
             row = await self._db.fetch_one(stmt)
             if row:
-                return {
-                    "title": row["title"],
-                    "content": row["content"],
-                    "include_in_prompt": row["include_in_prompt"],
-                    "attachment_ids": _parse_attachment_ids(row["attachment_ids"]),
-                }
+                return _row_to_note_model(row)
             return None
         except SQLAlchemyError as e:
             self._logger.error(
@@ -160,38 +241,52 @@ class NotesRepository(BaseRepository):
         include_in_prompt: bool = True,
         append: bool = False,
         attachment_ids: list[str] | None = None,
+        visibility_labels: list[str] | None = None,
     ) -> str:
-        """Adds a new note or updates an existing note with the given title (upsert)."""
+        """Adds a new note or updates an existing note with the given title (upsert).
+
+        Args:
+            visibility_labels: Labels for visibility control.
+                None = preserve existing on update, use default for new notes.
+                Empty list = explicitly unrestricted (visible to all profiles).
+        """
         now = datetime.now(UTC)
 
         # If append is True, fetch existing content first
         existing_note = None
         if append:
-            existing_note = await self.get_by_title(title)
+            existing_note = await self.get_by_title(title, visibility_grants=None)
             if existing_note:
-                content = existing_note["content"] + "\n" + content
+                content = existing_note.content + "\n" + content
 
         # Determine attachment_ids to use
         if attachment_ids is None:
             if existing_note:
-                # Preserve existing attachment_ids on update
-                attachment_ids_to_use = existing_note.get("attachment_ids", [])
+                attachment_ids_to_use = existing_note.attachment_ids
             else:
-                # Check if note exists (if not already fetched)
                 if not append:
-                    existing_note = await self.get_by_title(title)
+                    existing_note = await self.get_by_title(
+                        title, visibility_grants=None
+                    )
                 if existing_note:
-                    # Preserve existing attachment_ids on update
-                    attachment_ids_to_use = existing_note.get("attachment_ids", [])
+                    attachment_ids_to_use = existing_note.attachment_ids
                 else:
-                    # New note, use empty list
                     attachment_ids_to_use = []
         else:
-            # Use provided attachment_ids
             attachment_ids_to_use = attachment_ids
 
-        # Serialize attachment_ids to JSON string
+        # Determine visibility_labels to use (same pattern as attachment_ids)
+        if visibility_labels is None:
+            if existing_note:
+                visibility_labels_to_use = existing_note.visibility_labels
+            else:
+                visibility_labels_to_use = []
+        else:
+            visibility_labels_to_use = visibility_labels
+
+        # Serialize to JSON strings
         attachment_ids_json = json.dumps(attachment_ids_to_use)
+        visibility_labels_json = json.dumps(visibility_labels_to_use)
 
         if self._db.engine.dialect.name == "postgresql":
             # Use PostgreSQL's ON CONFLICT DO UPDATE for atomic upsert
@@ -201,6 +296,7 @@ class NotesRepository(BaseRepository):
                     content=content,
                     include_in_prompt=include_in_prompt,
                     attachment_ids=attachment_ids_json,
+                    visibility_labels=visibility_labels_json,
                     created_at=now,
                     updated_at=now,
                 )
@@ -209,6 +305,7 @@ class NotesRepository(BaseRepository):
                     "content": stmt.excluded.content,
                     "include_in_prompt": stmt.excluded.include_in_prompt,
                     "attachment_ids": stmt.excluded.attachment_ids,
+                    "visibility_labels": stmt.excluded.visibility_labels,
                     "updated_at": stmt.excluded.updated_at,
                 }
                 stmt = stmt.on_conflict_do_update(
@@ -239,6 +336,7 @@ class NotesRepository(BaseRepository):
                     content=content,
                     include_in_prompt=include_in_prompt,
                     attachment_ids=attachment_ids_json,
+                    visibility_labels=visibility_labels_json,
                     created_at=now,
                     updated_at=now,
                 )
@@ -262,6 +360,7 @@ class NotesRepository(BaseRepository):
                             content=content,
                             include_in_prompt=include_in_prompt,
                             attachment_ids=attachment_ids_json,
+                            visibility_labels=visibility_labels_json,
                             updated_at=now,
                         )
                     )
@@ -313,6 +412,7 @@ class NotesRepository(BaseRepository):
         content: str,
         include_in_prompt: bool,
         attachment_ids: list[str] | None = None,
+        visibility_labels: list[str] | None = None,
     ) -> str:
         """Renames a note and updates its content, preserving the primary key.
 
@@ -322,6 +422,7 @@ class NotesRepository(BaseRepository):
             content: Updated content
             include_in_prompt: Whether to include in prompt
             attachment_ids: Optional list of attachment IDs. If None, preserves existing.
+            visibility_labels: Optional visibility labels. If None, preserves existing.
 
         Returns:
             Status message
@@ -333,7 +434,9 @@ class NotesRepository(BaseRepository):
         """
         try:
             # First verify the original note exists
-            existing_note = await self.get_by_title(original_title)
+            existing_note = await self.get_by_title(
+                original_title, visibility_grants=None
+            )
             if not existing_note:
                 raise NoteNotFoundError(
                     f"Cannot rename because note '{original_title}' was not found"
@@ -341,7 +444,9 @@ class NotesRepository(BaseRepository):
 
             # Check if new title conflicts with existing note (unless it's the same note)
             if new_title != original_title:
-                conflicting_note = await self.get_by_title(new_title)
+                conflicting_note = await self.get_by_title(
+                    new_title, visibility_grants=None
+                )
                 if conflicting_note:
                     raise DuplicateNoteError(
                         f"A note with title '{new_title}' already exists"
@@ -349,14 +454,19 @@ class NotesRepository(BaseRepository):
 
             # Determine attachment_ids to use
             if attachment_ids is None:
-                # Preserve existing attachment_ids
-                attachment_ids_to_use = existing_note.get("attachment_ids", [])
+                attachment_ids_to_use = existing_note.attachment_ids
             else:
-                # Use provided attachment_ids
                 attachment_ids_to_use = attachment_ids
 
-            # Serialize attachment_ids to JSON string
+            # Determine visibility_labels to use
+            if visibility_labels is None:
+                visibility_labels_to_use = existing_note.visibility_labels
+            else:
+                visibility_labels_to_use = visibility_labels
+
+            # Serialize to JSON strings
             attachment_ids_json = json.dumps(attachment_ids_to_use)
+            visibility_labels_json = json.dumps(visibility_labels_to_use)
 
             # Update the note in place, preserving the primary key
             stmt = (
@@ -367,6 +477,7 @@ class NotesRepository(BaseRepository):
                     content=content,
                     include_in_prompt=include_in_prompt,
                     attachment_ids=attachment_ids_json,
+                    visibility_labels=visibility_labels_json,
                     updated_at=func.now(),
                 )
             )

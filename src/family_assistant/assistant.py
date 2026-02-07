@@ -706,10 +706,16 @@ class Assistant:
             )
             await confirming_provider_for_profile.get_tool_definitions()
 
+            profile_grants = (
+                set(profile_conf.visibility_grants)
+                if profile_conf.visibility_grants
+                else None
+            )
             notes_provider = NotesContextProvider(
                 get_db_context_func=self._get_db_context_for_provider,
                 prompts=profile_proc_conf.prompts,
                 attachment_registry=self.attachment_registry,
+                visibility_grants=profile_grants,
             )
             calendar_provider = CalendarContextProvider(
                 calendar_config=_calendar_config_to_dict(self.config.calendar_config),
@@ -817,6 +823,9 @@ class Assistant:
                 id=profile_id,
                 description=profile_conf.description
                 or f"Processing profile: {profile_id}",
+                visibility_grants=profile_grants,
+                default_note_visibility_labels=self.config.notes_config.default_visibility_labels
+                or None,
             )
 
             processing_service_instance = ProcessingService(

@@ -145,6 +145,7 @@ class ServiceProfile(BaseModel):
     tools_config: ToolsConfig = Field(default_factory=ToolsConfig)
     chat_id_to_name_map: dict[int, str] = Field(default_factory=dict)
     slash_commands: list[str] = Field(default_factory=list)
+    visibility_grants: list[str] = Field(default_factory=list)
 
 
 class DefaultProfileSettings(BaseModel):
@@ -156,6 +157,15 @@ class DefaultProfileSettings(BaseModel):
     tools_config: ToolsConfig = Field(default_factory=ToolsConfig)
     chat_id_to_name_map: dict[int, str] = Field(default_factory=dict)
     slash_commands: list[str] = Field(default_factory=list)
+    visibility_grants: list[str] = Field(default_factory=list)
+
+
+class NotesConfig(BaseModel):
+    """Configuration for notes visibility behavior."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    default_visibility_labels: list[str] = Field(default_factory=list)
 
 
 class CalDAVConfig(BaseModel):
@@ -681,6 +691,7 @@ class AppConfig(BaseSettings):
         default_factory=MessageBatchingConfig
     )
     ai_worker_config: AIWorkerConfig = Field(default_factory=AIWorkerConfig)
+    notes_config: NotesConfig = Field(default_factory=NotesConfig)
 
     # LLM parameters (pattern -> parameters mapping)
     # ast-grep-ignore: no-dict-any - LLM params are provider-specific and genuinely arbitrary

@@ -31,6 +31,7 @@ class IngestedDocument:
     metadata: dict[str, Any] | None
     file_path: str | None = None
     id: int | None = None  # pylint: disable=invalid-name
+    visibility_labels: list[str] | None = None
 
 
 async def process_document_ingestion_request(

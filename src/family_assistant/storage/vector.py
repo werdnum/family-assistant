@@ -5,6 +5,7 @@ Provides functions for adding, retrieving, deleting, and querying documents and 
 
 """
 
+import json
 import logging  # Import the logging module
 from datetime import datetime
 from typing import (
@@ -97,6 +98,11 @@ class Document(Protocol):
         """Path to the original uploaded file, if applicable."""
         ...
 
+    @property
+    def visibility_labels(self) -> list[str] | None:
+        """Visibility labels for access control. None means preserve existing."""
+        ...
+
 
 class Base(DeclarativeBase):
     # Associate metadata with this Base
@@ -127,6 +133,9 @@ class DocumentRecord(Base):
     file_path: Mapped[str | None] = mapped_column(
         sa.Text
     )  # Path to original uploaded file
+    visibility_labels: Mapped[str] = mapped_column(
+        sa.Text, nullable=False, server_default="[]"
+    )
 
     embeddings: Mapped[list["DocumentEmbeddingRecord"]] = relationship(
         "DocumentEmbeddingRecord",
@@ -240,6 +249,8 @@ async def add_document(
     # Merge metadata
     final_doc_metadata = {**(doc.metadata or {}), **(enriched_doc_metadata or {})}
 
+    visibility_labels_json = json.dumps(doc.visibility_labels or [])
+
     values_to_insert = {
         "source_type": doc.source_type,
         "source_id": doc.source_id,
@@ -248,6 +259,7 @@ async def add_document(
         "created_at": doc.created_at,
         "doc_metadata": final_doc_metadata,
         "file_path": doc.file_path,
+        "visibility_labels": visibility_labels_json,
     }
 
     try:

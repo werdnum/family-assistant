@@ -2,6 +2,7 @@
 Defines the schema for vector search queries and implements the query logic.
 """
 
+import json
 import logging
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -50,6 +51,7 @@ class VectorSearchQuery:
     metadata_filters: list[MetadataFilter] = field(
         default_factory=list
     )  # Changed to list
+    visibility_grants: set[str] | None = None
 
     # Control Parameters
     limit: int = 10
@@ -190,6 +192,13 @@ async def query_vector_store(
         # Use @> for containment check if value is JSON, ->> for text comparison
         # Assuming simple string comparison for now:
         doc_where_clauses.append(f"d.doc_metadata->>'{meta_key}' = :{param_name}")
+
+    if query.visibility_grants is not None:
+        grants_json = json.dumps(sorted(query.visibility_grants))
+        params["visibility_grants_json"] = grants_json
+        doc_where_clauses.append(
+            "CAST(d.visibility_labels AS jsonb) <@ CAST(:visibility_grants_json AS jsonb)"
+        )
 
     doc_where_sql = " AND ".join(doc_where_clauses)
 

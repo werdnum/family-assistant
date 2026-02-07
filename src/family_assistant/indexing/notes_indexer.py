@@ -60,7 +60,7 @@ class NotesIndexer:
         logger.info(f"Starting indexing for note ID: {note_id}")
 
         # --- 1. Fetch Note Data ---
-        note_row = await db_context.notes.get_by_id(note_id)
+        note_row = await db_context.notes.get_by_id(note_id, visibility_grants=None)
         if not note_row:
             logger.warning(f"Note {note_id} not found in database. Skipping indexing.")
             # Don't raise an error, just exit gracefully. Task will be marked 'done'.
@@ -69,11 +69,12 @@ class NotesIndexer:
         # --- 2. Create Document Object ---
         try:
             note_doc = NoteDocument(
-                _id=note_row["id"],
-                _title=note_row["title"],
-                _content=note_row["content"],
-                _created_at=note_row["created_at"],
-                _updated_at=note_row["updated_at"],
+                _id=note_row.id,
+                _title=note_row.title,
+                _content=note_row.content,
+                _created_at=note_row.created_at,
+                _updated_at=note_row.updated_at,
+                _visibility_labels=note_row.visibility_labels,
             )
         except ValueError as e:
             logger.error(f"Failed to create NoteDocument for ID {note_id}: {e}")

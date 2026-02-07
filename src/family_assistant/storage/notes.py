@@ -4,7 +4,7 @@ Handles storage and retrieval of notes.
 
 import logging
 import uuid
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Any
 
@@ -48,6 +48,12 @@ notes_table = Table(
         server_default="[]",
     ),  # JSON array of attachment UUIDs
     Column(
+        "visibility_labels",
+        Text,
+        nullable=False,
+        server_default="[]",
+    ),  # JSON array of visibility label strings
+    Column(
         "created_at",
         DateTime(timezone=True),
         default=lambda: datetime.now(UTC),
@@ -73,6 +79,7 @@ class NoteDocument(Document):
     _content: str
     _created_at: datetime
     _updated_at: datetime
+    _visibility_labels: list[str] = field(default_factory=list)
 
     @property
     def id(self) -> int | None:
@@ -110,6 +117,10 @@ class NoteDocument(Document):
             "created_at": self._created_at.isoformat(),
             "updated_at": self._updated_at.isoformat(),
         }
+
+    @property
+    def visibility_labels(self) -> list[str] | None:
+        return self._visibility_labels
 
 
 # ast-grep-ignore: no-dict-any - Legacy code - needs structured types

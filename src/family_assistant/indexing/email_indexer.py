@@ -93,6 +93,14 @@ class EmailDocument(Document):
         """List of attachment metadata dictionaries."""
         return self._attachment_info_raw
 
+    @property
+    def file_path(self) -> str | None:
+        return None
+
+    @property
+    def visibility_labels(self) -> list[str] | None:
+        return None
+
     @classmethod
     def from_row(cls, row: Mapping[str, Any]) -> "EmailDocument":
         """

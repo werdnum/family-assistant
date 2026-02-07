@@ -25,19 +25,19 @@ async def test_add_note_with_include_in_prompt_true(
         assert result == "Success"
 
         # Verify note exists and has correct flag
-        note = await db.notes.get_by_title("Test Note Included")
+        note = await db.notes.get_by_title("Test Note Included", visibility_grants=None)
         assert note is not None
-        assert note["title"] == "Test Note Included"
-        assert note["content"] == "This note should appear in prompts"
-        assert note["include_in_prompt"] is True
+        assert note.title == "Test Note Included"
+        assert note.content == "This note should appear in prompts"
+        assert note.include_in_prompt is True
 
         # Verify note appears in prompt notes
-        prompt_notes = await db.notes.get_prompt_notes()
-        assert any(n["title"] == "Test Note Included" for n in prompt_notes)
+        prompt_notes = await db.notes.get_prompt_notes(visibility_grants=None)
+        assert any(n.title == "Test Note Included" for n in prompt_notes)
 
         # Verify note appears in all notes
-        all_notes = await db.notes.get_all()
-        assert any(n["title"] == "Test Note Included" for n in all_notes)
+        all_notes = await db.notes.get_all(visibility_grants=None)
+        assert any(n.title == "Test Note Included" for n in all_notes)
 
 
 @pytest.mark.asyncio
@@ -56,21 +56,21 @@ async def test_add_note_with_include_in_prompt_false(
         assert result == "Success"
 
         # Verify note exists and has correct flag
-        note = await db.notes.get_by_title("Test Note Excluded")
+        note = await db.notes.get_by_title("Test Note Excluded", visibility_grants=None)
         assert note is not None
-        assert note["title"] == "Test Note Excluded"
-        assert note["content"] == "This note should NOT appear in prompts"
-        assert note["include_in_prompt"] is False
+        assert note.title == "Test Note Excluded"
+        assert note.content == "This note should NOT appear in prompts"
+        assert note.include_in_prompt is False
 
         # Verify note does NOT appear in prompt notes
-        prompt_notes = await db.notes.get_prompt_notes()
-        assert not any(n["title"] == "Test Note Excluded" for n in prompt_notes)
+        prompt_notes = await db.notes.get_prompt_notes(visibility_grants=None)
+        assert not any(n.title == "Test Note Excluded" for n in prompt_notes)
 
         # Verify note still appears in all notes
-        all_notes = await db.notes.get_all()
-        matching_notes = [n for n in all_notes if n["title"] == "Test Note Excluded"]
+        all_notes = await db.notes.get_all(visibility_grants=None)
+        matching_notes = [n for n in all_notes if n.title == "Test Note Excluded"]
         assert len(matching_notes) == 1
-        assert matching_notes[0]["include_in_prompt"] is False
+        assert matching_notes[0].include_in_prompt is False
 
 
 @pytest.mark.asyncio
@@ -88,13 +88,13 @@ async def test_add_note_default_includes_in_prompt(
         assert result == "Success"
 
         # Verify note is included by default
-        note = await db.notes.get_by_title("Test Note Default")
+        note = await db.notes.get_by_title("Test Note Default", visibility_grants=None)
         assert note is not None
-        assert note["include_in_prompt"] is True
+        assert note.include_in_prompt is True
 
         # Verify note appears in prompt notes
-        prompt_notes = await db.notes.get_prompt_notes()
-        assert any(n["title"] == "Test Note Default" for n in prompt_notes)
+        prompt_notes = await db.notes.get_prompt_notes(visibility_grants=None)
+        assert any(n.title == "Test Note Default" for n in prompt_notes)
 
 
 @pytest.mark.asyncio
@@ -112,8 +112,8 @@ async def test_update_note_include_in_prompt_flag(
         )
 
         # Verify initial state
-        prompt_notes = await db.notes.get_prompt_notes()
-        assert any(n["title"] == "Test Note Toggle" for n in prompt_notes)
+        prompt_notes = await db.notes.get_prompt_notes(visibility_grants=None)
+        assert any(n.title == "Test Note Toggle" for n in prompt_notes)
 
         # Update to exclude from prompts
         await db.notes.add_or_update(
@@ -123,14 +123,14 @@ async def test_update_note_include_in_prompt_flag(
         )
 
         # Verify updated state
-        note = await db.notes.get_by_title("Test Note Toggle")
+        note = await db.notes.get_by_title("Test Note Toggle", visibility_grants=None)
         assert note is not None
-        assert note["content"] == "Updated content"
-        assert note["include_in_prompt"] is False
+        assert note.content == "Updated content"
+        assert note.include_in_prompt is False
 
         # Verify no longer in prompt notes
-        prompt_notes = await db.notes.get_prompt_notes()
-        assert not any(n["title"] == "Test Note Toggle" for n in prompt_notes)
+        prompt_notes = await db.notes.get_prompt_notes(visibility_grants=None)
+        assert not any(n.title == "Test Note Toggle" for n in prompt_notes)
 
         # Update back to include in prompts
         await db.notes.add_or_update(
@@ -140,8 +140,8 @@ async def test_update_note_include_in_prompt_flag(
         )
 
         # Verify final state
-        prompt_notes = await db.notes.get_prompt_notes()
-        assert any(n["title"] == "Test Note Toggle" for n in prompt_notes)
+        prompt_notes = await db.notes.get_prompt_notes(visibility_grants=None)
+        assert any(n.title == "Test Note Toggle" for n in prompt_notes)
 
 
 @pytest.mark.asyncio
@@ -168,8 +168,8 @@ async def test_get_prompt_notes_filters_correctly(
             )
 
         # Get prompt notes
-        prompt_notes = await db.notes.get_prompt_notes()
-        prompt_titles = {n["title"] for n in prompt_notes}
+        prompt_notes = await db.notes.get_prompt_notes(visibility_grants=None)
+        prompt_titles = {n.title for n in prompt_notes}
 
         # Verify only included notes are returned
         expected_titles = {"Included Note 1", "Included Note 2", "Included Note 3"}
@@ -178,8 +178,8 @@ async def test_get_prompt_notes_filters_correctly(
         assert "Excluded Note 2" not in prompt_titles
 
         # Get all notes
-        all_notes = await db.notes.get_all()
-        all_titles = {n["title"] for n in all_notes}
+        all_notes = await db.notes.get_all(visibility_grants=None)
+        all_titles = {n.title for n in all_notes}
 
         # Verify all notes are returned
         for title, _, _ in test_notes:

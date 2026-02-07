@@ -76,6 +76,10 @@ class TestDocument:
     def file_path(self) -> str | None:
         return self._file_path
 
+    @property
+    def visibility_labels(self) -> list[str] | None:
+        return None
+
 
 @pytest.fixture
 async def comprehensive_vector_client(

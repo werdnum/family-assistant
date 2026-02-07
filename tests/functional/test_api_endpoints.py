@@ -69,6 +69,10 @@ class TestDocument:
     def file_path(self) -> str | None:
         return self._file_path
 
+    @property
+    def visibility_labels(self) -> list[str] | None:
+        return None
+
 
 @pytest.mark.asyncio
 async def test_notes_api_crud(api_client: httpx.AsyncClient) -> None:

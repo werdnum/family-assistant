@@ -434,9 +434,9 @@ async def test_api_chat_add_note_tool(
     assert len(mock_llm_client.get_calls()) == 2
 
     # Assert Database State (Note created)
-    note = await db_context.notes.get_by_title(note_title)
+    note = await db_context.notes.get_by_title(note_title, visibility_grants=None)
     assert note is not None
-    assert note["content"] == note_content
+    assert note.content == note_content
 
     # Assert Message History
     # Fetch history for the conversation_id from the response

@@ -535,9 +535,11 @@ async def test_notes_clearing_attachments_with_empty_list(
         )
 
         # Verify attachment was added
-        note = await db.notes.get_by_title("Note With Attachments")
+        note = await db.notes.get_by_title(
+            "Note With Attachments", visibility_grants=None
+        )
         assert note is not None
-        assert len(note.get("attachment_ids", [])) == 1
+        assert len(note.attachment_ids) == 1
 
         # Now clear attachments by passing empty list
         await db.notes.add_or_update(
@@ -548,9 +550,11 @@ async def test_notes_clearing_attachments_with_empty_list(
         )
 
         # Verify attachments were cleared
-        note_after = await db.notes.get_by_title("Note With Attachments")
+        note_after = await db.notes.get_by_title(
+            "Note With Attachments", visibility_grants=None
+        )
         assert note_after is not None
-        attachment_ids = note_after.get("attachment_ids", [])
+        attachment_ids = note_after.attachment_ids
         # Handle case where attachment_ids is a JSON string
         if isinstance(attachment_ids, str):
             attachment_ids = json.loads(attachment_ids)
@@ -603,9 +607,9 @@ async def test_notes_preserving_attachments_when_not_specified(
         )
 
         # Verify attachment was added
-        note = await db.notes.get_by_title("Note To Preserve")
+        note = await db.notes.get_by_title("Note To Preserve", visibility_grants=None)
         assert note is not None
-        assert len(note.get("attachment_ids", [])) == 1
+        assert len(note.attachment_ids) == 1
 
         # Update note content without specifying attachment_ids
         await db.notes.add_or_update(
@@ -616,9 +620,11 @@ async def test_notes_preserving_attachments_when_not_specified(
         )
 
         # Verify attachments were preserved
-        note_after = await db.notes.get_by_title("Note To Preserve")
+        note_after = await db.notes.get_by_title(
+            "Note To Preserve", visibility_grants=None
+        )
         assert note_after is not None
-        attachment_ids = note_after.get("attachment_ids", [])
+        attachment_ids = note_after.attachment_ids
         # Handle case where attachment_ids is a JSON string
         if isinstance(attachment_ids, str):
             attachment_ids = json.loads(attachment_ids)

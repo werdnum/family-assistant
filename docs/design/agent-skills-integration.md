@@ -9,14 +9,16 @@ context, with non-included content discoverable on demand.
 
 ### 1.1. What Exists Today
 
-| Feature                  | Status                                            |
-| ------------------------ | ------------------------------------------------- |
-| Notes CRUD               | Done                                              |
-| `include_in_prompt` flag | Done                                              |
-| Vector indexing          | Done                                              |
-| Semantic search          | Done                                              |
-| `NotesContextProvider`   | Done (simple boolean filtering)                   |
-| `include_system_docs`    | Done (loads files into system prompt per profile) |
+| Feature                  | Status                                                  |
+| ------------------------ | ------------------------------------------------------- |
+| Notes CRUD               | Done                                                    |
+| `include_in_prompt` flag | Done                                                    |
+| Vector indexing          | Done                                                    |
+| Semantic search          | Done                                                    |
+| `NotesContextProvider`   | Done (profile-aware with visibility grants)             |
+| `include_system_docs`    | Done (loads files into system prompt per profile)       |
+| `visibility_labels`      | Done (JSON column, SQL filtering, config grants, tools) |
+| `NoteModel` (Pydantic)   | Done (replaced dict returns across all callers)         |
 
 ### 1.2. What's Missing
 
@@ -726,14 +728,14 @@ src/family_assistant/skills/        # Built-in skills (shipped with app)
 
 ### 4.1. notes-v2 Milestones Superseded
 
-| notes-v2 Milestone                       | Status in This Design                                      |
-| ---------------------------------------- | ---------------------------------------------------------- |
-| Milestone 1: Note indexing               | Done (keep as-is)                                          |
-| Milestone 2: include_in_prompt           | Done (keep as-is)                                          |
-| Milestone 2.5: Tool/UI enhancements      | Partially superseded by `get_note` tool                    |
-| **Milestone 3: Profile-based filtering** | **Replaced by `visibility_labels` column + config grants** |
-| Milestone 4: Web UI enhancements         | Deferred (not blocking)                                    |
-| **Milestone 5: Direct note access tool** | **Replaced by `get_note` tool**                            |
+| notes-v2 Milestone                       | Status in This Design                                                   |
+| ---------------------------------------- | ----------------------------------------------------------------------- |
+| Milestone 1: Note indexing               | Done (keep as-is)                                                       |
+| Milestone 2: include_in_prompt           | Done (keep as-is)                                                       |
+| Milestone 2.5: Tool/UI enhancements      | Partially superseded by `get_note` tool                                 |
+| **Milestone 3: Profile-based filtering** | **Implemented: `visibility_labels` column + config grants + filtering** |
+| Milestone 4: Web UI enhancements         | Deferred (not blocking)                                                 |
+| **Milestone 5: Direct note access tool** | **Replaced by `get_note` tool**                                         |
 
 ### 4.2. Key Simplification
 
@@ -828,28 +830,31 @@ description: Help with research tasks including web searches, document analysis,
 
 ## 6. Implementation Plan
 
-### Phase 1: Core Infrastructure
+### Phase 1: Core Infrastructure -- DONE
 
-1. **DB migration**: Add `visibility_labels` JSON column to notes table (default: `[]`)
-2. **Frontmatter parser**: Extract YAML frontmatter from note content (for skill metadata)
-3. **`ParsedNote` dataclass**: Unified representation with parsed metadata
-4. **`NoteRegistry`**: Load from DB + files, parse frontmatter, cache
-5. **File loading**: `load_notes_from_directory()` for built-in skills
-6. **Configuration**: `skills.builtin_dir`, `skills.user_dir`, and profile `visibility_grants` in
-   config
+1. **DB migration**: Add `visibility_labels` JSON column to notes table (default: `[]`) -- Done
+2. **Configuration**: Profile `visibility_grants` and `notes_config.default_visibility_labels` in
+   config -- Done
+3. **Repository layer**: Pydantic `NoteModel`/`NoteRow` types, SQL-level visibility filtering for
+   both SQLite and PostgreSQL -- Done
+4. **Frontmatter parser**: Extract YAML frontmatter from note content (for skill metadata) --
+   Deferred to skills phase
+5. **`NoteRegistry`**: Load from DB + files, parse frontmatter, cache -- Deferred to skills phase
+6. **File loading**: `load_notes_from_directory()` for built-in skills -- Deferred to skills phase
 
-**Deliverable**: Notes and file-based skills loaded into a unified registry with label-based access
-control.
+**Deliverable**: Notes have label-based visibility with profile grants threaded through all layers.
 
-### Phase 2: Profile-Aware Context
+### Phase 2: Profile-Aware Context -- DONE
 
-1. **Refactor `NotesContextProvider`**: Use `NoteRegistry` instead of direct DB queries
-2. **Profile visibility**: Apply label/grant access control + frontmatter prompt rules in context
-   provider
-3. **Skill catalog**: Generate catalog listing for skill notes
-4. **Pass profile_id** through context provider initialization
+1. **`NotesContextProvider`**: Accepts `visibility_grants`, passes to repo queries -- Done
+2. **Profile visibility**: Label/grant access control applied in context provider -- Done
+3. **Tools access control**: `get_note`, `list_notes`, `add_or_update_note` respect visibility --
+   Done
+4. **Search filtering**: Vector search results filtered by visibility grants -- Done
+5. **Skill catalog**: Generate catalog listing for skill notes -- Deferred to skills phase
 
-**Deliverable**: Different profiles see different notes/skills. Skills listed in catalog.
+**Deliverable**: Different profiles see different notes. Access control enforced at context
+provider, tools, and search layers.
 
 ### Phase 3: On-Demand Access
 

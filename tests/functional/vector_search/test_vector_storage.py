@@ -109,6 +109,10 @@ class MockDocumentImpl(Document):
     def file_path(self) -> str | None:
         return None  # Mock documents don't have file paths by default
 
+    @property
+    def visibility_labels(self) -> list[str] | None:
+        return None
+
 
 @pytest.mark.asyncio
 @pytest.mark.postgres
@@ -475,6 +479,10 @@ async def test_get_full_document_content_with_raw_content(
         @property
         def file_path(self) -> str | None:
             return None  # Test document doesn't have a file path
+
+        @property
+        def visibility_labels(self) -> list[str] | None:
+            return None
 
     doc_id = None
 

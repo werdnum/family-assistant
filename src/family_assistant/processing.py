@@ -117,6 +117,9 @@ class ProcessingServiceConfig:
     web_max_history_messages: int | None = None  # If None, uses max_history_messages
     web_history_max_age_hours: float | None = None  # Can be fractional
     max_iterations: int = 5
+    # Visibility grants for note access control
+    visibility_grants: set[str] | None = None
+    default_note_visibility_labels: list[str] | None = None
 
 
 # --- Processing Service Class ---
@@ -964,6 +967,8 @@ class ProcessingService:
             ),
             attachment_registry=self.attachment_registry,
             camera_backend=self.camera_backend,
+            visibility_grants=self.service_config.visibility_grants,
+            default_note_visibility_labels=self.service_config.default_note_visibility_labels,
         )
 
         try:

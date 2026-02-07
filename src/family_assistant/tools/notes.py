@@ -25,6 +25,7 @@ async def add_or_update_note_tool(
     include_in_prompt: bool = True,
     append: bool = False,
     attachment_ids: list[str] | None = None,
+    visibility_labels: list[str] | None = None,
 ) -> str:
     """
     Adds a new note or updates an existing note with the given title.
@@ -36,12 +37,30 @@ async def add_or_update_note_tool(
         include_in_prompt: Whether to include the note in system prompts
         append: Whether to append to existing content instead of replacing it
         attachment_ids: Optional list of attachment UUIDs to associate with this note
+        visibility_labels: Optional list of visibility labels for access control.
+            If not specified, new notes get default labels from config.
 
     Returns:
         A string indicating success or failure
     """
     db_context = exec_context.db_context
     attachment_registry = exec_context.attachment_registry
+
+    # Enforce visibility: check if user can see existing note before allowing update
+    labels_to_use = visibility_labels
+    visible_existing = await db_context.notes.get_by_title(
+        title, visibility_grants=exec_context.visibility_grants
+    )
+    if visible_existing is None:
+        # Check if title is taken by a note the user can't see
+        any_existing = await db_context.notes.get_by_title(
+            title, visibility_grants=None
+        )
+        if any_existing:
+            return f"Error: Cannot modify note '{title}' - insufficient visibility permissions."
+        # Truly new note - apply default labels if none specified
+        if labels_to_use is None and exec_context.default_note_visibility_labels:
+            labels_to_use = exec_context.default_note_visibility_labels
 
     # Validate attachment IDs if provided
     # None means "preserve existing", empty list means "clear all attachments"
@@ -74,6 +93,7 @@ async def add_or_update_note_tool(
             include_in_prompt=include_in_prompt,
             append=append,
             attachment_ids=valid_attachment_ids,  # None preserves existing, [] clears
+            visibility_labels=labels_to_use,
         )
         attachment_info = (
             f" with {len(valid_attachment_ids)} attachment(s)"
@@ -125,6 +145,11 @@ NOTE_TOOLS_DEFINITION: list[ToolDefinition] = [
                         "type": "array",
                         "items": {"type": "string"},
                         "description": "Optional list of attachment UUIDs to associate with this note. These attachments will be returned when retrieving the note.",
+                    },
+                    "visibility_labels": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "Optional list of visibility labels for access control. Notes are only visible to profiles with matching grants. If not specified, new notes get default labels from config. Use an empty list [] to make a note visible to all profiles.",
                     },
                 },
                 "required": ["title", "content"],
@@ -217,7 +242,9 @@ async def get_note_tool(
     db_context = exec_context.db_context
     attachment_registry = exec_context.attachment_registry
 
-    note = await db_context.notes.get_by_title(title)
+    note = await db_context.notes.get_by_title(
+        title, visibility_grants=exec_context.visibility_grants
+    )
     if not note:
         return ToolResult(
             data={
@@ -230,7 +257,7 @@ async def get_note_tool(
         )
 
     # Parse attachment_ids from the note
-    attachment_ids_raw = note.get("attachment_ids")
+    attachment_ids_raw = note.attachment_ids
     attachment_ids: list[str] = []
     if attachment_ids_raw:
         if isinstance(attachment_ids_raw, str):
@@ -247,9 +274,9 @@ async def get_note_tool(
     # Prepare result data
     result_data = {
         "exists": True,
-        "title": note["title"],
-        "content": note["content"],
-        "include_in_prompt": note["include_in_prompt"],
+        "title": note.title,
+        "content": note.content,
+        "include_in_prompt": note.include_in_prompt,
         "attachment_count": len(attachment_ids),
     }
 
@@ -300,12 +327,14 @@ async def list_notes_tool(
     # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
 ) -> list[dict[str, Any]]:
     """Tool wrapper for get_all_notes with optional filtering."""
-    all_notes = await exec_context.db_context.notes.get_all()
+    all_notes = await exec_context.db_context.notes.get_all(
+        visibility_grants=exec_context.visibility_grants
+    )
 
     # Apply filtering if requested
     if include_in_prompt is not None:
         filtered_notes = [
-            note for note in all_notes if note["include_in_prompt"] == include_in_prompt
+            note for note in all_notes if note.include_in_prompt == include_in_prompt
         ]
     else:
         filtered_notes = all_notes
@@ -313,12 +342,12 @@ async def list_notes_tool(
     # Return summary with attachment count
     return [
         {
-            "title": note["title"],
-            "include_in_prompt": note["include_in_prompt"],
-            "content_preview": note["content"][:100] + "..."
-            if len(note["content"]) > 100
-            else note["content"],
-            "attachment_count": len(note.get("attachment_ids", [])),
+            "title": note.title,
+            "include_in_prompt": note.include_in_prompt,
+            "content_preview": note.content[:100] + "..."
+            if len(note.content) > 100
+            else note.content,
+            "attachment_count": len(note.attachment_ids),
         }
         for note in filtered_notes
     ]
@@ -330,6 +359,15 @@ async def delete_note_tool(
     # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
 ) -> dict[str, Any]:
     """Tool wrapper for delete_note."""
+    # Enforce visibility: only allow deleting notes the user can see
+    visible = await exec_context.db_context.notes.get_by_title(
+        title, visibility_grants=exec_context.visibility_grants
+    )
+    if not visible:
+        return {
+            "success": False,
+            "message": f"Note '{title}' not found.",
+        }
     deleted = await exec_context.db_context.notes.delete(title)
     return {
         "success": deleted,
