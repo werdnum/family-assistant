@@ -15,6 +15,7 @@ from typing import TYPE_CHECKING, Any
 from family_assistant.storage.context import DatabaseContext
 
 if TYPE_CHECKING:
+    import builtins
     from collections.abc import Callable
 
     from sqlalchemy.ext.asyncio import AsyncEngine
@@ -364,7 +365,7 @@ class AttachmentAPI:
         source_type: str | None = None,
         limit: int = 20,
         # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
-    ) -> list[dict[str, Any]]:
+    ) -> builtins.list[dict[str, Any]]:
         """
         List attachments in the current conversation.
 
@@ -395,11 +396,11 @@ class AttachmentAPI:
         source_type: str | None = None,
         limit: int = 20,
         # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
-    ) -> list[dict[str, Any]]:
+    ) -> builtins.list[dict[str, Any]]:
         """Async implementation of list."""
 
         # ast-grep-ignore: no-dict-any - Inner helper shares return type with parent
-        async def _do_list(db_ctx: DatabaseContext) -> list[dict[str, Any]]:
+        async def _do_list(db_ctx: DatabaseContext) -> builtins.list[dict[str, Any]]:
             attachments = await self.attachment_registry.list_attachments(
                 db_ctx,
                 conversation_id=self.conversation_id,

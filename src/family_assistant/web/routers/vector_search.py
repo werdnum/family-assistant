@@ -400,17 +400,20 @@ async def handle_vector_search(
                 current_doc["snippets"].append(snippet_data)
 
                 # Update best scores for the document
-                if snippet_data.get("rrf_score") is not None:
+                rrf_score = snippet_data.get("rrf_score")
+                if rrf_score is not None:
                     current_doc["best_rrf_score"] = max(
-                        current_doc["best_rrf_score"], snippet_data["rrf_score"]
+                        current_doc["best_rrf_score"], rrf_score
                     )
-                if snippet_data.get("fts_score") is not None:
+                fts_score = snippet_data.get("fts_score")
+                if fts_score is not None:
                     current_doc["best_fts_score"] = max(
-                        current_doc["best_fts_score"], snippet_data["fts_score"]
+                        current_doc["best_fts_score"], fts_score
                     )
-                if snippet_data.get("distance") is not None:
+                distance = snippet_data.get("distance")
+                if distance is not None:
                     current_doc["min_distance"] = min(
-                        current_doc["min_distance"], snippet_data["distance"]
+                        current_doc["min_distance"], distance
                     )
 
             # Convert to list and sort
