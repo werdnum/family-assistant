@@ -1,4 +1,4 @@
-import { useAssistantState } from '@assistant-ui/react';
+import { useAuiState } from '@assistant-ui/react';
 import { ChevronDownIcon } from 'lucide-react';
 import React, { useMemo, useState } from 'react';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
@@ -20,7 +20,7 @@ interface ToolGroupProps {
 function useSafeToolNames(startIndex: number, endIndex: number): string[] {
   try {
     // Extract tool names and join to string to ensure stable reference
-    const toolNamesString = useAssistantState((s) => {
+    const toolNamesString = useAuiState((s) => {
       const parts = s.message.parts;
       const names: string[] = [];
       for (let i = startIndex; i <= endIndex && i < parts.length; i++) {

@@ -301,7 +301,7 @@ const UserMessage: React.FC = () => {
             className="max-w-[70%] p-4 bg-primary text-primary-foreground rounded-2xl rounded-br-md shadow-sm"
             data-testid="user-message-content"
           >
-            <MessagePrimitive.Content />
+            <MessagePrimitive.Parts />
           </div>
           <Avatar className="h-9 w-9 shrink-0">
             <AvatarFallback className="bg-primary text-primary-foreground">
@@ -410,7 +410,7 @@ const AssistantMessage: React.FC = () => {
                   <>
                     {Array.isArray(message.content) ? (
                       // @ts-expect-error - assistant-ui tool type mismatch
-                      <MessagePrimitive.Content components={messageContentComponents} />
+                      <MessagePrimitive.Parts components={messageContentComponents} />
                     ) : typeof message.content === 'string' ? (
                       <MarkdownText text={message.content} />
                     ) : message.content ? (

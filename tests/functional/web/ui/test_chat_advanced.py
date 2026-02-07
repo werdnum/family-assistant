@@ -135,9 +135,24 @@ async def test_tool_call_display(
 
     # Configure mock LLM to respond with a tool call
     tool_call_id = "call_test123"
+
+    def initial_request_matcher(args: dict) -> bool:
+        """Match the initial user request (no tool messages yet)."""
+        messages = args.get("messages", [])
+        has_tool_messages = any(msg.role == "tool" for msg in messages)
+        has_user_request = "add a note" in str(messages)
+        return has_user_request and not has_tool_messages
+
+    def tool_result_matcher(args: dict) -> bool:
+        """Match when we have a tool result."""
+        messages = args.get("messages", [])
+        return any(
+            msg.role == "tool" and msg.tool_call_id == tool_call_id for msg in messages
+        )
+
     mock_llm_client.rules = [
         (
-            lambda args: "add a note" in str(args.get("messages", [])),
+            initial_request_matcher,
             LLMOutput(
                 content="I'll add that note for you.",
                 tool_calls=[
@@ -156,10 +171,7 @@ async def test_tool_call_display(
             ),
         ),
         (
-            lambda args: any(
-                msg.role == "tool" and msg.tool_call_id == tool_call_id
-                for msg in args.get("messages", [])
-            ),
+            tool_result_matcher,
             LLMOutput(
                 content="I've successfully added the note 'Test Note from Chat' for you."
             ),
@@ -229,9 +241,24 @@ async def test_tool_call_status_progression(
 
     # Configure mock LLM to respond with a tool call
     tool_call_id = "call_status_test"
+
+    def initial_request_matcher(args: dict) -> bool:
+        """Match the initial user request (no tool messages yet)."""
+        messages = args.get("messages", [])
+        has_tool_messages = any(msg.role == "tool" for msg in messages)
+        has_user_request = "add a note for status test" in str(messages)
+        return has_user_request and not has_tool_messages
+
+    def tool_result_matcher(args: dict) -> bool:
+        """Match when we have a tool result."""
+        messages = args.get("messages", [])
+        return any(
+            msg.role == "tool" and msg.tool_call_id == tool_call_id for msg in messages
+        )
+
     mock_llm_client.rules = [
         (
-            lambda args: "add a note for status test" in str(args.get("messages", [])),
+            initial_request_matcher,
             LLMOutput(
                 content="I'll add that note and demonstrate status progression.",
                 tool_calls=[
@@ -250,10 +277,7 @@ async def test_tool_call_status_progression(
             ),
         ),
         (
-            lambda args: any(
-                msg.role == "tool" and msg.tool_call_id == tool_call_id
-                for msg in args.get("messages", [])
-            ),
+            tool_result_matcher,
             LLMOutput(
                 content="The note has been created successfully and the tool call is now complete!"
             ),
@@ -286,9 +310,14 @@ async def test_tool_call_status_progression(
     # Wait for streaming to complete
     await chat_page.wait_for_streaming_complete(timeout=10000)
 
+    # Re-wait for tool call elements after streaming (re-render may briefly remove them)
+    await chat_page.wait_for_tool_call_display(timeout=5000)
+
     # Get tool calls after completion
     tool_calls = await chat_page.get_tool_calls()
-    assert len(tool_calls) > 0, "Expected at least one tool UI element to be displayed"
+    assert len(tool_calls) > 0, (
+        "Expected at least one tool call UI element after completion"
+    )
 
     # Verify the tool call completed successfully
     # In a full implementation, we would check for specific status indicators
