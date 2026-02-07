@@ -74,6 +74,7 @@ class NotesIndexer:
                 _content=note_row.content,
                 _created_at=note_row.created_at,
                 _updated_at=note_row.updated_at,
+                _visibility_labels=note_row.visibility_labels,
             )
         except ValueError as e:
             logger.error(f"Failed to create NoteDocument for ID {note_id}: {e}")

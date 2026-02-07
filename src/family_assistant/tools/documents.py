@@ -273,7 +273,7 @@ async def search_documents_tool(
             source_types=source_types or [],  # Use empty list if None
             embedding_types=embedding_types or [],  # Use empty list if None
             limit=limit,
-            # Use default rrf_k, metadata_filters, etc.
+            visibility_grants=exec_context.visibility_grants,
         )
 
         # 3. Execute the search
@@ -283,19 +283,7 @@ async def search_documents_tool(
             query_embedding=query_embedding,
         )
 
-        # 4. Filter note results by visibility grants
-        if results and exec_context.visibility_grants is not None:
-            grants = exec_context.visibility_grants
-            accessible_notes = await db_context.notes.get_all(visibility_grants=grants)
-            accessible_titles = {n.title for n in accessible_notes}
-            results = [
-                res
-                for res in results
-                if res.get("source_type") != "note"
-                or res.get("title") in accessible_titles
-            ]
-
-        # 5. Format results for LLM
+        # 4. Format results for LLM
         if not results:
             return "No relevant documents found matching the query and filters."
 
@@ -375,8 +363,8 @@ async def get_full_document_content_tool(
         # First, get document metadata including file_path and original filename
         doc_query = text(
             """
-            SELECT file_path, doc_metadata, title, source_type
-            FROM documents 
+            SELECT file_path, doc_metadata, title, source_type, visibility_labels
+            FROM documents
             WHERE id = :doc_id
         """
         )
@@ -385,6 +373,11 @@ async def get_full_document_content_tool(
         if not doc_result:
             logger.warning(f"Document ID {document_id} not found.")
             return f"Error: Document with ID {document_id} not found."
+
+        if exec_context.visibility_grants is not None:
+            labels = json.loads(doc_result["visibility_labels"] or "[]")
+            if not set(labels) <= exec_context.visibility_grants:
+                return f"Error: Document with ID {document_id} not found."
 
         file_path = doc_result["file_path"]
         doc_metadata = doc_result.get("doc_metadata") or {}
