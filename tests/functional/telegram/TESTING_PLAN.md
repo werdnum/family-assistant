@@ -56,14 +56,13 @@ user input scenarios, while isolating external network dependencies (Telegram AP
 ## 4. Test Structure (Typical Test Case)
 
 1. **Arrange:** \*Depend on the database fixture (`pg_vector_db_engine`). \*Depend on the **default
-   database fixture (`db_engine`)**. \*Instantiate the real `ProcessingService` with the mock
-   LLM. \*Instantiate mock `Application` and `Bot`, configuring the `Bot`'s mocked methods.
-   \*Instantiate the chosen `MessageBatcher` implementation (e.g., `NoBatchMessageBatcher` for
-   simplicity, passing the handler instance) and assign it to `handler.message_batcher`.
-   \*Instantiate the `TelegramUpdateHandler` with the real `ProcessingService`, the
-   `DatabaseContext` provider function (derived from the fixture), the chosen `MessageBatcher`, and
-   mocked Telegram components. \*Create the specific mock `Update` and `Context` representing the
-   user input for the scenario.
+   database fixture (`db_engine`)**. \*Instantiate the real `ProcessingService` with the mock LLM.
+   \*Instantiate mock `Application` and `Bot`, configuring the `Bot`'s mocked methods. \*Instantiate
+   the chosen `MessageBatcher` implementation (e.g., `NoBatchMessageBatcher` for simplicity, passing
+   the handler instance) and assign it to `handler.message_batcher`. \*Instantiate the
+   `TelegramUpdateHandler` with the real `ProcessingService`, the `DatabaseContext` provider
+   function (derived from the fixture), the chosen `MessageBatcher`, and mocked Telegram components.
+   \*Create the specific mock `Update` and `Context` representing the user input for the scenario.
 
 2. **Act:** \*Call the relevant handler method (e.g.,
    `await handler.message_handler(mock_update, mock_context)`).
@@ -192,12 +191,12 @@ The following refactoring could simplify these tests further:
 
 3. **Create Test Fixture for `TelegramUpdateHandler`:** \*In `tests/functional/telegram/conftest.py`
    (or a dedicated test file), create a `pytest` fixture (e.g., `telegram_update_handler_fixture`).
-   \*This fixture will depend on the default database fixture (`db_engine`), mock LLM fixtures,
-   etc. \*It will instantiate mock `Application`, `Bot`, and potentially a mock
-   `ConfirmationUIManager`. \*It will instantiate the real `ProcessingService` (with mock LLM). \*It
-   will instantiate the `TelegramUpdateHandler` with all real and mocked dependencies injected.
-   \*The fixture should yield the handler instance and potentially the mock objects (Bot, LLM,
-   ConfirmationManager) for assertions.
+   \*This fixture will depend on the default database fixture (`db_engine`), mock LLM fixtures, etc.
+   \*It will instantiate mock `Application`, `Bot`, and potentially a mock `ConfirmationUIManager`.
+   \*It will instantiate the real `ProcessingService` (with mock LLM). \*It will instantiate the
+   `TelegramUpdateHandler` with all real and mocked dependencies injected. \*The fixture should
+   yield the handler instance and potentially the mock objects (Bot, LLM, ConfirmationManager) for
+   assertions.
 
 4. **Write Initial Test Case:** \*Create `tests/functional/telegram/test_telegram_handler.py`.
    \*Write a test function (e.g., `test_simple_text_message`) that uses the

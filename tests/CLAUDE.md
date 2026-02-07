@@ -98,8 +98,8 @@ To find tests for a specific feature:
 
   - **Write tests as "end-to-end" as possible.** The most valuable tests are those that resemble how
     the application is used in production.
-  - **Use real dependencies** like the test database (`db_engine` fixture) whenever you can.
-    This provides the highest confidence.
+  - **Use real dependencies** like the test database (`db_engine` fixture) whenever you can. This
+    provides the highest confidence.
   - **Use fake dependencies** for services that are complex or slow to run in tests. A "fake" is a
     high-fidelity test implementation that mimics the real service's API and behavior.
   - **Use mocks sparingly.** Mocks should be a last resort, primarily for:
@@ -184,8 +184,7 @@ PostgreSQL, so it's important to test with PostgreSQL to catch database-specific
 - PostgreSQL container starts automatically when the flag is used (requires Docker/Podman)
 - Tests that specifically need PostgreSQL features can use `pg_vector_db_engine` fixture, but will
   get a warning if run without `--postgres` flag
-- The unified `db_engine` fixture automatically provides the appropriate database based on the
-  flag
+- The unified `db_engine` fixture automatically provides the appropriate database based on the flag
 
 **PostgreSQL Test Isolation**: When using `--postgres`, each test gets its own unique database:
 
