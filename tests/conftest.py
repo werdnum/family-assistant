@@ -252,13 +252,25 @@ async def db_engine(
     request: pytest.FixtureRequest,
 ) -> AsyncGenerator[AsyncEngine]:
     """
-    A parameterized fixture that provides a database engine.
+    Provides a parameterized database engine (SQLite or PostgreSQL).
 
-    The parameter (e.g., 'sqlite' or 'postgres') is injected by the
-    `pytest_generate_tests` hook based on the --db command-line option.
+    Purpose:
+        The primary fixture for database-dependent tests. It handles schema initialization,
+        test isolation, and cleanup for both SQLite and PostgreSQL backends.
 
-    This fixture is designed to replace db_engine once all tests
-    are migrated to use explicit fixture dependencies.
+    Parameterization:
+        The backend ('sqlite' or 'postgres') is injected via `pytest_generate_tests`
+        based on the --db (or --postgres) command-line flags.
+
+    Isolation & Cleanup:
+        - SQLite: Uses a temporary on-disk file (`fa_test_*.sqlite`) for each test.
+          The file is deleted after the test completes.
+        - PostgreSQL: Creates a unique, randomly-named database for each test.
+          The database is dropped after the test completes.
+
+    Note:
+        This fixture is NOT 'autouse'. Tests must explicitly include it in their
+        arguments to use it.
     """
     db_backend = request.param
 
@@ -454,11 +466,21 @@ class PgServerContainer:
 @pytest.fixture(scope="session")
 def postgres_container() -> Generator[ContainerProtocol]:
     """
-    Starts and manages a PostgreSQL server for the test session using pgserver.
+    Manages a PostgreSQL server for the entire test session.
 
-    Priority order:
-    1. If TEST_DATABASE_URL is set, use that external database
-    2. Use pgserver (pip-installable embedded PostgreSQL)
+    Purpose:
+        Provides a shared PostgreSQL instance used by individual tests to create
+        their own isolated databases. This avoids the overhead of starting a
+        server for every test.
+
+    Implementation:
+        - Uses `pgserver` (an embedded PostgreSQL) by default.
+        - If `TEST_DATABASE_URL` is set, it connects to that external instance instead.
+        - Includes the `pgvector` extension for vector search capabilities.
+
+    Scope:
+        Session-scoped. The server starts once and is shared across all tests
+        in the current run.
     """
     # Check for external PostgreSQL first
     test_database_url = os.getenv("TEST_DATABASE_URL")
@@ -526,9 +548,19 @@ async def pg_vector_db_engine(
     request: pytest.FixtureRequest,
 ) -> AsyncGenerator[AsyncEngine]:
     """
-    PostgreSQL database engine with vector support for tests that require pgvector.
-    Always provides PostgreSQL regardless of --postgres flag.
-    Creates a unique database for each test to ensure complete isolation.
+    Provides a PostgreSQL engine specifically for tests requiring vector support.
+
+    Purpose:
+        Ensures a PostgreSQL backend with `pgvector` initialized, regardless of
+        whether the test suite is running against SQLite by default. Use this
+        for tests that explicitly depend on vector search functionality.
+
+    Isolation & Cleanup:
+        Like `db_engine` in PostgreSQL mode, it creates a unique database for
+        each test and drops it during teardown.
+
+    Requirements:
+        Depends on the session-scoped `postgres_container` fixture.
     """
     # Create a unique database name for this test
     test_name_safe = "".join(

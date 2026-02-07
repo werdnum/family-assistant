@@ -468,10 +468,21 @@ async def _create_web_assistant(
 
 @pytest_asyncio.fixture(scope="session")
 async def session_db_engine() -> AsyncGenerator[AsyncEngine]:
-    """Create a session-scoped SQLite database for read-only tests.
+    """
+    Creates a session-scoped SQLite database engine for read-only tests.
 
-    Uses a file-based database (not in-memory) to work correctly with
-    pytest-xdist parallel testing. Each worker gets its own database file.
+    Purpose:
+        Performance optimization for web UI tests. Sharing a database across
+        tests reduces setup time significantly.
+
+    Implementation:
+        - Uses a file-based SQLite database (`*_playwright_session_*.db`).
+        - Supports `pytest-xdist` by creating one database file per worker.
+        - Initialized with the full schema during setup.
+
+    Constraint:
+        Only suitable for read-only tests as state persists across tests in the
+        same session.
     """
     # Get worker ID from environment (for pytest-xdist)
     worker_id = os.environ.get("PYTEST_XDIST_WORKER", "master")
@@ -1023,7 +1034,17 @@ async def playwright() -> AsyncGenerator[Any]:
 async def api_db_context(
     db_engine: AsyncEngine,
 ) -> AsyncGenerator[DatabaseContext]:
-    """Provides a DatabaseContext for API tests."""
+    """
+    Provides a high-level `DatabaseContext` instance for API-level tests.
+
+    Purpose:
+        Simplifies database interaction in API tests by providing an already
+        entered context, allowing direct access to repository methods (fetch_all,
+        execute_with_retry, etc.).
+
+    Scope:
+        Function-scoped. Depends on the standard `db_engine` fixture.
+    """
     async with get_db_context(engine=db_engine) as ctx:
         yield ctx
 
