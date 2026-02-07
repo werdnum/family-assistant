@@ -8,7 +8,8 @@ import pytest
 class TestTimeAPIIntegration:
     """Test time API integration with both engines."""
 
-    def test_time_functions_in_script(self, engine_class: type) -> None:
+    @pytest.mark.asyncio
+    async def test_time_functions_in_script(self, engine_class: type) -> None:
         """Test using time functions in a script."""
         engine = engine_class()
 
@@ -33,7 +34,7 @@ result = {
 }
 result
 """
-        result = engine.evaluate(script)
+        result = await engine.evaluate_async(script)
 
         assert result["now_year"] == datetime.now().year
         assert result["utc_tz"] == "UTC"
@@ -43,7 +44,8 @@ result
         assert result["xmas_day"] == 25
         assert result["tomorrow_day"] == 26
 
-    def test_timezone_operations(self, engine_class: type) -> None:
+    @pytest.mark.asyncio
+    async def test_timezone_operations(self, engine_class: type) -> None:
         """Test timezone operations in scripts."""
         engine = engine_class()
 
@@ -63,7 +65,7 @@ result = {
 }
 result
 """
-        result = engine.evaluate(script)
+        result = await engine.evaluate_async(script)
 
         assert result["utc_hour"] == 15
         assert result["ny_hour"] == 10  # UTC-5 in winter
@@ -71,7 +73,8 @@ result
         assert result["london_valid"] is True
         assert result["fake_valid"] is False
 
-    def test_duration_operations(self, engine_class: type) -> None:
+    @pytest.mark.asyncio
+    async def test_duration_operations(self, engine_class: type) -> None:
         """Test duration parsing and arithmetic."""
         engine = engine_class()
 
@@ -96,7 +99,7 @@ result = {
 }
 result
 """
-        result = engine.evaluate(script)
+        result = await engine.evaluate_async(script)
 
         assert result["one_hour"] == 3600
         assert result["ninety_min"] == 5400
@@ -106,7 +109,8 @@ result
         assert result["three_hours"] == 10800
         assert result["formatted_3h"] == "3h"
 
-    def test_time_comparisons(self, engine_class: type) -> None:
+    @pytest.mark.asyncio
+    async def test_time_comparisons(self, engine_class: type) -> None:
         """Test time comparison operations."""
         engine = engine_class()
 
@@ -127,7 +131,7 @@ result = {
 }
 result
 """
-        result = engine.evaluate(script)
+        result = await engine.evaluate_async(script)
 
         assert result["before"] is True
         assert result["after"] is True
@@ -138,7 +142,8 @@ result
         assert result["diff_hours_human"] == "5h"
         assert result["diff_days_human"] == "1d"
 
-    def test_utility_functions(self, engine_class: type) -> None:
+    @pytest.mark.asyncio
+    async def test_utility_functions(self, engine_class: type) -> None:
         """Test utility functions like is_between and is_weekend."""
         engine = engine_class()
 
@@ -158,7 +163,7 @@ result = {
 }
 result
 """
-        result = engine.evaluate(script)
+        result = await engine.evaluate_async(script)
 
         assert result["morning_work"] is True
         assert result["evening_work"] is False
@@ -168,7 +173,8 @@ result
         assert result["monday_day"] == 0
         assert result["saturday_day"] == 5
 
-    def test_real_world_automation_example(self, engine_class: type) -> None:
+    @pytest.mark.asyncio
+    async def test_real_world_automation_example(self, engine_class: type) -> None:
         """Test a realistic automation script using time functions."""
         engine = engine_class()
 
@@ -210,14 +216,15 @@ result = {
 }
 result
 """
-        result = engine.evaluate(script)
+        result = await engine.evaluate_async(script)
 
         assert result["should_remind"] is True
         assert "h" in result["time_left"]
         assert isinstance(result["is_business_hours"], bool)
         assert result["next_monday_weekday"] == 0
 
-    def test_time_parsing_formats(self, engine_class: type) -> None:
+    @pytest.mark.asyncio
+    async def test_time_parsing_formats(self, engine_class: type) -> None:
         """Test various time parsing formats."""
         engine = engine_class()
 
@@ -251,7 +258,7 @@ def parse_and_check_times():
 
 parse_and_check_times()
 """
-        result = engine.evaluate(script)
+        result = await engine.evaluate_async(script)
 
         assert result["all_2024"] is True
         assert len(result["years"]) == 5

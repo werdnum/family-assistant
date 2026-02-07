@@ -117,7 +117,7 @@ class EventProcessor:
 
             # Check each listener
             for listener in listeners:
-                if self._check_match_conditions(
+                if await self._check_match_conditions(
                     event_data,
                     listener["match_conditions"],
                     listener.get("condition_script"),
@@ -157,7 +157,7 @@ class EventProcessor:
                 "EventProcessor requires get_db_context_func to be provided"
             )
 
-    def _check_match_conditions(
+    async def _check_match_conditions(
         self,
         event_data: dict,
         match_conditions: dict | None,
@@ -167,7 +167,7 @@ class EventProcessor:
         # Script takes precedence if present
         if condition_script:
             try:
-                return self.condition_evaluator.evaluate_condition(
+                return await self.condition_evaluator.evaluate_condition(
                     condition_script, event_data
                 )
             except ScriptExecutionError as e:

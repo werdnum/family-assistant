@@ -1,5 +1,5 @@
 """
-Event condition evaluator for Starlark script-based conditions.
+Event condition evaluator for script-based conditions.
 """
 
 import logging
@@ -13,7 +13,7 @@ logger = logging.getLogger(__name__)
 
 
 class EventConditionEvaluator:
-    """Evaluates Starlark condition scripts for event matching."""
+    """Evaluates condition scripts for event matching."""
 
     # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
     def __init__(self, config: dict[str, Any] | None = None) -> None:
@@ -39,12 +39,12 @@ class EventConditionEvaluator:
         self.engine = StarlarkEngine(tools_provider=None, config=self.config)
 
     # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
-    def evaluate_condition(self, script: str, event_data: dict[str, Any]) -> bool:
+    async def evaluate_condition(self, script: str, event_data: dict[str, Any]) -> bool:
         """
         Evaluate a condition script against event data.
 
         Args:
-            script: The Starlark script to evaluate
+            script: The script to evaluate
             event_data: The event data to make available to the script
 
         Returns:
@@ -77,8 +77,7 @@ def _evaluate():
 _evaluate()
 """
 
-            # Use the engine to evaluate with proper timeout and sandboxing
-            result = self.engine.evaluate(
+            result = await self.engine.evaluate_async(
                 wrapped_script,
                 globals_dict={"event": event_data},
                 execution_context=None,
@@ -99,7 +98,7 @@ _evaluate()
             # Wrap other errors
             raise ScriptExecutionError(f"Script execution failed: {str(e)}") from e
 
-    def validate_script(self, script: str) -> tuple[bool, str | None]:
+    async def validate_script(self, script: str) -> tuple[bool, str | None]:
         """
         Validate a condition script without executing it.
 
@@ -117,7 +116,7 @@ _evaluate()
                 "old_state": {"state": "off", "attributes": {}},
                 "new_state": {"state": "on", "attributes": {}},
             }
-            self.evaluate_condition(script, sample_event)
+            await self.evaluate_condition(script, sample_event)
 
             # Script executed successfully and returned boolean (already checked in evaluate_condition)
             return True, None
@@ -150,7 +149,7 @@ class EventConditionValidator:
         self.evaluator = evaluator or EventConditionEvaluator(config)
         self.size_limit = (config or {}).get("script_size_limit_bytes", 10240)
 
-    def validate_script(self, script: str) -> tuple[bool, str | None]:
+    async def validate_script(self, script: str) -> tuple[bool, str | None]:
         """
         Validate a condition script.
 
@@ -165,4 +164,4 @@ class EventConditionValidator:
             return False, f"Script too large (max {self.size_limit} bytes)"
 
         # Delegate to evaluator for actual validation
-        return self.evaluator.validate_script(script)
+        return await self.evaluator.validate_script(script)

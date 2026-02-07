@@ -31,7 +31,6 @@ from family_assistant.tools.types import ToolResult
 
 from .apis import time as time_api
 from .apis.attachments import create_attachment_api
-from .apis.tools import create_tools_api
 from .engine import StarlarkConfig
 from .errors import ScriptExecutionError, ScriptSyntaxError, ScriptTimeoutError
 
@@ -67,80 +66,10 @@ class MontyEngine:
         # ast-grep-ignore: no-dict-any - Script globals can be arbitrary values
         self._script_globals: dict[str, Any] = {}
 
-        try:
-            self._main_loop = asyncio.get_running_loop()
-        except RuntimeError:
-            self._main_loop = None
-
         logger.info(
-            "Initialized MontyEngine with config: max_execution_time=%s, main_loop=%s",
+            "Initialized MontyEngine with config: max_execution_time=%s",
             self.config.max_execution_time,
-            self._main_loop is not None,
         )
-
-    def evaluate(
-        self,
-        script: str,
-        # ast-grep-ignore: no-dict-any - Script globals/wake contexts are genuinely arbitrary
-        globals_dict: dict[str, Any] | None = None,
-        execution_context: "ToolExecutionContext | None" = None,
-    ) -> Any:  # noqa: ANN401 # Scripts can return any type
-        """
-        Evaluate a script synchronously.
-
-        For scripts without async external functions (tools), runs directly.
-        For scripts with tools, uses a bridge to the main event loop.
-        """
-        try:
-            self._wake_llm_contexts.clear()
-            self._script_globals = globals_dict or {}
-
-            ext_fn_names, ext_fn_impls, inputs = self._build_execution_context(
-                globals_dict, execution_context
-            )
-
-            m = pydantic_monty.Monty(
-                script,
-                inputs=list(inputs.keys()) if inputs else [],
-                external_functions=ext_fn_names,
-            )
-
-            limits = self._build_resource_limits()
-            print_cb = (
-                self._create_print_callback() if self.config.enable_print else None
-            )
-
-            result = m.run(
-                inputs=inputs or None,
-                external_functions=ext_fn_impls or None,
-                limits=limits,
-                print_callback=print_cb,
-            )
-
-            self._pending_wake_contexts = self._wake_llm_contexts.copy()
-            return result
-
-        except pydantic_monty.MontySyntaxError as e:
-            error_str = str(e)
-            line = None
-            match = re.search(r"line (\d+)", error_str)
-            if match:
-                line = int(match.group(1))
-            raise ScriptSyntaxError(error_str, line=line) from e
-
-        except pydantic_monty.MontyRuntimeError as e:
-            raise ScriptExecutionError(f"Script execution failed: {e}") from e
-
-        except pydantic_monty.MontyError as e:
-            raise ScriptExecutionError(f"Script execution failed: {e}") from e
-
-        except (ScriptSyntaxError, ScriptExecutionError, ScriptTimeoutError):
-            raise
-
-        except Exception as e:
-            error_msg = f"Script execution failed: {e}"
-            logger.error(error_msg, exc_info=True)
-            raise ScriptExecutionError(error_msg) from e
 
     async def evaluate_async(
         self,
@@ -274,123 +203,6 @@ class MontyEngine:
             error_msg = f"Script execution failed: {e}"
             logger.error(error_msg, exc_info=True)
             raise ScriptExecutionError(error_msg) from e
-
-    def _build_execution_context(
-        self,
-        # ast-grep-ignore: no-dict-any - Script globals can be arbitrary values
-        globals_dict: dict[str, Any] | None,
-        execution_context: "ToolExecutionContext | None",
-        # ast-grep-ignore: no-dict-any - Returns (fn_names, fn_impls, inputs) where inputs are arbitrary
-    ) -> tuple[list[str], dict[str, Callable[..., Any]], dict[str, Any]]:
-        """
-        Build external function names, implementations, and inputs for sync evaluation.
-
-        Uses the StarlarkToolsAPI sync bridge for tool calls. This is appropriate
-        for the synchronous evaluate() path.
-
-        Returns:
-            Tuple of (external_function_names, function_implementations, inputs)
-        """
-        ext_fn_names: list[str] = []
-        ext_fn_impls: dict[str, Callable[..., Any]] = {}
-        # ast-grep-ignore: no-dict-any - Inputs to scripts are arbitrary values
-        inputs: dict[str, Any] = {}
-
-        # Add user-provided globals as inputs (non-callable) or external functions (callable)
-        if globals_dict:
-            for key, value in globals_dict.items():
-                if callable(value):
-                    ext_fn_names.append(key)
-                    ext_fn_impls[key] = value
-                else:
-                    inputs[key] = value
-
-        # Add print function
-        if self.config.enable_print:
-            # print is handled via print_callback, not as external function
-            pass
-
-        # Add wake_llm
-        wake_fn = self._create_wake_llm_function()
-        ext_fn_names.append("wake_llm")
-        ext_fn_impls["wake_llm"] = wake_fn
-
-        # Add APIs (JSON, time, etc.) unless disabled
-        if not self.config.disable_apis:
-            self._add_json_api(ext_fn_names, ext_fn_impls)
-            self._add_time_api(ext_fn_names, ext_fn_impls, inputs)
-
-        # Add attachment API if available
-        if execution_context and execution_context.attachment_registry:
-            try:
-                attachment_api = create_attachment_api(
-                    execution_context, main_loop=self._main_loop
-                )
-                for name, method in [
-                    ("attachment_get", attachment_api.get),
-                    ("attachment_read", attachment_api.read),
-                    ("attachment_create", attachment_api.create),
-                ]:
-                    ext_fn_names.append(name)
-                    ext_fn_impls[name] = method
-                logger.debug("Added attachment API to Monty engine")
-            except Exception as e:
-                logger.warning(f"Failed to add attachment API: {e}")
-
-        # Add tools API if available
-        if self.tools_provider and execution_context:
-            tools_api = create_tools_api(
-                self.tools_provider,
-                execution_context,
-                allowed_tools=self.config.allowed_tools,
-                deny_all_tools=self.config.deny_all_tools,
-                main_loop=self._main_loop,
-            )
-
-            # Add functional API
-            for name, method in [
-                ("tools_list", tools_api.list),
-                ("tools_get", tools_api.get),
-                ("tools_execute", tools_api.execute),
-                ("tools_execute_json", tools_api.execute_json),
-            ]:
-                ext_fn_names.append(name)
-                ext_fn_impls[name] = method
-
-            # Add direct tool callables
-            available_tools = tools_api.list()
-            for tool_info in available_tools:
-                tool_name = tool_info["name"]
-
-                def make_tool_wrapper(
-                    name: str,
-                ) -> Callable[..., Any]:
-                    def tool_wrapper(
-                        *args: Any,  # noqa: ANN401
-                        **kwargs: Any,  # noqa: ANN401
-                    ) -> Any:  # noqa: ANN401
-                        if args:
-                            return tools_api.execute(name, *args, **kwargs)
-                        return tools_api.execute(name, **kwargs)
-
-                    return tool_wrapper
-
-                ext_fn_names.append(tool_name)
-                ext_fn_impls[tool_name] = make_tool_wrapper(tool_name)
-
-                prefixed = f"tool_{tool_name}"
-                ext_fn_names.append(prefixed)
-                ext_fn_impls[prefixed] = make_tool_wrapper(tool_name)
-
-            logger.debug(
-                "Added tools API to Monty engine (allowed_tools=%s, "
-                "deny_all_tools=%s, direct_tools=%d)",
-                self.config.allowed_tools,
-                self.config.deny_all_tools,
-                len(available_tools),
-            )
-
-        return ext_fn_names, ext_fn_impls, inputs
 
     async def _build_execution_context_async(
         self,

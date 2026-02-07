@@ -21,13 +21,15 @@ from family_assistant.scripting.monty_engine import MontyEngine
 class TestEngineIntegration:
     """Test engine integration with both Starlark and Monty."""
 
-    def test_basic_evaluation(self, engine_class: type) -> None:
+    @pytest.mark.asyncio
+    async def test_basic_evaluation(self, engine_class: type) -> None:
         """Test that we can evaluate a simple expression."""
         engine = engine_class()
-        result = engine.evaluate("2 + 3")
+        result = await engine.evaluate_async("2 + 3")
         assert result == 5
 
-    def test_global_variable_injection(self, engine_class: type) -> None:
+    @pytest.mark.asyncio
+    async def test_global_variable_injection(self, engine_class: type) -> None:
         """Test that we can inject Python data structures as globals."""
         engine = engine_class()
 
@@ -38,29 +40,31 @@ class TestEngineIntegration:
             "items": [1, 2, 3, 4, 5],
         }
 
-        assert engine.evaluate("name", globals_dict) == "Alice"
-        assert engine.evaluate("age * 2", globals_dict) == 60
-        assert engine.evaluate("data['count']", globals_dict) == 42
-        assert engine.evaluate("len(items)", globals_dict) == 5
+        assert await engine.evaluate_async("name", globals_dict) == "Alice"
+        assert await engine.evaluate_async("age * 2", globals_dict) == 60
+        assert await engine.evaluate_async("data['count']", globals_dict) == 42
+        assert await engine.evaluate_async("len(items)", globals_dict) == 5
 
-    def test_syntax_error_handling(self, engine_class: type) -> None:
+    @pytest.mark.asyncio
+    async def test_syntax_error_handling(self, engine_class: type) -> None:
         """Test that syntax errors are properly converted to ScriptSyntaxError."""
         engine = engine_class()
 
         with pytest.raises(ScriptSyntaxError) as exc_info:
-            engine.evaluate("print('hello'")
+            await engine.evaluate_async("print('hello'")
 
         assert isinstance(exc_info.value, ScriptSyntaxError)
 
-    def test_runtime_error_handling(self, engine_class: type) -> None:
+    @pytest.mark.asyncio
+    async def test_runtime_error_handling(self, engine_class: type) -> None:
         """Test that runtime errors are properly converted to ScriptExecutionError."""
         engine = engine_class()
 
         with pytest.raises(ScriptExecutionError):
-            engine.evaluate("1 / 0")
+            await engine.evaluate_async("1 / 0")
 
         with pytest.raises(ScriptExecutionError):
-            engine.evaluate("undefined_variable")
+            await engine.evaluate_async("undefined_variable")
 
     @pytest.mark.asyncio
     async def test_async_evaluation(self, engine_class: type) -> None:
@@ -97,23 +101,26 @@ class TestEngineIntegration:
         for i, (_, expected) in enumerate(scripts):
             assert results[i] == expected
 
-    def test_empty_script_handling(self, engine_class: type) -> None:
+    @pytest.mark.asyncio
+    async def test_empty_script_handling(self, engine_class: type) -> None:
         """Test that empty scripts are handled gracefully."""
         engine = engine_class()
-        assert engine.evaluate("") is None
-        assert engine.evaluate("   \n  \t  \n  ") is None
+        assert await engine.evaluate_async("") is None
+        assert await engine.evaluate_async("   \n  \t  \n  ") is None
 
-    def test_complex_data_structure_result(self, engine_class: type) -> None:
+    @pytest.mark.asyncio
+    async def test_complex_data_structure_result(self, engine_class: type) -> None:
         """Test that complex data structures are properly returned."""
         engine = engine_class()
 
-        result = engine.evaluate('{"name": "test", "values": [1, 2, 3]}')
+        result = await engine.evaluate_async('{"name": "test", "values": [1, 2, 3]}')
         assert result == {"name": "test", "values": [1, 2, 3]}
 
-        result = engine.evaluate('[{"id": 1}, {"id": 2}]')
+        result = await engine.evaluate_async('[{"id": 1}, {"id": 2}]')
         assert result == [{"id": 1}, {"id": 2}]
 
-    def test_function_injection_supported(self, engine_class: type) -> None:
+    @pytest.mark.asyncio
+    async def test_function_injection_supported(self, engine_class: type) -> None:
         """Test that function injection is supported."""
         engine = engine_class()
 
@@ -122,21 +129,21 @@ class TestEngineIntegration:
 
         globals_dict = {"my_func": my_function, "my_value": 10}
 
-        assert engine.evaluate("my_value", globals_dict) == 10
-        assert engine.evaluate("my_func()", globals_dict) == 42
+        assert await engine.evaluate_async("my_value", globals_dict) == 10
+        assert await engine.evaluate_async("my_func()", globals_dict) == 42
 
         def add(x: int, y: int) -> int:
             return x + y
 
         globals_dict["add"] = add
-        assert engine.evaluate("add(5, 3)", globals_dict) == 8
+        assert await engine.evaluate_async("add(5, 3)", globals_dict) == 8
 
         def concat(*args: str) -> str:
             return "".join(args)
 
         globals_dict["concat"] = concat
         assert (
-            engine.evaluate("concat('Hello', ' ', 'World')", globals_dict)
+            await engine.evaluate_async("concat('Hello', ' ', 'World')", globals_dict)
             == "Hello World"
         )
 
@@ -145,8 +152,8 @@ class TestEngineIntegration:
             return {"status": "ok", "count": 3}
 
         globals_dict["get_data"] = get_data
-        assert engine.evaluate("get_data()['status']", globals_dict) == "ok"
-        assert engine.evaluate("get_data()['count']", globals_dict) == 3
+        assert await engine.evaluate_async("get_data()['status']", globals_dict) == "ok"
+        assert await engine.evaluate_async("get_data()['count']", globals_dict) == 3
 
     @pytest.mark.skip(
         reason="PERMANENTLY DISABLED: Resource limit testing causes system crashes."
@@ -159,18 +166,20 @@ class TestEngineIntegration:
 class TestStarlarkEngineSpecific:
     """Tests specific to Starlark engine behavior."""
 
-    def test_starlark_dialect_features(self) -> None:
+    @pytest.mark.asyncio
+    async def test_starlark_dialect_features(self) -> None:
         """Test Starlark-specific dialect features like f-strings and lambda."""
         engine = StarlarkEngine()
 
-        result = engine.evaluate('name = "World"\nf"Hello, {name}!"')
+        result = await engine.evaluate_async('name = "World"\nf"Hello, {name}!"')
         assert result == "Hello, World!"
 
 
 class TestMontyEngineSpecific:
     """Tests specific to Monty engine behavior."""
 
-    def test_try_except(self) -> None:
+    @pytest.mark.asyncio
+    async def test_try_except(self) -> None:
         """Test that Monty supports try/except (which Starlark doesn't)."""
         engine = MontyEngine()
 
@@ -181,12 +190,13 @@ except ZeroDivisionError:
     result = "caught"
 result
 """
-        result = engine.evaluate(script)
+        result = await engine.evaluate_async(script)
         assert result == "caught"
 
-    def test_f_strings(self) -> None:
+    @pytest.mark.asyncio
+    async def test_f_strings(self) -> None:
         """Test that Monty supports f-strings natively."""
         engine = MontyEngine()
 
-        result = engine.evaluate('name = "World"\nf"Hello, {name}!"')
+        result = await engine.evaluate_async('name = "World"\nf"Hello, {name}!"')
         assert result == "Hello, World!"
