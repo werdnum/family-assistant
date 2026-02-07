@@ -831,13 +831,13 @@ class GoogleGenAIClient(BaseLLMClient):
             )
 
             if "temperature" in config_params:
-                generation_config.temperature = config_params["temperature"]
+                generation_config.temperature = float(config_params["temperature"])
             if "max_tokens" in config_params:
-                generation_config.max_output_tokens = config_params["max_tokens"]
+                generation_config.max_output_tokens = int(config_params["max_tokens"])
             if "top_p" in config_params:
-                generation_config.top_p = config_params["top_p"]
+                generation_config.top_p = float(config_params["top_p"])
             if "top_k" in config_params:
-                generation_config.top_k = config_params["top_k"]
+                generation_config.top_k = int(config_params["top_k"])
 
             # Prepare all tools (function tools + grounding tools)
             # Pass tool_choice to respect "none" mode which returns empty list
@@ -1363,13 +1363,13 @@ class GoogleGenAIClient(BaseLLMClient):
             )
 
             if "temperature" in config_params:
-                generation_config.temperature = config_params["temperature"]
+                generation_config.temperature = float(config_params["temperature"])
             if "max_tokens" in config_params:
-                generation_config.max_output_tokens = config_params["max_tokens"]
+                generation_config.max_output_tokens = int(config_params["max_tokens"])
             if "top_p" in config_params:
-                generation_config.top_p = config_params["top_p"]
+                generation_config.top_p = float(config_params["top_p"])
             if "top_k" in config_params:
-                generation_config.top_k = config_params["top_k"]
+                generation_config.top_k = int(config_params["top_k"])
 
             # Prepare all tools (function tools + grounding tools)
             # Pass tool_choice to respect "none" mode which returns empty list

@@ -3,28 +3,29 @@ import json  # Add json import
 import logging
 import os  # For working with file paths
 import tempfile  # For creating temporary files
+from collections.abc import Callable
+from typing import Any
 
 # Remove lru_cache as we will cache based on tool name at the call site
 
 # Attempt to import schema generation tools, handle import error gracefully
 try:
-    # Import generate_from_filename which works with file paths
     from json_schema_for_humans.generate import (  # type: ignore[import-untyped]
-        generate_from_filename,
+        generate_from_filename as _generate_from_filename,
     )
     from json_schema_for_humans.generation_configuration import (  # type: ignore[import-untyped]
         GenerationConfiguration,
     )
 
     _SCHEMA_GENERATION_AVAILABLE = True
-    # Configure once
-    _SCHEMA_GEN_CONFIG = GenerationConfiguration(
+    _SCHEMA_GEN_CONFIG: Any = GenerationConfiguration(
         template_name="flat", with_footer=False
     )
+    generate_from_filename: Callable[..., Any] | None = _generate_from_filename
 except ImportError:
     _SCHEMA_GENERATION_AVAILABLE = False
-    _SCHEMA_GEN_CONFIG = None  # Type: ignore
-    generate_from_filename = None  # Type: ignore
+    _SCHEMA_GEN_CONFIG = None
+    generate_from_filename = None
     logging.warning(
         "json-schema-for-humans library not found. "
         "Tool schema rendering will fall back to raw JSON."

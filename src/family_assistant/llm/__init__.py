@@ -599,7 +599,7 @@ def _format_serialized_messages_for_debug(
     lines = [f"=== LLM Request ({len(messages)} messages) ==="]
 
     for i, msg in enumerate(messages):
-        role = msg.get("role", "unknown")
+        role = str(msg.get("role", "unknown"))
         content = msg.get("content", "")
 
         parts_field = msg.get("parts")
@@ -608,11 +608,15 @@ def _format_serialized_messages_for_debug(
             for part in parts_field:
                 if isinstance(part, dict):
                     if "text" in part:
-                        parts_strs.append(_truncate_content(part["text"]))
+                        parts_strs.append(_truncate_content(str(part["text"])))
                     elif "inline_data" in part:
                         inline = part["inline_data"]
-                        mime = inline.get("mime_type", "unknown")
-                        data_size = len(inline.get("data", b""))
+                        if isinstance(inline, dict):
+                            mime = str(inline.get("mime_type", "unknown"))
+                            data_size = len(inline.get("data", b""))
+                        else:
+                            mime = "unknown"
+                            data_size = 0
                         parts_strs.append(f"[INLINE_DATA: {mime}, {data_size} bytes]")
                     else:
                         parts_strs.append(f"[PART: {list(part.keys())}]")
@@ -625,10 +629,15 @@ def _format_serialized_messages_for_debug(
             for part in content:
                 if isinstance(part, dict):
                     if part.get("type") == "text":
-                        text = part.get("text", "")
+                        text = str(part.get("text", ""))
                         content_parts.append(_truncate_content(text))
                     elif part.get("type") == "image_url":
-                        url = part.get("image_url", {}).get("url", "")
+                        image_url = part.get("image_url", {})
+                        url = (
+                            str(image_url.get("url", ""))
+                            if isinstance(image_url, dict)
+                            else ""
+                        )
                         content_parts.append(_truncate_content(url))
                     else:
                         content_parts.append(f"[{part.get('type', 'unknown')}]")
@@ -655,8 +664,8 @@ def _format_serialized_messages_for_debug(
 
         tool_info = ""
         if role == "tool":
-            tool_call_id = msg.get("tool_call_id", "unknown")
-            name = msg.get("name", "unknown")
+            tool_call_id = str(msg.get("tool_call_id", "unknown"))
+            name = str(msg.get("name", "unknown"))
             tool_info = f"({name}, id={tool_call_id})"
 
         attachment_info = ""

@@ -6,6 +6,7 @@ Starlark scripting environment, allowing scripts to discover and execute tools.
 """
 
 import asyncio
+import builtins
 import concurrent.futures
 import json
 import logging
@@ -662,7 +663,7 @@ class StarlarkToolsAPI:
         self._api = api
 
     # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
-    def list(self) -> list[dict[str, Any]]:
+    def list(self) -> builtins.list[dict[str, Any]]:
         """List available tools."""
         tools = self._api.list_tools()
         # Convert ToolInfo objects to dictionaries for Starlark
@@ -693,7 +694,7 @@ class StarlarkToolsAPI:
         *args: Any,  # noqa: ANN401
         **kwargs: Any,  # noqa: ANN401
         # ast-grep-ignore: no-dict-any - Return dict for Starlark JSON compatibility
-    ) -> "str | dict[str, Any] | list[Any] | int | float | bool":
+    ) -> "str | dict[str, Any] | builtins.list[Any] | int | float | bool":
         """Execute a tool."""
         return self._api.execute(tool_name, *args, **kwargs)
 
@@ -702,7 +703,7 @@ class StarlarkToolsAPI:
         tool_name: str,
         args_json: str,
         # ast-grep-ignore: no-dict-any - Return dict for Starlark JSON compatibility
-    ) -> "str | dict[str, Any] | list[Any] | int | float | bool":
+    ) -> "str | dict[str, Any] | builtins.list[Any] | int | float | bool":
         """Execute a tool with JSON arguments."""
         return self._api.execute_json(tool_name, args_json)
 

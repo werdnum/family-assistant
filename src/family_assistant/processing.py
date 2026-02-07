@@ -1736,9 +1736,10 @@ Call attach_to_response with your selected attachment IDs."""
                     if isinstance(arguments, str):
                         arguments = json.loads(arguments)
                     selected_ids_raw = arguments.get("attachment_ids", [])
-                    # Ensure selected_ids is a list of strings
                     selected_ids: list[str] = (
-                        selected_ids_raw if isinstance(selected_ids_raw, list) else []
+                        [str(id_) for id_ in selected_ids_raw]
+                        if isinstance(selected_ids_raw, list)
+                        else []
                     )
                     selected_ids = selected_ids[
                         : self.app_config.max_response_attachments

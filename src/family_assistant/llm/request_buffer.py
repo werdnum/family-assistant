@@ -119,11 +119,10 @@ def get_request_buffer(max_size: int = 100) -> LLMRequestBuffer:
         The global LLMRequestBuffer instance.
     """
     global _global_buffer
-    if _global_buffer is None:
-        with _buffer_lock:
-            if _global_buffer is None:
-                _global_buffer = LLMRequestBuffer(max_size=max_size)
-    return _global_buffer
+    with _buffer_lock:
+        if _global_buffer is None:
+            _global_buffer = LLMRequestBuffer(max_size=max_size)
+        return _global_buffer
 
 
 def reset_request_buffer() -> None:

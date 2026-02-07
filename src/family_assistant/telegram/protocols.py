@@ -43,7 +43,9 @@ class ConfirmationUIManager(Protocol):
 
     async def request_confirmation(
         self,
-        chat_id: int,
+        conversation_id: str,
+        interface_type: str,
+        turn_id: str | None,
         prompt_text: str,
         tool_name: str,
         # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
