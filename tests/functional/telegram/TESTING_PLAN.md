@@ -56,7 +56,7 @@ user input scenarios, while isolating external network dependencies (Telegram AP
 ## 4. Test Structure (Typical Test Case)
 
 1. **Arrange:** \*Depend on the database fixture (`pg_vector_db_engine`). \*Depend on the **default
-   database fixture (`test_db_engine`)**. \*Instantiate the real `ProcessingService` with the mock
+   database fixture (`db_engine`)**. \*Instantiate the real `ProcessingService` with the mock
    LLM. \*Instantiate mock `Application` and `Bot`, configuring the `Bot`'s mocked methods.
    \*Instantiate the chosen `MessageBatcher` implementation (e.g., `NoBatchMessageBatcher` for
    simplicity, passing the handler instance) and assign it to `handler.message_batcher`.
@@ -149,7 +149,7 @@ user input scenarios, while isolating external network dependencies (Telegram AP
 ## 7. Prerequisites/Assumptions
 
 \*Reliable `pytest` fixtures exist for setting up and tearing down a test database instance
-(`AsyncEngine`), defaulting to SQLite (`test_db_engine`).
+(`AsyncEngine`), defaulting to SQLite (`db_engine`).
 
 ## 8. Potential Future Improvements (Refactoring)
 
@@ -192,7 +192,7 @@ The following refactoring could simplify these tests further:
 
 3. **Create Test Fixture for `TelegramUpdateHandler`:** \*In `tests/functional/telegram/conftest.py`
    (or a dedicated test file), create a `pytest` fixture (e.g., `telegram_update_handler_fixture`).
-   \*This fixture will depend on the default database fixture (`test_db_engine`), mock LLM fixtures,
+   \*This fixture will depend on the default database fixture (`db_engine`), mock LLM fixtures,
    etc. \*It will instantiate mock `Application`, `Bot`, and potentially a mock
    `ConfirmationUIManager`. \*It will instantiate the real `ProcessingService` (with mock LLM). \*It
    will instantiate the `TelegramUpdateHandler` with all real and mocked dependencies injected.

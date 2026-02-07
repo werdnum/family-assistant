@@ -113,7 +113,7 @@ async def test_index_document(indexing_task_worker):
 
 ### Database Fixtures
 
-**`test_db_engine`** (function scope, autouse)
+**`db_engine`** (function scope)
 
 - Provides SQLite or PostgreSQL database
 - Initializes schema with all tables

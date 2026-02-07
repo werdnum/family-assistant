@@ -116,7 +116,7 @@ async def test_automation_execution(task_worker_manager):
 
 ### Database Fixtures
 
-**`test_db_engine`** (function scope, autouse)
+**`db_engine`** (function scope)
 
 - Provides SQLite or PostgreSQL database
 - Initializes schema with automations table

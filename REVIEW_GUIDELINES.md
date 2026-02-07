@@ -454,7 +454,7 @@ To ensure our tests are realistic and maintainable, we follow a principle of usi
 dependencies wherever possible, especially in functional and integration tests. Mocks should be used
 sparingly.
 
-- **Real Dependencies**: Use real components like a test database (e.g., via `test_db_engine`) for
+- **Real Dependencies**: Use real components like a test database (e.g., via `db_engine`) for
   the most accurate testing.
 - **Fake Dependencies**: When a real service is not practical (e.g., it's slow or complex to set
   up), use a high-fidelity "fake" implementation that mimics the real API and behavior.

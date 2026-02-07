@@ -98,7 +98,7 @@ To find tests for a specific feature:
 
   - **Write tests as "end-to-end" as possible.** The most valuable tests are those that resemble how
     the application is used in production.
-  - **Use real dependencies** like the test database (`test_db_engine` fixture) whenever you can.
+  - **Use real dependencies** like the test database (`db_engine` fixture) whenever you can.
     This provides the highest confidence.
   - **Use fake dependencies** for services that are complex or slow to run in tests. A "fake" is a
     high-fidelity test implementation that mimics the real service's API and behavior.
@@ -184,7 +184,7 @@ PostgreSQL, so it's important to test with PostgreSQL to catch database-specific
 - PostgreSQL container starts automatically when the flag is used (requires Docker/Podman)
 - Tests that specifically need PostgreSQL features can use `pg_vector_db_engine` fixture, but will
   get a warning if run without `--postgres` flag
-- The unified `test_db_engine` fixture automatically provides the appropriate database based on the
+- The unified `db_engine` fixture automatically provides the appropriate database based on the
   flag
 
 **PostgreSQL Test Isolation**: When using `--postgres`, each test gets its own unique database:
@@ -210,33 +210,41 @@ fixtures are defined in `tests/conftest.py` and `tests/functional/telegram/conft
 
 ### Database Fixtures
 
-**`test_db_engine`** (function scope, autouse)
+**`db_engine`** (function scope)
 
-- Automatically provides either SQLite or PostgreSQL database based on `--postgres` flag
-- Default: Creates an in-memory SQLite database for each test
-- With `--postgres` flag: Creates a unique PostgreSQL database for each test
-  - Database name format: `test_{test_name}_{random_id}`
-  - Complete isolation - no data sharing between tests
-  - Database is dropped after test completion
-- Patches the global storage engine to use the test database
-- Initializes the database schema
-- Cleans up after the test completes
-- Usage: Automatically available in all tests, no need to explicitly request
+- The primary fixture for database tests, providing either SQLite or PostgreSQL.
+- Controlled by `--db` or `--postgres` flags (defaults to SQLite).
+- **SQLite**: Creates a temporary on-disk database for each test.
+- **PostgreSQL**: Creates a unique database for each test using `postgres_container`.
+- Handles schema initialization and automatic cleanup after each test.
+- **Note**: This is not an `autouse` fixture; it must be requested by the test.
 
 **`postgres_container`** (session scope)
 
-- Starts a PostgreSQL container with pgvector extension for the test session
-- Uses testcontainers library with `pgvector/pgvector:0.8.0-pg17` image
-- Respects DOCKER_HOST environment variable
-- Usage: `def test_something(postgres_container):`
+- Manages a PostgreSQL server instance for the entire test session.
+- Uses `pgserver` (embedded PostgreSQL) or an external instance via `TEST_DATABASE_URL`.
+- Provides the shared infrastructure for PostgreSQL-based tests.
+- Includes `pgvector` support.
 
 **`pg_vector_db_engine`** (function scope)
 
-- PostgreSQL database engine with vector support
-- Always creates a unique PostgreSQL database regardless of `--postgres` flag
-- Database name format: `test_pgvec_{test_name}_{random_id}`
-- Complete isolation - database is created before and dropped after each test
+- PostgreSQL database engine with `pgvector` support guaranteed.
+- Always provides a PostgreSQL backend, even if the suite is running with SQLite.
+- Creates a unique database per test for complete isolation.
 - Usage: `async def test_something(pg_vector_db_engine):`
+
+**`session_db_engine`** (session scope)
+
+- Session-scoped SQLite engine for performance-critical, read-only tests.
+- Shared across multiple tests to reduce setup overhead.
+- Supports parallel execution via `pytest-xdist` (one database per worker).
+- Located in `tests/functional/web/conftest.py`.
+
+**`api_db_context`** (function scope)
+
+- Provides an already-entered `DatabaseContext` for API-level tests.
+- Simplifies access to database repository methods.
+- Located in `tests/functional/web/conftest.py`.
 
 ### Task Worker Fixtures
 
