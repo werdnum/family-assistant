@@ -94,7 +94,7 @@ class NotesRepository(BaseRepository):
             grants_json = json.dumps(grants_list)
             stmt = stmt.where(
                 sa.cast(notes_table.c.visibility_labels, JSONB).contained_by(
-                    sa.literal_column(f"'{grants_json}'::jsonb")
+                    sa.cast(sa.literal(grants_json), JSONB)
                 )
             )
         else:
