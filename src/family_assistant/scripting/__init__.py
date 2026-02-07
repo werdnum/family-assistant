@@ -1,7 +1,7 @@
 """
 Family Assistant Scripting System.
 
-Provides a Starlark-based scripting engine for executing user-defined scripts
+Provides scripting engines for executing user-defined scripts
 with access to family assistant tools and state.
 """
 
@@ -12,8 +12,10 @@ from .errors import (
     ScriptSyntaxError,
     ScriptTimeoutError,
 )
+from .monty_engine import MontyEngine
 
 __all__ = [
+    "MontyEngine",
     "StarlarkEngine",
     "ScriptError",
     "ScriptExecutionError",

@@ -79,7 +79,7 @@ class StarlarkEngine:
             self._main_loop is not None,
         )
 
-    def evaluate(
+    def _evaluate_sync(
         self,
         script: str,
         # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
@@ -89,18 +89,9 @@ class StarlarkEngine:
         """
         Evaluate a Starlark expression or script synchronously.
 
-        Args:
-            script: The Starlark script to execute
-            globals_dict: Optional dictionary of global variables to make available
-            execution_context: Optional execution context for tools access
-
-        Returns:
-            The result of the script execution
-
-        Raises:
-            ScriptSyntaxError: If the script has invalid syntax
-            ScriptExecutionError: If the script encounters a runtime error
-            ScriptTimeoutError: If the script exceeds the execution time limit
+        This is an internal method called from evaluate_async() via
+        run_in_executor. Starlark execution is inherently synchronous,
+        so async support is provided by running this in a thread pool.
         """
         try:
             # Create a module for execution
@@ -355,7 +346,7 @@ class StarlarkEngine:
             # Run the script evaluation with a timeout
             result = await asyncio.wait_for(
                 asyncio.get_event_loop().run_in_executor(
-                    None, self.evaluate, script, globals_dict, execution_context
+                    None, self._evaluate_sync, script, globals_dict, execution_context
                 ),
                 timeout=self.config.max_execution_time,
             )
