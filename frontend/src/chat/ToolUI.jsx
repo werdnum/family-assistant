@@ -21,6 +21,10 @@ const CodeHighlight = ({ code, language = 'python', showLineNumbers = true, cust
     });
   }, []);
 
+  if (!style) {
+    return <pre className="tool-code-block">{code}</pre>;
+  }
+
   return (
     <Suspense fallback={<pre className="tool-code-block">{code}</pre>}>
       <LazyPrism
