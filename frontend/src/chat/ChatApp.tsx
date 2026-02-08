@@ -50,6 +50,7 @@ const ChatApp: React.FC<ChatAppProps> = ({ profileId = 'default_assistant' }) =>
   });
   const streamingMessageIdRef = useRef<string | null>(null);
   const toolCallMessageIdRef = useRef<string | null>(null);
+  const lastStreamingErrorRef = useRef<string | null>(null);
   const initialPromptProcessedRef = useRef(false);
   const abortControllerRef = useRef<AbortController | null>(null);
   const messagesAbortControllerRef = useRef<AbortController | null>(null);
@@ -182,36 +183,12 @@ const ChatApp: React.FC<ChatAppProps> = ({ profileId = 'default_assistant' }) =>
     }
   }, []);
 
-  const handleStreamingError = useCallback(
-    (error: Error | string, _metadata: unknown) => {
-      console.error('Streaming error:', error, _metadata);
-      if (streamingMessageIdRef.current) {
-        // Build diagnostics URL with conversation context
-        const diagnosticsUrl = getDiagnosticsUrl({
-          conversationId: conversationId ?? undefined,
-        });
-
-        setMessages((prev) =>
-          prev.map((msg) =>
-            msg.id === streamingMessageIdRef.current
-              ? {
-                  ...msg,
-                  content: [
-                    {
-                      type: 'text',
-                      text: `Sorry, I encountered an error processing your message. [View diagnostics](${diagnosticsUrl}) for debugging details.`,
-                    },
-                  ],
-                  isLoading: false, // Remove loading state on error
-                }
-              : msg
-          )
-        );
-        streamingMessageIdRef.current = null;
-      }
-    },
-    [conversationId]
-  );
+  const handleStreamingError = useCallback((error: Error | string, _metadata: unknown) => {
+    console.error('Streaming error:', error, _metadata);
+    // Store the error but don't treat it as terminal — the stream may recover
+    // with subsequent tool results or text content
+    lastStreamingErrorRef.current = typeof error === 'string' ? error : error.message;
+  }, []);
 
   const handleStreamingComplete = useCallback(
     ({
@@ -224,36 +201,70 @@ const ChatApp: React.FC<ChatAppProps> = ({ profileId = 'default_assistant' }) =>
       // Capture ref values locally to avoid race conditions
       const messageId = streamingMessageIdRef.current;
       const toolCallMessageId = toolCallMessageIdRef.current;
+      const lastError = lastStreamingErrorRef.current;
 
-      if (messageId && content) {
-        setMessages((prev) =>
-          prev.map((msg) => {
-            if (msg.id === messageId) {
-              // Preserve any existing tool calls
-              const existingToolCalls =
-                msg.content?.filter((part) => part.type === 'tool-call') || [];
-              return {
-                ...msg,
-                content: [{ type: 'text', text: content }, ...existingToolCalls],
-                status: { type: 'complete' as const },
-                isLoading: false, // Ensure loading state is cleared
-              };
-            }
-            return msg;
-          })
-        );
+      if (messageId) {
+        const hasContent = Boolean(content);
+        const hasToolCalls = Boolean(toolCallMessageId);
 
-        // Clean up the references immediately after state update
-        // Only clear if the IDs haven't changed (avoiding race with new streaming)
-        if (streamingMessageIdRef.current === messageId) {
-          streamingMessageIdRef.current = null;
+        if (hasContent) {
+          // Has text content: update message with text + preserved tool calls
+          setMessages((prev) =>
+            prev.map((msg) => {
+              if (msg.id === messageId) {
+                const existingToolCalls =
+                  msg.content?.filter((part) => part.type === 'tool-call') || [];
+                return {
+                  ...msg,
+                  content: [{ type: 'text', text: content }, ...existingToolCalls],
+                  status: { type: 'complete' as const },
+                  isLoading: false,
+                };
+              }
+              return msg;
+            })
+          );
+        } else if (hasToolCalls) {
+          // No text but has tool calls: just clear loading state and set complete
+          setMessages((prev) =>
+            prev.map((msg) => {
+              if (msg.id === messageId) {
+                return {
+                  ...msg,
+                  status: { type: 'complete' as const },
+                  isLoading: false,
+                };
+              }
+              return msg;
+            })
+          );
+        } else if (lastError) {
+          // No text, no tool calls, but had an error: show error message
+          const diagnosticsUrl = getDiagnosticsUrl({
+            conversationId: conversationId ?? undefined,
+          });
+          setMessages((prev) =>
+            prev.map((msg) =>
+              msg.id === messageId
+                ? {
+                    ...msg,
+                    content: [
+                      {
+                        type: 'text',
+                        text: `Sorry, I encountered an error processing your message. [View diagnostics](${diagnosticsUrl}) for debugging details.`,
+                      },
+                    ],
+                    isLoading: false,
+                  }
+                : msg
+            )
+          );
+        } else {
+          // No text, no tool calls, no error: just clear loading state
+          setMessages((prev) =>
+            prev.map((msg) => (msg.id === messageId ? { ...msg, isLoading: false } : msg))
+          );
         }
-        if (toolCallMessageIdRef.current === toolCallMessageId) {
-          toolCallMessageIdRef.current = null;
-        }
-
-        // Refresh conversations after state is updated
-        fetchConversations();
       }
 
       // Update tool call message status when streaming completes
@@ -261,11 +272,9 @@ const ChatApp: React.FC<ChatAppProps> = ({ profileId = 'default_assistant' }) =>
         setMessages((prev) =>
           prev.map((msg) => {
             if (msg.id === toolCallMessageId) {
-              // Check if all tool calls have results
               const allToolsComplete = msg.content?.every(
                 (part) => part.type !== 'tool-call' || part.result !== undefined
               );
-
               return {
                 ...msg,
                 status: allToolsComplete ? { type: 'complete' } : msg.status,
@@ -275,8 +284,18 @@ const ChatApp: React.FC<ChatAppProps> = ({ profileId = 'default_assistant' }) =>
           })
         );
       }
+
+      // Always clean up refs and refresh conversations
+      if (streamingMessageIdRef.current === messageId) {
+        streamingMessageIdRef.current = null;
+      }
+      if (toolCallMessageIdRef.current === toolCallMessageId) {
+        toolCallMessageIdRef.current = null;
+      }
+      lastStreamingErrorRef.current = null;
+      fetchConversations();
     },
-    [fetchConversations]
+    [conversationId, fetchConversations]
   );
 
   // Handle tool calls during streaming
@@ -793,6 +812,7 @@ const ChatApp: React.FC<ChatAppProps> = ({ profileId = 'default_assistant' }) =>
       setMessages((prev) => [...prev, userMessage, loadingAssistantMessage]);
 
       streamingMessageIdRef.current = assistantMessageId;
+      lastStreamingErrorRef.current = null;
 
       await sendStreamingMessage({
         prompt: message.content[0].text,
