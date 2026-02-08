@@ -1,6 +1,6 @@
 """Script execution tool.
 
-This module contains a tool for executing Starlark scripts within the family assistant.
+This module contains a tool for executing Python scripts within the family assistant.
 """
 
 from __future__ import annotations
@@ -127,11 +127,11 @@ async def execute_script_tool(
     globals: dict[str, Any] | None = None,
 ) -> ToolResult:
     """
-    Execute a Starlark script in a sandboxed environment.
+    Execute a Python script in a sandboxed environment.
 
     Args:
         exec_context: The execution context
-        script: The Starlark script code to execute
+        script: The Python script code to execute
         globals: Optional dictionary of global variables to inject into the script
 
     Returns:
@@ -328,15 +328,9 @@ SCRIPT_TOOLS_DEFINITION: list[ToolDefinition] = [
         "function": {
             "name": "execute_script",
             "description": (
-                "Execute a Starlark script in a sandboxed environment for automation and complex operations.\n\n"
+                "Execute a Python script in a sandboxed environment for automation and complex operations.\n\n"
                 "**IMPORTANT: Before writing scripts, please read the scripting documentation first!**\n"
                 "Use the command: `get_user_documentation_content filename='scripting.md'`\n\n"
-                "**What is Starlark?**\n"
-                "Starlark is a Python-like language that LOOKS like Python but has important differences:\n"
-                "• NO try/except - errors terminate the script\n"
-                "• NO while loops - use for loops instead\n"
-                "• NO isinstance() - use type() comparisons\n"
-                "• Limited standard library\n\n"
                 "**Tool Documentation:**\n"
                 "To see available tools and their parameters, ask: 'Show me the available tools'\n\n"
                 "**Execution Environment:**\n"
@@ -358,7 +352,7 @@ SCRIPT_TOOLS_DEFINITION: list[ToolDefinition] = [
                 "• send_email(to='...', subject='...', body='...')\n\n"
                 "**Note**: Tools currently return string results. For tools that return structured data\n"
                 "(like lists or dicts), use json_decode() to parse the result:\n"
-                "```starlark\n"
+                "```python\n"
                 "result_str = search_notes(query='TODO')\n"
                 "notes = json_decode(result_str) if result_str != '[]' else []\n"
                 "```\n\n"
@@ -375,7 +369,7 @@ SCRIPT_TOOLS_DEFINITION: list[ToolDefinition] = [
                 "Attachments created by tools or attachment_create() are represented as dictionaries\n"
                 'with metadata: {"id": uuid, "filename": str, "mime_type": str, "size": int, "description": str}\n'
                 "Return these dicts to make attachments visible to the LLM:\n\n"
-                "```starlark\n"
+                "```python\n"
                 "# Single attachment - last expression is returned\n"
                 'data = attachment_create(content="data", filename="data.txt", mime_type="text/plain")\n'
                 "data  # Dict with attachment info, automatically sent to LLM\n\n"
@@ -392,7 +386,7 @@ SCRIPT_TOOLS_DEFINITION: list[ToolDefinition] = [
                 "```\n\n"
                 "**Example Scripts:**\n\n"
                 "1. Simple note creation:\n"
-                "```starlark\n"
+                "```python\n"
                 "result = add_or_update_note(\n"
                 "    title='Meeting Notes',\n"
                 "    content='Discussed project timeline'\n"
@@ -400,7 +394,7 @@ SCRIPT_TOOLS_DEFINITION: list[ToolDefinition] = [
                 "print('Created note:', result)\n"
                 "```\n\n"
                 "2. Conditional logic with search:\n"
-                "```starlark\n"
+                "```python\n"
                 "def process_todos():\n"
                 "    # Search returns a JSON string, so decode it\n"
                 "    result_str = search_notes(query='TODO')\n"
@@ -418,7 +412,7 @@ SCRIPT_TOOLS_DEFINITION: list[ToolDefinition] = [
                 "process_todos()\n"
                 "```\n\n"
                 "3. Complex automation:\n"
-                "```starlark\n"
+                "```python\n"
                 "def create_project_summary():\n"
                 "    # Search for notes, create summary, send email\n"
                 "    result_str = search_notes(query='Project Alpha')\n"
@@ -446,7 +440,7 @@ SCRIPT_TOOLS_DEFINITION: list[ToolDefinition] = [
                 "create_project_summary()\n"
                 "```\n\n"
                 "4. Working with user attachments (attachment ID provided by LLM):\n"
-                "```starlark\n"
+                "```python\n"
                 "# Attachment ID passed to script by LLM based on conversation context\n"
                 "# Example: LLM calls execute_script with attachment_id parameter\n"
                 "def process_user_attachment(attachment_id):\n"
@@ -471,7 +465,7 @@ SCRIPT_TOOLS_DEFINITION: list[ToolDefinition] = [
                 "# process_user_attachment('uuid-from-llm-context')\n"
                 "```\n\n"
                 "5. Data visualization with automatic attachment propagation:\n"
-                "```starlark\n"
+                "```python\n"
                 "# Create a chart - attachment automatically returns to LLM\n"
                 "spec = {\n"
                 "  '$schema': 'https://vega.github.io/schema/vega-lite/v5.json',\n"
@@ -490,7 +484,7 @@ SCRIPT_TOOLS_DEFINITION: list[ToolDefinition] = [
                 ")\n"
                 "```\n\n"
                 "6. Multi-chart dashboard:\n"
-                "```starlark\n"
+                "```python\n"
                 "# Create multiple related charts\n"
                 "temp_spec = {'$schema': '...', 'mark': 'line', ...}\n"
                 "humidity_spec = {'$schema': '...', 'mark': 'area', ...}\n\n"
@@ -499,15 +493,6 @@ SCRIPT_TOOLS_DEFINITION: list[ToolDefinition] = [
                 "# Both charts automatically visible to LLM\n"
                 "[temp_chart, humidity_chart]\n"
                 "```\n\n"
-                "**Language Differences from Python:**\n"
-                "• No imports or modules\n"
-                "• No classes (only functions and structs)\n"
-                "• No while loops (use for loops with range)\n"
-                "• No exceptions (use fail() to stop with error)\n"
-                "• No set literals (use dict keys as workaround)\n"
-                "• Strings are immutable\n"
-                "• Integer division with // (not /)\n"
-                "• **Important**: if/else statements can only be used inside functions, not at top level\n"
             ),
             "parameters": {
                 "type": "object",
@@ -515,7 +500,7 @@ SCRIPT_TOOLS_DEFINITION: list[ToolDefinition] = [
                     "script": {
                         "type": "string",
                         "description": (
-                            "The Starlark script code to execute. Must be valid Starlark syntax.\n\n"
+                            "The Python script code to execute. Must be valid Python syntax.\n\n"
                             "The script can:\n"
                             "• Define variables and functions\n"
                             "• Use control flow (if/else, for loops)\n"

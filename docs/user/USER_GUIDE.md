@@ -459,7 +459,7 @@ various tasks with dark mode support and mobile optimization.
   that turns on" (pattern matching with entity_id) \*Choose between two action types:
 
   - **wake_llm**: Wakes the assistant to handle complex situations requiring reasoning - **script**:
-    Runs automated Starlark code for simple, deterministic tasks \*Scripts can also use wake_llm()
+    Runs automated Python scripts for simple, deterministic tasks \*Scripts can also use wake_llm()
     to conditionally wake the assistant with specific context \*Via the Web UI: Navigate to
     Automations and click "Create New Automation" to use the visual form with live script validation
 

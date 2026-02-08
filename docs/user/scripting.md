@@ -1,38 +1,32 @@
 # Family Assistant Scripting Guide
 
-This guide provides a reference for assistants to write Starlark scripts when responding to user
+This guide provides a reference for assistants to write Python scripts when responding to user
 requests for automation and complex operations.
 
 **Important**: Scripts are primarily a tool for assistants to fulfill user requests, not for direct
-user interaction. Before writing scripts, understand Starlark's limitations and available APIs to
+user interaction. Before writing scripts, understand the available APIs and sandbox constraints to
 write effective scripts.
 
-## Starlark Language Overview
+## Python Scripting Overview
 
-Starlark is a dialect of Python designed for configuration and deterministic execution. While it
-looks like Python, it has important differences:
+Scripts run real Python code in a sandboxed environment. Standard Python syntax is fully supported,
+including:
 
-### Key Differences from Python
+- **Exception handling**: `try`/`except`/`finally` blocks work normally
+- **All loop types**: `for` loops, `while` loops, and comprehensions
+- **Classes**: You can define and use classes
+- **Float arithmetic**: `float()`, decimal math, and all numeric types
+- **Standard control flow**: Generators, context managers, and all Python constructs
 
-01. **No exceptions or try-except**: Errors terminate the script. Check inputs carefully.
-02. **No while loops**: Use for loops and recursion instead.
-03. **No generators or yield**: All functions return complete values.
-04. **Limited standard library**: Only basic functions are available.
-05. **No isinstance()**: Use `type(x) == type("")` for type checking.
-06. **Immutable globals**: After initial evaluation, global variables cannot be changed.
-07. **No implicit string concatenation**: Use `+` explicitly (`"hello" + "world"`).
-08. **No chained comparisons**: Write `1 < x and x < 5` instead of `1 < x < 5`.
-09. **Integer limits**: 32-bit signed integers only (no arbitrary precision).
-10. **Dictionary iteration order**: Guaranteed to be deterministic.
+### Sandbox Constraints
 
-### Restricted Top-Level Statements
+While the scripting engine runs real Python, it operates in a restricted sandbox:
 
-- `for` loops and `if` statements must be inside functions at the top level
-- Global variables cannot be reassigned after definition
-- Use list comprehensions for top-level data generation
-
-For full Starlark syntax details, see the
-[official Starlark documentation](https://github.com/bazelbuild/starlark/blob/master/spec.md).
+1. **No imports**: Cannot import external modules
+2. **No file/network access**: Scripts are sandboxed with no filesystem or network access
+3. **Limited builtins**: Only safe built-in functions are available
+4. **Resource limits**: Scripts have memory and recursion depth limits
+5. **Timeout**: Scripts timeout after 10 minutes
 
 ## Available APIs
 
@@ -45,7 +39,7 @@ All Family Assistant tools are available in scripts through two interfaces:
 
 #### 1. Direct Callable Interface (Recommended)
 
-```starlark
+```python
 
 # Call tools directly as functions
 result = add_or_update_note(title="Meeting Notes", content="...")
@@ -56,7 +50,7 @@ events = get_calendar_events(days_ahead=7)
 
 #### 2. Functional Interface
 
-```starlark
+```python
 
 # List all available tools
 tools = tools_list()
@@ -88,7 +82,7 @@ propagated back to the assistant and shown to the user.
 When you create or receive attachments in scripts, they are represented as **dictionaries** with
 metadata fields:
 
-```starlark
+```python
 # Example attachment dict structure
 {
     "id": "550e8400-e29b-41d4-a716-446655440000",  # UUID for referencing
@@ -105,7 +99,7 @@ You can access fields directly: `attachment["id"]`, `attachment["filename"]`, et
 
 Use `attachment_create()` to create new attachments from script-generated content:
 
-```starlark
+```python
 # Create a text file attachment
 data_file = attachment_create(
     content="Temperature readings: 72, 75, 73, 71",
@@ -118,7 +112,7 @@ data_file = attachment_create(
 data_file
 ```
 
-```starlark
+```python
 # Create a CSV file attachment
 csv_content = "date,temperature,humidity\n2024-01-01,72,45\n2024-01-02,75,48"
 csv_file = attachment_create(
@@ -145,7 +139,7 @@ Many tools return attachments (charts, reports, images, etc.). These come in two
 
 **Single attachment (no text):**
 
-```starlark
+```python
 # Tool that returns just an attachment
 chart = create_vega_chart(
     spec='{"mark": "line", ...}',
@@ -159,7 +153,7 @@ chart  # Return it to make it visible to the assistant
 
 **Attachment(s) with text:**
 
-```starlark
+```python
 # Tool that returns text and attachments
 result = process_documents(query="invoices")
 
@@ -175,7 +169,7 @@ for att in result["attachments"]:
 
 Return a list to send multiple attachments to the assistant:
 
-```starlark
+```python
 # Create multiple charts
 chart1 = create_vega_chart(spec=temperature_spec, data_attachments=[temp_data])
 chart2 = create_vega_chart(spec=humidity_spec, data_attachments=[humidity_data])
@@ -184,7 +178,7 @@ chart2 = create_vega_chart(spec=humidity_spec, data_attachments=[humidity_data])
 [chart1, chart2]
 ```
 
-```starlark
+```python
 # Mix manual and tool-created attachments
 data_file = attachment_create(
     content="Raw data: 1,2,3",
@@ -202,7 +196,7 @@ report = generate_report(title="Analysis Report")
 
 One of the most powerful patterns is passing data from one tool to another:
 
-```starlark
+```python
 # Process data, then visualize - all in one expression
 # jq_query returns data directly, pass via data parameter
 chart = create_vega_chart(
@@ -212,7 +206,7 @@ chart = create_vega_chart(
 chart
 ```
 
-```starlark
+```python
 # Multi-step data pipeline
 # 1. Query and filter data
 filtered_data = jq_query(
@@ -239,7 +233,7 @@ chart  # Final chart is sent to assistant
 
 ##### Example 1: Generate CSV Report
 
-```starlark
+```python
 # Query notes and generate CSV report
 def create_task_report():
     result_str = search_notes(query="TODO")
@@ -270,7 +264,7 @@ create_task_report()
 
 ##### Example 2: Data Visualization Pipeline
 
-```starlark
+```python
 # Fetch data, transform it, and create a chart
 def visualize_temperature_trend(days=7):
     # Get calendar events (example data source)
@@ -317,7 +311,7 @@ visualize_temperature_trend(7)
 
 ##### Example 3: Multiple Related Files
 
-```starlark
+```python
 # Generate multiple related reports
 def generate_weekly_reports():
     # Create summary
@@ -343,7 +337,7 @@ generate_weekly_reports()
 
 ##### Example 4: Data Processing and Visualization
 
-```starlark
+```python
 # Process data and create visualization using direct data flow
 def analyze_and_chart(source_attachment, query):
     # Get data from jq_query - returns raw data, not an attachment
@@ -400,7 +394,7 @@ analyze_and_chart(source_data, '.[] | select(.value > 100)')
 
 ### JSON Functions
 
-```starlark
+```python
 # Encode Python objects to JSON
 data = {"tasks": ["review PR", "update docs"]}
 json_str = json_encode(data)
@@ -415,7 +409,7 @@ A comprehensive time API is available for working with dates, times, and timezon
 
 #### Creating Time Objects
 
-```starlark
+```python
 # Get current time
 now = time_now()  # Local timezone
 now_utc = time_now_utc()  # UTC timezone
@@ -436,7 +430,7 @@ timestamp_time = time_from_timestamp(1710515400, 0)
 
 #### Formatting and Timezones
 
-```starlark
+```python
 # Format time as string
 formatted = time_format(now, "%Y-%m-%d %H:%M:%S")
 date_only = time_format(now, "%Y-%m-%d")
@@ -451,7 +445,7 @@ if timezone_is_valid("Europe/London"):
 
 #### Time Components
 
-```starlark
+```python
 # Extract components
 year = time_year(now)
 month = time_month(now)
@@ -471,7 +465,7 @@ if is_between(9, 17, now):  # Between 9 AM and 5 PM
 
 #### Time Arithmetic
 
-```starlark
+```python
 # Add seconds
 tomorrow = time_add(now, DAY)  # DAY = 86400 seconds
 next_hour = time_add(now, HOUR)  # HOUR = 3600 seconds
@@ -486,7 +480,7 @@ diff_seconds = time_diff(future, now)
 
 #### Time Comparisons
 
-```starlark
+```python
 # Compare times
 if time_before(now, meeting_time):
     print("Meeting hasn't started yet")
@@ -500,7 +494,7 @@ if time_equal(t1, t2):
 
 #### Duration Handling
 
-```starlark
+```python
 # Parse duration strings
 duration = duration_parse("2h30m")  # Returns seconds: 9000
 
@@ -513,7 +507,7 @@ human = duration_human(3665)  # Returns: "1h1m5s"
 
 #### Practical Examples
 
-```starlark
+```python
 # Schedule something for next business day
 def next_business_day():
     next_day = time_add(time_now(), DAY)
@@ -548,7 +542,7 @@ def relative_time_str(target_time):
 
 Scripts can receive global variables when executed:
 
-```starlark
+```python
 
 # These might be available depending on context
 # user_email, user_name, current_date, etc.
@@ -568,7 +562,7 @@ if "user_email" in globals():
 
 ### 1. Search and Summarize Notes
 
-```starlark
+```python
 def summarize_project_notes(project_name):
     result_str = search_notes(query=project_name)
     notes = json_decode(result_str) if result_str else []
@@ -594,7 +588,7 @@ summarize_project_notes("Project Alpha")
 
 ### 2. Process TODOs
 
-```starlark
+```python
 def collect_todos():
     # Search for TODO items
     result_str = search_notes(query="TODO")
@@ -624,7 +618,7 @@ collect_todos()
 
 ### 3. Calendar-Based Automation
 
-```starlark
+```python
 def create_meeting_prep_notes():
     # Get upcoming events
     events = get_calendar_events(days_ahead=1)
@@ -645,7 +639,7 @@ create_meeting_prep_notes()
 
 ### 4. Email Digest
 
-```starlark
+```python
 def create_email_digest(search_term):
     # Search recent emails
     result_str = search_emails(query=search_term)
@@ -673,7 +667,7 @@ create_email_digest("project update")
 
 ### 5. Conditional Actions
 
-```starlark
+```python
 def smart_reminder(title, check_calendar=True):
     # Check if reminder already exists
     existing = search_notes(query=title)
@@ -725,7 +719,7 @@ For complex event matching that can't be expressed as simple equality checks, us
 "Watch for any sensor that starts with 'sensor.motion_' and turns on"
 ```
 
-Condition scripts are Starlark expressions that:
+Condition scripts are Python expressions that:
 
 - Receive the full event data in the `event` variable
 - Must return a boolean value (True to trigger, False to ignore)
@@ -741,24 +735,22 @@ Common patterns:
 - Attribute changes:
   `event.get('old_state', {}).get('attributes', {}).get('battery') != event.get('new_state', {}).get('attributes', {}).get('battery')`
 
-Note: Starlark doesn't have `float()`, only `int()`. For decimal values like "25.5", the safest
-approach is:
+Note: For decimal values like "25.5", you can use `float()` for precise comparisons:
 
-- Truncate to integer: `int(event.get('new_state', {}).get('state', '0').split('.')[0])` (e.g.,
-  "25.5" becomes 25, "26" stays 26)
-- Be aware this loses precision - a value of "25.9" will not trigger a `> 25` condition
+- `float(event.get('new_state', {}).get('state', '0'))` converts "25.5" to 25.5
+- You can also truncate to integer with `int()` if precision isn't needed
 
 ### Event Script Context
 
 When triggered by an event, scripts receive special global variables:
 
-```starlark
+```python
 # Available global variables in event scripts:
 # event - Dictionary containing all event data
 # conversation_id - The conversation this automation belongs to
 # automation_id - ID of the event automation that triggered this script
 
-# Example: Log temperature changes (note: Starlark only has int(), not float())
+# Example: Log temperature changes
 temp = int(event.get("new_state", {}).get("state", "0").split('.')[0])  # Truncate decimals
 old_temp = int(event.get("old_state", {}).get("state", "0").split('.')[0]) if event.get("old_state") else 0
 
@@ -773,7 +765,7 @@ add_or_update_note(
 
 #### Motion Logging
 
-```starlark
+```python
 # Log all motion events with timestamps
 def log_motion():
     entity = event.get("entity_id", "unknown")
@@ -791,7 +783,7 @@ log_motion()
 
 #### Temperature Alerts
 
-```starlark
+```python
 # Alert on high temperature during business hours
 def check_temperature():
     temp = int(event.get("new_state", {}).get("state", "0").split('.')[0])  # Truncate decimals
@@ -809,7 +801,7 @@ check_temperature()
 
 #### Document Processing
 
-```starlark
+```python
 # Process newly indexed documents
 def process_document():
     if event.get("source_id") != "indexing":
@@ -834,7 +826,7 @@ process_document()
 
 #### Energy Usage Tracking
 
-```starlark
+```python
 # Track hourly energy usage
 def track_energy():
     reading = int(event.get("new_state", {}).get("state", "0").split('.')[0])  # Truncate decimals
@@ -897,7 +889,7 @@ The `wake_llm` function allows scripts to wake the LLM with custom context when 
 are met. This is particularly useful in event-triggered scripts where you want to provide the LLM
 with specific information about what happened.
 
-```starlark
+```python
 # Wake the LLM with custom context
 wake_llm(context, include_event=True)
 ```
@@ -914,7 +906,7 @@ wake_llm(context, include_event=True)
 
 **Usage in Event Scripts:**
 
-```starlark
+```python
 # Example: Simple string message (recommended for straightforward alerts)
 temp = int(event.get("new_state", {}).get("state", "0").split('.')[0])  # Truncate decimals
 if temp > 30:
@@ -925,7 +917,7 @@ if event.get("new_state", {}).get("state") == "on":
     wake_llm("Motion detected in " + event.get("entity_id", "unknown"))
 ```
 
-```starlark
+```python
 # Example: Dictionary for complex context with multiple fields
 temp = int(event.get("new_state", {}).get("state", "0").split('.')[0])  # Truncate decimals
 if temp > 30:
@@ -937,7 +929,7 @@ if temp > 30:
     })
 ```
 
-```starlark
+```python
 # Example: Process important emails with structured data
 if event.get("source_id") == "indexing":
     metadata = event.get("metadata", {})
@@ -973,8 +965,8 @@ if event.get("source_id") == "indexing":
 
 ### Error Handling
 
-```starlark
-# Starlark has no try/except, so check inputs carefully
+```python
+# Check inputs carefully to handle missing data
 result_str = search_notes(query="test")
 if result_str and result_str != "[]":
     notes = json_decode(result_str)
@@ -1020,7 +1012,7 @@ Use scripts when users request:
 
 #### Summarize my TODO notes
 
-```starlark
+```python
 # Search, process, and create summary
 results = search_notes(query="TODO")
 if results and results != "[]":
@@ -1030,7 +1022,7 @@ if results and results != "[]":
 
 #### Send me daily reminders
 
-```starlark
+```python
 # Check calendar and create contextual reminders
 events = get_calendar_events(days_ahead=1)
 for event in events:
@@ -1039,7 +1031,7 @@ for event in events:
 
 #### Monitor temperature and alert me
 
-```starlark
+```python
 # For event-triggered scripts
 if int(event.get("new_state", {}).get("state", "0").split('.')[0]) > 25:  # Truncate decimals
     send_telegram_message(message="High temperature alert!")

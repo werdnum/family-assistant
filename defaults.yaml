@@ -205,16 +205,6 @@ mcp_config:
         - "npm:@modelcontextprotocol/server-brave-search"
       env:
         BRAVE_API_KEY: "$BRAVE_API_KEY"
-    python:
-      command: "deno"
-      args:
-        - "run"
-        - "-N"
-        - "-R=node_modules"
-        - "-W=node_modules"
-        - "--node-modules-dir=auto"
-        - "jsr:@pydantic/mcp-run-python"
-        - "stdio"
     homeassistant:
       transport: "sse"
       url: "https://homeassistant.example.com/mcp_server/sse"
@@ -319,7 +309,6 @@ default_profile_settings:
     enable_mcp_server_ids: # Explicitly define MCP servers for the default profile
       - "time"
       - "brave"
-      - "python"
       - "homeassistant"
       - "google-maps"
       # The "browser" mcp server is intentionally excluded here.
@@ -440,7 +429,6 @@ service_profiles:
         - "read_task_result"
         - "list_worker_tasks"
       enable_mcp_server_ids:
-        - "python"
         - "homeassistant"
         - "scrape"
     slash_commands:
@@ -522,7 +510,7 @@ service_profiles:
           - What specific entity or data should be watched?
           - What conditions indicate the automation should run?
           - Can conditions be expressed as simple equality checks (match_conditions)?
-          - Or do they require complex logic (condition_script with Starlark)?
+          - Or do they require complex logic (condition_script with Python)?
 
           **For Schedule-Based Automations:**
           - What time(s) should it run?
@@ -596,7 +584,7 @@ service_profiles:
           - Test it against actual event data from `query_recent_events`
           - Verify it returns boolean values correctly
           - Check it handles missing fields gracefully (use `.get()` with defaults)
-          - Remember: Starlark has no float(), only int(). For decimal temperatures, truncate: `int(event.get('new_state', {}).get('state', '0').split('.')[0])`
+          - For decimal temperatures, you can use float() or truncate with int(): `float(event.get('new_state', {}).get('state', '0'))`
 
           **Example Testing Pattern:**
           ```python
@@ -703,7 +691,7 @@ service_profiles:
           **Write defensive scripts:**
           - Use `.get()` with defaults for optional fields
           - Check for None/empty values before processing
-          - Remember Starlark limitations: no try/except, no while loops, no float()
+          - Use try/except for error handling when appropriate
           - Handle missing event fields gracefully
 
           **Make automations debuggable:**
@@ -720,7 +708,7 @@ service_profiles:
           ## Common Patterns
 
           **Zone entry detection:**
-          ```starlark
+          ```python
           # Detect when someone enters home zone
           old_state = event.get('old_state', {}).get('state', '')
           new_state = event.get('new_state', {}).get('state', '')
@@ -728,7 +716,7 @@ service_profiles:
           ```
 
           **Threshold crossing:**
-          ```starlark
+          ```python
           # Alert when temperature crosses above 25°C
           temp = int(event.get("new_state", {}).get("state", "0").split('.')[0])
           old_temp = int(event.get("old_state", {}).get("state", "0").split('.')[0]) if event.get("old_state") else 0
@@ -736,7 +724,7 @@ service_profiles:
           ```
 
           **Pattern matching:**
-          ```starlark
+          ```python
           # Match any motion sensor
           entity_id = event.get('entity_id', '')
           new_state = event.get('new_state', {}).get('state', '')
@@ -746,7 +734,7 @@ service_profiles:
           ## Remember
 
           You have access to comprehensive scripting documentation (already loaded). Reference it when writing scripts. The scripting guide covers:
-          - Starlark language features and limitations
+          - Python scripting capabilities
           - Available tool APIs and how to call them
           - Time/date handling functions
           - Attachment creation and manipulation
@@ -907,7 +895,6 @@ service_profiles:
       enable_mcp_server_ids:
         - "time"
         - "brave"
-        - "python"
         - "homeassistant"
         - "google-maps"
       confirm_tools: []

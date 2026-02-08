@@ -229,7 +229,7 @@ const CreateScheduleAutomation = ({ onSuccess, onCancel }) => {
                     onChange={handleInputChange}
                     rows={10}
                     className="font-mono"
-                    placeholder="# Starlark script to execute on schedule\nprint('Scheduled task executed')"
+                    placeholder="# Python script to execute on schedule\nprint('Scheduled task executed')"
                   />
                   {validationErrors.script_code && (
                     <Alert variant="destructive">

@@ -247,7 +247,7 @@ const AutomationDetail = () => {
 
             {automation.condition_script ? (
               <>
-                <h4>Condition Script (Starlark)</h4>
+                <h4>Condition Script (Python)</h4>
                 <div
                   style={{
                     backgroundColor: 'var(--bg-secondary)',

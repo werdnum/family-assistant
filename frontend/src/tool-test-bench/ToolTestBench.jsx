@@ -2198,7 +2198,7 @@ def process_event(event_data):
     name: 'execute_script',
     title: 'Execute Script - Running',
     args: {
-      script: 'print("Hello from Starlark!")\nresult = 2 + 3\nprint("Result:", result)',
+      script: 'print("Hello from Python!")\nresult = 2 + 3\nprint("Result:", result)',
       globals: null,
     },
     result: null,
@@ -2264,7 +2264,7 @@ def process_event(event_data):
       script: 'undefined_variable = some_missing_var + 5',
       globals: null,
     },
-    result: "Error: Starlark execution failed - name 'some_missing_var' is not defined",
+    result: "Error: Script execution failed - name 'some_missing_var' is not defined",
     status: { type: 'incomplete', reason: 'error' },
   },
 
