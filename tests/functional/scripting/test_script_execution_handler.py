@@ -161,7 +161,7 @@ async def test_script_with_syntax_error_creates_no_note(
             conversation_id="test_conv",
             interface_type="telegram",
             action_type=EventActionType.script,
-            action_config={"script_code": "this is not valid starlark syntax!"},
+            action_config={"script_code": "this is not valid syntax!"},
             enabled=True,
         )
 

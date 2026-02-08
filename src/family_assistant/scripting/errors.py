@@ -8,7 +8,7 @@ class ScriptError(Exception):
 
 
 class ScriptSyntaxError(ScriptError):
-    """Raised when a script has invalid Starlark syntax."""
+    """Raised when a script has invalid syntax."""
 
     def __init__(
         self, message: str, line: int | None = None, column: int | None = None

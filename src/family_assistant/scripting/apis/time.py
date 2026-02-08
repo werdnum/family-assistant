@@ -1,8 +1,8 @@
 """
-Time API for Starlark scripts.
+Time API for scripts.
 
-This module provides time manipulation capabilities for Starlark scripts,
-following patterns from starlark-go but adapted for starlark-pyo3's constraints.
+This module provides time manipulation capabilities for scripts,
+following patterns from starlark-go's time module API design.
 """
 
 import logging

@@ -166,7 +166,7 @@ class EventsRepository(BaseRepository):
             description: Optional description
             action_type: Type of action to trigger (wake_llm or script)
             action_config: Configuration for the action
-            condition_script: Optional Starlark script for complex matching
+            condition_script: Optional Python script for complex matching
             one_time: If true, listener is disabled after first trigger
             enabled: Whether the listener is enabled
 
@@ -395,7 +395,7 @@ class EventsRepository(BaseRepository):
             action_config: New action configuration (optional)
             one_time: Whether listener should auto-disable after first trigger
             enabled: Whether the listener is enabled
-            condition_script: Optional Starlark script for complex matching
+            condition_script: Optional Python script for complex matching
 
         Returns:
             True if updated successfully, False if not found or unauthorized

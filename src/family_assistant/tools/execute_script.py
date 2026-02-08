@@ -1,6 +1,6 @@
 """Script execution tool.
 
-This module contains a tool for executing Starlark scripts within the family assistant.
+This module contains a tool for executing Python scripts within the family assistant.
 """
 
 from __future__ import annotations
@@ -11,13 +11,13 @@ import uuid
 from typing import TYPE_CHECKING, Any
 
 from family_assistant.scripting.apis.attachments import ScriptAttachment
-from family_assistant.scripting.apis.tools import ScriptToolResult
-from family_assistant.scripting.engine import StarlarkConfig, StarlarkEngine
+from family_assistant.scripting.config import ScriptConfig
 from family_assistant.scripting.errors import (
     ScriptExecutionError,
     ScriptSyntaxError,
     ScriptTimeoutError,
 )
+from family_assistant.scripting.monty_engine import MontyEngine
 from family_assistant.tools.types import ToolAttachment, ToolDefinition, ToolResult
 
 if TYPE_CHECKING:
@@ -68,7 +68,6 @@ def _extract_attachment_ids_from_result(result: Any) -> list[str]:  # noqa: ANN4
 
     Supports:
     - ScriptAttachment object
-    - ScriptToolResult object
     - List of ScriptAttachments or dicts with "id" field
     - Dict with "id" field (from attachment_create())
     - UUID strings (backward compatibility)
@@ -83,10 +82,6 @@ def _extract_attachment_ids_from_result(result: Any) -> list[str]:  # noqa: ANN4
     # Single ScriptAttachment
     if isinstance(result, ScriptAttachment):
         return [result.get_id()]
-
-    # ScriptToolResult
-    if isinstance(result, ScriptToolResult):
-        return [att.get_id() for att in result.get_attachments()]
 
     # List of attachments or UUIDs
     if isinstance(result, list):
@@ -126,11 +121,11 @@ async def execute_script_tool(
     globals: dict[str, Any] | None = None,
 ) -> ToolResult:
     """
-    Execute a Starlark script in a sandboxed environment.
+    Execute a Python script in a sandboxed environment.
 
     Args:
         exec_context: The execution context
-        script: The Starlark script code to execute
+        script: The Python script code to execute
         globals: Optional dictionary of global variables to inject into the script
 
     Returns:
@@ -138,7 +133,7 @@ async def execute_script_tool(
     """
     try:
         # Create a configuration with reasonable defaults
-        config = StarlarkConfig(
+        config = ScriptConfig(
             max_execution_time=600.0,  # 10 minute timeout for scripts that may make external calls
             enable_print=True,  # Allow print statements
             enable_debug=False,  # No debug output by default
@@ -170,7 +165,7 @@ async def execute_script_tool(
             )
 
         # Create the engine with the tools provider (may be None)
-        engine = StarlarkEngine(
+        engine = MontyEngine(
             tools_provider=tools_provider,
             config=config,
         )
@@ -201,17 +196,6 @@ async def execute_script_tool(
             response_parts.append(
                 f"Script result: Attachment(id={result.get_id()}, "
                 f"mime_type={result.get_mime_type()}, size={result.get_size()})"
-            )
-        elif isinstance(result, ScriptToolResult):
-            # Legacy: ScriptToolResult - show text and attachment count
-            text_preview = (
-                result.text[:100] + "..."
-                if result.text and len(result.text) > 100
-                else result.text
-            )
-            att_count = len(result.get_attachments())
-            response_parts.append(
-                f"Script result: ToolResult(text={text_preview!r}, {att_count} attachment(s))"
             )
         elif (
             isinstance(result, dict)
@@ -285,9 +269,7 @@ async def execute_script_tool(
         if isinstance(result, (dict, list, int, float, bool, str)):
             # Preserve structured data for programmatic access
             result_data = result  # type: ignore[assignment]
-        elif result is not None and not isinstance(
-            result, (ScriptAttachment, ScriptToolResult)
-        ):
+        elif result is not None and not isinstance(result, ScriptAttachment):
             # For other types, convert to string
             result_data = str(result)
 
@@ -327,21 +309,30 @@ SCRIPT_TOOLS_DEFINITION: list[ToolDefinition] = [
         "function": {
             "name": "execute_script",
             "description": (
-                "Execute a Starlark script in a sandboxed environment for automation and complex operations.\n\n"
+                "Execute a Python script in a sandboxed environment for automation and complex operations.\n\n"
                 "**IMPORTANT: Before writing scripts, please read the scripting documentation first!**\n"
                 "Use the command: `get_user_documentation_content filename='scripting.md'`\n\n"
-                "**What is Starlark?**\n"
-                "Starlark is a Python-like language that LOOKS like Python but has important differences:\n"
-                "• NO try/except - errors terminate the script\n"
-                "• NO while loops - use for loops instead\n"
-                "• NO isinstance() - use type() comparisons\n"
-                "• Limited standard library\n\n"
                 "**Tool Documentation:**\n"
                 "To see available tools and their parameters, ask: 'Show me the available tools'\n\n"
                 "**Execution Environment:**\n"
                 "• Timeout: 10 minutes maximum execution time (to allow for external API calls)\n"
                 "• Sandboxed: No file system or network access\n"
                 "• Deterministic: No random numbers or current time\n\n"
+                "**Sandbox Limitations:**\n"
+                "The Monty scripting engine runs a sandboxed Python subset with these restrictions:\n"
+                "• No class definitions (can't use `class` keyword)\n"
+                "• No generators or yield statements\n"
+                "• No match/case statements\n"
+                "• No context managers or with statements\n"
+                "• No del statement\n"
+                "• No dict unpacking in literals ({**d1, **d2} not supported)\n"
+                "• No str.format() method (use f-strings instead)\n"
+                "• No map/filter functions (use list comprehensions instead)\n"
+                "• Decorators are buggy (avoid using them)\n"
+                "• Exceptions only accept 0 or 1 string arguments\n"
+                "• No imports except heavily sandboxed os, sys, typing, pathlib modules\n"
+                "• Resource limits: 256MB memory, 100 recursion depth\n"
+                "• However: try/except, while loops, float(), set(), frozenset() ARE supported\n\n"
                 "**Built-in Functions:**\n"
                 "• Type conversions: bool(), int(), str(), list(), tuple(), dict()\n"
                 "• Collections: len(), range(), sorted(), reversed(), enumerate(), zip()\n"
@@ -357,7 +348,7 @@ SCRIPT_TOOLS_DEFINITION: list[ToolDefinition] = [
                 "• send_email(to='...', subject='...', body='...')\n\n"
                 "**Note**: Tools currently return string results. For tools that return structured data\n"
                 "(like lists or dicts), use json_decode() to parse the result:\n"
-                "```starlark\n"
+                "```python\n"
                 "result_str = search_notes(query='TODO')\n"
                 "notes = json_decode(result_str) if result_str != '[]' else []\n"
                 "```\n\n"
@@ -374,7 +365,7 @@ SCRIPT_TOOLS_DEFINITION: list[ToolDefinition] = [
                 "Attachments created by tools or attachment_create() are represented as dictionaries\n"
                 'with metadata: {"id": uuid, "filename": str, "mime_type": str, "size": int, "description": str}\n'
                 "Return these dicts to make attachments visible to the LLM:\n\n"
-                "```starlark\n"
+                "```python\n"
                 "# Single attachment - last expression is returned\n"
                 'data = attachment_create(content="data", filename="data.txt", mime_type="text/plain")\n'
                 "data  # Dict with attachment info, automatically sent to LLM\n\n"
@@ -391,7 +382,7 @@ SCRIPT_TOOLS_DEFINITION: list[ToolDefinition] = [
                 "```\n\n"
                 "**Example Scripts:**\n\n"
                 "1. Simple note creation:\n"
-                "```starlark\n"
+                "```python\n"
                 "result = add_or_update_note(\n"
                 "    title='Meeting Notes',\n"
                 "    content='Discussed project timeline'\n"
@@ -399,7 +390,7 @@ SCRIPT_TOOLS_DEFINITION: list[ToolDefinition] = [
                 "print('Created note:', result)\n"
                 "```\n\n"
                 "2. Conditional logic with search:\n"
-                "```starlark\n"
+                "```python\n"
                 "def process_todos():\n"
                 "    # Search returns a JSON string, so decode it\n"
                 "    result_str = search_notes(query='TODO')\n"
@@ -417,7 +408,7 @@ SCRIPT_TOOLS_DEFINITION: list[ToolDefinition] = [
                 "process_todos()\n"
                 "```\n\n"
                 "3. Complex automation:\n"
-                "```starlark\n"
+                "```python\n"
                 "def create_project_summary():\n"
                 "    # Search for notes, create summary, send email\n"
                 "    result_str = search_notes(query='Project Alpha')\n"
@@ -445,7 +436,7 @@ SCRIPT_TOOLS_DEFINITION: list[ToolDefinition] = [
                 "create_project_summary()\n"
                 "```\n\n"
                 "4. Working with user attachments (attachment ID provided by LLM):\n"
-                "```starlark\n"
+                "```python\n"
                 "# Attachment ID passed to script by LLM based on conversation context\n"
                 "# Example: LLM calls execute_script with attachment_id parameter\n"
                 "def process_user_attachment(attachment_id):\n"
@@ -470,7 +461,7 @@ SCRIPT_TOOLS_DEFINITION: list[ToolDefinition] = [
                 "# process_user_attachment('uuid-from-llm-context')\n"
                 "```\n\n"
                 "5. Data visualization with automatic attachment propagation:\n"
-                "```starlark\n"
+                "```python\n"
                 "# Create a chart - attachment automatically returns to LLM\n"
                 "spec = {\n"
                 "  '$schema': 'https://vega.github.io/schema/vega-lite/v5.json',\n"
@@ -489,7 +480,7 @@ SCRIPT_TOOLS_DEFINITION: list[ToolDefinition] = [
                 ")\n"
                 "```\n\n"
                 "6. Multi-chart dashboard:\n"
-                "```starlark\n"
+                "```python\n"
                 "# Create multiple related charts\n"
                 "temp_spec = {'$schema': '...', 'mark': 'line', ...}\n"
                 "humidity_spec = {'$schema': '...', 'mark': 'area', ...}\n\n"
@@ -498,15 +489,6 @@ SCRIPT_TOOLS_DEFINITION: list[ToolDefinition] = [
                 "# Both charts automatically visible to LLM\n"
                 "[temp_chart, humidity_chart]\n"
                 "```\n\n"
-                "**Language Differences from Python:**\n"
-                "• No imports or modules\n"
-                "• No classes (only functions and structs)\n"
-                "• No while loops (use for loops with range)\n"
-                "• No exceptions (use fail() to stop with error)\n"
-                "• No set literals (use dict keys as workaround)\n"
-                "• Strings are immutable\n"
-                "• Integer division with // (not /)\n"
-                "• **Important**: if/else statements can only be used inside functions, not at top level\n"
             ),
             "parameters": {
                 "type": "object",
@@ -514,7 +496,7 @@ SCRIPT_TOOLS_DEFINITION: list[ToolDefinition] = [
                     "script": {
                         "type": "string",
                         "description": (
-                            "The Starlark script code to execute. Must be valid Starlark syntax.\n\n"
+                            "The Python script code to execute. Must be valid Python syntax.\n\n"
                             "The script can:\n"
                             "• Define variables and functions\n"
                             "• Use control flow (if/else, for loops)\n"

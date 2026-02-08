@@ -25,11 +25,11 @@ from sqlalchemy.ext.asyncio import AsyncEngine
 from family_assistant.embeddings import EmbeddingGenerator
 from family_assistant.interfaces import ChatInterface  # Import ChatInterface
 from family_assistant.scripting import (
+    MontyEngine,
     ScriptError,
     ScriptTimeoutError,
-    StarlarkEngine,
 )
-from family_assistant.scripting.engine import StarlarkConfig
+from family_assistant.scripting.config import ScriptConfig
 from family_assistant.tools.types import CalendarConfig
 
 if TYPE_CHECKING:
@@ -1281,7 +1281,7 @@ async def handle_script_execution(
     payload: dict[str, Any],
 ) -> None:
     """
-    Task handler for executing Starlark scripts triggered by events.
+    Task handler for executing scripts triggered by events.
 
     Executes user-defined scripts in response to events from Home Assistant,
     document indexing, and other sources. Scripts run with restricted tool access
@@ -1290,7 +1290,7 @@ async def handle_script_execution(
     Args:
         exec_context: Execution context providing access to tools and services
         payload: Task payload containing:
-            - script_code: The Starlark script to execute
+            - script_code: The Python script to execute
             - event_data: Event data to pass to the script
             - config: Optional configuration (timeout, allowed_tools)
             - listener_id: ID of the event listener that triggered this
@@ -1340,7 +1340,7 @@ async def handle_script_execution(
         )
 
     # Create script engine with configuration
-    engine_config = StarlarkConfig(
+    engine_config = ScriptConfig(
         max_execution_time=config.get("timeout", 600),  # Default 10 minutes
         allowed_tools=config.get("allowed_tools"),  # None means use profile defaults
         deny_all_tools=False,  # Scripts should have tool access
@@ -1348,7 +1348,7 @@ async def handle_script_execution(
         enable_debug=False,  # Could be enabled based on config
     )
 
-    engine = StarlarkEngine(
+    engine = MontyEngine(
         tools_provider=tools_provider,
         config=engine_config,
     )

@@ -1,6 +1,6 @@
 """Functional tests for data manipulation tools.
 
-Tests jq_query tool by calling it from Starlark scripts (realistic usage)
+Tests jq_query tool by calling it from scripts (realistic usage)
 rather than direct Python calls.
 """
 

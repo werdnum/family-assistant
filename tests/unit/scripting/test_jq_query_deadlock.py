@@ -1,7 +1,7 @@
 """Test for jq_query() deadlock when called from scripts.
 
 This test reproduces the deadlock that occurs when jq_query() is called from within
-a Starlark script with a ConfirmingToolsProvider (which doesn't have get_raw_tool_definitions).
+a script with a ConfirmingToolsProvider (which doesn't have get_raw_tool_definitions).
 """
 
 from pathlib import Path
@@ -41,7 +41,7 @@ async def test_jq_query_from_script_no_deadlock(
     """Test that jq_query() doesn't deadlock when called from a script.
 
     This test reproduces the deadlock issue where calling jq_query() from within
-    a Starlark script causes a 30-second timeout. The deadlock occurs because:
+    a script causes a 30-second timeout. The deadlock occurs because:
 
     1. _process_attachment_arguments() (async coroutine on main loop)
     2. → calls _get_raw_tool_definitions() (sync method)

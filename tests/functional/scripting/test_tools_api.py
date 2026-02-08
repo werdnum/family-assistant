@@ -1,5 +1,5 @@
 """
-Tests for the Starlark tools API bridge.
+Tests for the scripting tools API bridge.
 """
 
 from typing import Any
@@ -7,7 +7,7 @@ from typing import Any
 import pytest
 from sqlalchemy.ext.asyncio import AsyncEngine
 
-from family_assistant.scripting.engine import StarlarkEngine
+from family_assistant.scripting.monty_engine import MontyEngine
 from family_assistant.storage.context import DatabaseContext
 from family_assistant.tools.types import ToolDefinition, ToolExecutionContext
 
@@ -129,7 +129,7 @@ class MockToolsProvider:
 
 @pytest.mark.asyncio
 async def test_tools_api_list(db_engine: AsyncEngine) -> None:
-    """Test listing tools from Starlark."""
+    """Test listing tools from script."""
     # Create mock tools provider
     tools_provider = MockToolsProvider()
 
@@ -150,7 +150,7 @@ async def test_tools_api_list(db_engine: AsyncEngine) -> None:
         )
 
         # Create engine
-        engine = StarlarkEngine(tools_provider=tools_provider)
+        engine = MontyEngine(tools_provider=tools_provider)
 
         # Test script that lists tools
         script = """
@@ -168,7 +168,7 @@ tool_names
 
 @pytest.mark.asyncio
 async def test_tools_api_get(db_engine: AsyncEngine) -> None:
-    """Test getting a specific tool from Starlark."""
+    """Test getting a specific tool from script."""
     tools_provider = MockToolsProvider()
 
     async with DatabaseContext(engine=db_engine) as db:
@@ -186,7 +186,7 @@ async def test_tools_api_get(db_engine: AsyncEngine) -> None:
             camera_backend=None,
         )
 
-        engine = StarlarkEngine(tools_provider=tools_provider)
+        engine = MontyEngine(tools_provider=tools_provider)
 
         # Test script that gets a specific tool
         script = """
@@ -209,7 +209,7 @@ fake_tool
 
 @pytest.mark.asyncio
 async def test_tools_api_execute(db_engine: AsyncEngine) -> None:
-    """Test executing tools from Starlark."""
+    """Test executing tools from script."""
     tools_provider = MockToolsProvider()
 
     async with DatabaseContext(engine=db_engine) as db:
@@ -227,16 +227,16 @@ async def test_tools_api_execute(db_engine: AsyncEngine) -> None:
             camera_backend=None,
         )
 
-        engine = StarlarkEngine(tools_provider=tools_provider)
+        engine = MontyEngine(tools_provider=tools_provider)
 
         # Test executing echo tool
         script = """
-result = tools_execute("echo", message="Hello, Starlark!")
+result = tools_execute("echo", message="Hello, Script!")
 result
 """
 
         result = await engine.evaluate_async(script, execution_context=context)
-        assert result == "Echo: Hello, Starlark!"
+        assert result == "Echo: Hello, Script!"
 
         # Test executing add_numbers tool
         script2 = """
@@ -250,7 +250,7 @@ result
 
 @pytest.mark.asyncio
 async def test_tools_api_execute_json(db_engine: AsyncEngine) -> None:
-    """Test executing tools with JSON arguments from Starlark."""
+    """Test executing tools with JSON arguments from script."""
     tools_provider = MockToolsProvider()
 
     async with DatabaseContext(engine=db_engine) as db:
@@ -268,7 +268,7 @@ async def test_tools_api_execute_json(db_engine: AsyncEngine) -> None:
             camera_backend=None,
         )
 
-        engine = StarlarkEngine(tools_provider=tools_provider)
+        engine = MontyEngine(tools_provider=tools_provider)
 
         # Test executing with JSON arguments
         script = """
@@ -285,7 +285,7 @@ result
 async def test_tools_api_not_available_without_context(db_engine: AsyncEngine) -> None:
     """Test that tools API is not available without execution context."""
     tools_provider = MockToolsProvider()
-    engine = StarlarkEngine(tools_provider=tools_provider)
+    engine = MontyEngine(tools_provider=tools_provider)
 
     # Script that tries to use tools - should fail without context
     script = """
@@ -330,7 +330,7 @@ async def test_tools_api_invalid_tool(db_engine: AsyncEngine) -> None:
             camera_backend=None,
         )
 
-        engine = StarlarkEngine(tools_provider=tools_provider)
+        engine = MontyEngine(tools_provider=tools_provider)
 
         # Test executing non-existent tool - should raise an error
         script = """
@@ -338,7 +338,7 @@ async def test_tools_api_invalid_tool(db_engine: AsyncEngine) -> None:
 tools_execute("nonexistent", arg="value")
 """
 
-        # Since Starlark doesn't have try/except, this will raise an exception
+        # This will raise an exception
         with pytest.raises(Exception) as exc_info:
             await engine.evaluate_async(script, execution_context=context)
 

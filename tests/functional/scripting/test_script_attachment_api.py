@@ -1,4 +1,4 @@
-"""Tests for Starlark script attachment API functionality."""
+"""Tests for script attachment API functionality."""
 
 from __future__ import annotations
 
@@ -12,8 +12,9 @@ from family_assistant.scripting.apis.attachments import (
     AttachmentAPI,
     create_attachment_api,
 )
-from family_assistant.scripting.engine import StarlarkConfig, StarlarkEngine
+from family_assistant.scripting.config import ScriptConfig
 from family_assistant.scripting.errors import ScriptExecutionError
+from family_assistant.scripting.monty_engine import MontyEngine
 from family_assistant.services.attachment_registry import AttachmentRegistry
 from family_assistant.storage.context import DatabaseContext
 from family_assistant.tools import (
@@ -79,7 +80,6 @@ class TestAttachmentAPI:
         api = AttachmentAPI(
             attachment_registry=attachment_registry,
             conversation_id="test_conversation",
-            main_loop=None,
             db_engine=db_engine,
         )
 
@@ -101,7 +101,6 @@ class TestAttachmentAPI:
         api = AttachmentAPI(
             attachment_registry=attachment_registry,
             conversation_id="test_conversation",
-            main_loop=None,
             db_engine=db_engine,
         )
 
@@ -120,7 +119,6 @@ class TestAttachmentAPI:
         api = AttachmentAPI(
             attachment_registry=attachment_registry,
             conversation_id="different_conversation",  # Different conversation
-            main_loop=None,
             db_engine=db_engine,
         )
 
@@ -140,7 +138,6 @@ class TestAttachmentAPI:
         api = AttachmentAPI(
             attachment_registry=attachment_registry,
             conversation_id="test_conversation",
-            main_loop=None,
             db_engine=db_engine,
         )
 
@@ -165,7 +162,6 @@ class TestAttachmentAPI:
         api = AttachmentAPI(
             attachment_registry=attachment_registry,
             conversation_id="test_conversation",
-            main_loop=None,
             db_engine=db_engine,
         )
 
@@ -186,7 +182,6 @@ class TestAttachmentAPI:
         api = AttachmentAPI(
             attachment_registry=attachment_registry,
             conversation_id="empty_conversation",
-            main_loop=None,
             db_engine=db_engine,
         )
 
@@ -203,7 +198,6 @@ class TestAttachmentAPI:
         api = AttachmentAPI(
             attachment_registry=attachment_registry,
             conversation_id="test_conversation",
-            main_loop=None,
             db_engine=db_engine,
         )
 
@@ -221,7 +215,6 @@ class TestAttachmentAPI:
         api = AttachmentAPI(
             attachment_registry=attachment_registry,
             conversation_id="test_conversation",
-            main_loop=None,
             db_engine=db_engine,
         )
 
@@ -241,7 +234,6 @@ class TestAttachmentAPI:
         api = AttachmentAPI(
             attachment_registry=attachment_registry,
             conversation_id="different_conversation",
-            main_loop=None,
             db_engine=db_engine,
         )
 
@@ -258,7 +250,6 @@ class TestAttachmentAPI:
         api = AttachmentAPI(
             attachment_registry=attachment_registry,
             conversation_id="test_conversation",
-            main_loop=None,
             db_engine=db_engine,
         )
 
@@ -301,7 +292,6 @@ class TestAttachmentAPI:
         api = AttachmentAPI(
             attachment_registry=attachment_registry,
             conversation_id="test_conversation",
-            main_loop=None,
             db_engine=db_engine,
         )
 
@@ -333,7 +323,6 @@ class TestAttachmentAPI:
         api = AttachmentAPI(
             attachment_registry=attachment_registry,
             conversation_id="test_conversation",
-            main_loop=None,
             db_engine=db_engine,
         )
 
@@ -365,7 +354,6 @@ class TestAttachmentAPI:
         api = AttachmentAPI(
             attachment_registry=attachment_registry,
             conversation_id="conversation_a",
-            main_loop=None,
             db_engine=db_engine,
         )
 
@@ -380,7 +368,6 @@ class TestAttachmentAPI:
         same_api = AttachmentAPI(
             attachment_registry=attachment_registry,
             conversation_id="conversation_a",
-            main_loop=None,
             db_engine=db_engine,
         )
         result = await same_api._get_async(metadata.attachment_id)
@@ -390,7 +377,6 @@ class TestAttachmentAPI:
         different_api = AttachmentAPI(
             attachment_registry=attachment_registry,
             conversation_id="conversation_b",
-            main_loop=None,
             db_engine=db_engine,
         )
         result = await different_api._get_async(metadata.attachment_id)
@@ -454,8 +440,8 @@ class TestCreateAttachmentAPI:
                 create_attachment_api(execution_context)
 
 
-class TestStarlarkIntegration:
-    """Test attachment API integration with Starlark scripts."""
+class TestScriptIntegration:
+    """Test attachment API integration with scripts."""
 
     async def test_script_without_attachment_registry(
         self,
@@ -477,8 +463,8 @@ class TestStarlarkIntegration:
                 camera_backend=None,
             )
 
-            config = StarlarkConfig(enable_print=True)
-            engine = StarlarkEngine(config=config)
+            config = ScriptConfig(enable_print=True)
+            engine = MontyEngine(config=config)
 
             # Simple script that doesn't use attachment functions
             script = """
@@ -499,7 +485,7 @@ print("Hello world")
         attachment_registry: AttachmentRegistry,
         sample_attachment: str,
     ) -> None:
-        """Test that attachment functions are available in Starlark scripts."""
+        """Test that attachment functions are available in scripts."""
         async with DatabaseContext(engine=db_engine) as db_context:
             execution_context = ToolExecutionContext(
                 interface_type="test",
@@ -527,8 +513,8 @@ print("Hello world")
             tools_provider = CompositeToolsProvider(providers=[local_provider])
             await tools_provider.get_tool_definitions()
 
-            config = StarlarkConfig(enable_print=True)
-            engine = StarlarkEngine(tools_provider=tools_provider, config=config)
+            config = ScriptConfig(enable_print=True)
+            engine = MontyEngine(tools_provider=tools_provider, config=config)
 
             # Test script that uses attachment functions
             # Note: attachment_list is not available for security, so we test with known attachment ID
@@ -580,8 +566,8 @@ result
                 camera_backend=None,
             )
 
-            config = StarlarkConfig(enable_print=True)
-            engine = StarlarkEngine(config=config)
+            config = ScriptConfig(enable_print=True)
+            engine = MontyEngine(config=config)
 
             # Script that tries to get non-existent attachment
             script = """
@@ -619,8 +605,8 @@ result == None
                 camera_backend=None,
             )
 
-            config = StarlarkConfig(enable_print=True)
-            engine = StarlarkEngine(config=config)
+            config = ScriptConfig(enable_print=True)
+            engine = MontyEngine(config=config)
 
             # Script that tries to call attachment_list (should fail)
             script = """
@@ -630,7 +616,7 @@ attachment_list()
 
             # Expect ScriptExecutionError due to NameError
             with pytest.raises(
-                ScriptExecutionError, match="Variable.*attachment_list.*not found"
+                ScriptExecutionError, match="attachment_list.*not defined"
             ):
                 await engine.evaluate_async(
                     script=script,
@@ -642,7 +628,7 @@ attachment_list()
         db_engine: AsyncEngine,
         attachment_registry: AttachmentRegistry,
     ) -> None:
-        """Test creating a text attachment from within a Starlark script."""
+        """Test creating a text attachment from within a script."""
         async with DatabaseContext(engine=db_engine) as db_context:
             execution_context = ToolExecutionContext(
                 interface_type="test",
@@ -658,8 +644,8 @@ attachment_list()
                 camera_backend=None,
             )
 
-            config = StarlarkConfig(enable_print=True)
-            engine = StarlarkEngine(config=config)
+            config = ScriptConfig(enable_print=True)
+            engine = MontyEngine(config=config)
 
             # Script that creates a text attachment
             script = """
@@ -713,7 +699,7 @@ attachment_id
         db_engine: AsyncEngine,
         attachment_registry: AttachmentRegistry,
     ) -> None:
-        """Test creating a JSON attachment from within a Starlark script."""
+        """Test creating a JSON attachment from within a script."""
         async with DatabaseContext(engine=db_engine) as db_context:
             execution_context = ToolExecutionContext(
                 interface_type="test",
@@ -729,8 +715,8 @@ attachment_id
                 camera_backend=None,
             )
 
-            config = StarlarkConfig(enable_print=True)
-            engine = StarlarkEngine(config=config)
+            config = ScriptConfig(enable_print=True)
+            engine = MontyEngine(config=config)
 
             # Script that creates a JSON attachment (stored as text/plain)
             script = """
@@ -803,8 +789,8 @@ attachment_id
                 camera_backend=None,
             )
 
-            config = StarlarkConfig(enable_print=True)
-            engine = StarlarkEngine(config=config)
+            config = ScriptConfig(enable_print=True)
+            engine = MontyEngine(config=config)
 
             # Script that creates an attachment and retrieves it
             script = """

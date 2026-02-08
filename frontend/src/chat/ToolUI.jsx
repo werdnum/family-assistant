@@ -2911,7 +2911,7 @@ export const ExecuteScriptToolUI = ({ args, result, status }) => {
       <div className="tool-execute-script-content">
         {args?.script && (
           <div className="tool-script-input">
-            <div className="tool-section-label">Starlark Script:</div>
+            <div className="tool-section-label">Script:</div>
             <CodeHighlight
               code={
                 args.script.length > 2000
@@ -2960,7 +2960,7 @@ export const ExecuteScriptToolUI = ({ args, result, status }) => {
       </div>
 
       {status?.type === 'running' && (
-        <div className="tool-running-message">Executing Starlark script...</div>
+        <div className="tool-running-message">Executing script...</div>
       )}
     </div>
   );

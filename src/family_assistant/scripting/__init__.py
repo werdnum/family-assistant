@@ -5,7 +5,7 @@ Provides scripting engines for executing user-defined scripts
 with access to family assistant tools and state.
 """
 
-from .engine import StarlarkEngine
+from .config import ScriptConfig
 from .errors import (
     ScriptError,
     ScriptExecutionError,
@@ -16,7 +16,7 @@ from .monty_engine import MontyEngine
 
 __all__ = [
     "MontyEngine",
-    "StarlarkEngine",
+    "ScriptConfig",
     "ScriptError",
     "ScriptExecutionError",
     "ScriptSyntaxError",

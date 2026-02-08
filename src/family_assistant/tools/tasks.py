@@ -307,7 +307,7 @@ TASK_TOOLS_DEFINITION: list[ToolDefinition] = [
                         "description": (
                             "Configuration for the action. "
                             "For wake_llm: {'context': 'message for LLM'}. "
-                            "For script: {'script_code': 'Starlark code', 'timeout': 600}"
+                            "For script: {'script_code': 'Python code', 'timeout': 600}"
                         ),
                     },
                 },
@@ -359,7 +359,7 @@ TASK_TOOLS_DEFINITION: list[ToolDefinition] = [
                         "description": (
                             "Configuration for the action. "
                             "For wake_llm: {'context': 'message for LLM'}. "
-                            "For script: {'script_code': 'Starlark code', 'timeout': 600}"
+                            "For script: {'script_code': 'Python code', 'timeout': 600}"
                         ),
                     },
                     "task_name": {

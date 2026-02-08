@@ -29,7 +29,7 @@ Data can come from multiple sources:
 For data transformations, multi-step processing, or functional composition, use **scripts** that
 automatically propagate attachments:
 
-```starlark
+```python
 # Script automatically returns attachments created by tools
 chart = create_vega_chart(
     spec=spec_json,
@@ -48,7 +48,7 @@ chart
 
 **Example: Transform and visualize with functional composition**
 
-```starlark
+```python
 # Process data with jq_query, pass result directly to create_vega_chart
 # No intermediate attachment needed - jq result flows directly as data
 filtered_data = jq_query(source_attachment, ".[] | select(.value > 10)")
@@ -60,7 +60,7 @@ create_vega_chart(
 
 **Example: Create multiple related charts**
 
-```starlark
+```python
 # All charts automatically available to LLM
 temp_chart = create_vega_chart(temp_spec, data_attachments=[sensor_data])
 humidity_chart = create_vega_chart(humidity_spec, data_attachments=[sensor_data])
@@ -93,7 +93,7 @@ The `create_vega_chart` tool accepts data in two ways:
 - **Direct composition** where data flows through tool calls
 - **Ephemeral data** that doesn't need persistent storage
 
-```starlark
+```python
 # Example: Direct composition with jq_query
 result = jq_query(attachment_id, ".[] | select(.temp > 20)")
 create_vega_chart(spec=spec_json, data=result)
@@ -106,7 +106,7 @@ create_vega_chart(spec=spec_json, data=result)
 - **Persistent data** that needs to be referenceable later
 - **Data from tools** that return attachment IDs
 
-```starlark
+```python
 # Example: CSV file from user upload
 create_vega_chart(spec=spec_json, data_attachments=[csv_attachment_id])
 ```
@@ -115,7 +115,7 @@ create_vega_chart(spec=spec_json, data_attachments=[csv_attachment_id])
 
 You can combine both parameters for complex visualizations using multiple data sources:
 
-```starlark
+```python
 # Computed data + file data
 computed = jq_query(attachment, ".summary")
 create_vega_chart(
@@ -131,7 +131,7 @@ create_vega_chart(
 structure), it is automatically assigned to a default dataset named **`"data"`**. Your Vega-Lite
 specification **must** reference it by that exact name.
 
-```starlark
+```python
 # Example: Direct data from jq_query
 filtered_data = jq_query(attachment_id, ".[] | select(.value > 10)")
 
@@ -165,7 +165,7 @@ benefits:
 
 ### Example: Two-Step Pattern
 
-```starlark
+```python
 # Step 1: Retrieve data as attachment (outside the script)
 # User or assistant calls: download_state_history(entity_ids=["sensor.pool_temp"], ...)
 # Result: Attachment with ID "abc123" containing state history JSON
@@ -199,7 +199,7 @@ states like `"unavailable"`, `"unknown"`, or `null` that will cause chart render
 
 #### Recommended jq Pattern for Sensor Data
 
-```starlark
+```python
 # Robust cleaning pattern using tonumber? filter
 cleaned = jq_query(
   attachment_id,
@@ -221,7 +221,7 @@ cleaned = jq_query(
 
 #### Example: Complete Cleaning Workflow
 
-```starlark
+```python
 # Get sensor history (already retrieved as attachment "history_id")
 # Clean the data thoroughly
 cleaned_data = jq_query(
@@ -331,7 +331,7 @@ create_vega_chart(
 
 For the same scenario using scripts (recommended for complex processing):
 
-```starlark
+```python
 # Define the Vega spec
 spec = {
   "$schema": "https://vega.github.io/schema/vega-lite/v5.json",
@@ -353,7 +353,7 @@ create_vega_chart(
 
 **Advanced: Filter data with jq and create chart**
 
-```starlark
+```python
 # Functional composition - filter and visualize
 # jq_query returns data directly (not an attachment), pass via data parameter
 filtered_data = jq_query("636058f3-...", "[.[] | select(.state != null)]")
@@ -379,7 +379,7 @@ create_vega_chart(
 
 Create multiple related charts in a single script:
 
-```starlark
+```python
 # Fetch sensor data
 temp_data = download_state_history(
   entity_ids=["sensor.pool_temp"],

@@ -88,8 +88,6 @@ dependencies = [
     # For detecting file types
     "rebrowser-playwright>=1.52.0",
     # Patched Playwright for reduced bot detection (drop-in replacement)
-    "starlark-pyo3>=0.1.0",
-    # For Starlark scripting language support
     "homeassistant-api>=5.0.0",
     # For Home Assistant integration
     "janus>=1.0.0",

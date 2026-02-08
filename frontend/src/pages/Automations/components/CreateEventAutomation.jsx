@@ -236,7 +236,7 @@ const CreateEventAutomation = ({ onSuccess, onCancel }) => {
                 <div className="flex items-center space-x-2">
                   <RadioGroupItem value="script" id="conditions-script" />
                   <Label htmlFor="conditions-script" className="font-normal">
-                    Starlark Condition Script
+                    Condition Script (Python)
                   </Label>
                 </div>
               </RadioGroup>
@@ -271,7 +271,7 @@ const CreateEventAutomation = ({ onSuccess, onCancel }) => {
                     className="font-mono"
                   />
                   <p className="text-sm text-muted-foreground">
-                    Starlark script that returns True/False
+                    Python script that returns True/False
                   </p>
                 </div>
               )}
@@ -288,7 +288,7 @@ const CreateEventAutomation = ({ onSuccess, onCancel }) => {
                     onChange={handleInputChange}
                     rows={10}
                     className="font-mono"
-                    placeholder="# Starlark script to execute\nprint('Event triggered:', event)"
+                    placeholder="# Python script to execute\nprint('Event triggered:', event)"
                   />
                   {validationErrors.script_code && (
                     <Alert variant="destructive">

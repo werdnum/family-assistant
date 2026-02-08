@@ -80,7 +80,7 @@ class CreateEventAutomationRequest(BaseModel):
     conversation_id: str = Field(..., description="Conversation ID for the automation")
     condition_script: str | None = Field(
         None,
-        description="Optional Starlark script for condition matching (executed in sandboxed environment)",
+        description="Optional Python script for condition matching (executed in sandboxed environment)",
     )
 
 

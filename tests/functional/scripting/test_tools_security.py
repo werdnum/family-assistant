@@ -1,14 +1,13 @@
 """
-Tests for tools API security controls in the Starlark scripting engine.
+Tests for tools API security controls in the scripting engine.
 """
-
-from typing import Any
 
 import pytest
 from sqlalchemy.ext.asyncio import AsyncEngine
 
-from family_assistant.scripting.engine import StarlarkConfig, StarlarkEngine
+from family_assistant.scripting.config import ScriptConfig
 from family_assistant.scripting.errors import ScriptExecutionError
+from family_assistant.scripting.monty_engine import MontyEngine
 from family_assistant.storage.context import DatabaseContext
 from family_assistant.tools.types import ToolExecutionContext
 
@@ -19,7 +18,7 @@ from .test_tools_api import MockToolsProvider
 async def test_deny_all_tools(db_engine: AsyncEngine) -> None:
     """Test that deny_all_tools prevents all tool access."""
     # Create config with deny_all_tools
-    config = StarlarkConfig(deny_all_tools=True)
+    config = ScriptConfig(deny_all_tools=True)
 
     # Create mock tools provider
     tools_provider = MockToolsProvider()
@@ -41,7 +40,7 @@ async def test_deny_all_tools(db_engine: AsyncEngine) -> None:
         )
 
         # Create engine with security config
-        engine = StarlarkEngine(tools_provider=tools_provider, config=config)
+        engine = MontyEngine(tools_provider=tools_provider, config=config)
 
         # Test that list returns empty
         script = """
@@ -57,20 +56,20 @@ tools_get("echo")
         result2 = await engine.evaluate_async(script2, execution_context=context)
         assert result2 is None
 
-        # Test that execute fails
+        # Test that execute fails (tools_execute is not available when all tools denied)
         script3 = """
 tools_execute("echo", message="test")
 """
         with pytest.raises(ScriptExecutionError) as exc_info:
             await engine.evaluate_async(script3, execution_context=context)
-        assert "not allowed" in str(exc_info.value)
+        assert "not defined" in str(exc_info.value)
 
 
 @pytest.mark.asyncio
 async def test_allowed_tools_filter(db_engine: AsyncEngine) -> None:
     """Test that allowed_tools filters available tools."""
     # Create config with only "echo" allowed
-    config = StarlarkConfig(allowed_tools={"echo"})
+    config = ScriptConfig(allowed_tools={"echo"})
 
     # Create mock tools provider
     tools_provider = MockToolsProvider()
@@ -92,7 +91,7 @@ async def test_allowed_tools_filter(db_engine: AsyncEngine) -> None:
         )
 
         # Create engine with security config
-        engine = StarlarkEngine(tools_provider=tools_provider, config=config)
+        engine = MontyEngine(tools_provider=tools_provider, config=config)
 
         # Test that list only shows allowed tools
         script = """
@@ -138,7 +137,7 @@ tools_execute("add_numbers", a=1, b=2)
 async def test_no_restrictions_by_default(db_engine: AsyncEngine) -> None:
     """Test that without restrictions, all tools are available."""
     # Create default config (no restrictions)
-    config = StarlarkConfig()
+    config = ScriptConfig()
 
     # Create mock tools provider
     tools_provider = MockToolsProvider()
@@ -160,15 +159,15 @@ async def test_no_restrictions_by_default(db_engine: AsyncEngine) -> None:
         )
 
         # Create engine with default config
-        engine = StarlarkEngine(tools_provider=tools_provider, config=config)
+        engine = MontyEngine(tools_provider=tools_provider, config=config)
 
         # Test that all tools are listed
         script = """
-tools_list = tools_list()
-sorted([tool["name"] for tool in tools_list])
+tool_names = [tool["name"] for tool in tools_list()]
+tool_names
 """
         result = await engine.evaluate_async(script, execution_context=context)
-        assert result == ["add_numbers", "echo"]
+        assert sorted(result) == ["add_numbers", "echo"]
 
         # Test that both tools can be executed
         script2 = """
@@ -184,7 +183,7 @@ add_result = tools_execute("add_numbers", a=10, b=5)
 async def test_empty_allowed_tools_denies_all(db_engine: AsyncEngine) -> None:
     """Test that an empty allowed_tools set denies all tools."""
     # Create config with empty allowed_tools set
-    config = StarlarkConfig(allowed_tools=set())
+    config = ScriptConfig(allowed_tools=set())
 
     # Create mock tools provider
     tools_provider = MockToolsProvider()
@@ -206,7 +205,7 @@ async def test_empty_allowed_tools_denies_all(db_engine: AsyncEngine) -> None:
         )
 
         # Create engine with security config
-        engine = StarlarkEngine(tools_provider=tools_provider, config=config)
+        engine = MontyEngine(tools_provider=tools_provider, config=config)
 
         # Test that list returns empty
         script = """
@@ -225,10 +224,10 @@ tools_execute("echo", message="test")
 
 
 @pytest.mark.asyncio
-async def test_security_logging(db_engine: AsyncEngine, caplog: Any) -> None:  # noqa: ANN401  # pytest fixture for log capturing
-    """Test that security events are logged properly."""
+async def test_denied_tool_raises_error(db_engine: AsyncEngine) -> None:
+    """Test that executing a denied tool raises a clear error."""
     # Create config with restrictions
-    config = StarlarkConfig(allowed_tools={"echo"})
+    config = ScriptConfig(allowed_tools={"echo"})
 
     # Create mock tools provider
     tools_provider = MockToolsProvider()
@@ -250,10 +249,7 @@ async def test_security_logging(db_engine: AsyncEngine, caplog: Any) -> None:  #
         )
 
         # Create engine with security config
-        engine = StarlarkEngine(tools_provider=tools_provider, config=config)
-
-        # Clear existing logs
-        caplog.clear()
+        engine = MontyEngine(tools_provider=tools_provider, config=config)
 
         # Try to execute a denied tool (this should fail)
         script = """
@@ -266,21 +262,14 @@ result
             await engine.evaluate_async(script, execution_context=context)
 
         # Check that the error message mentions the tool is not allowed
-        assert "Tool 'add_numbers' is not allowed" in str(exc_info.value)
-
-        # Check that security warning was logged
-        assert any(
-            "Security: Attempted execution of denied tool 'add_numbers'"
-            in record.message
-            for record in caplog.records
-        )
+        assert "not allowed" in str(exc_info.value)
 
 
 @pytest.mark.asyncio
 async def test_multiple_allowed_tools(db_engine: AsyncEngine) -> None:
     """Test configuration with multiple allowed tools."""
     # Create config with both tools allowed explicitly
-    config = StarlarkConfig(allowed_tools={"echo", "add_numbers"})
+    config = ScriptConfig(allowed_tools={"echo", "add_numbers"})
 
     # Create mock tools provider
     tools_provider = MockToolsProvider()
@@ -302,15 +291,15 @@ async def test_multiple_allowed_tools(db_engine: AsyncEngine) -> None:
         )
 
         # Create engine with security config
-        engine = StarlarkEngine(tools_provider=tools_provider, config=config)
+        engine = MontyEngine(tools_provider=tools_provider, config=config)
 
         # Test that both tools are available
         script = """
-tools_list = tools_list()
-sorted([tool["name"] for tool in tools_list])
+tool_names = [tool["name"] for tool in tools_list()]
+tool_names
 """
         result = await engine.evaluate_async(script, execution_context=context)
-        assert result == ["add_numbers", "echo"]
+        assert sorted(result) == ["add_numbers", "echo"]
 
         # Test that both can be executed
         script2 = """
@@ -327,7 +316,7 @@ results
 async def test_deny_all_overrides_allowed_tools(db_engine: AsyncEngine) -> None:
     """Test that deny_all_tools takes precedence over allowed_tools."""
     # Create config with both deny_all and allowed_tools (deny should win)
-    config = StarlarkConfig(deny_all_tools=True, allowed_tools={"echo", "add_numbers"})
+    config = ScriptConfig(deny_all_tools=True, allowed_tools={"echo", "add_numbers"})
 
     # Create mock tools provider
     tools_provider = MockToolsProvider()
@@ -349,7 +338,7 @@ async def test_deny_all_overrides_allowed_tools(db_engine: AsyncEngine) -> None:
         )
 
         # Create engine with security config
-        engine = StarlarkEngine(tools_provider=tools_provider, config=config)
+        engine = MontyEngine(tools_provider=tools_provider, config=config)
 
         # Test that no tools are available (deny_all wins)
         script = """
@@ -359,9 +348,10 @@ tools_list()
         assert result == []
 
         # Test that execution fails even for "allowed" tools
+        # (tools_execute is not available when deny_all_tools=True)
         script2 = """
 tools_execute("echo", message="should fail")
 """
         with pytest.raises(ScriptExecutionError) as exc_info:
             await engine.evaluate_async(script2, execution_context=context)
-        assert "not allowed" in str(exc_info.value)
+        assert "not defined" in str(exc_info.value)

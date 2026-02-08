@@ -97,7 +97,7 @@ Schedules any type of action (LLM callback or script) for one-time execution.
 - `action_type`: Either "wake_llm" or "script"
 - `action_config`: Configuration for the action
   - For wake_llm: `{"context": "message for assistant"}`
-  - For script: `{"script_code": "your Starlark code", "timeout": 600}`
+  - For script: `{"script_code": "your Python code", "timeout": 600}`
 
 **Examples:**
 

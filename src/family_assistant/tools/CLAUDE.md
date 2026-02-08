@@ -429,10 +429,10 @@ ensure blocking operations don't run directly on the event loop.
 - All other operations freeze (database, HTTP, WebSockets)
 - Telegram messages queue up
 - Web UI becomes unresponsive
-- In Starlark scripts: Creates deadlock when tool tries to use main loop → 30s timeout
+- In scripts: Can cause hangs or timeouts when async operations can't proceed
 
-**Real example:** The jq_query tool was timing out in Starlark scripts because `jq.compile()`
-blocked the event loop, creating a deadlock with the async/sync bridge.
+**Real example:** The jq_query tool was timing out in scripts because `jq.compile()` blocked the
+event loop.
 
 ### What Operations Are Blocking?
 

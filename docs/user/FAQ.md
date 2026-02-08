@@ -214,7 +214,7 @@ Before scheduling a script, test it:
 Key debugging tips:
 
 - Scripts have a 10-minute timeout
-- Starlark has no try-except, so check inputs carefully
+- Check inputs carefully to handle missing or invalid data
 - Most tools return JSON strings - use `json_decode()` to parse them
 - Check the Tasks page in the web UI for script execution logs and error messages
 - View script execution history in the Automations page

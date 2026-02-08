@@ -2,9 +2,8 @@
 Monty scripting engine for Family Assistant.
 
 This module provides a Monty-based scripting engine (pydantic-monty) that executes
-user-defined scripts with access to family assistant tools and state. It implements
-the same interface as StarlarkEngine but uses Monty's pause/resume model for
-clean async external function handling.
+user-defined scripts with access to family assistant tools and state. It uses
+Monty's pause/resume model for clean async external function handling.
 """
 
 import asyncio
@@ -31,7 +30,7 @@ from family_assistant.tools.types import ToolResult
 
 from .apis import time as time_api
 from .apis.attachments import create_attachment_api
-from .engine import StarlarkConfig
+from .config import ScriptConfig
 from .errors import ScriptExecutionError, ScriptSyntaxError, ScriptTimeoutError
 
 if TYPE_CHECKING:
@@ -49,16 +48,16 @@ class MontyEngine:
     using Monty (pydantic-monty), with controlled access to family assistant
     functionality via external functions.
 
-    Uses the same StarlarkConfig for configuration compatibility.
+    Uses the same ScriptConfig for configuration compatibility.
     """
 
     def __init__(
         self,
         tools_provider: "ToolsProvider | None" = None,
-        config: StarlarkConfig | None = None,
+        config: ScriptConfig | None = None,
     ) -> None:
         self.tools_provider = tools_provider
-        self.config = config or StarlarkConfig()
+        self.config = config or ScriptConfig()
         # ast-grep-ignore: no-dict-any - Wake contexts and script globals are arbitrary dicts
         self._wake_llm_contexts: list[dict[str, Any]] = []
         # ast-grep-ignore: no-dict-any - Wake contexts and script globals are arbitrary dicts
@@ -127,9 +126,7 @@ class MontyEngine:
             )
 
             limits = self._build_resource_limits()
-            print_cb = (
-                self._create_print_callback() if self.config.enable_print else None
-            )
+            print_cb = self._create_print_callback()
             loop = asyncio.get_running_loop()
 
             # Start execution in thread pool (Monty execution is CPU-bound)
@@ -267,7 +264,7 @@ class MontyEngine:
         """
         Add async tool functions that directly await the ToolsProvider.
 
-        This bypasses the StarlarkToolsAPI sync bridge entirely. Tool calls from
+        Tool calls from
         scripts are handled via Monty's pause/resume model: when a script calls
         a tool function, Monty pauses, we await the async ToolsProvider directly,
         then resume Monty with the result.
@@ -679,7 +676,7 @@ class MontyEngine:
         Monty supports additional resource limits beyond execution time:
         max_memory, max_allocations, max_recursion_depth, gc_interval.
         These are set to sensible defaults here. To expose them via config,
-        add fields to StarlarkConfig or create a MontyConfig subclass.
+        add fields to ScriptConfig or create a MontyConfig subclass.
         """
         return pydantic_monty.ResourceLimits(
             max_duration_secs=self.config.max_execution_time,
@@ -690,10 +687,19 @@ class MontyEngine:
     def _create_print_callback(
         self,
     ) -> Callable[[str, str], None]:
-        """Create a print callback that logs output."""
+        """Create a print callback that logs output.
+
+        When enable_print is False, the callback raises an error to prevent
+        print() usage.
+        """
+        if not self.config.enable_print:
+
+            def deny_print(stream: str, text: str) -> None:
+                raise RuntimeError("print() is not available in this context")
+
+            return deny_print
 
         def print_callback(stream: str, text: str) -> None:
-            # Filter out bare newlines from print()
             stripped = text.rstrip("\n")
             if stripped:
                 logger.info("Script output: %s", stripped)

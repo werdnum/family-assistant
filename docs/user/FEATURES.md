@@ -550,7 +550,7 @@ ______________________________________________________________________
 
 ### Scripting
 
-Write custom automation scripts using Starlark for complex workflows.
+Write custom automation scripts using Python for complex workflows.
 
 **Capabilities:**
 

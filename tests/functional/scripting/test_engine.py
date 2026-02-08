@@ -1,8 +1,8 @@
 """
 Tests for the scripting engine integration.
 
-This module tests our integration with both the Starlark and Monty engines,
-validating that both implement the same interface correctly.
+This module tests the MontyEngine integration, validating that it implements
+the scripting interface correctly.
 """
 
 import asyncio
@@ -10,7 +10,6 @@ from typing import Any
 
 import pytest
 
-from family_assistant.scripting.engine import StarlarkEngine
 from family_assistant.scripting.errors import (
     ScriptExecutionError,
     ScriptSyntaxError,
@@ -19,7 +18,7 @@ from family_assistant.scripting.monty_engine import MontyEngine
 
 
 class TestEngineIntegration:
-    """Test engine integration with both Starlark and Monty."""
+    """Test engine integration with MontyEngine."""
 
     @pytest.mark.asyncio
     async def test_basic_evaluation(self, engine_class: type) -> None:
@@ -163,24 +162,12 @@ class TestEngineIntegration:
         pass
 
 
-class TestStarlarkEngineSpecific:
-    """Tests specific to Starlark engine behavior."""
-
-    @pytest.mark.asyncio
-    async def test_starlark_dialect_features(self) -> None:
-        """Test Starlark-specific dialect features like f-strings and lambda."""
-        engine = StarlarkEngine()
-
-        result = await engine.evaluate_async('name = "World"\nf"Hello, {name}!"')
-        assert result == "Hello, World!"
-
-
 class TestMontyEngineSpecific:
     """Tests specific to Monty engine behavior."""
 
     @pytest.mark.asyncio
     async def test_try_except(self) -> None:
-        """Test that Monty supports try/except (which Starlark doesn't)."""
+        """Test that Monty supports try/except."""
         engine = MontyEngine()
 
         script = """
