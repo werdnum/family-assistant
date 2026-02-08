@@ -7,7 +7,8 @@ import textwrap
 from typing import Any
 
 from family_assistant.scripting import ScriptExecutionError, ScriptSyntaxError
-from family_assistant.scripting.engine import StarlarkConfig, StarlarkEngine
+from family_assistant.scripting.config import ScriptConfig
+from family_assistant.scripting.engine import StarlarkEngine
 
 logger = logging.getLogger(__name__)
 
@@ -29,7 +30,7 @@ class EventConditionEvaluator:
         # using dependency injection to ensure complete isolation and security.
         # This engine is configured with maximum restrictions and no access to tools.
         timeout_ms = (config or {}).get("script_execution_timeout_ms", 100)
-        self.config = StarlarkConfig(
+        self.config = ScriptConfig(
             max_execution_time=timeout_ms / 1000.0,  # Convert to seconds
             enable_print=False,
             enable_debug=False,

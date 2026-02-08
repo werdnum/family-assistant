@@ -31,7 +31,7 @@ from family_assistant.tools.types import ToolResult
 
 from .apis import time as time_api
 from .apis.attachments import create_attachment_api
-from .engine import StarlarkConfig
+from .config import ScriptConfig
 from .errors import ScriptExecutionError, ScriptSyntaxError, ScriptTimeoutError
 
 if TYPE_CHECKING:
@@ -49,16 +49,16 @@ class MontyEngine:
     using Monty (pydantic-monty), with controlled access to family assistant
     functionality via external functions.
 
-    Uses the same StarlarkConfig for configuration compatibility.
+    Uses the same ScriptConfig for configuration compatibility.
     """
 
     def __init__(
         self,
         tools_provider: "ToolsProvider | None" = None,
-        config: StarlarkConfig | None = None,
+        config: ScriptConfig | None = None,
     ) -> None:
         self.tools_provider = tools_provider
-        self.config = config or StarlarkConfig()
+        self.config = config or ScriptConfig()
         # ast-grep-ignore: no-dict-any - Wake contexts and script globals are arbitrary dicts
         self._wake_llm_contexts: list[dict[str, Any]] = []
         # ast-grep-ignore: no-dict-any - Wake contexts and script globals are arbitrary dicts
@@ -679,7 +679,7 @@ class MontyEngine:
         Monty supports additional resource limits beyond execution time:
         max_memory, max_allocations, max_recursion_depth, gc_interval.
         These are set to sensible defaults here. To expose them via config,
-        add fields to StarlarkConfig or create a MontyConfig subclass.
+        add fields to ScriptConfig or create a MontyConfig subclass.
         """
         return pydantic_monty.ResourceLimits(
             max_duration_secs=self.config.max_execution_time,

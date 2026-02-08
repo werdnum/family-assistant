@@ -12,7 +12,8 @@ from typing import TYPE_CHECKING, Any
 
 from family_assistant.scripting.apis.attachments import ScriptAttachment
 from family_assistant.scripting.apis.tools import ScriptToolResult
-from family_assistant.scripting.engine import StarlarkConfig, StarlarkEngine
+from family_assistant.scripting.config import ScriptConfig
+from family_assistant.scripting.engine import StarlarkEngine
 from family_assistant.scripting.errors import (
     ScriptExecutionError,
     ScriptSyntaxError,
@@ -138,7 +139,7 @@ async def execute_script_tool(
     """
     try:
         # Create a configuration with reasonable defaults
-        config = StarlarkConfig(
+        config = ScriptConfig(
             max_execution_time=600.0,  # 10 minute timeout for scripts that may make external calls
             enable_print=True,  # Allow print statements
             enable_debug=False,  # No debug output by default

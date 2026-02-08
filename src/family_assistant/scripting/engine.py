@@ -11,7 +11,6 @@ import logging
 import re
 import uuid
 from collections.abc import Callable
-from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 import starlark
@@ -19,6 +18,7 @@ import starlark
 from .apis import time as time_api
 from .apis.attachments import create_attachment_api
 from .apis.tools import create_tools_api
+from .config import ScriptConfig as StarlarkConfig
 from .errors import ScriptExecutionError, ScriptSyntaxError, ScriptTimeoutError
 
 if TYPE_CHECKING:
@@ -26,22 +26,6 @@ if TYPE_CHECKING:
     from family_assistant.tools.types import ToolExecutionContext
 
 logger = logging.getLogger(__name__)
-
-
-@dataclass
-class StarlarkConfig:
-    """Configuration for the Starlark scripting engine."""
-
-    max_execution_time: float = (
-        600.0  # Maximum execution time in seconds (10 minutes default)
-    )
-    enable_print: bool = True  # Whether to enable the print() function
-    enable_debug: bool = False  # Whether to enable debug output
-    allowed_tools: set[str] | None = (
-        None  # If specified, only these tools can be executed
-    )
-    deny_all_tools: bool = False  # If True, no tools can be executed
-    disable_apis: bool = False  # If True, no APIs (json, time, etc.) are loaded
 
 
 class StarlarkEngine:
