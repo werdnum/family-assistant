@@ -363,6 +363,15 @@ class LocalToolsProvider:
                         and annotation_to_check.__name__ == "DatabaseContext"
                     ):
                         needs_db_context = True
+                    # Fallback for unresolved forward reference string
+                    elif isinstance(param.annotation, str) and (
+                        param.annotation == "DatabaseContext"
+                        or param.annotation.endswith(".DatabaseContext")
+                    ):
+                        needs_db_context = True
+                        logger.debug(
+                            f"Identified 'db_context' for {callable_func.__name__} via string forward reference fallback."
+                        )
 
                 elif param_name == "embedding_generator":
                     # Check for EmbeddingGenerator by name since we can't import it

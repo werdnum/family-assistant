@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import json
+import sys
+import types
 from typing import Any
 from unittest.mock import MagicMock
 
@@ -390,3 +392,190 @@ class TestLocalToolsProvider:
         assert result.startswith("Error:")
         assert "not found or access denied" in result
         assert "image_attachment_id" in result
+
+    @pytest.mark.asyncio
+    async def test_execute_tool_injects_exec_context(self) -> None:
+        """Test that exec_context is properly injected into tool functions."""
+        received_context: list[ToolExecutionContext | None] = [None]
+
+        async def tool_needs_exec_context(
+            exec_context: ToolExecutionContext,
+            query: str,
+        ) -> str:
+            received_context[0] = exec_context
+            return f"Got query: {query}"
+
+        provider = LocalToolsProvider(
+            definitions=[
+                {
+                    "type": "function",
+                    "function": {
+                        "name": "tool_needs_exec_context",
+                        "description": "Test tool",
+                        "parameters": {
+                            "type": "object",
+                            "properties": {
+                                "query": {"type": "string"},
+                            },
+                            "required": ["query"],
+                        },
+                    },
+                }
+            ],
+            implementations={"tool_needs_exec_context": tool_needs_exec_context},
+        )
+
+        mock_db_context = MagicMock(spec=DatabaseContext)
+        context = ToolExecutionContext(
+            conversation_id="test-conv-inject",
+            user_name="test-user",
+            interface_type="test",
+            timezone_str="UTC",
+            turn_id=None,
+            db_context=mock_db_context,
+            processing_service=None,
+            clock=None,
+            home_assistant_client=None,
+            event_sources=None,
+            attachment_registry=None,
+            camera_backend=None,
+        )
+
+        result = await provider.execute_tool(
+            "tool_needs_exec_context", {"query": "test"}, context
+        )
+
+        assert result == "Got query: test"
+        assert received_context[0] is context
+        assert received_context[0] is not None
+        assert received_context[0].db_context is mock_db_context
+
+    @pytest.mark.asyncio
+    async def test_execute_tool_injects_db_context(self) -> None:
+        """Test that db_context is properly injected into tool functions."""
+        received_db: list[DatabaseContext | None] = [None]
+
+        async def tool_needs_db_context(
+            db_context: DatabaseContext,
+            query: str,
+        ) -> str:
+            received_db[0] = db_context
+            return f"Got query: {query}"
+
+        provider = LocalToolsProvider(
+            definitions=[
+                {
+                    "type": "function",
+                    "function": {
+                        "name": "tool_needs_db_context",
+                        "description": "Test tool",
+                        "parameters": {
+                            "type": "object",
+                            "properties": {
+                                "query": {"type": "string"},
+                            },
+                            "required": ["query"],
+                        },
+                    },
+                }
+            ],
+            implementations={"tool_needs_db_context": tool_needs_db_context},
+        )
+
+        mock_db_context = MagicMock(spec=DatabaseContext)
+        context = ToolExecutionContext(
+            conversation_id="test-conv-db",
+            user_name="test-user",
+            interface_type="test",
+            timezone_str="UTC",
+            turn_id=None,
+            db_context=mock_db_context,
+            processing_service=None,
+            clock=None,
+            home_assistant_client=None,
+            event_sources=None,
+            attachment_registry=None,
+            camera_backend=None,
+        )
+
+        result = await provider.execute_tool(
+            "tool_needs_db_context", {"query": "test"}, context
+        )
+
+        assert result == "Got query: test"
+        assert received_db[0] is mock_db_context
+
+    @pytest.mark.asyncio
+    async def test_execute_tool_injects_db_context_with_string_annotation(
+        self,
+    ) -> None:
+        """Test that db_context is injected even when the annotation is a string.
+
+        This simulates the case where a tool module uses `from __future__ import annotations`
+        and imports DatabaseContext under TYPE_CHECKING, so get_type_hints() cannot
+        resolve the annotation and falls back to the raw string.
+        """
+        received_db: list[Any] = [None]
+
+        async def tool_with_string_annotation(
+            db_context: DatabaseContext,
+            query: str,
+        ) -> str:
+            received_db[0] = db_context
+            return f"Got query: {query}"
+
+        # Simulate a module where DatabaseContext is NOT in the namespace
+        # (as if imported only under TYPE_CHECKING)
+        fake_module = types.ModuleType("fake_tool_module")
+        fake_module.__dict__["__name__"] = "fake_tool_module"
+        tool_with_string_annotation.__module__ = "fake_tool_module"
+        # Patch so inspect.getmodule finds our fake module
+        sys.modules["fake_tool_module"] = fake_module
+
+        try:
+            provider = LocalToolsProvider(
+                definitions=[
+                    {
+                        "type": "function",
+                        "function": {
+                            "name": "tool_with_string_annotation",
+                            "description": "Test tool",
+                            "parameters": {
+                                "type": "object",
+                                "properties": {
+                                    "query": {"type": "string"},
+                                },
+                                "required": ["query"],
+                            },
+                        },
+                    }
+                ],
+                implementations={
+                    "tool_with_string_annotation": tool_with_string_annotation
+                },
+            )
+
+            mock_db_context = MagicMock(spec=DatabaseContext)
+            context = ToolExecutionContext(
+                conversation_id="test-conv-str-db",
+                user_name="test-user",
+                interface_type="test",
+                timezone_str="UTC",
+                turn_id=None,
+                db_context=mock_db_context,
+                processing_service=None,
+                clock=None,
+                home_assistant_client=None,
+                event_sources=None,
+                attachment_registry=None,
+                camera_backend=None,
+            )
+
+            result = await provider.execute_tool(
+                "tool_with_string_annotation", {"query": "test"}, context
+            )
+
+            assert result == "Got query: test"
+            assert received_db[0] is mock_db_context
+        finally:
+            del sys.modules["fake_tool_module"]
