@@ -354,3 +354,143 @@ add_or_update_note(
 
     # Cleanup is handled by the task_worker_manager fixture
     logger.info(f"--- Script Multi-Note Test ({test_run_id}) Passed ---")
+
+
+@pytest.mark.asyncio
+async def test_script_can_retrieve_notes(
+    db_engine: AsyncEngine,
+    task_worker_manager: Callable[..., tuple[TaskWorker, asyncio.Event, asyncio.Event]],
+) -> None:
+    """Test that scripts can retrieve notes via list_notes and get_note tools.
+
+    This verifies that the database context is properly passed through the
+    MontyEngine to tool calls, enabling read operations (not just writes).
+    """
+    test_run_id = uuid.uuid4()
+    logger.info(f"\n--- Running Script Note Retrieval Test ({test_run_id}) ---")
+
+    # Step 1: Pre-create a note that the script will try to retrieve
+    async with DatabaseContext(engine=db_engine) as db_ctx:
+        await db_ctx.notes.add_or_update(
+            title="Test Note Alpha",
+            content="This is a test note for retrieval",
+            include_in_prompt=True,
+        )
+
+    # Step 2: Create event listener with script that reads notes
+    async with DatabaseContext(engine=db_engine) as db_ctx:
+        await db_ctx.events.create_event_listener(
+            name=f"Note Reader {test_run_id}",
+            source_id=EventSourceType.home_assistant,
+            match_conditions={
+                "entity_id": "sensor.note_reader_test",
+            },
+            conversation_id="test_conv",
+            interface_type="telegram",
+            action_type=EventActionType.script,
+            action_config={
+                "script_code": """
+# Retrieve notes via list_notes tool
+all_notes = list_notes()
+
+# Parse the JSON result (list_notes returns a JSON string via LocalToolsProvider)
+if isinstance(all_notes, str):
+    notes_list = json_decode(all_notes)
+else:
+    notes_list = all_notes
+
+# Find our test note
+found = False
+for note in notes_list:
+    if note["title"] == "Test Note Alpha":
+        found = True
+
+# Also test get_note for a specific note
+note_detail = get_note(title="Test Note Alpha")
+if isinstance(note_detail, str):
+    detail = json_decode(note_detail)
+else:
+    detail = note_detail
+
+# Create a summary note with results
+add_or_update_note(
+    title="Retrieval Results",
+    content="Found via list: " + str(found) + ", Exists: " + str(detail["exists"]) + ", Content: " + str(detail["content"])
+)
+"""
+            },
+            enabled=True,
+        )
+
+    # Step 3: Create infrastructure with all note tools
+    processor = EventProcessor(
+        sources={},
+        sample_interval_hours=1.0,
+        get_db_context_func=lambda: get_db_context(db_engine),
+    )
+    processor._running = True
+    await processor._refresh_listener_cache()
+
+    local_provider = LocalToolsProvider(
+        definitions=NOTE_TOOLS_DEFINITION,
+        implementations={
+            "add_or_update_note": local_tool_implementations["add_or_update_note"],
+            "list_notes": local_tool_implementations["list_notes"],
+            "get_note": local_tool_implementations["get_note"],
+        },
+    )
+    tools_provider = CompositeToolsProvider(providers=[local_provider])
+    await tools_provider.get_tool_definitions()
+
+    processing_service = ProcessingService(
+        llm_client=RuleBasedMockLLMClient(
+            rules=[], default_response=LLMOutput(content="N/A")
+        ),
+        tools_provider=tools_provider,
+        service_config=ProcessingServiceConfig(
+            id="event_handler",
+            prompts={"system_prompt": "Event handler"},
+            timezone_str="UTC",
+            max_history_messages=1,
+            history_max_age_hours=1,
+            tools_config={},
+            delegation_security_level="blocked",
+        ),
+        app_config=AppConfig(),
+        context_providers=[],
+        server_url=None,
+    )
+
+    worker, new_task_event, shutdown_event = task_worker_manager(
+        processing_service,
+        AsyncMock(spec=ChatInterface),
+    )
+    worker.register_task_handler("script_execution", handle_script_execution)
+    # ast-grep-ignore: no-asyncio-sleep-in-tests - Waiting for task worker to start and register handler
+    await asyncio.sleep(0.1)
+
+    # Step 4: Process event that triggers the script
+    await processor.process_event(
+        "home_assistant",
+        {
+            "entity_id": "sensor.note_reader_test",
+            "old_state": {"state": "idle"},
+            "new_state": {"state": "active"},
+        },
+    )
+
+    new_task_event.set()
+    await wait_for_tasks_to_complete(db_engine, task_types={"script_execution"})
+
+    # Step 5: Verify the script successfully retrieved and processed notes
+    async with DatabaseContext(engine=db_engine) as db_ctx:
+        result_note = await db_ctx.notes.get_by_title(
+            "Retrieval Results", visibility_grants=None
+        )
+        assert result_note is not None, "Script should have created a result note"
+        assert "Found via list: True" in result_note.content
+        assert "Exists: True" in result_note.content
+        assert "This is a test note for retrieval" in result_note.content
+
+    logger.info("Script successfully retrieved notes via tools")
+    logger.info(f"--- Script Note Retrieval Test ({test_run_id}) Passed ---")

@@ -762,6 +762,16 @@ class TaskWorker:
                 update_activity_callback=self._update_last_activity,  # Pass activity callback
                 embedding_generator=self.embedding_generator,
                 indexing_source=self.indexing_source,  # Pass the indexing source
+                visibility_grants=(
+                    self.processing_service.service_config.visibility_grants
+                    if self.processing_service
+                    else None
+                ),
+                default_note_visibility_labels=(
+                    self.processing_service.service_config.default_note_visibility_labels
+                    if self.processing_service
+                    else None
+                ),
             )
             # --- Execute Handler with Context ---
             logger.debug(
