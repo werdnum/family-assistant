@@ -11,7 +11,6 @@ import uuid
 from typing import TYPE_CHECKING, Any
 
 from family_assistant.scripting.apis.attachments import ScriptAttachment
-from family_assistant.scripting.apis.tools import ScriptToolResult
 from family_assistant.scripting.config import ScriptConfig
 from family_assistant.scripting.errors import (
     ScriptExecutionError,
@@ -69,7 +68,6 @@ def _extract_attachment_ids_from_result(result: Any) -> list[str]:  # noqa: ANN4
 
     Supports:
     - ScriptAttachment object
-    - ScriptToolResult object
     - List of ScriptAttachments or dicts with "id" field
     - Dict with "id" field (from attachment_create())
     - UUID strings (backward compatibility)
@@ -84,10 +82,6 @@ def _extract_attachment_ids_from_result(result: Any) -> list[str]:  # noqa: ANN4
     # Single ScriptAttachment
     if isinstance(result, ScriptAttachment):
         return [result.get_id()]
-
-    # ScriptToolResult
-    if isinstance(result, ScriptToolResult):
-        return [att.get_id() for att in result.get_attachments()]
 
     # List of attachments or UUIDs
     if isinstance(result, list):
@@ -203,17 +197,6 @@ async def execute_script_tool(
                 f"Script result: Attachment(id={result.get_id()}, "
                 f"mime_type={result.get_mime_type()}, size={result.get_size()})"
             )
-        elif isinstance(result, ScriptToolResult):
-            # Legacy: ScriptToolResult - show text and attachment count
-            text_preview = (
-                result.text[:100] + "..."
-                if result.text and len(result.text) > 100
-                else result.text
-            )
-            att_count = len(result.get_attachments())
-            response_parts.append(
-                f"Script result: ToolResult(text={text_preview!r}, {att_count} attachment(s))"
-            )
         elif (
             isinstance(result, dict)
             and "id" in result
@@ -286,9 +269,7 @@ async def execute_script_tool(
         if isinstance(result, (dict, list, int, float, bool, str)):
             # Preserve structured data for programmatic access
             result_data = result  # type: ignore[assignment]
-        elif result is not None and not isinstance(
-            result, (ScriptAttachment, ScriptToolResult)
-        ):
+        elif result is not None and not isinstance(result, ScriptAttachment):
             # For other types, convert to string
             result_data = str(result)
 
@@ -337,6 +318,21 @@ SCRIPT_TOOLS_DEFINITION: list[ToolDefinition] = [
                 "• Timeout: 10 minutes maximum execution time (to allow for external API calls)\n"
                 "• Sandboxed: No file system or network access\n"
                 "• Deterministic: No random numbers or current time\n\n"
+                "**Sandbox Limitations:**\n"
+                "The Monty scripting engine runs a sandboxed Python subset with these restrictions:\n"
+                "• No class definitions (can't use `class` keyword)\n"
+                "• No generators or yield statements\n"
+                "• No match/case statements\n"
+                "• No context managers or with statements\n"
+                "• No del statement\n"
+                "• No dict unpacking in literals ({**d1, **d2} not supported)\n"
+                "• No str.format() method (use f-strings instead)\n"
+                "• No map/filter functions (use list comprehensions instead)\n"
+                "• Decorators are buggy (avoid using them)\n"
+                "• Exceptions only accept 0 or 1 string arguments\n"
+                "• No imports except heavily sandboxed os, sys, typing, pathlib modules\n"
+                "• Resource limits: 256MB memory, 100 recursion depth\n"
+                "• However: try/except, while loops, float(), set(), frozenset() ARE supported\n\n"
                 "**Built-in Functions:**\n"
                 "• Type conversions: bool(), int(), str(), list(), tuple(), dict()\n"
                 "• Collections: len(), range(), sorted(), reversed(), enumerate(), zip()\n"

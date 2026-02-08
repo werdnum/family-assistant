@@ -1281,7 +1281,7 @@ async def handle_script_execution(
     payload: dict[str, Any],
 ) -> None:
     """
-    Task handler for executing Starlark scripts triggered by events.
+    Task handler for executing scripts triggered by events.
 
     Executes user-defined scripts in response to events from Home Assistant,
     document indexing, and other sources. Scripts run with restricted tool access
@@ -1290,7 +1290,7 @@ async def handle_script_execution(
     Args:
         exec_context: Execution context providing access to tools and services
         payload: Task payload containing:
-            - script_code: The Starlark script to execute
+            - script_code: The Python script to execute
             - event_data: Event data to pass to the script
             - config: Optional configuration (timeout, allowed_tools)
             - listener_id: ID of the event listener that triggered this

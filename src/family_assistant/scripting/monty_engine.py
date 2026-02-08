@@ -2,9 +2,8 @@
 Monty scripting engine for Family Assistant.
 
 This module provides a Monty-based scripting engine (pydantic-monty) that executes
-user-defined scripts with access to family assistant tools and state. It implements
-the same interface as StarlarkEngine but uses Monty's pause/resume model for
-clean async external function handling.
+user-defined scripts with access to family assistant tools and state. It uses
+Monty's pause/resume model for clean async external function handling.
 """
 
 import asyncio
@@ -265,7 +264,7 @@ class MontyEngine:
         """
         Add async tool functions that directly await the ToolsProvider.
 
-        This bypasses the StarlarkToolsAPI sync bridge entirely. Tool calls from
+        Tool calls from
         scripts are handled via Monty's pause/resume model: when a script calls
         a tool function, Monty pauses, we await the async ToolsProvider directly,
         then resume Monty with the result.
@@ -691,8 +690,7 @@ class MontyEngine:
         """Create a print callback that logs output.
 
         When enable_print is False, the callback raises an error to prevent
-        print() usage (matching StarlarkEngine's behavior where print is
-        simply not registered as a builtin).
+        print() usage.
         """
         if not self.config.enable_print:
 

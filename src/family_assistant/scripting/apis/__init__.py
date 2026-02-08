@@ -1,1 +1,1 @@
-"""APIs available to Starlark scripts."""
+"""APIs available to scripts."""

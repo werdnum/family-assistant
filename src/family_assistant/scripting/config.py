@@ -17,6 +17,3 @@ class ScriptConfig:
     )
     deny_all_tools: bool = False  # If True, no tools can be executed
     disable_apis: bool = False  # If True, no APIs (json, time, etc.) are loaded
-
-
-StarlarkConfig = ScriptConfig

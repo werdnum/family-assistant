@@ -1588,7 +1588,6 @@ dependencies = [
     { name = "sqlalchemy", version = "2.0.39", source = { registry = "https://pypi.org/simple" }, extra = ["asyncio"], marker = "python_full_version < '3.13.2'" },
     { name = "sqlalchemy", version = "2.0.40", source = { registry = "https://pypi.org/simple" }, extra = ["asyncio"], marker = "python_full_version >= '3.13.2' and platform_python_implementation == 'PyPy'" },
     { name = "sqlalchemy", version = "2.0.41", source = { registry = "https://pypi.org/simple" }, extra = ["asyncio"], marker = "python_full_version >= '3.13.2' and platform_python_implementation != 'PyPy'" },
-    { name = "starlark-pyo3" },
     { name = "telegramify-markdown" },
     { name = "uvicorn", extra = ["standard"] },
     { name = "vl-convert-python" },
@@ -1757,7 +1756,6 @@ requires-dist = [
     { name = "sentence-transformers", marker = "extra == 'local-embeddings'", specifier = ">=3.0.1" },
     { name = "soxr", specifier = ">=0.5.0" },
     { name = "sqlalchemy", extras = ["asyncio"], specifier = ">=2.0.0" },
-    { name = "starlark-pyo3", specifier = ">=0.1.0" },
     { name = "symbex", marker = "extra == 'dev'", specifier = ">=2.0" },
     { name = "telegram-bot-api-mock", extras = ["dev"], marker = "extra == 'dev'", git = "https://github.com/werdnum/telegram-bot-api-mock" },
     { name = "telegramify-markdown", specifier = ">=0.5.1" },
@@ -5744,22 +5742,6 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/8d/06/7bf7c0ec16574aeb1f6602d6a7bdb020084362fb4a9b177c5465b0aae0b6/standard_telnetlib-3.13.0.tar.gz", hash = "sha256:243333696bf1659a558eb999c23add82c41ffc2f2d04a56fae13b61b536fb173", size = 12636, upload-time = "2024-10-30T16:01:42.257Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/33/85/a1808451ac0b36c61dffe8aea21e45c64ba7da28f6cb0d269171298c6281/standard_telnetlib-3.13.0-py3-none-any.whl", hash = "sha256:b268060a3220c80c7887f2ad9df91cd81e865f0c5052332b81d80ffda8677691", size = 9995, upload-time = "2024-10-30T16:01:29.289Z" },
-]
-
-[[package]]
-name = "starlark-pyo3"
-version = "2025.2"
-source = { registry = "https://pypi.org/simple" }
-dependencies = [
-    { name = "typing-extensions" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/68/8d/feb6625a4c0be54f9a9d394ccb9c35dceb185d3e70cd1446855fb9696a5e/starlark_pyo3-2025.2.tar.gz", hash = "sha256:de3b82115aea312537a20e9f732aec5cfca0c6daf0b30c5b16bde199e9eaefe2", size = 32316, upload-time = "2025-09-10T18:53:13.936Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/01/cb/97afa6679731ad5b59dce057914a374f8ce64bf345fc08a06fe429ff2502/starlark_pyo3-2025.2-cp313-cp313-macosx_11_0_arm64.whl", hash = "sha256:4af462e06a07b3ada4de0eff3cb29fa3757a04c29e1b2c40831191af73333bbd", size = 2947863, upload-time = "2025-09-10T18:52:57.842Z" },
-    { url = "https://files.pythonhosted.org/packages/0e/e7/534042131b71421383a003ab116f31394669e459106669a2edfc56d2ce5c/starlark_pyo3-2025.2-cp313-cp313-manylinux_2_17_aarch64.manylinux2014_aarch64.whl", hash = "sha256:34893c1335ae1861499e56aae2610b0a3249b74c0a45ad4f0af95b77e84d1304", size = 3446776, upload-time = "2025-09-10T18:52:59.084Z" },
-    { url = "https://files.pythonhosted.org/packages/f6/ce/2b88d08abf9aa2610fe9ee113d2f65b9aee34d055cd6785013e2df966e1e/starlark_pyo3-2025.2-cp313-cp313-manylinux_2_17_armv7l.manylinux2014_armv7l.whl", hash = "sha256:a32f914051149de750535d740b9690e9d96946d483e5ba668ed7f5f1d871c901", size = 3254347, upload-time = "2025-09-10T18:53:00.56Z" },
-    { url = "https://files.pythonhosted.org/packages/e8/02/f4c8201858df339097f24f237c5b152eff86e21a0cfb5fb504c764e7fb3e/starlark_pyo3-2025.2-cp313-cp313-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:4381bd3a7c75a3b9f54ffa71e5e009edb508943c8530ab249a8a4d86a1094670", size = 3553441, upload-time = "2025-09-10T18:53:01.841Z" },
-    { url = "https://files.pythonhosted.org/packages/72/01/014627b433019a4a992479c35330abffeb20b1d31d5675b69f1b5957b692/starlark_pyo3-2025.2-cp313-cp313-win_amd64.whl", hash = "sha256:b5409bc0d5960d72847c55f361b02b3ef1a424a4f605872f6148701551b6f621", size = 2528026, upload-time = "2025-09-10T18:53:03.166Z" },
 ]
 
 [[package]]

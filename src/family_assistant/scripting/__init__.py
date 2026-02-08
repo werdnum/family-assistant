@@ -6,7 +6,6 @@ with access to family assistant tools and state.
 """
 
 from .config import ScriptConfig
-from .engine import StarlarkEngine
 from .errors import (
     ScriptError,
     ScriptExecutionError,
@@ -18,7 +17,6 @@ from .monty_engine import MontyEngine
 __all__ = [
     "MontyEngine",
     "ScriptConfig",
-    "StarlarkEngine",
     "ScriptError",
     "ScriptExecutionError",
     "ScriptSyntaxError",

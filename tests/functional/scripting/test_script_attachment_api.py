@@ -80,7 +80,6 @@ class TestAttachmentAPI:
         api = AttachmentAPI(
             attachment_registry=attachment_registry,
             conversation_id="test_conversation",
-            main_loop=None,
             db_engine=db_engine,
         )
 
@@ -102,7 +101,6 @@ class TestAttachmentAPI:
         api = AttachmentAPI(
             attachment_registry=attachment_registry,
             conversation_id="test_conversation",
-            main_loop=None,
             db_engine=db_engine,
         )
 
@@ -121,7 +119,6 @@ class TestAttachmentAPI:
         api = AttachmentAPI(
             attachment_registry=attachment_registry,
             conversation_id="different_conversation",  # Different conversation
-            main_loop=None,
             db_engine=db_engine,
         )
 
@@ -141,7 +138,6 @@ class TestAttachmentAPI:
         api = AttachmentAPI(
             attachment_registry=attachment_registry,
             conversation_id="test_conversation",
-            main_loop=None,
             db_engine=db_engine,
         )
 
@@ -166,7 +162,6 @@ class TestAttachmentAPI:
         api = AttachmentAPI(
             attachment_registry=attachment_registry,
             conversation_id="test_conversation",
-            main_loop=None,
             db_engine=db_engine,
         )
 
@@ -187,7 +182,6 @@ class TestAttachmentAPI:
         api = AttachmentAPI(
             attachment_registry=attachment_registry,
             conversation_id="empty_conversation",
-            main_loop=None,
             db_engine=db_engine,
         )
 
@@ -204,7 +198,6 @@ class TestAttachmentAPI:
         api = AttachmentAPI(
             attachment_registry=attachment_registry,
             conversation_id="test_conversation",
-            main_loop=None,
             db_engine=db_engine,
         )
 
@@ -222,7 +215,6 @@ class TestAttachmentAPI:
         api = AttachmentAPI(
             attachment_registry=attachment_registry,
             conversation_id="test_conversation",
-            main_loop=None,
             db_engine=db_engine,
         )
 
@@ -242,7 +234,6 @@ class TestAttachmentAPI:
         api = AttachmentAPI(
             attachment_registry=attachment_registry,
             conversation_id="different_conversation",
-            main_loop=None,
             db_engine=db_engine,
         )
 
@@ -259,7 +250,6 @@ class TestAttachmentAPI:
         api = AttachmentAPI(
             attachment_registry=attachment_registry,
             conversation_id="test_conversation",
-            main_loop=None,
             db_engine=db_engine,
         )
 
@@ -302,7 +292,6 @@ class TestAttachmentAPI:
         api = AttachmentAPI(
             attachment_registry=attachment_registry,
             conversation_id="test_conversation",
-            main_loop=None,
             db_engine=db_engine,
         )
 
@@ -334,7 +323,6 @@ class TestAttachmentAPI:
         api = AttachmentAPI(
             attachment_registry=attachment_registry,
             conversation_id="test_conversation",
-            main_loop=None,
             db_engine=db_engine,
         )
 
@@ -366,7 +354,6 @@ class TestAttachmentAPI:
         api = AttachmentAPI(
             attachment_registry=attachment_registry,
             conversation_id="conversation_a",
-            main_loop=None,
             db_engine=db_engine,
         )
 
@@ -381,7 +368,6 @@ class TestAttachmentAPI:
         same_api = AttachmentAPI(
             attachment_registry=attachment_registry,
             conversation_id="conversation_a",
-            main_loop=None,
             db_engine=db_engine,
         )
         result = await same_api._get_async(metadata.attachment_id)
@@ -391,7 +377,6 @@ class TestAttachmentAPI:
         different_api = AttachmentAPI(
             attachment_registry=attachment_registry,
             conversation_id="conversation_b",
-            main_loop=None,
             db_engine=db_engine,
         )
         result = await different_api._get_async(metadata.attachment_id)
