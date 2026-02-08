@@ -2,13 +2,10 @@
 
 import pytest
 
-from family_assistant.scripting.engine import StarlarkEngine
 from family_assistant.scripting.monty_engine import MontyEngine
 
 
-@pytest.fixture(params=["starlark", "monty"], ids=["starlark", "monty"])
-def engine_class(request: pytest.FixtureRequest) -> type:
-    """Parameterized fixture that yields both engine classes for dual-engine testing."""
-    if request.param == "starlark":
-        return StarlarkEngine
+@pytest.fixture
+def engine_class() -> type:
+    """Fixture that yields the MontyEngine class for scripting tests."""
     return MontyEngine

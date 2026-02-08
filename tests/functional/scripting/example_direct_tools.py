@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """
-Example demonstrating direct tool callable functionality in Starlark scripts.
+Example demonstrating direct tool callable functionality in scripts.
 
-This example shows how tools can be called directly as functions in Starlark,
+This example shows how tools can be called directly as functions in scripts,
 making the scripting experience more natural and intuitive.
 """
 
@@ -10,7 +10,7 @@ import asyncio
 import logging
 from typing import Any
 
-from family_assistant.scripting.engine import StarlarkEngine
+from family_assistant.scripting.monty_engine import MontyEngine
 from family_assistant.storage import init_db
 from family_assistant.storage.base import create_engine_with_sqlite_optimizations
 from family_assistant.storage.context import DatabaseContext
@@ -129,7 +129,7 @@ async def main() -> None:
         )
 
         # Create engine
-        engine = StarlarkEngine(tools_provider=tools_provider)
+        engine = MontyEngine(tools_provider=tools_provider)
 
         # Example 1: Direct tool calls
         print("\n=== Example 1: Direct Tool Calls ===")

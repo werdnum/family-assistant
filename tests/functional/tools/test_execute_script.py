@@ -158,12 +158,12 @@ tools = tools_list()
         result = await execute_script_tool(
             ctx,
             """
-echo(message="Hello from Starlark!")
+echo(message="Hello from script!")
 """,
         )
         assert result.text is not None
 
-        assert "Echo: Hello from Starlark!" in result.text
+        assert "Echo: Hello from script!" in result.text
 
 
 @pytest.mark.asyncio
@@ -349,7 +349,7 @@ async def test_script_attachment_composition_dict_format(
     Test passing attachment from one tool to another via script (dict format).
 
     This reproduces the bug where scripts pass dict-based attachments
-    (per design doc: scripts return dicts due to starlark-pyo3 JSON constraint)
+    (per design doc: scripts return dicts due to JSON constraint)
     but process_attachment_arguments doesn't handle them, causing AttributeError.
     """
     async with DatabaseContext(engine=db_engine) as db:

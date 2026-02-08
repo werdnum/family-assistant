@@ -314,7 +314,7 @@ snapshot_result = get_camera_snapshot()
 # Extract attachment ID from the result dict
 # Tools that return text + attachments return: {"text": "...", "attachments": [{...}, ...]}
 # Tools that return single attachment with no text return: {"id": uuid, "mime_type": ..., ...}
-# Note: Using type() comparison because Starlark doesn't have isinstance()
+# Note: Using type() comparison because the scripting sandbox doesn't have isinstance()
 if type(snapshot_result) == type({}):
     if "id" in snapshot_result:
         # Single attachment, no text

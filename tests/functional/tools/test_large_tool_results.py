@@ -220,8 +220,8 @@ async def test_read_text_attachment_tool(
 
 
 @pytest.mark.asyncio
-async def test_starlark_attachment_read(db_engine: AsyncEngine, tmp_path: Path) -> None:
-    """Test reading attachment content from Starlark script."""
+async def test_script_attachment_read(db_engine: AsyncEngine, tmp_path: Path) -> None:
+    """Test reading attachment content from script."""
     storage_path = tmp_path / "attachments"
     storage_path.mkdir()
     attachment_registry = AttachmentRegistry(
@@ -230,7 +230,7 @@ async def test_starlark_attachment_read(db_engine: AsyncEngine, tmp_path: Path) 
 
     async with DatabaseContext(engine=db_engine) as db:
         # Create a text attachment
-        text_content = "Hello from Starlark attachment!"
+        text_content = "Hello from script attachment!"
         reg_metadata = await attachment_registry.store_and_register_tool_attachment(
             file_content=text_content.encode("utf-8"),
             filename="hello.txt",
@@ -265,11 +265,11 @@ content
 
 
 @pytest.mark.asyncio
-async def test_starlark_attachment_read_same_transaction(
+async def test_script_attachment_read_same_transaction(
     db_engine: AsyncEngine, tmp_path: Path
 ) -> None:
     """
-    Test reading attachment from Starlark when created in the same transaction.
+    Test reading attachment from script when created in the same transaction.
 
     This test exposes a transaction isolation bug: when an attachment is created
     within a transaction (like during tool processing), and then a script tries
@@ -321,7 +321,7 @@ async def test_starlark_attachment_read_same_transaction(
             camera_backend=None,
         )
 
-        # Try to read the attachment from a Starlark script
+        # Try to read the attachment from a script
         # This should work but currently fails due to transaction isolation
         script = f"""
 content = attachment_read('{att_id}')

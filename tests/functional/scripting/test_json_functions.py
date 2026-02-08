@@ -20,7 +20,7 @@ encoded
         assert result == '{"name": "Alice", "age": 30, "items": [1, 2, 3]}'
 
         script2 = """
-json_str = '{"name": "Bob", "count": 42, "tags": ["python", "starlark"]}'
+json_str = '{"name": "Bob", "count": 42, "tags": ["python", "monty"]}'
 decoded = json_decode(json_str)
 decoded["name"] + " has " + str(decoded["count"]) + " items"
 """

@@ -1,7 +1,7 @@
 """
-Tests for direct tool callable functionality in Starlark scripts.
+Tests for direct tool callable functionality in scripts.
 
-This module tests that tools can be called directly as functions in Starlark,
+This module tests that tools can be called directly as functions in scripts,
 without going through the tools_execute() wrapper.
 """
 
@@ -10,7 +10,8 @@ from typing import Any
 import pytest
 from sqlalchemy.ext.asyncio import AsyncEngine
 
-from family_assistant.scripting.engine import StarlarkConfig, StarlarkEngine
+from family_assistant.scripting.config import ScriptConfig
+from family_assistant.scripting.monty_engine import MontyEngine
 from family_assistant.storage.context import DatabaseContext
 from family_assistant.tools.types import ToolDefinition, ToolExecutionContext
 
@@ -203,7 +204,7 @@ async def test_direct_tool_callable(db_engine: AsyncEngine) -> None:
         )
 
         # Create engine
-        engine = StarlarkEngine(tools_provider=tools_provider)
+        engine = MontyEngine(tools_provider=tools_provider)
 
         # Test script that calls tools directly
         script = """
@@ -255,7 +256,7 @@ async def test_tool_prefix_fallback(db_engine: AsyncEngine) -> None:
         )
 
         # Create engine
-        engine = StarlarkEngine(tools_provider=tools_provider)
+        engine = MontyEngine(tools_provider=tools_provider)
 
         # Test script that calls tools with tool_ prefix
         script = """
@@ -306,8 +307,8 @@ async def test_direct_callable_with_security(db_engine: AsyncEngine) -> None:
         )
 
         # Create engine with only echo allowed
-        config = StarlarkConfig(allowed_tools={"echo"})
-        engine = StarlarkEngine(tools_provider=tools_provider, config=config)
+        config = ScriptConfig(allowed_tools={"echo"})
+        engine = MontyEngine(tools_provider=tools_provider, config=config)
 
         # Test script that tries to call allowed and disallowed tools
         script = """
@@ -385,7 +386,7 @@ async def test_direct_callable_validates_parameters(db_engine: AsyncEngine) -> N
         )
 
         # Create engine
-        engine = StarlarkEngine(tools_provider=tools_provider)
+        engine = MontyEngine(tools_provider=tools_provider)
 
         # Test script that checks parameter validation
         script = """
@@ -429,7 +430,7 @@ async def test_tools_api_still_works(db_engine: AsyncEngine) -> None:
         )
 
         # Create engine
-        engine = StarlarkEngine(tools_provider=tools_provider)
+        engine = MontyEngine(tools_provider=tools_provider)
 
         # Test script that uses both old and new APIs
         script = """
@@ -487,8 +488,8 @@ async def test_no_tools_when_denied(db_engine: AsyncEngine) -> None:
         )
 
         # Create engine with all tools denied
-        config = StarlarkConfig(deny_all_tools=True)
-        engine = StarlarkEngine(tools_provider=tools_provider, config=config)
+        config = ScriptConfig(deny_all_tools=True)
+        engine = MontyEngine(tools_provider=tools_provider, config=config)
 
         # Test script that checks if tools exist
         script = """
@@ -499,7 +500,7 @@ add_numbers_exists = False
 # Check tools list  
 available_tools = tools_list()
 
-# Since we can't use dir() or hasattr in Starlark, we just verify the tools list is empty
+# Just verify the tools list is empty
 # and trust that if no tools are in the list, the functions won't be created
 
 results = {

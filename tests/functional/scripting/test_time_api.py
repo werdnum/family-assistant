@@ -1,4 +1,4 @@
-"""Tests for the Starlark time API."""
+"""Tests for the scripting time API."""
 
 from datetime import UTC, datetime
 
