@@ -8,7 +8,7 @@ from typing import Any
 
 from family_assistant.scripting import ScriptExecutionError, ScriptSyntaxError
 from family_assistant.scripting.config import ScriptConfig
-from family_assistant.scripting.engine import StarlarkEngine
+from family_assistant.scripting.monty_engine import MontyEngine
 
 logger = logging.getLogger(__name__)
 
@@ -26,7 +26,7 @@ class EventConditionEvaluator:
                    script_execution_timeout_ms and script_size_limit_bytes
         """
         # Restricted config for event conditions
-        # Note: We intentionally create a new StarlarkEngine instance here rather than
+        # Note: We intentionally create a new MontyEngine instance here rather than
         # using dependency injection to ensure complete isolation and security.
         # This engine is configured with maximum restrictions and no access to tools.
         timeout_ms = (config or {}).get("script_execution_timeout_ms", 100)
@@ -37,7 +37,7 @@ class EventConditionEvaluator:
             deny_all_tools=True,
             disable_apis=True,  # No JSON, time, or other APIs for security
         )
-        self.engine = StarlarkEngine(tools_provider=None, config=self.config)
+        self.engine = MontyEngine(tools_provider=None, config=self.config)
 
     # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
     async def evaluate_condition(self, script: str, event_data: dict[str, Any]) -> bool:

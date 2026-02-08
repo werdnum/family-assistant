@@ -127,9 +127,7 @@ class MontyEngine:
             )
 
             limits = self._build_resource_limits()
-            print_cb = (
-                self._create_print_callback() if self.config.enable_print else None
-            )
+            print_cb = self._create_print_callback()
             loop = asyncio.get_running_loop()
 
             # Start execution in thread pool (Monty execution is CPU-bound)
@@ -690,10 +688,20 @@ class MontyEngine:
     def _create_print_callback(
         self,
     ) -> Callable[[str, str], None]:
-        """Create a print callback that logs output."""
+        """Create a print callback that logs output.
+
+        When enable_print is False, the callback raises an error to prevent
+        print() usage (matching StarlarkEngine's behavior where print is
+        simply not registered as a builtin).
+        """
+        if not self.config.enable_print:
+
+            def deny_print(stream: str, text: str) -> None:
+                raise RuntimeError("print() is not available in this context")
+
+            return deny_print
 
         def print_callback(stream: str, text: str) -> None:
-            # Filter out bare newlines from print()
             stripped = text.rstrip("\n")
             if stripped:
                 logger.info("Script output: %s", stripped)

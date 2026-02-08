@@ -53,7 +53,7 @@ async def test_execute_script_without_tools_provider(db_engine: AsyncEngine) -> 
         assert "Error:" in result.text
         assert result.text is not None
 
-        assert "not found" in result.text
+        assert "not found" in result.text or "not defined" in result.text
 
 
 @pytest.mark.asyncio

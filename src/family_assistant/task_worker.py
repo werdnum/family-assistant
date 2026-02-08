@@ -25,9 +25,9 @@ from sqlalchemy.ext.asyncio import AsyncEngine
 from family_assistant.embeddings import EmbeddingGenerator
 from family_assistant.interfaces import ChatInterface  # Import ChatInterface
 from family_assistant.scripting import (
+    MontyEngine,
     ScriptError,
     ScriptTimeoutError,
-    StarlarkEngine,
 )
 from family_assistant.scripting.config import ScriptConfig
 from family_assistant.tools.types import CalendarConfig
@@ -1348,7 +1348,7 @@ async def handle_script_execution(
         enable_debug=False,  # Could be enabled based on config
     )
 
-    engine = StarlarkEngine(
+    engine = MontyEngine(
         tools_provider=tools_provider,
         config=engine_config,
     )

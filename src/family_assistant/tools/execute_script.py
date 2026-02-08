@@ -13,12 +13,12 @@ from typing import TYPE_CHECKING, Any
 from family_assistant.scripting.apis.attachments import ScriptAttachment
 from family_assistant.scripting.apis.tools import ScriptToolResult
 from family_assistant.scripting.config import ScriptConfig
-from family_assistant.scripting.engine import StarlarkEngine
 from family_assistant.scripting.errors import (
     ScriptExecutionError,
     ScriptSyntaxError,
     ScriptTimeoutError,
 )
+from family_assistant.scripting.monty_engine import MontyEngine
 from family_assistant.tools.types import ToolAttachment, ToolDefinition, ToolResult
 
 if TYPE_CHECKING:
@@ -171,7 +171,7 @@ async def execute_script_tool(
             )
 
         # Create the engine with the tools provider (may be None)
-        engine = StarlarkEngine(
+        engine = MontyEngine(
             tools_provider=tools_provider,
             config=config,
         )
