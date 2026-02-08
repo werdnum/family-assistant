@@ -763,8 +763,9 @@ class TaskWorker:
                 embedding_generator=self.embedding_generator,
                 indexing_source=self.indexing_source,  # Pass the indexing source
                 visibility_grants=(
-                    self.processing_service.service_config.visibility_grants
+                    set(self.processing_service.service_config.visibility_grants)
                     if self.processing_service
+                    and self.processing_service.service_config.visibility_grants
                     else None
                 ),
                 default_note_visibility_labels=(
