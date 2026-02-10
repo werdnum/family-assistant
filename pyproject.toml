@@ -343,6 +343,7 @@ mutate_only_covered_lines = false
 pytest_add_cli_args_test_selection = [
     "tests/unit/",
     "tests/functional/",
+    "--ignore=tests/functional/web/",
     "-m", "not (postgres or integration or llm_integration or playwright or gemini_live)",
 ]
 
@@ -355,6 +356,16 @@ pytest_add_cli_args = [
     "-p", "no:pytest_alembic",
     "-n0",
     "-o", "addopts=",
+    # Deselect timing-sensitive tests that are flaky under mutmut's in-process execution
+    "--deselect=tests/functional/home_assistant/test_reconnection.py::test_health_check_triggers_reconnection",
+]
+
+# Exclude files where mutmut's sync trampoline wrapper breaks async function detection.
+# FastAPI/Starlette uses asyncio.iscoroutinefunction() on Depends() parameters; the sync
+# trampoline makes async deps appear synchronous, causing "coroutine never awaited" errors.
+do_not_mutate = [
+    "src/family_assistant/web/auth.py",
+    "src/family_assistant/web/dependencies.py",
 ]
 
 also_copy = [
