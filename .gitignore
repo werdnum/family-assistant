@@ -51,3 +51,9 @@ frontend/dev-dist
 
 # MonkeyType
 monkeytype.sqlite3
+
+# Mutation testing (mutmut)
+.mutmut-cache
+mutants/
+html/
+coverage_test_mapping.json
