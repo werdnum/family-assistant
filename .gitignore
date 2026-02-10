@@ -56,4 +56,5 @@ monkeytype.sqlite3
 .mutmut-cache
 mutants/
 html/
+mutmut-summary.json
 coverage_test_mapping.json

@@ -1,0 +1,283 @@
+name: Mutation Testing
+on:
+  schedule:
+    - cron: '0 4 * * 0' # Weekly Sunday 4am UTC
+  workflow_dispatch:
+    inputs:
+      modules:
+        description: 'Comma-separated module list (empty = all)'
+        default: ''
+      max_children:
+        description: 'Max parallel mutant workers per job'
+        default: '2'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'src/family_assistant/**/*.py'
+
+concurrency:
+  group: mutation-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_PREFIX: ${{ github.repository }}
+
+permissions:
+  contents: read
+  packages: write
+  pull-requests: write
+
+jobs:
+  prepare:
+    runs-on: ubuntu-latest
+    outputs:
+      image-tag: ${{ steps.tag.outputs.tag }}
+      image-name: ${{ steps.tag.outputs.image }}
+      is-pr: ${{ steps.detect.outputs.is_pr }}
+      matrix: ${{ steps.matrix.outputs.matrix }}
+    steps:
+      - name: Generate image tag
+        id: tag
+        run: |
+          TAG="ci-${{ github.run_id }}-${{ github.run_attempt }}"
+          echo "tag=${TAG}" >> $GITHUB_OUTPUT
+          echo "image=${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}:devcontainer-${TAG}" >> $GITHUB_OUTPUT
+
+      - name: Detect trigger type
+        id: detect
+        run: |
+          if [[ "${{ github.event_name }}" == "pull_request" ]]; then
+            echo "is_pr=true" >> $GITHUB_OUTPUT
+          else
+            echo "is_pr=false" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Build module matrix
+        id: matrix
+        run: |
+          # For PRs, we use a single job with --changed
+          if [[ "${{ github.event_name }}" == "pull_request" ]]; then
+            echo 'matrix={"include":[{"module":"changed","narrow":"","pattern":""}]}' >> $GITHUB_OUTPUT
+            exit 0
+          fi
+
+          # For scheduled/dispatch: build matrix from module list
+          MODULES_INPUT="${{ github.event.inputs.modules || '' }}"
+
+          if [[ -n "$MODULES_INPUT" ]]; then
+            # User-specified modules
+            MATRIX='{"include":['
+            FIRST=true
+            IFS=',' read -ra MODS <<< "$MODULES_INPUT"
+            for mod in "${MODS[@]}"; do
+              mod=$(echo "$mod" | xargs)  # trim whitespace
+              if [[ "$FIRST" == "true" ]]; then FIRST=false; else MATRIX+=','; fi
+              MATRIX+="{\"module\":\"$mod\",\"narrow\":\"family_assistant.$mod\",\"pattern\":\"family_assistant.$mod.*\"}"
+            done
+            MATRIX+=']}'
+          else
+            # All modules
+            MATRIX='{"include":['
+            MATRIX+='{"module":"tools","narrow":"family_assistant.tools","pattern":"family_assistant.tools.*"},'
+            MATRIX+='{"module":"storage","narrow":"family_assistant.storage","pattern":"family_assistant.storage.*"},'
+            MATRIX+='{"module":"web","narrow":"family_assistant.web","pattern":"family_assistant.web.*"},'
+            MATRIX+='{"module":"llm","narrow":"family_assistant.llm","pattern":"family_assistant.llm.*"},'
+            MATRIX+='{"module":"indexing","narrow":"family_assistant.indexing","pattern":"family_assistant.indexing.*"},'
+            MATRIX+='{"module":"services","narrow":"family_assistant.services","pattern":"family_assistant.services.*"},'
+            MATRIX+='{"module":"telegram","narrow":"family_assistant.telegram","pattern":"family_assistant.telegram.*"},'
+            MATRIX+='{"module":"events","narrow":"family_assistant.events","pattern":"family_assistant.events.*"},'
+            MATRIX+='{"module":"scripting","narrow":"family_assistant.scripting","pattern":"family_assistant.scripting.*"},'
+            MATRIX+='{"module":"camera","narrow":"family_assistant.camera","pattern":"family_assistant.camera.*"},'
+            MATRIX+='{"module":"utils","narrow":"family_assistant.utils","pattern":"family_assistant.utils.*"},'
+            # Root module: files directly under src/family_assistant/ (not subpackages)
+            MATRIX+='{"module":"root","narrow":"family_assistant","pattern":"family_assistant.assistant.*,family_assistant.processing.*,family_assistant.config_loader.*,family_assistant.config_models.*,family_assistant.config_sources.*,family_assistant.context_providers.*,family_assistant.embeddings.*,family_assistant.home_assistant_shared.*,family_assistant.home_assistant_wrapper.*,family_assistant.interfaces.*,family_assistant.similarity.*,family_assistant.task_worker.*,family_assistant.web_server.*,family_assistant.actions.*,family_assistant.calendar_integration.*"}'
+            MATRIX+=']}'
+          fi
+
+          echo "matrix=$MATRIX" >> $GITHUB_OUTPUT
+
+  build-ci-container:
+    needs: [prepare]
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Free up disk space
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL
+          sudo docker image prune --all --force
+      - name: Checkout code
+        uses: actions/checkout@v6.0.2
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+      - name: Log in to Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Build CI devcontainer image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: .devcontainer/Dockerfile.ci
+          platforms: linux/amd64
+          push: true
+          tags: ${{ needs.prepare.outputs.image-name }}
+          cache-from: |
+            type=registry,ref=${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}:devcontainer-main
+            type=registry,ref=${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}:cache-devcontainer-dev
+            type=registry,ref=${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}:cache-devcontainer-ci
+          cache-to: |
+            type=registry,ref=${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}:cache-devcontainer-ci,mode=max
+
+  mutate-module:
+    needs: [prepare, build-ci-container]
+    if: needs.prepare.outputs.is-pr == 'false'
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJson(needs.prepare.outputs.matrix) }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v6.0.2
+      - name: Log in to Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Run mutation testing for ${{ matrix.module }}
+        run: |
+          MAX_CHILDREN="${{ github.event.inputs.max_children || '2' }}"
+          docker run \
+            --rm \
+            -v ${{ github.workspace }}:/workspace/main \
+            -e CLAUDE_PROJECT_REPO="" \
+            -e UV_CACHE_DIR=/opt/uv-cache \
+            -e CI=true \
+            -u claude \
+            ${{ needs.prepare.outputs.image-name }} \
+            bash -c 'cd /workspace/main && \
+              echo "Setting up Python environment..." && \
+              uv venv .venv && \
+              . .venv/bin/activate && \
+              uv sync --extra dev && \
+              scripts/run-mutmut.sh \
+                --ci-summary \
+                --narrow ${{ matrix.narrow }} \
+                --max-children '"$MAX_CHILDREN"' \
+                "${{ matrix.pattern }}" || true'
+      - name: Upload mutation results
+        uses: actions/upload-artifact@v6
+        if: always()
+        with:
+          name: mutmut-results-${{ matrix.module }}
+          path: mutmut-summary.json
+          retention-days: 30
+          if-no-files-found: warn
+
+  mutate-pr:
+    needs: [prepare, build-ci-container]
+    if: needs.prepare.outputs.is-pr == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v6.0.2
+        with:
+          fetch-depth: 0 # Need full history for git diff
+      - name: Log in to Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Run mutation testing on changed files
+        run: |
+          docker run \
+            --rm \
+            -v ${{ github.workspace }}:/workspace/main \
+            -e CLAUDE_PROJECT_REPO="" \
+            -e UV_CACHE_DIR=/opt/uv-cache \
+            -e CI=true \
+            -u claude \
+            ${{ needs.prepare.outputs.image-name }} \
+            bash -c 'cd /workspace/main && \
+              echo "Setting up Python environment..." && \
+              uv venv .venv && \
+              . .venv/bin/activate && \
+              uv sync --extra dev && \
+              scripts/run-mutmut.sh \
+                --ci-summary \
+                --changed origin/${{ github.base_ref }} \
+                --max-children 2 || true'
+      - name: Upload mutation results
+        uses: actions/upload-artifact@v6
+        if: always()
+        with:
+          name: mutmut-results-pr
+          path: mutmut-summary.json
+          retention-days: 30
+          if-no-files-found: warn
+
+  summarize:
+    needs: [prepare, mutate-module, mutate-pr]
+    if: always() && (needs.mutate-module.result == 'success' || needs.mutate-module.result == 'failure' || needs.mutate-pr.result == 'success' || needs.mutate-pr.result == 'failure')
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v6.0.2
+      - name: Download all mutation results
+        uses: actions/download-artifact@v6
+        with:
+          pattern: mutmut-results-*
+          path: mutation-artifacts/
+      - name: Generate summary
+        id: summary
+        run: |
+          chmod +x scripts/mutmut-summarize.sh
+          SUMMARY=$(scripts/mutmut-summarize.sh mutation-artifacts/)
+          echo "$SUMMARY" >> $GITHUB_STEP_SUMMARY
+          # Save for PR comment
+          echo "$SUMMARY" > mutation-summary.md
+      - name: Comment on PR
+        if: needs.prepare.outputs.is-pr == 'true'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const summary = fs.readFileSync('mutation-summary.md', 'utf8');
+            const prNumber = context.payload.pull_request?.number;
+            if (!prNumber) return;
+
+            // Find existing comment to update
+            const comments = await github.rest.issues.listComments({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: prNumber,
+            });
+            const botComment = comments.data.find(c =>
+              c.user.type === 'Bot' && c.body.includes('## Mutation Testing Results')
+            );
+
+            const body = summary + '\n\n_Updated: ' + new Date().toISOString() + '_';
+
+            if (botComment) {
+              await github.rest.issues.updateComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                comment_id: botComment.id,
+                body: body,
+              });
+            } else {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: prNumber,
+                body: body,
+              });
+            }
+

@@ -335,10 +335,14 @@ shell = "mutmut results"
 help = "Generate mutation testing HTML report"
 shell = "mutmut html && echo 'Report generated: html/index.html'"
 
+[tool.poe.tasks.mutmut-changed]
+help = "Run mutation testing on files changed vs main"
+cmd = "scripts/run-mutmut.sh --changed origin/main"
+
 [tool.mutmut]
 paths_to_mutate = ["src/family_assistant/"]
 tests_dir = []
-mutate_only_covered_lines = false
+mutate_only_covered_lines = true
 
 pytest_add_cli_args_test_selection = [
     "tests/unit/",
