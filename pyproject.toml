@@ -360,6 +360,8 @@ pytest_add_cli_args = [
 also_copy = [
     "defaults.yaml",
     "prompts.yaml",
+    "alembic.ini",
+    "alembic/",
 ]
 
 [tool.ruff.lint.isort]
