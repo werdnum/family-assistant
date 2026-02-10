@@ -54,7 +54,7 @@ gemini_live_config:
   # Voice configuration
   voice:
     # Prebuilt voice name (e.g., "Puck", "Kore", "Charon", "Fenrir", "Aoede")
-    name: "Puck"
+    name: "Autonoe"
 
   # Session limits
   session:
@@ -86,7 +86,7 @@ gemini_live_config:
   # Advanced features (require v1alpha API)
   # Affective dialog allows the model to adapt response style to user's tone
   affective_dialog:
-    enabled: false
+    enabled: true
 
   # Proactivity allows the model to proactively decline irrelevant responses
   proactivity:
