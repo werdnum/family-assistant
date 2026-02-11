@@ -112,6 +112,9 @@ gemini_live_config:
       end_of_speech_sensitivity: "DEFAULT"
       # Longer silence duration to account for telephone latency
       silence_duration_ms: 1000
+    # Pre-recorded greeting played immediately when answering the call
+    greeting:
+      enabled: true
 
 # Configuration for the document indexing pipeline
 indexing_pipeline_config:

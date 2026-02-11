@@ -304,12 +304,21 @@ class TelephoneVADOverrides(BaseModel):
     silence_duration_ms: int | None = 1000
 
 
+class TelephoneGreetingConfig(BaseModel):
+    """Configuration for pre-recorded greeting played on call answer."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    enabled: bool = True
+
+
 class TelephoneOverrides(BaseModel):
     """Telephone-specific overrides for Gemini Live API."""
 
     model_config = ConfigDict(extra="forbid")
 
     vad: TelephoneVADOverrides = Field(default_factory=TelephoneVADOverrides)
+    greeting: TelephoneGreetingConfig = Field(default_factory=TelephoneGreetingConfig)
 
 
 class GeminiLiveConfig(BaseModel):

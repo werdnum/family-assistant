@@ -58,6 +58,12 @@ class GeminiLiveThinkingConfig(BaseModel):
     include_thoughts: bool = False
 
 
+class GeminiLiveGreetingConfig(BaseModel):
+    """Configuration for pre-recorded greeting played on call answer."""
+
+    enabled: bool = True
+
+
 class GeminiLiveConfig(BaseModel):
     """Full Gemini Live Voice API configuration."""
 
@@ -71,6 +77,7 @@ class GeminiLiveConfig(BaseModel):
     )
     proactivity: GeminiLiveProactivityConfig = GeminiLiveProactivityConfig()
     thinking: GeminiLiveThinkingConfig = GeminiLiveThinkingConfig()
+    greeting: GeminiLiveGreetingConfig = GeminiLiveGreetingConfig()
 
     @classmethod
     # ast-grep-ignore: no-dict-any - Config dict from YAML has dynamic nested structure
@@ -91,6 +98,7 @@ class GeminiLiveConfig(BaseModel):
                 **config_dict.get("proactivity", {})
             ),
             thinking=GeminiLiveThinkingConfig(**config_dict.get("thinking", {})),
+            greeting=GeminiLiveGreetingConfig(**config_dict.get("greeting", {})),
         )
 
     @classmethod
@@ -151,6 +159,15 @@ class GeminiLiveConfig(BaseModel):
                         voice_dict[key] = value
                 base_config = base_config.model_copy(
                     update={"voice": GeminiLiveVoiceConfig(**voice_dict)}
+                )
+
+            if "greeting" in overrides:
+                greeting_dict = base_config.greeting.model_dump()
+                for key, value in overrides["greeting"].items():
+                    if value is not None:
+                        greeting_dict[key] = value
+                base_config = base_config.model_copy(
+                    update={"greeting": GeminiLiveGreetingConfig(**greeting_dict)}
                 )
 
         return base_config
