@@ -19,6 +19,7 @@ import pathlib
 import secrets
 import time
 import uuid
+import wave
 from array import array
 from datetime import datetime
 from typing import IO, TYPE_CHECKING, Annotated, Protocol, TypeAlias, cast
@@ -203,6 +204,8 @@ class AsteriskLiveHandler:
         # Stateful resamplers for bidirectional audio
         self.asterisk_to_gemini_resampler: StatefulResampler | None = None
         self.gemini_to_asterisk_resampler: StatefulResampler | None = None
+        # Buffer for caller audio received before Gemini session is established
+        self._audio_buffer_pre_gemini: list[bytes] = []
         # Allow media to flow by default until we receive an XOFF from Asterisk
         self.media_send_allowed.set()
         self._debug_log(
@@ -509,26 +512,60 @@ class AsteriskLiveHandler:
                 proactivity=proactivity,
             )
 
-            # Use the injected client to connect
-            # Note: Caller hears ringing during this connection setup (~5-10 seconds)
+            # Answer immediately so the caller stops hearing ringing.
+            # Pre-canned greeting plays while Gemini connects (~200ms).
+            await self._answer_call()
+            await self._trace_event(
+                "lifecycle",
+                "fa->asterisk",
+                event="answered_early",
+            )
+
+            # Start pre-canned greeting playback as a background task.
+            # Store reference to prevent garbage collection of the task.
+            self._greeting_task: asyncio.Task[None] | None = None
+            if self.gemini_live_config.greeting.enabled:
+                self._greeting_task = asyncio.create_task(
+                    self._send_precanned_greeting()
+                )
+
+            # Connect to Gemini (caller hears "Hello!" during this ~200ms)
             async with self.client.connect(config=config) as session:
                 self.gemini_session = session
                 logger.info("Connected to Gemini Live")
-
-                # Now that Gemini is ready, answer the call
-                # This stops the ringing and connects audio
-                await self._answer_call()
                 await self._trace_event(
                     "lifecycle",
                     "fa->asterisk",
-                    event="gemini_connected_answered",
+                    event="gemini_connected",
                 )
+
+                # Wait for greeting to finish before Gemini starts sending
+                # audio — both write to the same websocket and interleaving
+                # causes choppy playback.
+                if self._greeting_task is not None:
+                    await self._greeting_task
+                    self._greeting_task = None
+
+                # Flush any caller audio buffered before Gemini connected
+                if self._audio_buffer_pre_gemini:
+                    logger.info(
+                        f"Flushing {len(self._audio_buffer_pre_gemini)} buffered "
+                        f"audio chunks to Gemini"
+                    )
+                    for chunk in self._audio_buffer_pre_gemini:
+                        audio_to_send = chunk
+                        if self.asterisk_to_gemini_resampler:
+                            audio_to_send = self.asterisk_to_gemini_resampler.resample(
+                                chunk
+                            )
+                        audio_blob = Blob(
+                            data=audio_to_send, mime_type="audio/pcm;rate=16000"
+                        )
+                        await self.gemini_session.send_realtime_input(audio=audio_blob)
+                    self._audio_buffer_pre_gemini.clear()
 
                 # Start task to receive from Gemini and send to Asterisk
                 self.receive_task = asyncio.create_task(self._receive_from_gemini())
-
-                # Note: We don't trigger a greeting here - let natural voice
-                # conversation flow. Caller speaks first, Gemini responds.
 
                 try:
                     while True:
@@ -720,8 +757,9 @@ class AsteriskLiveHandler:
     async def _answer_call(self) -> None:
         """Send ANSWER command to Asterisk to pick up the call.
 
-        This should be called after Gemini is ready, so the caller stops hearing
-        ringing and can immediately start conversing.
+        Called early (before Gemini connects) so the caller stops hearing
+        ringing immediately. A pre-recorded greeting plays while Gemini
+        connects in the background.
         """
         # Send as plain text - Asterisk accepts both plain text and JSON
         await self.websocket.send_text("ANSWER")
@@ -754,10 +792,79 @@ class AsteriskLiveHandler:
         )
         logger.info("Sent greeting trigger to Gemini")
 
+    async def _send_precanned_greeting(self) -> None:
+        """Play a pre-recorded greeting WAV file directly to Asterisk.
+
+        Loads greeting.wav (16kHz mono 16-bit PCM), resamples to Asterisk's
+        negotiated sample rate if needed, and sends in frame-sized chunks
+        with pacing to match real-time playback.
+        """
+        greeting_path = (
+            pathlib.Path(__file__).parent.parent / "resources" / "greeting.wav"
+        )
+        if not greeting_path.exists():
+            logger.warning(f"Greeting file not found: {greeting_path}")
+            return
+
+        try:
+            with wave.open(str(greeting_path), "rb") as wf:
+                wav_rate = wf.getframerate()
+                wav_channels = wf.getnchannels()
+                wav_sampwidth = wf.getsampwidth()
+                pcm_data = wf.readframes(wf.getnframes())
+
+            if wav_channels != 1 or wav_sampwidth != 2:
+                logger.warning(
+                    f"Greeting WAV has unexpected format: "
+                    f"channels={wav_channels} sampwidth={wav_sampwidth}"
+                )
+                return
+
+            # Resample to Asterisk's negotiated rate if needed
+            if wav_rate != self.sample_rate:
+                resampler = StatefulResampler(wav_rate, self.sample_rate)
+                pcm_data = resampler.resample(pcm_data)
+                logger.info(f"Resampled greeting: {wav_rate}Hz -> {self.sample_rate}Hz")
+
+            # Send in frame-sized chunks with real-time pacing
+            frame_size = self.send_frame_size
+            frame_duration_s = self.send_frame_duration_ms / 1000.0
+            offset = 0
+            frames_sent = 0
+
+            while offset < len(pcm_data):
+                await self.media_send_allowed.wait()
+                chunk = pcm_data[offset : offset + frame_size]
+                offset += frame_size
+                await self.websocket.send_bytes(
+                    chunk if isinstance(chunk, bytes) else bytes(chunk)
+                )
+                frames_sent += 1
+                if offset < len(pcm_data) and frame_duration_s > 0:
+                    await asyncio.sleep(frame_duration_s)
+
+            logger.info(
+                f"Pre-canned greeting sent: {frames_sent} frames, {len(pcm_data)} bytes"
+            )
+            await self._trace_event(
+                "lifecycle",
+                "fa->asterisk",
+                event="precanned_greeting_sent",
+                frames=frames_sent,
+                total_bytes=len(pcm_data),
+            )
+
+        except Exception:
+            logger.exception("Error sending pre-canned greeting")
+
     async def _handle_media_message(self, audio_data: bytes) -> None:
         """Handle media (audio) from Asterisk."""
         if not self.gemini_session:
-            logger.warning("Received media but no Gemini session active")
+            self._audio_buffer_pre_gemini.append(audio_data)
+            logger.debug(
+                f"Buffered {len(audio_data)} bytes pre-Gemini "
+                f"({len(self._audio_buffer_pre_gemini)} chunks)"
+            )
             return
 
         logger.debug(
@@ -999,7 +1106,22 @@ class AsteriskLiveHandler:
                                         self._pacing_interval_max_ms = 0.0
                                         self._pacing_samples = 0
                                         self._pacing_underflows = 0
-                                self._pacing_last_send_ts = now
+                                # Pace to real-time: wait if we'd send faster than
+                                # the frame duration. This prevents bursts when Gemini
+                                # delivers audio faster than real-time.
+                                if self._pacing_last_send_ts:
+                                    elapsed_ms = (
+                                        time.monotonic() - self._pacing_last_send_ts
+                                    ) * 1000.0
+                                    delay_ms = self.send_frame_duration_ms - elapsed_ms
+                                    if delay_ms > 0:
+                                        await asyncio.sleep(delay_ms / 1000.0)
+                                        if (
+                                            len(self.audio_buffer)
+                                            < self.send_frame_size
+                                        ):
+                                            self._pacing_underflows += 1
+                                self._pacing_last_send_ts = time.monotonic()
                                 await self._trace_event(
                                     "media",
                                     "fa->asterisk",
@@ -1009,14 +1131,6 @@ class AsteriskLiveHandler:
                                     buffer_len=len(self.audio_buffer),
                                 )
                                 await self.websocket.send_bytes(bytes(chunk))
-                                if len(self.audio_buffer) < self.send_frame_size:
-                                    elapsed_ms = (
-                                        time.monotonic() - self._pacing_last_send_ts
-                                    ) * 1000.0
-                                    delay_ms = self.send_frame_duration_ms - elapsed_ms
-                                    if delay_ms > 0:
-                                        self._pacing_underflows += 1
-                                        await asyncio.sleep(delay_ms / 1000.0)
 
         except asyncio.CancelledError:
             pass
