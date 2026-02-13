@@ -11,13 +11,30 @@ skill loading, skill catalog in the system prompt, and `get_note` access to file
 This covers the deferred items from Phases 1-2 of the design doc:
 
 - **Frontmatter parser**: Parse YAML frontmatter from markdown content
+- **DB-based skills**: DB notes with frontmatter (`name` + `description`) are detected as skills and
+  shown in the catalog instead of the regular notes section
 - **File-based skill loading**: Load `.md` files with frontmatter from directories
-- **Skill catalog in system prompt**: Show available skills to the LLM
+- **Skill catalog in system prompt**: Show available skills (both DB and file-based) to the LLM
 - **`get_note` for file-based skills**: LLM can load skill content on demand
 - **Configuration**: Skill directory paths in config
 - **Built-in skills**: A few initial skill files shipped with the app
 
 Explicitly **not** in scope: SkillRouter/preflight routing (Phase 4), Web UI changes (Phase 5).
+
+### DB-Based Skills
+
+Per the design doc: "A note is detected as a skill when its content (DB note) or frontmatter
+(file-based note) contains both `name` and `description` fields."
+
+DB notes with skill frontmatter:
+
+- Appear in the **skill catalog** (metadata only), not in the regular notes section
+- `include_in_prompt` is ignored for skills — progressive disclosure is the default
+- Full content is loadable via `get_note` (already works, no change needed)
+- Users create DB skills via `add_or_update_note` with frontmatter in the content
+
+This means `NotesContextProvider` must parse frontmatter on all DB notes to partition them into
+regular notes vs skills before formatting.
 
 ## Design Decisions
 
@@ -142,7 +159,18 @@ skills_config: SkillsConfig = Field(default_factory=SkillsConfig)
 
 ### Milestone 5: Extend NotesContextProvider
 
-Add skill catalog section to the system prompt output. After regular notes, append:
+Partition DB notes into regular notes vs skills, and add a unified skill catalog section.
+
+The new flow in `get_context_fragments()`:
+
+1. Get all accessible DB notes (both prompt and excluded)
+2. Parse frontmatter on each to detect skills (has `name` + `description`)
+3. **Regular notes** with `include_in_prompt=True` → Notes section (as today)
+4. **DB skills** → Skill Catalog section (metadata only, regardless of `include_in_prompt`)
+5. **File-based skills** from NoteRegistry → also Skill Catalog section
+6. **Regular notes** with `include_in_prompt=False` → "Other notes" section (titles only)
+
+Catalog output:
 
 ```
 ## Available Skills
@@ -154,7 +182,9 @@ Use the `get_note` tool to load a skill's full instructions.
 Changes to `NotesContextProvider`:
 
 - Add `note_registry: NoteRegistry | None = None` parameter
-- In `get_context_fragments()`, append skill catalog if registry has skills
+- Parse frontmatter on DB notes to detect skills
+- Partition notes into regular vs skill before formatting
+- Merge DB skills + file-based skills into unified catalog
 
 ### Milestone 6: Extend get_note Tool
 
