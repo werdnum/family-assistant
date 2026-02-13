@@ -218,6 +218,11 @@ if [ -f "pyproject.toml" ]; then
     uv sync --extra dev && touch .venv/.ready
 
     uv pip install poethepoet pytest-xdist pre-commit
+
+    # Symlink basedpyright-langserver as pyright-langserver for the Claude Code pyright-lsp plugin
+    if [ -f ".venv/bin/basedpyright-langserver" ] && [ ! -f ".venv/bin/pyright-langserver" ]; then
+        ln -s basedpyright-langserver .venv/bin/pyright-langserver
+    fi
     
     # Install pre-commit hooks if available (skip if running as root or in CI)
     if [ -f ".pre-commit-config.yaml" ] && [ "$RUNNING_AS_ROOT" != "true" ] && [ "$IS_CI_CONTAINER" != "true" ]; then
