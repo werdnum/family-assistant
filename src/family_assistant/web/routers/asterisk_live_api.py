@@ -218,6 +218,8 @@ class AsteriskLiveHandler:
             f"Asterisk live ducking: {self.assistant_duck_ms}ms gain={self.assistant_duck_gain}"
         )
         self._transcript_segments: list[tuple[str, str, float]] = []
+        self._caller_transcript_buf: list[str] = []
+        self._assistant_transcript_buf: list[str] = []
         self._call_start_time = time.time()
         app = getattr(self.websocket, "app", None)
         app_state = getattr(app, "state", None)
@@ -967,39 +969,49 @@ class AsteriskLiveHandler:
                 )
                 # Log transcripts for debugging
                 if response.server_content:
-                    # Log input (user) transcription
+                    # Accumulate input (user) transcription chunks
                     if response.server_content.input_transcription:
-                        text = response.server_content.input_transcription.text
-                        if text:
-                            logger.info(f"[TRANSCRIPT] User: {text}")
-                            self._transcript_segments.append((
-                                "Caller",
-                                text,
-                                time.time() - self._call_start_time,
-                            ))
-                            await self._trace_event(
-                                "transcript",
-                                "gemini->fa",
-                                speaker="user",
-                                text=text,
-                            )
+                        chunk = response.server_content.input_transcription
+                        if chunk.text:
+                            self._caller_transcript_buf.append(chunk.text)
+                        if chunk.finished:
+                            full_text = "".join(self._caller_transcript_buf)
+                            self._caller_transcript_buf.clear()
+                            if full_text:
+                                logger.info(f"[TRANSCRIPT] User: {full_text}")
+                                self._transcript_segments.append((
+                                    "Caller",
+                                    full_text,
+                                    time.time() - self._call_start_time,
+                                ))
+                                await self._trace_event(
+                                    "transcript",
+                                    "gemini->fa",
+                                    speaker="user",
+                                    text=full_text,
+                                )
 
-                    # Log output (model) transcription
+                    # Accumulate output (model) transcription chunks
                     if response.server_content.output_transcription:
-                        text = response.server_content.output_transcription.text
-                        if text:
-                            logger.info(f"[TRANSCRIPT] Assistant: {text}")
-                            self._transcript_segments.append((
-                                "Assistant",
-                                text,
-                                time.time() - self._call_start_time,
-                            ))
-                            await self._trace_event(
-                                "transcript",
-                                "gemini->fa",
-                                speaker="assistant",
-                                text=text,
-                            )
+                        chunk = response.server_content.output_transcription
+                        if chunk.text:
+                            self._assistant_transcript_buf.append(chunk.text)
+                        if chunk.finished:
+                            full_text = "".join(self._assistant_transcript_buf)
+                            self._assistant_transcript_buf.clear()
+                            if full_text:
+                                logger.info(f"[TRANSCRIPT] Assistant: {full_text}")
+                                self._transcript_segments.append((
+                                    "Assistant",
+                                    full_text,
+                                    time.time() - self._call_start_time,
+                                ))
+                                await self._trace_event(
+                                    "transcript",
+                                    "gemini->fa",
+                                    speaker="assistant",
+                                    text=full_text,
+                                )
 
                 # Extract audio data
                 server_content = response.server_content
@@ -1322,6 +1334,26 @@ class AsteriskLiveHandler:
 
     async def _save_call_transcript(self) -> None:
         """Save accumulated transcript segments as a note."""
+        # Flush any remaining partial transcription buffers
+        if self._caller_transcript_buf:
+            remaining = "".join(self._caller_transcript_buf)
+            if remaining:
+                self._transcript_segments.append((
+                    "Caller",
+                    remaining,
+                    time.time() - self._call_start_time,
+                ))
+            self._caller_transcript_buf.clear()
+        if self._assistant_transcript_buf:
+            remaining = "".join(self._assistant_transcript_buf)
+            if remaining:
+                self._transcript_segments.append((
+                    "Assistant",
+                    remaining,
+                    time.time() - self._call_start_time,
+                ))
+            self._assistant_transcript_buf.clear()
+
         if not self._transcript_segments or self.database_engine is None:
             return
 
@@ -1486,8 +1518,16 @@ async def asterisk_live_endpoint(
                     }
                 )
         else:
+            if profile:
+                logger.warning(
+                    f"Asterisk connection rejected: profile '{profile_id}' not found"
+                )
+                await websocket.close(
+                    code=1008, reason=f"Profile '{profile_id}' not found"
+                )
+                return
             logger.warning(
-                f"Profile '{profile_id}' not found, using default configuration"
+                "Default 'telephone' profile not found, using unconfigured defaults"
             )
 
     except Exception as e:
