@@ -171,6 +171,7 @@ if TYPE_CHECKING:
     from family_assistant.interfaces import ChatInterface  # Import the new interface
     from family_assistant.processing import ProcessingService
     from family_assistant.services.attachment_registry import AttachmentRegistry
+    from family_assistant.skills.registry import NoteRegistry
     from family_assistant.storage.context import DatabaseContext
     from family_assistant.tools.infrastructure import ToolsProvider
     from family_assistant.utils.clock import Clock
@@ -281,6 +282,7 @@ class ToolExecutionContext:
     tools_provider: ToolsProvider | None = None  # Add tools_provider for API access
     visibility_grants: set[str] | None = None
     default_note_visibility_labels: list[str] | None = None
+    note_registry: NoteRegistry | None = None
 
 
 @dataclass

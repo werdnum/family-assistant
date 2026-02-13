@@ -168,6 +168,15 @@ class NotesConfig(BaseModel):
     default_visibility_labels: list[str] = Field(default_factory=list)
 
 
+class SkillsConfig(BaseModel):
+    """Configuration for file-based skills directories."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    builtin_dir: str | None = None
+    user_dir: str | None = None
+
+
 class CalDAVConfig(BaseModel):
     """CalDAV server configuration."""
 
@@ -692,6 +701,7 @@ class AppConfig(BaseSettings):
     )
     ai_worker_config: AIWorkerConfig = Field(default_factory=AIWorkerConfig)
     notes_config: NotesConfig = Field(default_factory=NotesConfig)
+    skills_config: SkillsConfig = Field(default_factory=SkillsConfig)
 
     # LLM parameters (pattern -> parameters mapping)
     # ast-grep-ignore: no-dict-any - LLM params are provider-specific and genuinely arbitrary

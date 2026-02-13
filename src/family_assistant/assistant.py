@@ -9,6 +9,7 @@ import sys
 import zoneinfo
 from asyncio import subprocess as asyncio_subprocess
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
 
 import httpx
@@ -46,6 +47,7 @@ from family_assistant.indexing.tasks import handle_embed_and_store_batch
 from family_assistant.llm.factory import LLMClientFactory
 from family_assistant.processing import ProcessingService, ProcessingServiceConfig
 from family_assistant.services.push_notification import PushNotificationService
+from family_assistant.skills import NoteRegistry, load_skills_from_directory
 from family_assistant.storage import init_db
 from family_assistant.storage.base import create_engine_with_sqlite_optimizations
 from family_assistant.storage.context import (
@@ -557,6 +559,19 @@ class Assistant:
             f"Root ToolsProvider initialized with {len(self.fastapi_app.state.tool_definitions)} tools"
         )
 
+        # Load file-based skills and create NoteRegistry
+        all_skills = []
+        skills_config = self.config.skills_config
+        builtin_dir = (
+            Path(skills_config.builtin_dir) if skills_config.builtin_dir else None
+        )
+        user_dir = Path(skills_config.user_dir) if skills_config.user_dir else None
+        if builtin_dir:
+            all_skills.extend(load_skills_from_directory(builtin_dir))
+        if user_dir:
+            all_skills.extend(load_skills_from_directory(user_dir))
+        note_registry = NoteRegistry(all_skills) if all_skills else None
+
         for profile_conf in resolved_profiles:
             profile_id = profile_conf.id
             logger.info(
@@ -716,6 +731,7 @@ class Assistant:
                 prompts=profile_proc_conf.prompts,
                 attachment_registry=self.attachment_registry,
                 visibility_grants=profile_grants,
+                note_registry=note_registry,
             )
             calendar_provider = CalendarContextProvider(
                 calendar_config=_calendar_config_to_dict(self.config.calendar_config),
@@ -826,6 +842,7 @@ class Assistant:
                 visibility_grants=profile_grants,
                 default_note_visibility_labels=self.config.notes_config.default_visibility_labels
                 or None,
+                note_registry=note_registry,
             )
 
             processing_service_instance = ProcessingService(

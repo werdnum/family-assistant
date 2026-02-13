@@ -28,6 +28,7 @@ from pydantic import TypeAdapter
 
 from family_assistant.config_models import AppConfig
 from family_assistant.services.attachment_registry import AttachmentRegistry
+from family_assistant.skills.registry import NoteRegistry
 
 # Import storage and calendar integration for context building
 # storage import removed - using repository pattern via DatabaseContext
@@ -120,6 +121,7 @@ class ProcessingServiceConfig:
     # Visibility grants for note access control
     visibility_grants: set[str] | None = None
     default_note_visibility_labels: list[str] | None = None
+    note_registry: NoteRegistry | None = None
 
 
 # --- Processing Service Class ---
@@ -969,6 +971,7 @@ class ProcessingService:
             camera_backend=self.camera_backend,
             visibility_grants=self.service_config.visibility_grants,
             default_note_visibility_labels=self.service_config.default_note_visibility_labels,
+            note_registry=self.service_config.note_registry,
         )
 
         try:
