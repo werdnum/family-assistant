@@ -19,7 +19,7 @@
     "guardian@werdnum-plugins": true,
     "development-agents@werdnum-plugins": true,
     "python-utils@werdnum-plugins": true,
-    "pyright-lsp@werdnum-plugins": true
+    "pyright-lsp@claude-plugins-official": true
   },
   "extraKnownMarketplaces": {
     "werdnum-plugins": {
