@@ -112,6 +112,8 @@ class ProcessingConfig(BaseModel):
     max_iterations: int = 5
     calendar_config: CalendarConfig | None = None  # Per-profile calendar config
     camera_config: CameraConfig | None = None  # Per-profile camera backend config
+    greeting_wav_path: str | None = None
+    default_note_visibility_labels: list[str] = Field(default_factory=list)
 
 
 class ToolsConfig(BaseModel):
@@ -318,6 +320,7 @@ class TelephoneGreetingConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     enabled: bool = True
+    wav_path: str | None = None
 
 
 class TelephoneOverrides(BaseModel):

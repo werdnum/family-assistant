@@ -62,6 +62,7 @@ class GeminiLiveGreetingConfig(BaseModel):
     """Configuration for pre-recorded greeting played on call answer."""
 
     enabled: bool = True
+    wav_path: str | None = None
 
 
 class GeminiLiveConfig(BaseModel):

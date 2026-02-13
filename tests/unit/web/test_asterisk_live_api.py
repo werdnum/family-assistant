@@ -211,7 +211,7 @@ class TestPrecannedGreeting(unittest.IsolatedAsyncioTestCase):
         self.mock_client = MagicMock()
         self.mock_config = MagicMock()
         self.mock_config.vad = MagicMock(automatic=True)
-        self.mock_config.greeting = MagicMock(enabled=True)
+        self.mock_config.greeting = MagicMock(enabled=True, wav_path=None)
         self.mock_websocket.client_state = WebSocketState.CONNECTED
 
         self.handler = AsteriskLiveHandler(
@@ -335,7 +335,7 @@ class TestPreGeminiAudioBuffering(unittest.IsolatedAsyncioTestCase):
         self.mock_client = MagicMock()
         self.mock_config = MagicMock()
         self.mock_config.vad = MagicMock(automatic=True)
-        self.mock_config.greeting = MagicMock(enabled=True)
+        self.mock_config.greeting = MagicMock(enabled=True, wav_path=None)
         self.mock_websocket.client_state = WebSocketState.CONNECTED
 
         self.handler = AsteriskLiveHandler(

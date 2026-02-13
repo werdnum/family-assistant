@@ -64,6 +64,7 @@ if TYPE_CHECKING:
     from google.genai.live import AsyncSession
     from starlette.applications import Starlette
 
+    from family_assistant.interfaces import ChatInterface
     from family_assistant.processing import ProcessingService
 
 logger = logging.getLogger(__name__)
@@ -158,11 +159,13 @@ class AsteriskLiveHandler:
         conversation_id: str | None = None,
         system_instruction: str | None = None,
         tools: ToolListUnion | None = None,
+        chat_interfaces: dict[str, ChatInterface] | None = None,
     ) -> None:
         self.websocket = websocket
         self.client = client
         self.gemini_live_config = gemini_live_config
         self.processing_service = processing_service
+        self.chat_interfaces = chat_interfaces
         self.extension = extension  # User identity (like Telegram chat_id)
         self.conversation_id = conversation_id or str(uuid.uuid4())  # For history
         self.system_instruction = system_instruction
@@ -214,6 +217,8 @@ class AsteriskLiveHandler:
         self._debug_log(
             f"Asterisk live ducking: {self.assistant_duck_ms}ms gain={self.assistant_duck_gain}"
         )
+        self._transcript_segments: list[tuple[str, str, float]] = []
+        self._call_start_time = time.time()
         app = getattr(self.websocket, "app", None)
         app_state = getattr(app, "state", None)
         self.database_engine = getattr(app_state, "database_engine", None)
@@ -618,6 +623,7 @@ class AsteriskLiveHandler:
                         self.receive_task.cancel()
                         with contextlib.suppress(asyncio.CancelledError):
                             await self.receive_task
+                    await self._save_call_transcript()
 
         except Exception as e:
             logger.error(f"Error in AsteriskLiveHandler: {e}", exc_info=True)
@@ -799,9 +805,15 @@ class AsteriskLiveHandler:
         negotiated sample rate if needed, and sends in frame-sized chunks
         with pacing to match real-time playback.
         """
-        greeting_path = (
-            pathlib.Path(__file__).parent.parent / "resources" / "greeting.wav"
-        )
+        resources_dir = pathlib.Path(__file__).parent.parent / "resources"
+        configured_wav = self.gemini_live_config.greeting.wav_path
+        if configured_wav:
+            candidate = pathlib.Path(configured_wav)
+            if not candidate.is_absolute():
+                candidate = resources_dir / candidate
+            greeting_path = candidate
+        else:
+            greeting_path = resources_dir / "greeting.wav"
         if not greeting_path.exists():
             logger.warning(f"Greeting file not found: {greeting_path}")
             return
@@ -960,6 +972,11 @@ class AsteriskLiveHandler:
                         text = response.server_content.input_transcription.text
                         if text:
                             logger.info(f"[TRANSCRIPT] User: {text}")
+                            self._transcript_segments.append((
+                                "Caller",
+                                text,
+                                time.time() - self._call_start_time,
+                            ))
                             await self._trace_event(
                                 "transcript",
                                 "gemini->fa",
@@ -972,6 +989,11 @@ class AsteriskLiveHandler:
                         text = response.server_content.output_transcription.text
                         if text:
                             logger.info(f"[TRANSCRIPT] Assistant: {text}")
+                            self._transcript_segments.append((
+                                "Assistant",
+                                text,
+                                time.time() - self._call_start_time,
+                            ))
                             await self._trace_event(
                                 "transcript",
                                 "gemini->fa",
@@ -1236,7 +1258,7 @@ class AsteriskLiveHandler:
                         turn_id=call_id,
                         db_context=db_context,
                         chat_interface=None,
-                        chat_interfaces=None,
+                        chat_interfaces=self.chat_interfaces,
                         timezone_str=self.processing_service.timezone_str,
                         processing_profile_id=self.processing_service.service_config.id,
                         subconversation_id=None,
@@ -1298,6 +1320,44 @@ class AsteriskLiveHandler:
                 payload=self._safe_serialize(function_responses),
             )
 
+    async def _save_call_transcript(self) -> None:
+        """Save accumulated transcript segments as a note."""
+        if not self._transcript_segments or self.database_engine is None:
+            return
+
+        try:
+            call_time = datetime.fromtimestamp(self._call_start_time)
+            iso_datetime = call_time.strftime("%Y-%m-%d %H:%M")
+            ext_label = self.extension or "unknown"
+            title = f"Call Transcript: {ext_label} - {iso_datetime}"
+
+            lines: list[str] = []
+            for speaker, text, offset_secs in self._transcript_segments:
+                minutes = int(offset_secs) // 60
+                seconds = int(offset_secs) % 60
+                lines.append(f"[{minutes:02d}:{seconds:02d}] {speaker}: {text}")
+
+            content = "\n".join(lines)
+
+            visibility_labels: list[str] | None = None
+            if self.processing_service:
+                visibility_labels = self.processing_service.service_config.default_note_visibility_labels
+
+            async with get_db_context(self.database_engine) as db_context:
+                await db_context.notes.add_or_update(
+                    title=title,
+                    content=content,
+                    include_in_prompt=False,
+                    visibility_labels=visibility_labels,
+                )
+
+            logger.info(
+                f"Saved call transcript: {title} "
+                f"({len(self._transcript_segments)} segments)"
+            )
+        except Exception:
+            logger.exception("Failed to save call transcript")
+
     async def _iter_gemini_messages(self) -> AsyncIterator[LiveServerMessage]:
         if not self.gemini_session:
             return
@@ -1322,6 +1382,7 @@ async def asterisk_live_endpoint(
     token: Annotated[str | None, Query()] = None,
     extension: Annotated[str | None, Query()] = None,
     channel_id: Annotated[str | None, Query()] = None,
+    profile: Annotated[str | None, Query()] = None,
 ) -> None:
     """
     WebSocket endpoint for Asterisk Live Audio.
@@ -1335,9 +1396,12 @@ async def asterisk_live_endpoint(
         - token: Authentication token (required if ASTERISK_SECRET_TOKEN is set)
         - extension: Caller's extension number (user identity)
         - channel_id: Asterisk channel ID (used as conversation ID for history)
+        - profile: Processing service profile ID (default: "telephone").
+          Use "telephone_external" for external/unknown callers.
 
     Example Asterisk Dialplan:
         Dial(WebSocket/host:8000/api/asterisk/live?token=${TOKEN}&extension=${CALLERID(num)}&channel_id=${CHANNEL})
+        Dial(WebSocket/host:8000/api/asterisk/live?token=${TOKEN}&extension=${CALLERID(num)}&channel_id=${CHANNEL}&profile=telephone_external)
     """
     secret_token, allowed_extensions = get_asterisk_auth_config()
 
@@ -1359,19 +1423,21 @@ async def asterisk_live_endpoint(
     conversation_id = channel_id or str(uuid.uuid4())
 
     logger.info(
-        f"Asterisk connection authorized: extension={extension}, channel={conversation_id}"
+        f"Asterisk connection authorized: extension={extension}, "
+        f"channel={conversation_id}, profile={profile or 'telephone'}"
     )
 
     # Get Gemini Live configuration from app state
     gemini_live_config = get_gemini_live_config_from_app(websocket.app)
 
-    # Get configuration from telephone profile if available
+    # Get configuration from the requested profile (default: "telephone")
+    profile_id = profile or "telephone"
     system_instruction = None
     tools: ToolListUnion | None = None
 
     try:
         processing_services = getattr(websocket.app.state, "processing_services", {})
-        telephone_service = processing_services.get("telephone")
+        telephone_service = processing_services.get(profile_id)
 
         if telephone_service:
             # Get system prompt
@@ -1406,16 +1472,30 @@ async def asterisk_live_endpoint(
                 )
                 tools = cast("ToolListUnion", convert_tools_to_genai_format(raw_tools))
                 logger.info(
-                    f"Loaded {len(tools)} tools (Gemini format) for telephone profile"
+                    f"Loaded {len(tools)} tools (Gemini format) for '{profile_id}' profile"
+                )
+
+            # Override greeting WAV path if profile specifies one
+            wav_path = telephone_service.service_config.greeting_wav_path
+            if wav_path:
+                gemini_live_config = gemini_live_config.model_copy(
+                    update={
+                        "greeting": gemini_live_config.greeting.model_copy(
+                            update={"wav_path": wav_path}
+                        )
+                    }
                 )
         else:
-            logger.warning("Telephone profile not found, using default configuration")
+            logger.warning(
+                f"Profile '{profile_id}' not found, using default configuration"
+            )
 
     except Exception as e:
         logger.error(
-            f"Error loading telephone profile configuration: {e}", exc_info=True
+            f"Error loading profile '{profile_id}' configuration: {e}", exc_info=True
         )
 
+    chat_interfaces = getattr(websocket.app.state, "chat_interfaces", None)
     handler = AsteriskLiveHandler(
         websocket,
         client,
@@ -1425,5 +1505,6 @@ async def asterisk_live_endpoint(
         conversation_id=conversation_id,
         system_instruction=system_instruction,
         tools=tools,
+        chat_interfaces=chat_interfaces,
     )
     await handler.run()

@@ -122,6 +122,7 @@ class ProcessingServiceConfig:
     visibility_grants: set[str] | None = None
     default_note_visibility_labels: list[str] | None = None
     note_registry: NoteRegistry | None = None
+    greeting_wav_path: str | None = None
 
 
 # --- Processing Service Class ---
@@ -665,14 +666,16 @@ class ProcessingService:
                                 att_id
                             )
                             if metadata:
-                                attachment_details.append({
-                                    "id": att_id,
-                                    "type": "image",  # Currently all are images, could use metadata.mime_type
-                                    "name": metadata.description or "Attachment",
-                                    "content": f"/api/attachments/{att_id}",
-                                    "mime_type": metadata.mime_type,
-                                    "size": metadata.size,
-                                })
+                                attachment_details.append(
+                                    {
+                                        "id": att_id,
+                                        "type": "image",  # Currently all are images, could use metadata.mime_type
+                                        "name": metadata.description or "Attachment",
+                                        "content": f"/api/attachments/{att_id}",
+                                        "mime_type": metadata.mime_type,
+                                        "size": metadata.size,
+                                    }
+                                )
                         except Exception as e:
                             logger.warning(
                                 f"Failed to fetch metadata for attachment {att_id}: {e}"
@@ -803,12 +806,14 @@ class ProcessingService:
                         "error_traceback": traceback.format_exc(),
                     }
                     yield (error_event, error_message)
-                    tool_response_messages_for_llm.append({
-                        "tool_call_id": f"error_{uuid.uuid4()}",
-                        "role": "tool",
-                        "name": "unknown",
-                        "content": f"Unexpected error: {str(e)}",
-                    })
+                    tool_response_messages_for_llm.append(
+                        {
+                            "tool_call_id": f"error_{uuid.uuid4()}",
+                            "role": "tool",
+                            "name": "unknown",
+                            "content": f"Unexpected error: {str(e)}",
+                        }
+                    )
 
             # Add tool responses to messages for next iteration
             messages.extend(tool_response_messages_for_llm)
@@ -1151,16 +1156,18 @@ class ProcessingService:
                                             )
                                         )
                                         if attachment_info:
-                                            attachment_metadata_list.append({
-                                                "attachment_id": attachment_id,
-                                                "type": "tool_result",
-                                                "description": attachment_info.description
-                                                or "Attachment",
-                                                "url": attachment_info.content_url,
-                                                "content_url": attachment_info.content_url,
-                                                "mime_type": attachment_info.mime_type,
-                                                "size": attachment_info.size,
-                                            })
+                                            attachment_metadata_list.append(
+                                                {
+                                                    "attachment_id": attachment_id,
+                                                    "type": "tool_result",
+                                                    "description": attachment_info.description
+                                                    or "Attachment",
+                                                    "url": attachment_info.content_url,
+                                                    "content_url": attachment_info.content_url,
+                                                    "mime_type": attachment_info.mime_type,
+                                                    "size": attachment_info.size,
+                                                }
+                                            )
                                     except Exception as e:
                                         logger.warning(
                                             f"Failed to get metadata for attachment {attachment_id}: {e}"
@@ -1415,10 +1422,12 @@ class ProcessingService:
                                 data_uri = f"data:{content_type};base64,{base64_data}"
 
                                 # Replace with data URI
-                                converted_parts.append({
-                                    "type": "image_url",
-                                    "image_url": {"url": data_uri},
-                                })
+                                converted_parts.append(
+                                    {
+                                        "type": "image_url",
+                                        "image_url": {"url": data_uri},
+                                    }
+                                )
                                 logger.info(
                                     f"Converted attachment URL to data URI for attachment {attachment_id} (type: {content_type})"
                                 )
@@ -2017,8 +2026,7 @@ Call attach_to_response with your selected attachment IDs."""
                 local_tz = pytz.timezone(self.timezone_str)
                 # Use the injected clock's now() method
                 current_time_str = (
-                    self.clock
-                    .now()
+                    self.clock.now()
                     .astimezone(local_tz)
                     .strftime("%Y-%m-%d %H:%M:%S %Z")
                 )
@@ -2442,8 +2450,7 @@ Call attach_to_response with your selected attachment IDs."""
             try:
                 local_tz = pytz.timezone(self.timezone_str)
                 current_time_str = (
-                    self.clock
-                    .now()
+                    self.clock.now()
                     .astimezone(local_tz)
                     .strftime("%Y-%m-%d %H:%M:%S %Z")
                 )
