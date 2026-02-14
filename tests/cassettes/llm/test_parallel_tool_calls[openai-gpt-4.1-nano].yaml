@@ -830,4 +830,109 @@ interactions:
       status:
         code: 200
         message: OK
+  - request:
+      body: '{"messages":[{"role":"user","content":"What''s the weather in New York and what is 15 plus 27?"}],"model":"gpt-4.1-nano","tool_choice":"auto","tools":[{"type":"function","function":{"name":"get_weather","description":"Get the current weather in a given location","parameters":{"type":"object","properties":{"location":{"type":"string","description":"The city and state, e.g. San Francisco, CA"},"unit":{"type":"string","enum":["celsius","fahrenheit"],"description":"The temperature unit"}},"required":["location"]}}},{"type":"function","function":{"name":"calculate","description":"Perform basic mathematical calculations","parameters":{"type":"object","properties":{"expression":{"type":"string","description":"The mathematical expression to evaluate"}},"required":["expression"]}}}]}'
+      headers:
+        accept:
+          - application/json
+        accept-encoding:
+          - gzip, deflate
+        connection:
+          - keep-alive
+        content-length:
+          - '784'
+        content-type:
+          - application/json
+        host:
+          - api.openai.com
+        user-agent:
+          - AsyncOpenAI/Python 1.92.3
+        x-stainless-arch:
+          - arm64
+        x-stainless-async:
+          - async:asyncio
+        x-stainless-lang:
+          - python
+        x-stainless-os:
+          - Linux
+        x-stainless-package-version:
+          - 1.92.3
+        x-stainless-read-timeout:
+          - '600'
+        x-stainless-retry-count:
+          - '0'
+        x-stainless-runtime:
+          - CPython
+        x-stainless-runtime-version:
+          - 3.13.9
+      method: POST
+      uri: https://api.openai.com/v1/chat/completions
+    response:
+      body:
+        string: !!binary |
+          H4sIAAAAAAAA/7VUUW/aMBB+z6+I/DpSJWko0Net00oF64q0iY0qMo4TXBw7sp0WhPjvuziQBNpt
+          fRkPKL7vvvN957vbOa6LWIKuXURW2JC84N6n0a1WwcP4Szn7+k1uI5PM55MX9XEYllODehVDLp8o
+          MUfWBZHAo4ZJUcNEUWxoFTUYDILAH42CSwvkMqG8omWF8aKLwBNYSC/0w77nR14QHegryQjV4PcL
+          jq67s/9VoiKhGzD7vaMlp1rjjILt6ARGJXllQVhrpg0WddIHkEhhqKhyFyXnHcBIyWOCOW8vrn+7
+          zndbLXCMi5+Tm6t5JvRafR+zbZ7dbO/Cvh537qtDbwubUFoK0lSpgzf267PLABM4t9yMmvgFyrqi
+          6owOTlhlZQ6qqtTRboG4JLgKuIDzAk3pizuXar1Ae3TC3HdO+967JD8LPmX3YnJXLGeb4dPw8+2P
+          2T3uL/+HZLiQlBw66d+C6aZQ0AqN5KDvfnDDwd8VN9+PnTZQNC015q/7Awshja2qbZBH56xuUPSs
+          UHKpz6goZYLpVQwzoa3ebqc5x0RsCqg8aWYE4fLCxEauqb00CPp1VNROXItGgwNoIE/eYV2FvTfi
+          xQk1mNlubwaMYLKiSUttBw2XCZMdwOlof53NW7Fr/Uxk7wnfAoTQAnZJDO+bMHKquHVTtFpIf3Jr
+          qmwTRpqqZ1gwsWEwS/AeCU1xyQ+rTW+1oXkMj5ZRVShmVwVKi3jpL0dRejnwR8jZO78B9z7TrTkF
+          AAA=
+      headers:
+        CF-RAY:
+          - 9ce02bb85a1965ca-FRA
+        Connection:
+          - keep-alive
+        Content-Encoding:
+          - gzip
+        Content-Type:
+          - application/json
+        Date:
+          - Sat, 14 Feb 2026 22:58:33 GMT
+        Server:
+          - cloudflare
+        Strict-Transport-Security:
+          - max-age=31536000; includeSubDomains; preload
+        Transfer-Encoding:
+          - chunked
+        X-Content-Type-Options:
+          - nosniff
+        access-control-expose-headers:
+          - X-Request-ID
+        alt-svc:
+          - h3=":443"; ma=86400
+        cf-cache-status:
+          - DYNAMIC
+        openai-organization:
+          - REDACTED
+        openai-processing-ms:
+          - '370'
+        openai-project:
+          - proj_wvaoRBrBR9ayhT5aPMqWgDtI
+        openai-version:
+          - '2020-10-01'
+        set-cookie:
+          - __cf_bm=LBQN5lS6mPZl_C2NKXDedBotgyc9ny7J2OO0AjcwoaU-1771109912.3795679-1.0.1.1-a7rBW7RGOg6QlpAz2ERQrOeErM4sDtDzN0UsmgnJGSKrxnw.LPYoO6wQZGt6tmwp36oLuhUiuf9SLcinS9nwcVxqOaeNv8e0AyLrQD_f52TOGsQV024c8wfzyrkU3Kst; HttpOnly; Secure; Path=/; Domain=api.openai.com; Expires=Sat, 14 Feb 2026 23:28:33 GMT
+        x-openai-proxy-wasm:
+          - v0.1
+        x-ratelimit-limit-requests:
+          - '500'
+        x-ratelimit-limit-tokens:
+          - '200000'
+        x-ratelimit-remaining-requests:
+          - '499'
+        x-ratelimit-remaining-tokens:
+          - '199984'
+        x-ratelimit-reset-requests:
+          - 120ms
+        x-ratelimit-reset-tokens:
+          - 4ms
+        x-request-id:
+          - req_031ffc29572942b0afb592d56f0d5c6a
+      status:
+        code: 200
+        message: OK
 version: 1

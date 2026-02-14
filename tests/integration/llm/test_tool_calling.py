@@ -268,7 +268,7 @@ async def test_no_tool_needed(
     "provider,model",
     [
         ("openai", "gpt-4.1-nano"),
-        # Google Gemini might handle parallel calls differently
+        ("google", "gemini-2.5-flash-lite"),
     ],
 )
 async def test_parallel_tool_calls(
@@ -294,13 +294,15 @@ async def test_parallel_tool_calls(
     assert isinstance(response, LLMOutput)
     assert response.tool_calls is not None
 
-    # Some models might make parallel calls, others sequential
-    # Just verify we get tool calls for both requests
     tool_names = [tc.function.name for tc in response.tool_calls]
 
-    # Might get both in one response or need multiple turns
-    assert len(tool_names) >= 1
-    assert any(name in {"get_weather", "calculate"} for name in tool_names)
+    # Both tools should be called in a single response (parallel tool calling)
+    assert len(tool_names) >= 2, (
+        f"Expected at least 2 tool calls in one response for parallel execution, "
+        f"got {len(tool_names)}: {tool_names}"
+    )
+    assert "get_weather" in tool_names
+    assert "calculate" in tool_names
 
 
 @pytest.mark.no_db
