@@ -46,7 +46,7 @@ control.
 **`replay` (Default)**
 
 ```bash
-LLM_RECORD_MODE=replay pytest tests/integration/llm/
+LLM_RECORD_MODE=replay pytest tests/integration/llm/ -m llm_integration
 ```
 
 - **Behavior**: Only use existing recordings - does NOT make API calls
@@ -58,7 +58,7 @@ LLM_RECORD_MODE=replay pytest tests/integration/llm/
 **`auto`**
 
 ```bash
-LLM_RECORD_MODE=auto pytest tests/integration/llm/
+LLM_RECORD_MODE=auto pytest tests/integration/llm/ -m llm_integration
 ```
 
 - **Behavior**: Record if missing, else replay
@@ -71,7 +71,7 @@ LLM_RECORD_MODE=auto pytest tests/integration/llm/
 **`record`**
 
 ```bash
-LLM_RECORD_MODE=record pytest tests/integration/llm/
+LLM_RECORD_MODE=record pytest tests/integration/llm/ -m llm_integration
 ```
 
 - **Behavior**: Force re-record everything, overwriting existing recordings
@@ -134,6 +134,9 @@ VCR_RECORD_MODE=new_episodes pytest tests/integration/home_assistant/
 
 #### For LLM Integration Tests
 
+LLM integration tests are **excluded from normal test runs** via `pytest.ini` (`addopts` includes
+`-m "not llm_integration"`). You must explicitly select them with `-m llm_integration` to run them.
+
 LLM tests use a **unified record/replay system** that works across all providers (OpenAI, Google
 Gemini, etc.) via the `LLM_RECORD_MODE` environment variable:
 
@@ -141,13 +144,16 @@ Gemini, etc.) via the `LLM_RECORD_MODE` environment variable:
 # Record missing LLM interactions (auto mode)
 export OPENAI_API_KEY="your-openai-key"
 export GEMINI_API_KEY="your-gemini-key"
-LLM_RECORD_MODE=auto pytest tests/integration/llm/ -xvs
+LLM_RECORD_MODE=auto pytest tests/integration/llm/ -xq -m llm_integration
 
 # Re-record all LLM interactions (when APIs change)
-LLM_RECORD_MODE=record pytest tests/integration/llm/ -xvs
+LLM_RECORD_MODE=record pytest tests/integration/llm/ -xq -m llm_integration
 
 # Run with existing recordings only (default - safe for CI)
-LLM_RECORD_MODE=replay pytest tests/integration/llm/ -xvs
+LLM_RECORD_MODE=replay pytest tests/integration/llm/ -xq -m llm_integration
+
+# Record a specific test
+LLM_RECORD_MODE=record pytest tests/integration/llm/test_tool_calling.py::test_parallel_tool_calls -xq -m llm_integration
 
 # Verify recordings are created
 ls tests/cassettes/llm/          # OpenAI (VCR.py cassettes)
