@@ -98,3 +98,34 @@
   }
 }
 
+/* Chat markdown content overflow handling */
+.markdown-text {
+  overflow-wrap: break-word;
+  word-break: break-word;
+  min-width: 0;
+  max-width: 100%;
+}
+
+.markdown-text .code-block {
+  overflow-x: auto;
+  max-width: 100%;
+  background-color: hsl(var(--muted));
+  padding: 0.75em;
+  border-radius: 6px;
+  border: 1px solid hsl(var(--border));
+  margin: 0.5em 0;
+  font-size: 0.875rem;
+}
+
+.markdown-text .code-block code {
+  white-space: pre;
+}
+
+.markdown-text .inline-code {
+  background-color: hsl(var(--muted));
+  padding: 0.15em 0.4em;
+  border-radius: 3px;
+  font-size: 0.875em;
+  word-break: break-all;
+}
+

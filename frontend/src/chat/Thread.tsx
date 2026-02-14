@@ -118,7 +118,7 @@ export const Thread: React.FC = () => {
 const ThreadContent: React.FC = () => {
   return (
     <ThreadPrimitive.Root className="flex flex-1 flex-col bg-background min-h-0">
-      <ThreadPrimitive.Viewport className="flex-1 overflow-y-auto scrollbar-thin scrollbar-thumb-muted-foreground/20 min-h-0">
+      <ThreadPrimitive.Viewport className="flex-1 overflow-y-auto overflow-x-hidden scrollbar-thin scrollbar-thumb-muted-foreground/20 min-h-0">
         <div className="pb-6">
           <ThreadWelcome />
 
@@ -296,9 +296,9 @@ const UserMessage: React.FC = () => {
           <MessageTimestamp />
         </div>
         <UserMessageAttachments />
-        <div className="flex items-end gap-3 justify-end">
+        <div className="flex items-end gap-3 justify-end min-w-0">
           <div
-            className="max-w-[70%] p-4 bg-primary text-primary-foreground rounded-2xl rounded-br-md shadow-sm"
+            className="max-w-full md:max-w-[70%] min-w-0 p-4 bg-primary text-primary-foreground rounded-2xl rounded-br-md shadow-sm overflow-x-auto"
             data-testid="user-message-content"
           >
             <MessagePrimitive.Parts />
@@ -394,10 +394,10 @@ const AssistantMessage: React.FC = () => {
               <BotIcon size={20} className="text-primary" />
             </AvatarFallback>
           </Avatar>
-          <div className="flex-1">
-            <div className="relative inline-block max-w-[70%]">
+          <div className="flex-1 min-w-0">
+            <div className="relative inline-block max-w-full md:max-w-[70%] min-w-0">
               <div
-                className="p-4 bg-muted border rounded-2xl rounded-bl-md shadow-sm"
+                className="p-4 bg-muted border rounded-2xl rounded-bl-md shadow-sm overflow-x-auto"
                 data-testid="assistant-message-content"
               >
                 {isLoading ? (

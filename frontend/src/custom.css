@@ -12,6 +12,8 @@ pre {
     word-wrap: break-word;
     max-height: 200px; /* Limit height */
     overflow-y: auto;  /* Add scroll */
+    overflow-x: auto;  /* Horizontal scroll for wide code */
+    max-width: 100%;
     background-color: var(--accent-bg); /* Use theme background */
     padding: 0.5em;
     border-radius: 4px;
