@@ -1305,7 +1305,7 @@ class LiteLLMClient(BaseLLMClient):
                 last_exception = e
 
         # Attempt 3: Fallback model
-        actual_fallback_model_id = self.fallback_model_id or "openai/o4-mini"
+        actual_fallback_model_id = self.fallback_model_id or "openai/gpt-5.2"
         if actual_fallback_model_id == self.model:
             logger.warning(
                 f"Fallback model '{actual_fallback_model_id}' is the same as the primary model '{self.model}'. Skipping fallback."
@@ -1962,7 +1962,7 @@ class LiteLLMClient(BaseLLMClient):
                 last_exception = e
 
         # Attempt 3: Fallback model
-        actual_fallback_model_id = self.fallback_model_id or "openai/o4-mini"
+        actual_fallback_model_id = self.fallback_model_id or "openai/gpt-5.2"
         if actual_fallback_model_id == self.model:
             logger.warning(
                 f"Fallback model '{actual_fallback_model_id}' is the same as the primary model '{self.model}'. Skipping fallback."

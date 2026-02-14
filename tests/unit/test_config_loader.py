@@ -700,6 +700,81 @@ class TestResolveServiceProfile:
         result = resolve_service_profile(profile_def, default_settings, {})
         assert result["slash_commands"] == ["/custom1", "/custom2"]
 
+    def test_retry_config_inherited_when_profile_has_none(self) -> None:
+        """Test that retry_config from defaults is inherited when profile has None.
+
+        This reproduces a bug where Pydantic model defaults (retry_config: None)
+        would overwrite the inherited retry_config from default_profile_settings.
+        """
+        default_settings: dict[str, Any] = {
+            "processing_config": {
+                "timezone": "UTC",
+                "retry_config": {
+                    "primary": {"provider": "google", "model": "gemini-3-pro-preview"},
+                    "fallback": {"provider": "openai", "model": "gpt-5.2"},
+                },
+            },
+            "tools_config": {},
+            "chat_id_to_name_map": {},
+            "slash_commands": [],
+        }
+        # Profile has retry_config: None (as Pydantic model defaults would produce)
+        profile_def: dict[str, Any] = {
+            "id": "test_profile",
+            "description": "Test profile",
+            "processing_config": {
+                "retry_config": None,  # Pydantic default - should NOT override
+                "provider": None,  # Pydantic default
+                "llm_model": None,  # Pydantic default
+            },
+        }
+        result = resolve_service_profile(profile_def, default_settings, {})
+
+        # retry_config should be inherited from defaults, not overwritten with None
+        assert result["processing_config"]["retry_config"] is not None
+        assert (
+            result["processing_config"]["retry_config"]["primary"]["provider"]
+            == "google"
+        )
+        assert (
+            result["processing_config"]["retry_config"]["primary"]["model"]
+            == "gemini-3-pro-preview"
+        )
+
+    def test_retry_config_can_be_explicitly_overridden(self) -> None:
+        """Test that profile can explicitly override retry_config."""
+        default_settings: dict[str, Any] = {
+            "processing_config": {
+                "timezone": "UTC",
+                "retry_config": {
+                    "primary": {"provider": "google", "model": "gemini-3-pro-preview"},
+                    "fallback": {"provider": "openai", "model": "gpt-5.2"},
+                },
+            },
+            "tools_config": {},
+            "chat_id_to_name_map": {},
+            "slash_commands": [],
+        }
+        # Profile explicitly sets a different retry_config
+        profile_def: dict[str, Any] = {
+            "id": "test_profile",
+            "processing_config": {
+                "retry_config": {
+                    "primary": {"provider": "openai", "model": "gpt-4o"},
+                },
+            },
+        }
+        result = resolve_service_profile(profile_def, default_settings, {})
+
+        # retry_config should be the profile's explicit value
+        assert (
+            result["processing_config"]["retry_config"]["primary"]["provider"]
+            == "openai"
+        )
+        assert (
+            result["processing_config"]["retry_config"]["primary"]["model"] == "gpt-4o"
+        )
+
 
 class TestResolveAllServiceProfiles:
     """Tests for resolve_all_service_profiles function."""

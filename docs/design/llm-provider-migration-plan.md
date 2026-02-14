@@ -829,13 +829,13 @@ processing_config:
       model: "gemini-3-pro-preview"
     fallback:
       provider: "openai"
-      model: "o4-mini"
+      model: "gpt-5.2"
 ```
 
 This configuration provides:
 
 - Primary: Google Gemini 3 Pro Preview (direct SDK)
-- Fallback: OpenAI o4-mini (direct SDK, cost-effective)
+- Fallback: OpenAI GPT-5.2 (direct SDK)
 - Automatic retry on transient errors
 - Seamless fallback if primary provider fails
 
