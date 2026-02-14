@@ -246,6 +246,23 @@ async def get_note_tool(
         title, visibility_grants=exec_context.visibility_grants
     )
     if not note:
+        # Fall back to file-based skills via NoteRegistry
+        if exec_context.note_registry:
+            skill = exec_context.note_registry.get_skill_by_name(
+                title, visibility_grants=exec_context.visibility_grants
+            )
+            if skill:
+                return ToolResult(
+                    data={
+                        "exists": True,
+                        "title": skill.name,
+                        "content": skill.content,
+                        "include_in_prompt": False,
+                        "attachment_count": 0,
+                        "source": "file",
+                    }
+                )
+
         return ToolResult(
             data={
                 "exists": False,

@@ -54,6 +54,14 @@ notes_table = Table(
         server_default="[]",
     ),  # JSON array of visibility label strings
     Column(
+        "is_skill",
+        Boolean,
+        nullable=False,
+        server_default="false",
+    ),
+    Column("skill_name", String, nullable=True),
+    Column("skill_description", String, nullable=True),
+    Column(
         "created_at",
         DateTime(timezone=True),
         default=lambda: datetime.now(UTC),
