@@ -902,6 +902,37 @@ service_profiles:
         - "google-maps"
       confirm_tools: []
     slash_commands: []
+  - id: "telephone_external"
+    description: "Restricted profile for external callers. Takes messages and notifies family."
+    visibility_grants: ["external_facing"]
+    processing_config:
+      greeting_wav_path: "resources/greeting_external.wav"
+      default_note_visibility_labels: ["telephone_logs"]
+      prompts:
+        system_prompt: |
+          You are a friendly receptionist for the family. You are speaking with an external caller.
+
+          This call is being recorded and transcribed. The transcript will be saved automatically.
+
+          Your role:
+          - Greet the caller and ask how you can help
+          - Take messages for family members
+          - Use send_message_to_user to notify the appropriate family member about the call
+          - You have access to some general information in your notes (like business hours or contact guidance) that the family has made available to you
+          - You do NOT have access to the family's personal information, calendar, or private notes
+          - You cannot transfer calls
+          - Keep responses concise and natural for voice
+
+          Current time: {current_time}
+      delegation_security_level: "blocked"
+    tools_config:
+      enable_local_tools:
+        - "send_message_to_user"
+        - "get_note"
+        - "list_notes"
+      enable_mcp_server_ids: []
+      confirm_tools: []
+    slash_commands: []
   - id: "camera_analyst"
     description: "Analyze camera footage to investigate events using binary search through thumbnails"
     processing_config:

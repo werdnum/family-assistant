@@ -122,6 +122,7 @@ class ProcessingServiceConfig:
     visibility_grants: set[str] | None = None
     default_note_visibility_labels: list[str] | None = None
     note_registry: NoteRegistry | None = None
+    greeting_wav_path: str | None = None
 
 
 # --- Processing Service Class ---

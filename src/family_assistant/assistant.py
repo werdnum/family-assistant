@@ -835,9 +835,13 @@ class Assistant:
                 description=profile_conf.description
                 or f"Processing profile: {profile_id}",
                 visibility_grants=profile_grants,
-                default_note_visibility_labels=self.config.notes_config.default_visibility_labels
-                or None,
+                default_note_visibility_labels=(
+                    profile_proc_conf.default_note_visibility_labels
+                    if profile_proc_conf.default_note_visibility_labels is not None
+                    else self.config.notes_config.default_visibility_labels or None
+                ),
                 note_registry=note_registry,
+                greeting_wav_path=profile_proc_conf.greeting_wav_path,
             )
 
             processing_service_instance = ProcessingService(

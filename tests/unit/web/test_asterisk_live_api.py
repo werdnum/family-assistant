@@ -5,6 +5,7 @@ import unittest
 import wave
 from array import array
 from collections.abc import AsyncGenerator
+from contextlib import AbstractContextManager, asynccontextmanager
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -46,6 +47,8 @@ class TestAsteriskLiveHandler(unittest.IsolatedAsyncioTestCase):
 
         mock_response = MagicMock()
         mock_response.server_content.model_turn.parts = [part]
+        mock_response.server_content.input_transcription = None
+        mock_response.server_content.output_transcription = None
         mock_response.tool_call = None
 
         # Configure receive to yield the response then cancel
@@ -90,6 +93,8 @@ class TestAsteriskLiveHandler(unittest.IsolatedAsyncioTestCase):
 
         mock_response = MagicMock()
         mock_response.server_content.model_turn.parts = [part]
+        mock_response.server_content.input_transcription = None
+        mock_response.server_content.output_transcription = None
         mock_response.tool_call = None
 
         async def mock_receive() -> AsyncGenerator[MagicMock]:
@@ -130,6 +135,8 @@ class TestAsteriskLiveHandler(unittest.IsolatedAsyncioTestCase):
 
         mock_response = MagicMock()
         mock_response.server_content.model_turn.parts = [part]
+        mock_response.server_content.input_transcription = None
+        mock_response.server_content.output_transcription = None
         mock_response.tool_call = None
 
         async def mock_receive() -> AsyncGenerator[MagicMock]:
@@ -211,7 +218,7 @@ class TestPrecannedGreeting(unittest.IsolatedAsyncioTestCase):
         self.mock_client = MagicMock()
         self.mock_config = MagicMock()
         self.mock_config.vad = MagicMock(automatic=True)
-        self.mock_config.greeting = MagicMock(enabled=True)
+        self.mock_config.greeting = MagicMock(enabled=True, wav_path=None)
         self.mock_websocket.client_state = WebSocketState.CONNECTED
 
         self.handler = AsteriskLiveHandler(
@@ -335,7 +342,7 @@ class TestPreGeminiAudioBuffering(unittest.IsolatedAsyncioTestCase):
         self.mock_client = MagicMock()
         self.mock_config = MagicMock()
         self.mock_config.vad = MagicMock(automatic=True)
-        self.mock_config.greeting = MagicMock(enabled=True)
+        self.mock_config.greeting = MagicMock(enabled=True, wav_path=None)
         self.mock_websocket.client_state = WebSocketState.CONNECTED
 
         self.handler = AsteriskLiveHandler(
@@ -374,6 +381,152 @@ class TestPreGeminiAudioBuffering(unittest.IsolatedAsyncioTestCase):
     async def test_buffer_starts_empty(self) -> None:
         """Test that the pre-Gemini audio buffer is empty on init."""
         self.assertEqual(len(self.handler._audio_buffer_pre_gemini), 0)
+
+
+class _SavedNoteArgs:
+    """Captures kwargs passed to notes.add_or_update in transcript tests."""
+
+    def __init__(self) -> None:
+        self.title: str = ""
+        self.content: str = ""
+        self.include_in_prompt: bool = True
+        self.visibility_labels: list[str] | None = None
+        self.called = False
+
+    async def capture(
+        self,
+        title: str = "",
+        content: str = "",
+        include_in_prompt: bool = True,
+        append: bool = False,
+        attachment_ids: list[str] | None = None,
+        visibility_labels: list[str] | None = None,
+    ) -> str:
+        self.title = title
+        self.content = content
+        self.include_in_prompt = include_in_prompt
+        self.visibility_labels = visibility_labels
+        self.called = True
+        return "note-id"
+
+
+@asynccontextmanager
+async def _fake_db_context_capturing(
+    captured: _SavedNoteArgs,
+) -> AsyncGenerator[MagicMock]:
+    """Provide a fake DB context that captures add_or_update kwargs."""
+    mock_notes = MagicMock()
+    mock_notes.add_or_update = captured.capture
+    ctx = MagicMock()
+    ctx.notes = mock_notes
+    yield ctx
+
+
+class TestCallTranscriptSaving(unittest.IsolatedAsyncioTestCase):
+    """Tests for call transcript accumulation and saving."""
+
+    async def asyncSetUp(self) -> None:
+        self.mock_websocket = AsyncMock()
+        self.mock_client = MagicMock()
+        self.mock_config = MagicMock()
+        self.mock_config.vad = MagicMock(automatic=True)
+        self.mock_config.greeting = MagicMock(enabled=True, wav_path=None)
+        self.mock_websocket.client_state = WebSocketState.CONNECTED
+
+        self.handler = AsteriskLiveHandler(
+            websocket=self.mock_websocket,
+            client=self.mock_client,
+            gemini_live_config=self.mock_config,
+        )
+        self.handler.format = "slin16"
+        self.handler.extension = "100"
+
+    def _patch_db(self, captured: _SavedNoteArgs) -> AbstractContextManager[object]:
+        """Return a patch context that captures note save kwargs."""
+        return patch(
+            "family_assistant.web.routers.asterisk_live_api.get_db_context",
+            side_effect=lambda engine: _fake_db_context_capturing(captured),
+        )
+
+    async def test_save_transcript_no_segments_no_db(self) -> None:
+        """No segments and no database engine should be a no-op."""
+        self.handler.database_engine = None
+        self.handler._transcript_segments = []
+        await self.handler._save_call_transcript()
+
+    async def test_save_transcript_flushes_partial_caller_buffer(self) -> None:
+        """Partial caller buffer should be flushed into segments before save check."""
+        self.handler.database_engine = None
+        self.handler._caller_transcript_buf = ["Hello", " world"]
+        self.handler._assistant_transcript_buf = []
+        self.handler._transcript_segments = []
+
+        await self.handler._save_call_transcript()
+
+        # Even though there's no DB (so no actual save), the buffer should have been
+        # flushed into segments
+        self.assertEqual(len(self.handler._transcript_segments), 1)
+        self.assertEqual(self.handler._transcript_segments[0][0], "Caller")
+        self.assertEqual(self.handler._transcript_segments[0][1], "Hello world")
+        self.assertEqual(self.handler._caller_transcript_buf, [])
+
+    async def test_save_transcript_flushes_partial_assistant_buffer(self) -> None:
+        """Partial assistant buffer should be flushed into segments before save check."""
+        self.handler.database_engine = None
+        self.handler._caller_transcript_buf = []
+        self.handler._assistant_transcript_buf = ["Good", "bye"]
+        self.handler._transcript_segments = []
+
+        await self.handler._save_call_transcript()
+
+        self.assertEqual(len(self.handler._transcript_segments), 1)
+        self.assertEqual(self.handler._transcript_segments[0][0], "Assistant")
+        self.assertEqual(self.handler._transcript_segments[0][1], "Goodbye")
+        self.assertEqual(self.handler._assistant_transcript_buf, [])
+
+    async def test_save_transcript_formats_timestamps(self) -> None:
+        """Transcript segments should be formatted with MM:SS timestamps."""
+        self.handler._transcript_segments = [
+            ("Caller", "Hello", 0.0),
+            ("Assistant", "Hi there", 5.5),
+            ("Caller", "Thanks", 65.3),
+        ]
+
+        captured = _SavedNoteArgs()
+        with self._patch_db(captured):
+            self.handler.database_engine = MagicMock()
+            await self.handler._save_call_transcript()
+
+        self.assertIn("[00:00] Caller: Hello", captured.content)
+        self.assertIn("[00:05] Assistant: Hi there", captured.content)
+        self.assertIn("[01:05] Caller: Thanks", captured.content)
+        self.assertIs(captured.include_in_prompt, False)
+
+    async def test_save_transcript_uses_visibility_labels_from_service(self) -> None:
+        """Visibility labels should come from the processing service config."""
+        self.handler._transcript_segments = [("Caller", "Hello", 0.0)]
+
+        mock_service = MagicMock()
+        mock_service.service_config.default_note_visibility_labels = ["telephone_logs"]
+        self.handler.processing_service = mock_service
+
+        captured = _SavedNoteArgs()
+        with self._patch_db(captured):
+            self.handler.database_engine = MagicMock()
+            await self.handler._save_call_transcript()
+
+        self.assertEqual(captured.visibility_labels, ["telephone_logs"])
+
+    async def test_save_transcript_title_includes_extension(self) -> None:
+        """Title should include the extension and datetime."""
+        self.handler._transcript_segments = [("Caller", "Hello", 0.0)]
+
+        captured = _SavedNoteArgs()
+        with self._patch_db(captured):
+            self.handler.database_engine = MagicMock()
+            await self.handler._save_call_transcript()
+
+        self.assertIn("Call Transcript: 100 -", captured.title)
 
 
 if __name__ == "__main__":
