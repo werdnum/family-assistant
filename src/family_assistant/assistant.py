@@ -562,12 +562,7 @@ class Assistant:
         # Load file-based skills and create NoteRegistry
         all_skills = []
         skills_config = self.config.skills_config
-        builtin_dir = (
-            Path(skills_config.builtin_dir) if skills_config.builtin_dir else None
-        )
         user_dir = Path(skills_config.user_dir) if skills_config.user_dir else None
-        if builtin_dir:
-            all_skills.extend(load_skills_from_directory(builtin_dir))
         if user_dir:
             all_skills.extend(load_skills_from_directory(user_dir))
         note_registry = NoteRegistry(all_skills) if all_skills else None

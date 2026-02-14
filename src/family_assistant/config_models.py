@@ -173,7 +173,6 @@ class SkillsConfig(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    builtin_dir: str | None = None
     user_dir: str | None = None
 
 

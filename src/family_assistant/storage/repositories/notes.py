@@ -13,6 +13,7 @@ from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlalchemy.sql import functions as func
 
+from family_assistant.skills.frontmatter import parse_frontmatter
 from family_assistant.storage.notes import notes_table
 from family_assistant.storage.repositories.base import BaseRepository
 
@@ -25,6 +26,9 @@ class NoteModel(BaseModel):
     include_in_prompt: bool = True
     attachment_ids: list[str] = Field(default_factory=list)
     visibility_labels: list[str] = Field(default_factory=list)
+    is_skill: bool = False
+    skill_name: str | None = None
+    skill_description: str | None = None
 
 
 class NoteRow(NoteModel):
@@ -56,6 +60,9 @@ def _row_to_note_model(row: dict[str, Any]) -> NoteModel:
         include_in_prompt=row["include_in_prompt"],
         attachment_ids=_parse_json_list(row["attachment_ids"]),
         visibility_labels=_parse_json_list(row["visibility_labels"]),
+        is_skill=row.get("is_skill", False),
+        skill_name=row.get("skill_name"),
+        skill_description=row.get("skill_description"),
     )
 
 
@@ -69,6 +76,29 @@ class DuplicateNoteError(Exception):
     """Raised when attempting to create a note with a title that already exists."""
 
     pass
+
+
+_NOTE_COLUMNS = [
+    notes_table.c.title,
+    notes_table.c.content,
+    notes_table.c.include_in_prompt,
+    notes_table.c.attachment_ids,
+    notes_table.c.visibility_labels,
+    notes_table.c.is_skill,
+    notes_table.c.skill_name,
+    notes_table.c.skill_description,
+]
+
+
+def _detect_skill_metadata(content: str) -> tuple[bool, str | None, str | None]:
+    """Parse frontmatter to detect if content represents a skill.
+
+    Returns (is_skill, skill_name, skill_description).
+    """
+    fm, _ = parse_frontmatter(content)
+    if fm and "name" in fm and "description" in fm:
+        return True, str(fm["name"]), str(fm["description"])
+    return False, None, None
 
 
 class NotesRepository(BaseRepository):
@@ -119,13 +149,7 @@ class NotesRepository(BaseRepository):
     ) -> list[NoteModel]:
         """Retrieves all notes, optionally filtered by visibility grants."""
         try:
-            stmt = select(
-                notes_table.c.title,
-                notes_table.c.content,
-                notes_table.c.include_in_prompt,
-                notes_table.c.attachment_ids,
-                notes_table.c.visibility_labels,
-            ).order_by(notes_table.c.title)
+            stmt = select(*_NOTE_COLUMNS).order_by(notes_table.c.title)
             stmt = self._apply_visibility_filter(stmt, visibility_grants)
             rows = await self._db.fetch_all(stmt)
             return [_row_to_note_model(row) for row in rows]
@@ -137,17 +161,12 @@ class NotesRepository(BaseRepository):
         self,
         visibility_grants: set[str] | None,
     ) -> list[NoteModel]:
-        """Retrieves only notes that should be included in prompts."""
+        """Retrieves only regular notes that should be included in prompts (excludes skills)."""
         try:
             stmt = (
-                select(
-                    notes_table.c.title,
-                    notes_table.c.content,
-                    notes_table.c.include_in_prompt,
-                    notes_table.c.attachment_ids,
-                    notes_table.c.visibility_labels,
-                )
+                select(*_NOTE_COLUMNS)
                 .where(notes_table.c.include_in_prompt.is_(True))
+                .where(notes_table.c.is_skill.is_(False))
                 .order_by(notes_table.c.title)
             )
             stmt = self._apply_visibility_filter(stmt, visibility_grants)
@@ -163,11 +182,12 @@ class NotesRepository(BaseRepository):
         self,
         visibility_grants: set[str] | None,
     ) -> list[str]:
-        """Retrieves titles of notes that are excluded from prompts."""
+        """Retrieves titles of regular notes that are excluded from prompts (excludes skills)."""
         try:
             stmt = (
                 select(notes_table.c.title)
                 .where(notes_table.c.include_in_prompt.is_(False))
+                .where(notes_table.c.is_skill.is_(False))
                 .order_by(notes_table.c.title)
             )
             stmt = self._apply_visibility_filter(stmt, visibility_grants)
@@ -177,6 +197,24 @@ class NotesRepository(BaseRepository):
             self._logger.error(
                 f"Database error in get_excluded_notes_titles: {e}", exc_info=True
             )
+            raise
+
+    async def get_skills(
+        self,
+        visibility_grants: set[str] | None,
+    ) -> list[NoteModel]:
+        """Retrieves notes that are skills, for building the skill catalog."""
+        try:
+            stmt = (
+                select(*_NOTE_COLUMNS)
+                .where(notes_table.c.is_skill.is_(True))
+                .order_by(notes_table.c.skill_name)
+            )
+            stmt = self._apply_visibility_filter(stmt, visibility_grants)
+            rows = await self._db.fetch_all(stmt)
+            return [_row_to_note_model(row) for row in rows]
+        except SQLAlchemyError as e:
+            self._logger.error(f"Database error in get_skills: {e}", exc_info=True)
             raise
 
     async def get_by_id(
@@ -204,6 +242,9 @@ class NotesRepository(BaseRepository):
                 include_in_prompt=row["include_in_prompt"],
                 attachment_ids=_parse_json_list(row["attachment_ids"]),
                 visibility_labels=_parse_json_list(row["visibility_labels"]),
+                is_skill=row.get("is_skill", False),
+                skill_name=row.get("skill_name"),
+                skill_description=row.get("skill_description"),
                 created_at=row["created_at"],
                 updated_at=row["updated_at"],
             )
@@ -216,13 +257,7 @@ class NotesRepository(BaseRepository):
     ) -> NoteModel | None:
         """Retrieves a specific note by its title."""
         try:
-            stmt = select(
-                notes_table.c.title,
-                notes_table.c.content,
-                notes_table.c.include_in_prompt,
-                notes_table.c.attachment_ids,
-                notes_table.c.visibility_labels,
-            ).where(notes_table.c.title == title)
+            stmt = select(*_NOTE_COLUMNS).where(notes_table.c.title == title)
             stmt = self._apply_visibility_filter(stmt, visibility_grants)
             row = await self._db.fetch_one(stmt)
             if row:
@@ -288,6 +323,9 @@ class NotesRepository(BaseRepository):
         attachment_ids_json = json.dumps(attachment_ids_to_use)
         visibility_labels_json = json.dumps(visibility_labels_to_use)
 
+        # Detect skill metadata from frontmatter at write time
+        is_skill, skill_name, skill_description = _detect_skill_metadata(content)
+
         if self._db.engine.dialect.name == "postgresql":
             # Use PostgreSQL's ON CONFLICT DO UPDATE for atomic upsert
             try:
@@ -297,6 +335,9 @@ class NotesRepository(BaseRepository):
                     include_in_prompt=include_in_prompt,
                     attachment_ids=attachment_ids_json,
                     visibility_labels=visibility_labels_json,
+                    is_skill=is_skill,
+                    skill_name=skill_name,
+                    skill_description=skill_description,
                     created_at=now,
                     updated_at=now,
                 )
@@ -306,6 +347,9 @@ class NotesRepository(BaseRepository):
                     "include_in_prompt": stmt.excluded.include_in_prompt,
                     "attachment_ids": stmt.excluded.attachment_ids,
                     "visibility_labels": stmt.excluded.visibility_labels,
+                    "is_skill": stmt.excluded.is_skill,
+                    "skill_name": stmt.excluded.skill_name,
+                    "skill_description": stmt.excluded.skill_description,
                     "updated_at": stmt.excluded.updated_at,
                 }
                 stmt = stmt.on_conflict_do_update(
@@ -337,6 +381,9 @@ class NotesRepository(BaseRepository):
                     include_in_prompt=include_in_prompt,
                     attachment_ids=attachment_ids_json,
                     visibility_labels=visibility_labels_json,
+                    is_skill=is_skill,
+                    skill_name=skill_name,
+                    skill_description=skill_description,
                     created_at=now,
                     updated_at=now,
                 )
@@ -361,6 +408,9 @@ class NotesRepository(BaseRepository):
                             include_in_prompt=include_in_prompt,
                             attachment_ids=attachment_ids_json,
                             visibility_labels=visibility_labels_json,
+                            is_skill=is_skill,
+                            skill_name=skill_name,
+                            skill_description=skill_description,
                             updated_at=now,
                         )
                     )
@@ -468,6 +518,9 @@ class NotesRepository(BaseRepository):
             attachment_ids_json = json.dumps(attachment_ids_to_use)
             visibility_labels_json = json.dumps(visibility_labels_to_use)
 
+            # Detect skill metadata from frontmatter at write time
+            is_skill, skill_name, skill_description = _detect_skill_metadata(content)
+
             # Update the note in place, preserving the primary key
             stmt = (
                 update(notes_table)
@@ -478,6 +531,9 @@ class NotesRepository(BaseRepository):
                     include_in_prompt=include_in_prompt,
                     attachment_ids=attachment_ids_json,
                     visibility_labels=visibility_labels_json,
+                    is_skill=is_skill,
+                    skill_name=skill_name,
+                    skill_description=skill_description,
                     updated_at=func.now(),
                 )
             )

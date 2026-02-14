@@ -9,10 +9,6 @@ import pytz
 from family_assistant import (
     calendar_integration,  # For calendar functions
 )
-
-# Import necessary types and modules from your project.
-# These are based on the previously discussed files and common patterns in your project.
-from family_assistant.skills.frontmatter import parse_frontmatter
 from family_assistant.storage.context import DatabaseContext
 
 # Define a type alias for prompts if not already a dedicated class
@@ -150,32 +146,25 @@ class NotesContextProvider(ContextProvider):
             async with (
                 await self._get_db_context_func() as db_context
             ):  # Get context per call
-                all_notes = await db_context.notes.get_all(
+                # Use targeted queries - skills are identified at write time via is_skill column
+                prompt_notes = await db_context.notes.get_prompt_notes(
+                    visibility_grants=self._visibility_grants
+                )
+                db_skills = await db_context.notes.get_skills(
+                    visibility_grants=self._visibility_grants
+                )
+                excluded_titles = await db_context.notes.get_excluded_notes_titles(
                     visibility_grants=self._visibility_grants
                 )
 
-                # Partition notes into regular notes vs DB skills
-                regular_prompt_notes = []
-                regular_excluded_titles: list[str] = []
-                db_skills: list[tuple[str, str]] = []  # (name, description)
-
-                for note in all_notes:
-                    fm, _ = parse_frontmatter(note.content)
-                    if fm and "name" in fm and "description" in fm:
-                        db_skills.append((fm["name"], fm["description"]))
-                    elif note.include_in_prompt:
-                        regular_prompt_notes.append(note)
-                    else:
-                        regular_excluded_titles.append(note.title)
-
                 # 1. Regular notes section
-                if regular_prompt_notes:
+                if prompt_notes:
                     notes_list_str = ""
                     note_item_format = self._prompts.get(
                         "note_item_format",
                         "- {title}: {content}",  # Default format
                     )
-                    for note in regular_prompt_notes:
+                    for note in prompt_notes:
                         note_text = note_item_format.format(
                             title=note.title, content=note.content
                         )
@@ -214,20 +203,22 @@ class NotesContextProvider(ContextProvider):
                         "## Available Skills",
                         "Use the `get_note` tool to load a skill's full instructions.",
                     ]
-                    for name, description in db_skills:
-                        catalog_lines.append(f"- **{name}**: {description}")
+                    for skill in db_skills:
+                        catalog_lines.append(
+                            f"- **{skill.skill_name}**: {skill.skill_description}"
+                        )
                     for skill in file_skills:
                         catalog_lines.append(f"- **{skill.name}**: {skill.description}")
                     fragments.append("\n".join(catalog_lines))
 
                 # 3. Excluded regular notes
-                if regular_excluded_titles:
+                if excluded_titles:
                     excluded_notes_format = self._prompts.get(
                         "excluded_notes_format",
                         "Other available notes (not included above): {excluded_titles}",
                     )
                     excluded_titles_str = ", ".join(
-                        f'"{title}"' for title in regular_excluded_titles
+                        f'"{title}"' for title in excluded_titles
                     )
                     formatted_excluded_notes = excluded_notes_format.format(
                         excluded_titles=excluded_titles_str
@@ -238,7 +229,7 @@ class NotesContextProvider(ContextProvider):
                 logger.debug(
                     "[%s] Formatted %d notes, %d DB skills, %d file skills into %d fragment(s).",
                     self.name,
-                    len(regular_prompt_notes),
+                    len(prompt_notes),
                     len(db_skills),
                     len(file_skills),
                     len(fragments),
