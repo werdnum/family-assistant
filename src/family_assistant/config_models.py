@@ -113,7 +113,7 @@ class ProcessingConfig(BaseModel):
     calendar_config: CalendarConfig | None = None  # Per-profile calendar config
     camera_config: CameraConfig | None = None  # Per-profile camera backend config
     greeting_wav_path: str | None = None
-    default_note_visibility_labels: list[str] = Field(default_factory=list)
+    default_note_visibility_labels: list[str] | None = None
 
 
 class ToolsConfig(BaseModel):
