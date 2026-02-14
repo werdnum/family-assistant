@@ -570,7 +570,9 @@ def resolve_service_profile(
                 profile_def["processing_config"]["prompts"],
             )
 
-        # Replace scalar values
+        # Replace scalar values only if explicitly set (not None from Pydantic defaults)
+        # This ensures profiles inherit values from default_profile_settings when they
+        # don't explicitly override them.
         scalar_keys = [
             "provider",
             "llm_model",
@@ -585,7 +587,10 @@ def resolve_service_profile(
             "camera_config",
         ]
         for key in scalar_keys:
-            if key in profile_def["processing_config"]:
+            if (
+                key in profile_def["processing_config"]
+                and profile_def["processing_config"][key] is not None
+            ):
                 resolved["processing_config"][key] = profile_def["processing_config"][
                     key
                 ]
