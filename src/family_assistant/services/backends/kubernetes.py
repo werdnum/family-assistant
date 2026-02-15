@@ -77,15 +77,15 @@ async def _load_kube_config(
 ) -> Configuration:
     """Load Kubernetes configuration, trying in-cluster first, then kubeconfig.
 
-    Returns a Configuration object with disable_ssl_x509_strict=True to work around
-    k3s (and other distributions) issuing certificates without the Authority Key
-    Identifier extension, which OpenSSL 3.4+ rejects under strict verification.
+    Returns a Configuration object with strict SSL verification disabled to work
+    around k3s (and other distributions) issuing certificates without the Authority
+    Key Identifier extension, which OpenSSL 3.4+ rejects under strict verification.
 
     Args:
         kubeconfig_path: Optional explicit path to kubeconfig file.
     """
     config = Configuration()
-    config.disable_ssl_x509_strict = True
+    config.disable_strict_ssl_verification = True
     try:
         kube_config.load_incluster_config(client_configuration=config)
         logger.debug("Loaded in-cluster Kubernetes config")
