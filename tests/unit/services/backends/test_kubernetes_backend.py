@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from unittest.mock import AsyncMock, patch
+from types import SimpleNamespace
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -36,7 +37,18 @@ def kubernetes_config() -> KubernetesBackendConfig:
 @pytest.fixture
 def backend(kubernetes_config: KubernetesBackendConfig) -> KubernetesBackend:
     """Create a KubernetesBackend instance for testing."""
-    return KubernetesBackend(config=kubernetes_config, workspace_pvc_name="test-pvc")
+    backend = KubernetesBackend(config=kubernetes_config, workspace_pvc_name="test-pvc")
+    # Skip actual kube config loading in tests
+    backend._config_loaded = True
+    return backend
+
+
+def _mock_api_client() -> MagicMock:
+    """Create a mock ApiClient that supports async context manager."""
+    mock_client = MagicMock()
+    mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+    mock_client.__aexit__ = AsyncMock(return_value=None)
+    return mock_client
 
 
 class TestKubernetesBackendInit:
@@ -69,12 +81,20 @@ class TestKubernetesBackendSpawnTask:
     @pytest.mark.asyncio
     async def test_spawn_task_success(self, backend: KubernetesBackend) -> None:
         """Test successful task spawn."""
-        with patch("asyncio.create_subprocess_exec") as mock_exec:
-            mock_proc = AsyncMock()
-            mock_proc.returncode = 0
-            mock_proc.communicate.return_value = (b'{"metadata": {}}', b"")
-            mock_exec.return_value = mock_proc
+        mock_client = _mock_api_client()
+        mock_batch_api = AsyncMock()
+        mock_batch_api.create_namespaced_job = AsyncMock()
 
+        with (
+            patch(
+                "family_assistant.services.backends.kubernetes.ApiClient",
+                return_value=mock_client,
+            ),
+            patch(
+                "family_assistant.services.backends.kubernetes.BatchV1Api",
+                return_value=mock_batch_api,
+            ),
+        ):
             job_id = await backend.spawn_task(
                 task_id="task-123",
                 prompt_path="tasks/task-123/prompt.md",
@@ -90,25 +110,36 @@ class TestKubernetesBackendSpawnTask:
             assert task.task_id == "task-123"
             assert task.status == WorkerStatus.SUBMITTED
             assert task.model == "claude"
+            mock_batch_api.create_namespaced_job.assert_awaited_once()
 
     @pytest.mark.asyncio
     async def test_spawn_task_failure(self, backend: KubernetesBackend) -> None:
-        """Test spawn task handles kubectl failure."""
-        with patch("asyncio.create_subprocess_exec") as mock_exec:
-            mock_proc = AsyncMock()
-            mock_proc.returncode = 1
-            mock_proc.communicate.return_value = (b"", b"Error: forbidden\n")
-            mock_exec.return_value = mock_proc
+        """Test spawn task handles API failure."""
+        mock_client = _mock_api_client()
+        mock_batch_api = AsyncMock()
+        mock_batch_api.create_namespaced_job = AsyncMock(
+            side_effect=Exception("forbidden")
+        )
 
-            with pytest.raises(RuntimeError, match="Failed to create Kubernetes Job"):
-                await backend.spawn_task(
-                    task_id="task-123",
-                    prompt_path="tasks/task-123/prompt.md",
-                    output_dir="tasks/task-123/output",
-                    webhook_url="http://localhost:8000/webhook/event",
-                    model="claude",
-                    timeout_minutes=30,
-                )
+        with (
+            patch(
+                "family_assistant.services.backends.kubernetes.ApiClient",
+                return_value=mock_client,
+            ),
+            patch(
+                "family_assistant.services.backends.kubernetes.BatchV1Api",
+                return_value=mock_batch_api,
+            ),
+            pytest.raises(RuntimeError, match="Failed to create Kubernetes Job"),
+        ):
+            await backend.spawn_task(
+                task_id="task-123",
+                prompt_path="tasks/task-123/prompt.md",
+                output_dir="tasks/task-123/output",
+                webhook_url="http://localhost:8000/webhook/event",
+                model="claude",
+                timeout_minutes=30,
+            )
 
 
 class TestKubernetesBackendBuildJobManifest:
@@ -126,27 +157,27 @@ class TestKubernetesBackendBuildJobManifest:
             timeout_minutes=30,
         )
 
-        assert manifest["apiVersion"] == "batch/v1"
-        assert manifest["kind"] == "Job"
-        assert manifest["metadata"]["name"] == "worker-task-123"
-        assert manifest["metadata"]["namespace"] == "test-namespace"
-        assert manifest["metadata"]["labels"]["task-id"] == "task-123"
-        assert manifest["metadata"]["labels"]["model"] == "claude"
+        assert manifest.api_version == "batch/v1"
+        assert manifest.kind == "Job"
+        assert manifest.metadata.name == "worker-task-123"
+        assert manifest.metadata.namespace == "test-namespace"
+        assert manifest.metadata.labels["task-id"] == "task-123"
+        assert manifest.metadata.labels["model"] == "claude"
 
-        spec = manifest["spec"]
-        assert spec["ttlSecondsAfterFinished"] == 7200
-        assert spec["backoffLimit"] == 0
-        assert spec["activeDeadlineSeconds"] == 30 * 60
+        spec = manifest.spec
+        assert spec.ttl_seconds_after_finished == 7200
+        assert spec.backoff_limit == 0
+        assert spec.active_deadline_seconds == 30 * 60
 
-        pod_spec = spec["template"]["spec"]
-        assert pod_spec["serviceAccountName"] == "test-sa"
-        assert pod_spec["runtimeClassName"] == "test-runtime"
-        assert pod_spec["restartPolicy"] == "Never"
+        pod_spec = spec.template.spec
+        assert pod_spec.service_account_name == "test-sa"
+        assert pod_spec.runtime_class_name == "test-runtime"
+        assert pod_spec.restart_policy == "Never"
 
-        container = pod_spec["containers"][0]
-        assert container["name"] == "worker"
-        assert container["image"] == "test-image:latest"
-        assert container["command"] == ["run-task"]
+        container = pod_spec.containers[0]
+        assert container.name == "worker"
+        assert container.image == "test-image:latest"
+        assert container.command == ["run-task"]
 
     def test_build_manifest_env_vars(self, backend: KubernetesBackend) -> None:
         """Test job manifest includes correct environment variables."""
@@ -160,25 +191,24 @@ class TestKubernetesBackendBuildJobManifest:
             timeout_minutes=45,
         )
 
-        container = manifest["spec"]["template"]["spec"]["containers"][0]
-        env_vars = {e["name"]: e for e in container["env"]}
+        container = manifest.spec.template.spec.containers[0]
+        env_vars = {e.name: e for e in container.env}
 
-        assert env_vars["TASK_ID"]["value"] == "task-123"
+        assert env_vars["TASK_ID"].value == "task-123"
         # Paths are relative to /task since we mount only the task's directory
-        assert env_vars["TASK_INPUT"]["value"] == "/task/prompt.md"
-        assert env_vars["TASK_OUTPUT_DIR"]["value"] == "/task/output"
+        assert env_vars["TASK_INPUT"].value == "/task/prompt.md"
+        assert env_vars["TASK_OUTPUT_DIR"].value == "/task/output"
         assert (
-            env_vars["TASK_WEBHOOK_URL"]["value"]
-            == "http://localhost:8000/webhook/event"
+            env_vars["TASK_WEBHOOK_URL"].value == "http://localhost:8000/webhook/event"
         )
-        assert env_vars["AI_AGENT"]["value"] == "claude"
-        assert env_vars["MAX_TURNS"]["value"] == "50"
-        assert env_vars["TASK_TIMEOUT_MINUTES"]["value"] == "45"
+        assert env_vars["AI_AGENT"].value == "claude"
+        assert env_vars["MAX_TURNS"].value == "50"
+        assert env_vars["TASK_TIMEOUT_MINUTES"].value == "45"
 
         # Check envFrom includes the API keys secret
-        env_from = container["envFrom"]
+        env_from = container.env_from
         assert len(env_from) == 1
-        assert env_from[0]["secretRef"]["name"] == "test-api-keys"
+        assert env_from[0].secret_ref.name == "test-api-keys"
 
     def test_build_manifest_gemini_model(self, backend: KubernetesBackend) -> None:
         """Test job manifest for gemini model uses gemini config volume."""
@@ -192,25 +222,25 @@ class TestKubernetesBackendBuildJobManifest:
             timeout_minutes=30,
         )
 
-        container = manifest["spec"]["template"]["spec"]["containers"][0]
-        env_vars = {e["name"]: e for e in container["env"]}
-        assert env_vars["AI_AGENT"]["value"] == "gemini"
+        container = manifest.spec.template.spec.containers[0]
+        env_vars = {e.name: e for e in container.env}
+        assert env_vars["AI_AGENT"].value == "gemini"
 
         # Check envFrom is still present (same secret for all API keys)
-        env_from = container["envFrom"]
+        env_from = container.env_from
         assert len(env_from) == 1
-        assert env_from[0]["secretRef"]["name"] == "test-api-keys"
+        assert env_from[0].secret_ref.name == "test-api-keys"
 
         # Check gemini config volume is mounted instead of claude
-        pod_spec = manifest["spec"]["template"]["spec"]
-        volume_mounts = {v["name"]: v for v in container["volumeMounts"]}
+        pod_spec = manifest.spec.template.spec
+        volume_mounts = {v.name: v for v in container.volume_mounts}
         assert "gemini-config" in volume_mounts
-        assert volume_mounts["gemini-config"]["mountPath"] == "/home/coder/.gemini"
+        assert volume_mounts["gemini-config"].mount_path == "/home/coder/.gemini"
         assert "claude-config" not in volume_mounts
 
-        volumes = {v["name"]: v for v in pod_spec["volumes"]}
+        volumes = {v.name: v for v in pod_spec.volumes}
         assert (
-            volumes["gemini-config"]["persistentVolumeClaim"]["claimName"]
+            volumes["gemini-config"].persistent_volume_claim.claim_name
             == "gemini-config-pvc"
         )
 
@@ -226,16 +256,16 @@ class TestKubernetesBackendBuildJobManifest:
             timeout_minutes=30,
         )
 
-        pod_spec = manifest["spec"]["template"]["spec"]
-        security_context = pod_spec["securityContext"]
-        assert security_context["runAsNonRoot"] is True
-        assert security_context["runAsUser"] == 1000
-        assert security_context["runAsGroup"] == 1000
-        assert security_context["fsGroup"] == 1000
+        pod_spec = manifest.spec.template.spec
+        security_context = pod_spec.security_context
+        assert security_context.run_as_non_root is True
+        assert security_context.run_as_user == 1000
+        assert security_context.run_as_group == 1000
+        assert security_context.fs_group == 1000
 
-        container_security = pod_spec["containers"][0]["securityContext"]
-        assert container_security["allowPrivilegeEscalation"] is False
-        assert container_security["capabilities"]["drop"] == ["ALL"]
+        container_security = pod_spec.containers[0].security_context
+        assert container_security.allow_privilege_escalation is False
+        assert container_security.capabilities.drop == ["ALL"]
 
     def test_build_manifest_volume_mounts(self, backend: KubernetesBackend) -> None:
         """Test job manifest includes volume mounts."""
@@ -249,24 +279,24 @@ class TestKubernetesBackendBuildJobManifest:
             timeout_minutes=30,
         )
 
-        pod_spec = manifest["spec"]["template"]["spec"]
-        container = pod_spec["containers"][0]
-        volume_mounts = {v["name"]: v for v in container["volumeMounts"]}
+        pod_spec = manifest.spec.template.spec
+        container = pod_spec.containers[0]
+        volume_mounts = {v.name: v for v in container.volume_mounts}
 
         assert "workspace" in volume_mounts
         # Volume is mounted at /task with subPath for task isolation
-        assert volume_mounts["workspace"]["mountPath"] == "/task"
-        assert volume_mounts["workspace"]["subPath"] == "tasks/task-123"
+        assert volume_mounts["workspace"].mount_path == "/task"
+        assert volume_mounts["workspace"].sub_path == "tasks/task-123"
 
         # Claude config mount from PVC
         assert "claude-config" in volume_mounts
-        assert volume_mounts["claude-config"]["mountPath"] == "/home/coder/.claude"
-        assert volume_mounts["claude-config"]["readOnly"] is True
+        assert volume_mounts["claude-config"].mount_path == "/home/coder/.claude"
+        assert volume_mounts["claude-config"].read_only is True
 
-        volumes = {v["name"]: v for v in pod_spec["volumes"]}
-        assert volumes["workspace"]["persistentVolumeClaim"]["claimName"] == "test-pvc"
+        volumes = {v.name: v for v in pod_spec.volumes}
+        assert volumes["workspace"].persistent_volume_claim.claim_name == "test-pvc"
         assert (
-            volumes["claude-config"]["persistentVolumeClaim"]["claimName"]
+            volumes["claude-config"].persistent_volume_claim.claim_name
             == "claude-config-pvc"
         )
 
@@ -298,8 +328,8 @@ class TestKubernetesBackendBuildJobManifest:
             timeout_minutes=30,
         )
 
-        pod_spec = manifest["spec"]["template"]["spec"]
-        volumes = {v["name"]: v for v in pod_spec["volumes"]}
+        pod_spec = manifest.spec.template.spec
+        volumes = {v.name: v for v in pod_spec.volumes}
         assert "claude-config" in volumes
         assert "user-provided-name" not in volumes
 
@@ -329,15 +359,25 @@ class TestKubernetesBackendGetTaskStatus:
             status=WorkerStatus.SUBMITTED,
         )
 
-        with patch("asyncio.create_subprocess_exec") as mock_exec:
-            mock_proc = AsyncMock()
-            mock_proc.returncode = 0
-            mock_proc.communicate.return_value = (
-                b'{"status": {"active": 1}}',
-                b"",
+        mock_client = _mock_api_client()
+        mock_job = SimpleNamespace(
+            status=SimpleNamespace(
+                active=1, succeeded=None, failed=None, conditions=None
             )
-            mock_exec.return_value = mock_proc
+        )
+        mock_batch_api = AsyncMock()
+        mock_batch_api.read_namespaced_job = AsyncMock(return_value=mock_job)
 
+        with (
+            patch(
+                "family_assistant.services.backends.kubernetes.ApiClient",
+                return_value=mock_client,
+            ),
+            patch(
+                "family_assistant.services.backends.kubernetes.BatchV1Api",
+                return_value=mock_batch_api,
+            ),
+        ):
             result = await backend.get_task_status("worker-task-123")
             assert result.status == WorkerStatus.RUNNING
 
@@ -355,15 +395,25 @@ class TestKubernetesBackendGetTaskStatus:
             status=WorkerStatus.RUNNING,
         )
 
-        with patch("asyncio.create_subprocess_exec") as mock_exec:
-            mock_proc = AsyncMock()
-            mock_proc.returncode = 0
-            mock_proc.communicate.return_value = (
-                b'{"status": {"succeeded": 1}}',
-                b"",
+        mock_client = _mock_api_client()
+        mock_job = SimpleNamespace(
+            status=SimpleNamespace(
+                succeeded=1, active=None, failed=None, conditions=None
             )
-            mock_exec.return_value = mock_proc
+        )
+        mock_batch_api = AsyncMock()
+        mock_batch_api.read_namespaced_job = AsyncMock(return_value=mock_job)
 
+        with (
+            patch(
+                "family_assistant.services.backends.kubernetes.ApiClient",
+                return_value=mock_client,
+            ),
+            patch(
+                "family_assistant.services.backends.kubernetes.BatchV1Api",
+                return_value=mock_batch_api,
+            ),
+        ):
             result = await backend.get_task_status("worker-task-123")
             assert result.status == WorkerStatus.SUCCESS
             assert result.exit_code == 0
@@ -382,15 +432,25 @@ class TestKubernetesBackendGetTaskStatus:
             status=WorkerStatus.RUNNING,
         )
 
-        with patch("asyncio.create_subprocess_exec") as mock_exec:
-            mock_proc = AsyncMock()
-            mock_proc.returncode = 0
-            mock_proc.communicate.return_value = (
-                b'{"status": {"failed": 1}}',
-                b"",
+        mock_client = _mock_api_client()
+        mock_job = SimpleNamespace(
+            status=SimpleNamespace(
+                succeeded=None, active=None, failed=1, conditions=None
             )
-            mock_exec.return_value = mock_proc
+        )
+        mock_batch_api = AsyncMock()
+        mock_batch_api.read_namespaced_job = AsyncMock(return_value=mock_job)
 
+        with (
+            patch(
+                "family_assistant.services.backends.kubernetes.ApiClient",
+                return_value=mock_client,
+            ),
+            patch(
+                "family_assistant.services.backends.kubernetes.BatchV1Api",
+                return_value=mock_batch_api,
+            ),
+        ):
             result = await backend.get_task_status("worker-task-123")
             assert result.status == WorkerStatus.FAILED
             # exit_code not set here - webhook provides actual value
@@ -411,15 +471,28 @@ class TestKubernetesBackendGetTaskStatus:
             status=WorkerStatus.RUNNING,
         )
 
-        with patch("asyncio.create_subprocess_exec") as mock_exec:
-            mock_proc = AsyncMock()
-            mock_proc.returncode = 0
-            mock_proc.communicate.return_value = (
-                b'{"status": {"failed": 1, "conditions": [{"type": "Failed", "reason": "DeadlineExceeded"}]}}',
-                b"",
+        mock_client = _mock_api_client()
+        deadline_condition = SimpleNamespace(
+            type="Failed", reason="DeadlineExceeded", message=""
+        )
+        mock_job = SimpleNamespace(
+            status=SimpleNamespace(
+                succeeded=None, active=None, failed=1, conditions=[deadline_condition]
             )
-            mock_exec.return_value = mock_proc
+        )
+        mock_batch_api = AsyncMock()
+        mock_batch_api.read_namespaced_job = AsyncMock(return_value=mock_job)
 
+        with (
+            patch(
+                "family_assistant.services.backends.kubernetes.ApiClient",
+                return_value=mock_client,
+            ),
+            patch(
+                "family_assistant.services.backends.kubernetes.BatchV1Api",
+                return_value=mock_batch_api,
+            ),
+        ):
             result = await backend.get_task_status("worker-task-123")
             assert result.status == WorkerStatus.TIMEOUT
             assert result.error_message == "Job exceeded deadline"
@@ -442,15 +515,24 @@ class TestKubernetesBackendCancelTask:
             status=WorkerStatus.RUNNING,
         )
 
-        with patch("asyncio.create_subprocess_exec") as mock_exec:
-            mock_proc = AsyncMock()
-            mock_proc.returncode = 0
-            mock_proc.communicate.return_value = (b"", b"")
-            mock_exec.return_value = mock_proc
+        mock_client = _mock_api_client()
+        mock_batch_api = AsyncMock()
+        mock_batch_api.delete_namespaced_job = AsyncMock()
 
+        with (
+            patch(
+                "family_assistant.services.backends.kubernetes.ApiClient",
+                return_value=mock_client,
+            ),
+            patch(
+                "family_assistant.services.backends.kubernetes.BatchV1Api",
+                return_value=mock_batch_api,
+            ),
+        ):
             result = await backend.cancel_task("worker-task-123")
             assert result is True
             assert backend._tasks["worker-task-123"].status == WorkerStatus.CANCELLED
+            mock_batch_api.delete_namespaced_job.assert_awaited_once()
 
     @pytest.mark.asyncio
     async def test_cancel_unknown_task(self, backend: KubernetesBackend) -> None:
@@ -533,30 +615,50 @@ class TestKubernetesBackendGetJobLogs:
     @pytest.mark.asyncio
     async def test_get_job_logs_success(self, backend: KubernetesBackend) -> None:
         """Test getting logs from a job."""
-        with patch("asyncio.create_subprocess_exec") as mock_exec:
-            # First call gets pod name
-            mock_proc1 = AsyncMock()
-            mock_proc1.returncode = 0
-            mock_proc1.communicate.return_value = (b"worker-task-123-abc123", b"")
+        mock_client = _mock_api_client()
 
-            # Second call gets logs
-            mock_proc2 = AsyncMock()
-            mock_proc2.returncode = 0
-            mock_proc2.communicate.return_value = (b"Log line 1\nLog line 2", b"")
+        mock_pod = SimpleNamespace(
+            metadata=SimpleNamespace(name="worker-task-123-abc123")
+        )
+        mock_pod_list = SimpleNamespace(items=[mock_pod])
 
-            mock_exec.side_effect = [mock_proc1, mock_proc2]
+        mock_core_api = AsyncMock()
+        mock_core_api.list_namespaced_pod = AsyncMock(return_value=mock_pod_list)
+        mock_core_api.read_namespaced_pod_log = AsyncMock(
+            return_value="Log line 1\nLog line 2"
+        )
 
+        with (
+            patch(
+                "family_assistant.services.backends.kubernetes.ApiClient",
+                return_value=mock_client,
+            ),
+            patch(
+                "family_assistant.services.backends.kubernetes.CoreV1Api",
+                return_value=mock_core_api,
+            ),
+        ):
             logs = await backend.get_job_logs("worker-task-123")
             assert logs == "Log line 1\nLog line 2"
 
     @pytest.mark.asyncio
     async def test_get_job_logs_no_pod(self, backend: KubernetesBackend) -> None:
         """Test getting logs when pod not found."""
-        with patch("asyncio.create_subprocess_exec") as mock_exec:
-            mock_proc = AsyncMock()
-            mock_proc.returncode = 1
-            mock_proc.communicate.return_value = (b"", b"")
-            mock_exec.return_value = mock_proc
+        mock_client = _mock_api_client()
 
+        mock_pod_list = SimpleNamespace(items=[])
+        mock_core_api = AsyncMock()
+        mock_core_api.list_namespaced_pod = AsyncMock(return_value=mock_pod_list)
+
+        with (
+            patch(
+                "family_assistant.services.backends.kubernetes.ApiClient",
+                return_value=mock_client,
+            ),
+            patch(
+                "family_assistant.services.backends.kubernetes.CoreV1Api",
+                return_value=mock_core_api,
+            ),
+        ):
             logs = await backend.get_job_logs("worker-task-123")
             assert logs is None

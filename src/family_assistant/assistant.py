@@ -522,6 +522,23 @@ class Assistant:
                     )
                 break
 
+        # Update the spawn_worker tool's agent enum from config
+        available_agents = self.config.ai_worker_config.available_agents
+        for tool_def_template in base_local_tools_definition:
+            if tool_def_template.get("function", {}).get("name") == "spawn_worker":
+                agent_param = (
+                    tool_def_template["function"]
+                    .get("parameters", {})
+                    .get("properties", {})
+                    .get("agent")
+                )
+                if agent_param:
+                    agent_param["enum"] = available_agents
+                    logger.debug(
+                        f"Updated spawn_worker agent enum to {available_agents}"
+                    )
+                break
+
         # Create root providers with ALL tools for UI/API access
         logger.info("Creating root ToolsProvider with all available tools")
 

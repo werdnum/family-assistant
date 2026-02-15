@@ -19,6 +19,12 @@ def webhook_source() -> WebhookEventSource:
     return WebhookEventSource()
 
 
+@pytest.fixture(autouse=True)
+def _set_db_engine_on_app(db_engine: AsyncEngine) -> None:
+    """Set database_engine on the shared fastapi_app state for get_db dependency."""
+    fastapi_app.state.database_engine = db_engine
+
+
 @pytest.mark.asyncio
 async def test_webhook_event_basic_acceptance(
     db_engine: AsyncEngine,

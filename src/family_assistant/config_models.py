@@ -545,6 +545,9 @@ class KubernetesBackendConfig(BaseModel):
     # Resource limits for worker containers
     resources: WorkerResourceLimits = Field(default_factory=WorkerResourceLimits)
 
+    # Optional explicit kubeconfig path (for local dev; in-cluster config used by default)
+    kubeconfig_path: str | None = None
+
 
 class DockerBackendConfig(BaseModel):
     """Docker-specific configuration for AI workers (local development)."""
@@ -597,6 +600,9 @@ class AIWorkerConfig(BaseModel):
 
     # Resource limits
     resources: WorkerResourceLimits = Field(default_factory=WorkerResourceLimits)
+
+    # Available AI agent types (used to populate tool enum at runtime)
+    available_agents: list[str] = Field(default_factory=lambda: ["claude", "gemini"])
 
     # Cleanup settings
     task_retention_hours: int = 48

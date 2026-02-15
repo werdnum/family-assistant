@@ -111,6 +111,7 @@ dependencies = [
     "pydantic-settings>=2.10.1",
     "pydantic-monty>=0.0.3",
     "anthropic>=0.40.0",
+    "kubernetes-asyncio>=35.0.0",
 ]
 
 [project.optional-dependencies]
