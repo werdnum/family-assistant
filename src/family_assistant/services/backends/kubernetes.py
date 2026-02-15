@@ -3,24 +3,47 @@
 This backend creates Kubernetes Jobs to run worker tasks,
 providing isolation and scalability in production environments.
 
-Uses kubectl CLI via asyncio.subprocess to avoid heavy dependencies.
+Uses the kubernetes-asyncio client library for native async Kubernetes API access.
 """
 
 from __future__ import annotations
 
 import asyncio
-import json
 import logging
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
+from kubernetes_asyncio import config as kube_config
+from kubernetes_asyncio.client import (
+    ApiClient,
+    BatchV1Api,
+    CoreV1Api,
+    V1Capabilities,
+    V1ConfigMapVolumeSource,
+    V1Container,
+    V1EnvFromSource,
+    V1EnvVar,
+    V1Job,
+    V1JobSpec,
+    V1ObjectMeta,
+    V1PersistentVolumeClaimVolumeSource,
+    V1PodSecurityContext,
+    V1PodSpec,
+    V1PodTemplateSpec,
+    V1ResourceRequirements,
+    V1SecretEnvSource,
+    V1SecretVolumeSource,
+    V1SecurityContext,
+    V1Volume,
+    V1VolumeMount,
+)
+
+from family_assistant.config_models import WorkerResourceLimits
 from family_assistant.services.worker_backend import WorkerStatus, WorkerTaskResult
 
 if TYPE_CHECKING:
     from family_assistant.config_models import KubernetesBackendConfig
-
-from family_assistant.config_models import WorkerResourceLimits
 
 logger = logging.getLogger(__name__)
 
@@ -47,12 +70,67 @@ class KubernetesTask:
     error_message: str | None = None
 
 
+async def _load_kube_config(kubeconfig_path: str | None = None) -> None:
+    """Load Kubernetes configuration, trying in-cluster first, then kubeconfig.
+
+    Args:
+        kubeconfig_path: Optional explicit path to kubeconfig file.
+    """
+    try:
+        kube_config.load_incluster_config()
+        logger.debug("Loaded in-cluster Kubernetes config")
+    except kube_config.ConfigException:
+        await kube_config.load_kube_config(config_file=kubeconfig_path)
+        logger.debug("Loaded kubeconfig file")
+
+
+# ast-grep-ignore: no-dict-any - Raw Kubernetes YAML volume config from user settings
+def _config_dict_to_volume(config_dict: dict[str, Any], name: str) -> V1Volume:
+    """Convert a raw Kubernetes volume config dict to a V1Volume.
+
+    The config dict uses camelCase keys matching Kubernetes YAML format.
+    Any "name" key in the config dict is ignored; the provided name is used.
+
+    Supported volume source types: persistentVolumeClaim, configMap, secret.
+    """
+    if "persistentVolumeClaim" in config_dict:
+        pvc = config_dict["persistentVolumeClaim"]
+        return V1Volume(
+            name=name,
+            persistent_volume_claim=V1PersistentVolumeClaimVolumeSource(
+                claim_name=pvc["claimName"],
+                read_only=pvc.get("readOnly"),
+            ),
+        )
+    if "configMap" in config_dict:
+        cm = config_dict["configMap"]
+        return V1Volume(
+            name=name,
+            config_map=V1ConfigMapVolumeSource(
+                name=cm["name"],
+            ),
+        )
+    if "secret" in config_dict:
+        secret = config_dict["secret"]
+        return V1Volume(
+            name=name,
+            secret=V1SecretVolumeSource(
+                secret_name=secret["secretName"],
+            ),
+        )
+    volume_keys = [k for k in config_dict if k != "name"]
+    msg = (
+        f"Unsupported config volume source type: {volume_keys}. "
+        f"Supported: persistentVolumeClaim, configMap, secret"
+    )
+    raise ValueError(msg)
+
+
 class KubernetesBackend:
     """Kubernetes backend for running worker tasks as Jobs.
 
-    Uses `kubectl` CLI via asyncio.subprocess for Kubernetes operations.
-    This avoids adding a heavy dependency (kubernetes-client) while
-    providing full async functionality.
+    Uses the kubernetes-asyncio client library for native async Kubernetes
+    API access, providing full async functionality without subprocess calls.
 
     Example usage:
         backend = KubernetesBackend(config)
@@ -80,6 +158,7 @@ class KubernetesBackend:
         self._config = config
         self._workspace_pvc_name = workspace_pvc_name
         self._tasks: dict[str, KubernetesTask] = {}
+        self._config_loaded = False
 
     @property
     def namespace(self) -> str:
@@ -123,6 +202,13 @@ class KubernetesBackend:
             return self._config.resources
         return WorkerResourceLimits()
 
+    async def _ensure_config_loaded(self) -> None:
+        """Ensure Kubernetes configuration is loaded (once)."""
+        if not self._config_loaded:
+            kubeconfig_path = self._config.kubeconfig_path if self._config else None
+            await _load_kube_config(kubeconfig_path)
+            self._config_loaded = True
+
     async def spawn_task(
         self,
         task_id: str,
@@ -164,30 +250,18 @@ class KubernetesBackend:
         )
 
         logger.info(f"Creating Kubernetes Job {job_name} for task {task_id}")
-        logger.debug(f"Job manifest: {json.dumps(job_manifest, indent=2)}")
 
-        # Apply the job manifest
-        proc = await asyncio.create_subprocess_exec(
-            "kubectl",
-            "apply",
-            "-f",
-            "-",
-            "-n",
-            self.namespace,
-            "-o",
-            "json",
-            stdin=asyncio.subprocess.PIPE,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-        )
-
-        manifest_json = json.dumps(job_manifest).encode()
-        stdout, stderr = await proc.communicate(input=manifest_json)
-
-        if proc.returncode != 0:
-            error_msg = stderr.decode().strip() if stderr else "Unknown error"
-            logger.error(f"Failed to create job {job_name}: {error_msg}")
-            raise RuntimeError(f"Failed to create Kubernetes Job: {error_msg}")
+        await self._ensure_config_loaded()
+        async with ApiClient() as api_client:
+            batch_api = BatchV1Api(api_client)
+            try:
+                await batch_api.create_namespaced_job(
+                    namespace=self.namespace,
+                    body=job_manifest,
+                )
+            except Exception as e:
+                logger.error(f"Failed to create job {job_name}: {e}")
+                raise RuntimeError(f"Failed to create Kubernetes Job: {e}") from e
 
         # Track the task
         task = KubernetesTask(
@@ -215,151 +289,145 @@ class KubernetesBackend:
         model: str,
         timeout_minutes: int,
         callback_token: str | None = None,
-    ) -> dict:
+    ) -> V1Job:
         """Build the Kubernetes Job manifest.
 
-        Returns a dictionary that can be serialized to JSON/YAML for kubectl apply.
+        Returns a V1Job object for the kubernetes-asyncio API.
         """
-        # Extract the filename from prompt_path (e.g., "tasks/{task_id}/prompt.md" -> "prompt.md")
-        # The workspace volume uses subPath to isolate each task, so paths are relative to /task
-        prompt_filename = prompt_path.rsplit("/", maxsplit=1)[-1]  # "prompt.md"
-        output_dirname = output_dir.rsplit("/", maxsplit=1)[-1]  # "output"
+        prompt_filename = prompt_path.rsplit("/", maxsplit=1)[-1]
+        output_dirname = output_dir.rsplit("/", maxsplit=1)[-1]
 
-        # Environment variables for the task runner
-        # Paths are relative to /task since we mount only the task's directory
-        # ast-grep-ignore: no-dict-any - Kubernetes env vars have mixed structures (value vs valueFrom)
-        env_vars: list[dict[str, Any]] = [
-            {"name": "TASK_ID", "value": task_id},
-            {"name": "TASK_INPUT", "value": f"/task/{prompt_filename}"},
-            {"name": "TASK_OUTPUT_DIR", "value": f"/task/{output_dirname}"},
-            {"name": "TASK_WEBHOOK_URL", "value": webhook_url},
-            {"name": "AI_AGENT", "value": model},
-            {"name": "MAX_TURNS", "value": str(DEFAULT_MAX_TURNS)},
-            {"name": "TASK_TIMEOUT_MINUTES", "value": str(timeout_minutes)},
+        env_vars = [
+            V1EnvVar(name="TASK_ID", value=task_id),
+            V1EnvVar(name="TASK_INPUT", value=f"/task/{prompt_filename}"),
+            V1EnvVar(name="TASK_OUTPUT_DIR", value=f"/task/{output_dirname}"),
+            V1EnvVar(name="TASK_WEBHOOK_URL", value=webhook_url),
+            V1EnvVar(name="AI_AGENT", value=model),
+            V1EnvVar(name="MAX_TURNS", value=str(DEFAULT_MAX_TURNS)),
+            V1EnvVar(name="TASK_TIMEOUT_MINUTES", value=str(timeout_minutes)),
         ]
 
-        # Add callback token for webhook verification
         if callback_token:
-            env_vars.append({"name": "TASK_CALLBACK_TOKEN", "value": callback_token})
+            env_vars.append(V1EnvVar(name="TASK_CALLBACK_TOKEN", value=callback_token))
 
-        # Build envFrom to inject all API keys from the secret
-        # ast-grep-ignore: no-dict-any - Kubernetes envFrom has nested optional fields
-        env_from: list[dict[str, Any]] = []
+        env_from: list[V1EnvFromSource] = []
         if self._config and self._config.api_keys_secret:
-            env_from.append({
-                "secretRef": {
-                    "name": self._config.api_keys_secret,
-                    "optional": True,
-                }
-            })
+            env_from.append(
+                V1EnvFromSource(
+                    secret_ref=V1SecretEnvSource(
+                        name=self._config.api_keys_secret,
+                        optional=True,
+                    )
+                )
+            )
 
-        # Volume mounts with isolation - mount only the task's directory at /task
-        # ast-grep-ignore: no-dict-any - Kubernetes volume mounts have mixed types (str vs bool for readOnly)
-        volume_mounts: list[dict[str, Any]] = [
-            {
-                "name": "workspace",
-                "mountPath": "/task",
-                "subPath": f"tasks/{task_id}",
-            }
+        volume_mounts = [
+            V1VolumeMount(
+                name="workspace",
+                mount_path="/task",
+                sub_path=f"tasks/{task_id}",
+            )
         ]
 
-        # Volumes
-        # ast-grep-ignore: no-dict-any - Kubernetes volume specs have mixed types
-        volumes: list[dict[str, Any]] = [
-            {
-                "name": "workspace",
-                "persistentVolumeClaim": {"claimName": self._workspace_pvc_name},
-            }
+        volumes: list[V1Volume] = [
+            V1Volume(
+                name="workspace",
+                persistent_volume_claim=V1PersistentVolumeClaimVolumeSource(
+                    claim_name=self._workspace_pvc_name,
+                ),
+            )
         ]
 
-        # Add optional config volume mounts (for full ~/.claude or ~/.gemini directories)
         if model == "claude" and self._config and self._config.claude_config_volume:
-            volume_mounts.append({
-                "name": "claude-config",
-                "mountPath": "/home/coder/.claude",
-                "readOnly": True,
-            })
-            volumes.append({
-                **self._config.claude_config_volume,
-                "name": "claude-config",
-            })
+            volume_mounts.append(
+                V1VolumeMount(
+                    name="claude-config",
+                    mount_path="/home/coder/.claude",
+                    read_only=True,
+                )
+            )
+            volumes.append(
+                _config_dict_to_volume(
+                    self._config.claude_config_volume, "claude-config"
+                )
+            )
         elif model == "gemini" and self._config and self._config.gemini_config_volume:
-            volume_mounts.append({
-                "name": "gemini-config",
-                "mountPath": "/home/coder/.gemini",
-                "readOnly": True,
-            })
-            volumes.append({
-                **self._config.gemini_config_volume,
-                "name": "gemini-config",
-            })
+            volume_mounts.append(
+                V1VolumeMount(
+                    name="gemini-config",
+                    mount_path="/home/coder/.gemini",
+                    read_only=True,
+                )
+            )
+            volumes.append(
+                _config_dict_to_volume(
+                    self._config.gemini_config_volume, "gemini-config"
+                )
+            )
 
-        # Build the Job manifest
-        manifest = {
-            "apiVersion": "batch/v1",
-            "kind": "Job",
-            "metadata": {
-                "name": job_name,
-                "namespace": self.namespace,
-                "labels": {
+        return V1Job(
+            api_version="batch/v1",
+            kind="Job",
+            metadata=V1ObjectMeta(
+                name=job_name,
+                namespace=self.namespace,
+                labels={
                     "app": "ai-worker",
                     "task-id": task_id,
                     "model": model,
                 },
-            },
-            "spec": {
-                "ttlSecondsAfterFinished": self.job_ttl_seconds,
-                "backoffLimit": 0,  # No retries
-                "activeDeadlineSeconds": timeout_minutes * 60,
-                "template": {
-                    "metadata": {
-                        "labels": {
+            ),
+            spec=V1JobSpec(
+                ttl_seconds_after_finished=self.job_ttl_seconds,
+                backoff_limit=0,
+                active_deadline_seconds=timeout_minutes * 60,
+                template=V1PodTemplateSpec(
+                    metadata=V1ObjectMeta(
+                        labels={
                             "app": "ai-worker",
                             "task-id": task_id,
                         },
-                    },
-                    "spec": {
-                        "restartPolicy": "Never",
-                        "serviceAccountName": self.service_account,
-                        "runtimeClassName": self.runtime_class,
-                        "securityContext": {
-                            "runAsNonRoot": True,
-                            "runAsUser": 1000,
-                            "runAsGroup": 1000,
-                            "fsGroup": 1000,
-                        },
-                        "containers": [
-                            {
-                                "name": "worker",
-                                "image": self.image,
-                                "command": ["run-task"],
-                                "env": env_vars,
-                                "envFrom": env_from,
-                                "volumeMounts": volume_mounts,
-                                "securityContext": {
-                                    "allowPrivilegeEscalation": False,
-                                    "capabilities": {"drop": ["ALL"]},
-                                    "readOnlyRootFilesystem": False,
-                                },
-                                "resources": {
-                                    "requests": {
+                    ),
+                    spec=V1PodSpec(
+                        restart_policy="Never",
+                        service_account_name=self.service_account,
+                        runtime_class_name=self.runtime_class,
+                        security_context=V1PodSecurityContext(
+                            run_as_non_root=True,
+                            run_as_user=1000,
+                            run_as_group=1000,
+                            fs_group=1000,
+                        ),
+                        containers=[
+                            V1Container(
+                                name="worker",
+                                image=self.image,
+                                command=["run-task"],
+                                env=env_vars,
+                                env_from=env_from,
+                                volume_mounts=volume_mounts,
+                                security_context=V1SecurityContext(
+                                    allow_privilege_escalation=False,
+                                    capabilities=V1Capabilities(drop=["ALL"]),
+                                    read_only_root_filesystem=False,
+                                ),
+                                resources=V1ResourceRequirements(
+                                    requests={
                                         "memory": self.resources.memory_request,
                                         "cpu": self.resources.cpu_request,
                                     },
-                                    "limits": {
+                                    limits={
                                         "memory": self.resources.memory_limit,
                                         "cpu": self.resources.cpu_limit,
                                     },
-                                },
-                            }
+                                ),
+                            )
                         ],
-                        "volumes": volumes,
-                    },
-                },
-            },
-        }
-
-        return manifest
+                        volumes=volumes,
+                    ),
+                ),
+            ),
+        )
 
     async def get_task_status(self, job_id: str) -> WorkerTaskResult:
         """Get the status of a Kubernetes Job.
@@ -377,61 +445,51 @@ class KubernetesBackend:
                 error_message=f"Task not found: {job_id}",
             )
 
-        # Get job status from Kubernetes
-        proc = await asyncio.create_subprocess_exec(
-            "kubectl",
-            "get",
-            "job",
-            job_id,
-            "-n",
-            self.namespace,
-            "-o",
-            "json",
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-        )
-
-        stdout, stderr = await proc.communicate()
-
-        if proc.returncode != 0:
-            # Job not found - check if we have a cached status
-            if task.status in {
-                WorkerStatus.SUCCESS,
-                WorkerStatus.FAILED,
-                WorkerStatus.TIMEOUT,
-            }:
-                return WorkerTaskResult(
-                    status=task.status,
-                    exit_code=task.exit_code,
-                    error_message=task.error_message,
+        await self._ensure_config_loaded()
+        async with ApiClient() as api_client:
+            batch_api = BatchV1Api(api_client)
+            try:
+                job = await batch_api.read_namespaced_job(
+                    name=job_id,
+                    namespace=self.namespace,
                 )
-            return WorkerTaskResult(
-                status=WorkerStatus.FAILED,
-                error_message="Job not found in cluster",
-            )
+            except Exception:
+                # Job not found - check if we have a cached status
+                if task.status in {
+                    WorkerStatus.SUCCESS,
+                    WorkerStatus.FAILED,
+                    WorkerStatus.TIMEOUT,
+                }:
+                    return WorkerTaskResult(
+                        status=task.status,
+                        exit_code=task.exit_code,
+                        error_message=task.error_message,
+                    )
+                return WorkerTaskResult(
+                    status=WorkerStatus.FAILED,
+                    error_message="Job not found in cluster",
+                )
 
-        job_data = json.loads(stdout.decode())
-        status = job_data.get("status", {})
+        status = job.status
 
         # Parse job status
-        if status.get("succeeded", 0) > 0:
+        if (status.succeeded or 0) > 0:
             task.status = WorkerStatus.SUCCESS
             task.completed_at = datetime.now(UTC)
             task.exit_code = 0
             return WorkerTaskResult(status=WorkerStatus.SUCCESS, exit_code=0)
 
-        if status.get("failed", 0) > 0:
+        if (status.failed or 0) > 0:
             task.status = WorkerStatus.FAILED
             task.completed_at = datetime.now(UTC)
-            # Don't set exit_code here - let webhook provide actual value
 
             # Check conditions for failure details
-            conditions = status.get("conditions", [])
+            conditions = status.conditions or []
             failure_reason = None
             for condition in conditions:
-                if condition.get("type") == "Failed":
-                    reason = condition.get("reason", "")
-                    message = condition.get("message", "")
+                if condition.type == "Failed":
+                    reason = condition.reason or ""
+                    message = condition.message or ""
                     if reason == "DeadlineExceeded":
                         task.status = WorkerStatus.TIMEOUT
                         task.error_message = "Job exceeded deadline"
@@ -439,7 +497,6 @@ class KubernetesBackend:
                             status=WorkerStatus.TIMEOUT,
                             error_message="Job exceeded deadline",
                         )
-                    # Capture failure reason for error message
                     failure_reason = f"{reason}: {message}" if message else reason
 
             task.error_message = failure_reason or "Job failed (details via webhook)"
@@ -448,7 +505,7 @@ class KubernetesBackend:
                 error_message=task.error_message,
             )
 
-        if status.get("active", 0) > 0:
+        if (status.active or 0) > 0:
             if task.started_at is None:
                 task.started_at = datetime.now(UTC)
             task.status = WorkerStatus.RUNNING
@@ -482,24 +539,18 @@ class KubernetesBackend:
 
         logger.info(f"Cancelling Kubernetes Job {job_id}")
 
-        proc = await asyncio.create_subprocess_exec(
-            "kubectl",
-            "delete",
-            "job",
-            job_id,
-            "-n",
-            self.namespace,
-            "--grace-period=30",
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-        )
-
-        _, stderr = await proc.communicate()
-
-        if proc.returncode != 0:
-            error_msg = stderr.decode().strip() if stderr else "Unknown error"
-            logger.error(f"Failed to delete job {job_id}: {error_msg}")
-            return False
+        await self._ensure_config_loaded()
+        async with ApiClient() as api_client:
+            batch_api = BatchV1Api(api_client)
+            try:
+                await batch_api.delete_namespaced_job(
+                    name=job_id,
+                    namespace=self.namespace,
+                    propagation_policy="Foreground",
+                )
+            except Exception as e:
+                logger.error(f"Failed to delete job {job_id}: {e}")
+                return False
 
         task.status = WorkerStatus.CANCELLED
         task.completed_at = datetime.now(UTC)
@@ -516,48 +567,31 @@ class KubernetesBackend:
         Returns:
             Log output or None if not available
         """
-        # First, find the pod for this job
-        proc = await asyncio.create_subprocess_exec(
-            "kubectl",
-            "get",
-            "pods",
-            "-n",
-            self.namespace,
-            "-l",
-            f"job-name={job_id}",
-            "-o",
-            "jsonpath={.items[0].metadata.name}",
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-        )
+        await self._ensure_config_loaded()
+        async with ApiClient() as api_client:
+            core_api = CoreV1Api(api_client)
+            try:
+                # Find the pod for this job
+                pod_list = await core_api.list_namespaced_pod(
+                    namespace=self.namespace,
+                    label_selector=f"job-name={job_id}",
+                )
 
-        stdout, _ = await proc.communicate()
+                if not pod_list.items:
+                    return None
 
-        if proc.returncode != 0 or not stdout:
-            return None
+                pod_name = pod_list.items[0].metadata.name
+                if not pod_name:
+                    return None
 
-        pod_name = stdout.decode().strip()
-        if not pod_name:
-            return None
-
-        # Get logs from the pod
-        proc = await asyncio.create_subprocess_exec(
-            "kubectl",
-            "logs",
-            pod_name,
-            "-n",
-            self.namespace,
-            f"--tail={tail}",
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.STDOUT,
-        )
-
-        stdout, _ = await proc.communicate()
-
-        if proc.returncode != 0:
-            return None
-
-        return stdout.decode()
+                # Get logs from the pod
+                return await core_api.read_namespaced_pod_log(
+                    name=pod_name,
+                    namespace=self.namespace,
+                    tail_lines=tail,
+                )
+            except Exception:
+                return None
 
     async def wait_for_completion(
         self,

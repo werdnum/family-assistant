@@ -1588,6 +1588,7 @@ dependencies = [
     { name = "jinja2" },
     { name = "jq" },
     { name = "json-schema-for-humans" },
+    { name = "kubernetes-asyncio" },
     { name = "linkify-it-py" },
     { name = "litellm" },
     { name = "llm" },
@@ -1724,6 +1725,7 @@ requires-dist = [
     { name = "jinja2", specifier = ">=3.1.4" },
     { name = "jq", specifier = ">=1.10.0" },
     { name = "json-schema-for-humans", specifier = ">=0.53.10" },
+    { name = "kubernetes-asyncio", specifier = ">=35.0.0" },
     { name = "linkify-it-py", specifier = ">=2.0.0" },
     { name = "litellm", specifier = ">=1.75.0" },
     { name = "llm", specifier = ">=0.27.1" },
@@ -2898,6 +2900,26 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/bf/ce/46fbd9c8119cfc3581ee5643ea49464d168028cfb5caff5fc0596d0cf914/jsonschema_specifications-2025.4.1.tar.gz", hash = "sha256:630159c9f4dbea161a6a2205c3011cc4f18ff381b189fff48bb39b9bf26ae608", size = 15513, upload-time = "2025-04-23T12:34:07.418Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/01/0e/b27cdbaccf30b890c40ed1da9fd4a3593a5cf94dae54fb34f8a4b74fcd3f/jsonschema_specifications-2025.4.1-py3-none-any.whl", hash = "sha256:4653bffbd6584f7de83a67e0d620ef16900b390ddc7939d56684d6c81e33f1af", size = 18437, upload-time = "2025-04-23T12:34:05.422Z" },
+]
+
+[[package]]
+name = "kubernetes-asyncio"
+version = "35.0.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "aiohttp", version = "3.11.16", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.13.2'" },
+    { name = "aiohttp", version = "3.12.13", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.13.2' and platform_python_implementation == 'PyPy'" },
+    { name = "aiohttp", version = "3.12.15", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.13.2' and platform_python_implementation != 'PyPy'" },
+    { name = "certifi" },
+    { name = "python-dateutil" },
+    { name = "pyyaml" },
+    { name = "six" },
+    { name = "urllib3", version = "1.26.20", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.13.2' or platform_python_implementation == 'PyPy'" },
+    { name = "urllib3", version = "2.5.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.13.2' and platform_python_implementation != 'PyPy'" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/30/64/15fe503534746573252dee4a5d7714b24d1b4a536fcf6a84bc522e175cef/kubernetes_asyncio-35.0.0.tar.gz", hash = "sha256:9921d93838fae33993d5b563c7a5e591e9934826e5dcd6556d4adcf9fa600b40", size = 1320166, upload-time = "2026-02-13T19:52:01.322Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/33/d5/9816fc74aaa873b1138877835722250f6575e8cf5d4c13fd66c96aab5da5/kubernetes_asyncio-35.0.0-py3-none-any.whl", hash = "sha256:cea90dfc93f63a79314c164f3d6e0fb3f1fa41e6fa2fb7ab472f95c1eead97eb", size = 2868438, upload-time = "2026-02-13T19:51:59.302Z" },
 ]
 
 [[package]]

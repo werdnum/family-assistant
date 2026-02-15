@@ -234,6 +234,7 @@ class WebhookEventResponse(BaseModel):
 async def handle_generic_webhook(
     request: Request,
     body: WebhookEventPayload,
+    db_context: Annotated[DatabaseContext, Depends(get_db)],
     event_type: str | None = None,
     source: str | None = None,
 ) -> WebhookEventResponse:
@@ -316,7 +317,7 @@ async def handle_generic_webhook(
 
     # Handle worker completion events - update task status in database
     if effective_event_type == "worker_completion":
-        await _handle_worker_completion(request, body.data)
+        await _handle_worker_completion(db_context, body.data)
 
     # Get webhook source and emit event
     webhook_source: WebhookEventSource | None = getattr(
@@ -331,14 +332,14 @@ async def handle_generic_webhook(
 
 
 async def _handle_worker_completion(
-    request: Request,
+    db_context: DatabaseContext,
     # ast-grep-ignore: no-dict-any - Webhook data is dynamic from external worker
     data: dict[str, Any] | None,
 ) -> None:
     """Handle worker completion webhook by updating task status.
 
     Args:
-        request: The FastAPI request object
+        db_context: Database context for data access
         data: The webhook data containing task_id, outcome, output, exit_code, callback_token
     """
     if not data:
@@ -348,12 +349,6 @@ async def _handle_worker_completion(
     task_id = data.get("task_id")
     if not task_id:
         logger.warning("Worker completion event missing task_id")
-        return
-
-    # Get database context
-    db_context: DatabaseContext | None = getattr(request.app.state, "db_context", None)
-    if not db_context:
-        logger.error("DatabaseContext not available for worker completion handling")
         return
 
     # Verify callback token if the task has one stored

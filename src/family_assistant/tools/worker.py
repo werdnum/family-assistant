@@ -53,10 +53,13 @@ WORKER_TOOLS_DEFINITION: list[ToolDefinition] = [
                             "and what output is expected."
                         ),
                     },
-                    "model": {
+                    "agent": {
                         "type": "string",
                         "enum": ["claude", "gemini"],
-                        "description": "AI model to use for the task (default: claude)",
+                        "description": (
+                            "AI coding tool to use. NOT a model checkpoint - "
+                            "use only the exact values listed. (default: claude)"
+                        ),
                         "default": "claude",
                     },
                     "context_paths": {
@@ -146,7 +149,7 @@ WORKER_TOOLS_DEFINITION: list[ToolDefinition] = [
 async def spawn_worker_tool(
     exec_context: ToolExecutionContext,
     task_description: str,
-    model: str = "claude",
+    agent: str = "claude",
     context_paths: list[str] | None = None,
     timeout_minutes: int = 30,
 ) -> ToolResult:
@@ -155,7 +158,7 @@ async def spawn_worker_tool(
     Args:
         exec_context: The tool execution context
         task_description: Description of the task for the worker
-        model: AI model to use (claude or gemini)
+        agent: AI coding tool to use (e.g. claude or gemini)
         context_paths: Optional paths to include as context
         timeout_minutes: Maximum execution time in minutes
 
@@ -190,10 +193,12 @@ async def spawn_worker_tool(
             }
         )
 
-    # Validate model
-    if model not in {"claude", "gemini"}:
+    # Validate agent
+    if agent not in set(worker_config.available_agents):
         return ToolResult(
-            data={"error": f"Invalid model: {model}. Must be 'claude' or 'gemini'"}
+            data={
+                "error": f"Invalid agent: {agent}. Must be one of: {worker_config.available_agents}"
+            }
         )
 
     # Generate task ID with full UUID for 128-bit entropy
@@ -249,7 +254,7 @@ async def spawn_worker_tool(
             conversation_id=exec_context.conversation_id,
             interface_type=exec_context.interface_type,
             task_description=task_description,
-            model=model,
+            model=agent,
             context_files=validated_context_paths,
             timeout_minutes=timeout_minutes,
             user_name=exec_context.user_name,
@@ -291,7 +296,7 @@ async def spawn_worker_tool(
                 prompt_path=str(prompt_path.relative_to(workspace_root)),
                 output_dir=str(output_dir.relative_to(workspace_root)),
                 webhook_url=webhook_url,
-                model=model,
+                model=agent,
                 timeout_minutes=timeout_minutes,
                 context_paths=validated_context_paths,
                 callback_token=callback_token,
@@ -325,7 +330,7 @@ async def spawn_worker_tool(
         result_data: dict[str, Any] = {
             "task_id": task_id,
             "status": "submitted",
-            "model": model,
+            "agent": agent,
             "timeout_minutes": timeout_minutes,
             "message": (
                 f"Worker task '{task_id}' has been submitted. "
