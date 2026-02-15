@@ -11,13 +11,25 @@ import uuid
 from collections.abc import AsyncIterator, Sequence
 from dataclasses import asdict
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING, Any, NoReturn
+from typing import TYPE_CHECKING, Any, Literal, NoReturn, TypedDict, cast
 
 if TYPE_CHECKING:
     from family_assistant.tools.types import ToolAttachment
 
 import aiofiles
 import anthropic
+from anthropic.types import (
+    Base64ImageSourceParam,
+    Base64PDFSourceParam,
+    DocumentBlockParam,
+    ImageBlockParam,
+    TextBlockParam,
+    ToolChoiceParam,
+    ToolParam,
+    ToolResultBlockParam,
+    ToolUseBlockParam,
+    URLImageSourceParam,
+)
 
 from family_assistant.llm import (
     BaseLLMClient,
@@ -52,9 +64,22 @@ from ..base import (
 )
 
 StreamingMetadata = dict[str, object]
+ImageMediaType = Literal["image/jpeg", "image/png", "image/gif", "image/webp"]
+_VALID_IMAGE_MEDIA_TYPES: set[str] = {
+    "image/jpeg",
+    "image/png",
+    "image/gif",
+    "image/webp",
+}
 
 
 logger = logging.getLogger(__name__)
+
+
+class _StreamingToolAccumulator(TypedDict):
+    id: str
+    name: str
+    arguments: str
 
 
 class AnthropicClient(BaseLLMClient):
@@ -64,7 +89,6 @@ class AnthropicClient(BaseLLMClient):
         self,
         api_key: str,
         model: str,
-        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
         model_parameters: dict[str, dict[str, object]] | None = None,
         **kwargs: Any,  # noqa: ANN401 # Accepts arbitrary Anthropic API parameters
     ) -> None:
@@ -101,36 +125,44 @@ class AnthropicClient(BaseLLMClient):
                 and original_msg.transient_attachments
             ):
                 attachments = original_msg.transient_attachments
-                # ast-grep-ignore: no-dict-any - Anthropic content block format
-                content: list[dict[str, Any]] = [
-                    {"type": "text", "text": original_msg.content},
+                text_block = TextBlockParam(type="text", text=original_msg.content)
+                content: list[TextBlockParam | ImageBlockParam | DocumentBlockParam] = [
+                    text_block,
                 ]
                 injection_msgs: list[LLMMessage] = []
                 for attachment in attachments:
-                    if attachment.content and attachment.mime_type.startswith("image/"):
+                    if (
+                        attachment.content
+                        and attachment.mime_type in _VALID_IMAGE_MEDIA_TYPES
+                    ):
                         b64_data = attachment.get_content_as_base64()
                         if b64_data:
-                            content.append({
-                                "type": "image",
-                                "source": {
-                                    "type": "base64",
-                                    "media_type": attachment.mime_type,
-                                    "data": b64_data,
-                                },
-                            })
+                            image_media = cast("ImageMediaType", attachment.mime_type)
+                            content.append(
+                                ImageBlockParam(
+                                    type="image",
+                                    source=Base64ImageSourceParam(
+                                        type="base64",
+                                        media_type=image_media,
+                                        data=b64_data,
+                                    ),
+                                )
+                            )
                     elif (
                         attachment.content and attachment.mime_type == "application/pdf"
                     ):
                         b64_data = attachment.get_content_as_base64()
                         if b64_data:
-                            content.append({
-                                "type": "document",
-                                "source": {
-                                    "type": "base64",
-                                    "media_type": attachment.mime_type,
-                                    "data": b64_data,
-                                },
-                            })
+                            content.append(
+                                DocumentBlockParam(
+                                    type="document",
+                                    source=Base64PDFSourceParam(
+                                        type="base64",
+                                        media_type="application/pdf",
+                                        data=b64_data,
+                                    ),
+                                )
+                            )
                     elif attachment.content or attachment.file_path:
                         if attachment.content:
                             logger.warning(
@@ -140,7 +172,7 @@ class AnthropicClient(BaseLLMClient):
                             logger.warning(
                                 f"File-path-only attachment {attachment.file_path} for Anthropic, falling back to text description"
                             )
-                        content[0]["text"] += "\n[File content in following message]"
+                        text_block["text"] += "\n[File content in following message]"
                         injection_msg = self.create_attachment_injection(attachment)
                         injection_msgs.append(injection_msg)
                 updated_msg = original_msg.model_copy(
@@ -218,7 +250,6 @@ class AnthropicClient(BaseLLMClient):
 
         return UserMessage(content=content_parts)
 
-    # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
     def _get_model_specific_params(self, model: str) -> dict[str, object]:
         """Get parameters for a specific model based on pattern matching."""
         params = {}
@@ -232,10 +263,8 @@ class AnthropicClient(BaseLLMClient):
 
     @staticmethod
     def _convert_tools_to_anthropic_format(
-        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
         tools: list[dict[str, object]],
-        # ast-grep-ignore: no-dict-any - Anthropic tool format
-    ) -> list[dict[str, object]]:
+    ) -> list[ToolParam]:
         """Convert OpenAI-style tool definitions to Anthropic format."""
         anthropic_tools = []
         for tool in tools:
@@ -254,8 +283,7 @@ class AnthropicClient(BaseLLMClient):
     @staticmethod
     def _convert_tool_choice_to_anthropic(
         tool_choice: str | None,
-        # ast-grep-ignore: no-dict-any - Anthropic tool_choice format
-    ) -> dict[str, str] | None:
+    ) -> ToolChoiceParam | None:
         """Convert tool_choice string to Anthropic format."""
         if tool_choice is None or tool_choice == "none":
             return None
@@ -295,21 +323,22 @@ class AnthropicClient(BaseLLMClient):
                 api_messages.append({"role": "user", "content": content})
 
             elif isinstance(msg, AssistantMessage):
-                # ast-grep-ignore: no-dict-any - Anthropic content block format
-                content_blocks: list[dict[str, Any]] = []
+                content_blocks: list[TextBlockParam | ToolUseBlockParam] = []
                 if msg.content:
-                    content_blocks.append({"type": "text", "text": msg.content})
+                    content_blocks.append(TextBlockParam(type="text", text=msg.content))
                 if msg.tool_calls:
                     for tc in msg.tool_calls:
                         arguments = tc.function.arguments
                         if isinstance(arguments, str):
                             arguments = json.loads(arguments)
-                        content_blocks.append({
-                            "type": "tool_use",
-                            "id": tc.id,
-                            "name": tc.function.name,
-                            "input": arguments,
-                        })
+                        content_blocks.append(
+                            ToolUseBlockParam(
+                                type="tool_use",
+                                id=tc.id,
+                                name=tc.function.name,
+                                input=arguments,
+                            )
+                        )
                 if content_blocks:
                     api_messages.append({
                         "role": "assistant",
@@ -319,12 +348,11 @@ class AnthropicClient(BaseLLMClient):
             elif isinstance(msg, ToolMessage):
                 # content may be a string or list of content blocks (from _process_tool_messages
                 # for native multimodal support). Anthropic tool_result accepts both.
-                # ast-grep-ignore: no-dict-any - Anthropic tool_result content block format
-                tool_result_block: dict[str, Any] = {
-                    "type": "tool_result",
-                    "tool_use_id": msg.tool_call_id,
-                    "content": msg.content,
-                }
+                tool_result_block = ToolResultBlockParam(
+                    type="tool_result",
+                    tool_use_id=msg.tool_call_id,
+                    content=msg.content,
+                )
                 api_messages.append({"role": "user", "content": [tool_result_block]})
 
         # Merge consecutive same-role messages (Anthropic requires alternating roles)
@@ -334,41 +362,50 @@ class AnthropicClient(BaseLLMClient):
         return system_prompt, api_messages
 
     @staticmethod
-    # ast-grep-ignore: no-dict-any - Anthropic content format
-    def _convert_user_content(msg: UserMessage) -> str | list[dict[str, Any]]:
+    def _convert_user_content(
+        msg: UserMessage,
+    ) -> str | list[TextBlockParam | ImageBlockParam]:
         """Convert UserMessage content to Anthropic format."""
         if isinstance(msg.content, str):
             return msg.content
 
         # Multipart content
-        # ast-grep-ignore: no-dict-any - Anthropic content block format
-        blocks: list[dict[str, Any]] = []
+        blocks: list[TextBlockParam | ImageBlockParam] = []
         for part in msg.content:
             if isinstance(part, TextContentPart):
-                blocks.append({"type": "text", "text": part.text})
+                blocks.append(TextBlockParam(type="text", text=part.text))
             elif isinstance(part, ImageUrlContentPart):
                 url = part.image_url.get("url", "")
                 if url.startswith("data:"):
                     # Parse data URI: data:<media_type>;base64,<data>
                     header, b64_data = url.split(",", 1)
-                    media_type = header.split(":")[1].split(";")[0]
-                    blocks.append({
-                        "type": "image",
-                        "source": {
-                            "type": "base64",
-                            "media_type": media_type,
-                            "data": b64_data,
-                        },
-                    })
+                    raw_media_type = header.split(":")[1].split(";")[0]
+                    if raw_media_type not in _VALID_IMAGE_MEDIA_TYPES:
+                        logger.warning(
+                            f"Unsupported image media type '{raw_media_type}' for Anthropic, skipping"
+                        )
+                        continue
+                    blocks.append(
+                        ImageBlockParam(
+                            type="image",
+                            source=Base64ImageSourceParam(
+                                type="base64",
+                                media_type=cast("ImageMediaType", raw_media_type),
+                                data=b64_data,
+                            ),
+                        )
+                    )
                 else:
                     # URL-based image
-                    blocks.append({
-                        "type": "image",
-                        "source": {
-                            "type": "url",
-                            "url": url,
-                        },
-                    })
+                    blocks.append(
+                        ImageBlockParam(
+                            type="image",
+                            source=URLImageSourceParam(
+                                type="url",
+                                url=url,
+                            ),
+                        )
+                    )
         return blocks
 
     @staticmethod
@@ -413,7 +450,6 @@ class AnthropicClient(BaseLLMClient):
     async def generate_response(
         self,
         messages: Sequence[LLMMessage],
-        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
         tools: list[dict[str, object]] | None = None,
         tool_choice: str | None = "auto",
     ) -> LLMOutput:
@@ -579,7 +615,6 @@ class AnthropicClient(BaseLLMClient):
         file_path: str | None,
         mime_type: str | None,
         max_text_length: int | None,
-        # ast-grep-ignore: no-dict-any - Anthropic API message format has heterogeneous value types
     ) -> dict[str, object]:
         """Format user message with optional file content.
 
@@ -589,24 +624,25 @@ class AnthropicClient(BaseLLMClient):
         if not file_path:
             return {"role": "user", "content": prompt_text or ""}
 
-        if mime_type and mime_type.startswith("image/"):
+        if mime_type and mime_type in _VALID_IMAGE_MEDIA_TYPES:
             async with aiofiles.open(file_path, "rb") as f:
                 image_data = await f.read()
 
             base64_image = base64.b64encode(image_data).decode("utf-8")
 
-            # ast-grep-ignore: no-dict-any - Anthropic image content blocks have heterogeneous value types
-            content: list[dict[str, Any]] = []
+            content: list[TextBlockParam | ImageBlockParam] = []
             if prompt_text:
-                content.append({"type": "text", "text": prompt_text})
-            content.append({
-                "type": "image",
-                "source": {
-                    "type": "base64",
-                    "media_type": mime_type,
-                    "data": base64_image,
-                },
-            })
+                content.append(TextBlockParam(type="text", text=prompt_text))
+            content.append(
+                ImageBlockParam(
+                    type="image",
+                    source=Base64ImageSourceParam(
+                        type="base64",
+                        media_type=cast("ImageMediaType", mime_type),
+                        data=base64_image,
+                    ),
+                )
+            )
 
             return {"role": "user", "content": content}
 
@@ -617,20 +653,21 @@ class AnthropicClient(BaseLLMClient):
 
             base64_pdf = base64.b64encode(pdf_data).decode("utf-8")
 
-            # ast-grep-ignore: no-dict-any - Anthropic document content blocks have heterogeneous value types
-            content = []
+            pdf_content: list[TextBlockParam | DocumentBlockParam] = []
             if prompt_text:
-                content.append({"type": "text", "text": prompt_text})
-            content.append({
-                "type": "document",
-                "source": {
-                    "type": "base64",
-                    "media_type": "application/pdf",
-                    "data": base64_pdf,
-                },
-            })
+                pdf_content.append(TextBlockParam(type="text", text=prompt_text))
+            pdf_content.append(
+                DocumentBlockParam(
+                    type="document",
+                    source=Base64PDFSourceParam(
+                        type="base64",
+                        media_type="application/pdf",
+                        data=base64_pdf,
+                    ),
+                )
+            )
 
-            return {"role": "user", "content": content}
+            return {"role": "user", "content": pdf_content}
 
         else:
             # Try reading as text, fall back to binary description on decode error
@@ -663,7 +700,6 @@ class AnthropicClient(BaseLLMClient):
     def generate_response_stream(
         self,
         messages: Sequence[LLMMessage],
-        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
         tools: list[dict[str, object]] | None = None,
         tool_choice: str | None = "auto",
     ) -> AsyncIterator[LLMStreamEvent]:
@@ -674,7 +710,6 @@ class AnthropicClient(BaseLLMClient):
     async def _generate_response_stream(
         self,
         messages: Sequence[LLMMessage],
-        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
         tools: list[dict[str, object]] | None = None,
         tool_choice: str | None = "auto",
     ) -> AsyncIterator[LLMStreamEvent]:
@@ -721,9 +756,7 @@ class AnthropicClient(BaseLLMClient):
 
             # Use Anthropic streaming
             async with self.client.messages.stream(**params) as stream:
-                # Track tool_use blocks being built
-                # ast-grep-ignore: no-dict-any - Streaming accumulator
-                current_tool: dict[str, Any] | None = None
+                current_tool: _StreamingToolAccumulator | None = None
 
                 async for event in stream:
                     if event.type == "content_block_start":
