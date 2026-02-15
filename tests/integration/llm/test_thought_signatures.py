@@ -24,6 +24,7 @@ from .vcr_helpers import sanitize_response
 
 if TYPE_CHECKING:
     from family_assistant.llm.messages import LLMMessage
+    from family_assistant.tools.types import ToolDefinition
 
 
 @pytest_asyncio.fixture
@@ -47,7 +48,7 @@ async def test_thought_signatures_with_tool_calls(
         pytest.skip("Skipping Google test in CI without API key")
 
     # Arrange: Define a simple tool
-    tools = [
+    tools: list[ToolDefinition] = [
         {
             "type": "function",
             "function": {
@@ -67,7 +68,7 @@ async def test_thought_signatures_with_tool_calls(
     messages = [create_user_message("What's the weather in San Francisco?")]
 
     # Act: Call the real Gemini API
-    response = await google_client_thinking.generate_response(  # type: ignore[reportArgumentType]
+    response = await google_client_thinking.generate_response(
         messages=messages, tools=tools
     )
 
@@ -238,7 +239,7 @@ async def test_thought_signature_multiturn_with_api(
         pytest.skip("Skipping Google test in CI without API key")
 
     # Define tools for the conversation
-    tools = [
+    tools: list[ToolDefinition] = [
         {
             "type": "function",
             "function": {

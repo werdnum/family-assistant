@@ -54,6 +54,7 @@ import pytest_asyncio
 from family_assistant.llm import LLMInterface, LLMStreamEvent
 from family_assistant.llm.factory import LLMClientFactory
 from family_assistant.llm.providers.google_genai_client import GoogleGenAIClient
+from family_assistant.tools.types import ToolDefinition
 from tests.factories.messages import (
     create_assistant_message,
     create_system_message,
@@ -126,8 +127,7 @@ async def llm_client_factory() -> (  # type: ignore[misc]
 
 
 @pytest_asyncio.fixture
-# ast-grep-ignore: no-dict-any - Legacy code - needs structured types
-async def sample_tools() -> list[dict[str, Any]]:
+async def sample_tools() -> list[ToolDefinition]:
     """Sample tools for testing tool calling functionality."""
     return [
         {
@@ -293,8 +293,7 @@ async def test_streaming_with_tool_calls(
     provider: str,
     model: str,
     llm_client_factory: Callable[[str, str, str | None], Awaitable[LLMInterface]],
-    # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
-    sample_tools: list[dict[str, Any]],
+    sample_tools: list[ToolDefinition],
 ) -> None:
     """Test streaming with tool calls."""
     if os.getenv("CI") and not os.getenv(f"{provider.upper()}_API_KEY"):
@@ -705,8 +704,7 @@ async def test_streaming_with_tool_calls_gemini(
         # ast-grep-ignore: no-dict-any - Test infrastructure requires dict config
         [str, str, str | None, dict[str, Any] | None], Awaitable[LLMInterface]
     ],
-    # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
-    sample_tools: list[dict[str, Any]],
+    sample_tools: list[ToolDefinition],
     # ast-grep-ignore: no-dict-any - Test infrastructure requires dict config
     llm_replay_config: dict[str, Any],
 ) -> None:
@@ -912,8 +910,7 @@ async def test_google_streaming_with_multiturns_and_tool_calls(
         # ast-grep-ignore: no-dict-any - Test infrastructure requires dict config
         [str, str, str | None, dict[str, Any] | None], Awaitable[LLMInterface]
     ],
-    # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
-    sample_tools: list[dict[str, Any]],
+    sample_tools: list[ToolDefinition],
     # ast-grep-ignore: no-dict-any - Test infrastructure requires dict config
     llm_replay_config: dict[str, Any],
 ) -> None:
@@ -1021,8 +1018,7 @@ async def test_google_streaming_pydantic_validation_reproducer(
         # ast-grep-ignore: no-dict-any - Test infrastructure requires dict config
         [str, str, str | None, dict[str, Any] | None], Awaitable[LLMInterface]
     ],
-    # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
-    sample_tools: list[dict[str, Any]],
+    sample_tools: list[ToolDefinition],
     llm_record_mode: str,
 ) -> None:
     """Reproducer test for Pydantic validation error with Google GenAI streaming.

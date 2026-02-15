@@ -23,6 +23,7 @@ from family_assistant.llm import (
     StructuredOutputError,
 )
 from family_assistant.llm.messages import UserMessage, message_to_json_dict
+from family_assistant.tools.types import ToolDefinition
 
 T = TypeVar("T", bound=BaseModel)
 
@@ -120,8 +121,7 @@ class RuleBasedMockLLMClient(BaseLLMClient, LLMInterface):
     async def generate_response(
         self,
         messages: list[LLMMessage],
-        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
-        tools: list[dict[str, Any]] | None = None,
+        tools: list[ToolDefinition] | None = None,
         tool_choice: str | None = "auto",
     ) -> LLMOutput:
         """
@@ -213,8 +213,7 @@ class RuleBasedMockLLMClient(BaseLLMClient, LLMInterface):
     def generate_response_stream(
         self,
         messages: list[LLMMessage],
-        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
-        tools: list[dict[str, Any]] | None = None,
+        tools: list[ToolDefinition] | None = None,
         tool_choice: str | None = "auto",
     ) -> AsyncIterator[LLMStreamEvent]:
         """Mock streaming implementation that yields events based on generate_response."""

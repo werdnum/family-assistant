@@ -50,6 +50,7 @@ from family_assistant.llm.messages import (
     message_to_json_dict,
 )
 from family_assistant.llm.request_buffer import LLMRequestRecord, get_request_buffer
+from family_assistant.tools.types import ToolDefinition
 
 from ..base import (
     AuthenticationError,
@@ -263,7 +264,7 @@ class AnthropicClient(BaseLLMClient):
 
     @staticmethod
     def _convert_tools_to_anthropic_format(
-        tools: list[dict[str, object]],
+        tools: list[ToolDefinition],
     ) -> list[ToolParam]:
         """Convert OpenAI-style tool definitions to Anthropic format."""
         anthropic_tools = []
@@ -450,7 +451,7 @@ class AnthropicClient(BaseLLMClient):
     async def generate_response(
         self,
         messages: Sequence[LLMMessage],
-        tools: list[dict[str, object]] | None = None,
+        tools: list[ToolDefinition] | None = None,
         tool_choice: str | None = "auto",
     ) -> LLMOutput:
         """Generate response using Anthropic API."""
@@ -700,7 +701,7 @@ class AnthropicClient(BaseLLMClient):
     def generate_response_stream(
         self,
         messages: Sequence[LLMMessage],
-        tools: list[dict[str, object]] | None = None,
+        tools: list[ToolDefinition] | None = None,
         tool_choice: str | None = "auto",
     ) -> AsyncIterator[LLMStreamEvent]:
         """Generate streaming response using Anthropic API."""
@@ -710,7 +711,7 @@ class AnthropicClient(BaseLLMClient):
     async def _generate_response_stream(
         self,
         messages: Sequence[LLMMessage],
-        tools: list[dict[str, object]] | None = None,
+        tools: list[ToolDefinition] | None = None,
         tool_choice: str | None = "auto",
     ) -> AsyncIterator[LLMStreamEvent]:
         """Internal async generator for streaming responses."""

@@ -3,7 +3,7 @@
 import json
 import os
 from collections.abc import Awaitable, Callable
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 import pytest
 import pytest_asyncio
@@ -15,6 +15,7 @@ from family_assistant.llm import (
     ToolCallItem,
 )
 from family_assistant.llm.factory import LLMClientFactory
+from family_assistant.tools.types import ToolDefinition
 from tests.factories.messages import (
     create_assistant_message,
     create_tool_message,
@@ -86,8 +87,7 @@ async def llm_client_with_tools() -> Callable[[str, str], Awaitable[LLMInterface
     return _create_client
 
 
-# ast-grep-ignore: no-dict-any - Legacy code - needs structured types
-def get_weather_tool() -> dict[str, Any]:
+def get_weather_tool() -> ToolDefinition:
     """Get a sample weather tool definition."""
     return {
         "type": "function",
@@ -113,8 +113,7 @@ def get_weather_tool() -> dict[str, Any]:
     }
 
 
-# ast-grep-ignore: no-dict-any - Legacy code - needs structured types
-def calculate_tool() -> dict[str, Any]:
+def calculate_tool() -> ToolDefinition:
     """Get a sample calculation tool definition."""
     return {
         "type": "function",
