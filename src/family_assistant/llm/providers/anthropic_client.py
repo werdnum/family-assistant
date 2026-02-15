@@ -78,8 +78,83 @@ class AnthropicClient(BaseLLMClient):
         )
 
     def _supports_multimodal_tools(self) -> bool:
-        """Anthropic supports images in tool results natively."""
+        """Anthropic supports images and PDFs in tool results natively."""
         return True
+
+    def _process_tool_messages(
+        self,
+        messages: list[LLMMessage],
+    ) -> list[LLMMessage]:
+        """Process tool messages, converting attachments to native Anthropic format.
+
+        Anthropic supports images and PDFs natively in tool results via `image`
+        and `document` content blocks. Unsupported attachment types fall back to
+        base class text injection.
+        """
+        if not self._supports_multimodal_tools():
+            return super()._process_tool_messages(messages)
+
+        processed: list[LLMMessage] = []
+        for original_msg in messages:
+            if (
+                isinstance(original_msg, ToolMessage)
+                and original_msg.transient_attachments
+            ):
+                attachments = original_msg.transient_attachments
+                # ast-grep-ignore: no-dict-any - Anthropic content block format
+                content: list[dict[str, Any]] = [
+                    {"type": "text", "text": original_msg.content},
+                ]
+                injection_msgs: list[LLMMessage] = []
+                for attachment in attachments:
+                    if attachment.content and attachment.mime_type.startswith("image/"):
+                        b64_data = attachment.get_content_as_base64()
+                        if b64_data:
+                            content.append({
+                                "type": "image",
+                                "source": {
+                                    "type": "base64",
+                                    "media_type": attachment.mime_type,
+                                    "data": b64_data,
+                                },
+                            })
+                    elif (
+                        attachment.content and attachment.mime_type == "application/pdf"
+                    ):
+                        b64_data = attachment.get_content_as_base64()
+                        if b64_data:
+                            content.append({
+                                "type": "document",
+                                "source": {
+                                    "type": "base64",
+                                    "media_type": attachment.mime_type,
+                                    "data": b64_data,
+                                },
+                            })
+                    elif attachment.content or attachment.file_path:
+                        if attachment.content:
+                            logger.warning(
+                                f"Unsupported attachment type {attachment.mime_type} for Anthropic, falling back to text description"
+                            )
+                        else:
+                            logger.warning(
+                                f"File-path-only attachment {attachment.file_path} for Anthropic, falling back to text description"
+                            )
+                        content[0]["text"] += "\n[File content in following message]"
+                        injection_msg = self.create_attachment_injection(attachment)
+                        injection_msgs.append(injection_msg)
+                updated_msg = original_msg.model_copy(
+                    update={
+                        "content": content,
+                        "transient_attachments": None,
+                    }
+                )
+                processed.append(updated_msg)
+                if injection_msgs:
+                    processed.extend(injection_msgs)
+            else:
+                processed.append(original_msg)
+        return processed
 
     def create_attachment_injection(
         self,
@@ -242,6 +317,8 @@ class AnthropicClient(BaseLLMClient):
                     })
 
             elif isinstance(msg, ToolMessage):
+                # content may be a string or list of content blocks (from _process_tool_messages
+                # for native multimodal support). Anthropic tool_result accepts both.
                 # ast-grep-ignore: no-dict-any - Anthropic tool_result content block format
                 tool_result_block: dict[str, Any] = {
                     "type": "tool_result",
@@ -502,9 +579,13 @@ class AnthropicClient(BaseLLMClient):
         file_path: str | None,
         mime_type: str | None,
         max_text_length: int | None,
-        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
+        # ast-grep-ignore: no-dict-any - Anthropic API message format has heterogeneous value types
     ) -> dict[str, object]:
-        """Format user message with optional file content."""
+        """Format user message with optional file content.
+
+        Anthropic supports images via base64, PDFs via document blocks,
+        and text files as inline content.
+        """
         if not file_path:
             return {"role": "user", "content": prompt_text or ""}
 
@@ -529,9 +610,44 @@ class AnthropicClient(BaseLLMClient):
 
             return {"role": "user", "content": content}
 
+        elif mime_type and mime_type == "application/pdf":
+            # Anthropic supports PDFs natively via document blocks
+            async with aiofiles.open(file_path, "rb") as f:
+                pdf_data = await f.read()
+
+            base64_pdf = base64.b64encode(pdf_data).decode("utf-8")
+
+            # ast-grep-ignore: no-dict-any - Anthropic document content blocks have heterogeneous value types
+            content = []
+            if prompt_text:
+                content.append({"type": "text", "text": prompt_text})
+            content.append({
+                "type": "document",
+                "source": {
+                    "type": "base64",
+                    "media_type": "application/pdf",
+                    "data": base64_pdf,
+                },
+            })
+
+            return {"role": "user", "content": content}
+
         else:
-            async with aiofiles.open(file_path, encoding="utf-8") as f:
-                file_content = await f.read()
+            # Try reading as text, fall back to binary description on decode error
+            try:
+                async with aiofiles.open(file_path, encoding="utf-8") as f:
+                    file_content = await f.read()
+            except (UnicodeDecodeError, ValueError):
+                description = (
+                    f"[Binary file: {file_path} ({mime_type or 'unknown type'})"
+                    f" - content cannot be displayed as text]"
+                )
+                if prompt_text:
+                    return {
+                        "role": "user",
+                        "content": f"{prompt_text}\n\n{description}",
+                    }
+                return {"role": "user", "content": description}
 
             if max_text_length and len(file_content) > max_text_length:
                 file_content = file_content[:max_text_length]
