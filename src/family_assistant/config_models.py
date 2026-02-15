@@ -531,9 +531,17 @@ class KubernetesBackendConfig(BaseModel):
     service_account: str = "ai-worker"
     runtime_class: str = "gvisor"
     job_ttl_seconds: int = 3600
-    # Config/auth mounts (read-only) - names of Kubernetes secrets
-    claude_settings_secret: str | None = "ai-coder-claude-settings"
-    gemini_settings_secret: str | None = "ai-coder-gemini-settings"
+
+    # Secret containing API keys (keys should be ANTHROPIC_API_KEY, GOOGLE_API_KEY, etc.)
+    # All keys from this secret are injected as environment variables
+    api_keys_secret: str | None = None
+
+    # Optional config volume specs for ~/.claude and ~/.gemini (raw K8s volume specs)
+    # ast-grep-ignore: no-dict-any - raw K8s volume specs have mixed types
+    claude_config_volume: dict[str, Any] | None = None
+    # ast-grep-ignore: no-dict-any - raw K8s volume specs have mixed types
+    gemini_config_volume: dict[str, Any] | None = None
+
     # Resource limits for worker containers
     resources: WorkerResourceLimits = Field(default_factory=WorkerResourceLimits)
 
@@ -545,9 +553,16 @@ class DockerBackendConfig(BaseModel):
 
     image: str = "ghcr.io/werdnum/ai-coding-base:latest"
     network: str = "bridge"
-    # Local paths to mount for auth
-    claude_config_path: str | None = None
-    gemini_config_path: str | None = None
+
+    # API keys from host environment variables (names of env vars to pass through)
+    # Set to None to disable passing the env var
+    anthropic_api_key_env: str | None = "ANTHROPIC_API_KEY"
+    gemini_api_key_env: str | None = "GOOGLE_API_KEY"
+
+    # Optional config volume mounts for ~/.claude and ~/.gemini
+    claude_config_volume: str | None = None
+    gemini_config_volume: str | None = None
+
     # Resource limits for worker containers
     resources: WorkerResourceLimits = Field(default_factory=WorkerResourceLimits)
 

@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
@@ -277,14 +278,16 @@ class DockerBackend:
         for key, value in env_vars.items():
             cmd.extend(["-e", f"{key}={value}"])
 
+        # Pass through API key environment variables from host
+        self._add_api_key_env_vars(cmd, model)
+
         # Mount only the task's directory for isolation (not the entire workspace)
         task_dir = self._workspace_root / "tasks" / task_id
         task_dir_abs = str(task_dir.resolve())
         cmd.extend(["-v", f"{task_dir_abs}:/task"])
 
-        # Mount auth config paths if configured
-        if self._config:
-            self._add_auth_mounts(cmd, model)
+        # Mount config volumes if configured
+        self._add_config_volume_mounts(cmd, model)
 
         # Image and command
         cmd.append(self.image)
@@ -292,24 +295,59 @@ class DockerBackend:
 
         return cmd
 
-    def _add_auth_mounts(self, cmd: list[str], model: str) -> None:
-        """Add authentication config volume mounts based on model.
+    def _add_api_key_env_vars(self, cmd: list[str], model: str) -> None:
+        """Pass through API key environment variables from host.
 
         Args:
             cmd: Command list to append to
             model: The AI model being used ("claude" or "gemini")
         """
-        if model == "claude" and self._config and self._config.claude_config_path:
-            config_path = Path(self._config.claude_config_path).expanduser()
-            if config_path.exists():
-                cmd.extend(["-v", f"{config_path}:/home/user/.claude:ro"])
-                logger.debug(f"Mounting Claude config from {config_path}")
+        if not self._config:
+            return
 
-        elif model == "gemini" and self._config and self._config.gemini_config_path:
-            config_path = Path(self._config.gemini_config_path).expanduser()
-            if config_path.exists():
-                cmd.extend(["-v", f"{config_path}:/home/user/.gemini:ro"])
-                logger.debug(f"Mounting Gemini config from {config_path}")
+        # Pass through Anthropic API key for Claude
+        if model == "claude" and self._config.anthropic_api_key_env:
+            env_var_name = self._config.anthropic_api_key_env
+            api_key = os.environ.get(env_var_name)
+            if api_key:
+                cmd.extend(["-e", f"ANTHROPIC_API_KEY={api_key}"])
+                logger.debug(f"Passing through {env_var_name} as ANTHROPIC_API_KEY")
+            else:
+                logger.warning(
+                    f"Configured API key env var {env_var_name} not found in environment"
+                )
+
+        # Pass through Google API key for Gemini
+        elif model == "gemini" and self._config.gemini_api_key_env:
+            env_var_name = self._config.gemini_api_key_env
+            api_key = os.environ.get(env_var_name)
+            if api_key:
+                cmd.extend(["-e", f"GOOGLE_API_KEY={api_key}"])
+                logger.debug(f"Passing through {env_var_name} as GOOGLE_API_KEY")
+            else:
+                logger.warning(
+                    f"Configured API key env var {env_var_name} not found in environment"
+                )
+
+    def _add_config_volume_mounts(self, cmd: list[str], model: str) -> None:
+        """Add config volume mounts based on model.
+
+        Args:
+            cmd: Command list to append to
+            model: The AI model being used ("claude" or "gemini")
+        """
+        if not self._config:
+            return
+
+        # Mount Claude config volume if specified
+        if model == "claude" and self._config.claude_config_volume:
+            cmd.extend(["-v", self._config.claude_config_volume])
+            logger.debug(f"Mounting Claude config: {self._config.claude_config_volume}")
+
+        # Mount Gemini config volume if specified
+        elif model == "gemini" and self._config.gemini_config_volume:
+            cmd.extend(["-v", self._config.gemini_config_volume])
+            logger.debug(f"Mounting Gemini config: {self._config.gemini_config_volume}")
 
     async def get_task_status(self, job_id: str) -> WorkerTaskResult:
         """Get the status of a Docker container task.
