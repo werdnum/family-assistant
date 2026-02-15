@@ -11,12 +11,12 @@ from tests.functional.web.conftest import WebTestFixture
 @pytest.mark.playwright
 @pytest.mark.asyncio
 async def test_automations_page_basic_functionality(
-    web_test_with_console_check: WebTestFixture,
+    web_test_readonly_with_console_check: WebTestFixture,
     take_screenshot: Callable[[Any, str, str], Awaitable[None]],
 ) -> None:
     """Test basic functionality of the automations React interface."""
-    page = web_test_with_console_check.page
-    server_url = web_test_with_console_check.base_url
+    page = web_test_readonly_with_console_check.page
+    server_url = web_test_readonly_with_console_check.base_url
 
     # Navigate to automations page
     await page.goto(f"{server_url}/automations")
@@ -80,11 +80,11 @@ async def test_automations_page_basic_functionality(
 @pytest.mark.playwright
 @pytest.mark.asyncio
 async def test_automations_create_event_navigation(
-    web_test_with_console_check: WebTestFixture,
+    web_test_readonly_with_console_check: WebTestFixture,
 ) -> None:
     """Test navigation to create new event automation form."""
-    page = web_test_with_console_check.page
-    server_url = web_test_with_console_check.base_url
+    page = web_test_readonly_with_console_check.page
+    server_url = web_test_readonly_with_console_check.base_url
 
     # Navigate to automations page
     await page.goto(f"{server_url}/automations")
@@ -107,11 +107,11 @@ async def test_automations_create_event_navigation(
 @pytest.mark.playwright
 @pytest.mark.asyncio
 async def test_automations_create_schedule_navigation(
-    web_test_with_console_check: WebTestFixture,
+    web_test_readonly_with_console_check: WebTestFixture,
 ) -> None:
     """Test navigation to create new schedule automation form."""
-    page = web_test_with_console_check.page
-    server_url = web_test_with_console_check.base_url
+    page = web_test_readonly_with_console_check.page
+    server_url = web_test_readonly_with_console_check.base_url
 
     # Navigate to automations page
     await page.goto(f"{server_url}/automations")
@@ -136,11 +136,11 @@ async def test_automations_create_schedule_navigation(
 @pytest.mark.playwright
 @pytest.mark.asyncio
 async def test_automations_filters_interaction(
-    web_test_with_console_check: WebTestFixture,
+    web_test_readonly_with_console_check: WebTestFixture,
 ) -> None:
     """Test filter form interactions on automations page."""
-    page = web_test_with_console_check.page
-    server_url = web_test_with_console_check.base_url
+    page = web_test_readonly_with_console_check.page
+    server_url = web_test_readonly_with_console_check.base_url
 
     # Navigate to automations page
     await page.goto(f"{server_url}/automations")
@@ -192,11 +192,11 @@ async def test_automations_filters_interaction(
 @pytest.mark.playwright
 @pytest.mark.asyncio
 async def test_automations_responsive_design(
-    web_test_with_console_check: WebTestFixture,
+    web_test_readonly_with_console_check: WebTestFixture,
 ) -> None:
     """Test responsive design of automations page."""
-    page = web_test_with_console_check.page
-    server_url = web_test_with_console_check.base_url
+    page = web_test_readonly_with_console_check.page
+    server_url = web_test_readonly_with_console_check.base_url
 
     # Navigate to automations page
     await page.goto(f"{server_url}/automations")
