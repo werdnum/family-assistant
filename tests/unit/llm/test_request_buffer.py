@@ -11,6 +11,7 @@ from family_assistant.llm.request_buffer import (
     get_request_buffer,
     reset_request_buffer,
 )
+from family_assistant.tools.types import ToolDefinition
 
 
 @pytest.fixture(autouse=True)
@@ -49,7 +50,16 @@ class TestLLMRequestRecord:
             request_id="abc123",
             model_id="gpt-4",
             messages=[{"role": "user", "content": "Hello"}],
-            tools=[{"name": "test_tool"}],
+            tools=[
+                ToolDefinition(
+                    type="function",
+                    function={
+                        "name": "test_tool",
+                        "description": "A test tool",
+                        "parameters": {"type": "object", "properties": {}},
+                    },
+                )
+            ],
             tool_choice="auto",
             response={"content": "Hi there"},
             duration_ms=150.5,
@@ -62,7 +72,16 @@ class TestLLMRequestRecord:
         assert result["request_id"] == "abc123"
         assert result["model_id"] == "gpt-4"
         assert result["messages"] == [{"role": "user", "content": "Hello"}]
-        assert result["tools"] == [{"name": "test_tool"}]
+        assert result["tools"] == [
+            {
+                "type": "function",
+                "function": {
+                    "name": "test_tool",
+                    "description": "A test tool",
+                    "parameters": {"type": "object", "properties": {}},
+                },
+            }
+        ]
         assert result["tool_choice"] == "auto"
         assert result["response"] == {"content": "Hi there"}
         assert result["duration_ms"] == 150.5

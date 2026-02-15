@@ -45,6 +45,7 @@ from family_assistant.llm.messages import (
     message_to_json_dict,
 )
 from family_assistant.llm.request_buffer import LLMRequestRecord, get_request_buffer
+from family_assistant.tools.types import ToolDefinition
 
 from ..base import (
     AuthenticationError,
@@ -83,8 +84,7 @@ def _normalize_thought_signature(raw_value: bytes | None) -> bytes | None:
     return raw_value
 
 
-# ast-grep-ignore: no-dict-any - Provider tool schema mirrors OpenAI format
-def convert_tools_to_genai_format(tools: list[dict[str, Any]]) -> list[Any]:
+def convert_tools_to_genai_format(tools: list[ToolDefinition]) -> list[Any]:
     """Convert OpenAI-style tools to Gemini format."""
 
     function_declarations = []
@@ -107,7 +107,7 @@ def convert_tools_to_genai_format(tools: list[dict[str, Any]]) -> list[Any]:
             if prop_type == "array":
                 # Handle array types - need to specify items
                 items_def = prop_def.get("items", {})
-                items_type = items_def.get("type", "string").upper()
+                items_type = types.Type(items_def.get("type", "string").upper())
 
                 google_properties[prop_name] = types.Schema(
                     type=types.Type.ARRAY,
@@ -119,7 +119,7 @@ def convert_tools_to_genai_format(tools: list[dict[str, Any]]) -> list[Any]:
                 )
             else:
                 # Handle non-array types
-                schema_type = prop_type.upper()
+                schema_type = types.Type(prop_type.upper())
                 google_properties[prop_name] = types.Schema(
                     type=schema_type,
                     description=prop_def.get("description", ""),
@@ -655,8 +655,7 @@ class GoogleGenAIClient(BaseLLMClient):
 
         return contents
 
-    # ast-grep-ignore: no-dict-any - Provider tool schema mirrors OpenAI format
-    def _convert_tools_to_genai_format(self, tools: list[dict[str, Any]]) -> list[Any]:
+    def _convert_tools_to_genai_format(self, tools: list[ToolDefinition]) -> list[Any]:
         """Convert OpenAI-style tools to Gemini format."""
         # If using Computer Use, filter out the manually defined computer use tools
         # because we use types.Tool(computer_use=...) instead
@@ -705,10 +704,8 @@ class GoogleGenAIClient(BaseLLMClient):
         return grounding_tools
 
     def _prepare_all_tools(
-        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
         self,
-        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
-        tools: list[dict[str, Any]] | None = None,
+        tools: list[ToolDefinition] | None = None,
         tool_choice: str | None = "auto",
     ) -> list[Any]:
         """Prepare all tools including function tools and grounding tools.
@@ -757,8 +754,7 @@ class GoogleGenAIClient(BaseLLMClient):
     async def generate_response(
         self,
         messages: Sequence[LLMMessage],
-        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
-        tools: list[dict[str, Any]] | None = None,
+        tools: list[ToolDefinition] | None = None,
         tool_choice: str | None = "auto",
     ) -> LLMOutput:
         """Generate response using Google GenAI."""
@@ -1134,8 +1130,7 @@ class GoogleGenAIClient(BaseLLMClient):
     def generate_response_stream(
         self,
         messages: Sequence[LLMMessage],
-        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
-        tools: list[dict[str, Any]] | None = None,
+        tools: list[ToolDefinition] | None = None,
         tool_choice: str | None = "auto",
     ) -> AsyncIterator[LLMStreamEvent]:
         """Generate streaming response using Google GenAI."""
@@ -1313,8 +1308,7 @@ class GoogleGenAIClient(BaseLLMClient):
     async def _generate_response_stream(
         self,
         messages: Sequence[LLMMessage],
-        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
-        tools: list[dict[str, Any]] | None = None,
+        tools: list[ToolDefinition] | None = None,
         tool_choice: str | None = "auto",
     ) -> AsyncIterator[LLMStreamEvent]:
         """Internal async generator for streaming responses using Google GenAI."""

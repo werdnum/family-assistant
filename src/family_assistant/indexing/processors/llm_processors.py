@@ -1,6 +1,6 @@
 import json
 import logging
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 # Removed aiofiles and base64 as file handling is delegated to LLMClient
 from family_assistant.indexing.pipeline import ContentProcessor, IndexableContent
@@ -9,7 +9,7 @@ from family_assistant.llm.messages import SystemMessage, UserMessage
 
 if TYPE_CHECKING:
     from family_assistant.storage.vector import Document
-    from family_assistant.tools.types import ToolExecutionContext
+    from family_assistant.tools.types import ToolDefinition, ToolExecutionContext
 
 
 logger = logging.getLogger(__name__)
@@ -100,18 +100,21 @@ class LLMIntelligenceProcessor(ContentProcessor):
             system_prompt = self.system_prompt_template
             # Future: system_prompt = self.system_prompt_template.format(title=original_document.title, ...)
 
-            tools = [
-                {
-                    "type": "function",
-                    "function": {
-                        "name": self.tool_name,
-                        "description": (
-                            f"Extracts information according to the schema. Schema description: {self.output_schema.get('description', 'User-defined schema')}"
-                        ),
-                        "parameters": self.output_schema,
-                    },
-                }
-            ]
+            tools = cast(
+                "list[ToolDefinition]",
+                [
+                    {
+                        "type": "function",
+                        "function": {
+                            "name": self.tool_name,
+                            "description": (
+                                f"Extracts information according to the schema. Schema description: {self.output_schema.get('description', 'User-defined schema')}"
+                            ),
+                            "parameters": self.output_schema,
+                        },
+                    }
+                ],
+            )
             # tool_choice_for_llm was assigned but not used.
             # tool_choice="required" is used in generate_response call directly.
 
@@ -423,18 +426,21 @@ class LLMPrimaryLinkExtractorProcessor(LLMIntelligenceProcessor):
                 continue
 
             system_prompt = self.system_prompt_template
-            tools = [
-                {
-                    "type": "function",
-                    "function": {
-                        "name": self.tool_name,
-                        "description": self.output_schema.get(
-                            "description", "Extract primary link."
-                        ),
-                        "parameters": self.output_schema,
-                    },
-                }
-            ]
+            tools = cast(
+                "list[ToolDefinition]",
+                [
+                    {
+                        "type": "function",
+                        "function": {
+                            "name": self.tool_name,
+                            "description": self.output_schema.get(
+                                "description", "Extract primary link."
+                            ),
+                            "parameters": self.output_schema,
+                        },
+                    }
+                ],
+            )
             # tool_choice_for_llm was assigned but not used.
             # tool_choice="required" is used in generate_response call directly.
 

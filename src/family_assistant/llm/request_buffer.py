@@ -11,6 +11,8 @@ from datetime import UTC, datetime, timedelta
 from threading import Lock
 from typing import Any
 
+from family_assistant.tools.types import ToolDefinition
+
 
 @dataclass
 class LLMRequestRecord:
@@ -21,8 +23,7 @@ class LLMRequestRecord:
     model_id: str
     # ast-grep-ignore: no-dict-any - Serialized LLM messages from external APIs
     messages: list[dict[str, Any]]
-    # ast-grep-ignore: no-dict-any - Serialized tool definitions from external APIs
-    tools: list[dict[str, Any]] | None = None
+    tools: list[ToolDefinition] | None = None
     tool_choice: str | None = None
     # ast-grep-ignore: no-dict-any - Serialized LLM response from external APIs
     response: dict[str, Any] | None = None

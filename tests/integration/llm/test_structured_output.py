@@ -65,6 +65,8 @@ async def llm_client_factory() -> Callable[
                 api_key = os.getenv("OPENAI_API_KEY", "test-openai-key")
             elif provider == "google":
                 api_key = os.getenv("GEMINI_API_KEY", "test-gemini-key")
+            elif provider == "anthropic":
+                api_key = os.getenv("ANTHROPIC_API_KEY", "test-anthropic-key")
             else:
                 api_key = "test-api-key"
 
@@ -196,6 +198,7 @@ class TestMockClientStructuredOutput:
     [
         ("openai", "gpt-4.1-nano"),
         ("google", "gemini-2.5-flash-lite"),
+        ("anthropic", "claude-haiku-3-5-20241022"),
     ],
 )
 async def test_basic_structured_output(
@@ -233,6 +236,7 @@ async def test_basic_structured_output(
     [
         ("openai", "gpt-4.1-nano"),
         ("google", "gemini-2.5-flash-lite"),
+        ("anthropic", "claude-haiku-3-5-20241022"),
     ],
 )
 async def test_structured_output_with_system_message(
@@ -273,6 +277,7 @@ async def test_structured_output_with_system_message(
     [
         ("openai", "gpt-4.1-nano"),
         ("google", "gemini-2.5-flash-lite"),
+        ("anthropic", "claude-haiku-3-5-20241022"),
     ],
 )
 async def test_nested_structured_output(
@@ -349,6 +354,7 @@ async def test_structured_output_with_optional_fields(
     [
         ("openai", "gpt-4.1-nano"),
         ("google", "gemini-2.5-flash-lite"),
+        ("anthropic", "claude-haiku-3-5-20241022"),
     ],
 )
 async def test_structured_output_with_constrained_fields(

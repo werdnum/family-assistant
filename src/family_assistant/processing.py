@@ -15,7 +15,6 @@ from datetime import (  # Added timezone
 from typing import (
     TYPE_CHECKING,
     Any,
-    cast,
 )
 
 if TYPE_CHECKING:
@@ -58,7 +57,7 @@ from .storage.context import DatabaseContext, get_db_context
 
 # Import ToolsProvider interface and context
 from .tools import ToolExecutionContext, ToolNotFoundError, ToolsProvider
-from .tools.types import ToolAttachment, ToolResult
+from .tools.types import ToolAttachment, ToolDefinition, ToolResult
 from .utils.clock import Clock, SystemClock
 
 logger = logging.getLogger(__name__)
@@ -538,9 +537,7 @@ class ProcessingService:
             try:
                 async for event in self.llm_client.generate_response_stream(
                     messages=messages,
-                    # cast needed because ToolDefinition is a TypedDict which
-                    # the type checker doesn't recognize as assignable to dict[str, Any]
-                    tools=cast("list[dict[str, Any]] | None", tools_to_offer),
+                    tools=tools_to_offer,
                     tool_choice=tool_choice_mode,
                 ):
                     # Yield content events as they come
@@ -1703,7 +1700,7 @@ Available attachments:
 
 Call attach_to_response with your selected attachment IDs."""
 
-            selection_tools = [
+            selection_tools: list[ToolDefinition] = [
                 {
                     "type": "function",
                     "function": {

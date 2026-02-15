@@ -7,14 +7,19 @@ import json
 from typing import Any, cast
 from unittest.mock import patch
 
+import pytest
+
 from family_assistant.llm import BaseLLMClient, LiteLLMClient
+from family_assistant.llm.base import InvalidRequestError
 from family_assistant.llm.messages import (
     AssistantMessage,
     ToolMessage,
     UserMessage,
 )
+from family_assistant.llm.providers.anthropic_client import AnthropicClient
 from family_assistant.llm.providers.google_genai_client import GoogleGenAIClient
 from family_assistant.llm.providers.openai_client import OpenAIClient
+from family_assistant.llm.tool_call import ToolCallFunction, ToolCallItem
 from family_assistant.tools.types import ToolAttachment
 
 
@@ -449,7 +454,7 @@ class TestLiteLLMClient:
         assert len(result) == 2
         assert isinstance(result[0], ToolMessage)
         assert isinstance(result[1], UserMessage)
-        assert "File from previous tool response" in result[1].content
+        assert "File from previous tool response" in str(result[1].content)
 
     def test_process_tool_messages_with_file_path_only_attachment(self) -> None:
         """Test processing tool messages with file-path-only attachments"""
@@ -476,7 +481,7 @@ class TestLiteLLMClient:
         assert len(result) == 2
         assert isinstance(result[0], ToolMessage)
         assert isinstance(result[1], UserMessage)
-        assert "File from previous tool response" in result[1].content
+        assert "File from previous tool response" in str(result[1].content)
         assert (
             "External PDF file" in result[1].content
         )  # Uses description, not file_path
@@ -726,3 +731,260 @@ class TestLiteLLMClient:
         assert "[System: Large text file from previous tool response]" in content
         assert "Content too large for inline display" in content
         assert "JSON Schema" not in content
+
+
+class TestAnthropicClient:
+    """Test AnthropicClient multimodal functionality"""
+
+    def test_supports_multimodal_tools(self) -> None:
+        """Test Anthropic supports multimodal tool responses"""
+        client = AnthropicClient(api_key="test", model="claude-3-sonnet-20240229")
+        assert client._supports_multimodal_tools() is True
+
+    def test_process_tool_messages_with_image_attachment(self) -> None:
+        """Test processing tool messages with image attachments"""
+        client = AnthropicClient(api_key="test", model="claude-3-sonnet-20240229")
+
+        fake_image_data = b"fake image data"
+        attachment = ToolAttachment(
+            mime_type="image/png", content=fake_image_data, description="Test image"
+        )
+
+        messages: list = [
+            ToolMessage(
+                tool_call_id="call_123",
+                content="Generated an image",
+                name="test_tool",
+                _attachments=[attachment],
+            )
+        ]
+
+        result = client._process_tool_messages(messages)
+
+        assert len(result) == 1
+        assert isinstance(result[0], ToolMessage)
+        assert isinstance(result[0].content, list)
+        assert len(result[0].content) == 2
+
+        content_list: list[Any] = result[0].content  # type: ignore[assignment]
+        assert content_list[0]["type"] == "text"  # type: ignore[index]
+        assert content_list[0]["text"] == "Generated an image"  # type: ignore[index]
+
+        assert content_list[1]["type"] == "image"  # type: ignore[index]
+        assert content_list[1]["source"]["type"] == "base64"  # type: ignore[index]
+        assert content_list[1]["source"]["media_type"] == "image/png"  # type: ignore[index]
+
+        # Verify base64 content
+        decoded = base64.b64decode(content_list[1]["source"]["data"])  # type: ignore[index]
+        assert decoded == fake_image_data
+
+    def test_process_tool_messages_with_pdf_attachment(self) -> None:
+        """Test processing tool messages with PDF attachments uses document blocks"""
+        client = AnthropicClient(api_key="test", model="claude-3-sonnet-20240229")
+
+        fake_pdf_data = b"fake pdf data"
+        attachment = ToolAttachment(
+            mime_type="application/pdf", content=fake_pdf_data, description="Test PDF"
+        )
+
+        messages: list = [
+            ToolMessage(
+                tool_call_id="call_456",
+                content="Retrieved a PDF document",
+                name="test_tool",
+                _attachments=[attachment],
+            )
+        ]
+
+        result = client._process_tool_messages(messages)
+
+        assert len(result) == 1
+        assert isinstance(result[0], ToolMessage)
+        assert isinstance(result[0].content, list)
+        assert len(result[0].content) == 2
+
+        content_list: list[Any] = result[0].content  # type: ignore[assignment]
+        assert content_list[0]["type"] == "text"  # type: ignore[index]
+        assert content_list[0]["text"] == "Retrieved a PDF document"  # type: ignore[index]
+
+        assert content_list[1]["type"] == "document"  # type: ignore[index]
+        assert content_list[1]["source"]["type"] == "base64"  # type: ignore[index]
+        assert content_list[1]["source"]["media_type"] == "application/pdf"  # type: ignore[index]
+
+    def test_process_tool_messages_with_unsupported_type_falls_back(self) -> None:
+        """Test unsupported attachment types fall back to injection"""
+        client = AnthropicClient(api_key="test", model="claude-3-sonnet-20240229")
+
+        fake_data = b"fake zip data"
+        attachment = ToolAttachment(
+            mime_type="application/zip", content=fake_data, description="Test ZIP"
+        )
+
+        messages: list = [
+            ToolMessage(
+                tool_call_id="call_789",
+                content="Created a ZIP file",
+                name="test_tool",
+                _attachments=[attachment],
+            )
+        ]
+
+        result = client._process_tool_messages(messages)
+
+        # Should have 2 messages: tool message + injected user message
+        assert len(result) == 2
+        assert isinstance(result[0], ToolMessage)
+        assert isinstance(result[1], UserMessage)
+        assert "File from previous tool response" in str(result[1].content)
+
+    def test_process_tool_messages_with_file_path_only(self) -> None:
+        """Test file-path-only attachments fall back to injection"""
+        client = AnthropicClient(api_key="test", model="claude-3-sonnet-20240229")
+
+        attachment = ToolAttachment(
+            mime_type="application/pdf",
+            file_path="/path/to/document.pdf",
+            description="External PDF",
+        )
+
+        messages: list = [
+            ToolMessage(
+                tool_call_id="call_999",
+                content="Found external document",
+                name="test_tool",
+                _attachments=[attachment],
+            )
+        ]
+
+        result = client._process_tool_messages(messages)
+
+        assert len(result) == 2
+        assert isinstance(result[0], ToolMessage)
+        assert isinstance(result[1], UserMessage)
+        assert "File from previous tool response" in str(result[1].content)
+
+    def test_process_tool_messages_without_attachments_passes_through(self) -> None:
+        """Test messages without attachments pass through unchanged"""
+        client = AnthropicClient(api_key="test", model="claude-3-sonnet-20240229")
+
+        messages: list = [
+            UserMessage(content="Hello"),
+            ToolMessage(
+                tool_call_id="call_000",
+                content="Tool result",
+                name="test_tool",
+            ),
+        ]
+
+        result = client._process_tool_messages(messages)
+
+        assert len(result) == 2
+        assert result[0].content == "Hello"
+        assert result[1].content == "Tool result"
+
+    def test_process_tool_messages_multimodal_content_in_tool_result(self) -> None:
+        """Test that multimodal tool content is preserved in message conversion."""
+        client = AnthropicClient(api_key="test", model="claude-3-sonnet-20240229")
+
+        fake_image_data = b"fake image data"
+        attachment = ToolAttachment(
+            mime_type="image/png", content=fake_image_data, description="Screenshot"
+        )
+
+        messages: list = [
+            UserMessage(content="Take a screenshot"),
+            AssistantMessage(
+                content=None,
+                tool_calls=[
+                    ToolCallItem(
+                        id="call_123",
+                        type="function",
+                        function=ToolCallFunction(name="screenshot", arguments="{}"),
+                    )
+                ],
+            ),
+            ToolMessage(
+                tool_call_id="call_123",
+                content="Screenshot captured",
+                name="screenshot",
+                _attachments=[attachment],
+            ),
+        ]
+
+        processed = client._process_tool_messages(messages)
+        _system, api_messages = client._convert_messages_to_anthropic_format(processed)
+
+        # The tool_result should contain the multimodal content list
+        # Find the tool_result block
+        tool_result_found = False
+        for msg in api_messages:
+            if msg["role"] == "user":
+                for block in msg.get("content", []):
+                    if isinstance(block, dict) and block.get("type") == "tool_result":
+                        tool_result_found = True
+                        # Content should be a list with text + image blocks
+                        assert isinstance(block["content"], list)
+                        assert block["content"][0]["type"] == "text"
+                        assert block["content"][1]["type"] == "image"
+                        break
+
+        assert tool_result_found, "tool_result block not found in converted messages"
+
+    def test_process_tool_messages_mixed_attachments(self) -> None:
+        """Test tool result with mix of supported (image) and unsupported (zip) attachments."""
+        client = AnthropicClient(api_key="test", model="claude-3-sonnet-20240229")
+
+        image_attachment = ToolAttachment(
+            mime_type="image/png", content=b"fake image", description="Screenshot"
+        )
+        zip_attachment = ToolAttachment(
+            mime_type="application/zip", content=b"fake zip", description="Archive"
+        )
+
+        messages: list = [
+            ToolMessage(
+                tool_call_id="call_mix",
+                content="Files ready",
+                name="test_tool",
+                _attachments=[image_attachment, zip_attachment],
+            )
+        ]
+
+        result = client._process_tool_messages(messages)
+
+        # Should have 2 messages: tool (with image inline) + injected user (for zip)
+        assert len(result) == 2
+        assert isinstance(result[0], ToolMessage)
+        assert isinstance(result[1], UserMessage)
+
+        # Tool message content should have text + image blocks
+        content_list: list[Any] = result[0].content  # type: ignore[assignment]
+        assert isinstance(content_list, list)
+        assert content_list[0]["type"] == "text"  # type: ignore[index]
+        assert content_list[1]["type"] == "image"  # type: ignore[index]
+
+        # Injected user message for unsupported zip
+        assert "File from previous tool response" in str(result[1].content)
+
+    def test_convert_messages_malformed_tool_arguments_raises_error(self) -> None:
+        """Test that malformed JSON in tool call arguments raises InvalidRequestError."""
+        client = AnthropicClient(api_key="test", model="claude-3-sonnet-20240229")
+
+        messages: list = [
+            AssistantMessage(
+                content=None,
+                tool_calls=[
+                    ToolCallItem(
+                        id="call_bad",
+                        type="function",
+                        function=ToolCallFunction(
+                            name="broken_tool",
+                            arguments="{invalid json!!!",
+                        ),
+                    )
+                ],
+            ),
+        ]
+
+        with pytest.raises(InvalidRequestError, match="Malformed tool call arguments"):
+            client._convert_messages_to_anthropic_format(messages)

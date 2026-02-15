@@ -14,7 +14,7 @@ from typing import TYPE_CHECKING, Any, TypeVar
 from pydantic import BaseModel
 
 if TYPE_CHECKING:
-    from family_assistant.tools.types import ToolAttachment
+    from family_assistant.tools.types import ToolAttachment, ToolDefinition
 
 from . import LLMInterface, LLMMessage, LLMOutput, LLMStreamEvent, StructuredOutputError
 from .base import (
@@ -69,8 +69,7 @@ class RetryingLLMClient:
     async def generate_response(
         self,
         messages: Sequence[LLMMessage],
-        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
-        tools: list[dict[str, Any]] | None = None,
+        tools: "list[ToolDefinition] | None" = None,
         tool_choice: str | None = "auto",
     ) -> "LLMOutput":
         """Generate response with retry and fallback logic."""
@@ -191,8 +190,7 @@ class RetryingLLMClient:
     async def generate_response_stream(
         self,
         messages: Sequence[LLMMessage],
-        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
-        tools: list[dict[str, Any]] | None = None,
+        tools: "list[ToolDefinition] | None" = None,
         tool_choice: str | None = "auto",
     ) -> AsyncIterator[LLMStreamEvent]:
         """Generate streaming response with retry and fallback logic."""

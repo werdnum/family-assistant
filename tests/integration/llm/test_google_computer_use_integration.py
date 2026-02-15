@@ -22,7 +22,7 @@ from family_assistant.tools.computer_use import (
     computer_use_navigate,
     get_browser_session,
 )
-from family_assistant.tools.types import ToolExecutionContext
+from family_assistant.tools.types import ToolDefinition, ToolExecutionContext
 
 logger = logging.getLogger(__name__)
 
@@ -87,7 +87,7 @@ async def test_computer_use_tool_injection(gemini_client: GoogleGenAIClient) -> 
         messages = [UserMessage(content="Navigate to google.com")]
 
         # We pass some dummy tools to verify filtering logic too
-        dummy_tools = [
+        dummy_tools: list[ToolDefinition] = [
             {
                 "type": "function",
                 "function": {

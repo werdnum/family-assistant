@@ -14,7 +14,7 @@ from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
-    from family_assistant.tools.types import ToolAttachment
+    from family_assistant.tools.types import ToolAttachment, ToolDefinition
 
 import aiofiles
 from openai import AsyncOpenAI
@@ -171,8 +171,7 @@ class OpenAIClient(BaseLLMClient):
     async def generate_response(
         self,
         messages: Sequence[LLMMessage],
-        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
-        tools: list[dict[str, object]] | None = None,
+        tools: list["ToolDefinition"] | None = None,
         tool_choice: str | None = "auto",
     ) -> LLMOutput:
         """Generate response using OpenAI API."""
@@ -394,8 +393,7 @@ class OpenAIClient(BaseLLMClient):
     def generate_response_stream(
         self,
         messages: Sequence[LLMMessage],
-        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
-        tools: list[dict[str, object]] | None = None,
+        tools: list["ToolDefinition"] | None = None,
         tool_choice: str | None = "auto",
     ) -> AsyncIterator[LLMStreamEvent]:
         """Generate streaming response using OpenAI API."""
@@ -406,8 +404,7 @@ class OpenAIClient(BaseLLMClient):
     async def _generate_response_stream(
         self,
         messages: Sequence[LLMMessage],
-        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
-        tools: list[dict[str, object]] | None = None,
+        tools: list["ToolDefinition"] | None = None,
         tool_choice: str | None = "auto",
     ) -> AsyncIterator[LLMStreamEvent]:
         """Internal async generator for streaming responses."""

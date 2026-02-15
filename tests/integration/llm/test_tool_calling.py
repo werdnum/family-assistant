@@ -3,7 +3,7 @@
 import json
 import os
 from collections.abc import Awaitable, Callable
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 import pytest
 import pytest_asyncio
@@ -15,6 +15,7 @@ from family_assistant.llm import (
     ToolCallItem,
 )
 from family_assistant.llm.factory import LLMClientFactory
+from family_assistant.tools.types import ToolDefinition
 from tests.factories.messages import (
     create_assistant_message,
     create_tool_message,
@@ -66,6 +67,8 @@ async def llm_client_with_tools() -> Callable[[str, str], Awaitable[LLMInterface
             api_key = os.getenv("OPENAI_API_KEY", "test-openai-key")
         elif provider == "google":
             api_key = os.getenv("GEMINI_API_KEY", "test-gemini-key")
+        elif provider == "anthropic":
+            api_key = os.getenv("ANTHROPIC_API_KEY", "test-anthropic-key")
         else:
             api_key = "test-api-key"
 
@@ -84,8 +87,7 @@ async def llm_client_with_tools() -> Callable[[str, str], Awaitable[LLMInterface
     return _create_client
 
 
-# ast-grep-ignore: no-dict-any - Legacy code - needs structured types
-def get_weather_tool() -> dict[str, Any]:
+def get_weather_tool() -> ToolDefinition:
     """Get a sample weather tool definition."""
     return {
         "type": "function",
@@ -111,8 +113,7 @@ def get_weather_tool() -> dict[str, Any]:
     }
 
 
-# ast-grep-ignore: no-dict-any - Legacy code - needs structured types
-def calculate_tool() -> dict[str, Any]:
+def calculate_tool() -> ToolDefinition:
     """Get a sample calculation tool definition."""
     return {
         "type": "function",
@@ -141,6 +142,7 @@ def calculate_tool() -> dict[str, Any]:
     [
         ("openai", "gpt-4.1-nano"),
         ("google", "gemini-2.5-flash-lite"),
+        ("anthropic", "claude-haiku-3-5-20241022"),
     ],
 )
 async def test_single_tool_call(
@@ -188,6 +190,7 @@ async def test_single_tool_call(
     [
         ("openai", "gpt-4.1-nano"),
         ("google", "gemini-2.5-flash-lite"),
+        ("anthropic", "claude-haiku-3-5-20241022"),
     ],
 )
 async def test_multiple_tool_options(
@@ -232,6 +235,7 @@ async def test_multiple_tool_options(
     [
         ("openai", "gpt-4.1-nano"),
         ("google", "gemini-2.5-flash-lite"),
+        ("anthropic", "claude-haiku-3-5-20241022"),
     ],
 )
 async def test_no_tool_needed(
@@ -313,6 +317,7 @@ async def test_parallel_tool_calls(
     [
         ("openai", "gpt-4.1-nano"),
         ("google", "gemini-2.5-flash-lite"),
+        ("anthropic", "claude-haiku-3-5-20241022"),
     ],
 )
 async def test_tool_call_with_conversation_history(
@@ -367,6 +372,7 @@ async def test_tool_call_with_conversation_history(
     [
         ("openai", "gpt-4.1-nano"),
         ("google", "gemini-2.5-flash-lite"),
+        ("anthropic", "claude-haiku-3-5-20241022"),
     ],
 )
 async def test_tool_response_handling(
@@ -438,6 +444,7 @@ async def test_tool_response_handling(
     [
         ("openai", "gpt-4.1-nano"),
         ("google", "gemini-2.5-flash-lite"),
+        ("anthropic", "claude-haiku-3-5-20241022"),
     ],
 )
 async def test_tool_call_id_format(

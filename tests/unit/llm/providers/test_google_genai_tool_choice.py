@@ -12,6 +12,7 @@ from google.genai import types
 
 from family_assistant.llm import UserMessage
 from family_assistant.llm.providers.google_genai_client import GoogleGenAIClient
+from family_assistant.tools.types import ToolDefinition
 
 
 class TestGoogleGenAIToolChoice:
@@ -25,8 +26,7 @@ class TestGoogleGenAIToolChoice:
         )
 
     @pytest.fixture
-    # ast-grep-ignore: no-dict-any - Test fixtures use dict for mock tool definitions
-    def sample_tools(self) -> list[dict[str, Any]]:
+    def sample_tools(self) -> list[ToolDefinition]:
         """Create sample tool definitions for testing."""
         return [
             {
@@ -69,11 +69,10 @@ class TestGoogleGenAIToolChoice:
         return [UserMessage(content="Hello, can you help me?")]
 
     @pytest.mark.asyncio
-    # ast-grep-ignore-block: no-dict-any - Test parameters use dict[str, Any] for flexible mock data
     async def test_tool_choice_required_sets_any_mode(
         self,
         google_client: GoogleGenAIClient,
-        sample_tools: list[dict[str, Any]],
+        sample_tools: list[ToolDefinition],
         sample_messages: list[Any],
     ) -> None:
         """Test that tool_choice='required' sets FunctionCallingConfigMode.ANY."""
@@ -123,7 +122,7 @@ class TestGoogleGenAIToolChoice:
     async def test_tool_choice_specific_tool_sets_allowed_names(
         self,
         google_client: GoogleGenAIClient,
-        sample_tools: list[dict[str, Any]],
+        sample_tools: list[ToolDefinition],
         sample_messages: list[Any],
     ) -> None:
         """Test that specific tool_choice restricts to allowed_function_names."""
@@ -169,7 +168,7 @@ class TestGoogleGenAIToolChoice:
     async def test_tool_choice_auto_no_restrictive_config(
         self,
         google_client: GoogleGenAIClient,
-        sample_tools: list[dict[str, Any]],
+        sample_tools: list[ToolDefinition],
         sample_messages: list[Any],
     ) -> None:
         """Test that tool_choice='auto' doesn't set restrictive tool config."""
@@ -210,7 +209,7 @@ class TestGoogleGenAIToolChoice:
     async def test_tool_choice_none_sets_none_mode(
         self,
         google_client: GoogleGenAIClient,
-        sample_tools: list[dict[str, Any]],
+        sample_tools: list[ToolDefinition],
         sample_messages: list[Any],
     ) -> None:
         """Test that tool_choice='none' sets FunctionCallingConfigMode.NONE."""
@@ -250,7 +249,7 @@ class TestGoogleGenAIToolChoice:
     async def test_tool_choice_none_prevents_tool_inclusion(
         self,
         google_client: GoogleGenAIClient,
-        sample_tools: list[dict[str, Any]],
+        sample_tools: list[ToolDefinition],
         sample_messages: list[Any],
     ) -> None:
         """Test that tool_choice='none' prevents tools from being included in config."""
@@ -285,7 +284,7 @@ class TestGoogleGenAIToolChoice:
     async def test_tool_choice_required_includes_tools(
         self,
         google_client: GoogleGenAIClient,
-        sample_tools: list[dict[str, Any]],
+        sample_tools: list[ToolDefinition],
         sample_messages: list[Any],
     ) -> None:
         """Test that tool_choice='required' includes tools in config."""
@@ -320,7 +319,7 @@ class TestGoogleGenAIToolChoice:
     async def test_tool_choice_specific_tool_includes_tools(
         self,
         google_client: GoogleGenAIClient,
-        sample_tools: list[dict[str, Any]],
+        sample_tools: list[ToolDefinition],
         sample_messages: list[Any],
     ) -> None:
         """Test that specific tool_choice includes tools in config."""
@@ -355,7 +354,7 @@ class TestGoogleGenAIToolChoice:
     async def test_tool_choice_parameter_passed_to_generate_response(
         self,
         google_client: GoogleGenAIClient,
-        sample_tools: list[dict[str, Any]],
+        sample_tools: list[ToolDefinition],
         sample_messages: list[Any],
     ) -> None:
         """Test that tool_choice parameter is properly passed through."""
@@ -384,7 +383,7 @@ class TestGoogleGenAIToolChoice:
     async def test_automatic_function_calling_disabled(
         self,
         google_client: GoogleGenAIClient,
-        sample_tools: list[dict[str, Any]],
+        sample_tools: list[ToolDefinition],
         sample_messages: list[Any],
     ) -> None:
         """Test that automatic function calling is disabled when tools are provided."""
@@ -456,9 +455,8 @@ class TestGoogleGenAIToolChoiceStreaming:
             api_key="test_key_for_unit_tests", model="gemini-2.0-flash"
         )
 
-    # ast-grep-ignore: no-dict-any - Test fixtures use dict for mock tool definitions
     @pytest.fixture
-    def sample_tools(self) -> list[dict[str, Any]]:
+    def sample_tools(self) -> list[ToolDefinition]:
         """Create sample tool definitions for testing."""
         return [
             {
@@ -486,7 +484,7 @@ class TestGoogleGenAIToolChoiceStreaming:
     async def test_stream_tool_choice_required(
         self,
         google_client: GoogleGenAIClient,
-        sample_tools: list[dict[str, Any]],
+        sample_tools: list[ToolDefinition],
         sample_messages: list[Any],
     ) -> None:
         """Test that tool_choice='required' works in streaming mode."""
@@ -532,7 +530,7 @@ class TestGoogleGenAIToolChoiceStreaming:
     async def test_stream_tool_choice_specific_tool(
         self,
         google_client: GoogleGenAIClient,
-        sample_tools: list[dict[str, Any]],
+        sample_tools: list[ToolDefinition],
         sample_messages: list[Any],
     ) -> None:
         """Test that specific tool_choice works in streaming mode."""
@@ -577,7 +575,7 @@ class TestGoogleGenAIToolChoiceStreaming:
     async def test_stream_tool_choice_none(
         self,
         google_client: GoogleGenAIClient,
-        sample_tools: list[dict[str, Any]],
+        sample_tools: list[ToolDefinition],
         sample_messages: list[Any],
     ) -> None:
         """Test that tool_choice='none' works in streaming mode."""

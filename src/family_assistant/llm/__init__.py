@@ -31,6 +31,8 @@ from litellm.exceptions import (
 )
 from pydantic import BaseModel, ValidationError
 
+from family_assistant.tools.types import ToolDefinition
+
 from .base import InvalidRequestError, StructuredOutputError
 from .factory import LLMClientFactory
 from .google_types import GeminiProviderMetadata
@@ -499,7 +501,7 @@ def _format_tool_calls_for_debug(tool_calls: Sequence[ToolCallItem] | None) -> s
 
 def _format_messages_for_debug(
     messages: Sequence[LLMMessage],
-    tools: Sequence[dict[str, object]] | None = None,
+    tools: Sequence[ToolDefinition] | None = None,
     tool_choice: str | None = None,
 ) -> str:
     """Format typed messages for debug logging."""
@@ -592,7 +594,7 @@ def _format_messages_for_debug(
 
 def _format_serialized_messages_for_debug(
     messages: Sequence[dict[str, object]],
-    tools: Sequence[dict[str, object]] | None = None,
+    tools: Sequence[ToolDefinition] | None = None,
     tool_choice: str | None = None,
 ) -> str:
     """Format already-serialized messages (dict form) for debug logging."""
@@ -718,9 +720,8 @@ class LLMStreamEvent:
     metadata: dict[str, Any] | None = None  # Additional event metadata
 
 
-# ast-grep-ignore: no-dict-any - Legacy code - needs structured types
-# ast-grep-ignore: no-dict-any - Legacy code - needs structured types
-def _sanitize_tools_for_litellm(tools: list[dict[str, Any]]) -> list[dict[str, Any]]:
+# ast-grep-ignore: no-dict-any - Return type intentionally untyped; deep-copies and strips fields for litellm
+def _sanitize_tools_for_litellm(tools: list[ToolDefinition]) -> list[dict[str, Any]]:
     """
     Removes unsupported 'format' fields from string parameters in tool definitions
     before sending them to LiteLLM/OpenAI, which only supports 'enum' and 'date-time'.
@@ -770,7 +771,7 @@ def _sanitize_tools_for_litellm(tools: list[dict[str, Any]]) -> list[dict[str, A
             ):
                 del properties[param_name]["format"]
 
-    return sanitized_tools
+    return cast("list[dict[str, Any]]", sanitized_tools)
 
 
 class LLMInterface(Protocol):
@@ -779,8 +780,7 @@ class LLMInterface(Protocol):
     async def generate_response(
         self,
         messages: Sequence[LLMMessage],
-        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
-        tools: list[dict[str, Any]] | None = None,
+        tools: list[ToolDefinition] | None = None,
         tool_choice: str | None = "auto",
     ) -> LLMOutput:
         """
@@ -792,8 +792,7 @@ class LLMInterface(Protocol):
     def generate_response_stream(
         self,
         messages: Sequence[LLMMessage],
-        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
-        tools: list[dict[str, Any]] | None = None,
+        tools: list[ToolDefinition] | None = None,
         tool_choice: str | None = "auto",
     ) -> AsyncIterator[LLMStreamEvent]:
         """
@@ -1012,8 +1011,7 @@ class LiteLLMClient(BaseLLMClient):
         self,
         model_id: str,
         messages: list[LLMMessage],
-        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
-        tools: list[dict[str, Any]] | None,
+        tools: list[ToolDefinition] | None,
         tool_choice: str | None,
         # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
         specific_model_params: dict[str, dict[str, Any]],  # Corrected type
@@ -1228,8 +1226,7 @@ class LiteLLMClient(BaseLLMClient):
     async def generate_response(
         self,
         messages: Sequence[LLMMessage],
-        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
-        tools: list[dict[str, Any]] | None = None,
+        tools: list[ToolDefinition] | None = None,
         tool_choice: str | None = "auto",
     ) -> LLMOutput:
         """Generates a response using LiteLLM, with one retry on primary model and fallback."""
@@ -1530,8 +1527,7 @@ class LiteLLMClient(BaseLLMClient):
     def generate_response_stream(
         self,
         messages: Sequence[LLMMessage],
-        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
-        tools: list[dict[str, Any]] | None = None,
+        tools: list[ToolDefinition] | None = None,
         tool_choice: str | None = "auto",
     ) -> AsyncIterator[LLMStreamEvent]:
         """Generate streaming response using LiteLLM, with one retry on primary model and fallback."""
@@ -1543,8 +1539,7 @@ class LiteLLMClient(BaseLLMClient):
         self,
         model_id: str,
         messages: Sequence[LLMMessage],
-        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
-        tools: list[dict[str, Any]] | None,
+        tools: list[ToolDefinition] | None,
         tool_choice: str | None,
         # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
         specific_model_params: dict[str, dict[str, Any]],
@@ -1820,8 +1815,7 @@ class LiteLLMClient(BaseLLMClient):
     async def _generate_response_stream(
         self,
         messages: Sequence[LLMMessage],
-        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
-        tools: list[dict[str, Any]] | None = None,
+        tools: list[ToolDefinition] | None = None,
         tool_choice: str | None = "auto",
     ) -> AsyncIterator[LLMStreamEvent]:
         """Internal async generator for streaming responses with retry/fallback logic."""
@@ -2168,8 +2162,7 @@ class RecordingLLMClient:
     async def generate_response(
         self,
         messages: Sequence[LLMMessage],
-        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
-        tools: list[dict[str, Any]] | None = None,
+        tools: list[ToolDefinition] | None = None,
         tool_choice: str | None = "auto",
     ) -> LLMOutput:
         """Calls the wrapped client's standard generate_response, records, and returns."""
@@ -2235,8 +2228,7 @@ class RecordingLLMClient:
     async def generate_response_stream(
         self,
         messages: Sequence[LLMMessage],
-        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
-        tools: list[dict[str, Any]] | None = None,
+        tools: list[ToolDefinition] | None = None,
         tool_choice: str | None = "auto",
     ) -> AsyncIterator[LLMStreamEvent]:
         """Delegates streaming to wrapped client - no recording for streams yet."""
@@ -2393,8 +2385,7 @@ class PlaybackLLMClient:
     async def generate_response(
         self,
         messages: Sequence[LLMMessage],
-        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
-        tools: list[dict[str, Any]] | None = None,
+        tools: list[ToolDefinition] | None = None,
         tool_choice: str | None = "auto",
     ) -> LLMOutput:
         """Plays back for the standard generate_response method."""
@@ -2526,8 +2517,7 @@ class PlaybackLLMClient:
     async def generate_response_stream(
         self,
         messages: Sequence[LLMMessage],
-        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
-        tools: list[dict[str, Any]] | None = None,
+        tools: list[ToolDefinition] | None = None,
         tool_choice: str | None = "auto",
     ) -> AsyncIterator[LLMStreamEvent]:
         """

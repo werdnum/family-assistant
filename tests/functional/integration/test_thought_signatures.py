@@ -27,7 +27,7 @@ from family_assistant.llm.google_types import (
 from family_assistant.llm.messages import UserMessage
 from family_assistant.processing import ProcessingService, ProcessingServiceConfig
 from family_assistant.storage.context import get_db_context
-from family_assistant.tools.types import ToolResult
+from family_assistant.tools.types import ToolDefinition, ToolResult
 
 T = TypeVar("T", bound=BaseModel)
 
@@ -75,8 +75,7 @@ class MockLLMWithThoughtSignatures:
     async def generate_response(
         self,
         messages: Sequence[LLMMessage],
-        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
-        tools: list[dict[str, Any]] | None = None,
+        tools: list[ToolDefinition] | None = None,
         tool_choice: str | None = "auto",
     ) -> LLMOutput:
         """Generate mock response with thought signatures."""
@@ -111,8 +110,7 @@ class MockLLMWithThoughtSignatures:
     def generate_response_stream(
         self,
         messages: Sequence[LLMMessage],
-        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
-        tools: list[dict[str, Any]] | None = None,
+        tools: list[ToolDefinition] | None = None,
         tool_choice: str | None = "auto",
     ) -> AsyncIterator[LLMStreamEvent]:
         """Streaming version - delegates to async generator."""
@@ -121,8 +119,7 @@ class MockLLMWithThoughtSignatures:
     async def _generate_response_stream(
         self,
         messages: Sequence[LLMMessage],
-        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
-        tools: list[dict[str, Any]] | None = None,
+        tools: list[ToolDefinition] | None = None,
         tool_choice: str | None = "auto",
     ) -> AsyncIterator[LLMStreamEvent]:
         """Internal async generator for streaming."""
@@ -179,8 +176,7 @@ class MockLLMWithThoughtSignaturesNoToolCalls:
     async def generate_response(
         self,
         messages: Sequence[LLMMessage],
-        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
-        tools: list[dict[str, Any]] | None = None,
+        tools: list[ToolDefinition] | None = None,
         tool_choice: str | None = "auto",
     ) -> LLMOutput:
         """Generate mock response with thought signature but no tool calls."""
@@ -196,8 +192,7 @@ class MockLLMWithThoughtSignaturesNoToolCalls:
     def generate_response_stream(
         self,
         messages: Sequence[LLMMessage],
-        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
-        tools: list[dict[str, Any]] | None = None,
+        tools: list[ToolDefinition] | None = None,
         tool_choice: str | None = "auto",
     ) -> AsyncIterator[LLMStreamEvent]:
         """Streaming version - delegates to async generator."""
@@ -206,8 +201,7 @@ class MockLLMWithThoughtSignaturesNoToolCalls:
     async def _generate_response_stream(
         self,
         messages: Sequence[LLMMessage],
-        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
-        tools: list[dict[str, Any]] | None = None,
+        tools: list[ToolDefinition] | None = None,
         tool_choice: str | None = "auto",
     ) -> AsyncIterator[LLMStreamEvent]:
         """Internal async generator for streaming."""

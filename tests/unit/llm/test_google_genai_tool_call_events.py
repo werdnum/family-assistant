@@ -1,11 +1,15 @@
 """Test that Google GenAI client correctly emits tool_call events."""
 
 import os
+from typing import TYPE_CHECKING
 
 import pytest
 
 from family_assistant.llm.messages import SystemMessage, UserMessage
 from family_assistant.llm.providers.google_genai_client import GoogleGenAIClient
+
+if TYPE_CHECKING:
+    from family_assistant.tools.types import ToolDefinition
 
 
 @pytest.mark.asyncio
@@ -26,7 +30,7 @@ async def test_tool_call_events_are_emitted() -> None:
         UserMessage(content="use Python to calculate 1+1"),
     ]
 
-    tools = [
+    tools: list[ToolDefinition] = [
         {
             "type": "function",
             "function": {
