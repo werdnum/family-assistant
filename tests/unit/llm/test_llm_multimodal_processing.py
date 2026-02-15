@@ -7,7 +7,10 @@ import json
 from typing import Any, cast
 from unittest.mock import patch
 
+import pytest
+
 from family_assistant.llm import BaseLLMClient, LiteLLMClient
+from family_assistant.llm.base import InvalidRequestError
 from family_assistant.llm.messages import (
     AssistantMessage,
     ToolMessage,
@@ -926,3 +929,62 @@ class TestAnthropicClient:
                         break
 
         assert tool_result_found, "tool_result block not found in converted messages"
+
+    def test_process_tool_messages_mixed_attachments(self) -> None:
+        """Test tool result with mix of supported (image) and unsupported (zip) attachments."""
+        client = AnthropicClient(api_key="test", model="claude-3-sonnet-20240229")
+
+        image_attachment = ToolAttachment(
+            mime_type="image/png", content=b"fake image", description="Screenshot"
+        )
+        zip_attachment = ToolAttachment(
+            mime_type="application/zip", content=b"fake zip", description="Archive"
+        )
+
+        messages: list = [
+            ToolMessage(
+                tool_call_id="call_mix",
+                content="Files ready",
+                name="test_tool",
+                _attachments=[image_attachment, zip_attachment],
+            )
+        ]
+
+        result = client._process_tool_messages(messages)
+
+        # Should have 2 messages: tool (with image inline) + injected user (for zip)
+        assert len(result) == 2
+        assert isinstance(result[0], ToolMessage)
+        assert isinstance(result[1], UserMessage)
+
+        # Tool message content should have text + image blocks
+        content_list: list[Any] = result[0].content  # type: ignore[assignment]
+        assert isinstance(content_list, list)
+        assert content_list[0]["type"] == "text"  # type: ignore[index]
+        assert content_list[1]["type"] == "image"  # type: ignore[index]
+
+        # Injected user message for unsupported zip
+        assert "File from previous tool response" in str(result[1].content)
+
+    def test_convert_messages_malformed_tool_arguments_raises_error(self) -> None:
+        """Test that malformed JSON in tool call arguments raises InvalidRequestError."""
+        client = AnthropicClient(api_key="test", model="claude-3-sonnet-20240229")
+
+        messages: list = [
+            AssistantMessage(
+                content=None,
+                tool_calls=[
+                    ToolCallItem(
+                        id="call_bad",
+                        type="function",
+                        function=ToolCallFunction(
+                            name="broken_tool",
+                            arguments="{invalid json!!!",
+                        ),
+                    )
+                ],
+            ),
+        ]
+
+        with pytest.raises(InvalidRequestError, match="Malformed tool call arguments"):
+            client._convert_messages_to_anthropic_format(messages)

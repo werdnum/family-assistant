@@ -98,8 +98,8 @@ class AnthropicClient(BaseLLMClient):
         self.model_parameters = model_parameters or {}
         self.default_kwargs = kwargs
         logger.info(
-            f"AnthropicClient initialized for model: {model} with default kwargs: {kwargs}, "
-            f"model-specific parameters: {model_parameters}"
+            f"AnthropicClient initialized for model: {model}, "
+            f"model-specific parameters: {list(model_parameters.keys()) if model_parameters else []}"
         )
 
     def _supports_multimodal_tools(self) -> bool:
@@ -331,7 +331,15 @@ class AnthropicClient(BaseLLMClient):
                     for tc in msg.tool_calls:
                         arguments = tc.function.arguments
                         if isinstance(arguments, str):
-                            arguments = json.loads(arguments)
+                            try:
+                                arguments = json.loads(arguments)
+                            except json.JSONDecodeError as e:
+                                raise InvalidRequestError(
+                                    f"Malformed tool call arguments for "
+                                    f"'{tc.function.name}' (id={tc.id}): {e}",
+                                    provider="anthropic",
+                                    model=self.model,
+                                ) from e
                         content_blocks.append(
                             ToolUseBlockParam(
                                 type="tool_use",
