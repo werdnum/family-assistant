@@ -276,7 +276,7 @@ class KubernetesBackend:
         if model == "claude" and self._config and self._config.claude_config_volume:
             volume_mounts.append({
                 "name": "claude-config",
-                "mountPath": "/home/user/.claude",
+                "mountPath": "/home/coder/.claude",
                 "readOnly": True,
             })
             volumes.append({
@@ -286,7 +286,7 @@ class KubernetesBackend:
         elif model == "gemini" and self._config and self._config.gemini_config_volume:
             volume_mounts.append({
                 "name": "gemini-config",
-                "mountPath": "/home/user/.gemini",
+                "mountPath": "/home/coder/.gemini",
                 "readOnly": True,
             })
             volumes.append({

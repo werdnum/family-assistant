@@ -205,7 +205,7 @@ class TestKubernetesBackendBuildJobManifest:
         pod_spec = manifest["spec"]["template"]["spec"]
         volume_mounts = {v["name"]: v for v in container["volumeMounts"]}
         assert "gemini-config" in volume_mounts
-        assert volume_mounts["gemini-config"]["mountPath"] == "/home/user/.gemini"
+        assert volume_mounts["gemini-config"]["mountPath"] == "/home/coder/.gemini"
         assert "claude-config" not in volume_mounts
 
         volumes = {v["name"]: v for v in pod_spec["volumes"]}
@@ -260,7 +260,7 @@ class TestKubernetesBackendBuildJobManifest:
 
         # Claude config mount from PVC
         assert "claude-config" in volume_mounts
-        assert volume_mounts["claude-config"]["mountPath"] == "/home/user/.claude"
+        assert volume_mounts["claude-config"]["mountPath"] == "/home/coder/.claude"
         assert volume_mounts["claude-config"]["readOnly"] is True
 
         volumes = {v["name"]: v for v in pod_spec["volumes"]}
