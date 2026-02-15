@@ -198,7 +198,7 @@ class TestMockClientStructuredOutput:
     [
         ("openai", "gpt-4.1-nano"),
         ("google", "gemini-2.5-flash-lite"),
-        ("anthropic", "claude-haiku-3-5-20241022"),
+        ("anthropic", "claude-haiku-4-5-20251001"),
     ],
 )
 async def test_basic_structured_output(
@@ -236,7 +236,7 @@ async def test_basic_structured_output(
     [
         ("openai", "gpt-4.1-nano"),
         ("google", "gemini-2.5-flash-lite"),
-        ("anthropic", "claude-haiku-3-5-20241022"),
+        ("anthropic", "claude-haiku-4-5-20251001"),
     ],
 )
 async def test_structured_output_with_system_message(
@@ -277,7 +277,7 @@ async def test_structured_output_with_system_message(
     [
         ("openai", "gpt-4.1-nano"),
         ("google", "gemini-2.5-flash-lite"),
-        ("anthropic", "claude-haiku-3-5-20241022"),
+        ("anthropic", "claude-haiku-4-5-20251001"),
     ],
 )
 async def test_nested_structured_output(
@@ -354,7 +354,7 @@ async def test_structured_output_with_optional_fields(
     [
         ("openai", "gpt-4.1-nano"),
         ("google", "gemini-2.5-flash-lite"),
-        ("anthropic", "claude-haiku-3-5-20241022"),
+        ("anthropic", "claude-haiku-4-5-20251001"),
     ],
 )
 async def test_structured_output_with_constrained_fields(

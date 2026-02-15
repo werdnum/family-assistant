@@ -1,0 +1,109 @@
+interactions:
+  - request:
+      body: '{"max_tokens":8192,"messages":[{"role":"user","content":"I''m planning a trip to Paris, France"},{"role":"assistant","content":[{"type":"text","text":"Paris is a wonderful destination! Would you like to know about the weather there?"}]},{"role":"user","content":"Yes, what''s the weather like in Paris, France?"}],"model":"claude-haiku-4-5-20251001","tool_choice":{"type":"auto"},"tools":[{"name":"get_weather","description":"Get the current weather in a given location","input_schema":{"type":"object","properties":{"location":{"type":"string","description":"The city and state, e.g. San Francisco, CA"},"unit":{"type":"string","enum":["celsius","fahrenheit"],"description":"The temperature unit"}},"required":["location"]}}]}'
+      headers:
+        accept:
+          - application/json
+        accept-encoding:
+          - gzip, deflate
+        anthropic-version:
+          - '2023-06-01'
+        connection:
+          - keep-alive
+        content-length:
+          - '725'
+        content-type:
+          - application/json
+        host:
+          - api.anthropic.com
+        user-agent:
+          - AsyncAnthropic/Python 0.79.0
+        x-stainless-arch:
+          - arm64
+        x-stainless-async:
+          - async:asyncio
+        x-stainless-lang:
+          - python
+        x-stainless-os:
+          - Linux
+        x-stainless-package-version:
+          - 0.79.0
+        x-stainless-read-timeout:
+          - '600'
+        x-stainless-retry-count:
+          - '0'
+        x-stainless-runtime:
+          - CPython
+        x-stainless-runtime-version:
+          - 3.13.9
+        x-stainless-timeout:
+          - '600'
+      method: POST
+      uri: https://api.anthropic.com/v1/messages
+    response:
+      body:
+        string: !!binary |
+          H4sIAAAAAAAA/3WR20rDQBCGX0X2OoEkNkVyp9VeFAXRYkWRZZqMydrNbtxDbSl5d2cD0ap4tzv/
+          N/PP4cBaXaFkBSsl+ArjBsTGx5M4j7Mky9MkSVnEREVAa2uepLN2dzG5XFb6Pm+yazvvVucueyTG
+          7TsMFFoLNVLAaBkCYK2wDpSjUKmVQ3oVz4eRd1pL7i2OLuHvyedmP33Y4XKhZ6dXi7cc7p7Wq+2M
+          KAVtyKvR8Q8E16AJqarzVPbApC7BCa2IuAUjbHQyN6BKZD25g5REF1/elTBYOtb3LxGzTnfcINgh
+          96irQbD47jGUKZSXMmJ+mJEqDcbc6Q0qy4rp5CzYlA3ykmqFRvhPIhl1kqv/tDE3GGDXYIsGJM/b
+          v/y3mja/VZpYe3ccyqc0DpqtKJE7EVbBwmUqMNWww1c0YUheoyZJacdhC0LCmg7Z95/I1VU5KwIA
+          AA==
+      headers:
+        CF-RAY:
+          - 9ce27af5fae28c46-FRA
+        Connection:
+          - keep-alive
+        Content-Encoding:
+          - gzip
+        Content-Security-Policy:
+          - default-src 'none'; frame-ancestors 'none'
+        Content-Type:
+          - application/json
+        Date:
+          - Sun, 15 Feb 2026 05:42:10 GMT
+        Server:
+          - cloudflare
+        Transfer-Encoding:
+          - chunked
+        X-Robots-Tag:
+          - none
+        anthropic-organization-id:
+          - 47b93e1d-acf2-4be5-b32d-1716b0cff224
+        anthropic-ratelimit-input-tokens-limit:
+          - '50000'
+        anthropic-ratelimit-input-tokens-remaining:
+          - '50000'
+        anthropic-ratelimit-input-tokens-reset:
+          - '2026-02-15T05:42:10Z'
+        anthropic-ratelimit-output-tokens-limit:
+          - '10000'
+        anthropic-ratelimit-output-tokens-remaining:
+          - '10000'
+        anthropic-ratelimit-output-tokens-reset:
+          - '2026-02-15T05:42:10Z'
+        anthropic-ratelimit-requests-limit:
+          - '50'
+        anthropic-ratelimit-requests-remaining:
+          - '48'
+        anthropic-ratelimit-requests-reset:
+          - '2026-02-15T05:42:11Z'
+        anthropic-ratelimit-tokens-limit:
+          - '60000'
+        anthropic-ratelimit-tokens-remaining:
+          - '60000'
+        anthropic-ratelimit-tokens-reset:
+          - '2026-02-15T05:42:10Z'
+        cf-cache-status:
+          - DYNAMIC
+        request-id:
+          - req_011CY9KYgPfBrNzHceiSwTgz
+        strict-transport-security:
+          - max-age=31536000; includeSubDomains; preload
+        x-envoy-upstream-service-time:
+          - '547'
+      status:
+        code: 200
+        message: OK
+version: 1

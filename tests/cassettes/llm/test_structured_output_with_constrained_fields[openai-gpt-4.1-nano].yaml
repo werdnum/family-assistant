@@ -1,0 +1,104 @@
+interactions:
+  - request:
+      body: '{"messages":[{"role":"system","content":"You must respond with valid JSON that matches this schema:\n```json\n{\n  \"description\": \"Simple response model for basic tests.\",\n  \"properties\": {\n    \"answer\": {\n      \"title\": \"Answer\",\n      \"type\": \"string\"\n    },\n    \"confidence\": {\n      \"maximum\": 1.0,\n      \"minimum\": 0.0,\n      \"title\": \"Confidence\",\n      \"type\": \"number\"\n    }\n  },\n  \"required\": [\n    \"answer\",\n    \"confidence\"\n  ],\n  \"title\": \"SimpleResponse\",\n  \"type\": \"object\"\n}\n```\n\nRespond ONLY with the JSON object, no additional text or markdown."},{"role":"user","content":"What is the capital of France? Provide a one-word answer and your confidence level between 0 and 1."}],"model":"gpt-4.1-nano"}'
+      headers:
+        accept:
+          - application/json
+        accept-encoding:
+          - gzip, deflate
+        connection:
+          - keep-alive
+        content-length:
+          - '782'
+        content-type:
+          - application/json
+        host:
+          - api.openai.com
+        user-agent:
+          - AsyncOpenAI/Python 1.92.3
+        x-stainless-arch:
+          - arm64
+        x-stainless-async:
+          - async:asyncio
+        x-stainless-lang:
+          - python
+        x-stainless-os:
+          - Linux
+        x-stainless-package-version:
+          - 1.92.3
+        x-stainless-read-timeout:
+          - '600'
+        x-stainless-retry-count:
+          - '0'
+        x-stainless-runtime:
+          - CPython
+        x-stainless-runtime-version:
+          - 3.13.9
+      method: POST
+      uri: https://api.openai.com/v1/chat/completions
+    response:
+      body:
+        string: !!binary |
+          H4sIAAAAAAAA/41Sy27bMBC8+yuEPVuGZctx3XNSoIcEiU8tqkCgyZXMhCIZLpUHDP97ScmOlLQF
+          eiGgmZ3R7OMwSRKQAr4mwPfM88aq9HJze5U/0tv1zdPd08t2vfv5fbtsf9it+fagYBoVZveA3J9V
+          M26CDr00uqe5Q+YxumbrdZYt88Vm0RGNEaiirLY+zWdZqpk26WK+WKXzPM3yk3xvJEcKdb/CZ5Ic
+          ujcG1QJfAzyfnpEGiViNATsXBdAZFRFgRJI80x6mA8mN9qi77IdCJ0kBTNMLuiIgBdwyJ6mAac+E
+          2koK1BwjO59tVoU+js0cVi2x2JFulRoRTGvjWZxI18b9iTm+B1emts7s6JMUKqkl7cswQArTDCHJ
+          GwsdewzvfTeg9kPPEIwa60tvHrH7XbbOez8YFjNiv5xIHxKqEd7v6LNfKdAzqWg0YuCM71EM0mEf
+          rBXSjIjJqOs/0/zNu+9c6vp/7AeCc7Th5ErrUEj+seOhzGG823+VvU+5CwyE7jncYeklurgJgRVr
+          VX9MQG/ksSnDump01sn+oipbLpcXArNVxnKYHCe/AdavGTBgAwAA
+      headers:
+        CF-RAY:
+          - 9ce27eee79df048b-FRA
+        Connection:
+          - keep-alive
+        Content-Encoding:
+          - gzip
+        Content-Type:
+          - application/json
+        Date:
+          - Sun, 15 Feb 2026 05:44:52 GMT
+        Server:
+          - cloudflare
+        Strict-Transport-Security:
+          - max-age=31536000; includeSubDomains; preload
+        Transfer-Encoding:
+          - chunked
+        X-Content-Type-Options:
+          - nosniff
+        access-control-expose-headers:
+          - X-Request-ID
+        alt-svc:
+          - h3=":443"; ma=86400
+        cf-cache-status:
+          - DYNAMIC
+        openai-organization:
+          - REDACTED
+        openai-processing-ms:
+          - '419'
+        openai-project:
+          - proj_wvaoRBrBR9ayhT5aPMqWgDtI
+        openai-version:
+          - '2020-10-01'
+        set-cookie:
+          - __cf_bm=h.oF1IPaZ.8VSAtn6kGbzfXPhoz6hgPWKN3Kcohjc2w-1771134292.2349482-1.0.1.1-YV6DQ70teuBTOfDy.5pEPe3OvWeGHBog8pjGLW3YH3uWLzxT6zyJRZofFi7zgV8sFO9_QoIEcbAvwTLIoSIVmqe3hPv11GSEof.hEP2CBcjgZHnBlFcFKUyJRZ9Uji0Z; HttpOnly; Secure; Path=/; Domain=api.openai.com; Expires=Sun, 15 Feb 2026 06:14:52 GMT
+        x-openai-proxy-wasm:
+          - v0.1
+        x-ratelimit-limit-requests:
+          - '500'
+        x-ratelimit-limit-tokens:
+          - '200000'
+        x-ratelimit-remaining-requests:
+          - '499'
+        x-ratelimit-remaining-tokens:
+          - '199843'
+        x-ratelimit-reset-requests:
+          - 120ms
+        x-ratelimit-reset-tokens:
+          - 47ms
+        x-request-id:
+          - req_9fe2372add744bed9dfe4070e23d9ebf
+      status:
+        code: 200
+        message: OK
+version: 1
