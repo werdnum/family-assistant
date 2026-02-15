@@ -17,6 +17,7 @@ logger = logging.getLogger(__name__)
 
 @pytest.mark.asyncio
 @pytest.mark.integration
+@pytest.mark.llm_integration
 async def test_deep_research_integration_simple_query() -> None:
     """
     Integration test for Deep Research agent.

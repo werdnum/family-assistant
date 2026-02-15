@@ -173,14 +173,14 @@ async def check_endpoint(
 @pytest.mark.playwright
 @pytest.mark.asyncio
 async def test_ui_endpoint_accessibility_playwright(
-    web_test_with_console_check: WebTestFixture,
+    web_test_readonly_with_console_check: WebTestFixture,
 ) -> None:
     """
     Test that all UI endpoints are accessible via Playwright and render without errors.
     Uses parallel execution to speed up testing of multiple endpoints.
     """
-    browser = web_test_with_console_check.page.context.browser
-    base_url = web_test_with_console_check.base_url
+    browser = web_test_readonly_with_console_check.page.context.browser
+    base_url = web_test_readonly_with_console_check.base_url
 
     # Split endpoints into batches for parallel processing
     # Process 5 endpoints at a time to avoid overwhelming the server
@@ -212,19 +212,19 @@ async def test_ui_endpoint_accessibility_playwright(
 @pytest.mark.playwright
 @pytest.mark.asyncio
 async def test_navigation_links_work(
-    web_test_with_console_check: WebTestFixture,
+    web_test_readonly_with_console_check: WebTestFixture,
 ) -> None:
     """Test that all navigation links in the UI work correctly.
 
     This is a smoke test that discovers all nav links dynamically and tests each one
     in isolation to avoid stale element references and ensure proper testing.
     """
-    browser = web_test_with_console_check.page.context.browser
+    browser = web_test_readonly_with_console_check.page.context.browser
     assert browser is not None, "Browser not available"
-    base_url = web_test_with_console_check.base_url
+    base_url = web_test_readonly_with_console_check.base_url
 
     # Discover all navigation links using the existing page
-    page = web_test_with_console_check.page
+    page = web_test_readonly_with_console_check.page
     base_page = BasePage(page, base_url)
 
     await base_page.navigate_to("/notes")
@@ -307,11 +307,11 @@ async def test_navigation_links_work(
 @pytest.mark.playwright
 @pytest.mark.asyncio
 async def test_responsive_design_mobile(
-    web_test_with_console_check: WebTestFixture,
+    web_test_readonly_with_console_check: WebTestFixture,
 ) -> None:
     """Test that pages work on mobile viewport sizes."""
-    page = web_test_with_console_check.page
-    base_url = web_test_with_console_check.base_url
+    page = web_test_readonly_with_console_check.page
+    base_url = web_test_readonly_with_console_check.base_url
     base_page = BasePage(page, base_url)
 
     # Set mobile viewport
@@ -341,11 +341,11 @@ async def test_responsive_design_mobile(
 @pytest.mark.playwright
 @pytest.mark.asyncio
 async def test_form_interactions(
-    web_test_with_console_check: WebTestFixture,
+    web_test_readonly_with_console_check: WebTestFixture,
 ) -> None:
     """Test basic form interactions work without errors."""
-    page = web_test_with_console_check.page
-    base_url = web_test_with_console_check.base_url
+    page = web_test_readonly_with_console_check.page
+    base_url = web_test_readonly_with_console_check.base_url
     base_page = BasePage(page, base_url)
 
     # Navigate to vector search page (has a simple search form)

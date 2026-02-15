@@ -13,11 +13,11 @@ from tests.functional.web.conftest import WebTestFixture
 @pytest.mark.playwright
 @pytest.mark.asyncio
 async def test_chat_page_loads_with_error_handlers_initialized(
-    web_test_fixture: WebTestFixture,
+    web_test_fixture_readonly: WebTestFixture,
 ) -> None:
     """Test that the chat page loads with error handlers initialized."""
-    page = web_test_fixture.page
-    base_url = web_test_fixture.base_url
+    page = web_test_fixture_readonly.page
+    base_url = web_test_fixture_readonly.base_url
 
     # Navigate to chat page
     await page.goto(f"{base_url}/chat")
@@ -38,15 +38,15 @@ async def test_chat_page_loads_with_error_handlers_initialized(
 @pytest.mark.playwright
 @pytest.mark.asyncio
 async def test_chat_app_wrapped_in_error_boundary(
-    web_test_fixture: WebTestFixture,
+    web_test_fixture_readonly: WebTestFixture,
 ) -> None:
     """Test that the ChatApp is wrapped in an ErrorBoundary.
 
     When no errors occur, the ErrorBoundary should render its children
     (the ChatApp) normally.
     """
-    page = web_test_fixture.page
-    base_url = web_test_fixture.base_url
+    page = web_test_fixture_readonly.page
+    base_url = web_test_fixture_readonly.base_url
 
     # Navigate to chat page
     await page.goto(f"{base_url}/chat")
