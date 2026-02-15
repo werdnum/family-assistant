@@ -312,6 +312,10 @@ class DockerBackend:
             if api_key:
                 cmd.extend(["-e", f"ANTHROPIC_API_KEY={api_key}"])
                 logger.debug(f"Passing through {env_var_name} as ANTHROPIC_API_KEY")
+            else:
+                logger.warning(
+                    f"Configured API key env var {env_var_name} not found in environment"
+                )
 
         # Pass through Google API key for Gemini
         elif model == "gemini" and self._config.gemini_api_key_env:
@@ -320,6 +324,10 @@ class DockerBackend:
             if api_key:
                 cmd.extend(["-e", f"GOOGLE_API_KEY={api_key}"])
                 logger.debug(f"Passing through {env_var_name} as GOOGLE_API_KEY")
+            else:
+                logger.warning(
+                    f"Configured API key env var {env_var_name} not found in environment"
+                )
 
     def _add_config_volume_mounts(self, cmd: list[str], model: str) -> None:
         """Add config volume mounts based on model.

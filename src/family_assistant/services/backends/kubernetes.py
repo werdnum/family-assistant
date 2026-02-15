@@ -280,8 +280,8 @@ class KubernetesBackend:
                 "readOnly": True,
             })
             volumes.append({
-                "name": "claude-config",
                 **self._config.claude_config_volume,
+                "name": "claude-config",
             })
         elif model == "gemini" and self._config and self._config.gemini_config_volume:
             volume_mounts.append({
@@ -290,8 +290,8 @@ class KubernetesBackend:
                 "readOnly": True,
             })
             volumes.append({
-                "name": "gemini-config",
                 **self._config.gemini_config_volume,
+                "name": "gemini-config",
             })
 
         # Build the Job manifest

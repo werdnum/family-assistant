@@ -270,6 +270,39 @@ class TestKubernetesBackendBuildJobManifest:
             == "claude-config-pvc"
         )
 
+    def test_config_volume_cannot_overwrite_name(self) -> None:
+        """Test that user-provided config volume cannot overwrite the volume name."""
+        config = KubernetesBackendConfig(
+            namespace="test-namespace",
+            ai_coder_image="test-image:latest",
+            service_account="test-sa",
+            api_keys_secret="test-api-keys",
+            claude_config_volume={
+                "name": "user-provided-name",
+                "persistentVolumeClaim": {"claimName": "claude-config-pvc"},
+            },
+            gemini_config_volume={
+                "name": "user-provided-name",
+                "persistentVolumeClaim": {"claimName": "gemini-config-pvc"},
+            },
+        )
+        backend = KubernetesBackend(config=config, workspace_pvc_name="test-pvc")
+
+        manifest = backend._build_job_manifest(
+            job_name="worker-task-123",
+            task_id="task-123",
+            prompt_path="tasks/task-123/prompt.md",
+            output_dir="tasks/task-123/output",
+            webhook_url="http://localhost:8000/webhook/event",
+            model="claude",
+            timeout_minutes=30,
+        )
+
+        pod_spec = manifest["spec"]["template"]["spec"]
+        volumes = {v["name"]: v for v in pod_spec["volumes"]}
+        assert "claude-config" in volumes
+        assert "user-provided-name" not in volumes
+
 
 class TestKubernetesBackendGetTaskStatus:
     """Tests for KubernetesBackend.get_task_status()."""

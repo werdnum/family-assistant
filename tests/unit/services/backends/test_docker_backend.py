@@ -220,6 +220,32 @@ class TestDockerBackendBuildCommand:
         cmd_str = " ".join(cmd)
         assert "ANTHROPIC_API_KEY=sk-ant-test123" in cmd_str
 
+    @pytest.mark.asyncio
+    async def test_build_command_warns_missing_api_key(
+        self, tmp_path: Path, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """Test warning is logged when configured API key env var is missing."""
+        config = DockerBackendConfig(
+            image="test-image:latest",
+            network="test-network",
+            anthropic_api_key_env="ANTHROPIC_API_KEY",
+        )
+        backend = DockerBackend(config=config, workspace_root=str(tmp_path))
+
+        with patch.dict("os.environ", {}, clear=True):
+            cmd = await backend._build_docker_command(
+                task_id="task-123",
+                prompt_path="tasks/task-123/prompt.md",
+                output_dir="tasks/task-123/output",
+                webhook_url="http://localhost:8000/webhook/event",
+                model="claude",
+                timeout_minutes=30,
+            )
+
+        cmd_str = " ".join(cmd)
+        assert "ANTHROPIC_API_KEY" not in cmd_str
+        assert "not found in environment" in caplog.text
+
 
 class TestDockerBackendGetTaskStatus:
     """Tests for DockerBackend.get_task_status()."""
