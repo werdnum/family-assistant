@@ -1,0 +1,104 @@
+interactions:
+  - request:
+      body: '{"messages":[{"role":"system","content":"You are a helpful assistant that provides accurate information.\n\nYou must respond with valid JSON that matches this schema:\n```json\n{\n  \"description\": \"Person information model.\",\n  \"properties\": {\n    \"name\": {\n      \"title\": \"Name\",\n      \"type\": \"string\"\n    },\n    \"age\": {\n      \"maximum\": 150,\n      \"minimum\": 0,\n      \"title\": \"Age\",\n      \"type\": \"integer\"\n    },\n    \"occupation\": {\n      \"anyOf\": [\n        {\n          \"type\": \"string\"\n        },\n        {\n          \"type\": \"null\"\n        }\n      ],\n      \"default\": null,\n      \"title\": \"Occupation\"\n    }\n  },\n  \"required\": [\n    \"name\",\n    \"age\"\n  ],\n  \"title\": \"PersonInfo\",\n  \"type\": \"object\"\n}\n```\n\nRespond ONLY with the JSON object, no additional text or markdown."},{"role":"user","content":"Create a person profile for John who is 25 years old and works as a software developer."}],"model":"gpt-4.1-nano"}'
+      headers:
+        accept:
+          - application/json
+        accept-encoding:
+          - gzip, deflate
+        connection:
+          - keep-alive
+        content-length:
+          - '1019'
+        content-type:
+          - application/json
+        host:
+          - api.openai.com
+        user-agent:
+          - AsyncOpenAI/Python 1.92.3
+        x-stainless-arch:
+          - arm64
+        x-stainless-async:
+          - async:asyncio
+        x-stainless-lang:
+          - python
+        x-stainless-os:
+          - Linux
+        x-stainless-package-version:
+          - 1.92.3
+        x-stainless-read-timeout:
+          - '600'
+        x-stainless-retry-count:
+          - '0'
+        x-stainless-runtime:
+          - CPython
+        x-stainless-runtime-version:
+          - 3.13.9
+      method: POST
+      uri: https://api.openai.com/v1/chat/completions
+    response:
+      body:
+        string: !!binary |
+          H4sIAAAAAAAA/41SwY6bMBC95yuQz7ACQkq65+2hvbTXqKyQYw/grLEtj0lbRfn32iZZ2HYr9WJp
+          3pt5njczl02SEMHJY0LYQB0bjcyePn77lJtcnqrd4fP2fLQHfOLbHsWpOnwlaajQxxMwd696YNrX
+          gRNazTSzQB0E1aKui2Jblft9JEbNQYay3riseigyRZXOyrzcZXmVFdWtfNCCAfq87z5Mkkt8Q6OK
+          w08P5+kdGQGR9uCxe5IHrZYBIRRRoKPKkXQhmVYOVOz90qgkaYiiIzQ+bsgXPaiGpDPsZQNa7m6x
+          ZmwyNJick1F37ge1kHA4g9QGbEMadV3/ZaGbkAbDapJyRVCltIta0eXzjbm++pK6N1Yf8Y9S0gkl
+          cGj9fNEP23tApw2J7NW/z3F+05uREC80Gtc6/QLxu7Lcznpk2duKrW6k8x3KNV6n7+i1HBwVElcb
+          IIyyAfhSuqyLTlzoFbFZuf67m/e0Z+dC9f8jvxCMgfEX2RoLXLC3jpc0C+Gs/5X2OuXYMEGwZ3+m
+          rRNgwyY4dHSS860R/IUOxtavqwdrrJgPrjPe0oe8OvJ9XZPNdfMbmFuOPn8DAAA=
+      headers:
+        CF-RAY:
+          - 9ce27ed42e5019a0-FRA
+        Connection:
+          - keep-alive
+        Content-Encoding:
+          - gzip
+        Content-Type:
+          - application/json
+        Date:
+          - Sun, 15 Feb 2026 05:44:48 GMT
+        Server:
+          - cloudflare
+        Strict-Transport-Security:
+          - max-age=31536000; includeSubDomains; preload
+        Transfer-Encoding:
+          - chunked
+        X-Content-Type-Options:
+          - nosniff
+        access-control-expose-headers:
+          - X-Request-ID
+        alt-svc:
+          - h3=":443"; ma=86400
+        cf-cache-status:
+          - DYNAMIC
+        openai-organization:
+          - REDACTED
+        openai-processing-ms:
+          - '283'
+        openai-project:
+          - proj_wvaoRBrBR9ayhT5aPMqWgDtI
+        openai-version:
+          - '2020-10-01'
+        set-cookie:
+          - __cf_bm=ZPqlBBnrf5Kk_LYSZPhZRPRJufwmpE_F4QZO88e4mBk-1771134288.025584-1.0.1.1-Dq5H5lAHYECoNIvb0w3V.xKg2.VMhfEm8r8xx2YwWVfaYij7AAiaJpS1z8LG0IzPgRtSxTX.qMDvO7Z1Cf42gkjqCXDrSCD8Thr0pL_PaMWis0HvU28T2yLXrtK2Mzd3; HttpOnly; Secure; Path=/; Domain=api.openai.com; Expires=Sun, 15 Feb 2026 06:14:48 GMT
+        x-openai-proxy-wasm:
+          - v0.1
+        x-ratelimit-limit-requests:
+          - '500'
+        x-ratelimit-limit-tokens:
+          - '200000'
+        x-ratelimit-remaining-requests:
+          - '499'
+        x-ratelimit-remaining-tokens:
+          - '199791'
+        x-ratelimit-reset-requests:
+          - 120ms
+        x-ratelimit-reset-tokens:
+          - 62ms
+        x-request-id:
+          - req_a0c9c6bb9abc4c1b999bce4ecb86e1a2
+      status:
+        code: 200
+        message: OK
+version: 1

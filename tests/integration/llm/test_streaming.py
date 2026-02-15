@@ -179,7 +179,7 @@ async def sample_tools() -> list[ToolDefinition]:
     "provider,model",
     [
         ("openai", "gpt-4.1-nano"),
-        ("anthropic", "claude-haiku-3-5-20241022"),
+        ("anthropic", "claude-haiku-4-5-20251001"),
     ],
 )
 async def test_basic_streaming(
@@ -232,7 +232,7 @@ async def test_basic_streaming(
     "provider,model",
     [
         ("openai", "gpt-4.1-nano"),
-        ("anthropic", "claude-haiku-3-5-20241022"),
+        ("anthropic", "claude-haiku-4-5-20251001"),
     ],
 )
 async def test_streaming_with_system_message(
@@ -286,7 +286,7 @@ async def test_streaming_with_system_message(
     "provider,model",
     [
         ("openai", "gpt-4.1-nano"),
-        ("anthropic", "claude-haiku-3-5-20241022"),
+        ("anthropic", "claude-haiku-4-5-20251001"),
     ],
 )
 async def test_streaming_with_tool_calls(
@@ -344,7 +344,7 @@ async def test_streaming_with_tool_calls(
     "provider,model",
     [
         ("openai", "gpt-4.1-nano"),
-        ("anthropic", "claude-haiku-3-5-20241022"),
+        ("anthropic", "claude-haiku-4-5-20251001"),
     ],
 )
 async def test_streaming_error_handling(
@@ -389,7 +389,7 @@ async def test_streaming_error_handling(
     "provider,model",
     [
         ("openai", "gpt-4.1-nano"),
-        ("anthropic", "claude-haiku-3-5-20241022"),
+        ("anthropic", "claude-haiku-4-5-20251001"),
     ],
 )
 async def test_streaming_with_multi_turn_conversation(
@@ -434,7 +434,7 @@ async def test_streaming_with_multi_turn_conversation(
     "provider,model",
     [
         ("openai", "gpt-4.1-nano"),
-        ("anthropic", "claude-haiku-3-5-20241022"),
+        ("anthropic", "claude-haiku-4-5-20251001"),
     ],
 )
 async def test_streaming_reasoning_info(
@@ -491,7 +491,7 @@ async def test_streaming_reasoning_info(
     "provider,model",
     [
         ("openai", "gpt-4.1-nano"),
-        ("anthropic", "claude-haiku-3-5-20241022"),
+        ("anthropic", "claude-haiku-4-5-20251001"),
     ],
 )
 async def test_streaming_content_accumulation(

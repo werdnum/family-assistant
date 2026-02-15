@@ -42,6 +42,7 @@ jobs:
       web_api: ${{ steps.filter.outputs.web_api }}
       dockerfile_changes: ${{ steps.filter.outputs.dockerfile_changes }}
       gemini_client: ${{ steps.filter.outputs.gemini_client }}
+      llm_integration: ${{ steps.filter.outputs.llm_integration }}
     steps:
       - name: Checkout code
         uses: actions/checkout@v6.0.2
@@ -106,6 +107,11 @@ jobs:
               - 'requirements*.txt'
             gemini_client:
               - 'src/family_assistant/llm/providers/google_genai_client.py'
+            llm_integration:
+              - 'src/family_assistant/llm/**/*.py'
+              - 'tests/integration/llm/**/*.py'
+              - 'tests/cassettes/llm/**'
+              - 'tests/cassettes/gemini/**'
   build-ci-container:
     needs: [prepare, detect-changes]
     if: needs.detect-changes.outputs.has_code_changes == 'true'
@@ -636,6 +642,53 @@ jobs:
           retention-days: 7
           if-no-files-found: ignore
 
+  test-llm-integration:
+    needs: [prepare, build-ci-container, detect-changes]
+    if: |
+      needs.detect-changes.outputs.has_code_changes == 'true' &&
+      (needs.detect-changes.outputs.backend_source == 'true' ||
+       needs.detect-changes.outputs.backend_tests_unit == 'true' ||
+       needs.detect-changes.outputs.llm_integration == 'true' ||
+       needs.detect-changes.outputs.ci_workflow == 'true')
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v6.0.2
+      - name: Log in to Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Run LLM integration tests in replay mode
+        run: |
+          docker run \
+            --rm \
+            -v ${{ github.workspace }}:/workspace/main \
+            -e CLAUDE_PROJECT_REPO="" \
+            -e UV_CACHE_DIR=/opt/uv-cache \
+            -e CI=true \
+            -e LLM_RECORD_MODE=replay \
+            -u claude \
+            ${{ needs.prepare.outputs.image-name }} \
+            bash -c 'cd /workspace/main && \
+              echo "Setting up Python environment..." && \
+              uv venv .venv && \
+              . .venv/bin/activate && \
+              uv sync --extra dev && \
+              mkdir -p test-results && \
+              .venv/bin/pytest -q --timeout=300 -m "llm_integration" -o "addopts=" \
+                --json-report --json-report-file=test-results/llm-integration-report.json'
+      - name: Upload LLM integration test results
+        uses: actions/upload-artifact@v6
+        if: always()
+        with:
+          name: llm-integration-test-results-${{ github.run_id }}
+          path: test-results/llm-integration-report.json
+          retention-days: 7
+          if-no-files-found: ignore
+
   smoke-test-main-image:
     needs: [prepare, detect-changes]
     if: needs.detect-changes.outputs.has_code_changes == 'true'
@@ -653,7 +706,7 @@ jobs:
 
   # Require all test jobs to pass
   all-tests:
-    needs: [lint, test-frontend-unit, test-backend-sqlite, test-backend-postgres, test-playwright-sqlite, test-playwright-postgres, test-gemini-live, smoke-test-main-image]
+    needs: [lint, test-frontend-unit, test-backend-sqlite, test-backend-postgres, test-playwright-sqlite, test-playwright-postgres, test-gemini-live, test-llm-integration, smoke-test-main-image]
     runs-on: ubuntu-latest
     if: always()
     steps:
@@ -692,6 +745,7 @@ jobs:
           check_job "test-playwright-sqlite" "${{ needs.test-playwright-sqlite.result }}" || FAILED=1
           check_job "test-playwright-postgres" "${{ needs.test-playwright-postgres.result }}" || FAILED=1
           check_job "test-gemini-live" "${{ needs.test-gemini-live.result }}" || FAILED=1
+          check_job "test-llm-integration" "${{ needs.test-llm-integration.result }}" || FAILED=1
           check_job "smoke-test-main-image" "${{ needs.smoke-test-main-image.result }}" || FAILED=1
 
           if [[ $FAILED -eq 1 ]]; then

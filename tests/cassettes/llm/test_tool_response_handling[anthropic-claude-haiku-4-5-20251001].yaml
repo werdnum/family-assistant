@@ -1,0 +1,217 @@
+interactions:
+  - request:
+      body: '{"max_tokens":8192,"messages":[{"role":"user","content":"What''s the weather in London, UK?"}],"model":"claude-haiku-4-5-20251001","tool_choice":{"type":"auto"},"tools":[{"name":"get_weather","description":"Get the current weather in a given location","input_schema":{"type":"object","properties":{"location":{"type":"string","description":"The city and state, e.g. San Francisco, CA"},"unit":{"type":"string","enum":["celsius","fahrenheit"],"description":"The temperature unit"}},"required":["location"]}}]}'
+      headers:
+        accept:
+          - application/json
+        accept-encoding:
+          - gzip, deflate
+        anthropic-version:
+          - '2023-06-01'
+        connection:
+          - keep-alive
+        content-length:
+          - '507'
+        content-type:
+          - application/json
+        host:
+          - api.anthropic.com
+        user-agent:
+          - AsyncAnthropic/Python 0.79.0
+        x-stainless-arch:
+          - arm64
+        x-stainless-async:
+          - async:asyncio
+        x-stainless-lang:
+          - python
+        x-stainless-os:
+          - Linux
+        x-stainless-package-version:
+          - 0.79.0
+        x-stainless-read-timeout:
+          - '600'
+        x-stainless-retry-count:
+          - '0'
+        x-stainless-runtime:
+          - CPython
+        x-stainless-runtime-version:
+          - 3.13.9
+        x-stainless-timeout:
+          - '600'
+      method: POST
+      uri: https://api.anthropic.com/v1/messages
+    response:
+      body:
+        string: !!binary |
+          H4sIAAAAAAAA/3VSy07DMBD8lcgXLilKSoogt4KKQHBAiIcQQpZxto2p4w1+lFZV/p11RCgPcbK9
+          M7Mzu8mWNViBZiWTWoQKRrVQyzAqRpPROBtP8izLWcpURYTGLXiWTx/X0+LkYTWZFjCHl7PXg837
+          6TFx/KaFyALnxAKoYFHHgnBOOS+Mp5JE44Fu5dN24HtYR6Q/Snaxp3WyAJ/4GpJ3EHTYRJk52kZ4
+          hSahW3KFpkKTJneX/XODYZ916a4joubBwZA7vgMlLy5vr9ftw9FMnN8DyPEN3hytZsQyook6suWf
+          llFq2kCJtkyj7K2JsTMmPyaF1kQtv4wrZUF61nXPKXMeW25BuF74LVIPOHgLYCSJTNA6ZaFfGXXq
+          XbnHJRjHysO8iDayBi6pV0zBfzKyASe4+g8btNEA2hoasELzSfOXv0Pz+jdKE2PwP+Id0zhgV0oC
+          9yqugsUPXQlb9Qucg41D8gUgQQY9FyuhtHih/6LrPgAnXSfCegIAAA==
+      headers:
+        CF-RAY:
+          - 9ce27afa5c84ae0b-FRA
+        Connection:
+          - keep-alive
+        Content-Encoding:
+          - gzip
+        Content-Security-Policy:
+          - default-src 'none'; frame-ancestors 'none'
+        Content-Type:
+          - application/json
+        Date:
+          - Sun, 15 Feb 2026 05:42:11 GMT
+        Server:
+          - cloudflare
+        Transfer-Encoding:
+          - chunked
+        X-Robots-Tag:
+          - none
+        anthropic-organization-id:
+          - 47b93e1d-acf2-4be5-b32d-1716b0cff224
+        anthropic-ratelimit-input-tokens-limit:
+          - '50000'
+        anthropic-ratelimit-input-tokens-remaining:
+          - '49000'
+        anthropic-ratelimit-input-tokens-reset:
+          - '2026-02-15T05:42:11Z'
+        anthropic-ratelimit-output-tokens-limit:
+          - '10000'
+        anthropic-ratelimit-output-tokens-remaining:
+          - '10000'
+        anthropic-ratelimit-output-tokens-reset:
+          - '2026-02-15T05:42:11Z'
+        anthropic-ratelimit-requests-limit:
+          - '50'
+        anthropic-ratelimit-requests-remaining:
+          - '48'
+        anthropic-ratelimit-requests-reset:
+          - '2026-02-15T05:42:12Z'
+        anthropic-ratelimit-tokens-limit:
+          - '60000'
+        anthropic-ratelimit-tokens-remaining:
+          - '59000'
+        anthropic-ratelimit-tokens-reset:
+          - '2026-02-15T05:42:11Z'
+        cf-cache-status:
+          - DYNAMIC
+        request-id:
+          - req_011CY9KYjPVmQQxiE5xohv8Z
+        strict-transport-security:
+          - max-age=31536000; includeSubDomains; preload
+        x-envoy-upstream-service-time:
+          - '727'
+      status:
+        code: 200
+        message: OK
+  - request:
+      body: '{"max_tokens":8192,"messages":[{"role":"user","content":"What''s the weather in London, UK?"},{"role":"assistant","content":[{"type":"text","text":"I''ll get the weather information for London, UK for you."},{"type":"tool_use","id":"toolu_014KTPxpW8EaHVeec2RoR8vE","name":"get_weather","input":{"location":"London, UK"}}]},{"role":"user","content":[{"type":"tool_result","tool_use_id":"toolu_014KTPxpW8EaHVeec2RoR8vE","content":"{\"location\": \"London, UK\", \"temperature\": 15, \"unit\": \"celsius\", \"condition\": \"Partly cloudy\"}"}]}],"model":"claude-haiku-4-5-20251001","tool_choice":{"type":"auto"},"tools":[{"name":"get_weather","description":"Get the current weather in a given location","input_schema":{"type":"object","properties":{"location":{"type":"string","description":"The city and state, e.g. San Francisco, CA"},"unit":{"type":"string","enum":["celsius","fahrenheit"],"description":"The temperature unit"}},"required":["location"]}}]}'
+      headers:
+        accept:
+          - application/json
+        accept-encoding:
+          - gzip, deflate
+        anthropic-version:
+          - '2023-06-01'
+        connection:
+          - keep-alive
+        content-length:
+          - '954'
+        content-type:
+          - application/json
+        host:
+          - api.anthropic.com
+        user-agent:
+          - AsyncAnthropic/Python 0.79.0
+        x-stainless-arch:
+          - arm64
+        x-stainless-async:
+          - async:asyncio
+        x-stainless-lang:
+          - python
+        x-stainless-os:
+          - Linux
+        x-stainless-package-version:
+          - 0.79.0
+        x-stainless-read-timeout:
+          - '600'
+        x-stainless-retry-count:
+          - '0'
+        x-stainless-runtime:
+          - CPython
+        x-stainless-runtime-version:
+          - 3.13.9
+        x-stainless-timeout:
+          - '600'
+      method: POST
+      uri: https://api.anthropic.com/v1/messages
+    response:
+      body:
+        string: !!binary |
+          H4sIAAAAAAAA/3WS327TMBjFX+XDN4MqQUm1UJHbbZUQCHHRCiE6WZ79LTF17OA/LaHqO+0Z9mR8
+          7lSNP+Iq0Tm/k+Sc+MAGp9CwlkkjksKyF3qbysuyKefVvKmrqmYF04qAIXS8qm9Ct5Q/u+VwfXO9
+          Wiw+f3Trbm2JidOImcIQRIckeGeyIELQIQobSZLORqS79uvhzEf8kZ3TpWWrHmGPIvboQVv44Kxy
+          toD1e9ABZPKe0mZqN7aE2WyFw4hexOSxnc2gbh4fruBl8/bxYfnqibiivI7a2ex/Ep6yII1LatrY
+          jX0XLwIIGLRRoMQEex17CG7AJwak26F/DV9cIqbrI+ypBUQHd17bjpLmpH4TcosR9D1MLl14hB6F
+          yoBL8QU73hYsRDdyjyI4Sx3RKk7fnDc7GQG/J7SSxrDJmIKl037tgWk7psij26INrF3ML2lAIXvk
+          kp6VW/E/iersk63+552z+QU49jjQgoY3w7/8s1v3f7vHglG736U3NdVBv9MSedToqWj+60p4lQ+Q
+          vUefS/IOHVnWRS52QhtxR4fkePwFv5O9cYcCAAA=
+      headers:
+        CF-RAY:
+          - 9ce27aff9f61ae0b-FRA
+        Connection:
+          - keep-alive
+        Content-Encoding:
+          - gzip
+        Content-Security-Policy:
+          - default-src 'none'; frame-ancestors 'none'
+        Content-Type:
+          - application/json
+        Date:
+          - Sun, 15 Feb 2026 05:42:11 GMT
+        Server:
+          - cloudflare
+        Transfer-Encoding:
+          - chunked
+        X-Robots-Tag:
+          - none
+        anthropic-organization-id:
+          - 47b93e1d-acf2-4be5-b32d-1716b0cff224
+        anthropic-ratelimit-input-tokens-limit:
+          - '50000'
+        anthropic-ratelimit-input-tokens-remaining:
+          - '49000'
+        anthropic-ratelimit-input-tokens-reset:
+          - '2026-02-15T05:42:12Z'
+        anthropic-ratelimit-output-tokens-limit:
+          - '10000'
+        anthropic-ratelimit-output-tokens-remaining:
+          - '10000'
+        anthropic-ratelimit-output-tokens-reset:
+          - '2026-02-15T05:42:12Z'
+        anthropic-ratelimit-requests-limit:
+          - '50'
+        anthropic-ratelimit-requests-remaining:
+          - '47'
+        anthropic-ratelimit-requests-reset:
+          - '2026-02-15T05:42:13Z'
+        anthropic-ratelimit-tokens-limit:
+          - '60000'
+        anthropic-ratelimit-tokens-remaining:
+          - '59000'
+        anthropic-ratelimit-tokens-reset:
+          - '2026-02-15T05:42:12Z'
+        cf-cache-status:
+          - DYNAMIC
+        request-id:
+          - req_011CY9KYnyo75WnNAuEGVzN4
+        strict-transport-security:
+          - max-age=31536000; includeSubDomains; preload
+        x-envoy-upstream-service-time:
+          - '718'
+      status:
+        code: 200
+        message: OK
+version: 1

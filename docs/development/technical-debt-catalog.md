@@ -53,21 +53,15 @@ A similar measurement in `frontend/src` shows `frontend/src/chat/ToolUI.jsx` at 
     fixtures/generated files).
   - All extracted modules have focused tests and stable public interfaces.
 
-## 2) Integration gap in Google tool-calling path
+## 2) ~~Integration gap in Google tool-calling path~~ (RESOLVED)
 
-- **Evidence**
-  - Integration tests explicitly skip Google tool-calling due to an “architectural limitation
-    pending implementation” (`tests/integration/llm/test_tool_calling.py`).
-- **Why this matters**
-  - Cross-provider behavior diverges for a core capability.
-  - Increases fragility of routing/fallback strategies and complicates production operations.
-- **Resolution project: “Provider Capability Parity”**
-  - Implement Google-specific tool call request/response translation in the LLM client stack.
-  - Add contract tests that run the same capability suite across providers.
-  - Add explicit provider capability matrix surfaced in docs and runtime diagnostics.
-- **Definition of done**
-  - Google tool-calling tests no longer skipped for architectural reasons.
-  - Capability matrix generated automatically from tests.
+- **Status**: Resolved (2026-02-15)
+- **Resolution**: The Google GenAI client has full tool-calling support. The
+  `skip_if_google_tool_calling()` function was dead code (defined but never called) and has been
+  removed. All three providers (OpenAI, Google, Anthropic) now have complete tool-calling
+  integration tests with VCR cassettes, and these tests run in CI via replay mode. The invalid
+  Anthropic model ID (`claude-haiku-3-5-20241022`) was corrected to `claude-haiku-4-5-20251001` and
+  all cassettes recorded.
 
 ## 3) Streaming/resumption reliability debt
 

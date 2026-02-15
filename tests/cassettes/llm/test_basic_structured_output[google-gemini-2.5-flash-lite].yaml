@@ -1,0 +1,86 @@
+interactions:
+  - request:
+      body: '{"contents": [{"parts": [{"text": "System: You must respond with valid JSON that matches this schema:\n```json\n{\n  \"description\": \"Math calculation result.\",\n  \"properties\": {\n    \"expression\": {\n      \"title\": \"Expression\",\n      \"type\": \"string\"\n    },\n    \"result\": {\n      \"title\": \"Result\",\n      \"type\": \"integer\"\n    },\n    \"explanation\": {\n      \"title\": \"Explanation\",\n      \"type\": \"string\"\n    }\n  },\n  \"required\": [\n    \"expression\",\n    \"result\",\n    \"explanation\"\n  ],\n  \"title\": \"MathResult\",\n  \"type\": \"object\"\n}\n```\n\nRespond ONLY with the JSON object, no additional text or markdown."}], "role": "user"}, {"parts": [{"text": "What is 2 + 2? Provide the expression, result, and a brief explanation."}], "role": "user"}], "generationConfig": {"mediaResolution": "MEDIA_RESOLUTION_HIGH"}}'
+      headers:
+        Content-Type:
+          - application/json
+        user-agent:
+          - google-genai-sdk/1.56.0 gl-python/3.13.9
+        x-goog-api-client:
+          - google-genai-sdk/1.56.0 gl-python/3.13.9
+      method: post
+      uri: https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-lite:generateContent
+    response:
+      body:
+        string: "{\n  \"candidates\": [\n    {\n      \"content\": {\n        \"parts\": [\n          {\n            \"text\": \"```json\\n{\\n  \\\"expression\\\": \\\"2 + 2\\\",\\n  \\\"result\\\": 4,\\n  \\\"explanation\\\": \\\"The sum of two and two is four.\\\"\\n}\\n```\"\n          }\n        ],\n        \"role\": \"model\"\n      },\n      \"finishReason\": \"STOP\",\n      \"index\": 0\n    }\n  ],\n  \"usageMetadata\": {\n    \"promptTokenCount\": 192,\n    \"candidatesTokenCount\": 42,\n    \"totalTokenCount\": 234,\n    \"promptTokensDetails\": [\n      {\n        \"modality\": \"TEXT\",\n        \"tokenCount\": 192\n      }\n    ]\n  },\n  \"modelVersion\": \"gemini-2.5-flash-lite\",\n  \"responseId\": \"hF2RacTPLcLGnsEPpsWFiAk\"\n}\n"
+      headers:
+        Alt-Svc:
+          - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+        Content-Encoding:
+          - gzip
+        Content-Type:
+          - application/json; charset=UTF-8
+        Date:
+          - Sun, 15 Feb 2026 05:45:40 GMT
+        Server:
+          - scaffolding on HTTPServer2
+        Server-Timing:
+          - gfet4t7; dur=550
+        Transfer-Encoding:
+          - chunked
+        Vary:
+          - Origin
+          - X-Origin
+          - Referer
+        X-Content-Type-Options:
+          - nosniff
+        X-Frame-Options:
+          - SAMEORIGIN
+        X-XSS-Protection:
+          - '0'
+      status:
+        code: 200
+        message: OK
+  - request:
+      body: '{"contents": [{"parts": [{"text": "System: You must respond with valid JSON that matches this schema:\n```json\n{\n  \"description\": \"Math calculation result.\",\n  \"properties\": {\n    \"expression\": {\n      \"title\": \"Expression\",\n      \"type\": \"string\"\n    },\n    \"result\": {\n      \"title\": \"Result\",\n      \"type\": \"integer\"\n    },\n    \"explanation\": {\n      \"title\": \"Explanation\",\n      \"type\": \"string\"\n    }\n  },\n  \"required\": [\n    \"expression\",\n    \"result\",\n    \"explanation\"\n  ],\n  \"title\": \"MathResult\",\n  \"type\": \"object\"\n}\n```\n\nRespond ONLY with the JSON object, no additional text or markdown."}], "role": "user"}, {"parts": [{"text": "What is 2 + 2? Provide the expression, result, and a brief explanation."}], "role": "user"}], "generationConfig": {"mediaResolution": "MEDIA_RESOLUTION_HIGH"}}'
+      headers:
+        Content-Type:
+          - application/json
+        user-agent:
+          - google-genai-sdk/1.56.0 gl-python/3.13.9
+        x-goog-api-client:
+          - google-genai-sdk/1.56.0 gl-python/3.13.9
+      method: post
+      uri: https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-lite:generateContent
+    response:
+      body:
+        string: "{\n  \"candidates\": [\n    {\n      \"content\": {\n        \"parts\": [\n          {\n            \"text\": \"```json\\n{\\n  \\\"expression\\\": \\\"2 + 2\\\",\\n  \\\"result\\\": 4,\\n  \\\"explanation\\\": \\\"The sum of 2 and 2 is 4.\\\"\\n}\\n```\"\n          }\n        ],\n        \"role\": \"model\"\n      },\n      \"finishReason\": \"STOP\",\n      \"index\": 0\n    }\n  ],\n  \"usageMetadata\": {\n    \"promptTokenCount\": 192,\n    \"candidatesTokenCount\": 45,\n    \"totalTokenCount\": 237,\n    \"promptTokensDetails\": [\n      {\n        \"modality\": \"TEXT\",\n        \"tokenCount\": 192\n      }\n    ]\n  },\n  \"modelVersion\": \"gemini-2.5-flash-lite\",\n  \"responseId\": \"yV2RaemhKNqI7M8P0JKEuAY\"\n}\n"
+      headers:
+        Alt-Svc:
+          - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+        Content-Encoding:
+          - gzip
+        Content-Type:
+          - application/json; charset=UTF-8
+        Date:
+          - Sun, 15 Feb 2026 05:46:49 GMT
+        Server:
+          - scaffolding on HTTPServer2
+        Server-Timing:
+          - gfet4t7; dur=620
+        Transfer-Encoding:
+          - chunked
+        Vary:
+          - Origin
+          - X-Origin
+          - Referer
+        X-Content-Type-Options:
+          - nosniff
+        X-Frame-Options:
+          - SAMEORIGIN
+        X-XSS-Protection:
+          - '0'
+      status:
+        code: 200
+        message: OK
+version: 1
