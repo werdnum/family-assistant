@@ -110,6 +110,7 @@ dependencies = [
     "email-validator>=2.3.0", # Required by litellm at runtime
     "pydantic-settings>=2.10.1",
     "pydantic-monty>=0.0.3",
+    "anthropic>=0.40.0",
 ]
 
 [project.optional-dependencies]

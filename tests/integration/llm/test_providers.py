@@ -44,6 +44,8 @@ async def llm_client_factory() -> Callable[
                 api_key = os.getenv("OPENAI_API_KEY", "test-openai-key")
             elif provider == "google":
                 api_key = os.getenv("GEMINI_API_KEY", "test-gemini-key")
+            elif provider == "anthropic":
+                api_key = os.getenv("ANTHROPIC_API_KEY", "test-anthropic-key")
             else:
                 api_key = "test-api-key"
 
@@ -73,6 +75,7 @@ async def llm_client_factory() -> Callable[
         ("openai", "gpt-4.1-nano"),
         ("openai", "gpt-5.2"),
         ("google", "gemini-2.5-flash-lite"),
+        ("anthropic", "claude-haiku-3-5-20241022"),
     ],
 )
 async def test_basic_completion(
@@ -115,6 +118,7 @@ async def test_basic_completion(
     [
         ("openai", "gpt-4.1-nano"),
         ("google", "gemini-2.5-flash-lite"),
+        ("anthropic", "claude-haiku-3-5-20241022"),
     ],
 )
 async def test_system_message_handling(
@@ -156,6 +160,7 @@ async def test_system_message_handling(
     [
         ("openai", "gpt-4.1-nano"),
         ("google", "gemini-2.5-flash-lite"),
+        ("anthropic", "claude-haiku-3-5-20241022"),
     ],
 )
 async def test_multi_turn_conversation(
@@ -190,6 +195,7 @@ async def test_multi_turn_conversation(
     [
         ("openai", "gpt-4.1-nano"),
         ("google", "gemini-2.5-flash-lite"),
+        ("anthropic", "claude-haiku-3-5-20241022"),
     ],
 )
 async def test_model_parameters(
@@ -272,6 +278,7 @@ async def test_provider_specific_openai_features(
     [
         ("openai", "gpt-4.1-nano"),
         ("google", "gemini-2.5-flash-lite"),
+        ("anthropic", "claude-haiku-3-5-20241022"),
     ],
 )
 async def test_empty_conversation(
@@ -306,6 +313,7 @@ async def test_empty_conversation(
     [
         ("openai", "gpt-4.1-nano"),
         ("google", "gemini-2.5-flash-lite"),
+        ("anthropic", "claude-haiku-3-5-20241022"),
     ],
 )
 async def test_reasoning_info_included(
@@ -451,6 +459,7 @@ async def test_gemini_system_message_with_multipart_content(
     [
         ("openai", "gpt-4.1-nano"),
         ("google", "gemini-2.5-flash-lite"),
+        ("anthropic", "claude-haiku-3-5-20241022"),
     ],
 )
 async def test_tool_message_with_image_attachment(
@@ -516,6 +525,7 @@ async def test_tool_message_with_image_attachment(
     [
         ("openai", "gpt-4.1-nano"),
         ("google", "gemini-2.5-flash-lite"),
+        ("anthropic", "claude-haiku-3-5-20241022"),
     ],
 )
 async def test_tool_message_with_pdf_attachment(

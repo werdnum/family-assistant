@@ -47,11 +47,21 @@ def normalize_llm_request_body(body: dict[str, Any]) -> dict[str, Any]:
     if "model" in body:
         normalized["model"] = body["model"]
 
+    # Handle system parameter (used by Anthropic instead of system messages)
+    if "system" in body:
+        normalized["system"] = body["system"]
+
     # Handle tools array
     if "tools" in body:
         # Sort tools by function name for consistent ordering
+        # OpenAI uses {"function": {"name": ...}}, Anthropic uses {"name": ...}
         normalized["tools"] = sorted(
-            body["tools"], key=lambda t: t.get("function", {}).get("name", "")
+            body["tools"],
+            key=lambda t: (
+                t.get("function", {}).get("name", "")
+                if "function" in t
+                else t.get("name", "")
+            ),
         )
 
     # Handle tool_choice

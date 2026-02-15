@@ -93,6 +93,8 @@ async def llm_client_factory() -> (  # type: ignore[misc]
                 api_key = os.getenv("OPENAI_API_KEY", "test-openai-key")
             elif provider == "google":
                 api_key = os.getenv("GEMINI_API_KEY", "test-gemini-key")
+            elif provider == "anthropic":
+                api_key = os.getenv("ANTHROPIC_API_KEY", "test-anthropic-key")
             else:
                 api_key = "test-api-key"
 
@@ -177,6 +179,7 @@ async def sample_tools() -> list[dict[str, Any]]:
     "provider,model",
     [
         ("openai", "gpt-4.1-nano"),
+        ("anthropic", "claude-haiku-3-5-20241022"),
     ],
 )
 async def test_basic_streaming(
@@ -229,6 +232,7 @@ async def test_basic_streaming(
     "provider,model",
     [
         ("openai", "gpt-4.1-nano"),
+        ("anthropic", "claude-haiku-3-5-20241022"),
     ],
 )
 async def test_streaming_with_system_message(
@@ -282,6 +286,7 @@ async def test_streaming_with_system_message(
     "provider,model",
     [
         ("openai", "gpt-4.1-nano"),
+        ("anthropic", "claude-haiku-3-5-20241022"),
     ],
 )
 async def test_streaming_with_tool_calls(
@@ -340,6 +345,7 @@ async def test_streaming_with_tool_calls(
     "provider,model",
     [
         ("openai", "gpt-4.1-nano"),
+        ("anthropic", "claude-haiku-3-5-20241022"),
     ],
 )
 async def test_streaming_error_handling(
@@ -384,6 +390,7 @@ async def test_streaming_error_handling(
     "provider,model",
     [
         ("openai", "gpt-4.1-nano"),
+        ("anthropic", "claude-haiku-3-5-20241022"),
     ],
 )
 async def test_streaming_with_multi_turn_conversation(
@@ -428,6 +435,7 @@ async def test_streaming_with_multi_turn_conversation(
     "provider,model",
     [
         ("openai", "gpt-4.1-nano"),
+        ("anthropic", "claude-haiku-3-5-20241022"),
     ],
 )
 async def test_streaming_reasoning_info(
@@ -484,6 +492,7 @@ async def test_streaming_reasoning_info(
     "provider,model",
     [
         ("openai", "gpt-4.1-nano"),
+        ("anthropic", "claude-haiku-3-5-20241022"),
     ],
 )
 async def test_streaming_content_accumulation(

@@ -66,6 +66,8 @@ async def llm_client_with_tools() -> Callable[[str, str], Awaitable[LLMInterface
             api_key = os.getenv("OPENAI_API_KEY", "test-openai-key")
         elif provider == "google":
             api_key = os.getenv("GEMINI_API_KEY", "test-gemini-key")
+        elif provider == "anthropic":
+            api_key = os.getenv("ANTHROPIC_API_KEY", "test-anthropic-key")
         else:
             api_key = "test-api-key"
 
@@ -141,6 +143,7 @@ def calculate_tool() -> dict[str, Any]:
     [
         ("openai", "gpt-4.1-nano"),
         ("google", "gemini-2.5-flash-lite"),
+        ("anthropic", "claude-haiku-3-5-20241022"),
     ],
 )
 async def test_single_tool_call(
@@ -188,6 +191,7 @@ async def test_single_tool_call(
     [
         ("openai", "gpt-4.1-nano"),
         ("google", "gemini-2.5-flash-lite"),
+        ("anthropic", "claude-haiku-3-5-20241022"),
     ],
 )
 async def test_multiple_tool_options(
@@ -232,6 +236,7 @@ async def test_multiple_tool_options(
     [
         ("openai", "gpt-4.1-nano"),
         ("google", "gemini-2.5-flash-lite"),
+        ("anthropic", "claude-haiku-3-5-20241022"),
     ],
 )
 async def test_no_tool_needed(
@@ -313,6 +318,7 @@ async def test_parallel_tool_calls(
     [
         ("openai", "gpt-4.1-nano"),
         ("google", "gemini-2.5-flash-lite"),
+        ("anthropic", "claude-haiku-3-5-20241022"),
     ],
 )
 async def test_tool_call_with_conversation_history(
@@ -367,6 +373,7 @@ async def test_tool_call_with_conversation_history(
     [
         ("openai", "gpt-4.1-nano"),
         ("google", "gemini-2.5-flash-lite"),
+        ("anthropic", "claude-haiku-3-5-20241022"),
     ],
 )
 async def test_tool_response_handling(
@@ -438,6 +445,7 @@ async def test_tool_response_handling(
     [
         ("openai", "gpt-4.1-nano"),
         ("google", "gemini-2.5-flash-lite"),
+        ("anthropic", "claude-haiku-3-5-20241022"),
     ],
 )
 async def test_tool_call_id_format(

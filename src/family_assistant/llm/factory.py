@@ -35,6 +35,7 @@ class LLMClientFactory:
     _provider_classes: dict[str, str] = {
         "openai": "family_assistant.llm.providers.openai_client.OpenAIClient",
         "google": "family_assistant.llm.providers.google_genai_client.GoogleGenAIClient",
+        "anthropic": "family_assistant.llm.providers.anthropic_client.AnthropicClient",
         "litellm": "family_assistant.llm.LiteLLMClient",
     }
 
