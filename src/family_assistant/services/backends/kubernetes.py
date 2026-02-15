@@ -18,6 +18,7 @@ from kubernetes_asyncio import config as kube_config
 from kubernetes_asyncio.client import (
     ApiClient,
     BatchV1Api,
+    Configuration,
     CoreV1Api,
     V1Capabilities,
     V1ConfigMapVolumeSource,
@@ -71,18 +72,29 @@ class KubernetesTask:
     error_message: str | None = None
 
 
-async def _load_kube_config(kubeconfig_path: str | None = None) -> None:
+async def _load_kube_config(
+    kubeconfig_path: str | None = None,
+) -> Configuration:
     """Load Kubernetes configuration, trying in-cluster first, then kubeconfig.
+
+    Returns a Configuration object with disable_ssl_x509_strict=True to work around
+    k3s (and other distributions) issuing certificates without the Authority Key
+    Identifier extension, which OpenSSL 3.4+ rejects under strict verification.
 
     Args:
         kubeconfig_path: Optional explicit path to kubeconfig file.
     """
+    config = Configuration()
+    config.disable_ssl_x509_strict = True
     try:
-        kube_config.load_incluster_config()
+        kube_config.load_incluster_config(client_configuration=config)
         logger.debug("Loaded in-cluster Kubernetes config")
     except kube_config.ConfigException:
-        await kube_config.load_kube_config(config_file=kubeconfig_path)
+        await kube_config.load_kube_config(
+            config_file=kubeconfig_path, client_configuration=config
+        )
         logger.debug("Loaded kubeconfig file")
+    return config
 
 
 # ast-grep-ignore: no-dict-any - Raw Kubernetes YAML volume config from user settings
@@ -172,6 +184,7 @@ class KubernetesBackend:
         self._tasks: dict[str, KubernetesTask] = {}
         self._config_loaded = False
         self._config_lock = asyncio.Lock()
+        self._kube_config: Configuration | None = None
 
     @property
     def namespace(self) -> str:
@@ -223,7 +236,7 @@ class KubernetesBackend:
                     kubeconfig_path = (
                         self._config.kubeconfig_path if self._config else None
                     )
-                    await _load_kube_config(kubeconfig_path)
+                    self._kube_config = await _load_kube_config(kubeconfig_path)
                     self._config_loaded = True
 
     async def spawn_task(
@@ -269,7 +282,7 @@ class KubernetesBackend:
         logger.info(f"Creating Kubernetes Job {job_name} for task {task_id}")
 
         await self._ensure_config_loaded()
-        async with ApiClient() as api_client:
+        async with ApiClient(configuration=self._kube_config) as api_client:
             batch_api = BatchV1Api(api_client)
             try:
                 await batch_api.create_namespaced_job(
@@ -463,7 +476,7 @@ class KubernetesBackend:
             )
 
         await self._ensure_config_loaded()
-        async with ApiClient() as api_client:
+        async with ApiClient(configuration=self._kube_config) as api_client:
             batch_api = BatchV1Api(api_client)
             try:
                 job = await batch_api.read_namespaced_job(
@@ -559,7 +572,7 @@ class KubernetesBackend:
         logger.info(f"Cancelling Kubernetes Job {job_id}")
 
         await self._ensure_config_loaded()
-        async with ApiClient() as api_client:
+        async with ApiClient(configuration=self._kube_config) as api_client:
             batch_api = BatchV1Api(api_client)
             try:
                 await batch_api.delete_namespaced_job(
@@ -587,7 +600,7 @@ class KubernetesBackend:
             Log output or None if not available
         """
         await self._ensure_config_loaded()
-        async with ApiClient() as api_client:
+        async with ApiClient(configuration=self._kube_config) as api_client:
             core_api = CoreV1Api(api_client)
             try:
                 # Find the pod for this job
