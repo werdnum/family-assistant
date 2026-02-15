@@ -38,6 +38,7 @@ from kubernetes_asyncio.client import (
     V1Volume,
     V1VolumeMount,
 )
+from kubernetes_asyncio.client.exceptions import ApiException
 
 from family_assistant.config_models import WorkerResourceLimits
 from family_assistant.services.worker_backend import WorkerStatus, WorkerTaskResult
@@ -95,6 +96,11 @@ def _config_dict_to_volume(config_dict: dict[str, Any], name: str) -> V1Volume:
     """
     if "persistentVolumeClaim" in config_dict:
         pvc = config_dict["persistentVolumeClaim"]
+        if "claimName" not in pvc:
+            msg = (
+                f"Missing required 'claimName' in persistentVolumeClaim volume '{name}'"
+            )
+            raise ValueError(msg)
         return V1Volume(
             name=name,
             persistent_volume_claim=V1PersistentVolumeClaimVolumeSource(
@@ -104,6 +110,9 @@ def _config_dict_to_volume(config_dict: dict[str, Any], name: str) -> V1Volume:
         )
     if "configMap" in config_dict:
         cm = config_dict["configMap"]
+        if "name" not in cm:
+            msg = f"Missing required 'name' in configMap volume '{name}'"
+            raise ValueError(msg)
         return V1Volume(
             name=name,
             config_map=V1ConfigMapVolumeSource(
@@ -112,6 +121,9 @@ def _config_dict_to_volume(config_dict: dict[str, Any], name: str) -> V1Volume:
         )
     if "secret" in config_dict:
         secret = config_dict["secret"]
+        if "secretName" not in secret:
+            msg = f"Missing required 'secretName' in secret volume '{name}'"
+            raise ValueError(msg)
         return V1Volume(
             name=name,
             secret=V1SecretVolumeSource(
@@ -159,6 +171,7 @@ class KubernetesBackend:
         self._workspace_pvc_name = workspace_pvc_name
         self._tasks: dict[str, KubernetesTask] = {}
         self._config_loaded = False
+        self._config_lock = asyncio.Lock()
 
     @property
     def namespace(self) -> str:
@@ -205,9 +218,13 @@ class KubernetesBackend:
     async def _ensure_config_loaded(self) -> None:
         """Ensure Kubernetes configuration is loaded (once)."""
         if not self._config_loaded:
-            kubeconfig_path = self._config.kubeconfig_path if self._config else None
-            await _load_kube_config(kubeconfig_path)
-            self._config_loaded = True
+            async with self._config_lock:
+                if not self._config_loaded:
+                    kubeconfig_path = (
+                        self._config.kubeconfig_path if self._config else None
+                    )
+                    await _load_kube_config(kubeconfig_path)
+                    self._config_loaded = True
 
     async def spawn_task(
         self,
@@ -453,7 +470,9 @@ class KubernetesBackend:
                     name=job_id,
                     namespace=self.namespace,
                 )
-            except Exception:
+            except ApiException as e:
+                if e.status != 404:
+                    raise
                 # Job not found - check if we have a cached status
                 if task.status in {
                     WorkerStatus.SUCCESS,
@@ -590,7 +609,10 @@ class KubernetesBackend:
                     namespace=self.namespace,
                     tail_lines=tail,
                 )
-            except Exception:
+            except ApiException as e:
+                if e.status in {403, 500, 502, 503}:
+                    raise
+                logger.warning(f"Failed to fetch logs for job {job_id}", exc_info=True)
                 return None
 
     async def wait_for_completion(
