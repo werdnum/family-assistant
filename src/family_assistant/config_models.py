@@ -551,6 +551,11 @@ class KubernetesBackendConfig(BaseModel):
     # Optional explicit kubeconfig path (for local dev; in-cluster config used by default)
     kubeconfig_path: str | None = None
 
+    # Security context for worker pods
+    run_as_user: int = 1000
+    run_as_group: int = 1000
+    fs_group: int = 1000
+
 
 class DockerBackendConfig(BaseModel):
     """Docker-specific configuration for AI workers (local development)."""

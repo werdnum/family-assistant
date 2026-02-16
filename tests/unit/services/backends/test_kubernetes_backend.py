@@ -268,6 +268,34 @@ class TestKubernetesBackendBuildJobManifest:
         assert container_security.allow_privilege_escalation is False
         assert container_security.capabilities.drop == ["ALL"]
 
+    def test_build_manifest_custom_uid_gid(self) -> None:
+        """Test job manifest uses custom uid/gid from config."""
+        config = KubernetesBackendConfig(
+            namespace="test-namespace",
+            ai_coder_image="test-image:latest",
+            service_account="test-sa",
+            run_as_user=2000,
+            run_as_group=2001,
+            fs_group=2002,
+        )
+        custom_backend = KubernetesBackend(config=config)
+        custom_backend._config_loaded = True
+
+        manifest = custom_backend._build_job_manifest(
+            job_name="ai-worker-task-123",
+            task_id="task-123",
+            prompt_path="tasks/task-123/prompt.md",
+            output_dir="tasks/task-123/output",
+            webhook_url="http://localhost:8000/webhook/event",
+            model="claude",
+            timeout_minutes=30,
+        )
+
+        security_context = manifest.spec.template.spec.security_context
+        assert security_context.run_as_user == 2000
+        assert security_context.run_as_group == 2001
+        assert security_context.fs_group == 2002
+
     def test_build_manifest_volume_mounts(self, backend: KubernetesBackend) -> None:
         """Test job manifest includes volume mounts."""
         manifest = backend._build_job_manifest(
