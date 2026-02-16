@@ -137,6 +137,6 @@ def get_worker_backend(
             KubernetesBackend,
         )
 
-        return KubernetesBackend()
+        return KubernetesBackend(config=kubernetes_config)
     else:
         raise ValueError(f"Unknown backend type: {backend_type}")

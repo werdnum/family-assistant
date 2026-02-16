@@ -24,6 +24,7 @@ def kubernetes_config() -> KubernetesBackendConfig:
         service_account="test-sa",
         runtime_class="test-runtime",
         job_ttl_seconds=7200,
+        workspace_pvc_name="test-pvc",
         api_keys_secret="test-api-keys",
         claude_config_volume={
             "persistentVolumeClaim": {"claimName": "claude-config-pvc"}
@@ -37,7 +38,9 @@ def kubernetes_config() -> KubernetesBackendConfig:
 @pytest.fixture
 def backend(kubernetes_config: KubernetesBackendConfig) -> KubernetesBackend:
     """Create a KubernetesBackend instance for testing."""
-    backend = KubernetesBackend(config=kubernetes_config, workspace_pvc_name="test-pvc")
+    backend = KubernetesBackend(
+        config=kubernetes_config,
+    )
     # Skip actual kube config loading in tests
     backend._config_loaded = True
     return backend
@@ -56,9 +59,7 @@ class TestKubernetesBackendInit:
 
     def test_init_with_config(self, kubernetes_config: KubernetesBackendConfig) -> None:
         """Test backend initializes with provided config."""
-        backend = KubernetesBackend(
-            config=kubernetes_config, workspace_pvc_name="my-pvc"
-        )
+        backend = KubernetesBackend(config=kubernetes_config)
         assert backend.namespace == "test-namespace"
         assert backend.image == "test-image:latest"
         assert backend.service_account == "test-sa"
@@ -316,7 +317,9 @@ class TestKubernetesBackendBuildJobManifest:
                 "persistentVolumeClaim": {"claimName": "gemini-config-pvc"},
             },
         )
-        backend = KubernetesBackend(config=config, workspace_pvc_name="test-pvc")
+        backend = KubernetesBackend(
+            config=config,
+        )
 
         manifest = backend._build_job_manifest(
             job_name="ai-worker-task-123",

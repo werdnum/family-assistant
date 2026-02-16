@@ -41,11 +41,11 @@ from kubernetes_asyncio.client import (
 )
 from kubernetes_asyncio.client.exceptions import ApiException
 
-from family_assistant.config_models import WorkerResourceLimits
+from family_assistant.config_models import KubernetesBackendConfig
 from family_assistant.services.worker_backend import WorkerStatus, WorkerTaskResult
 
 if TYPE_CHECKING:
-    from family_assistant.config_models import KubernetesBackendConfig
+    from family_assistant.config_models import WorkerResourceLimits
 
 logger = logging.getLogger(__name__)
 
@@ -171,16 +171,13 @@ class KubernetesBackend:
     def __init__(
         self,
         config: KubernetesBackendConfig | None = None,
-        workspace_pvc_name: str = "workspace",
     ) -> None:
         """Initialize the Kubernetes backend.
 
         Args:
             config: Kubernetes-specific configuration. If None, uses defaults.
-            workspace_pvc_name: Name of the PVC for workspace volume.
         """
-        self._config = config
-        self._workspace_pvc_name = workspace_pvc_name
+        self._config = config or KubernetesBackendConfig()
         self._tasks: dict[str, KubernetesTask] = {}
         self._config_loaded = False
         self._config_lock = asyncio.Lock()
@@ -189,53 +186,39 @@ class KubernetesBackend:
     @property
     def namespace(self) -> str:
         """Get the Kubernetes namespace to use."""
-        if self._config:
-            return self._config.namespace
-        return "ml-bot"
+        return self._config.namespace
 
     @property
     def image(self) -> str:
         """Get the container image to use."""
-        if self._config:
-            return self._config.ai_coder_image
-        return "ghcr.io/werdnum/ai-coding-base:latest"
+        return self._config.ai_coder_image
 
     @property
     def service_account(self) -> str:
         """Get the service account to use."""
-        if self._config:
-            return self._config.service_account
-        return "ai-worker"
+        return self._config.service_account
 
     @property
     def runtime_class(self) -> str:
         """Get the runtime class for sandboxing."""
-        if self._config:
-            return self._config.runtime_class
-        return "gvisor"
+        return self._config.runtime_class
 
     @property
     def job_ttl_seconds(self) -> int:
         """Get the TTL for completed jobs."""
-        if self._config:
-            return self._config.job_ttl_seconds
-        return 3600
+        return self._config.job_ttl_seconds
 
     @property
     def resources(self) -> WorkerResourceLimits:
         """Get the resource limits for worker containers."""
-        if self._config:
-            return self._config.resources
-        return WorkerResourceLimits()
+        return self._config.resources
 
     async def _ensure_config_loaded(self) -> None:
         """Ensure Kubernetes configuration is loaded (once)."""
         if not self._config_loaded:
             async with self._config_lock:
                 if not self._config_loaded:
-                    kubeconfig_path = (
-                        self._config.kubeconfig_path if self._config else None
-                    )
+                    kubeconfig_path = self._config.kubeconfig_path
                     self._kube_config = await _load_kube_config(kubeconfig_path)
                     self._config_loaded = True
 
@@ -341,7 +324,7 @@ class KubernetesBackend:
             env_vars.append(V1EnvVar(name="TASK_CALLBACK_TOKEN", value=callback_token))
 
         env_from: list[V1EnvFromSource] = []
-        if self._config and self._config.api_keys_secret:
+        if self._config.api_keys_secret:
             env_from.append(
                 V1EnvFromSource(
                     secret_ref=V1SecretEnvSource(
@@ -363,12 +346,12 @@ class KubernetesBackend:
             V1Volume(
                 name="workspace",
                 persistent_volume_claim=V1PersistentVolumeClaimVolumeSource(
-                    claim_name=self._workspace_pvc_name,
+                    claim_name=self._config.workspace_pvc_name,
                 ),
             )
         ]
 
-        if model == "claude" and self._config and self._config.claude_config_volume:
+        if model == "claude" and self._config.claude_config_volume:
             volume_mounts.append(
                 V1VolumeMount(
                     name="claude-config",
@@ -381,7 +364,7 @@ class KubernetesBackend:
                     self._config.claude_config_volume, "claude-config"
                 )
             )
-        elif model == "gemini" and self._config and self._config.gemini_config_volume:
+        elif model == "gemini" and self._config.gemini_config_volume:
             volume_mounts.append(
                 V1VolumeMount(
                     name="gemini-config",
