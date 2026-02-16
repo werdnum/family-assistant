@@ -309,6 +309,7 @@ default_profile_settings:
       - "spawn_worker" # Spawn an AI coding agent for complex tasks
       - "read_task_result" # Read results from a completed worker task
       - "list_worker_tasks" # List worker tasks for a conversation
+      - "cancel_worker_task" # Cancel a stuck or unwanted worker task
     enable_mcp_server_ids: # Explicitly define MCP servers for the default profile
       - "time"
       - "brave"

@@ -61,6 +61,7 @@ from family_assistant.task_worker import (
     handle_script_execution,
     handle_system_error_log_cleanup,
     handle_system_event_cleanup,
+    handle_worker_task_cleanup,
 )
 from family_assistant.task_worker import (
     handle_log_message as original_handle_log_message,
@@ -1152,6 +1153,9 @@ class Assistant:
             "script_execution", handle_script_execution
         )
         self.task_worker_instance.register_task_handler(
+            "worker_task_cleanup", handle_worker_task_cleanup
+        )
+        self.task_worker_instance.register_task_handler(
             "reindex_document", self.handle_reindex_document
         )
         logger.info(
@@ -1269,6 +1273,22 @@ class Assistant:
                 except Exception as e:
                     # If task already exists, this is fine - just log it
                     logger.info(f"System error log cleanup task setup: {e}")
+
+                # Upsert the worker task cleanup task
+                try:
+                    await db_ctx.tasks.enqueue(
+                        task_id="system_worker_task_cleanup_daily",
+                        task_type="worker_task_cleanup",
+                        payload={"retention_hours": 48},
+                        scheduled_at=next_3am_utc,
+                        recurrence_rule="FREQ=DAILY;BYHOUR=3;BYMINUTE=0",
+                        max_retries_override=5,
+                    )
+                    logger.info(
+                        f"Worker task cleanup task scheduled for {next_3am_local} ({timezone_str})"
+                    )
+                except Exception as e:
+                    logger.info(f"Worker task cleanup task setup: {e}")
         except RuntimeError as e:
             if "different loop" in str(e):
                 logger.warning(
