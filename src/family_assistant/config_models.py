@@ -545,6 +545,9 @@ class KubernetesBackendConfig(BaseModel):
     # Resource limits for worker containers
     resources: WorkerResourceLimits = Field(default_factory=WorkerResourceLimits)
 
+    # Name of the PersistentVolumeClaim for workspace storage
+    workspace_pvc_name: str = "workspace"
+
     # Optional explicit kubeconfig path (for local dev; in-cluster config used by default)
     kubeconfig_path: str | None = None
 
