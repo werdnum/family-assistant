@@ -406,10 +406,10 @@ class KubernetesBackend:
                         service_account_name=self.service_account,
                         runtime_class_name=self.runtime_class,
                         security_context=V1PodSecurityContext(
-                            run_as_non_root=True,
-                            run_as_user=1000,
-                            run_as_group=1000,
-                            fs_group=1000,
+                            run_as_non_root=self._config.run_as_user is not None,
+                            run_as_user=self._config.run_as_user,
+                            run_as_group=self._config.run_as_group,
+                            fs_group=self._config.fs_group,
                         ),
                         containers=[
                             V1Container(
