@@ -292,9 +292,39 @@ class TestKubernetesBackendBuildJobManifest:
         )
 
         security_context = manifest.spec.template.spec.security_context
+        assert security_context.run_as_non_root is True
         assert security_context.run_as_user == 2000
         assert security_context.run_as_group == 2001
         assert security_context.fs_group == 2002
+
+    def test_build_manifest_none_uid_gid(self) -> None:
+        """Test job manifest omits uid/gid when set to None."""
+        config = KubernetesBackendConfig(
+            namespace="test-namespace",
+            ai_coder_image="test-image:latest",
+            service_account="test-sa",
+            run_as_user=None,
+            run_as_group=None,
+            fs_group=None,
+        )
+        custom_backend = KubernetesBackend(config=config)
+        custom_backend._config_loaded = True
+
+        manifest = custom_backend._build_job_manifest(
+            job_name="ai-worker-task-123",
+            task_id="task-123",
+            prompt_path="tasks/task-123/prompt.md",
+            output_dir="tasks/task-123/output",
+            webhook_url="http://localhost:8000/webhook/event",
+            model="claude",
+            timeout_minutes=30,
+        )
+
+        security_context = manifest.spec.template.spec.security_context
+        assert security_context.run_as_non_root is False
+        assert security_context.run_as_user is None
+        assert security_context.run_as_group is None
+        assert security_context.fs_group is None
 
     def test_build_manifest_volume_mounts(self, backend: KubernetesBackend) -> None:
         """Test job manifest includes volume mounts."""
