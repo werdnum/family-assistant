@@ -411,11 +411,14 @@ async def spawn_worker_tool(
                     logger.warning(f"Invalid context path {path}: {e}")
 
         # Build webhook URL (use configured URL or fall back to server_url)
+        # Include event_type as query param so the worker doesn't need to know our event schema
         if worker_config.webhook_url:
-            webhook_url = worker_config.webhook_url.rstrip("/")
+            base_url = worker_config.webhook_url.rstrip("/")
         else:
             server_url = app_config.server_url.rstrip("/")
-            webhook_url = f"{server_url}/webhook/event"
+            base_url = f"{server_url}/webhook/event"
+        separator = "&" if "?" in base_url else "?"
+        webhook_url = f"{base_url}{separator}event_type=worker_completion"
 
         # Generate callback token for webhook verification (32 bytes = 64 hex chars)
         callback_token = secrets.token_hex(32)
