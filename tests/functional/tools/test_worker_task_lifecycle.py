@@ -18,8 +18,8 @@ from family_assistant.storage.context import DatabaseContext
 from family_assistant.storage.repositories.worker_tasks import worker_tasks_table
 from family_assistant.tools.types import ToolExecutionContext
 from family_assistant.tools.worker import (
-    _reconcile_stale_tasks,  # noqa: PLC2701 - testing internal reconciliation logic
     cancel_worker_task_tool,
+    reconcile_stale_tasks,
 )
 
 if TYPE_CHECKING:
@@ -85,7 +85,7 @@ async def _backdate_task(
 
 
 class TestReconcileStale:
-    """Tests for _reconcile_stale_tasks."""
+    """Tests for reconcile_stale_tasks."""
 
     @pytest.mark.asyncio
     async def test_reconcile_marks_tasks_without_job_name(
@@ -102,7 +102,7 @@ class TestReconcileStale:
             task_id="orphan-1", status="submitted"
         )
 
-        reconciled = await _reconcile_stale_tasks(db_context, mock_backend)
+        reconciled = await reconcile_stale_tasks(db_context, mock_backend)
 
         assert reconciled == 1
         task = await db_context.worker_tasks.get_task("orphan-1")
@@ -136,7 +136,7 @@ class TestReconcileStale:
 
         mock_backend.complete_task(job_id, success=True)
 
-        reconciled = await _reconcile_stale_tasks(db_context, mock_backend)
+        reconciled = await reconcile_stale_tasks(db_context, mock_backend)
 
         assert reconciled == 1
         task = await db_context.worker_tasks.get_task("task-with-job")
@@ -167,7 +167,7 @@ class TestReconcileStale:
             task_id="still-running", status="submitted", job_name=job_id
         )
 
-        reconciled = await _reconcile_stale_tasks(db_context, mock_backend)
+        reconciled = await reconcile_stale_tasks(db_context, mock_backend)
 
         assert reconciled == 0
         task = await db_context.worker_tasks.get_task("still-running")
@@ -189,7 +189,7 @@ class TestReconcileStale:
             task_id="ghost-job", status="submitted", job_name="nonexistent-job-id"
         )
 
-        reconciled = await _reconcile_stale_tasks(db_context, mock_backend)
+        reconciled = await reconcile_stale_tasks(db_context, mock_backend)
 
         assert reconciled == 1
         task = await db_context.worker_tasks.get_task("ghost-job")
@@ -201,7 +201,7 @@ class TestReconcileStale:
         self, db_context: DatabaseContext, mock_backend: MockBackend
     ) -> None:
         """Reconciliation with no active tasks should return 0."""
-        reconciled = await _reconcile_stale_tasks(db_context, mock_backend)
+        reconciled = await reconcile_stale_tasks(db_context, mock_backend)
         assert reconciled == 0
 
 

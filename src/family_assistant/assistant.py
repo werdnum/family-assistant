@@ -47,6 +47,7 @@ from family_assistant.indexing.tasks import handle_embed_and_store_batch
 from family_assistant.llm.factory import LLMClientFactory
 from family_assistant.processing import ProcessingService, ProcessingServiceConfig
 from family_assistant.services.push_notification import PushNotificationService
+from family_assistant.services.worker_backend import get_worker_backend
 from family_assistant.skills import NoteRegistry, load_skills_from_directory
 from family_assistant.storage import init_db
 from family_assistant.storage.base import create_engine_with_sqlite_optimizations
@@ -81,6 +82,7 @@ from family_assistant.tools import (
     MCPToolsProvider,
     _scan_user_docs,
 )
+from family_assistant.tools.worker import reconcile_stale_tasks
 from family_assistant.utils.logging_handler import setup_error_logging
 from family_assistant.utils.scraping import PlaywrightScraper
 from family_assistant.web.app_creator import configure_app_auth, create_app
@@ -1178,6 +1180,9 @@ class Assistant:
             # Create system cleanup task
             await self._setup_system_tasks()
 
+        # Reconcile stale worker tasks asynchronously
+        asyncio.create_task(self._reconcile_worker_tasks())
+
         await self.shutdown_event.wait()
         logger.info("Shutdown signal received by Assistant. Stopping services...")
 
@@ -1198,6 +1203,31 @@ class Assistant:
         else:
             logger.warning(
                 f"Shutdown already in progress. Signal {signal_name} received again."
+            )
+
+    async def _reconcile_worker_tasks(self) -> None:
+        """Reconcile stale worker tasks against backend state on startup."""
+        worker_config = self.config.ai_worker_config
+        if not worker_config.enabled:
+            return
+
+        try:
+            assert self.database_engine is not None
+            async with get_db_context(self.database_engine) as db_ctx:
+                backend = get_worker_backend(
+                    worker_config.backend_type,
+                    workspace_root=worker_config.workspace_mount_path,
+                    docker_config=worker_config.docker,
+                    kubernetes_config=worker_config.kubernetes,
+                )
+                reconciled = await reconcile_stale_tasks(db_ctx, backend)
+                if reconciled:
+                    logger.info(
+                        f"Reconciled {reconciled} stale worker tasks on startup"
+                    )
+        except Exception:
+            logger.warning(
+                "Worker task reconciliation failed on startup", exc_info=True
             )
 
     async def _setup_system_tasks(self) -> None:

@@ -25,9 +25,6 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-# Module-level flag so reconciliation runs at most once per process
-_reconciled = False
-
 
 # Tool Definitions
 WORKER_TOOLS_DEFINITION: list[ToolDefinition] = [
@@ -185,8 +182,10 @@ _STATUS_MAP = {
     WorkerStatus.CANCELLED: "cancelled",
 }
 
+_TERMINAL_DB_STATUSES = set(_STATUS_MAP.values())
 
-async def _reconcile_stale_tasks(
+
+async def reconcile_stale_tasks(
     db_context: DatabaseContext, backend: WorkerBackend
 ) -> int:
     """Check active DB tasks against backend state and mark stale ones as failed.
@@ -274,8 +273,7 @@ async def cancel_worker_task_tool(
             data={"error": "Access denied: Task belongs to another conversation"}
         )
 
-    terminal_statuses = {"success", "failed", "timeout", "cancelled"}
-    if task["status"] in terminal_statuses:
+    if task["status"] in _TERMINAL_DB_STATUSES:
         return ToolResult(
             data={
                 "error": f"Task already in terminal state: {task['status']}",
@@ -347,21 +345,6 @@ async def spawn_worker_tool(
 
     if not worker_config.enabled:
         return ToolResult(data={"error": "AI Worker feature is disabled"})
-
-    # Reconcile stale tasks on first invocation
-    global _reconciled  # noqa: PLW0603 - module-level flag intentionally mutated once for lazy init
-    if not _reconciled:
-        _reconciled = True
-        try:
-            backend = get_worker_backend(
-                worker_config.backend_type,
-                workspace_root=worker_config.workspace_mount_path,
-                docker_config=worker_config.docker,
-                kubernetes_config=worker_config.kubernetes,
-            )
-            await _reconcile_stale_tasks(exec_context.db_context, backend)
-        except Exception:
-            logger.warning("Stale task reconciliation failed", exc_info=True)
 
     # Validate timeout
     if timeout_minutes > worker_config.max_timeout_minutes:
