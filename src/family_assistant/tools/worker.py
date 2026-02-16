@@ -14,11 +14,13 @@ from typing import TYPE_CHECKING, Any
 import aiofiles
 import aiofiles.os
 
-from family_assistant.services.worker_backend import get_worker_backend
+from family_assistant.services.worker_backend import WorkerStatus, get_worker_backend
 from family_assistant.tools.types import ToolResult
 from family_assistant.utils.workspace import get_workspace_root, validate_workspace_path
 
 if TYPE_CHECKING:
+    from family_assistant.services.worker_backend import WorkerBackend
+    from family_assistant.storage.context import DatabaseContext
     from family_assistant.tools.types import ToolDefinition, ToolExecutionContext
 
 logger = logging.getLogger(__name__)
@@ -112,6 +114,26 @@ WORKER_TOOLS_DEFINITION: list[ToolDefinition] = [
     {
         "type": "function",
         "function": {
+            "name": "cancel_worker_task",
+            "description": (
+                "Cancel a running or stuck worker task. "
+                "Use this to free up concurrency slots when tasks are stuck or no longer needed."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "task_id": {
+                        "type": "string",
+                        "description": "The task ID to cancel",
+                    },
+                },
+                "required": ["task_id"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
             "name": "list_worker_tasks",
             "description": (
                 "List worker tasks for this conversation. "
@@ -144,6 +166,156 @@ WORKER_TOOLS_DEFINITION: list[ToolDefinition] = [
         },
     },
 ]
+
+
+_TERMINAL_STATUSES = {
+    WorkerStatus.SUCCESS,
+    WorkerStatus.FAILED,
+    WorkerStatus.TIMEOUT,
+    WorkerStatus.CANCELLED,
+}
+
+_STATUS_MAP = {
+    WorkerStatus.SUCCESS: "success",
+    WorkerStatus.FAILED: "failed",
+    WorkerStatus.TIMEOUT: "timeout",
+    WorkerStatus.CANCELLED: "cancelled",
+}
+
+_TERMINAL_DB_STATUSES = set(_STATUS_MAP.values())
+
+
+async def reconcile_stale_tasks(
+    db_context: DatabaseContext, backend: WorkerBackend
+) -> int:
+    """Check active DB tasks against backend state and mark stale ones as failed.
+
+    For each task with status "submitted" or "running" in the DB:
+    - If it has no job_name, mark as failed (spawn never completed)
+    - If backend reports a terminal status, update DB accordingly
+    - If backend still shows active, leave it alone
+
+    Returns:
+        Number of tasks reconciled
+    """
+    active_tasks = await db_context.worker_tasks.get_active_tasks()
+    if not active_tasks:
+        return 0
+
+    reconciled = 0
+    for task in active_tasks:
+        task_id = task["task_id"]
+        job_name = task.get("job_name")
+
+        if not job_name:
+            await db_context.worker_tasks.update_task_status(
+                task_id=task_id,
+                status="failed",
+                error_message="Task has no job_name — spawn never completed",
+            )
+            reconciled += 1
+            logger.info(f"Reconciled task {task_id}: no job_name, marked failed")
+            continue
+
+        try:
+            result = await backend.get_task_status(job_name)
+        except Exception:
+            logger.warning(
+                f"Failed to check backend status for task {task_id} (job {job_name})",
+                exc_info=True,
+            )
+            continue
+
+        if result.status in _TERMINAL_STATUSES:
+            db_status = _STATUS_MAP.get(result.status, "failed")
+            await db_context.worker_tasks.update_task_status(
+                task_id=task_id,
+                status=db_status,
+                error_message=result.error_message
+                or f"Reconciled from backend status: {result.status.value}",
+                exit_code=result.exit_code,
+            )
+            reconciled += 1
+            logger.info(
+                f"Reconciled task {task_id}: backend status {result.status.value} → {db_status}"
+            )
+
+    if reconciled:
+        logger.info(f"Reconciled {reconciled} stale worker tasks")
+    return reconciled
+
+
+async def cancel_worker_task_tool(
+    exec_context: ToolExecutionContext,
+    task_id: str,
+) -> ToolResult:
+    """Cancel a worker task.
+
+    Args:
+        exec_context: The tool execution context
+        task_id: The task ID to cancel
+
+    Returns:
+        ToolResult with cancellation status
+    """
+    if exec_context.processing_service is None:
+        return ToolResult(data={"error": "Worker feature not available"})
+
+    db_context = exec_context.db_context
+
+    task = await db_context.worker_tasks.get_task(task_id)
+    if not task:
+        return ToolResult(data={"error": f"Task not found: {task_id}"})
+
+    # Verify conversation access
+    if task["conversation_id"] != exec_context.conversation_id:
+        return ToolResult(
+            data={"error": "Access denied: Task belongs to another conversation"}
+        )
+
+    if task["status"] in _TERMINAL_DB_STATUSES:
+        return ToolResult(
+            data={
+                "error": f"Task already in terminal state: {task['status']}",
+                "task_id": task_id,
+                "status": task["status"],
+            }
+        )
+
+    app_config = exec_context.processing_service.app_config
+    worker_config = app_config.ai_worker_config
+
+    # Cancel via backend if we have a job_name
+    job_name = task.get("job_name")
+    if job_name:
+        backend = get_worker_backend(
+            worker_config.backend_type,
+            workspace_root=worker_config.workspace_mount_path,
+            docker_config=worker_config.docker,
+            kubernetes_config=worker_config.kubernetes,
+        )
+        try:
+            await backend.cancel_task(job_name)
+        except Exception as e:
+            logger.warning(
+                f"Backend cancel failed for task {task_id} (job {job_name}): {e}"
+            )
+
+    # Update DB status to cancelled regardless of backend result
+    await db_context.worker_tasks.update_task_status(
+        task_id=task_id,
+        status="cancelled",
+        error_message="Cancelled by user",
+    )
+
+    logger.info(f"Cancelled worker task {task_id}")
+    return ToolResult(
+        data={
+            "task_id": task_id,
+            "status": "cancelled",
+            "message": f"Worker task '{task_id}' has been cancelled.",
+        }
+    )
 
 
 async def spawn_worker_tool(

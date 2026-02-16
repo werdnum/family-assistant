@@ -166,6 +166,7 @@ from family_assistant.tools.video_generation import (
 )
 from family_assistant.tools.worker import (
     WORKER_TOOLS_DEFINITION,
+    cancel_worker_task_tool,
     list_worker_tasks_tool,
     read_task_result_tool,
     spawn_worker_tool,
@@ -300,6 +301,7 @@ __all__ = [
     "spawn_worker_tool",
     "read_task_result_tool",
     "list_worker_tasks_tool",
+    "cancel_worker_task_tool",
 ]
 
 
@@ -422,6 +424,7 @@ AVAILABLE_FUNCTIONS: dict[str, Callable] = {
     "spawn_worker": spawn_worker_tool,
     "read_task_result": read_task_result_tool,
     "list_worker_tasks": list_worker_tasks_tool,
+    "cancel_worker_task": cancel_worker_task_tool,
 }
 
 

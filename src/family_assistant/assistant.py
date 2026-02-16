@@ -47,6 +47,7 @@ from family_assistant.indexing.tasks import handle_embed_and_store_batch
 from family_assistant.llm.factory import LLMClientFactory
 from family_assistant.processing import ProcessingService, ProcessingServiceConfig
 from family_assistant.services.push_notification import PushNotificationService
+from family_assistant.services.worker_backend import get_worker_backend
 from family_assistant.skills import NoteRegistry, load_skills_from_directory
 from family_assistant.storage import init_db
 from family_assistant.storage.base import create_engine_with_sqlite_optimizations
@@ -61,6 +62,7 @@ from family_assistant.task_worker import (
     handle_script_execution,
     handle_system_error_log_cleanup,
     handle_system_event_cleanup,
+    handle_worker_task_cleanup,
 )
 from family_assistant.task_worker import (
     handle_log_message as original_handle_log_message,
@@ -80,6 +82,7 @@ from family_assistant.tools import (
     MCPToolsProvider,
     _scan_user_docs,
 )
+from family_assistant.tools.worker import reconcile_stale_tasks
 from family_assistant.utils.logging_handler import setup_error_logging
 from family_assistant.utils.scraping import PlaywrightScraper
 from family_assistant.web.app_creator import configure_app_auth, create_app
@@ -1152,6 +1155,9 @@ class Assistant:
             "script_execution", handle_script_execution
         )
         self.task_worker_instance.register_task_handler(
+            "worker_task_cleanup", handle_worker_task_cleanup
+        )
+        self.task_worker_instance.register_task_handler(
             "reindex_document", self.handle_reindex_document
         )
         logger.info(
@@ -1174,6 +1180,9 @@ class Assistant:
             # Create system cleanup task
             await self._setup_system_tasks()
 
+        # Reconcile stale worker tasks asynchronously
+        asyncio.create_task(self._reconcile_worker_tasks())
+
         await self.shutdown_event.wait()
         logger.info("Shutdown signal received by Assistant. Stopping services...")
 
@@ -1194,6 +1203,31 @@ class Assistant:
         else:
             logger.warning(
                 f"Shutdown already in progress. Signal {signal_name} received again."
+            )
+
+    async def _reconcile_worker_tasks(self) -> None:
+        """Reconcile stale worker tasks against backend state on startup."""
+        worker_config = self.config.ai_worker_config
+        if not worker_config.enabled:
+            return
+
+        try:
+            assert self.database_engine is not None
+            async with get_db_context(self.database_engine) as db_ctx:
+                backend = get_worker_backend(
+                    worker_config.backend_type,
+                    workspace_root=worker_config.workspace_mount_path,
+                    docker_config=worker_config.docker,
+                    kubernetes_config=worker_config.kubernetes,
+                )
+                reconciled = await reconcile_stale_tasks(db_ctx, backend)
+                if reconciled:
+                    logger.info(
+                        f"Reconciled {reconciled} stale worker tasks on startup"
+                    )
+        except Exception:
+            logger.warning(
+                "Worker task reconciliation failed on startup", exc_info=True
             )
 
     async def _setup_system_tasks(self) -> None:
@@ -1269,6 +1303,22 @@ class Assistant:
                 except Exception as e:
                     # If task already exists, this is fine - just log it
                     logger.info(f"System error log cleanup task setup: {e}")
+
+                # Upsert the worker task cleanup task
+                try:
+                    await db_ctx.tasks.enqueue(
+                        task_id="system_worker_task_cleanup_daily",
+                        task_type="worker_task_cleanup",
+                        payload={"retention_hours": 48},
+                        scheduled_at=next_3am_utc,
+                        recurrence_rule="FREQ=DAILY;BYHOUR=3;BYMINUTE=0",
+                        max_retries_override=5,
+                    )
+                    logger.info(
+                        f"Worker task cleanup task scheduled for {next_3am_local} ({timezone_str})"
+                    )
+                except Exception as e:
+                    logger.info(f"Worker task cleanup task setup: {e}")
         except RuntimeError as e:
             if "different loop" in str(e):
                 logger.warning(

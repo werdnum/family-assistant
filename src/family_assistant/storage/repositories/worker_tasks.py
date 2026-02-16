@@ -298,6 +298,94 @@ class WorkerTasksRepository(BaseRepository):
         row = await self._db.fetch_one(stmt)
         return row["count"] if row else 0
 
+    async def get_active_tasks(self) -> list[WorkerTaskDict]:
+        """Get all tasks with status 'submitted' or 'running'.
+
+        Used for reconciliation to detect stuck tasks.
+
+        Returns:
+            List of WorkerTaskDict for active tasks
+        """
+        stmt = (
+            select(worker_tasks_table)
+            .where(worker_tasks_table.c.status.in_(["submitted", "running"]))
+            .order_by(worker_tasks_table.c.created_at.asc())
+        )
+
+        rows = await self._db.fetch_all(stmt)
+        return [self._row_to_dict(row) for row in rows]
+
+    async def mark_stale_tasks(
+        self,
+        submitted_timeout_hours: int = 1,
+        running_buffer_minutes: int = 30,
+    ) -> int:
+        """Mark stale tasks as failed.
+
+        Tasks are considered stale if:
+        - Status is "submitted" and created more than submitted_timeout_hours ago
+        - Status is "running" and has exceeded timeout_minutes + running_buffer_minutes
+
+        Args:
+            submitted_timeout_hours: Hours after which a "submitted" task is stale
+            running_buffer_minutes: Extra minutes beyond timeout_minutes before a
+                "running" task is considered stale
+
+        Returns:
+            Number of tasks marked as failed
+        """
+        now = datetime.now(UTC)
+        marked_count = 0
+
+        # Get all active tasks
+        active_tasks = await self.get_active_tasks()
+
+        for task in active_tasks:
+            created_at_str = task.get("created_at")
+            if not created_at_str:
+                continue
+
+            # Parse created_at (stored as ISO string by _row_to_dict)
+            try:
+                created_at = datetime.fromisoformat(created_at_str)
+                if created_at.tzinfo is None:
+                    created_at = created_at.replace(tzinfo=UTC)
+            except (ValueError, TypeError):
+                continue
+
+            should_mark = False
+            error_message = ""
+
+            if task["status"] == "submitted":
+                cutoff = now - timedelta(hours=submitted_timeout_hours)
+                if created_at < cutoff:
+                    should_mark = True
+                    error_message = (
+                        "Task stuck in submitted state — likely rejected by cluster"
+                    )
+            elif task["status"] == "running":
+                timeout_minutes = task.get("timeout_minutes", 30)
+                total_timeout = timedelta(
+                    minutes=timeout_minutes + running_buffer_minutes
+                )
+                if now - created_at > total_timeout:
+                    should_mark = True
+                    error_message = "Task exceeded timeout without reporting completion"
+
+            if should_mark:
+                await self.update_task_status(
+                    task_id=task["task_id"],
+                    status="failed",
+                    error_message=error_message,
+                    completed_at=now,
+                )
+                marked_count += 1
+                self._logger.info(
+                    f"Marked stale task {task['task_id']} as failed: {error_message}"
+                )
+
+        return marked_count
+
     async def cleanup_old_tasks(self, retention_hours: int = 48) -> int:
         """Delete old task records.
 
@@ -310,7 +398,8 @@ class WorkerTasksRepository(BaseRepository):
         cutoff = datetime.now(UTC) - timedelta(hours=retention_hours)
 
         stmt = delete(worker_tasks_table).where(
-            worker_tasks_table.c.created_at < cutoff
+            worker_tasks_table.c.created_at < cutoff,
+            worker_tasks_table.c.status.notin_(["submitted", "running"]),
         )
 
         result = await self._execute_with_logging("cleanup_old_tasks", stmt)

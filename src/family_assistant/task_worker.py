@@ -1076,8 +1076,14 @@ async def handle_worker_task_cleanup(
 
     db_deleted = 0
     dirs_deleted = 0
+    stale_marked = 0
 
     try:
+        # Step 0: Mark stale tasks as failed before cleanup
+        stale_marked = await exec_context.db_context.worker_tasks.mark_stale_tasks()
+        if stale_marked:
+            logger.info(f"Marked {stale_marked} stale worker tasks as failed")
+
         # Step 1: Clean up database records
         db_deleted = await exec_context.db_context.worker_tasks.cleanup_old_tasks(
             retention_hours
@@ -1110,7 +1116,8 @@ async def handle_worker_task_cleanup(
 
         logger.info(
             f"Worker task cleanup completed. "
-            f"Deleted {db_deleted} database records, {dirs_deleted} task directories "
+            f"Marked {stale_marked} stale tasks, "
+            f"deleted {db_deleted} database records, {dirs_deleted} task directories "
             f"older than {retention_hours} hours."
         )
     except Exception as e:
