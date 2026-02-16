@@ -265,7 +265,7 @@ class KubernetesBackend:
         Returns:
             Job name that can be used to track the task
         """
-        job_name = f"worker-{task_id}"
+        job_name = f"ai-worker-{task_id}"
 
         # Build job manifest
         job_manifest = self._build_job_manifest(

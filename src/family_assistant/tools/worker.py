@@ -202,7 +202,7 @@ async def spawn_worker_tool(
         )
 
     # Generate task ID with full UUID for 128-bit entropy
-    task_id = f"worker-{uuid.uuid4().hex}"
+    task_id = uuid.uuid4().hex
 
     # Set up workspace paths
     workspace_root = get_workspace_root(exec_context)
