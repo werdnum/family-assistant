@@ -156,7 +156,7 @@ class TestDockerBackendBuildCommand:
         assert "--name=worker-task-123" in cmd
         assert "--network=test-network" in cmd
         assert "test-image:latest" in cmd
-        assert "run-task" in cmd
+        assert cmd[-3:] == ["sh", "-c", 'run-task < "$TASK_INPUT"']
 
         # Check environment variables
         cmd_str = " ".join(cmd)

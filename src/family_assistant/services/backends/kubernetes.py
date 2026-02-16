@@ -415,7 +415,7 @@ class KubernetesBackend:
                             V1Container(
                                 name="worker",
                                 image=self.image,
-                                command=["run-task"],
+                                command=["sh", "-c", 'run-task < "$TASK_INPUT"'],
                                 env=env_vars,
                                 env_from=env_from,
                                 volume_mounts=volume_mounts,

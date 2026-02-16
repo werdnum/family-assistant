@@ -291,7 +291,7 @@ class DockerBackend:
 
         # Image and command
         cmd.append(self.image)
-        cmd.append("run-task")  # The entrypoint command
+        cmd.extend(["sh", "-c", 'run-task < "$TASK_INPUT"'])
 
         return cmd
 
