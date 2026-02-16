@@ -178,7 +178,8 @@ class TestKubernetesBackendBuildJobManifest:
         container = pod_spec.containers[0]
         assert container.name == "worker"
         assert container.image == "test-image:latest"
-        assert container.command == ["sh", "-c", 'run-task < "$TASK_INPUT"']
+        assert container.command is None
+        assert container.args == ["sh", "-c", 'run-task < "$TASK_INPUT"']
 
     def test_build_manifest_env_vars(self, backend: KubernetesBackend) -> None:
         """Test job manifest includes correct environment variables."""
