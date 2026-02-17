@@ -1123,6 +1123,7 @@ class Assistant:
             if self.event_processor
             else None,
             engine=self.database_engine,  # Pass the database engine
+            chat_interfaces=self.fastapi_app.state.chat_interfaces,
         )
         self.task_worker_instance.register_task_handler(
             "log_message", task_wrapper_handle_log_message

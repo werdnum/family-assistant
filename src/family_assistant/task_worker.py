@@ -506,10 +506,12 @@ class TaskWorker:
         # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
         event_sources: dict[str, Any] | None = None,  # Add event sources
         handler_timeout: float = TASK_HANDLER_TIMEOUT,  # Configurable timeout per instance
+        chat_interfaces: dict[str, ChatInterface] | None = None,
     ) -> None:
         """Initializes the TaskWorker with its dependencies."""
         self.processing_service = processing_service
         self.chat_interface = chat_interface
+        self.chat_interfaces = chat_interfaces
         # Use provided shutdown_event_instance or create a new instance-specific event
         # Don't use the module-level shutdown_event as it persists across test runs
         self.shutdown_event = (
@@ -752,7 +754,12 @@ class TaskWorker:
                 else None,
                 camera_backend=None,
                 # Optional fields (with defaults)
-                chat_interface=self.chat_interface,
+                chat_interface=(
+                    self.chat_interfaces.get(final_interface_type, self.chat_interface)
+                    if self.chat_interfaces
+                    else self.chat_interface
+                ),
+                chat_interfaces=self.chat_interfaces,
                 timezone_str=self.timezone_str,
                 processing_profile_id=(
                     self.processing_service.service_config.id
