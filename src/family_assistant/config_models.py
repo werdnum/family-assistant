@@ -19,6 +19,7 @@ import contextlib
 from contextvars import ContextVar
 from typing import TYPE_CHECKING, Any, ClassVar, Literal
 
+import cloudcoil.models.kubernetes.core.v1 as k8s_models  # noqa: TC002 - Pydantic needs at runtime
 from pydantic import BaseModel, ConfigDict, Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -536,11 +537,9 @@ class KubernetesBackendConfig(BaseModel):
     # All keys from this secret are injected as environment variables
     api_keys_secret: str | None = None
 
-    # Optional config volume specs for ~/.claude and ~/.gemini (raw K8s volume specs)
-    # ast-grep-ignore: no-dict-any - raw K8s volume specs have mixed types
-    claude_config_volume: dict[str, Any] | None = None
-    # ast-grep-ignore: no-dict-any - raw K8s volume specs have mixed types
-    gemini_config_volume: dict[str, Any] | None = None
+    # Optional config volumes for ~/.claude and ~/.gemini
+    claude_config_volume: k8s_models.Volume | None = None
+    gemini_config_volume: k8s_models.Volume | None = None
 
     # Resource limits for worker containers
     resources: WorkerResourceLimits = Field(default_factory=WorkerResourceLimits)
@@ -555,6 +554,10 @@ class KubernetesBackendConfig(BaseModel):
     run_as_user: int | None = 1000
     run_as_group: int | None = 1000
     fs_group: int | None = 1000
+
+    # Additional volumes and volume mounts to attach to worker pods
+    extra_volumes: list[k8s_models.Volume] | None = None
+    extra_volume_mounts: list[k8s_models.VolumeMount] | None = None
 
 
 class DockerBackendConfig(BaseModel):

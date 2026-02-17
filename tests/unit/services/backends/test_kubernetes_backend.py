@@ -5,6 +5,7 @@ from __future__ import annotations
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import cloudcoil.models.kubernetes.core.v1 as k8s
 import pytest
 
 from family_assistant.config_models import KubernetesBackendConfig
@@ -26,12 +27,18 @@ def kubernetes_config() -> KubernetesBackendConfig:
         job_ttl_seconds=7200,
         workspace_pvc_name="test-pvc",
         api_keys_secret="test-api-keys",
-        claude_config_volume={
-            "persistentVolumeClaim": {"claimName": "claude-config-pvc"}
-        },
-        gemini_config_volume={
-            "persistentVolumeClaim": {"claimName": "gemini-config-pvc"}
-        },
+        claude_config_volume=k8s.Volume(
+            name="claude-config",
+            persistent_volume_claim=k8s.PersistentVolumeClaimVolumeSource(
+                claim_name="claude-config-pvc",
+            ),
+        ),
+        gemini_config_volume=k8s.Volume(
+            name="gemini-config",
+            persistent_volume_claim=k8s.PersistentVolumeClaimVolumeSource(
+                claim_name="gemini-config-pvc",
+            ),
+        ),
     )
 
 
@@ -360,25 +367,22 @@ class TestKubernetesBackendBuildJobManifest:
             == "claude-config-pvc"
         )
 
-    def test_config_volume_cannot_overwrite_name(self) -> None:
-        """Test that user-provided config volume cannot overwrite the volume name."""
+    def test_config_volume_uses_configured_name(self) -> None:
+        """Test that the volume name from config is used in the manifest."""
         config = KubernetesBackendConfig(
             namespace="test-namespace",
             ai_coder_image="test-image:latest",
             service_account="test-sa",
             api_keys_secret="test-api-keys",
-            claude_config_volume={
-                "name": "user-provided-name",
-                "persistentVolumeClaim": {"claimName": "claude-config-pvc"},
-            },
-            gemini_config_volume={
-                "name": "user-provided-name",
-                "persistentVolumeClaim": {"claimName": "gemini-config-pvc"},
-            },
+            claude_config_volume=k8s.Volume(
+                name="my-claude-cfg",
+                persistent_volume_claim=k8s.PersistentVolumeClaimVolumeSource(
+                    claim_name="claude-config-pvc",
+                ),
+            ),
         )
-        backend = KubernetesBackend(
-            config=config,
-        )
+        backend = KubernetesBackend(config=config)
+        backend._config_loaded = True
 
         manifest = backend._build_job_manifest(
             job_name="ai-worker-task-123",
@@ -392,8 +396,149 @@ class TestKubernetesBackendBuildJobManifest:
 
         pod_spec = manifest.spec.template.spec
         volumes = {v.name: v for v in pod_spec.volumes}
-        assert "claude-config" in volumes
-        assert "user-provided-name" not in volumes
+        assert "my-claude-cfg" in volumes
+        volume_mounts = {v.name: v for v in pod_spec.containers[0].volume_mounts}
+        assert "my-claude-cfg" in volume_mounts
+        assert volume_mounts["my-claude-cfg"].mount_path == "/home/coder/.claude"
+
+    def test_extra_volumes_and_mounts(self) -> None:
+        """Test extra volumes and volume mounts appear in the manifest."""
+        config = KubernetesBackendConfig(
+            namespace="test-namespace",
+            ai_coder_image="test-image:latest",
+            service_account="test-sa",
+            extra_volumes=[
+                k8s.Volume(
+                    name="my-secret",
+                    secret=k8s.SecretVolumeSource(secret_name="my-secret"),
+                ),
+                k8s.Volume(
+                    name="my-config",
+                    config_map=k8s.ConfigMapVolumeSource(name="my-cm"),
+                ),
+            ],
+            extra_volume_mounts=[
+                k8s.VolumeMount(
+                    name="my-secret", mount_path="/etc/secrets", read_only=True
+                ),
+                k8s.VolumeMount(name="my-config", mount_path="/etc/config"),
+            ],
+        )
+        backend = KubernetesBackend(config=config)
+        backend._config_loaded = True
+
+        manifest = backend._build_job_manifest(
+            job_name="ai-worker-task-123",
+            task_id="task-123",
+            prompt_path="tasks/task-123/prompt.md",
+            output_dir="tasks/task-123/output",
+            webhook_url="http://localhost:8000/webhook/event",
+            model="claude",
+            timeout_minutes=30,
+        )
+
+        pod_spec = manifest.spec.template.spec
+        volumes = {v.name: v for v in pod_spec.volumes}
+        assert "my-secret" in volumes
+        assert volumes["my-secret"].secret.secret_name == "my-secret"
+        assert "my-config" in volumes
+        assert volumes["my-config"].config_map.name == "my-cm"
+
+        mounts = {v.name: v for v in pod_spec.containers[0].volume_mounts}
+        assert mounts["my-secret"].mount_path == "/etc/secrets"
+        assert mounts["my-secret"].read_only is True
+        assert mounts["my-config"].mount_path == "/etc/config"
+
+    def test_extra_volume_name_collision_raises(self) -> None:
+        """Test that extra volume names colliding with existing volumes raise an error."""
+        config = KubernetesBackendConfig(
+            namespace="test-namespace",
+            ai_coder_image="test-image:latest",
+            service_account="test-sa",
+            extra_volumes=[
+                k8s.Volume(
+                    name="workspace",
+                    secret=k8s.SecretVolumeSource(secret_name="sneaky"),
+                ),
+            ],
+        )
+        backend = KubernetesBackend(config=config)
+        backend._config_loaded = True
+
+        with pytest.raises(ValueError, match="conflicts with existing volume"):
+            backend._build_job_manifest(
+                job_name="ai-worker-task-123",
+                task_id="task-123",
+                prompt_path="tasks/task-123/prompt.md",
+                output_dir="tasks/task-123/output",
+                webhook_url="http://localhost:8000/webhook/event",
+                model="claude",
+                timeout_minutes=30,
+            )
+
+    def test_extra_mount_path_collision_raises(self) -> None:
+        """Test that extra volume mount paths colliding with existing mounts raise an error."""
+        config = KubernetesBackendConfig(
+            namespace="test-namespace",
+            ai_coder_image="test-image:latest",
+            service_account="test-sa",
+            extra_volume_mounts=[
+                k8s.VolumeMount(name="workspace", mount_path="/task"),
+            ],
+        )
+        backend = KubernetesBackend(config=config)
+        backend._config_loaded = True
+
+        with pytest.raises(ValueError, match="conflicts with existing mount"):
+            backend._build_job_manifest(
+                job_name="ai-worker-task-123",
+                task_id="task-123",
+                prompt_path="tasks/task-123/prompt.md",
+                output_dir="tasks/task-123/output",
+                webhook_url="http://localhost:8000/webhook/event",
+                model="claude",
+                timeout_minutes=30,
+            )
+
+    def test_extra_mount_references_nonexistent_volume_raises(self) -> None:
+        """Test that extra volume mounts referencing non-existent volumes raise an error."""
+        config = KubernetesBackendConfig(
+            namespace="test-namespace",
+            ai_coder_image="test-image:latest",
+            service_account="test-sa",
+            extra_volume_mounts=[
+                k8s.VolumeMount(name="no-such-volume", mount_path="/mnt/missing"),
+            ],
+        )
+        backend = KubernetesBackend(config=config)
+        backend._config_loaded = True
+
+        with pytest.raises(ValueError, match="references non-existent volume"):
+            backend._build_job_manifest(
+                job_name="ai-worker-task-123",
+                task_id="task-123",
+                prompt_path="tasks/task-123/prompt.md",
+                output_dir="tasks/task-123/output",
+                webhook_url="http://localhost:8000/webhook/event",
+                model="claude",
+                timeout_minutes=30,
+            )
+
+    def test_none_extra_volumes_no_change(self, backend: KubernetesBackend) -> None:
+        """Test that None extra_volumes doesn't change existing behavior."""
+        manifest = backend._build_job_manifest(
+            job_name="ai-worker-task-123",
+            task_id="task-123",
+            prompt_path="tasks/task-123/prompt.md",
+            output_dir="tasks/task-123/output",
+            webhook_url="http://localhost:8000/webhook/event",
+            model="claude",
+            timeout_minutes=30,
+        )
+
+        pod_spec = manifest.spec.template.spec
+        volume_names = {v.name for v in pod_spec.volumes}
+        assert volume_names == {"workspace", "claude-config"}
 
 
 class TestKubernetesBackendGetTaskStatus:
