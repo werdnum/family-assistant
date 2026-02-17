@@ -112,6 +112,7 @@ dependencies = [
     "pydantic-monty>=0.0.3",
     "anthropic>=0.40.0",
     "kubernetes-asyncio>=35.0.0",
+    "cloudcoil-models-kubernetes>=1.32",
 ]
 
 [project.optional-dependencies]

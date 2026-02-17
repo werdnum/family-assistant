@@ -1239,6 +1239,32 @@ wheels = [
 ]
 
 [[package]]
+name = "cloudcoil"
+version = "0.6.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "httpx" },
+    { name = "pydantic" },
+    { name = "pyyaml" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/33/72/f939e235ec7ac0e5791ad66b64681057e3ee7d3aaecbc6c4e5f6c1177aed/cloudcoil-0.6.0.tar.gz", hash = "sha256:741c2e0a5c95f40b10099c395f830ad63b2007b6bc2a0a536e1288be70919485", size = 393447, upload-time = "2026-02-09T13:51:53.585Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/91/79/f9a567debc62ebf5ccb22f8c6517583710960ca76f382bd8e8f0f3f38e59/cloudcoil-0.6.0-py3-none-any.whl", hash = "sha256:91793dea2e86ad292af143c5d335ce2e5d27dfbe66fd4b945c2f069224cf7698", size = 92571, upload-time = "2026-02-09T13:51:52.163Z" },
+]
+
+[[package]]
+name = "cloudcoil-models-kubernetes"
+version = "1.32.1.3"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "cloudcoil" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/86/5d/3b49375453c610b010f8c969503a5f7b1a3bca5b073551fd51b195522292/cloudcoil_models_kubernetes-1.32.1.3.tar.gz", hash = "sha256:a0ba052d756878bf50637553e9670e2ea102ba82a25f3b1da818d4d9426f051b", size = 364158, upload-time = "2025-02-10T04:25:01.948Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/44/7c/db13900309d57285e1724279e3dc00b89b9b2ba378ae0fd6a84b9120b896/cloudcoil_models_kubernetes-1.32.1.3-py3-none-any.whl", hash = "sha256:58353d789b12dce2620d67b1d70b62e2dc272a3a1a5d464f32de8c940db8ae6f", size = 349524, upload-time = "2025-02-10T04:25:00.351Z" },
+]
+
+[[package]]
 name = "cobble"
 version = "0.1.4"
 source = { registry = "https://pypi.org/simple" }
@@ -1576,6 +1602,7 @@ dependencies = [
     { name = "bcrypt", version = "4.2.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.13.2' or platform_python_implementation == 'PyPy'" },
     { name = "bcrypt", version = "4.3.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.13.2' and platform_python_implementation != 'PyPy'" },
     { name = "caldav" },
+    { name = "cloudcoil-models-kubernetes" },
     { name = "email-validator" },
     { name = "fastapi" },
     { name = "filetype" },
@@ -1709,6 +1736,7 @@ requires-dist = [
     { name = "basedpyright", marker = "extra == 'dev'" },
     { name = "bcrypt", specifier = ">=4.0.0,<5.0.0" },
     { name = "caldav", specifier = ">=1.2.0" },
+    { name = "cloudcoil-models-kubernetes", specifier = ">=1.32" },
     { name = "email-validator", specifier = ">=2.3.0" },
     { name = "fastapi", specifier = ">=0.111.0" },
     { name = "fastapi-sso", marker = "extra == 'dev'", specifier = ">=0.18.0" },

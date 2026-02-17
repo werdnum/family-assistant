@@ -12,8 +12,9 @@ import asyncio
 import logging
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
+from kubernetes_asyncio import client as k8s_asyncio_client
 from kubernetes_asyncio import config as kube_config
 from kubernetes_asyncio.client import (
     ApiClient,
@@ -21,7 +22,6 @@ from kubernetes_asyncio.client import (
     Configuration,
     CoreV1Api,
     V1Capabilities,
-    V1ConfigMapVolumeSource,
     V1Container,
     V1EnvFromSource,
     V1EnvVar,
@@ -34,7 +34,6 @@ from kubernetes_asyncio.client import (
     V1PodTemplateSpec,
     V1ResourceRequirements,
     V1SecretEnvSource,
-    V1SecretVolumeSource,
     V1SecurityContext,
     V1Volume,
     V1VolumeMount,
@@ -45,6 +44,8 @@ from family_assistant.config_models import KubernetesBackendConfig
 from family_assistant.services.worker_backend import WorkerStatus, WorkerTaskResult
 
 if TYPE_CHECKING:
+    from pydantic import BaseModel
+
     from family_assistant.config_models import WorkerResourceLimits
 
 logger = logging.getLogger(__name__)
@@ -97,57 +98,46 @@ async def _load_kube_config(
     return config
 
 
-# ast-grep-ignore: no-dict-any - Raw Kubernetes YAML volume config from user settings
-def _config_dict_to_volume(config_dict: dict[str, Any], name: str) -> V1Volume:
-    """Convert a raw Kubernetes volume config dict to a V1Volume.
+def _cloudcoil_to_k8s_asyncio[T](cloudcoil_obj: BaseModel, k8s_class: type[T]) -> T:
+    """Convert a cloudcoil Pydantic model to a kubernetes-asyncio model.
 
-    The config dict uses camelCase keys matching Kubernetes YAML format.
-    Any "name" key in the config dict is ignored; the provided name is used.
-
-    Supported volume source types: persistentVolumeClaim, configMap, secret.
+    Uses the openapi_types metadata on kubernetes-asyncio models to recursively
+    convert nested dicts into the correct model types, so all fields are
+    preserved without manual mapping.
     """
-    if "persistentVolumeClaim" in config_dict:
-        pvc = config_dict["persistentVolumeClaim"]
-        if "claimName" not in pvc:
-            msg = (
-                f"Missing required 'claimName' in persistentVolumeClaim volume '{name}'"
-            )
-            raise ValueError(msg)
-        return V1Volume(
-            name=name,
-            persistent_volume_claim=V1PersistentVolumeClaimVolumeSource(
-                claim_name=pvc["claimName"],
-                read_only=pvc.get("readOnly"),
-            ),
-        )
-    if "configMap" in config_dict:
-        cm = config_dict["configMap"]
-        if "name" not in cm:
-            msg = f"Missing required 'name' in configMap volume '{name}'"
-            raise ValueError(msg)
-        return V1Volume(
-            name=name,
-            config_map=V1ConfigMapVolumeSource(
-                name=cm["name"],
-            ),
-        )
-    if "secret" in config_dict:
-        secret = config_dict["secret"]
-        if "secretName" not in secret:
-            msg = f"Missing required 'secretName' in secret volume '{name}'"
-            raise ValueError(msg)
-        return V1Volume(
-            name=name,
-            secret=V1SecretVolumeSource(
-                secret_name=secret["secretName"],
-            ),
-        )
-    volume_keys = [k for k in config_dict if k != "name"]
-    msg = (
-        f"Unsupported config volume source type: {volume_keys}. "
-        f"Supported: persistentVolumeClaim, configMap, secret"
-    )
-    raise ValueError(msg)
+    data = cloudcoil_obj.model_dump(exclude_none=True)
+    return _dict_to_k8s_model(data, k8s_class)
+
+
+def _dict_to_k8s_model[T](data: object, k8s_class: type[T]) -> T:
+    """Recursively convert a dict to a kubernetes-asyncio model instance."""
+    if not isinstance(data, dict):
+        return data  # type: ignore[return-value]
+    kwargs = {}
+    for field_name, field_type_str in k8s_class.openapi_types.items():  # type: ignore[attr-defined]
+        if field_name not in data:
+            continue
+        value = data[field_name]
+        field_type = _resolve_k8s_type(field_type_str)
+        if field_type and isinstance(value, dict):
+            kwargs[field_name] = _dict_to_k8s_model(value, field_type)
+        elif field_type and isinstance(value, list):
+            kwargs[field_name] = [
+                _dict_to_k8s_model(item, field_type) if isinstance(item, dict) else item
+                for item in value
+            ]
+        else:
+            kwargs[field_name] = value
+    return k8s_class(**kwargs)
+
+
+def _resolve_k8s_type(type_str: str) -> type | None:
+    """Resolve a kubernetes-asyncio openapi_types string to its class."""
+    if type_str.startswith("list[") and type_str.endswith("]"):
+        return _resolve_k8s_type(type_str[5:-1])
+    if type_str in {"str", "int", "float", "bool", "dict(str, str)", "object"}:
+        return None
+    return getattr(k8s_asyncio_client, type_str, None)
 
 
 class KubernetesBackend:
@@ -352,31 +342,49 @@ class KubernetesBackend:
         ]
 
         if model == "claude" and self._config.claude_config_volume:
+            vol = self._config.claude_config_volume
             volume_mounts.append(
                 V1VolumeMount(
-                    name="claude-config",
+                    name=vol.name,
                     mount_path="/home/coder/.claude",
                     read_only=True,
                 )
             )
-            volumes.append(
-                _config_dict_to_volume(
-                    self._config.claude_config_volume, "claude-config"
-                )
-            )
+            volumes.append(_cloudcoil_to_k8s_asyncio(vol, V1Volume))
         elif model == "gemini" and self._config.gemini_config_volume:
+            vol = self._config.gemini_config_volume
             volume_mounts.append(
                 V1VolumeMount(
-                    name="gemini-config",
+                    name=vol.name,
                     mount_path="/home/coder/.gemini",
                     read_only=True,
                 )
             )
-            volumes.append(
-                _config_dict_to_volume(
-                    self._config.gemini_config_volume, "gemini-config"
+            volumes.append(_cloudcoil_to_k8s_asyncio(vol, V1Volume))
+
+        existing_names = {v.name for v in volumes}
+        if self._config.extra_volumes:
+            for extra_vol in self._config.extra_volumes:
+                if extra_vol.name in existing_names:
+                    msg = f"Extra volume name '{extra_vol.name}' conflicts with existing volume"
+                    raise ValueError(msg)
+                existing_names.add(extra_vol.name)
+                volumes.append(_cloudcoil_to_k8s_asyncio(extra_vol, V1Volume))
+
+        if self._config.extra_volume_mounts:
+            volume_names = {v.name for v in volumes}
+            existing_paths = {vm.mount_path for vm in volume_mounts}
+            for extra_mount in self._config.extra_volume_mounts:
+                if extra_mount.name not in volume_names:
+                    msg = f"Extra volume mount '{extra_mount.name}' references non-existent volume"
+                    raise ValueError(msg)
+                if extra_mount.mount_path in existing_paths:
+                    msg = f"Extra volume mount path '{extra_mount.mount_path}' conflicts with existing mount"
+                    raise ValueError(msg)
+                existing_paths.add(extra_mount.mount_path)
+                volume_mounts.append(
+                    _cloudcoil_to_k8s_asyncio(extra_mount, V1VolumeMount)
                 )
-            )
 
         return V1Job(
             api_version="batch/v1",
