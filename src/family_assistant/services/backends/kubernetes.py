@@ -324,6 +324,15 @@ class KubernetesBackend:
                 )
             )
 
+        if self._config.extra_env:
+            existing_names = {v.name for v in env_vars}
+            for extra in self._config.extra_env:
+                if extra.name in existing_names:
+                    msg = f"extra_env name '{extra.name}' collides with a built-in env var"
+                    raise ValueError(msg)
+                existing_names.add(extra.name)
+                env_vars.append(_cloudcoil_to_k8s_asyncio(extra, V1EnvVar))
+
         volume_mounts = [
             V1VolumeMount(
                 name="workspace",

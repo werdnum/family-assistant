@@ -540,6 +540,78 @@ class TestKubernetesBackendBuildJobManifest:
         volume_names = {v.name for v in pod_spec.volumes}
         assert volume_names == {"workspace", "claude-config"}
 
+    def test_extra_env_vars(self) -> None:
+        """Test that extra_env vars are added to the container."""
+        config = KubernetesBackendConfig(
+            namespace="test-ns",
+            ai_coder_image="test:latest",
+            workspace_pvc_name="test-pvc",
+            extra_env=[
+                k8s.EnvVar(name="MY_CUSTOM_VAR", value="hello"),
+                k8s.EnvVar(
+                    name="SECRET_VAR",
+                    value_from=k8s.EnvVarSource(
+                        secret_key_ref=k8s.SecretKeySelector(
+                            name="my-secret", key="password"
+                        )
+                    ),
+                ),
+            ],
+        )
+        backend = KubernetesBackend(config)
+        manifest = backend._build_job_manifest(
+            job_name="ai-worker-task-123",
+            task_id="task-123",
+            prompt_path="tasks/task-123/prompt.md",
+            output_dir="tasks/task-123/output",
+            webhook_url="http://localhost:8000/webhook/event",
+            model="claude",
+            timeout_minutes=30,
+        )
+
+        container = manifest.spec.template.spec.containers[0]
+        env_by_name = {e.name: e for e in container.env}
+        assert "MY_CUSTOM_VAR" in env_by_name
+        assert env_by_name["MY_CUSTOM_VAR"].value == "hello"
+        assert "SECRET_VAR" in env_by_name
+        assert env_by_name["SECRET_VAR"].value_from.secret_key_ref.name == "my-secret"
+
+    def test_extra_env_name_collision_raises(self) -> None:
+        """Test that extra_env colliding with built-in env vars raises ValueError."""
+        config = KubernetesBackendConfig(
+            namespace="test-ns",
+            ai_coder_image="test:latest",
+            workspace_pvc_name="test-pvc",
+            extra_env=[k8s.EnvVar(name="TASK_ID", value="sneaky")],
+        )
+        backend = KubernetesBackend(config)
+        with pytest.raises(ValueError, match="TASK_ID.*collides"):
+            backend._build_job_manifest(
+                job_name="ai-worker-task-123",
+                task_id="task-123",
+                prompt_path="tasks/task-123/prompt.md",
+                output_dir="tasks/task-123/output",
+                webhook_url="http://localhost:8000/webhook/event",
+                model="claude",
+                timeout_minutes=30,
+            )
+
+    def test_none_extra_env_no_change(self, backend: KubernetesBackend) -> None:
+        """Test that None extra_env doesn't change existing behavior."""
+        manifest = backend._build_job_manifest(
+            job_name="ai-worker-task-123",
+            task_id="task-123",
+            prompt_path="tasks/task-123/prompt.md",
+            output_dir="tasks/task-123/output",
+            webhook_url="http://localhost:8000/webhook/event",
+            model="claude",
+            timeout_minutes=30,
+        )
+
+        container = manifest.spec.template.spec.containers[0]
+        env_names = {e.name for e in container.env}
+        assert "MY_CUSTOM_VAR" not in env_names
+
 
 class TestKubernetesBackendGetTaskStatus:
     """Tests for KubernetesBackend.get_task_status()."""
