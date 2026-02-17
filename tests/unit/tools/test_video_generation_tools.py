@@ -1,5 +1,6 @@
 """Tests for video generation tools."""
 
+import os
 from collections.abc import Generator
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -221,7 +222,8 @@ async def test_generate_video_tool_missing_api_key(
     mock_exec_context: MagicMock,
 ) -> None:
     """Test missing API key."""
-    with patch.dict("os.environ", {}, clear=True):
+    env_without_key = {k: v for k, v in os.environ.items() if k != "GEMINI_API_KEY"}
+    with patch.dict("os.environ", env_without_key, clear=True):
         result = await generate_video_tool(mock_exec_context, prompt="A video of a cat")
 
         assert isinstance(result, ToolResult)

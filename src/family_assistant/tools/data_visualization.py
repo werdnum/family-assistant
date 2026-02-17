@@ -12,8 +12,6 @@ import json
 import logging
 from typing import TYPE_CHECKING, Any
 
-import vl_convert as vlc
-
 from family_assistant.tools.types import ToolAttachment, ToolDefinition, ToolResult
 
 if TYPE_CHECKING:
@@ -201,6 +199,8 @@ async def create_vega_chart_tool(
         try:
 
             def _render_chart() -> bytes:
+                import vl_convert as vlc  # noqa: PLC0415 - lazy import; PyO3 module can only be initialized once per process
+
                 if is_vega_lite:
                     return vlc.vegalite_to_png(
                         vl_spec=spec_dict,

@@ -171,6 +171,7 @@ dev = [
     "homeassistant>=2025.4.4",
     "pixeltable-pgserver>=0.4.0",
     "monkeytype>=23.3.0",  # Runtime type inference from tests
+    "mutmut>=3.4.0",  # Mutation testing
 ]
 local-embeddings = [
     "sentence-transformers>=3.0.1",
@@ -320,6 +321,66 @@ shell = "for mod in $(monkeytype list-modules | grep '^family_assistant\\.'); do
 help = "Apply MonkeyType-inferred types, overwriting existing annotations (use with caution)"
 shell = "for mod in $(monkeytype list-modules | grep '^family_assistant\\.'); do monkeytype apply --ignore-existing-annotations $mod; done"
 
+# --- Mutation Testing (mutmut) ---
+[tool.poe.tasks.mutmut-build-map]
+help = "Generate coverage-to-test mapping for mutation testing"
+cmd = "scripts/run-mutmut.sh --build-map"
+
+[tool.poe.tasks.mutmut]
+help = "Run mutation testing (pass mutant patterns or --narrow MODULE)"
+cmd = "scripts/run-mutmut.sh"
+
+[tool.poe.tasks.mutmut-results]
+help = "Show mutation testing results"
+shell = "mutmut results"
+
+[tool.poe.tasks.mutmut-html]
+help = "Generate mutation testing HTML report"
+shell = "mutmut html && echo 'Report generated: html/index.html'"
+
+[tool.poe.tasks.mutmut-changed]
+help = "Run mutation testing on files changed vs main"
+cmd = "scripts/run-mutmut.sh --changed origin/main"
+
+[tool.mutmut]
+paths_to_mutate = ["src/family_assistant/"]
+tests_dir = []
+mutate_only_covered_lines = true
+
+pytest_add_cli_args_test_selection = [
+    "tests/unit/",
+    "tests/functional/",
+    "--ignore=tests/functional/web/",
+    "-m", "not (postgres or integration or llm_integration or playwright or gemini_live)",
+]
+
+pytest_add_cli_args = [
+    "-x",
+    "-q",
+    "--no-header",
+    "--timeout=60",
+    "-p", "no:randomly",
+    "-p", "no:pytest_alembic",
+    "-n0",
+    "-o", "addopts=",
+    # Deselect timing-sensitive tests that are flaky under mutmut's in-process execution
+    "--deselect=tests/functional/home_assistant/test_reconnection.py::test_health_check_triggers_reconnection",
+]
+
+# Exclude files where mutmut's sync trampoline wrapper breaks async function detection.
+# FastAPI/Starlette uses asyncio.iscoroutinefunction() on Depends() parameters; the sync
+# trampoline makes async deps appear synchronous, causing "coroutine never awaited" errors.
+do_not_mutate = [
+    "src/family_assistant/web/auth.py",
+    "src/family_assistant/web/dependencies.py",
+]
+
+also_copy = [
+    "defaults.yaml",
+    "prompts.yaml",
+    "alembic.ini",
+    "alembic/",
+]
 
 [tool.ruff.lint.isort]
 known-first-party = ["family_assistant"]
