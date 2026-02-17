@@ -559,6 +559,9 @@ class KubernetesBackendConfig(BaseModel):
     extra_volumes: list[k8s_models.Volume] | None = None
     extra_volume_mounts: list[k8s_models.VolumeMount] | None = None
 
+    # Additional environment variables to inject into worker containers
+    extra_env: list[k8s_models.EnvVar] | None = None
+
 
 class DockerBackendConfig(BaseModel):
     """Docker-specific configuration for AI workers (local development)."""
