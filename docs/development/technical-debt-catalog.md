@@ -115,21 +115,12 @@ A similar measurement in `frontend/src` shows `frontend/src/chat/ToolUI.jsx` at 
   - Fresh clone can follow docs exactly without corrective guesswork.
   - Doc consistency checks fail PRs when requirements drift.
 
-## 6) Packaging and metadata hygiene debt
+## 6) ~~Packaging and metadata hygiene debt~~ (RESOLVED)
 
-- **Evidence**
-  - `pyproject.toml` includes placeholder metadata (`Your Name`, placeholder URLs, TODO comments).
-  - Duplicate `passlib[bcrypt]` dependency entries exist with different version specs.
-- **Why this matters**
-  - Ambiguous package identity and potential dependency resolution confusion.
-  - Avoidable maintenance cost when upgrading dependencies.
-- **Resolution project: “Build Metadata Normalization”**
-  - Normalize package metadata (author, URLs, classifiers/license confirmation).
-  - Remove duplicate/contradictory dependency declarations.
-  - Add lockfile policy checks to prevent duplicate top-level dependencies.
-- **Definition of done**
-  - `pyproject.toml` has no placeholders/TODO metadata.
-  - Dependency graph is deduplicated and reproducible.
+- **Status**: Resolved (2026-02-18)
+- **Resolution**: Placeholder metadata in `pyproject.toml` replaced with correct author info and
+  GitHub URLs. Duplicate dependency entries removed (`passlib[bcrypt]`, `llm`, `asyncpg`, `httpx`).
+  Stale TODO comments cleaned up.
 
 ## 7) UI test stability debt (timing-based waits)
 
@@ -173,7 +164,7 @@ Recommended execution order:
 4. **Configuration Surface Cleanup** (developer/operator productivity)
 5. **Real-time Reliability Hardening** (resilience and UX)
 6. **Modularization Program** (sustained velocity and maintainability)
-7. **Build Metadata Normalization** (packaging hygiene)
+7. ~~**Build Metadata Normalization** (packaging hygiene)~~ RESOLVED
 8. **Path & Runtime Contract Consolidation** (deployment robustness)
 
 ## Governance recommendation
