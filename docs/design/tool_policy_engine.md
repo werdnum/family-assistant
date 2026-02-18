@@ -11,8 +11,10 @@ the current ad-hoc tool access control system (`enable_local_tools`, `confirm_to
 - **Priority-based rule evaluation** where higher-priority rules override lower-priority ones
 - **Operator config layering** where `config.yaml` overrides compose with `defaults.yaml`
 - **Per-profile policy rules** that compose with global defaults
-- **Dynamic taint-aware policies** that restrict tools when processing untrusted content
 - **Unified provider** replacing the separate `FilteredToolsProvider` + `ConfirmingToolsProvider`
+
+Taint tracking (dynamic restriction of tools based on untrusted content in the processing context)
+is deferred to future work. See section 11 for the deferred design.
 
 ### 1.1. Motivation
 
@@ -55,8 +57,8 @@ This design draws inspiration from:
 ### 2.1. Tool Metadata Registry
 
 Every tool -- both local Python tools and MCP server tools -- has a set of **tags** that describe
-its security-relevant properties. Tags are declared in code for local tools and in configuration for
-MCP tools.
+its security-relevant properties. Tags are declared inline in tool definitions for local tools and
+in configuration for MCP tools.
 
 ### 2.2. Policy Rules
 
@@ -78,12 +80,6 @@ Policies compose across three layers:
 Higher layers override lower layers through priority: operator rules at higher priority than
 defaults, profile rules at higher priority than operator rules.
 
-### 2.4. Taint Tracking
-
-When a tool produces output marked as potentially containing untrusted content (e.g., web scraping,
-email ingestion), the processing context's **taint level** escalates. Policy rules can be
-conditioned on the current taint level, enabling dynamic restriction of sensitive tools.
-
 ## 3. Tool Metadata
 
 ### 3.1. Tag Taxonomy
@@ -95,9 +91,10 @@ class ToolTag(StrEnum):
     # === Capability tags (what the tool does) ===
     READ_ONLY = "read_only"            # Only reads data, no side effects
     STATE_CHANGING = "state_changing"   # Modifies persistent state (DB, calendar, notes)
+    STATE_PERSISTING = "state_persisting"  # Persists data that may be re-injected into LLM context (notes, system state)
     EXTERNAL_COMM = "external_comm"    # Communicates externally (sends messages, emails)
     DESTRUCTIVE = "destructive"        # Deletes data or is hard to reverse
-    CODE_EXECUTION = "code_execution"  # Executes arbitrary code (scripts, workers)
+    CODE_EXECUTION = "code_execution"  # Executes code in a sandboxed environment
     BROWSER = "browser"                # Browser automation tools
     CAMERA = "camera"                  # Camera / surveillance access
     HOME_AUTOMATION = "home_auto"      # Home Assistant / IoT control
@@ -107,7 +104,7 @@ class ToolTag(StrEnum):
     # === Output trust tags (how safe is the output) ===
     OUTPUT_TRUSTED = "output_trusted"          # Output is from own DB or user-created content
     OUTPUT_UNTRUSTED = "output_untrusted"      # Output may contain prompt injection payloads
-    TRUST_UNSPECIFIED = "trust_unspecified"    # Trust level unknown (untagged MCP tools)
+    OUTPUT_UNSPECIFIED = "output_unspecified"   # Output safety unknown (untagged MCP tools)
 
     # === Functional group tags (for convenience matching) ===
     NOTES = "notes"
@@ -124,44 +121,73 @@ Tags are not mutually exclusive. A tool can be both `STATE_CHANGING` and `CALEND
 `OUTPUT_TRUSTED`. The capability and output trust tags are the most security-relevant; the
 functional group tags exist for ergonomic rule writing.
 
+**`CODE_EXECUTION` note**: Execution environments are sandboxed, and scripts propagate the calling
+profile's tool policy. A script cannot make tool calls that the calling profile wouldn't normally
+have access to -- scripts are constrained by the same policy as their caller. The `code_execution`
+tag is primarily useful for marking tools that allow indirect actions, so that operators can apply
+blanket restrictions (e.g., deny all code execution in an automated event handler profile) without
+needing to enumerate individual tools.
+
+**`STATE_PERSISTING` note**: Tools that write to storage which is later read back into the system
+prompt or LLM context are a vector for persistent prompt injection. For example, a prompt-injected
+instruction saved to a note could influence the LLM in future conversations when that note is
+included in context. The `state_persisting` tag allows policy rules to require confirmation or deny
+these tools when the processing context is considered risky. This is distinct from `state_changing`:
+a tool that modifies a calendar event is state-changing but not necessarily state-persisting
+(calendar events are not typically injected into the LLM's system prompt), whereas
+`add_or_update_note` is both state-changing and state-persisting because notes can appear in the
+system prompt.
+
 ### 3.2. Local Tool Metadata Declaration
 
-Each tool module declares metadata alongside its tool definitions:
+Tool metadata is declared inline as part of the tool definition itself, using a `tags` field in the
+`ToolDefinition` TypedDict:
+
+```python
+class ToolDefinition(TypedDict):
+    type: str
+    function: ToolFunctionSchema
+    tags: NotRequired[set[str]]  # Security-relevant metadata tags
+```
+
+Each tool module declares tags alongside its tool definitions:
 
 ```python
 # src/family_assistant/tools/calendar.py
 
-TOOL_METADATA: dict[str, set[ToolTag]] = {
-    "add_calendar_event": {
-        ToolTag.STATE_CHANGING, ToolTag.CALENDAR, ToolTag.OUTPUT_TRUSTED
+CALENDAR_TOOLS_DEFINITION: list[ToolDefinition] = [
+    {
+        "type": "function",
+        "function": {
+            "name": "add_calendar_event",
+            "description": "...",
+            "parameters": { ... },
+        },
+        "tags": {"state_changing", "calendar", "output_trusted"},
     },
-    "search_calendar_events": {
-        ToolTag.READ_ONLY, ToolTag.CALENDAR, ToolTag.OUTPUT_TRUSTED
+    {
+        "type": "function",
+        "function": {
+            "name": "search_calendar_events",
+            "description": "...",
+            "parameters": { ... },
+        },
+        "tags": {"read_only", "calendar", "output_trusted"},
     },
-    "modify_calendar_event": {
-        ToolTag.STATE_CHANGING, ToolTag.CALENDAR, ToolTag.OUTPUT_TRUSTED
+    {
+        "type": "function",
+        "function": {
+            "name": "delete_calendar_event",
+            "description": "...",
+            "parameters": { ... },
+        },
+        "tags": {"destructive", "state_changing", "calendar", "output_trusted"},
     },
-    "delete_calendar_event": {
-        ToolTag.DESTRUCTIVE, ToolTag.STATE_CHANGING, ToolTag.CALENDAR, ToolTag.OUTPUT_TRUSTED
-    },
-}
+]
 ```
 
-The `__init__.py` aggregates all module metadata into a single registry:
-
-```python
-# src/family_assistant/tools/__init__.py
-
-TOOL_METADATA_REGISTRY: dict[str, set[ToolTag]] = {
-    **notes.TOOL_METADATA,
-    **calendar_mod.TOOL_METADATA,
-    **communication.TOOL_METADATA,
-    # ... all tool modules ...
-}
-```
-
-A test validates that every tool in `AVAILABLE_FUNCTIONS` has a corresponding entry in
-`TOOL_METADATA_REGISTRY`, and vice versa.
+A test validates that every tool definition has a `tags` field, ensuring developers cannot
+accidentally ship a tool without considering its security properties.
 
 ### 3.3. MCP Tool Metadata
 
@@ -196,66 +222,89 @@ mcp_config:
 
 **Resolution**: When looking up metadata for an MCP tool, the system checks for an exact name match
 first, then falls back to the `"*"` wildcard for that server. If neither exists, the tool is treated
-as having `OUTPUT_UNTRUSTED` tag implicitly (see below).
+as having `OUTPUT_UNSPECIFIED` tag implicitly (see below).
 
 ### 3.4. Untagged Tools and Fail-Closed Defaults
 
 The system follows a **fail-closed** approach to tool metadata:
 
-**Local tools**: Every tool in `AVAILABLE_FUNCTIONS` **must** have an entry in
-`TOOL_METADATA_REGISTRY`. This is enforced at startup -- a missing entry is a hard error that
-prevents the application from starting. This ensures developers cannot accidentally ship a tool
-without considering its security properties.
+**Local tools**: Every tool definition **must** have a `tags` field. This is enforced at startup --
+a missing `tags` field is a hard error that prevents the application from starting. This ensures
+developers cannot accidentally ship a tool without considering its security properties.
 
 **MCP tools**: MCP tools without explicit metadata (no per-tool entry and no `"*"` wildcard for
-their server) automatically receive the `TRUST_UNSPECIFIED` tag. This tag honestly represents the
+their server) automatically receive the `OUTPUT_UNSPECIFIED` tag. This tag honestly represents the
 system's state of knowledge: we don't know what this tool does or whether its output is safe.
 
-The `trust_unspecified` tag is then handled by **policy rules**, keeping the security decision in
-the policy layer where it belongs. The application defaults include rules for `trust_unspecified`
+The `output_unspecified` tag is then handled by **policy rules**, keeping the security decision in
+the policy layer where it belongs. The application defaults include rules for `output_unspecified`
 tools (see section 5.1 for examples), but operators and profiles can override these rules to match
 their risk appetite:
 
 ```yaml
 # Default application policy (in defaults.yaml):
-# Treat unspecified-trust tools conservatively
-- match: { tags_any: ["trust_unspecified"] }
+# Treat unspecified-output tools conservatively
+- match: { tags_any: ["output_unspecified"] }
   decision: "confirm"
   priority: 15
   description: "Unknown MCP tools require confirmation"
 
 # An operator who trusts all their MCP servers could override:
-- match: { tags_any: ["trust_unspecified"] }
+- match: { tags_any: ["output_unspecified"] }
   decision: "allow"
   description: "Operator trusts all configured MCP servers"
 
 # A high-security profile could be stricter:
-- match: { tags_any: ["trust_unspecified"] }
+- match: { tags_any: ["output_unspecified"] }
   decision: "deny"
   priority: 50
   description: "Event handler blocks unknown tools entirely"
 ```
 
-With `trust_unspecified`, untagged MCP tools:
+With `output_unspecified`, untagged MCP tools:
 
-- Are **matchable by policy rules** via `tags_any: ["trust_unspecified"]`, giving operators and
+- Are **matchable by policy rules** via `tags_any: ["output_unspecified"]`, giving operators and
   profiles full control over how to handle them
 - Are **not matched** by tag-based rules checking for specific capability tags (e.g.,
   `tags_any: ["read_only"]`), so they will not be accidentally allowed by broad tag rules
 - **Are matched** by name-based rules and MCP server ID rules
 - Fall through to the `default_decision` of the policy if no rule matches
 
-**Taint behavior**: For taint propagation (section 6.3), `trust_unspecified` tools are treated the
-same as `output_untrusted` -- their output escalates the context taint level. An operator who wants
-to suppress this for specific servers should tag those servers' tools with `output_trusted` via the
-`"*"` wildcard in `tool_metadata`, which removes the `trust_unspecified` tag.
-
 **Rationale**: Local tools are under our control, so we can require exhaustive metadata at
 development time. MCP tools are third-party, so we cannot require metadata. Rather than pretending
 we know something we don't (by forcing `output_untrusted`), we label the gap in our knowledge
 honestly and let the policy engine decide. This is more composable: different profiles can handle
-unspecified trust differently (e.g., the main assistant confirms, the event handler denies, a
-development profile allows).
+unspecified output safety differently (e.g., the main assistant confirms, the event handler denies,
+a development profile allows).
+
+### 3.5. MCP ToolAnnotations Alignment
+
+The MCP protocol specification (2025-11-25) defines `ToolAnnotations` with the following hints:
+
+- `readOnlyHint: boolean` (default false)
+- `destructiveHint: boolean` (default true when not readOnly)
+- `idempotentHint: boolean` (default false)
+- `openWorldHint: boolean` (default true)
+
+Our tag system is a superset of these hints. When processing MCP tools that provide annotations, the
+system maps MCP annotations to our tags as follows:
+
+- `readOnlyHint: true` -> `read_only` tag
+- `destructiveHint: true` (and not readOnly) -> `destructive` tag
+- `openWorldHint: true` -> `output_untrusted` tag (open-world tools may return content containing
+  prompt injections)
+
+This mapping provides a useful starting point for MCP tools that lack explicit `tool_metadata`
+configuration. However, per the MCP specification:
+
+> "Descriptions of tool behavior such as annotations should be considered untrusted, unless obtained
+> from a trusted server."
+
+This means MCP-provided annotations are treated as **hints only**. Operator configuration in
+`tool_metadata` always takes precedence over MCP-provided annotations. An untrusted MCP server could
+lie about its tools being read-only, so the system must not grant elevated trust based solely on
+server-provided annotations. The annotation-derived tags are applied only when no explicit
+`tool_metadata` entry (per-tool or wildcard) exists for the tool.
 
 ## 4. Policy Rule Model
 
@@ -286,7 +335,6 @@ class PolicyRule(BaseModel):
     decision: str                                   # "allow", "deny", or "confirm"
     priority: int = 0                               # Higher priority wins
     description: str = ""                           # Human-readable audit trail
-    when_tainted: str | None = None                 # Only apply when context taint >= this level
 ```
 
 ```python
@@ -335,13 +383,9 @@ match:
 ### 4.3. Evaluation Algorithm
 
 ```
-function evaluate(tool_name, mcp_server_id, context_taint_level):
+function evaluate(tool_name, mcp_server_id):
     # Sort rules by priority descending
     for rule in rules sorted by -priority:
-        # Skip rules that don't apply at current taint level
-        if rule.when_tainted and context_taint_level < rule.when_tainted:
-            continue
-
         # Check if tool matches this rule
         if rule.match matches (tool_name, tool_tags, mcp_server_id):
             return rule.decision
@@ -352,21 +396,6 @@ function evaluate(tool_name, mcp_server_id, context_taint_level):
 When multiple rules have the same priority, the **first matching rule** (in declaration order) wins.
 This is deterministic: rules are evaluated in the order they appear in configuration, with priority
 as the primary sort key.
-
-### 4.4. Taint-Conditional Rules
-
-Rules can specify `when_tainted` to only apply when the processing context has been tainted by
-untrusted content. The taint levels form an ordered hierarchy:
-
-```
-trusted < partially_tainted < untrusted
-```
-
-A rule with `when_tainted: "untrusted"` only applies when `context_taint_level >= untrusted`. A rule
-with `when_tainted: "partially_tainted"` applies when the level is `partially_tainted` or
-`untrusted`.
-
-Rules without `when_tainted` (the default) always apply regardless of taint level.
 
 ## 5. Configuration Structure
 
@@ -419,24 +448,10 @@ default_profile_settings:
         priority: 10
 
       # --- Require confirmation for untagged MCP tools ---
-      - match: { tags_any: ["trust_unspecified"] }
+      - match: { tags_any: ["output_unspecified"] }
         decision: "confirm"
         priority: 15
         description: "Unknown MCP tools require confirmation by default"
-
-      # --- Taint-aware: block external communication when tainted ---
-      - match: { tags_any: ["external_comm"] }
-        decision: "deny"
-        when_tainted: "untrusted"
-        priority: 100
-        description: "Block external communication when processing untrusted content"
-
-      # --- Taint-aware: require confirmation for state changes when tainted ---
-      - match: { tags_any: ["state_changing"] }
-        decision: "confirm"
-        when_tainted: "untrusted"
-        priority: 90
-        description: "Require confirmation for state changes on tainted context"
 ```
 
 ### 5.2. Per-Profile Overrides
@@ -588,12 +603,11 @@ defaults).
 
 **Priority offset constants**:
 
-| Layer                | Offset | Effective Range | Description                                                     |
-| -------------------- | ------ | --------------- | --------------------------------------------------------------- |
-| Application defaults | +0     | 0-99            | Base policies shipped with the app                              |
-| Profile-specific     | +0     | 0-99            | Profile's own tool access rules                                 |
-| Operator overrides   | +1000  | 1000-1099       | Deployment-specific overrides                                   |
-| Taint-conditional    | (any)  | (any)           | Declared at whatever layer; use high priority within that layer |
+| Layer                | Offset | Effective Range | Description                        |
+| -------------------- | ------ | --------------- | ---------------------------------- |
+| Application defaults | +0     | 0-99            | Base policies shipped with the app |
+| Profile-specific     | +0     | 0-99            | Profile's own tool access rules    |
+| Operator overrides   | +1000  | 1000-1099       | Deployment-specific overrides      |
 
 Profile-specific rules use the same priority range as defaults (0-99) because they are scoped to a
 single profile and compose with defaults within that scope. Operator rules always override both due
@@ -607,97 +621,9 @@ to the +1000 offset.
    Prepending operator rules means they win ties against application defaults. This is a safety net
    -- in practice the +1000 offset should make ties rare.
 
-## 6. Taint Tracking and Dynamic Policies
+## 6. PolicyEnforcingToolsProvider
 
-### 6.1. Taint Levels
-
-```python
-class TaintLevel(StrEnum):
-    TRUSTED = "trusted"                # Direct user input, own database content
-    PARTIALLY_TAINTED = "partially_tainted"  # Processed/sanitized external content
-    UNTRUSTED = "untrusted"            # Raw external content (emails, web scraping)
-```
-
-Taint levels are ordered: `TRUSTED < PARTIALLY_TAINTED < UNTRUSTED`. Escalation is one-way within a
-processing turn -- once tainted, the context stays tainted until the conversation turn ends.
-
-### 6.2. Taint Sources
-
-The taint level of the processing context escalates when:
-
-1. **A tool with `output_untrusted` or `trust_unspecified` tag executes**: The tool's output is
-   injected into the LLM context and may contain injection payloads. Context escalates to
-   `UNTRUSTED`. Tools with unknown trust (`trust_unspecified`) are treated conservatively.
-
-2. **Processing an email or forwarded message**: The input source is external and not fully vetted.
-   Context starts at `UNTRUSTED` for these interactions.
-
-3. **Delegation with taint inheritance**: When a profile delegates to another profile and
-   `inherit_taint` is true (default), the target profile inherits the source's taint level.
-
-### 6.3. Taint Propagation in ProcessingService
-
-After each tool execution in the processing loop, the `ProcessingService` checks if the tool's
-output is tagged as untrusted:
-
-```python
-# In the tool execution loop of ProcessingService
-tool_tags = get_effective_tags(tool_name, tool_metadata_registry)
-# For MCP tools without metadata, tool_tags will contain {TRUST_UNSPECIFIED}
-# Local tools always have explicit metadata (enforced at startup)
-
-# Taint escalation: output_untrusted OR trust_unspecified (unless explicitly trusted)
-taints_context = (
-    ToolTag.OUTPUT_UNTRUSTED in tool_tags
-    or ToolTag.TRUST_UNSPECIFIED in tool_tags
-) and ToolTag.OUTPUT_TRUSTED not in tool_tags
-
-if taints_context:
-    exec_context.context_taint_level = max(
-        exec_context.context_taint_level,
-        TaintLevel.UNTRUSTED
-    )
-```
-
-The `PolicyEngine` receives the current taint level for each evaluation, enabling taint-conditional
-rules to activate dynamically.
-
-### 6.4. Rule of Two Integration
-
-Taint-conditional rules implement the **Rule of Two** from Meta's AI agent security framework:
-
-| Scenario                     | Properties                                          | Taint-Conditional Rules                                                              |
-| ---------------------------- | --------------------------------------------------- | ------------------------------------------------------------------------------------ |
-| **Trusted [BC]**             | Trusted input + sensitive data + state changes      | No taint rules active; full tool access                                              |
-| **Untrusted-Readonly [AB]**  | Untrusted input + sensitive data + NO state changes | `when_tainted: "untrusted"` deny rules block `state_changing` and `external_comm`    |
-| **Untrusted-Sandboxed [AC]** | Untrusted input + NO sensitive data + state changes | `when_tainted: "untrusted"` deny rules block tools tagged with sensitive data access |
-
-The default application rules implement the **[AB] fallback** -- when context is tainted, block
-external communication and require confirmation for state changes. Operators can configure stricter
-policies (full deny of state-changing tools) or looser ones depending on their threat model.
-
-### 6.5. Limitations of Taint Tracking
-
-- **MCP tools without metadata**: As described in section 3.4, MCP tools without explicit metadata
-  receive the `trust_unspecified` tag and escalate taint by default. The policy engine handles
-  access control for these tools via rules matching `trust_unspecified`. Operators who want to avoid
-  taint escalation from a trusted MCP server should configure `tool_metadata` with `output_trusted`
-  tags. This may cause false taint escalation for trusted-but-unconfigured MCP servers, which is
-  preferable to missing a genuine injection vector.
-
-- **Context window persistence**: Once the LLM's context contains untrusted content from a previous
-  turn, subsequent turns may still be influenced. The taint tracking per-turn model does not address
-  persistent context contamination. A more sophisticated approach would track taint at the message
-  level, but this is deferred as future work.
-
-- **LLM-level prompt injection defenses**: Taint tracking restricts tool access but does not prevent
-  the LLM from being influenced by injected instructions in other ways (e.g., changing its response
-  style or revealing information via text responses). Defense in depth with input sanitization and
-  output monitoring remains important.
-
-## 7. PolicyEnforcingToolsProvider
-
-### 7.1. Architecture
+### 6.1. Architecture
 
 The new `PolicyEnforcingToolsProvider` replaces both `FilteredToolsProvider` and
 `ConfirmingToolsProvider` with a single provider that makes unified access decisions:
@@ -709,7 +635,7 @@ PolicyEnforcingToolsProvider (unified allow/deny/confirm)
     |-- MCPToolsProvider (all MCP server tools)
 ```
 
-### 7.2. Behavior
+### 6.2. Behavior
 
 ```python
 class PolicyEnforcingToolsProvider(ToolsProvider):
@@ -742,7 +668,6 @@ class PolicyEnforcingToolsProvider(ToolsProvider):
         decision = self.policy_engine.evaluate(
             tool_name,
             mcp_server_id=self._get_server_id(tool_name),
-            taint_level=exec_context.context_taint_level,
         )
 
         if decision == PolicyDecision.DENY:
@@ -755,13 +680,10 @@ class PolicyEnforcingToolsProvider(ToolsProvider):
 
         result = await self.wrapped_provider.execute_tool(tool_name, arguments, exec_context)
 
-        # Propagate taint if tool output is untrusted
-        self._propagate_taint(tool_name, exec_context)
-
         return result
 ```
 
-### 7.3. Confirmation Integration
+### 6.3. Confirmation Integration
 
 The existing confirmation infrastructure (confirmation renderers for calendar events, timeout
 handling, web/Telegram confirmation UI) is preserved. The `PolicyEnforcingToolsProvider` uses the
@@ -770,19 +692,9 @@ today.
 
 The key difference: instead of checking a `confirm_tools` set, it queries the `PolicyEngine`.
 
-### 7.4. Dynamic Re-evaluation
+## 7. Delegation Policy
 
-Because the `PolicyEngine` receives the current `context_taint_level` on each `evaluate()` call, the
-effective policy can change mid-conversation. A tool that was allowed on the first call may become
-denied or require confirmation after a tool with untrusted output executes.
-
-**Important**: `get_tool_definitions()` is called at the start of each LLM turn (not once at
-startup). This means the LLM's visible tool set can shrink during a conversation as taint escalates.
-The provider must re-evaluate which tools to expose on each call.
-
-## 8. Delegation Policy
-
-### 8.1. Current Model
+### 7.1. Current Model
 
 The current `delegation_security_level` field on `ProcessingConfig` remains conceptually the same
 but is now expressed as part of the policy system:
@@ -792,9 +704,9 @@ but is now expressed as part of the policy system:
 - `"confirm"`: Delegation requires confirmation.
 - `"unrestricted"`: Delegation is allowed without confirmation.
 
-### 8.2. Enhanced Delegation Controls
+### 7.2. Enhanced Delegation Controls
 
-Two new optional fields on `ProcessingConfig`:
+A new optional field on `ProcessingConfig`:
 
 ```yaml
 processing_config:
@@ -802,26 +714,15 @@ processing_config:
 
   # NEW: Only these profiles can delegate to this one. None = any.
   allowed_delegation_sources: ["default_assistant"]
-
-  # NEW: Whether delegated context inherits source taint level. Default: true.
-  inherit_delegation_taint: true
 ```
 
 **Source restrictions**: `allowed_delegation_sources` prevents unintended delegation chains. For
 example, the `telephone` profile (which handles untrusted voice input) should not be able to
 delegate to the `automation_creation` profile (which can create arbitrary automations).
 
-**Taint inheritance**: When `inherit_delegation_taint` is true (default), the delegated profile's
-`ToolExecutionContext` starts with the source profile's taint level. This prevents circumventing
-taint restrictions by delegating to a "clean" profile.
+## 8. Configuration Model Changes
 
-When `inherit_delegation_taint` is false, the delegated profile starts with `TRUSTED` taint. This is
-appropriate when the delegation target processes a sanitized/summarized version of the input rather
-than raw untrusted content.
-
-## 9. Configuration Model Changes
-
-### 9.1. Removed Fields
+### 8.1. Removed Fields
 
 The following fields are **removed** from `ToolsConfig`:
 
@@ -829,7 +730,7 @@ The following fields are **removed** from `ToolsConfig`:
 - `enable_mcp_server_ids: list[str] | None` -- replaced by policy allow rules with `mcp_server_ids`
 - `confirm_tools: list[str]` -- replaced by policy confirm rules
 
-### 9.2. New `tools_policy` Field
+### 8.2. New `tools_policy` Field
 
 A new field `tools_policy` on `ServiceProfile` and `DefaultProfileSettings` replaces `tools_config`
 for tool access control:
@@ -848,7 +749,6 @@ class PolicyRuleConfig(BaseModel):
     decision: str                           # "allow", "deny", "confirm"
     priority: int = 0
     description: str = ""
-    when_tainted: str | None = None         # "trusted", "partially_tainted", "untrusted"
 
 class ToolPolicyConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
@@ -862,7 +762,7 @@ class ToolsConfig(BaseModel):
     confirmation_timeout_seconds: float = 3600.0
 ```
 
-### 9.3. ServiceProfile Changes
+### 8.3. ServiceProfile Changes
 
 ```python
 class ServiceProfile(BaseModel):
@@ -878,7 +778,7 @@ class ServiceProfile(BaseModel):
     visibility_grants: list[str] = Field(default_factory=list)
 ```
 
-### 9.4. MCP Config Changes
+### 8.4. MCP Config Changes
 
 ```python
 class MCPServerConfig(BaseModel):
@@ -890,7 +790,7 @@ class MCPServerConfig(BaseModel):
     tool_metadata: dict[str, list[str]] = Field(default_factory=dict)
 ```
 
-### 9.5. ProcessingConfig Changes
+### 8.5. ProcessingConfig Changes
 
 ```python
 class ProcessingConfig(BaseModel):
@@ -899,12 +799,11 @@ class ProcessingConfig(BaseModel):
 
     # NEW
     allowed_delegation_sources: list[str] | None = None
-    inherit_delegation_taint: bool = True
 ```
 
-## 10. Migration from Current System
+## 9. Migration from Current System
 
-### 10.1. Translation Rules
+### 9.1. Translation Rules
 
 Every existing configuration can be mechanically translated to the new policy model:
 
@@ -916,7 +815,7 @@ Every existing configuration can be mechanically translated to the new policy mo
 | `enable_mcp_server_ids: ["server1"]`       | `rules: [{match: {mcp_server_ids: ["server1"]}, decision: "allow", priority: 10}]`                                 |
 | `enable_mcp_server_ids: []`                | No MCP allow rules; `default_decision: "deny"` blocks them                                                         |
 
-### 10.2. Migration of Existing Profiles
+### 9.2. Migration of Existing Profiles
 
 **`default_assistant`** (currently inherits all defaults):
 
@@ -1004,7 +903,7 @@ tools_policy:
       priority: 10
 ```
 
-### 10.3. Benefits of Migration
+### 9.3. Benefits of Migration
 
 After migration, common operations become much simpler:
 
@@ -1034,17 +933,16 @@ default_profile_settings:
         priority: 500
 ```
 
-## 11. Implementation Phases
+## 10. Implementation Phases
 
-### Phase 1: Tool Metadata Registry
+### Phase 1: Tool Metadata
 
-Add tags to all local tools. No behavior changes.
+Add tags to all local tool definitions. No behavior changes.
 
-- Create `src/family_assistant/tools/metadata.py` with `ToolTag` enum
-- Add `TOOL_METADATA` dicts to each tool module
-- Aggregate into `TOOL_METADATA_REGISTRY` in `__init__.py`
+- Add `ToolTag` enum to `src/family_assistant/tools/metadata.py`
+- Add `tags` field to each tool definition dict in tool modules
 - Add `tool_metadata` field to `MCPServerConfig`
-- Test: every tool in `AVAILABLE_FUNCTIONS` has metadata entry; every tag is valid
+- Test: every tool definition has a `tags` field; tag values are valid
 
 ### Phase 2: Policy Engine
 
@@ -1054,7 +952,7 @@ Implement the rule evaluation engine with exhaustive tests.
   `PolicyDecision`
 - Add config models: `ToolPolicyConfig`, `PolicyRuleConfig`, `ToolMatcherConfig`
 - Test: name matching, glob patterns, tag matching (all/any), MCP server matching, priority
-  ordering, default decisions, edge cases, taint-conditional rules
+  ordering, default decisions, edge cases
 
 ### Phase 3: PolicyEnforcingToolsProvider
 
@@ -1062,7 +960,7 @@ Unified provider that replaces FilteredToolsProvider + ConfirmingToolsProvider.
 
 - Create `PolicyEnforcingToolsProvider` in `infrastructure.py`
 - Preserve existing confirmation infrastructure (renderers, callbacks, timeout)
-- Test: denied tools excluded from definitions, confirm tools trigger callback, taint propagation
+- Test: denied tools excluded from definitions, confirm tools trigger callback
 
 ### Phase 4: Config Migration
 
@@ -1076,33 +974,64 @@ Replace `enable_local_tools`/`confirm_tools`/`enable_mcp_server_ids` with `tools
 - Remove `FilteredToolsProvider` and `ConfirmingToolsProvider`
 - Update all tests
 
-### Phase 5: Taint Tracking
-
-Add taint propagation to the processing loop.
-
-- Add `TaintLevel` and `context_taint_level` to `ToolExecutionContext`
-- Add taint propagation in `ProcessingService` after tool execution
-- Taint-conditional rules already supported by Phase 2 engine
-- Test: taint escalation, conditional rules activating, delegation taint inheritance
-
-### Phase 6: Enhanced Delegation
+### Phase 5: Enhanced Delegation
 
 Richer delegation controls.
 
-- Add `allowed_delegation_sources` and `inherit_delegation_taint` to `ProcessingConfig`
-- Update `delegate_to_service` tool to check source restrictions and propagate taint
-- Test: source restrictions, taint inheritance, backwards compatibility
+- Add `allowed_delegation_sources` to `ProcessingConfig`
+- Update `delegate_to_service` tool to check source restrictions
+- Test: source restrictions, backwards compatibility
+
+## 11. Future Work: Taint Tracking
+
+Taint tracking -- dynamically restricting tools based on untrusted content in the processing context
+-- is deferred to be designed and implemented as a cohesive unit. The output trust tags
+(`output_trusted`, `output_untrusted`, `output_unspecified`) are included in the tag taxonomy now
+because they are useful for static policy rules even without taint tracking, but the dynamic taint
+propagation system is not part of the initial implementation.
+
+The deferred design includes the following components:
+
+- **Per-profile default taint level**: Each processing profile would have a configurable default
+  taint level (e.g., `trusted` for the main assistant, `untrusted` for an email handler). This is a
+  property of the profile configuration rather than hardcoded per input source.
+
+- **Taint propagation from tool output tags**: After tool execution, the processing context's taint
+  level would escalate based on the tool's output trust tags. Tools tagged `output_untrusted` or
+  `output_unspecified` would escalate taint to `untrusted`. Tools tagged `output_trusted` would not
+  escalate taint.
+
+- **Taint-conditional policy rules**: A `when_tainted` field on `PolicyRule` would allow rules to
+  activate only when the processing context's taint level meets a threshold (e.g.,
+  `when_tainted: "untrusted"` to deny `external_comm` tools when processing untrusted content).
+
+- **Cross-turn taint persistence**: Message-level taint tracking to handle the case where untrusted
+  content from a previous turn persists in the LLM's context window and may influence subsequent
+  turns. The implementation should be straightforward: store taint metadata alongside messages in
+  message history (or reconstruct it from tool definition tags when loading history). When
+  constructing an LLM request, the system determines whether the request is tainted by examining
+  which function call responses are included -- if any included tool result came from a tool tagged
+  `output_untrusted` or `output_unspecified`, the request context is tainted. This avoids complex
+  propagation logic: taint is a property of the assembled LLM request, derived from the tool
+  metadata of the function call results it contains.
+
+- **Delegation taint inheritance**: A configurable `inherit_delegation_taint` field on
+  `ProcessingConfig` to control whether delegated profiles inherit the source profile's taint level,
+  preventing circumvention of taint restrictions by delegating to a "clean" profile.
+
+These components interact closely and should be designed together to avoid partial implementations
+that create a false sense of security. The Rule of Two integration (restricting [BC] to [AB] or [AC]
+based on taint level) is the primary use case driving this design.
 
 ## 12. Testing Strategy
 
 ### 12.1. Unit Tests
 
-- **`test_tool_metadata.py`**: Every tool has metadata; tag values are valid; metadata and
-  `AVAILABLE_FUNCTIONS` are consistent
+- **`test_tool_metadata.py`**: Every tool definition has a `tags` field; tag values are valid
 - **`test_policy_engine.py`**: Rule evaluation logic -- name globs, tag matching, priorities,
-  defaults, taint conditions, edge cases. This is the most critical test file.
+  defaults, edge cases. This is the most critical test file.
 - **`test_policy_enforcing_provider.py`**: Provider filters definitions, blocks denied tools,
-  triggers confirmation, propagates taint
+  triggers confirmation
 
 ### 12.2. Security-Critical Scenarios
 
@@ -1110,28 +1039,23 @@ These must have dedicated test cases:
 
 01. A deny rule at priority N blocks a tool despite an allow rule at priority M < N
 02. An untagged MCP tool is denied in a `default_decision: "deny"` policy
-03. A taint-conditional deny rule activates after an `output_untrusted` tool executes
-04. A profile cannot bypass a global operator deny rule (priority enforcement via +1000 offset)
-05. `delegate_to_service` respects `allowed_delegation_sources`
-06. Taint propagates through delegation when `inherit_delegation_taint` is true
-07. A tool that matches both allow and deny at the same priority: first-match semantics
-08. Empty matcher (`ToolMatcher()` with all None) matches nothing
-09. Application startup fails if a local tool in `AVAILABLE_FUNCTIONS` has no metadata entry
-10. An MCP tool without metadata receives `trust_unspecified` tag and escalates taint
-11. An MCP tool explicitly tagged `output_trusted` does NOT escalate taint
-12. Policy rules can match `trust_unspecified` to allow/deny/confirm untagged MCP tools
-13. Operator rules with default priority (0) override application default rules (automatic +1000
+03. A profile cannot bypass a global operator deny rule (priority enforcement via +1000 offset)
+04. `delegate_to_service` respects `allowed_delegation_sources`
+05. A tool that matches both allow and deny at the same priority: first-match semantics
+06. Empty matcher (`ToolMatcher()` with all None) matches nothing
+07. Application startup fails if a local tool definition has no `tags` field
+08. An MCP tool without metadata receives `output_unspecified` tag
+09. Policy rules can match `output_unspecified` to allow/deny/confirm untagged MCP tools
+10. Operator rules with default priority (0) override application default rules (automatic +1000
     offset verified)
 
 ### 12.3. Integration Tests
 
 - End-to-end profile setup from YAML config produces correct tool sets
-- Full processing loop with taint tracking and dynamic tool restriction
 - Existing profile behaviors are preserved after migration
 
 ### 12.4. Property-Based Tests (Hypothesis)
 
 - Priority invariant: if rule A has higher priority than rule B and both match the same tool, rule
   A's decision always wins
-- Metadata completeness: every tool name in `AVAILABLE_FUNCTIONS` exists in `TOOL_METADATA_REGISTRY`
-- Monotonic taint: taint level never decreases within a processing turn
+- Metadata completeness: every tool definition in the tool list has a `tags` field
