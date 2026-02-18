@@ -194,20 +194,36 @@ mcp_config:
 ```
 
 **Resolution**: When looking up metadata for an MCP tool, the system checks for an exact name match
-first, then falls back to the `"*"` wildcard for that server. If neither exists, the tool has an
-empty tag set -- policy rules that match by tag will not match it, but name-based rules still can.
+first, then falls back to the `"*"` wildcard for that server. If neither exists, the tool is treated
+as having `OUTPUT_UNTRUSTED` tag implicitly (see below).
 
-### 3.4. Untagged Tools
+### 3.4. Untagged Tools and Fail-Closed Defaults
 
-Tools without metadata (whether local tools missing from the registry or MCP tools from servers
-without `tool_metadata` config) are treated conservatively:
+The system follows a **fail-closed** approach to tool metadata:
 
-- They are **not matched** by any tag-based rule (neither `tags_all` nor `tags_any`)
+**Local tools**: Every tool in `AVAILABLE_FUNCTIONS` **must** have an entry in
+`TOOL_METADATA_REGISTRY`. This is enforced at startup -- a missing entry is a hard error that
+prevents the application from starting. This ensures developers cannot accidentally ship a tool
+without considering its security properties.
+
+**MCP tools**: MCP tools without explicit metadata (no per-tool entry and no `"*"` wildcard for
+their server) are treated as having `{OUTPUT_UNTRUSTED}` implicitly. This means:
+
+- They **trigger taint escalation** when executed (fail-closed for output trust)
+- They are **not matched** by tag-based rules checking for specific capability tags (e.g.,
+  `tags_any: ["read_only"]`), so they will not be accidentally allowed by broad tag rules
 - They **are matched** by name-based rules and MCP server ID rules
 - The `default_decision` of the policy applies if no rule matches
 
-This means an untagged MCP tool from an unconfigured server, in a policy with
-`default_decision: "deny"`, will be denied. Operators must explicitly allow tools they want.
+This ensures a "secure by default" posture: unknown MCP tools from unconfigured servers are denied
+(in a `default_decision: "deny"` policy) and their output is treated as untrusted. Operators must
+explicitly tag tools they trust.
+
+**Rationale**: Local tools are under our control, so we can require exhaustive metadata at
+development time. MCP tools are third-party, so we cannot require metadata -- but we can default to
+the most restrictive assumption. An operator who adds a new MCP server must either configure
+`tool_metadata` for it or accept that its tools will be treated as untrusted and may escalate
+context taint.
 
 ## 4. Policy Rule Model
 
@@ -466,15 +482,29 @@ The operator's `config.yaml` can override `defaults.yaml` policies. The merging 
 `tools_policy`:
 
 1. **`default_decision`**: Operator's value replaces the default if specified.
-2. **`rules`**: Operator's rules are **appended** to the default rules. Since rules are evaluated by
-   priority, operator rules at higher priority override default rules.
+2. **`rules`**: Operator's rules receive an **automatic priority offset** of +1000 and are
+   **prepended** to the default rules. This guarantees that operator rules always take precedence
+   over application defaults without requiring operators to manually manage priority numbers.
+
+**Automatic priority offsetting**: When merging rules from `config.yaml` into
+`default_profile_settings`, the system adds +1000 to each operator rule's declared priority. An
+operator rule with `priority: 0` becomes effective priority 1000, which is higher than any
+application default rule (0-99). This means operators write rules with simple, low priority numbers
+and the system ensures they override defaults:
+
+```python
+# During config merge
+for rule in operator_rules:
+    rule.effective_priority = rule.priority + OPERATOR_PRIORITY_OFFSET  # +1000
+```
 
 This means operators can:
 
-- **Add restrictions**: Add deny rules at high priority
-- **Remove restrictions**: Add allow rules at higher priority than default deny rules
-- **Add confirmation requirements**: Add confirm rules for specific tools
-- **Block entire categories**: Add deny rules matching tags
+- **Add restrictions**: Write deny rules (they automatically override default allow rules)
+- **Remove restrictions**: Write allow rules (they automatically override default deny rules)
+- **Add confirmation requirements**: Write confirm rules for specific tools
+- **Block entire categories**: Write deny rules matching tags
+- **All without thinking about priority numbers** -- the offset handles precedence
 
 **Example**: Operator wants to block all code execution and require confirmation for all Home
 Assistant tools:
@@ -485,48 +515,59 @@ default_profile_settings:
   tools_policy:
     rules:
       # Block code execution across all profiles
+      # Declared priority 0 -> effective priority 1000 (overrides any default)
       - match: { tags_any: ["code_execution"] }
         decision: "deny"
-        priority: 500
         description: "Operator policy: no code execution"
 
       # Require confirmation for all Home Assistant operations
       - match: { tags_any: ["home_auto"] }
         decision: "confirm"
-        priority: 500
         description: "Operator policy: confirm HA operations"
 ```
 
-Since priority 500 > any default rule priority (typically 10-100), these operator rules take
-precedence.
+The operator does not need to specify `priority` -- the default of 0 becomes effective priority 1000
+after offsetting, which overrides all application defaults (0-99). If the operator needs to order
+their own rules relative to each other, they can use priority values which will be offset uniformly
+(e.g., operator priority 10 becomes 1010, operator priority 20 becomes 1020).
 
 ### 5.4. Rule Merging Across Layers
 
-The effective policy for a profile is built by merging rules from three sources:
+The effective policy for a profile is built by merging rules from three sources with automatic
+priority offsetting:
 
 ```
-effective_rules = (
-    defaults.yaml default_profile_settings.tools_policy.rules
-    + config.yaml default_profile_settings.tools_policy.rules  (appended)
-    + profile-specific tools_policy.rules                      (appended)
+effective_rules = merge(
+    application defaults (priority as-is: 0-99),
+    operator overrides   (priority += 1000),
+    profile-specific     (priority as-is: 0-99, scoped to profile),
 )
+sorted by effective_priority descending, then declaration order for tie-breaking
 ```
 
-All rules go into a single list. The priority system handles precedence -- no complex merge logic
-needed. The `default_decision` is taken from the most specific layer that defines it (profile >
-operator > defaults).
+The `default_decision` is taken from the most specific layer that defines it (profile > operator >
+defaults).
 
-**Priority conventions** (recommended, not enforced):
+**Priority offset constants**:
 
-| Layer                | Priority Range | Description                         |
-| -------------------- | -------------- | ----------------------------------- |
-| Application defaults | 0-99           | Base policies shipped with the app  |
-| Operator overrides   | 100-499        | Deployment-specific restrictions    |
-| Profile-specific     | 0-99           | Profile's own tool access rules     |
-| Taint-conditional    | 500-999        | Dynamic restrictions (highest prio) |
+| Layer                | Offset | Effective Range | Description                                                     |
+| -------------------- | ------ | --------------- | --------------------------------------------------------------- |
+| Application defaults | +0     | 0-99            | Base policies shipped with the app                              |
+| Profile-specific     | +0     | 0-99            | Profile's own tool access rules                                 |
+| Operator overrides   | +1000  | 1000-1099       | Deployment-specific overrides                                   |
+| Taint-conditional    | (any)  | (any)           | Declared at whatever layer; use high priority within that layer |
 
-Profile rules typically use the same priority range as defaults (0-99) because they're scoped to a
-specific profile and don't need to override global rules within their own scope.
+Profile-specific rules use the same priority range as defaults (0-99) because they are scoped to a
+single profile and compose with defaults within that scope. Operator rules always override both due
+to the +1000 offset.
+
+**Why prepend + offset instead of append?** Two reasons:
+
+1. **Intuitive behavior**: Operators expect their config to override defaults. Automatic offsetting
+   makes this work without priority management.
+2. **Deterministic tie-breaking**: For equal effective priorities, rules earlier in the list win.
+   Prepending operator rules means they win ties against application defaults. This is a safety net
+   -- in practice the +1000 offset should make ties rare.
 
 ## 6. Taint Tracking and Dynamic Policies
 
@@ -563,7 +604,14 @@ output is tagged as untrusted:
 ```python
 # In the tool execution loop of ProcessingService
 tool_tags = tool_metadata_registry.get(tool_name, set())
-if ToolTag.OUTPUT_UNTRUSTED in tool_tags:
+
+# Fail-closed: if tool has no metadata (MCP tool without config), treat as untrusted.
+# Local tools always have metadata (enforced at startup).
+# A tool is trusted only if EXPLICITLY tagged as OUTPUT_TRUSTED.
+is_output_trusted = ToolTag.OUTPUT_TRUSTED in tool_tags
+is_output_untrusted = ToolTag.OUTPUT_UNTRUSTED in tool_tags or not is_output_trusted
+
+if is_output_untrusted:
     exec_context.context_taint_level = max(
         exec_context.context_taint_level,
         TaintLevel.UNTRUSTED
@@ -589,10 +637,11 @@ policies (full deny of state-changing tools) or looser ones depending on their t
 
 ### 6.5. Limitations of Taint Tracking
 
-- **MCP tools without metadata**: If an MCP tool's output trust is unknown (no `tool_metadata`
-  configured), the system cannot determine whether to escalate taint. The conservative approach is
-  to treat output from untagged MCP tools as potentially untrusted, but this may be overly
-  restrictive. The operator can configure appropriate tags.
+- **MCP tools without metadata**: As described in section 3.4, MCP tools without explicit metadata
+  default to `OUTPUT_UNTRUSTED` (fail-closed). This is intentionally conservative -- operators who
+  want to avoid taint escalation from a trusted MCP server must configure `tool_metadata` with
+  `OUTPUT_TRUSTED` tags. This may cause false taint escalation for trusted-but-unconfigured MCP
+  servers, which is preferable to the alternative of missing a genuine injection vector.
 
 - **Context window persistence**: Once the LLM's context contains untrusted content from a previous
   turn, subsequent turns may still be influenced. The taint tracking per-turn model does not address
@@ -1017,14 +1066,19 @@ Richer delegation controls.
 
 These must have dedicated test cases:
 
-1. A deny rule at priority N blocks a tool despite an allow rule at priority M < N
-2. An untagged MCP tool is denied in a `default_decision: "deny"` policy
-3. A taint-conditional deny rule activates after an `output_untrusted` tool executes
-4. A profile cannot bypass a global operator deny rule (priority enforcement)
-5. `delegate_to_service` respects `allowed_delegation_sources`
-6. Taint propagates through delegation when `inherit_delegation_taint` is true
-7. A tool that matches both allow and deny at the same priority: first-match semantics
-8. Empty matcher (`ToolMatcher()` with all None) matches nothing
+01. A deny rule at priority N blocks a tool despite an allow rule at priority M < N
+02. An untagged MCP tool is denied in a `default_decision: "deny"` policy
+03. A taint-conditional deny rule activates after an `output_untrusted` tool executes
+04. A profile cannot bypass a global operator deny rule (priority enforcement via +1000 offset)
+05. `delegate_to_service` respects `allowed_delegation_sources`
+06. Taint propagates through delegation when `inherit_delegation_taint` is true
+07. A tool that matches both allow and deny at the same priority: first-match semantics
+08. Empty matcher (`ToolMatcher()` with all None) matches nothing
+09. Application startup fails if a local tool in `AVAILABLE_FUNCTIONS` has no metadata entry
+10. An MCP tool without metadata escalates taint when executed (fail-closed output trust)
+11. An MCP tool explicitly tagged `OUTPUT_TRUSTED` does NOT escalate taint
+12. Operator rules with default priority (0) override application default rules (automatic +1000
+    offset verified)
 
 ### 12.3. Integration Tests
 
