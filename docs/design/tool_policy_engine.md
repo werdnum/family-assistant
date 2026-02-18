@@ -207,23 +207,39 @@ prevents the application from starting. This ensures developers cannot accidenta
 without considering its security properties.
 
 **MCP tools**: MCP tools without explicit metadata (no per-tool entry and no `"*"` wildcard for
-their server) are treated as having `{OUTPUT_UNTRUSTED}` implicitly. This means:
+their server) receive a configurable set of **fallback tags**. The default fallback is
+`{OUTPUT_UNTRUSTED}`, but operators can configure this globally:
 
-- They **trigger taint escalation** when executed (fail-closed for output trust)
-- They are **not matched** by tag-based rules checking for specific capability tags (e.g.,
+```yaml
+# In config.yaml or defaults.yaml
+mcp_config:
+  # Tags applied to MCP tools with no explicit metadata.
+  # Default: ["output_untrusted"] (fail-closed)
+  untagged_tool_fallback_tags: ["output_untrusted"]
+```
+
+With the default fail-closed fallback, untagged MCP tools:
+
+- **Trigger taint escalation** when executed (due to `output_untrusted` tag)
+- Are **not matched** by tag-based rules checking for specific capability tags (e.g.,
   `tags_any: ["read_only"]`), so they will not be accidentally allowed by broad tag rules
-- They **are matched** by name-based rules and MCP server ID rules
-- The `default_decision` of the policy applies if no rule matches
+- **Are matched** by name-based rules and MCP server ID rules
+- Fall through to the `default_decision` of the policy if no rule matches
 
-This ensures a "secure by default" posture: unknown MCP tools from unconfigured servers are denied
-(in a `default_decision: "deny"` policy) and their output is treated as untrusted. Operators must
-explicitly tag tools they trust.
+Operators with a higher risk tolerance can change this to `[]` (no fallback tags, meaning untagged
+MCP tools do not escalate taint) or to a different set like `["read_only"]` if they trust their MCP
+servers by default. The per-server `tool_metadata` with `"*"` wildcard always takes precedence over
+the global fallback.
+
+This ensures a "secure by default" posture while giving operators control: unknown MCP tools from
+unconfigured servers are denied (in a `default_decision: "deny"` policy) and their output is treated
+as untrusted unless the operator explicitly opts in to a more permissive stance.
 
 **Rationale**: Local tools are under our control, so we can require exhaustive metadata at
-development time. MCP tools are third-party, so we cannot require metadata -- but we can default to
-the most restrictive assumption. An operator who adds a new MCP server must either configure
-`tool_metadata` for it or accept that its tools will be treated as untrusted and may escalate
-context taint.
+development time. MCP tools are third-party, so we cannot require metadata -- but the default
+assumption should be conservative. The configurability acknowledges that different deployments have
+different threat models: a home lab operator who controls all their MCP servers may reasonably trust
+them, while a multi-tenant deployment should not.
 
 ## 4. Policy Rule Model
 
@@ -603,15 +619,15 @@ output is tagged as untrusted:
 
 ```python
 # In the tool execution loop of ProcessingService
-tool_tags = tool_metadata_registry.get(tool_name, set())
+tool_tags = get_effective_tags(tool_name, tool_metadata_registry, mcp_fallback_tags)
 
-# Fail-closed: if tool has no metadata (MCP tool without config), treat as untrusted.
-# Local tools always have metadata (enforced at startup).
 # A tool is trusted only if EXPLICITLY tagged as OUTPUT_TRUSTED.
+# Untagged MCP tools receive fallback tags (default: {OUTPUT_UNTRUSTED}).
+# Local tools always have explicit metadata (enforced at startup).
 is_output_trusted = ToolTag.OUTPUT_TRUSTED in tool_tags
-is_output_untrusted = ToolTag.OUTPUT_UNTRUSTED in tool_tags or not is_output_trusted
+is_output_untrusted = ToolTag.OUTPUT_UNTRUSTED in tool_tags
 
-if is_output_untrusted:
+if is_output_untrusted and not is_output_trusted:
     exec_context.context_taint_level = max(
         exec_context.context_taint_level,
         TaintLevel.UNTRUSTED
@@ -836,9 +852,17 @@ class ServiceProfile(BaseModel):
     visibility_grants: list[str] = Field(default_factory=list)
 ```
 
-### 9.4. MCPServerConfig Changes
+### 9.4. MCP Config Changes
 
 ```python
+class MCPConfig(BaseModel):
+    # ... existing fields ...
+    mcpServers: dict[str, MCPServerConfig] = Field(default_factory=dict)
+    # NEW: fallback tags for MCP tools without explicit metadata
+    untagged_tool_fallback_tags: list[str] = Field(
+        default_factory=lambda: ["output_untrusted"]
+    )
+
 class MCPServerConfig(BaseModel):
     model_config = ConfigDict(extra="allow")
     command: str | None = None
