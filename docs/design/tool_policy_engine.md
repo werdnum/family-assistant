@@ -105,8 +105,9 @@ class ToolTag(StrEnum):
     FILE_SYSTEM = "file_system"        # Reads/writes local filesystem
 
     # === Output trust tags (how safe is the output) ===
-    OUTPUT_TRUSTED = "output_trusted"      # Output is from own DB or user-created content
-    OUTPUT_UNTRUSTED = "output_untrusted"  # Output may contain prompt injection payloads
+    OUTPUT_TRUSTED = "output_trusted"          # Output is from own DB or user-created content
+    OUTPUT_UNTRUSTED = "output_untrusted"      # Output may contain prompt injection payloads
+    TRUST_UNSPECIFIED = "trust_unspecified"    # Trust level unknown (untagged MCP tools)
 
     # === Functional group tags (for convenience matching) ===
     NOTES = "notes"
@@ -207,39 +208,54 @@ prevents the application from starting. This ensures developers cannot accidenta
 without considering its security properties.
 
 **MCP tools**: MCP tools without explicit metadata (no per-tool entry and no `"*"` wildcard for
-their server) receive a configurable set of **fallback tags**. The default fallback is
-`{OUTPUT_UNTRUSTED}`, but operators can configure this globally:
+their server) automatically receive the `TRUST_UNSPECIFIED` tag. This tag honestly represents the
+system's state of knowledge: we don't know what this tool does or whether its output is safe.
+
+The `trust_unspecified` tag is then handled by **policy rules**, keeping the security decision in
+the policy layer where it belongs. The application defaults include rules for `trust_unspecified`
+tools (see section 5.1 for examples), but operators and profiles can override these rules to match
+their risk appetite:
 
 ```yaml
-# In config.yaml or defaults.yaml
-mcp_config:
-  # Tags applied to MCP tools with no explicit metadata.
-  # Default: ["output_untrusted"] (fail-closed)
-  untagged_tool_fallback_tags: ["output_untrusted"]
+# Default application policy (in defaults.yaml):
+# Treat unspecified-trust tools conservatively
+- match: { tags_any: ["trust_unspecified"] }
+  decision: "confirm"
+  priority: 15
+  description: "Unknown MCP tools require confirmation"
+
+# An operator who trusts all their MCP servers could override:
+- match: { tags_any: ["trust_unspecified"] }
+  decision: "allow"
+  description: "Operator trusts all configured MCP servers"
+
+# A high-security profile could be stricter:
+- match: { tags_any: ["trust_unspecified"] }
+  decision: "deny"
+  priority: 50
+  description: "Event handler blocks unknown tools entirely"
 ```
 
-With the default fail-closed fallback, untagged MCP tools:
+With `trust_unspecified`, untagged MCP tools:
 
-- **Trigger taint escalation** when executed (due to `output_untrusted` tag)
+- Are **matchable by policy rules** via `tags_any: ["trust_unspecified"]`, giving operators and
+  profiles full control over how to handle them
 - Are **not matched** by tag-based rules checking for specific capability tags (e.g.,
   `tags_any: ["read_only"]`), so they will not be accidentally allowed by broad tag rules
 - **Are matched** by name-based rules and MCP server ID rules
 - Fall through to the `default_decision` of the policy if no rule matches
 
-Operators with a higher risk tolerance can change this to `[]` (no fallback tags, meaning untagged
-MCP tools do not escalate taint) or to a different set like `["read_only"]` if they trust their MCP
-servers by default. The per-server `tool_metadata` with `"*"` wildcard always takes precedence over
-the global fallback.
-
-This ensures a "secure by default" posture while giving operators control: unknown MCP tools from
-unconfigured servers are denied (in a `default_decision: "deny"` policy) and their output is treated
-as untrusted unless the operator explicitly opts in to a more permissive stance.
+**Taint behavior**: For taint propagation (section 6.3), `trust_unspecified` tools are treated the
+same as `output_untrusted` -- their output escalates the context taint level. An operator who wants
+to suppress this for specific servers should tag those servers' tools with `output_trusted` via the
+`"*"` wildcard in `tool_metadata`, which removes the `trust_unspecified` tag.
 
 **Rationale**: Local tools are under our control, so we can require exhaustive metadata at
-development time. MCP tools are third-party, so we cannot require metadata -- but the default
-assumption should be conservative. The configurability acknowledges that different deployments have
-different threat models: a home lab operator who controls all their MCP servers may reasonably trust
-them, while a multi-tenant deployment should not.
+development time. MCP tools are third-party, so we cannot require metadata. Rather than pretending
+we know something we don't (by forcing `output_untrusted`), we label the gap in our knowledge
+honestly and let the policy engine decide. This is more composable: different profiles can handle
+unspecified trust differently (e.g., the main assistant confirms, the event handler denies, a
+development profile allows).
 
 ## 4. Policy Rule Model
 
@@ -401,6 +417,12 @@ default_profile_settings:
       - match: { mcp_server_ids: ["browser"] }
         decision: "deny"
         priority: 10
+
+      # --- Require confirmation for untagged MCP tools ---
+      - match: { tags_any: ["trust_unspecified"] }
+        decision: "confirm"
+        priority: 15
+        description: "Unknown MCP tools require confirmation by default"
 
       # --- Taint-aware: block external communication when tainted ---
       - match: { tags_any: ["external_comm"] }
@@ -603,8 +625,9 @@ processing turn -- once tainted, the context stays tainted until the conversatio
 
 The taint level of the processing context escalates when:
 
-1. **A tool with `output_untrusted` tag executes**: The tool's output is injected into the LLM
-   context, potentially containing injection payloads. Context escalates to `UNTRUSTED`.
+1. **A tool with `output_untrusted` or `trust_unspecified` tag executes**: The tool's output is
+   injected into the LLM context and may contain injection payloads. Context escalates to
+   `UNTRUSTED`. Tools with unknown trust (`trust_unspecified`) are treated conservatively.
 
 2. **Processing an email or forwarded message**: The input source is external and not fully vetted.
    Context starts at `UNTRUSTED` for these interactions.
@@ -619,15 +642,17 @@ output is tagged as untrusted:
 
 ```python
 # In the tool execution loop of ProcessingService
-tool_tags = get_effective_tags(tool_name, tool_metadata_registry, mcp_fallback_tags)
+tool_tags = get_effective_tags(tool_name, tool_metadata_registry)
+# For MCP tools without metadata, tool_tags will contain {TRUST_UNSPECIFIED}
+# Local tools always have explicit metadata (enforced at startup)
 
-# A tool is trusted only if EXPLICITLY tagged as OUTPUT_TRUSTED.
-# Untagged MCP tools receive fallback tags (default: {OUTPUT_UNTRUSTED}).
-# Local tools always have explicit metadata (enforced at startup).
-is_output_trusted = ToolTag.OUTPUT_TRUSTED in tool_tags
-is_output_untrusted = ToolTag.OUTPUT_UNTRUSTED in tool_tags
+# Taint escalation: output_untrusted OR trust_unspecified (unless explicitly trusted)
+taints_context = (
+    ToolTag.OUTPUT_UNTRUSTED in tool_tags
+    or ToolTag.TRUST_UNSPECIFIED in tool_tags
+) and ToolTag.OUTPUT_TRUSTED not in tool_tags
 
-if is_output_untrusted and not is_output_trusted:
+if taints_context:
     exec_context.context_taint_level = max(
         exec_context.context_taint_level,
         TaintLevel.UNTRUSTED
@@ -654,10 +679,11 @@ policies (full deny of state-changing tools) or looser ones depending on their t
 ### 6.5. Limitations of Taint Tracking
 
 - **MCP tools without metadata**: As described in section 3.4, MCP tools without explicit metadata
-  default to `OUTPUT_UNTRUSTED` (fail-closed). This is intentionally conservative -- operators who
-  want to avoid taint escalation from a trusted MCP server must configure `tool_metadata` with
-  `OUTPUT_TRUSTED` tags. This may cause false taint escalation for trusted-but-unconfigured MCP
-  servers, which is preferable to the alternative of missing a genuine injection vector.
+  receive the `trust_unspecified` tag and escalate taint by default. The policy engine handles
+  access control for these tools via rules matching `trust_unspecified`. Operators who want to avoid
+  taint escalation from a trusted MCP server should configure `tool_metadata` with `output_trusted`
+  tags. This may cause false taint escalation for trusted-but-unconfigured MCP servers, which is
+  preferable to missing a genuine injection vector.
 
 - **Context window persistence**: Once the LLM's context contains untrusted content from a previous
   turn, subsequent turns may still be influenced. The taint tracking per-turn model does not address
@@ -855,14 +881,6 @@ class ServiceProfile(BaseModel):
 ### 9.4. MCP Config Changes
 
 ```python
-class MCPConfig(BaseModel):
-    # ... existing fields ...
-    mcpServers: dict[str, MCPServerConfig] = Field(default_factory=dict)
-    # NEW: fallback tags for MCP tools without explicit metadata
-    untagged_tool_fallback_tags: list[str] = Field(
-        default_factory=lambda: ["output_untrusted"]
-    )
-
 class MCPServerConfig(BaseModel):
     model_config = ConfigDict(extra="allow")
     command: str | None = None
@@ -1099,9 +1117,10 @@ These must have dedicated test cases:
 07. A tool that matches both allow and deny at the same priority: first-match semantics
 08. Empty matcher (`ToolMatcher()` with all None) matches nothing
 09. Application startup fails if a local tool in `AVAILABLE_FUNCTIONS` has no metadata entry
-10. An MCP tool without metadata escalates taint when executed (fail-closed output trust)
-11. An MCP tool explicitly tagged `OUTPUT_TRUSTED` does NOT escalate taint
-12. Operator rules with default priority (0) override application default rules (automatic +1000
+10. An MCP tool without metadata receives `trust_unspecified` tag and escalates taint
+11. An MCP tool explicitly tagged `output_trusted` does NOT escalate taint
+12. Policy rules can match `trust_unspecified` to allow/deny/confirm untagged MCP tools
+13. Operator rules with default priority (0) override application default rules (automatic +1000
     offset verified)
 
 ### 12.3. Integration Tests
