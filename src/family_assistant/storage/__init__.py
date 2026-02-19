@@ -21,6 +21,7 @@ from sqlalchemy.ext.asyncio import AsyncEngine
 from alembic import command as alembic_command
 
 # Import base components using absolute package paths
+from family_assistant.paths import PROJECT_ROOT
 from family_assistant.storage.base import (
     create_engine_with_sqlite_optimizations,
     metadata,
@@ -131,9 +132,7 @@ async def _log_current_revision(engine: AsyncEngine) -> None:
 def _get_alembic_config(engine: AsyncEngine) -> AlembicConfig:
     """Loads the Alembic configuration."""
     alembic_ini_env_var = os.getenv("ALEMBIC_CONFIG")
-    project_root = os.path.abspath(
-        os.path.join(os.path.dirname(__file__), "..", "..", "..")
-    )
+    project_root = str(PROJECT_ROOT)
     default_alembic_ini_path = os.path.join(project_root, "alembic.ini")
 
     if alembic_ini_env_var:

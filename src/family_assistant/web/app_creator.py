@@ -1,7 +1,6 @@
 import json
 import logging
 import os
-import pathlib
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from typing import Any
@@ -17,6 +16,12 @@ from starlette.templating import _TemplateResponse
 from starlette.types import ASGIApp, Receive, Scope, Send
 
 # Import new auth and utils modules
+from family_assistant.paths import (
+    STATIC_DIR,
+    STATIC_DIST_DIR,
+    TEMPLATES_DIR,
+    get_docs_user_dir,
+)
 from family_assistant.web.auth import (
     AUTH_ENABLED,
     PUBLIC_PATHS,
@@ -53,53 +58,24 @@ SERVER_URL = os.getenv("SERVER_URL", "http://localhost:8000")
 
 
 # --- Determine base path for templates and static files ---
-try:
-    # __file__ is src/family_assistant/web/app_creator.py
-    # Project root is 4 levels up from app_creator.py
-    _project_root = pathlib.Path(__file__).parent.parent.parent.parent.resolve()
-    # Package root (src/family_assistant/) is 2 levels up from app_creator.py
-    package_root_dir = pathlib.Path(__file__).parent.parent.resolve()
+templates_dir = TEMPLATES_DIR
+static_dir = STATIC_DIR
+docs_user_dir = get_docs_user_dir()
 
-    templates_dir = package_root_dir / "templates"
-    static_dir = package_root_dir / "static"
-
-    # Allow docs directory to be configured via environment variable for Docker deployments
-    docs_user_dir_env = os.getenv("DOCS_USER_DIR")
-    if docs_user_dir_env:
-        docs_user_dir = pathlib.Path(docs_user_dir_env).resolve()
-        logger.info(f"Using DOCS_USER_DIR from environment: {docs_user_dir}")
-    else:
-        docs_user_dir = _project_root / "docs" / "user"
-        # In Docker, if the calculated path doesn't exist, try /app/docs/user
-        if not docs_user_dir.exists() and pathlib.Path("/app/docs/user").exists():
-            docs_user_dir = pathlib.Path("/app/docs/user")
-            logger.info(f"Using Docker default docs directory: {docs_user_dir}")
-
-    if not templates_dir.is_dir():
-        logger.warning(
-            f"Templates directory not found at expected location: {templates_dir}"
-        )
-    if not static_dir.is_dir():
-        logger.warning(f"Static directory not found at expected location: {static_dir}")
-    if not docs_user_dir.is_dir():
-        logger.warning(
-            f"User docs directory not found at expected location: {docs_user_dir}"
-        )
-
-    templates = Jinja2Templates(directory=templates_dir)
-    templates.env.filters["tojson"] = json.dumps
-    templates.env.globals["AUTH_ENABLED"] = AUTH_ENABLED
-
-except NameError:
-    logger.error(
-        "Could not determine package path using __file__. Static/template files might not load."
+if not templates_dir.is_dir():
+    logger.warning(
+        f"Templates directory not found at expected location: {templates_dir}"
     )
-    # Fallback paths, assuming execution from project root if __file__ is not defined.
-    # This is less likely to be hit with proper packaging.
-    templates = Jinja2Templates(directory="src/family_assistant/templates")
-    static_dir = pathlib.Path("src/family_assistant/static")
-    docs_user_dir = pathlib.Path("docs") / "user"
-    logger.warning(f"Using fallback user docs directory: {docs_user_dir}")
+if not static_dir.is_dir():
+    logger.warning(f"Static directory not found at expected location: {static_dir}")
+if not docs_user_dir.is_dir():
+    logger.warning(
+        f"User docs directory not found at expected location: {docs_user_dir}"
+    )
+
+templates = Jinja2Templates(directory=templates_dir)
+templates.env.filters["tojson"] = json.dumps
+templates.env.globals["AUTH_ENABLED"] = AUTH_ENABLED
 
 
 middleware = []
@@ -505,7 +481,7 @@ def configure_app_auth(
         if not html_filename.endswith(".html"):
             html_filename += ".html"
 
-        html_path = static_dir / "dist" / html_filename
+        html_path = STATIC_DIST_DIR / html_filename
 
         if html_path.exists() and html_path.is_file():
             return FileResponse(html_path, media_type="text/html")
