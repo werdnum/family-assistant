@@ -49,6 +49,7 @@ from google.genai.types import (
 )
 from starlette.websockets import WebSocketState
 
+from family_assistant.paths import WEB_RESOURCES_DIR
 from family_assistant.storage.context import get_db_context
 from family_assistant.tools.types import ToolExecutionContext, ToolResult
 from family_assistant.web.audio_utils import StatefulResampler
@@ -807,7 +808,7 @@ class AsteriskLiveHandler:
         negotiated sample rate if needed, and sends in frame-sized chunks
         with pacing to match real-time playback.
         """
-        resources_dir = pathlib.Path(__file__).parent.parent / "resources"
+        resources_dir = WEB_RESOURCES_DIR
         configured_wav = self.gemini_live_config.greeting.wav_path
         if configured_wav:
             candidate = pathlib.Path(configured_wav)

@@ -12,6 +12,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 from google.genai.types import Blob, Part
 from starlette.websockets import WebSocketState
 
+from family_assistant.paths import WEB_RESOURCES_DIR
 from family_assistant.web.routers.asterisk_live_api import AsteriskLiveHandler
 
 
@@ -248,18 +249,12 @@ class TestPrecannedGreeting(unittest.IsolatedAsyncioTestCase):
         """Test that pre-canned greeting sends audio frames to WebSocket."""
         with tempfile.TemporaryDirectory() as tmpdir:
             tmp_path = Path(tmpdir)
-            resources_dir = tmp_path / "web" / "resources"
-            resources_dir.mkdir(parents=True)
+            resources_dir = tmp_path
             self._make_wav_file(resources_dir, rate=16000, num_frames=1600)
 
-            # Create fake module path so Path(__file__).parent.parent resolves
-            # to our temp dir containing "web/resources/greeting.wav"
-            fake_module_file = tmp_path / "web" / "routers" / "asterisk_live_api.py"
-            fake_module_file.parent.mkdir(parents=True, exist_ok=True)
-
             with patch(
-                "family_assistant.web.routers.asterisk_live_api.__file__",
-                str(fake_module_file),
+                "family_assistant.web.routers.asterisk_live_api.WEB_RESOURCES_DIR",
+                resources_dir,
             ):
                 await self.handler._send_precanned_greeting()
 
@@ -272,15 +267,7 @@ class TestPrecannedGreeting(unittest.IsolatedAsyncioTestCase):
 
     async def test_greeting_sends_audio_with_real_path(self) -> None:
         """Test greeting sends audio using the actual greeting.wav resource."""
-        # Use the real greeting.wav if it exists
-        greeting_path = (
-            Path(__file__).parent.parent.parent.parent
-            / "src"
-            / "family_assistant"
-            / "web"
-            / "resources"
-            / "greeting.wav"
-        )
+        greeting_path = WEB_RESOURCES_DIR / "greeting.wav"
         if not greeting_path.exists():
             self.skipTest("greeting.wav not found")
 

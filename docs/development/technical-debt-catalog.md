@@ -138,21 +138,15 @@ A similar measurement in `frontend/src` shows `frontend/src/chat/ToolUI.jsx` at 
   - No raw timeout polling in page objects except justified low-level helpers.
   - Flake rate for functional web tests reduced below agreed threshold.
 
-## 8) Path fragility and environment coupling
+## 8) ~~Path fragility and environment coupling~~ (RESOLVED)
 
-- **Evidence**
-  - Router code uses deep `pathlib.Path(__file__).parent...` traversal and labels it fragile in TODO
-    (`src/family_assistant/web/routers/vite_pages.py`).
-- **Why this matters**
-  - Brittle behavior under packaging/layout changes and container variants.
-  - Hidden environment assumptions complicate deployment automation.
-- **Resolution project: “Path & Runtime Contract Consolidation”**
-  - Centralize project root/static path resolution in one tested utility.
-  - Move runtime path assumptions into explicit config with validation at startup.
-  - Add tests for dev/prod path resolution across containerized and local execution.
-- **Definition of done**
-  - No ad hoc deep parent traversal in routers.
-  - Startup validation fails fast with actionable config errors.
+- **Status**: Resolved (2026-02-19)
+- **Resolution**: All deep `pathlib.Path(__file__).parent...` traversals (up to 5 levels) across the
+  web layer and storage module have been replaced with a centralized `family_assistant.paths`
+  module. This module derives all paths (`PROJECT_ROOT`, `PACKAGE_ROOT`, `FRONTEND_DIR`,
+  `STATIC_DIR`, `STATIC_DIST_DIR`, `TEMPLATES_DIR`, `WEB_RESOURCES_DIR`) from a single anchor point
+  with a `validate_paths_at_startup()` function for early feedback. Unit tests verify all path
+  constants.
 
 ## Prioritized project portfolio
 
@@ -165,7 +159,7 @@ Recommended execution order:
 5. **Real-time Reliability Hardening** (resilience and UX)
 6. **Modularization Program** (sustained velocity and maintainability)
 7. ~~**Build Metadata Normalization** (packaging hygiene)~~ RESOLVED
-8. **Path & Runtime Contract Consolidation** (deployment robustness)
+8. ~~**Path & Runtime Contract Consolidation** (deployment robustness)~~ RESOLVED
 
 ## Governance recommendation
 

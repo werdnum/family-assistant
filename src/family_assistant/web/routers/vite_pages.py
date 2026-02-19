@@ -7,10 +7,11 @@ including chat, tools, and tool-test-bench interfaces.
 
 import logging
 import os
-import pathlib
 
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import FileResponse, Response
+
+from family_assistant.paths import FRONTEND_DIR, STATIC_DIST_DIR
 
 logger = logging.getLogger(__name__)
 vite_pages_router = APIRouter()
@@ -27,20 +28,7 @@ async def serve_service_worker(request: Request) -> FileResponse:
     """Serve the service worker from root path with proper headers to control all pages."""
     dev_mode = _get_dev_mode_from_request(request)
 
-    if dev_mode:
-        # In dev mode, proxy to Vite dev server
-        # The Vite dev server will serve the SW at /static/dist/sw.js
-        sw_path = (
-            pathlib.Path(__file__).parent.parent.parent.parent.parent
-            / "frontend"
-            / "src"
-            / "sw.js"
-        )
-    else:
-        # In production, serve from built dist directory
-        sw_path = (
-            pathlib.Path(__file__).parent.parent.parent / "static" / "dist" / "sw.js"
-        )
+    sw_path = FRONTEND_DIR / "src" / "sw.js" if dev_mode else STATIC_DIST_DIR / "sw.js"
 
     if sw_path.exists():
         return FileResponse(
@@ -63,12 +51,7 @@ async def serve_pwa_manifest(request: Request) -> FileResponse:
 
     if not dev_mode:
         # In production, serve from built dist directory
-        manifest_path = (
-            pathlib.Path(__file__).parent.parent.parent
-            / "static"
-            / "dist"
-            / "manifest.webmanifest"
-        )
+        manifest_path = STATIC_DIST_DIR / "manifest.webmanifest"
 
         if manifest_path.exists():
             return FileResponse(
@@ -96,17 +79,13 @@ def _serve_vite_html_file(request: Request, html_filename: str) -> Response:
 
     if dev_mode:
         # In dev mode, serve from frontend directory
-        # TODO: Replace with project root constant to reduce fragility
-        frontend_dir = (
-            pathlib.Path(__file__).parent.parent.parent.parent.parent / "frontend"
-        )
-        html_file = frontend_dir / html_filename
+        html_file = FRONTEND_DIR / html_filename
         if html_file.exists():
             return FileResponse(html_file, media_type="text/html")
         else:
             logger.error(
                 f"Dev mode: HTML file {html_filename} not found at {html_file}. "
-                f"Frontend dir exists: {frontend_dir.exists()}"
+                f"Frontend dir exists: {FRONTEND_DIR.exists()}"
             )
             raise HTTPException(
                 status_code=404,
@@ -114,16 +93,15 @@ def _serve_vite_html_file(request: Request, html_filename: str) -> Response:
             )
     else:
         # In production mode, serve from dist directory
-        static_dir = pathlib.Path(__file__).parent.parent.parent / "static" / "dist"
-        html_file = static_dir / html_filename
+        html_file = STATIC_DIST_DIR / html_filename
         if html_file.exists():
             return FileResponse(html_file, media_type="text/html")
         else:
             # Enhanced error logging for CI debugging
             contents = []
-            if static_dir.exists():
+            if STATIC_DIST_DIR.exists():
                 try:
-                    contents = [p.name for p in static_dir.iterdir()][
+                    contents = [p.name for p in STATIC_DIST_DIR.iterdir()][
                         :10
                     ]  # Limit to first 10 files
                 except OSError:
@@ -131,7 +109,7 @@ def _serve_vite_html_file(request: Request, html_filename: str) -> Response:
 
             logger.error(
                 f"Production mode: HTML file {html_filename} not found at {html_file}. "
-                f"Static dir exists: {static_dir.exists()}. "
+                f"Static dir exists: {STATIC_DIST_DIR.exists()}. "
                 f"Contents (first 10): {contents}"
             )
             raise HTTPException(
