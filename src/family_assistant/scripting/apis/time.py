@@ -58,7 +58,7 @@ def _datetime_to_dict(dt: datetime) -> TimeDict:
 
 def _dict_to_datetime(time_dict: TimeDict) -> datetime:
     """Convert a time dictionary back to a datetime object."""
-    tz_str = time_dict.get("timezone", "UTC")
+    tz_str = time_dict["timezone"]
     if tz_str == "UTC":
         tz = UTC
     else:
@@ -69,13 +69,13 @@ def _dict_to_datetime(time_dict: TimeDict) -> datetime:
             tz = UTC
 
     return datetime(
-        year=time_dict.get("year", 1970),
-        month=time_dict.get("month", 1),
-        day=time_dict.get("day", 1),
-        hour=time_dict.get("hour", 0),
-        minute=time_dict.get("minute", 0),
-        second=time_dict.get("second", 0),
-        microsecond=time_dict.get("nanosecond", 0) // 1000,
+        year=time_dict["year"],
+        month=time_dict["month"],
+        day=time_dict["day"],
+        hour=time_dict["hour"],
+        minute=time_dict["minute"],
+        second=time_dict["second"],
+        microsecond=time_dict["nanosecond"] // 1000,
         tzinfo=tz,
     )
 
