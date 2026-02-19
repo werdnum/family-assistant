@@ -793,7 +793,7 @@ service_profiles:
     description: "Creative assistant specialized in generating and manipulating images and videos using advanced AI models."
     processing_config:
       provider: "google"
-      llm_model: "gemini-3-pro-preview"
+      llm_model: "gemini-3.1-pro-preview"
       prompts:
         system_prompt: |
           You are an expert digital artist and video producer specialized in using advanced AI models (Gemini Nano Banana/Pro and Veo) to create stunning visuals.

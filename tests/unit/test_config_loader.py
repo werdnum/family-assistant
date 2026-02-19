@@ -710,7 +710,10 @@ class TestResolveServiceProfile:
             "processing_config": {
                 "timezone": "UTC",
                 "retry_config": {
-                    "primary": {"provider": "google", "model": "gemini-3-pro-preview"},
+                    "primary": {
+                        "provider": "google",
+                        "model": "gemini-3.1-pro-preview",
+                    },
                     "fallback": {"provider": "openai", "model": "gpt-5.2"},
                 },
             },
@@ -738,7 +741,7 @@ class TestResolveServiceProfile:
         )
         assert (
             result["processing_config"]["retry_config"]["primary"]["model"]
-            == "gemini-3-pro-preview"
+            == "gemini-3.1-pro-preview"
         )
 
     def test_retry_config_can_be_explicitly_overridden(self) -> None:
@@ -747,7 +750,10 @@ class TestResolveServiceProfile:
             "processing_config": {
                 "timezone": "UTC",
                 "retry_config": {
-                    "primary": {"provider": "google", "model": "gemini-3-pro-preview"},
+                    "primary": {
+                        "provider": "google",
+                        "model": "gemini-3.1-pro-preview",
+                    },
                     "fallback": {"provider": "openai", "model": "gpt-5.2"},
                 },
             },

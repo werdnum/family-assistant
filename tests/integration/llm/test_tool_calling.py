@@ -458,7 +458,7 @@ async def test_tool_call_id_format(
     "provider,model",
     [
         # Use a model that is strict about thought signatures
-        ("google", "gemini-3-pro-preview"),
+        ("google", "gemini-3.1-pro-preview"),
     ],
 )
 async def test_gemini_multiturn_without_thought_signature(

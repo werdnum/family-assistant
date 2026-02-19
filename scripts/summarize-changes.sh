@@ -2,7 +2,7 @@
 
 # Configuration
 TARGET_BRANCH="origin/main"
-MODEL="gemini-3-pro-preview" 
+MODEL="gemini-3.1-pro-preview"
 EXCLUDE_SPEC=":!tests/cassettes/*"
 
 # LLM System Prompt
