@@ -69,10 +69,10 @@ the audit performed during the earlier investigation.
 
 ### 3.1 Candidates for stronger typing
 
-- The **time API** serializes `datetime` objects to dictionaries with well-defined fields (year,
+- ~~The **time API** serializes `datetime` objects to dictionaries with well-defined fields (year,
   month, timezone, unix, etc.) and accepts the same shape back in `_dict_to_datetime` and exported
-  helpers. Introducing a `TimeDict` `TypedDict` (and a `DurationDict` if needed) would let both the
-  Starlark bridge and Python tooling share an explicit schema.
+  helpers.~~ **Done**: `TimeDict` `TypedDict` is now defined in
+  `family_assistant.scripting.apis.time` and used throughout the time API.
 - **`wake_llm`** queues dictionaries containing `context` (message, attachments) and
   `include_event`; consumers assume both keys exist. Defining `TypedDict`s for `WakeLLMRequest` and
   `WakeLLMContext` (with a typed list of attachment IDs) would avoid malformed wake requests and
