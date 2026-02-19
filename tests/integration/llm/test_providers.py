@@ -74,7 +74,7 @@ async def llm_client_factory() -> Callable[
     [
         ("openai", "gpt-4.1-nano"),
         ("openai", "gpt-5.2"),
-        ("google", "gemini-2.5-flash-lite"),
+        ("google", "gemini-3-flash-preview"),
         ("anthropic", "claude-haiku-4-5-20251001"),
     ],
 )
@@ -117,7 +117,7 @@ async def test_basic_completion(
     "provider,model",
     [
         ("openai", "gpt-4.1-nano"),
-        ("google", "gemini-2.5-flash-lite"),
+        ("google", "gemini-3-flash-preview"),
         ("anthropic", "claude-haiku-4-5-20251001"),
     ],
 )
@@ -159,7 +159,7 @@ async def test_system_message_handling(
     "provider,model",
     [
         ("openai", "gpt-4.1-nano"),
-        ("google", "gemini-2.5-flash-lite"),
+        ("google", "gemini-3-flash-preview"),
         ("anthropic", "claude-haiku-4-5-20251001"),
     ],
 )
@@ -194,7 +194,7 @@ async def test_multi_turn_conversation(
     "provider,model",
     [
         ("openai", "gpt-4.1-nano"),
-        ("google", "gemini-2.5-flash-lite"),
+        ("google", "gemini-3-flash-preview"),
         ("anthropic", "claude-haiku-4-5-20251001"),
     ],
 )
@@ -231,7 +231,7 @@ async def test_provider_specific_google_features(
     if os.getenv("CI") and not os.getenv("GEMINI_API_KEY"):
         pytest.skip("Skipping Google-specific test in CI without API key")
 
-    client = await llm_client_factory("google", "gemini-2.5-flash-lite", None)
+    client = await llm_client_factory("google", "gemini-3-flash-preview", None)
 
     # Test basic functionality specific to Google
     # For now, just ensure the client works with Google-specific config
@@ -277,7 +277,7 @@ async def test_provider_specific_openai_features(
     "provider,model",
     [
         ("openai", "gpt-4.1-nano"),
-        ("google", "gemini-2.5-flash-lite"),
+        ("google", "gemini-3-flash-preview"),
         ("anthropic", "claude-haiku-4-5-20251001"),
     ],
 )
@@ -312,7 +312,7 @@ async def test_empty_conversation(
     "provider,model",
     [
         ("openai", "gpt-4.1-nano"),
-        ("google", "gemini-2.5-flash-lite"),
+        ("google", "gemini-3-flash-preview"),
         ("anthropic", "claude-haiku-4-5-20251001"),
     ],
 )
@@ -361,7 +361,7 @@ async def test_gemini_multipart_content_with_images(
     if os.getenv("CI") and not os.getenv("GEMINI_API_KEY"):
         pytest.skip("Skipping Gemini image test in CI without API key")
 
-    client = await llm_client_factory("google", "gemini-2.5-flash-lite", None)
+    client = await llm_client_factory("google", "gemini-3-flash-preview", None)
 
     # Generate a simple red square image
     # Create a 64x64 red image
@@ -412,7 +412,7 @@ async def test_gemini_system_message_with_multipart_content(
     if os.getenv("CI") and not os.getenv("GEMINI_API_KEY"):
         pytest.skip("Skipping Gemini system+image test in CI without API key")
 
-    client = await llm_client_factory("google", "gemini-2.5-flash-lite", None)
+    client = await llm_client_factory("google", "gemini-3-flash-preview", None)
 
     # Create a valid blue square image
     # Create a 64x64 blue image
@@ -458,7 +458,7 @@ async def test_gemini_system_message_with_multipart_content(
     "provider,model",
     [
         ("openai", "gpt-4.1-nano"),
-        ("google", "gemini-2.5-flash-lite"),
+        ("google", "gemini-3-flash-preview"),
         ("anthropic", "claude-haiku-4-5-20251001"),
     ],
 )
@@ -524,7 +524,7 @@ async def test_tool_message_with_image_attachment(
     "provider,model",
     [
         ("openai", "gpt-4.1-nano"),
-        ("google", "gemini-2.5-flash-lite"),
+        ("google", "gemini-3-flash-preview"),
         ("anthropic", "claude-haiku-4-5-20251001"),
     ],
 )
@@ -619,7 +619,7 @@ async def test_gemini_url_grounding() -> None:
     # Create Gemini client with URL context enabled
     config = {
         "provider": "google",
-        "model": "gemini-2.5-flash",
+        "model": "gemini-3-flash-preview",
         "api_key": os.getenv("GEMINI_API_KEY", "test-gemini-key"),
         "enable_url_context": True,
     }
@@ -664,7 +664,7 @@ async def test_gemini_google_search_grounding(
     # Create Gemini client with Google Search grounding enabled
     config = {
         "provider": "google",
-        "model": "gemini-2.5-flash",
+        "model": "gemini-3-flash-preview",
         "api_key": os.getenv("GEMINI_API_KEY", "test-gemini-key"),
         "enable_google_search": True,
     }

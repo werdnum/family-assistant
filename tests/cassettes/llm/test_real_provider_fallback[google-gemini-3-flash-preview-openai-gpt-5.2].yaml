@@ -1,0 +1,149 @@
+interactions:
+  - request:
+      body: '{"contents": [{"parts": [{"text": "Reply with: ''Primary response received''"}], "role": "user"}], "generationConfig": {"mediaResolution": "MEDIA_RESOLUTION_HIGH"}}'
+      headers:
+        Content-Type:
+          - application/json
+        user-agent:
+          - google-genai-sdk/1.56.0 gl-python/3.13.9
+        x-goog-api-client:
+          - google-genai-sdk/1.56.0 gl-python/3.13.9
+      method: post
+      uri: https://generativelanguage.googleapis.com/v1beta/models/gemini-3-flash-preview:generateContent
+    response:
+      body:
+        string: "{\n  \"error\": {\n    \"code\": 400,\n    \"message\": \"API key not valid. Please pass a valid API key.\",\n    \"status\": \"INVALID_ARGUMENT\",\n    \"details\": [\n      {\n        \"@type\": \"type.googleapis.com/google.rpc.ErrorInfo\",\n        \"reason\": \"API_KEY_INVALID\",\n        \"domain\": \"googleapis.com\",\n        \"metadata\": {\n          \"service\": \"generativelanguage.googleapis.com\"\n        }\n      },\n      {\n        \"@type\": \"type.googleapis.com/google.rpc.LocalizedMessage\",\n        \"locale\": \"en-US\",\n        \"message\": \"API key not valid. Please pass a valid API key.\"\n      }\n    ]\n  }\n}\n"
+      headers:
+        Alt-Svc:
+          - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+        Content-Encoding:
+          - gzip
+        Content-Type:
+          - application/json; charset=UTF-8
+        Date:
+          - Wed, 24 Dec 2025 07:29:50 GMT
+        Server:
+          - scaffolding on HTTPServer2
+        Server-Timing:
+          - gfet4t7; dur=12
+        Transfer-Encoding:
+          - chunked
+        Vary:
+          - Origin
+          - X-Origin
+          - Referer
+        X-Content-Type-Options:
+          - nosniff
+        X-Frame-Options:
+          - SAMEORIGIN
+        X-XSS-Protection:
+          - '0'
+      status:
+        code: 400
+        message: Bad Request
+  - request:
+      body: '{"messages":[{"role":"user","content":"Reply with: ''Primary response received''"}],"model":"gpt-5.2"}'
+      headers:
+        accept:
+          - application/json
+        accept-encoding:
+          - gzip, deflate
+        connection:
+          - keep-alive
+        content-length:
+          - '100'
+        content-type:
+          - application/json
+        host:
+          - api.openai.com
+        user-agent:
+          - AsyncOpenAI/Python 1.92.3
+        x-stainless-arch:
+          - arm64
+        x-stainless-async:
+          - async:asyncio
+        x-stainless-lang:
+          - python
+        x-stainless-os:
+          - Linux
+        x-stainless-package-version:
+          - 1.92.3
+        x-stainless-read-timeout:
+          - '600'
+        x-stainless-retry-count:
+          - '0'
+        x-stainless-runtime:
+          - CPython
+        x-stainless-runtime-version:
+          - 3.13.9
+      method: POST
+      uri: https://api.openai.com/v1/chat/completions
+    response:
+      body:
+        string: !!binary |
+          H4sIAAAAAAAAA4xSu27jMBDs9RUEayuIlNhBXObVpEmTAMEhEGhyZW9Mkcxy5csD/vcDaceScXdA
+          GhU7O6OZ4X4VQkg0ci6kXinWXbDl9dvNYnH3uTHPRK2/vsWHx99X5+vP9Y17upeTxPCLV9D8zTrR
+          vgsWGL3bwZpAMSTV6mI2m86qs8sqA503YBNtGbicntRlfVpPy6ouq2rPXHnUEOVc/CqEEOIrf5NH
+          Z+BdzsXp5HvSQYxqCXJ+WBJCkrdpIlWMGFk5lpMB1N4xuGz7gbBT9CEIYvAugiDQgBsw432Cto8q
+          +XW9tSNAOedZpbzZ6cse2R68tegwrhoCFb1L/4vsg8zothDiJWftj+zLQL4L3LBfQ5atzndycmh3
+          AGd7jD0rO4zrfT3HYo0BVmjjqCqplV6BGZhDr6o36EdAMYr2t5d/ae9io1v+RH4AtIbAYJpAYFAf
+          5x3WCNLp/W/tUHE2LCPQBjU0jEDpGQy0qre7o5DxIzJ0TYtuCRQI82Wkly62xR8AAAD//wMAZkEY
+          BxgDAAA=
+      headers:
+        CF-RAY:
+          - 9b2e63d69b3f92ad-FRA
+        Connection:
+          - keep-alive
+        Content-Encoding:
+          - gzip
+        Content-Type:
+          - application/json
+        Date:
+          - Wed, 24 Dec 2025 07:29:52 GMT
+        Server:
+          - cloudflare
+        Set-Cookie:
+          - __cf_bm=HbBxHtAqcq9Tb.Du1erjDDxnJSD18wZo2SRmQ9cT_M8-1766561392-1.0.1.1-WziMsJ.y7vJscuAnm3DXMKFC.qQciuIDSR_FpdkNmabzIy_T8OOKlozVAXP5mFPzEWXxsYasEItuFQw8zuqjHcLyQYY0y5.1Ig9_aK2agb8; path=/; expires=Wed, 24-Dec-25 07:59:52 GMT; domain=.api.openai.com; HttpOnly; Secure; SameSite=None
+          - _cfuvid=Ux71uyL4NJ2QF0zjta_P2eJJ7dhFug3QpHS49yyWwPM-1766561392233-0.0.1.1-604800000; path=/; domain=.api.openai.com; HttpOnly; Secure; SameSite=None
+        Strict-Transport-Security:
+          - max-age=31536000; includeSubDomains; preload
+        Transfer-Encoding:
+          - chunked
+        X-Content-Type-Options:
+          - nosniff
+        access-control-expose-headers:
+          - X-Request-ID
+        alt-svc:
+          - h3=":443"; ma=86400
+        cf-cache-status:
+          - DYNAMIC
+        openai-organization:
+          - REDACTED
+        openai-processing-ms:
+          - '619'
+        openai-project:
+          - proj_wvaoRBrBR9ayhT5aPMqWgDtI
+        openai-version:
+          - '2020-10-01'
+        x-envoy-upstream-service-time:
+          - '921'
+        x-openai-proxy-wasm:
+          - v0.1
+        x-ratelimit-limit-requests:
+          - '500'
+        x-ratelimit-limit-tokens:
+          - '500000'
+        x-ratelimit-remaining-requests:
+          - '499'
+        x-ratelimit-remaining-tokens:
+          - '499988'
+        x-ratelimit-reset-requests:
+          - 120ms
+        x-ratelimit-reset-tokens:
+          - 1ms
+        x-request-id:
+          - req_b8802aa2e55749ecba2077950ab8b767
+      status:
+        code: 200
+        message: OK
+version: 1

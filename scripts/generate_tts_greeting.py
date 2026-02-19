@@ -72,7 +72,7 @@ def generate_greeting(
     text: str,
     output_path: Path,
     voice: str = "Autonoe",
-    model: str = "gemini-2.5-flash-preview-tts",
+    model: str = "gemini-3-flash-preview-preview-tts",
 ) -> None:
     """Generate a greeting WAV file using Gemini TTS."""
     api_key = os.environ.get("GEMINI_API_KEY")
@@ -150,8 +150,8 @@ def main() -> None:
     )
     parser.add_argument(
         "--model",
-        default="gemini-2.5-flash-preview-tts",
-        help="Gemini TTS model (default: gemini-2.5-flash-preview-tts)",
+        default="gemini-3-flash-preview-preview-tts",
+        help="Gemini TTS model (default: gemini-3-flash-preview-preview-tts)",
     )
 
     args = parser.parse_args()

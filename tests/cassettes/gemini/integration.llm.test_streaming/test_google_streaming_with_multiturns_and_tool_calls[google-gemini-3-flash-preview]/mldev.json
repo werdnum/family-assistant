@@ -1,5 +1,5 @@
 {
-  "replay_id": "integration.llm.test_streaming/test_google_streaming_pydantic_validation_reproducer/mldev",
+  "replay_id": "integration.llm.test_streaming/test_google_streaming_with_multiturns_and_tool_calls[google-gemini-3-flash-preview]/mldev",
   "interactions": [
     {
       "request": {
@@ -17,7 +17,7 @@
               {
                 "parts": [
                   {
-                    "text": "Calculate 5 + 3"
+                    "text": "What's the weather in Paris?"
                   }
                 ],
                 "role": "user"
@@ -27,11 +27,12 @@
                   {
                     "thoughtSignature": "c2tpcF90aG91Z2h0X3NpZ25hdHVyZV92YWxpZGF0b3I=",
                     "functionCall": {
-                      "id": "call_test_123",
+                      "id": "call_123",
                       "args": {
-                        "expression": "5 + 3"
+                        "location": "Paris, France",
+                        "unit": "celsius"
                       },
-                      "name": "calculate"
+                      "name": "get_weather"
                     }
                   }
                 ],
@@ -41,10 +42,10 @@
                 "parts": [
                   {
                     "functionResponse": {
-                      "id": "call_test_123",
-                      "name": "calculate",
+                      "id": "call_123",
+                      "name": "get_weather",
                       "response": {
-                        "result": 8
+                        "result": "The weather in Paris is 18°C and sunny."
                       }
                     }
                   }
@@ -120,7 +121,7 @@
                 "content": {
                   "parts": [
                     {
-                      "text": "The result of "
+                      "text": "The weather in Paris"
                     }
                   ],
                   "role": "model"
@@ -129,18 +130,18 @@
               }
             ],
             "usageMetadata": {
-              "promptTokenCount": 129,
-              "candidatesTokenCount": 3,
-              "totalTokenCount": 132,
+              "promptTokenCount": 152,
+              "candidatesTokenCount": 4,
+              "totalTokenCount": 156,
               "promptTokensDetails": [
                 {
                   "modality": "TEXT",
-                  "tokenCount": 129
+                  "tokenCount": 152
                 }
               ]
             },
             "modelVersion": "gemini-3-flash-preview",
-            "responseId": "SBkpabPNB_K2xN8PmNySQQ"
+            "responseId": "3eguaY7vOr-exN8Pyeic4Aw"
           },
           {
             "candidates": [
@@ -148,7 +149,7 @@
                 "content": {
                   "parts": [
                     {
-                      "text": "5 + 3 is 8."
+                      "text": " is 18°C and sunny."
                     }
                   ],
                   "role": "model"
@@ -158,18 +159,18 @@
               }
             ],
             "usageMetadata": {
-              "promptTokenCount": 129,
-              "candidatesTokenCount": 11,
-              "totalTokenCount": 140,
+              "promptTokenCount": 152,
+              "candidatesTokenCount": 13,
+              "totalTokenCount": 165,
               "promptTokensDetails": [
                 {
                   "modality": "TEXT",
-                  "tokenCount": 129
+                  "tokenCount": 152
                 }
               ]
             },
             "modelVersion": "gemini-3-flash-preview",
-            "responseId": "SBkpabPNB_K2xN8PmNySQQ"
+            "responseId": "3eguaY7vOr-exN8Pyeic4Aw"
           }
         ],
         "byte_segments": [],
@@ -193,7 +194,7 @@
                 "content": {
                   "parts": [
                     {
-                      "text": "The result of "
+                      "text": "The weather in Paris"
                     }
                   ],
                   "role": "model"
@@ -202,17 +203,17 @@
               }
             ],
             "model_version": "gemini-3-flash-preview",
-            "response_id": "SBkpabPNB_K2xN8PmNySQQ",
+            "response_id": "3eguaY7vOr-exN8Pyeic4Aw",
             "usage_metadata": {
-              "candidates_token_count": 3,
-              "prompt_token_count": 129,
+              "candidates_token_count": 4,
+              "prompt_token_count": 152,
               "prompt_tokens_details": [
                 {
                   "modality": "TEXT",
-                  "token_count": 129
+                  "token_count": 152
                 }
               ],
-              "total_token_count": 132
+              "total_token_count": 156
             }
           },
           {
@@ -234,7 +235,7 @@
                 "content": {
                   "parts": [
                     {
-                      "text": "5 + 3 is 8."
+                      "text": " is 18°C and sunny."
                     }
                   ],
                   "role": "model"
@@ -244,17 +245,17 @@
               }
             ],
             "model_version": "gemini-3-flash-preview",
-            "response_id": "SBkpabPNB_K2xN8PmNySQQ",
+            "response_id": "3eguaY7vOr-exN8Pyeic4Aw",
             "usage_metadata": {
-              "candidates_token_count": 11,
-              "prompt_token_count": 129,
+              "candidates_token_count": 13,
+              "prompt_token_count": 152,
               "prompt_tokens_details": [
                 {
                   "modality": "TEXT",
-                  "token_count": 129
+                  "token_count": 152
                 }
               ],
-              "total_token_count": 140
+              "total_token_count": 165
             }
           }
         ]

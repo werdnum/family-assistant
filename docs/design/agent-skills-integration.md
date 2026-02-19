@@ -371,7 +371,7 @@ Skills support two complementary activation modes:
 
 1. **Agent self-activation**: The main model sees the skill catalog and can load any skill via the
    `get_note` tool
-2. **Preflight pre-loading**: A lightweight model (e.g., gemini-2.5-flash-lite) optionally
+2. **Preflight pre-loading**: A lightweight model (e.g., gemini-3-flash-preview) optionally
    pre-selects relevant skills before the main model starts
 
 Preflight is an **optimization for reliability and speed**, not a gatekeeper. The main model always
@@ -381,7 +381,7 @@ has the full catalog and can load any skill.
 User Request
       │
       ├──── Preflight (optional) ────── Pre-load 0-3 skills into context
-      │     gemini-2.5-flash-lite
+      │     gemini-3-flash-preview
       │     structured output
       │
       └──── System Prompt (always) ──── Skill catalog with metadata
@@ -944,7 +944,7 @@ trust model as regular notes. External skill registries are explicitly out of sc
 1. **Registry refresh frequency**: Refresh on every request, or cache with TTL? Notes change
    infrequently so a 60s cache with manual invalidation on note CRUD seems reasonable.
 
-2. **Preflight model selection**: gemini-2.5-flash-lite is the initial candidate. Need to benchmark
+2. **Preflight model selection**: gemini-3-flash-preview is the initial candidate. Need to benchmark
    accuracy and latency. Could also be configurable per profile.
 
 3. **Skill creation flow**: Should the assistant know how to create skills? Could add instructions

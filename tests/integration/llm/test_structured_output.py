@@ -197,7 +197,7 @@ class TestMockClientStructuredOutput:
     "provider,model",
     [
         ("openai", "gpt-4.1-nano"),
-        ("google", "gemini-2.5-flash-lite"),
+        ("google", "gemini-3-flash-preview"),
         ("anthropic", "claude-haiku-4-5-20251001"),
     ],
 )
@@ -235,7 +235,7 @@ async def test_basic_structured_output(
     "provider,model",
     [
         ("openai", "gpt-4.1-nano"),
-        ("google", "gemini-2.5-flash-lite"),
+        ("google", "gemini-3-flash-preview"),
         ("anthropic", "claude-haiku-4-5-20251001"),
     ],
 )
@@ -276,7 +276,7 @@ async def test_structured_output_with_system_message(
     "provider,model",
     [
         ("openai", "gpt-4.1-nano"),
-        ("google", "gemini-2.5-flash-lite"),
+        ("google", "gemini-3-flash-preview"),
         ("anthropic", "claude-haiku-4-5-20251001"),
     ],
 )
@@ -353,7 +353,7 @@ async def test_structured_output_with_optional_fields(
     "provider,model",
     [
         ("openai", "gpt-4.1-nano"),
-        ("google", "gemini-2.5-flash-lite"),
+        ("google", "gemini-3-flash-preview"),
         ("anthropic", "claude-haiku-4-5-20251001"),
     ],
 )
