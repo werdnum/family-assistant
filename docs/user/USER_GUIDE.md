@@ -476,9 +476,10 @@ various tasks with dark mode support and mobile optimization.
   you're unsure, ask the person who manages your Home Assistant setup.
 
 - \*\*Use Slash Commands:\*\*For specialized tasks like complex web browsing (e.g.,
-  `/browse find travel options to Paris for next June`) or in-depth research (e.g.,
-  `/research Tell me about the history of Python`), using the appropriate slash command can provide
-  more focused and effective responses.
+  `/browse find travel options to Paris for next June`), in-depth research (e.g.,
+  `/research Tell me about the history of Python`), or engineering diagnostics (e.g.,
+  `/engineer Why isn't my daily brief automation triggering?`), using the appropriate slash command
+  can provide more focused and effective responses.
 
 - \*\*Mobile Experience:\*\*The web interface is fully optimized for mobile devices. All features
   are accessible on phones and tablets with responsive design that adapts to your screen size.

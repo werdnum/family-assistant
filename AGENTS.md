@@ -500,6 +500,14 @@ dynamically adjusting available tools and supervision requirements based on inpu
    - Useful for processing external content that doesn't require personal context
    - Example: "What's the weather like?" - can call external APIs but not read user's calendar
 
+4. **Engineer Profile [B]**: Read-only diagnostic access for debugging the application
+
+   - Can read sensitive data (source code, database, error logs, notes)
+   - Cannot change state or communicate externally (delegation blocked)
+   - Only side effect: creating GitHub issues (requires user confirmation)
+   - Used via `/engineer` slash command
+   - Example: "Why isn't my daily brief firing?" - reads DB state, error logs, source code
+
 **Dynamic Profile Switching**: The system could switch profiles based on:
 
 - Input source detection (direct message vs forwarded email)

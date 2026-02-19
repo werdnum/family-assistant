@@ -87,6 +87,14 @@ from family_assistant.tools.documents import (
     ingest_document_from_url_tool,
     search_documents_tool,
 )
+from family_assistant.tools.engineering import (
+    ENGINEERING_TOOLS_DEFINITION,
+    create_github_issue,
+    query_database,
+    read_error_logs,
+    read_source_file,
+    search_source_code,
+)
 from family_assistant.tools.events import (
     EVENT_TOOLS_DEFINITION,
     query_recent_events_tool,
@@ -302,6 +310,13 @@ __all__ = [
     "read_task_result_tool",
     "list_worker_tasks_tool",
     "cancel_worker_task_tool",
+    # Engineering tools
+    "ENGINEERING_TOOLS_DEFINITION",
+    "read_source_file",
+    "search_source_code",
+    "query_database",
+    "read_error_logs",
+    "create_github_issue",
 ]
 
 
@@ -425,6 +440,12 @@ AVAILABLE_FUNCTIONS: dict[str, Callable] = {
     "read_task_result": read_task_result_tool,
     "list_worker_tasks": list_worker_tasks_tool,
     "cancel_worker_task": cancel_worker_task_tool,
+    # Engineering tools
+    "read_source_file": read_source_file,
+    "search_source_code": search_source_code,
+    "query_database": query_database,
+    "read_error_logs": read_error_logs,
+    "create_github_issue": create_github_issue,
 }
 
 
@@ -452,4 +473,5 @@ TOOLS_DEFINITION: list[ToolDefinition] = (
     + COMPUTER_USE_TOOLS_DEFINITION
     + WORKSPACE_TOOLS_DEFINITION
     + WORKER_TOOLS_DEFINITION
+    + ENGINEERING_TOOLS_DEFINITION
 )
