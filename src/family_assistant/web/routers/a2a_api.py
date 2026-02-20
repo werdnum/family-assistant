@@ -211,7 +211,10 @@ async def _handle_send_message(
     profile_id = service.service_config.id
 
     # Convert A2A message to FA content parts
-    content_parts: list[ContentPartDict] = a2a_message_to_content_parts(message)
+    try:
+        content_parts: list[ContentPartDict] = a2a_message_to_content_parts(message)
+    except ValueError as e:
+        return _jsonrpc_error(request_id, INVALID_PARAMS, f"Invalid message parts: {e}")
     if not content_parts:
         return _jsonrpc_error(
             request_id,
@@ -441,7 +444,24 @@ async def _stream_message(
         return
 
     profile_id = service.service_config.id
-    content_parts: list[ContentPartDict] = a2a_message_to_content_parts(message)
+    try:
+        content_parts: list[ContentPartDict] = a2a_message_to_content_parts(message)
+    except ValueError as e:
+        event = TaskStatusUpdateEvent(
+            task_id=task_id,
+            context_id=context_id,
+            status=TaskStatus(
+                state=TaskState.failed,
+                message=Message(
+                    role=Role.agent,
+                    parts=[Part(root=TextPart(text=f"Invalid message parts: {e}"))],
+                    message_id=str(uuid.uuid4()),
+                ),
+            ),
+            final=True,
+        )
+        yield _sse_jsonrpc(request_id, "status", event.model_dump(exclude_none=True))
+        return
     if not content_parts:
         event = TaskStatusUpdateEvent(
             task_id=task_id,
@@ -584,7 +604,7 @@ async def _stream_message(
             artifacts_json = [err_art.model_dump(exclude_none=True)]
         elif accumulated_text:
             art = Artifact(
-                artifact_id=uuid.uuid4().hex,
+                artifact_id=artifact_id,
                 name="response",
                 parts=[Part(root=TextPart(text=accumulated_text))],
             )
