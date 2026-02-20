@@ -1044,7 +1044,9 @@ async def test_google_streaming_pydantic_validation_reproducer(
         "replays_directory": "tests/cassettes/gemini",
     }
 
-    client = await llm_client_factory("google", "gemini-3-flash-preview", None, debug_config)
+    client = await llm_client_factory(
+        "google", "gemini-3-flash-preview", None, debug_config
+    )
     assert isinstance(client, GoogleGenAIClient)
 
     # Create conversation with tool calls - this triggers the buggy code path

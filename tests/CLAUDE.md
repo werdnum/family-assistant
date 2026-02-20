@@ -96,18 +96,21 @@ To find tests for a specific feature:
 
 - **Testing Philosophy: Prefer Real/Fake Dependencies Over Mocks**
 
-  - **Write tests as "end-to-end" as possible.** The most valuable tests are those that resemble how
-    the application is used in production.
-  - **Use real dependencies** like the test database (`db_engine` fixture) whenever you can. This
-    provides the highest confidence.
-  - **Use fake dependencies** for services that are complex or slow to run in tests. A "fake" is a
-    high-fidelity test implementation that mimics the real service's API and behavior.
-  - **Use mocks sparingly.** Mocks should be a last resort, primarily for:
-    - Isolating a single unit of code in a pure unit test.
-    - Simulating external third-party services that are difficult to control or fake (e.g.,
-      Telegram, Home Assistant).
-  - **Why?** Real and fake dependencies make tests more robust and realistic. Mocks can be brittle,
-    often breaking when the underlying implementation changes, and can hide real integration bugs.
+  - **"Bring the system into contact with reality."** The most important goal is to prove the system
+    actually works. The most valuable tests are those that resemble how the application is used in
+    production.
+  - **Use real dependencies** like the test database (`db_engine` fixture) or a real protocol client
+    whenever you can. This provides real assurance of compatibility with actual clients of the
+    protocols we implement.
+  - **Use fake dependencies** for services that are complex or slow. Prefer high-fidelity "fakes" or
+    simple in-memory implementations using official SDKs that mimic real behavior.
+  - **Avoid fragile "change-detector" unit tests.** Pure unit tests with extensive mocking often
+    just repeat implementation mistakes in the test. If you can't spot an error in the
+    implementation, you likely won't spot it in a mocked test either.
+  - **Use mocks as a very last resort.** Mocks should be reserved only for external third-party
+    services that are truly impossible to control or fake.
+  - **Why?** We want to guard against hallucinating or misunderstanding interfaces. Integrating an
+    external reference (SDK, real client, etc.) makes tests more robust and realistic.
 
 - **Each test tests one independent behaviour** of the system under test. Arrange, Act, Assert.
   NEVER Arrange, Act, Assert, Act, Assert.

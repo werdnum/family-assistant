@@ -450,34 +450,42 @@ Given the auto-formatting tools in place, the reviewer should focus on:
 
 #### Testing Philosophy: Prefer Real/Fake Dependencies Over Mocks
 
-To ensure our tests are realistic and maintainable, we follow a principle of using real or fake
-dependencies wherever possible, especially in functional and integration tests. Mocks should be used
-sparingly.
+The most important goal when writing a test is to "bring the system into contact with reality" and
+prove that it actually works. To ensure our tests are realistic and maintainable, we follow a
+principle of using real or fake dependencies wherever possible.
 
-- **Real Dependencies**: Use real components like a test database (e.g., via `db_engine`) for the
-  most accurate testing.
+- **Real Dependencies**: Use real components like a test database (e.g., via `db_engine`) or a real
+  protocol client for the most accurate testing. This gives real assurance that the system is
+  compatible with actual clients of the protocols we implement.
 - **Fake Dependencies**: When a real service is not practical (e.g., it's slow or complex to set
-  up), use a high-fidelity "fake" implementation that mimics the real API and behavior.
-- **Mocks**: Reserve mocks for isolating a specific unit of code (in unit tests) or for external
-  services that are difficult to fake and control (e.g., Telegram, Home Assistant APIs).
+  up), use a high-fidelity "fake" implementation or a simple in-memory version using official SDKs
+  that mimic the real API and behavior.
+- **Mocks**: Reserve mocks as a very last resort, primarily for simulating external third-party
+  services that are truly impossible to control or fake.
 
 **Rationale**:
 
-- **Realism**: Tests that use real or fake dependencies provide higher confidence that the system
-  works as a whole.
-- **Maintainability**: Mocks are often brittle and require updates when the mocked component's API
-  changes. Fakes, while requiring initial effort, are generally more robust.
-- **Fewer Bugs**: Real integration points are where bugs often hide. Mocks can conceal these
-  integration issues.
+- **Realism & Compatibility**: We want to guard against hallucinating or misunderstanding the
+  interfaces we implement or consume. Integrating an external reference (like a real client or
+  official SDK) provides higher confidence than a mock.
+- **Avoiding Fragile "Change-Detectors"**: Unit tests often end up being fragile change-detectors.
+  If an interface is misunderstood in the implementation, that same mistake is often repeated in a
+  unit test's mocks, making the test "pass" while the system is actually broken.
+- **Maintainability**: Mocks are brittle and require updates when a component's internal API
+  changes, even if the external behavior hasn't. Fakes and real dependencies are generally more
+  robust.
 
 **Review Guidelines**:
 
-- **Block** changes that introduce mocks for components that already have fake implementations or
-  are easily testable with real instances (e.g., mocking the database). This is a
+- **Block** changes that over-rely on mocks instead of fakes or real systems. This is a
   **DESIGN_FLAW_MAJOR**.
-- **Question** the use of new mocks for internal components. Encourage the creation of a fake
-  dependency instead.
-- **Accept** mocks for external, third-party services where creating a fake is impractical.
+- **Block** mocks for components that already have fake implementations or are easily testable with
+  real instances (e.g., mocking the database).
+- **Question** the use of unit tests that merely repeat the implementation logic with mocks.
+- **Encourage** coding up simple in-memory implementations using official SDKs or shoehorning
+  collaborators into test-friendly versions (as we do for Home Assistant and Calendar).
+- **Accept** mocks only for external, third-party services where creating a fake is truly
+  impractical.
 
 #### Time-Based Waits
 
