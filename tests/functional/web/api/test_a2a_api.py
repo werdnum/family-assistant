@@ -10,9 +10,17 @@ from collections.abc import AsyncGenerator
 
 import pytest
 import pytest_asyncio
+from a2a.client import Client, ClientConfig
+from a2a.client.client_factory import ClientFactory
+from a2a.client.errors import A2AClientJSONRPCError
 from a2a.types import AgentCard as SdkAgentCard
+from a2a.types import Message as SdkMessage
+from a2a.types import Part as SdkPart
+from a2a.types import Role as SdkRole
 from a2a.types import SendMessageResponse as SdkSendMessageResponse
 from a2a.types import SendStreamingMessageResponse as SdkStreamResponse
+from a2a.types import TaskIdParams, TaskQueryParams
+from a2a.types import TextPart as SdkTextPart
 from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
 
@@ -424,3 +432,154 @@ class TestSdkCompliance:
             assert hasattr(parsed.root, "result"), (
                 f"SSE event {i} was an error, not a result: {event_data}"
             )
+
+
+def _sdk_message(
+    text: str,
+    *,
+    task_id: str | None = None,
+    context_id: str | None = None,
+) -> SdkMessage:
+    """Build an SDK Message object for use with the SDK client."""
+    return SdkMessage(
+        role=SdkRole.user,
+        message_id=str(uuid.uuid4()),
+        parts=[SdkPart(root=SdkTextPart(text=text))],
+        task_id=task_id,
+        context_id=context_id,
+    )
+
+
+@pytest_asyncio.fixture
+async def sdk_client(
+    app_fixture: FastAPI,
+    api_test_processing_service: ProcessingService,
+) -> AsyncGenerator[Client]:
+    """SDK Client backed by ASGITransport for in-process testing."""
+    profile_id = api_test_processing_service.service_config.id
+    app_fixture.state.processing_services = {
+        profile_id: api_test_processing_service,
+    }
+    transport = ASGITransport(app=app_fixture)
+    async with AsyncClient(
+        transport=transport, base_url="http://testserver"
+    ) as httpx_client:
+        card_resp = await httpx_client.get("/.well-known/agent.json")
+        card = SdkAgentCard.model_validate(card_resp.json())
+        client = await ClientFactory.connect(
+            card, client_config=ClientConfig(httpx_client=httpx_client)
+        )
+        yield client
+
+
+class TestSdkClient:
+    """Tests using the official a2a-sdk Client to prove end-to-end protocol compliance."""
+
+    @pytest.mark.asyncio
+    async def test_sdk_get_card(self, sdk_client: Client) -> None:
+        card = await sdk_client.get_card()
+        assert card.name.startswith("Family Assistant")
+        assert len(card.skills) >= 1
+
+    @pytest.mark.asyncio
+    async def test_sdk_send_message(
+        self,
+        sdk_client: Client,
+        api_mock_llm_client: RuleBasedMockLLMClient,
+    ) -> None:
+        api_mock_llm_client.default_response = MockLLMOutput(
+            content="Hello from SDK client!"
+        )
+
+        msg = _sdk_message("Hello")
+        task = None
+        async for item in sdk_client.send_message(msg):
+            if isinstance(item, tuple):
+                task = item[0]
+
+        assert task is not None, "Expected a Task from send_message"
+        assert task.status.state.value == "completed"
+        assert task.artifacts is not None
+        assert len(task.artifacts) >= 1
+        first_part = task.artifacts[0].parts[0].root
+        assert isinstance(first_part, SdkTextPart)
+        assert "Hello from SDK client!" in first_part.text
+
+    @pytest.mark.asyncio
+    async def test_sdk_send_message_with_task_id(
+        self,
+        sdk_client: Client,
+        api_mock_llm_client: RuleBasedMockLLMClient,
+    ) -> None:
+        api_mock_llm_client.default_response = MockLLMOutput(content="OK")
+
+        custom_task_id = f"sdk-task-{uuid.uuid4().hex[:8]}"
+        custom_context_id = f"sdk-ctx-{uuid.uuid4().hex[:8]}"
+        msg = _sdk_message("test", task_id=custom_task_id, context_id=custom_context_id)
+
+        task = None
+        async for item in sdk_client.send_message(msg):
+            if isinstance(item, tuple):
+                task = item[0]
+
+        assert task is not None
+        assert task.id == custom_task_id
+        assert task.context_id == custom_context_id
+
+    @pytest.mark.asyncio
+    async def test_sdk_get_task(
+        self,
+        sdk_client: Client,
+        api_mock_llm_client: RuleBasedMockLLMClient,
+    ) -> None:
+        api_mock_llm_client.default_response = MockLLMOutput(content="reply")
+
+        task_id = f"sdk-get-{uuid.uuid4().hex[:8]}"
+        msg = _sdk_message("hello", task_id=task_id)
+
+        async for _ in sdk_client.send_message(msg):
+            pass
+
+        retrieved = await sdk_client.get_task(TaskQueryParams(id=task_id))
+        assert retrieved.id == task_id
+        assert retrieved.status.state.value == "completed"
+
+    @pytest.mark.asyncio
+    async def test_sdk_cancel_completed_task(
+        self,
+        sdk_client: Client,
+        api_mock_llm_client: RuleBasedMockLLMClient,
+    ) -> None:
+        api_mock_llm_client.default_response = MockLLMOutput(content="done")
+
+        task_id = f"sdk-cancel-{uuid.uuid4().hex[:8]}"
+        msg = _sdk_message("hello", task_id=task_id)
+
+        async for _ in sdk_client.send_message(msg):
+            pass
+
+        with pytest.raises(A2AClientJSONRPCError):
+            await sdk_client.cancel_task(TaskIdParams(id=task_id))
+
+    @pytest.mark.asyncio
+    async def test_sdk_streaming(
+        self,
+        sdk_client: Client,
+        api_mock_llm_client: RuleBasedMockLLMClient,
+    ) -> None:
+        api_mock_llm_client.default_response = MockLLMOutput(content="Streamed via SDK")
+
+        msg = _sdk_message("Hello stream")
+        events_received: list[tuple] = []
+        final_task = None
+
+        async for item in sdk_client.send_message(msg):
+            if isinstance(item, tuple):
+                final_task = item[0]
+                events_received.append(item)
+
+        assert len(events_received) >= 1, "Expected at least one event"
+        assert final_task is not None
+        assert final_task.status.state.value == "completed"
+        assert final_task.artifacts is not None
+        assert len(final_task.artifacts) >= 1
