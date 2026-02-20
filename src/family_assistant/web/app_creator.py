@@ -30,6 +30,7 @@ from family_assistant.web.auth import (
     AuthService,
     create_auth_router,
 )
+from family_assistant.web.routers.a2a_api import a2a_wellknown_router
 from family_assistant.web.routers.api import api_router
 from family_assistant.web.routers.api_documentation import (
     router as api_documentation_router,
@@ -248,6 +249,7 @@ def create_app() -> FastAPI:
             f"Potential route conflicts with auth paths: {conflicting_paths}"
         )
 
+    new_app.include_router(a2a_wellknown_router, tags=["A2A Discovery"])
     new_app.include_router(webhooks_router, tags=["Webhooks"])
     new_app.include_router(context_viewer_router, tags=["Context Viewer UI"])
     new_app.include_router(health_router, tags=["Health Check"])

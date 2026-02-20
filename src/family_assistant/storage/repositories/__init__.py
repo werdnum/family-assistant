@@ -1,5 +1,6 @@
 """Storage repository implementations."""
 
+from .a2a_tasks import A2ATasksRepository
 from .automations import AutomationsRepository
 from .base import BaseRepository
 from .email import EmailRepository
@@ -14,6 +15,7 @@ from .vector import VectorRepository
 from .worker_tasks import WorkerTasksRepository
 
 __all__ = [
+    "A2ATasksRepository",
     "AutomationsRepository",
     "BaseRepository",
     "EmailRepository",

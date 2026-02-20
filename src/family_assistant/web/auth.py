@@ -50,6 +50,7 @@ PUBLIC_PATHS = [
     re.compile(r"^/health$"),
     re.compile(r"^/static(/.*)?$"),
     re.compile(r"^/favicon.ico$"),
+    re.compile(r"^/\.well-known(/.*)?$"),
 ]
 
 
