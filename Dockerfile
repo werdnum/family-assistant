@@ -11,6 +11,8 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     # Add CA certificates for HTTPS communication
     ca-certificates \
     curl \
+    # ripgrep for engineer profile source code search
+    ripgrep \
     # FFmpeg for camera frame extraction from Reolink VOD streams
     ffmpeg \
     unzip \
