@@ -260,6 +260,43 @@ class TestStreamMessage:
         assert "text/event-stream" in resp.headers.get("content-type", "")
 
     @pytest.mark.asyncio
+    async def test_stream_persists_task(
+        self,
+        a2a_client: AsyncClient,
+        api_mock_llm_client: RuleBasedMockLLMClient,
+    ) -> None:
+        api_mock_llm_client.default_response = MockLLMOutput(
+            content="Persisted streamed response"
+        )
+
+        stream_body = _jsonrpc(
+            "message/stream",
+            params={
+                "message": {
+                    "role": "user",
+                    "parts": [{"type": "text", "text": "Hello persist"}],
+                    "taskId": "stream-persist-test",
+                }
+            },
+        )
+        resp = await a2a_client.post("/api/a2a/stream", json=stream_body)
+        assert resp.status_code == 200
+
+        get_body = _jsonrpc("tasks/get", params={"id": "stream-persist-test"})
+        resp = await a2a_client.post("/api/a2a", json=get_body)
+        assert resp.status_code == 200
+
+        data = resp.json()
+        assert "result" in data
+        task = data["result"]
+        assert task["id"] == "stream-persist-test"
+        assert task["status"]["state"] == "completed"
+        assert task["artifacts"] is not None
+        assert len(task["artifacts"]) >= 1
+        assert task["history"] is not None
+        assert len(task["history"]) >= 2
+
+    @pytest.mark.asyncio
     async def test_stream_wrong_method_returns_error(
         self, a2a_client: AsyncClient
     ) -> None:
