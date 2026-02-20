@@ -122,6 +122,8 @@ async def read_source_file(
             lines = await f.readlines()
     except UnicodeDecodeError:
         return ToolResult(data={"error": f"Cannot read binary file: {file_path}"})
+    except OSError as e:
+        return ToolResult(data={"error": f"Failed to read file: {e}"})
 
     total_lines = len(lines)
 
@@ -186,6 +188,7 @@ async def search_source_code(
             "--no-heading",
             "--color=never",
             "--max-filesize=1M",
+            "--",
             pattern,
             str(search_path),
             stdout=asyncio.subprocess.PIPE,
@@ -244,15 +247,19 @@ async def query_database(
     if not _is_select_only(query):
         return ToolResult(data={"error": "Only SELECT queries are allowed"})
 
-    db_context = exec_context.db_context
+    engine = exec_context.db_context.engine
 
     try:
-        # Set read-only transaction for PostgreSQL defense-in-depth
-        dialect = db_context.engine.dialect.name
-        if dialect == "postgresql":
-            await db_context.execute_with_retry(text("SET TRANSACTION READ ONLY"))
+        # Use a separate connection to avoid interfering with the active
+        # transaction in db_context (which may have already executed queries,
+        # making SET TRANSACTION READ ONLY fail on PostgreSQL).
+        async with engine.begin() as conn:
+            dialect = engine.dialect.name
+            if dialect == "postgresql":
+                await conn.execute(text("SET TRANSACTION READ ONLY"))
 
-        rows = await db_context.fetch_all(text(query))
+            result = await conn.execute(text(query))
+            rows = [dict(row) for row in result.mappings().fetchall()]
 
         if len(rows) > _MAX_QUERY_ROWS:
             rows = rows[:_MAX_QUERY_ROWS]

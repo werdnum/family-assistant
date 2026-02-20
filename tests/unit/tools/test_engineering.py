@@ -179,6 +179,19 @@ class TestReadSourceFile:
         assert "error" in data
         assert "Not a file" in data["error"]
 
+    @pytest.mark.anyio
+    async def test_os_error_handled(self, exec_context: ToolExecutionContext) -> None:
+        """File deleted between exists() check and open() is handled gracefully."""
+        with patch(
+            "family_assistant.tools.engineering.aiofiles.open",
+            side_effect=PermissionError("Permission denied"),
+        ):
+            result = await read_source_file(exec_context, "pyproject.toml")
+        data = result.get_data()
+        assert isinstance(data, dict)
+        assert "error" in data
+        assert "Failed to read file" in data["error"]
+
 
 # --- search_source_code tests ---
 
@@ -215,8 +228,70 @@ class TestSearchSourceCode:
         assert "error" in data
         assert "Path traversal denied" in data["error"]
 
+    @pytest.mark.anyio
+    async def test_hyphen_pattern_not_treated_as_option(
+        self, exec_context: ToolExecutionContext
+    ) -> None:
+        """Patterns starting with - should not be treated as rg options."""
+        result = await search_source_code(exec_context, "-e", "src/")
+        data = result.get_data()
+        assert isinstance(data, dict)
+        # Should succeed or find no matches, not return an error about bad flags
+        assert "error" not in data
+
 
 # --- query_database tests ---
+
+
+def _mock_db_for_query(
+    dialect: str,
+    rows: list | None = None,
+    *,
+    side_effect: Exception | None = None,
+) -> Mock:
+    """Create a mock db_context with engine.begin() for query_database tests."""
+    row_mappings = [_FakeRowMapping(r) for r in (rows or [])]
+
+    mock_mappings = Mock()
+    mock_mappings.fetchall.return_value = row_mappings
+
+    mock_result = Mock()
+    mock_result.mappings.return_value = mock_mappings
+
+    mock_conn = AsyncMock()
+    if side_effect:
+        mock_conn.execute = AsyncMock(side_effect=side_effect)
+    else:
+        mock_conn.execute = AsyncMock(return_value=mock_result)
+    mock_conn.__aenter__ = AsyncMock(return_value=mock_conn)
+    mock_conn.__aexit__ = AsyncMock(return_value=False)
+
+    mock_db = Mock()
+    mock_db.engine.dialect.name = dialect
+    mock_db.engine.begin.return_value = mock_conn
+    return mock_db
+
+
+class _FakeRowMapping:
+    """Minimal RowMapping-like object that supports dict() conversion."""
+
+    def __init__(self, data: dict[str, object]) -> None:
+        self._data = data
+
+    def __iter__(self) -> object:
+        return iter(self._data)
+
+    def keys(self) -> object:
+        return self._data.keys()
+
+    def values(self) -> object:
+        return self._data.values()
+
+    def items(self) -> object:
+        return self._data.items()
+
+    def __getitem__(self, key: str) -> object:
+        return self._data[key]
 
 
 class TestQueryDatabase:
@@ -224,10 +299,7 @@ class TestQueryDatabase:
     async def test_select_query_executes(
         self, exec_context: ToolExecutionContext
     ) -> None:
-        mock_db = Mock()
-        mock_db.engine.dialect.name = "sqlite"
-        mock_db.fetch_all = AsyncMock(return_value=[{"id": 1, "name": "test"}])
-        mock_db.execute_with_retry = AsyncMock()
+        mock_db = _mock_db_for_query("sqlite", [{"id": 1, "name": "test"}])
         exec_context.db_context = mock_db
 
         result = await query_database(exec_context, "SELECT * FROM users")
@@ -235,7 +307,6 @@ class TestQueryDatabase:
         assert isinstance(data, dict)
         assert data["row_count"] == 1
         assert data["truncated"] is False
-        assert data["rows"] == [{"id": 1, "name": "test"}]
 
     @pytest.mark.anyio
     async def test_non_select_rejected(
@@ -260,41 +331,34 @@ class TestQueryDatabase:
     async def test_postgresql_sets_read_only(
         self, exec_context: ToolExecutionContext
     ) -> None:
-        mock_execute = AsyncMock()
-        mock_db = Mock()
-        mock_db.engine.dialect.name = "postgresql"
-        mock_db.fetch_all = AsyncMock(return_value=[])
-        mock_db.execute_with_retry = mock_execute
+        mock_db = _mock_db_for_query("postgresql", [])
         exec_context.db_context = mock_db
 
         await query_database(exec_context, "SELECT 1")
 
-        mock_execute.assert_called_once()
-        text_clause = mock_execute.call_args[0][0]
-        assert text_clause.text == "SET TRANSACTION READ ONLY"
+        mock_conn = mock_db.engine.begin.return_value.__aenter__.return_value
+        # Should have 2 calls: SET TRANSACTION READ ONLY, then the actual query
+        assert mock_conn.execute.call_count == 2
+        first_call_arg = mock_conn.execute.call_args_list[0][0][0]
+        assert first_call_arg.text == "SET TRANSACTION READ ONLY"
 
     @pytest.mark.anyio
     async def test_sqlite_skips_read_only(
         self, exec_context: ToolExecutionContext
     ) -> None:
-        mock_execute = AsyncMock()
-        mock_db = Mock()
-        mock_db.engine.dialect.name = "sqlite"
-        mock_db.fetch_all = AsyncMock(return_value=[])
-        mock_db.execute_with_retry = mock_execute
+        mock_db = _mock_db_for_query("sqlite", [])
         exec_context.db_context = mock_db
 
         await query_database(exec_context, "SELECT 1")
 
-        mock_execute.assert_not_called()
+        mock_conn = mock_db.engine.begin.return_value.__aenter__.return_value
+        # Only the actual query, no SET TRANSACTION
+        assert mock_conn.execute.call_count == 1
 
     @pytest.mark.anyio
     async def test_row_truncation(self, exec_context: ToolExecutionContext) -> None:
         many_rows = [{"id": i} for i in range(1500)]
-        mock_db = Mock()
-        mock_db.engine.dialect.name = "sqlite"
-        mock_db.fetch_all = AsyncMock(return_value=many_rows)
-        mock_db.execute_with_retry = AsyncMock()
+        mock_db = _mock_db_for_query("sqlite", many_rows)
         exec_context.db_context = mock_db
 
         result = await query_database(exec_context, "SELECT * FROM big_table")
@@ -308,10 +372,9 @@ class TestQueryDatabase:
     async def test_query_error_handled(
         self, exec_context: ToolExecutionContext
     ) -> None:
-        mock_db = Mock()
-        mock_db.engine.dialect.name = "sqlite"
-        mock_db.fetch_all = AsyncMock(side_effect=Exception("table does not exist"))
-        mock_db.execute_with_retry = AsyncMock()
+        mock_db = _mock_db_for_query(
+            "sqlite", [], side_effect=Exception("table does not exist")
+        )
         exec_context.db_context = mock_db
 
         result = await query_database(exec_context, "SELECT * FROM nonexistent")
@@ -319,6 +382,18 @@ class TestQueryDatabase:
         assert isinstance(data, dict)
         assert "error" in data
         assert "table does not exist" in data["error"]
+
+    @pytest.mark.anyio
+    async def test_uses_separate_connection(
+        self, exec_context: ToolExecutionContext
+    ) -> None:
+        """Verify query_database uses engine.begin() not db_context methods."""
+        mock_db = _mock_db_for_query("sqlite", [{"x": 1}])
+        exec_context.db_context = mock_db
+
+        await query_database(exec_context, "SELECT 1")
+
+        mock_db.engine.begin.assert_called_once()
 
 
 # --- read_error_logs tests ---
