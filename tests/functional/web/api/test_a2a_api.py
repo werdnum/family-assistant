@@ -1,9 +1,18 @@
-"""Tests for the A2A (Agent-to-Agent) protocol API endpoints."""
+"""Tests for the A2A (Agent-to-Agent) protocol API endpoints.
 
+Validates protocol compliance against the official a2a-sdk types.
+"""
+
+import json
+import re
+import uuid
 from collections.abc import AsyncGenerator
 
 import pytest
 import pytest_asyncio
+from a2a.types import AgentCard as SdkAgentCard
+from a2a.types import SendMessageResponse as SdkSendMessageResponse
+from a2a.types import SendStreamingMessageResponse as SdkStreamResponse
 from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
 
@@ -43,6 +52,29 @@ def _jsonrpc(
     return body
 
 
+def _a2a_message(
+    text: str,
+    *,
+    task_id: str | None = None,
+    context_id: str | None = None,
+    extra_parts: list[dict] | None = None,
+) -> dict:
+    """Build an A2A message dict with required fields."""
+    parts: list[dict] = [{"kind": "text", "text": text}]
+    if extra_parts:
+        parts.extend(extra_parts)
+    msg: dict = {
+        "role": "user",
+        "messageId": str(uuid.uuid4()),
+        "parts": parts,
+    }
+    if task_id:
+        msg["taskId"] = task_id
+    if context_id:
+        msg["contextId"] = context_id
+    return msg
+
+
 class TestAgentCard:
     @pytest.mark.asyncio
     async def test_agent_card_returns_valid_card(self, a2a_client: AsyncClient) -> None:
@@ -51,7 +83,7 @@ class TestAgentCard:
         card = resp.json()
         assert card["name"].startswith("Family Assistant")
         assert card["url"] == "http://testserver/api/a2a"
-        assert card["version"] == "0.3.0"
+        assert card["version"] == "0.1.0"
         assert card["capabilities"]["streaming"] is True
         assert "skills" in card
 
@@ -78,12 +110,7 @@ class TestSendMessage:
 
         body = _jsonrpc(
             "message/send",
-            params={
-                "message": {
-                    "role": "user",
-                    "parts": [{"type": "text", "text": "Hello"}],
-                }
-            },
+            params={"message": _a2a_message("Hello")},
         )
         resp = await a2a_client.post("/api/a2a", json=body)
         assert resp.status_code == 200, (
@@ -115,24 +142,20 @@ class TestSendMessage:
         body = _jsonrpc(
             "message/send",
             params={
-                "message": {
-                    "role": "user",
-                    "parts": [
-                        {"type": "text", "text": "Look at this"},
+                "message": _a2a_message(
+                    "Look at this",
+                    extra_parts=[
                         {
-                            "type": "file",
+                            "kind": "file",
                             "file": {"uri": "https://example.com/report.pdf"},
                         },
                     ],
-                }
+                )
             },
         )
         resp = await a2a_client.post("/api/a2a", json=body)
         assert resp.status_code == 200
 
-        # The LLM must have received the file URL somewhere in its input.
-        # If the converter uses attachment_content (which triggers a DB lookup
-        # that fails for external URLs), the file gets silently dropped.
         calls = api_mock_llm_client.get_calls()
         assert len(calls) >= 1
         all_content = str(calls[-1]["kwargs"]["messages"])
@@ -151,12 +174,9 @@ class TestSendMessage:
         body = _jsonrpc(
             "message/send",
             params={
-                "message": {
-                    "role": "user",
-                    "parts": [{"type": "text", "text": "test"}],
-                    "taskId": "my-custom-task-123",
-                    "contextId": "my-ctx-456",
-                }
+                "message": _a2a_message(
+                    "test", task_id="my-custom-task-123", context_id="my-ctx-456"
+                )
             },
         )
         resp = await a2a_client.post("/api/a2a", json=body)
@@ -191,13 +211,7 @@ class TestGetTask:
 
         send_body = _jsonrpc(
             "message/send",
-            params={
-                "message": {
-                    "role": "user",
-                    "parts": [{"type": "text", "text": "hello"}],
-                    "taskId": "get-test-task",
-                }
-            },
+            params={"message": _a2a_message("hello", task_id="get-test-task")},
         )
         await a2a_client.post("/api/a2a", json=send_body)
 
@@ -233,13 +247,7 @@ class TestCancelTask:
 
         send_body = _jsonrpc(
             "message/send",
-            params={
-                "message": {
-                    "role": "user",
-                    "parts": [{"type": "text", "text": "hello"}],
-                    "taskId": "cancel-test-task",
-                }
-            },
+            params={"message": _a2a_message("hello", task_id="cancel-test-task")},
         )
         await a2a_client.post("/api/a2a", json=send_body)
 
@@ -287,12 +295,7 @@ class TestStreamMessage:
 
         body = _jsonrpc(
             "message/stream",
-            params={
-                "message": {
-                    "role": "user",
-                    "parts": [{"type": "text", "text": "Hello stream"}],
-                }
-            },
+            params={"message": _a2a_message("Hello stream")},
         )
         resp = await a2a_client.post("/api/a2a/stream", json=body)
         assert resp.status_code == 200
@@ -311,11 +314,7 @@ class TestStreamMessage:
         stream_body = _jsonrpc(
             "message/stream",
             params={
-                "message": {
-                    "role": "user",
-                    "parts": [{"type": "text", "text": "Hello persist"}],
-                    "taskId": "stream-persist-test",
-                }
+                "message": _a2a_message("Hello persist", task_id="stream-persist-test")
             },
         )
         resp = await a2a_client.post("/api/a2a/stream", json=stream_body)
@@ -346,3 +345,82 @@ class TestStreamMessage:
         resp = await a2a_client.post("/api/a2a/stream", json=body)
         assert resp.status_code == 200
         assert "text/event-stream" in resp.headers.get("content-type", "")
+
+
+def _parse_sse_events(raw: str) -> list[dict]:
+    """Extract JSON data payloads from raw SSE text."""
+    events: list[dict] = []
+    for block in re.split(r"\n\n+", raw.strip()):
+        for line in block.splitlines():
+            if line.startswith("data:"):
+                events.append(json.loads(line[len("data:") :].strip()))
+    return events
+
+
+class TestSdkCompliance:
+    """Validate our responses parse correctly with the official a2a-sdk types.
+
+    These tests catch protocol drift -- if our output doesn't match
+    the SDK's Pydantic models, the test fails immediately.
+    """
+
+    @pytest.mark.asyncio
+    async def test_agent_card_parses_with_sdk(self, a2a_client: AsyncClient) -> None:
+        """Agent card must be valid per the SDK's AgentCard model."""
+        resp = await a2a_client.get("/.well-known/agent.json")
+        assert resp.status_code == 200
+        SdkAgentCard.model_validate(resp.json())
+
+    @pytest.mark.asyncio
+    async def test_agent_card_v2_path_parses_with_sdk(
+        self, a2a_client: AsyncClient
+    ) -> None:
+        """The spec v0.3.0 path /.well-known/agent-card.json must also work."""
+        resp = await a2a_client.get("/.well-known/agent-card.json")
+        assert resp.status_code == 200
+        SdkAgentCard.model_validate(resp.json())
+
+    @pytest.mark.asyncio
+    async def test_send_message_parses_with_sdk(
+        self,
+        a2a_client: AsyncClient,
+        api_mock_llm_client: RuleBasedMockLLMClient,
+    ) -> None:
+        """message/send response must be valid per the SDK's SendMessageResponse."""
+        api_mock_llm_client.default_response = MockLLMOutput(content="SDK test reply")
+
+        body = _jsonrpc(
+            "message/send",
+            params={"message": _a2a_message("SDK compliance test")},
+        )
+        resp = await a2a_client.post("/api/a2a", json=body)
+        assert resp.status_code == 200
+        parsed = SdkSendMessageResponse.model_validate(resp.json())
+        assert hasattr(parsed.root, "result"), (
+            f"Expected success response, got error: {parsed.root}"
+        )
+
+    @pytest.mark.asyncio
+    async def test_stream_events_parse_with_sdk(
+        self,
+        a2a_client: AsyncClient,
+        api_mock_llm_client: RuleBasedMockLLMClient,
+    ) -> None:
+        """Every SSE event from message/stream must parse with the SDK types."""
+        api_mock_llm_client.default_response = MockLLMOutput(content="SDK stream test")
+
+        body = _jsonrpc(
+            "message/stream",
+            params={"message": _a2a_message("Stream SDK test")},
+        )
+        resp = await a2a_client.post("/api/a2a", json=body)
+        assert resp.status_code == 200
+
+        events = _parse_sse_events(resp.text)
+        assert len(events) >= 2, f"Expected at least 2 SSE events, got {len(events)}"
+
+        for i, event_data in enumerate(events):
+            parsed = SdkStreamResponse.model_validate(event_data)
+            assert hasattr(parsed.root, "result"), (
+                f"SSE event {i} was an error, not a result: {event_data}"
+            )

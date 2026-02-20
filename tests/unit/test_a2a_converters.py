@@ -1,5 +1,7 @@
 """Unit tests for A2A protocol type converters."""
 
+import uuid
+
 import pytest
 
 from family_assistant.a2a.converters import (
@@ -11,10 +13,12 @@ from family_assistant.a2a.converters import (
 )
 from family_assistant.a2a.types import (
     DataPart,
-    FileContent,
     FilePart,
+    FileWithBytes,
+    FileWithUri,
     Message,
     Part,
+    Role,
     TextPart,
 )
 from family_assistant.llm.content_parts import (
@@ -28,7 +32,7 @@ from family_assistant.processing import ChatInteractionResult
 
 class TestA2APartsToContentParts:
     def test_text_part(self) -> None:
-        parts: list[Part] = [TextPart(text="hello world")]
+        parts: list[Part] = [Part(root=TextPart(text="hello world"))]
         result = a2a_parts_to_content_parts(parts)
         assert len(result) == 1
         assert result[0]["type"] == "text"
@@ -37,7 +41,7 @@ class TestA2APartsToContentParts:
     def test_file_part_with_uri(self) -> None:
         """FileParts must become image_url, not attachment (which triggers DB lookup)."""
         parts: list[Part] = [
-            FilePart(file=FileContent(uri="https://example.com/file.pdf"))
+            Part(root=FilePart(file=FileWithUri(uri="https://example.com/file.pdf")))
         ]
         result = a2a_parts_to_content_parts(parts)
         assert len(result) == 1
@@ -47,20 +51,19 @@ class TestA2APartsToContentParts:
     def test_file_part_with_bytes(self) -> None:
         """FileParts with bytes must become image_url data URI, not attachment."""
         parts: list[Part] = [
-            FilePart(file=FileContent(bytes="dGVzdA==", mimeType="text/plain"))
+            Part(
+                root=FilePart(
+                    file=FileWithBytes(bytes="dGVzdA==", mime_type="text/plain")
+                )
+            )
         ]
         result = a2a_parts_to_content_parts(parts)
         assert len(result) == 1
         assert result[0]["type"] == "image_url"
         assert result[0]["image_url"]["url"] == "data:text/plain;base64,dGVzdA=="
 
-    def test_file_part_with_no_content_raises(self) -> None:
-        parts: list[Part] = [FilePart(file=FileContent())]
-        with pytest.raises(ValueError, match="neither URI nor bytes"):
-            a2a_parts_to_content_parts(parts)
-
     def test_data_part_serialized_as_json(self) -> None:
-        parts: list[Part] = [DataPart(data={"key": "value", "num": 42})]
+        parts: list[Part] = [Part(root=DataPart(data={"key": "value", "num": 42}))]
         result = a2a_parts_to_content_parts(parts)
         assert len(result) == 1
         assert result[0]["type"] == "text"
@@ -69,9 +72,9 @@ class TestA2APartsToContentParts:
 
     def test_multiple_parts(self) -> None:
         parts: list[Part] = [
-            TextPart(text="hello"),
-            TextPart(text="world"),
-            FilePart(file=FileContent(uri="file:///test")),
+            Part(root=TextPart(text="hello")),
+            Part(root=TextPart(text="world")),
+            Part(root=FilePart(file=FileWithUri(uri="file:///test"))),
         ]
         result = a2a_parts_to_content_parts(parts)
         assert len(result) == 3
@@ -86,15 +89,16 @@ class TestContentPartsToA2AParts:
         parts: list[ContentPartDict] = [text_content("hello")]
         result = content_parts_to_a2a_parts(parts)
         assert len(result) == 1
-        assert isinstance(result[0], TextPart)
-        assert result[0].text == "hello"
+        assert isinstance(result[0].root, TextPart)
+        assert result[0].root.text == "hello"
 
     def test_attachment_content(self) -> None:
         parts: list[ContentPartDict] = [attachment_content("att-123")]
         result = content_parts_to_a2a_parts(parts)
         assert len(result) == 1
-        assert isinstance(result[0], FilePart)
-        assert result[0].file.uri == "att-123"
+        assert isinstance(result[0].root, FilePart)
+        assert isinstance(result[0].root.file, FileWithUri)
+        assert result[0].root.file.uri == "att-123"
 
     def test_image_url_content(self) -> None:
         parts: list[ContentPartDict] = [
@@ -102,17 +106,19 @@ class TestContentPartsToA2AParts:
         ]
         result = content_parts_to_a2a_parts(parts)
         assert len(result) == 1
-        assert isinstance(result[0], FilePart)
-        assert result[0].file.uri == "https://example.com/image.png"
+        assert isinstance(result[0].root, FilePart)
+        assert isinstance(result[0].root.file, FileWithUri)
+        assert result[0].root.file.uri == "https://example.com/image.png"
 
     def test_image_url_data_uri(self) -> None:
         data_uri = "data:image/png;base64,iVBOR="
         parts: list[ContentPartDict] = [image_url_content(data_uri)]
         result = content_parts_to_a2a_parts(parts)
         assert len(result) == 1
-        assert isinstance(result[0], FilePart)
-        assert result[0].file.mimeType == "image/png"
-        assert result[0].file.bytes == "iVBOR="
+        assert isinstance(result[0].root, FilePart)
+        assert isinstance(result[0].root.file, FileWithBytes)
+        assert result[0].root.file.mime_type == "image/png"
+        assert result[0].root.file.bytes == "iVBOR="
 
     def test_image_url_data_uri_no_comma(self) -> None:
         """data: URI with no comma should be treated as a regular URL fallback."""
@@ -120,8 +126,9 @@ class TestContentPartsToA2AParts:
         parts: list[ContentPartDict] = [image_url_content(data_uri)]
         result = content_parts_to_a2a_parts(parts)
         assert len(result) == 1
-        assert isinstance(result[0], FilePart)
-        assert result[0].file.uri == data_uri
+        assert isinstance(result[0].root, FilePart)
+        assert isinstance(result[0].root.file, FileWithUri)
+        assert result[0].root.file.uri == data_uri
 
     def test_image_url_data_uri_no_semicolon(self) -> None:
         """data: URI without semicolon (no ;base64 marker)."""
@@ -129,9 +136,10 @@ class TestContentPartsToA2AParts:
         parts: list[ContentPartDict] = [image_url_content(data_uri)]
         result = content_parts_to_a2a_parts(parts)
         assert len(result) == 1
-        assert isinstance(result[0], FilePart)
-        assert result[0].file.mimeType == "text/plain"
-        assert result[0].file.bytes == "Hello%20World"
+        assert isinstance(result[0].root, FilePart)
+        assert isinstance(result[0].root.file, FileWithBytes)
+        assert result[0].root.file.mime_type == "text/plain"
+        assert result[0].root.file.bytes == "Hello%20World"
 
     def test_empty_parts(self) -> None:
         result = content_parts_to_a2a_parts([])
@@ -140,7 +148,11 @@ class TestContentPartsToA2AParts:
 
 class TestA2AMessageToContentParts:
     def test_message_extracts_parts(self) -> None:
-        msg = Message(role="user", parts=[TextPart(text="test message")])
+        msg = Message(
+            role=Role.user,
+            parts=[Part(root=TextPart(text="test message"))],
+            message_id=str(uuid.uuid4()),
+        )
         result = a2a_message_to_content_parts(msg)
         assert len(result) == 1
         assert result[0]["type"] == "text"
@@ -154,9 +166,9 @@ class TestChatResultToArtifact:
         assert artifact is not None
         assert artifact.name == "response"
         assert len(artifact.parts) == 1
-        assert isinstance(artifact.parts[0], TextPart)
-        assert artifact.parts[0].text == "Hello from the assistant"
-        assert artifact.lastChunk is True
+        assert isinstance(artifact.parts[0].root, TextPart)
+        assert artifact.parts[0].root.text == "Hello from the assistant"
+        assert artifact.artifact_id
 
     def test_with_attachments(self) -> None:
         result = ChatInteractionResult(
@@ -167,11 +179,13 @@ class TestChatResultToArtifact:
         )
         assert artifact is not None
         assert len(artifact.parts) == 3
-        assert isinstance(artifact.parts[0], TextPart)
-        assert isinstance(artifact.parts[1], FilePart)
-        assert artifact.parts[1].file.uri == "/download/att-1"
-        assert isinstance(artifact.parts[2], FilePart)
-        assert artifact.parts[2].file.uri == "att-2"
+        assert isinstance(artifact.parts[0].root, TextPart)
+        assert isinstance(artifact.parts[1].root, FilePart)
+        assert isinstance(artifact.parts[1].root.file, FileWithUri)
+        assert artifact.parts[1].root.file.uri == "/download/att-1"
+        assert isinstance(artifact.parts[2].root, FilePart)
+        assert isinstance(artifact.parts[2].root.file, FileWithUri)
+        assert artifact.parts[2].root.file.uri == "att-2"
 
     def test_empty_result_returns_none(self) -> None:
         result = ChatInteractionResult()
@@ -190,9 +204,9 @@ class TestErrorToArtifact:
         artifact = error_to_artifact("Something went wrong")
         assert artifact.name == "error"
         assert len(artifact.parts) == 1
-        assert isinstance(artifact.parts[0], TextPart)
-        assert artifact.parts[0].text == "Something went wrong"
-        assert artifact.lastChunk is True
+        assert isinstance(artifact.parts[0].root, TextPart)
+        assert artifact.parts[0].root.text == "Something went wrong"
+        assert artifact.artifact_id
 
 
 class TestRoundTrip:
@@ -215,7 +229,7 @@ class TestRoundTrip:
         ],
     )
     def test_file_round_trip(self, url: str) -> None:
-        """attachment_content → A2A FilePart → image_url_content (preserves URL)."""
+        """attachment_content -> A2A FilePart -> image_url_content (preserves URL)."""
         original: list[ContentPartDict] = [attachment_content(url)]
         a2a = content_parts_to_a2a_parts(original)
         back = a2a_parts_to_content_parts(a2a)

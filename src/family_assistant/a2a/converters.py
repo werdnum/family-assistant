@@ -9,13 +9,15 @@ Handles conversion of:
 from __future__ import annotations
 
 import json
+import uuid
 from typing import TYPE_CHECKING, cast
 
 from family_assistant.a2a.types import (
     Artifact,
     DataPart,
-    FileContent,
     FilePart,
+    FileWithBytes,
+    FileWithUri,
     Message,
     Part,
     TextPart,
@@ -36,55 +38,61 @@ if TYPE_CHECKING:
 def a2a_parts_to_content_parts(parts: list[Part]) -> list[ContentPartDict]:
     """Convert A2A message parts to FA ContentPartDict list.
 
+    SDK Part is a RootModel wrapping TextPart/FilePart/DataPart in .root.
+
     Raises:
         ValueError: If a part cannot be converted (e.g. FilePart with no content).
     """
     result: list[ContentPartDict] = []
     for part in parts:
-        if isinstance(part, TextPart):
-            result.append(text_content(part.text))
-        elif isinstance(part, FilePart):
-            if part.file.uri:
-                result.append(image_url_content(part.file.uri))
-            elif part.file.bytes:
-                mime = part.file.mimeType or "application/octet-stream"
-                result.append(
-                    image_url_content(f"data:{mime};base64,{part.file.bytes}")
-                )
+        inner = part.root
+        if isinstance(inner, TextPart):
+            result.append(text_content(inner.text))
+        elif isinstance(inner, FilePart):
+            file = inner.file
+            if isinstance(file, FileWithUri):
+                result.append(image_url_content(file.uri))
+            elif isinstance(file, FileWithBytes):
+                mime = file.mime_type or "application/octet-stream"
+                result.append(image_url_content(f"data:{mime};base64,{file.bytes}"))
             else:
                 raise ValueError("FilePart has neither URI nor bytes content")
-        elif isinstance(part, DataPart):
-            result.append(text_content(json.dumps(part.data)))
+        elif isinstance(inner, DataPart):
+            result.append(text_content(json.dumps(inner.data)))
         else:
-            raise ValueError(f"Unknown A2A part type: {type(part).__name__}")
+            raise ValueError(f"Unknown A2A part type: {type(inner).__name__}")
     return result
 
 
-def _convert_text_part(part: TextContentPartDict) -> TextPart:
-    return TextPart(text=part["text"])
+def _convert_text_part(part: TextContentPartDict) -> Part:
+    return Part(root=TextPart(text=part["text"]))
 
 
-def _convert_attachment_part(part: AttachmentContentPartDict) -> FilePart:
-    return FilePart(
-        file=FileContent(
-            uri=part["attachment_id"],
-            mimeType="application/octet-stream",
+def _convert_attachment_part(part: AttachmentContentPartDict) -> Part:
+    return Part(
+        root=FilePart(
+            file=FileWithUri(
+                uri=part["attachment_id"],
+                mime_type="application/octet-stream",
+            )
         )
     )
 
 
-def _convert_image_url_part(part: ImageUrlContentPartDict) -> FilePart:
+def _convert_image_url_part(part: ImageUrlContentPartDict) -> Part:
     url = part["image_url"].get("url", "")
     if url.startswith("data:"):
         comma_idx = url.find(",")
         if comma_idx == -1:
-            return FilePart(file=FileContent(uri=url, mimeType="image/*"))
+            return Part(root=FilePart(file=FileWithUri(uri=url, mime_type="image/*")))
         meta = url[5:comma_idx]
         mime_type = meta.split(";")[0] if ";" in meta else meta
-        return FilePart(
-            file=FileContent(bytes=url[comma_idx + 1 :], mimeType=mime_type)
+        return Part(
+            root=FilePart(
+                file=FileWithBytes(bytes=url[comma_idx + 1 :], mime_type=mime_type)
+            )
         )
-    return FilePart(file=FileContent(uri=url, mimeType="image/*"))
+    return Part(root=FilePart(file=FileWithUri(uri=url, mime_type="image/*")))
 
 
 def content_parts_to_a2a_parts(parts: list[ContentPartDict]) -> list[Part]:
@@ -129,31 +137,33 @@ def chat_result_to_artifact(
     parts: list[Part] = []
 
     if result.text_reply:
-        parts.append(TextPart(text=result.text_reply))
+        parts.append(Part(root=TextPart(text=result.text_reply)))
 
     if result.attachment_ids:
         for att_id in result.attachment_ids:
             url = (attachment_urls or {}).get(att_id, att_id)
             parts.append(
-                FilePart(file=FileContent(uri=url, mimeType="application/octet-stream"))
+                Part(
+                    root=FilePart(
+                        file=FileWithUri(uri=url, mime_type="application/octet-stream")
+                    )
+                )
             )
 
     if not parts:
         return None
 
     return Artifact(
+        artifact_id=str(uuid.uuid4()),
         name="response",
         parts=parts,
-        index=0,
-        lastChunk=True,
     )
 
 
 def error_to_artifact(error_message: str) -> Artifact:
     """Create an artifact representing an error."""
     return Artifact(
+        artifact_id=str(uuid.uuid4()),
         name="error",
-        parts=[TextPart(text=error_message)],
-        index=0,
-        lastChunk=True,
+        parts=[Part(root=TextPart(text=error_message))],
     )
