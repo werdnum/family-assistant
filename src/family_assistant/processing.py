@@ -1279,11 +1279,11 @@ class ProcessingService:
             f"_process_attachment_content_parts called with {len(content_parts)} parts, "
             f"attachment_registry={'present' if self.attachment_registry else 'MISSING'}"
         )
-        if not self.attachment_registry:
+        has_registry = bool(self.attachment_registry)
+        if not has_registry:
             logger.warning(
                 "Attachment registry not available - skipping attachment content part processing"
             )
-            return content_parts, []
 
         modified_parts = []
         injection_messages = []
@@ -1291,6 +1291,9 @@ class ProcessingService:
         for part in content_parts:
             logger.debug(f"Processing content part: {part}")
             if part.get("type") == "attachment":
+                if not has_registry:
+                    continue
+                assert self.attachment_registry is not None
                 attachment_id = part.get("attachment_id")
                 if not attachment_id:
                     logger.warning(
