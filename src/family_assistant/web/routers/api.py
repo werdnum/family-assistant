@@ -2,6 +2,7 @@ import logging
 
 from fastapi import APIRouter
 
+from .a2a_api import a2a_router
 from .attachments_api import attachments_api_router
 from .automations_api import automations_api_router
 from .chat_api import chat_api_router
@@ -47,3 +48,4 @@ api_router.include_router(
     diagnostics_api_router, prefix="/diagnostics", tags=["Diagnostics"]
 )
 api_router.include_router(version_router, tags=["Version"])
+api_router.include_router(a2a_router, prefix="/a2a", tags=["A2A Protocol"])
