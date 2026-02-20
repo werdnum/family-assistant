@@ -43,6 +43,7 @@ from .llm.messages import (
     ContentPart,
     ContentPartDict,
     ErrorMessage,
+    ImageUrlContentPart,
     LLMMessage,
     SystemMessage,
     TextContentPart,
@@ -1344,6 +1345,21 @@ class ProcessingService:
                         exc_info=True,
                     )
                     continue
+            elif part.get("type") == "image_url":
+                # image_url parts (e.g. from A2A FileParts) go directly to the LLM
+                # as injection messages — the LLM handles URLs and data URIs natively
+                url = part.get("image_url", {}).get("url", "")
+                if url:
+                    injection_messages.append(
+                        UserMessage(
+                            content=[
+                                ImageUrlContentPart(
+                                    type="image_url", image_url={"url": url}
+                                )
+                            ]
+                        )
+                    )
+                modified_parts.append(part)
             else:
                 # Not an attachment part, keep as-is
                 modified_parts.append(part)
