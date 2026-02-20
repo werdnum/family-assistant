@@ -137,7 +137,10 @@ class A2ATasksRepository(BaseRepository):
 
         stmt = (
             update(a2a_tasks_table)
-            .where(a2a_tasks_table.c.task_id == task_id)
+            .where(
+                a2a_tasks_table.c.task_id == task_id,
+                a2a_tasks_table.c.status != "canceled",
+            )
             .values(**values)
         )
         result = await self._execute_with_logging("update_a2a_task_status", stmt)

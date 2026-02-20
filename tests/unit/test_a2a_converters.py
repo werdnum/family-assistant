@@ -35,22 +35,24 @@ class TestA2APartsToContentParts:
         assert result[0]["text"] == "hello world"
 
     def test_file_part_with_uri(self) -> None:
+        """FileParts must become image_url, not attachment (which triggers DB lookup)."""
         parts: list[Part] = [
             FilePart(file=FileContent(uri="https://example.com/file.pdf"))
         ]
         result = a2a_parts_to_content_parts(parts)
         assert len(result) == 1
-        assert result[0]["type"] == "attachment"
-        assert result[0]["attachment_id"] == "https://example.com/file.pdf"
+        assert result[0]["type"] == "image_url"
+        assert result[0]["image_url"]["url"] == "https://example.com/file.pdf"
 
     def test_file_part_with_bytes(self) -> None:
+        """FileParts with bytes must become image_url data URI, not attachment."""
         parts: list[Part] = [
             FilePart(file=FileContent(bytes="dGVzdA==", mimeType="text/plain"))
         ]
         result = a2a_parts_to_content_parts(parts)
         assert len(result) == 1
-        assert result[0]["type"] == "attachment"
-        assert "data:text/plain;base64,dGVzdA==" in result[0]["attachment_id"]
+        assert result[0]["type"] == "image_url"
+        assert result[0]["image_url"]["url"] == "data:text/plain;base64,dGVzdA=="
 
     def test_file_part_with_no_content_raises(self) -> None:
         parts: list[Part] = [FilePart(file=FileContent())]
@@ -111,6 +113,25 @@ class TestContentPartsToA2AParts:
         assert isinstance(result[0], FilePart)
         assert result[0].file.mimeType == "image/png"
         assert result[0].file.bytes == "iVBOR="
+
+    def test_image_url_data_uri_no_comma(self) -> None:
+        """data: URI with no comma should be treated as a regular URL fallback."""
+        data_uri = "data:image/png;base64"
+        parts: list[ContentPartDict] = [image_url_content(data_uri)]
+        result = content_parts_to_a2a_parts(parts)
+        assert len(result) == 1
+        assert isinstance(result[0], FilePart)
+        assert result[0].file.uri == data_uri
+
+    def test_image_url_data_uri_no_semicolon(self) -> None:
+        """data: URI without semicolon (no ;base64 marker)."""
+        data_uri = "data:text/plain,Hello%20World"
+        parts: list[ContentPartDict] = [image_url_content(data_uri)]
+        result = content_parts_to_a2a_parts(parts)
+        assert len(result) == 1
+        assert isinstance(result[0], FilePart)
+        assert result[0].file.mimeType == "text/plain"
+        assert result[0].file.bytes == "Hello%20World"
 
     def test_empty_parts(self) -> None:
         result = content_parts_to_a2a_parts([])
@@ -193,10 +214,11 @@ class TestRoundTrip:
             "/relative/path",
         ],
     )
-    def test_attachment_round_trip(self, url: str) -> None:
+    def test_file_round_trip(self, url: str) -> None:
+        """attachment_content → A2A FilePart → image_url_content (preserves URL)."""
         original: list[ContentPartDict] = [attachment_content(url)]
         a2a = content_parts_to_a2a_parts(original)
         back = a2a_parts_to_content_parts(a2a)
         assert len(back) == 1
-        assert back[0]["type"] == "attachment"
-        assert back[0]["attachment_id"] == url
+        assert back[0]["type"] == "image_url"
+        assert back[0]["image_url"]["url"] == url

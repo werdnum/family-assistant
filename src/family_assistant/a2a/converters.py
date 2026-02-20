@@ -25,7 +25,7 @@ from family_assistant.llm.content_parts import (
     ContentPartDict,
     ImageUrlContentPartDict,
     TextContentPartDict,
-    attachment_content,
+    image_url_content,
     text_content,
 )
 
@@ -45,11 +45,11 @@ def a2a_parts_to_content_parts(parts: list[Part]) -> list[ContentPartDict]:
             result.append(text_content(part.text))
         elif isinstance(part, FilePart):
             if part.file.uri:
-                result.append(attachment_content(part.file.uri))
+                result.append(image_url_content(part.file.uri))
             elif part.file.bytes:
                 mime = part.file.mimeType or "application/octet-stream"
                 result.append(
-                    attachment_content(f"data:{mime};base64,{part.file.bytes}")
+                    image_url_content(f"data:{mime};base64,{part.file.bytes}")
                 )
             else:
                 raise ValueError("FilePart has neither URI nor bytes content")
@@ -76,10 +76,14 @@ def _convert_attachment_part(part: AttachmentContentPartDict) -> FilePart:
 def _convert_image_url_part(part: ImageUrlContentPartDict) -> FilePart:
     url = part["image_url"].get("url", "")
     if url.startswith("data:"):
-        mime_end = url.index(";") if ";" in url else len(url)
-        mime_type = url[5:mime_end]
-        b64_start = url.index(",") + 1 if "," in url else 0
-        return FilePart(file=FileContent(bytes=url[b64_start:], mimeType=mime_type))
+        comma_idx = url.find(",")
+        if comma_idx == -1:
+            return FilePart(file=FileContent(uri=url, mimeType="image/*"))
+        meta = url[5:comma_idx]
+        mime_type = meta.split(";")[0] if ";" in meta else meta
+        return FilePart(
+            file=FileContent(bytes=url[comma_idx + 1 :], mimeType=mime_type)
+        )
     return FilePart(file=FileContent(uri=url, mimeType="image/*"))
 
 

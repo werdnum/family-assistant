@@ -102,6 +102,45 @@ class TestSendMessage:
         assert len(task["artifacts"]) >= 1
 
     @pytest.mark.asyncio
+    async def test_send_message_with_file_part_reaches_llm(
+        self,
+        a2a_client: AsyncClient,
+        api_mock_llm_client: RuleBasedMockLLMClient,
+    ) -> None:
+        """A file URL sent via A2A must reach the LLM, not get silently dropped."""
+        api_mock_llm_client.default_response = MockLLMOutput(
+            content="I can see the file"
+        )
+
+        body = _jsonrpc(
+            "message/send",
+            params={
+                "message": {
+                    "role": "user",
+                    "parts": [
+                        {"type": "text", "text": "Look at this"},
+                        {
+                            "type": "file",
+                            "file": {"uri": "https://example.com/report.pdf"},
+                        },
+                    ],
+                }
+            },
+        )
+        resp = await a2a_client.post("/api/a2a", json=body)
+        assert resp.status_code == 200
+
+        # The LLM must have received the file URL somewhere in its input.
+        # If the converter uses attachment_content (which triggers a DB lookup
+        # that fails for external URLs), the file gets silently dropped.
+        calls = api_mock_llm_client.get_calls()
+        assert len(calls) >= 1
+        all_content = str(calls[-1]["kwargs"]["messages"])
+        assert "https://example.com/report.pdf" in all_content, (
+            f"File URL was silently dropped! LLM received: {all_content}"
+        )
+
+    @pytest.mark.asyncio
     async def test_send_message_with_task_id(
         self,
         a2a_client: AsyncClient,
