@@ -9,10 +9,10 @@ interactions:
         x-goog-api-client:
           - google-genai-sdk/1.56.0 gl-python/3.13.9
       method: post
-      uri: https://generativelanguage.googleapis.com/v1beta/models/gemini-3-flash-preview:generateContent
+      uri: https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-lite:generateContent
     response:
       body:
-        string: "{\n  \"candidates\": [\n    {\n      \"content\": {\n        \"parts\": [\n          {\n            \"functionCall\": {\n              \"name\": \"get_weather\",\n              \"args\": {\n                \"location\": \"New York, NY\"\n              }\n            }\n          },\n          {\n            \"functionCall\": {\n              \"name\": \"calculate\",\n              \"args\": {\n                \"expression\": \"15+27\"\n              }\n            }\n          }\n        ],\n        \"role\": \"model\"\n      },\n      \"finishReason\": \"STOP\",\n      \"index\": 0,\n      \"finishMessage\": \"Model generated function call(s).\"\n    }\n  ],\n  \"usageMetadata\": {\n    \"promptTokenCount\": 127,\n    \"candidatesTokenCount\": 35,\n    \"totalTokenCount\": 162,\n    \"promptTokensDetails\": [\n      {\n        \"modality\": \"TEXT\",\n        \"tokenCount\": 127\n      }\n    ]\n  },\n  \"modelVersion\": \"gemini-3-flash-preview\",\n  \"responseId\": \"GP6QaZSBJNqE7M8PiuTIsQk\"\n}\n"
+        string: "{\n  \"candidates\": [\n    {\n      \"content\": {\n        \"parts\": [\n          {\n            \"functionCall\": {\n              \"name\": \"get_weather\",\n              \"args\": {\n                \"location\": \"New York, NY\"\n              }\n            }\n          },\n          {\n            \"functionCall\": {\n              \"name\": \"calculate\",\n              \"args\": {\n                \"expression\": \"15+27\"\n              }\n            }\n          }\n        ],\n        \"role\": \"model\"\n      },\n      \"finishReason\": \"STOP\",\n      \"index\": 0,\n      \"finishMessage\": \"Model generated function call(s).\"\n    }\n  ],\n  \"usageMetadata\": {\n    \"promptTokenCount\": 127,\n    \"candidatesTokenCount\": 35,\n    \"totalTokenCount\": 162,\n    \"promptTokensDetails\": [\n      {\n        \"modality\": \"TEXT\",\n        \"tokenCount\": 127\n      }\n    ]\n  },\n  \"modelVersion\": \"gemini-2.5-flash-lite\",\n  \"responseId\": \"GP6QaZSBJNqE7M8PiuTIsQk\"\n}\n"
       headers:
         Alt-Svc:
           - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000

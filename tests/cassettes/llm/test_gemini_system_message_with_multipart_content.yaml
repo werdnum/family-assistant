@@ -9,10 +9,10 @@ interactions:
         x-goog-api-client:
           - google-genai-sdk/1.38.0 gl-python/3.13.7
       method: post
-      uri: https://generativelanguage.googleapis.com/v1beta/models/gemini-3-flash-preview-lite:generateContent
+      uri: https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-lite:generateContent
     response:
       body:
-        string: "{\n  \"candidates\": [\n    {\n      \"content\": {\n        \"parts\": [\n          {\n            \"text\": \"Blue\"\n          }\n        ],\n        \"role\": \"model\"\n      },\n      \"finishReason\": \"STOP\",\n      \"index\": 0\n    }\n  ],\n  \"usageMetadata\": {\n    \"promptTokenCount\": 283,\n    \"candidatesTokenCount\": 1,\n    \"totalTokenCount\": 284,\n    \"promptTokensDetails\": [\n      {\n        \"modality\": \"TEXT\",\n        \"tokenCount\": 25\n      },\n      {\n        \"modality\": \"IMAGE\",\n        \"tokenCount\": 258\n      }\n    ]\n  },\n  \"modelVersion\": \"gemini-3-flash-preview-lite\",\n  \"responseId\": \"eP4eaevyL7javdIP19aNkAQ\"\n}\n"
+        string: "{\n  \"candidates\": [\n    {\n      \"content\": {\n        \"parts\": [\n          {\n            \"text\": \"Blue\"\n          }\n        ],\n        \"role\": \"model\"\n      },\n      \"finishReason\": \"STOP\",\n      \"index\": 0\n    }\n  ],\n  \"usageMetadata\": {\n    \"promptTokenCount\": 283,\n    \"candidatesTokenCount\": 1,\n    \"totalTokenCount\": 284,\n    \"promptTokensDetails\": [\n      {\n        \"modality\": \"TEXT\",\n        \"tokenCount\": 25\n      },\n      {\n        \"modality\": \"IMAGE\",\n        \"tokenCount\": 258\n      }\n    ]\n  },\n  \"modelVersion\": \"gemini-2.5-flash-lite\",\n  \"responseId\": \"eP4eaevyL7javdIP19aNkAQ\"\n}\n"
       headers:
         Alt-Svc:
           - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
@@ -51,10 +51,10 @@ interactions:
         x-goog-api-client:
           - google-genai-sdk/1.38.0 gl-python/3.13.7
       method: post
-      uri: https://generativelanguage.googleapis.com/v1beta/models/gemini-3-flash-preview-lite:generateContent
+      uri: https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-lite:generateContent
     response:
       body:
-        string: "{\n  \"candidates\": [\n    {\n      \"content\": {\n        \"parts\": [\n          {\n            \"text\": \"Red\"\n          }\n        ],\n        \"role\": \"model\"\n      },\n      \"finishReason\": \"STOP\",\n      \"index\": 0\n    }\n  ],\n  \"usageMetadata\": {\n    \"promptTokenCount\": 18,\n    \"candidatesTokenCount\": 1,\n    \"totalTokenCount\": 19,\n    \"promptTokensDetails\": [\n      {\n        \"modality\": \"TEXT\",\n        \"tokenCount\": 18\n      }\n    ]\n  },\n  \"modelVersion\": \"gemini-3-flash-preview-lite\",\n  \"responseId\": \"0xMgafLDM93hnsEP9f-6oQM\"\n}\n"
+        string: "{\n  \"candidates\": [\n    {\n      \"content\": {\n        \"parts\": [\n          {\n            \"text\": \"Red\"\n          }\n        ],\n        \"role\": \"model\"\n      },\n      \"finishReason\": \"STOP\",\n      \"index\": 0\n    }\n  ],\n  \"usageMetadata\": {\n    \"promptTokenCount\": 18,\n    \"candidatesTokenCount\": 1,\n    \"totalTokenCount\": 19,\n    \"promptTokensDetails\": [\n      {\n        \"modality\": \"TEXT\",\n        \"tokenCount\": 18\n      }\n    ]\n  },\n  \"modelVersion\": \"gemini-2.5-flash-lite\",\n  \"responseId\": \"0xMgafLDM93hnsEP9f-6oQM\"\n}\n"
       headers:
         Alt-Svc:
           - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
@@ -93,10 +93,10 @@ interactions:
         x-goog-api-client:
           - google-genai-sdk/1.38.0 gl-python/3.13.7
       method: post
-      uri: https://generativelanguage.googleapis.com/v1beta/models/gemini-3-flash-preview-lite:generateContent
+      uri: https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-lite:generateContent
     response:
       body:
-        string: "{\n  \"candidates\": [\n    {\n      \"content\": {\n        \"parts\": [\n          {\n            \"text\": \"Cyan\"\n          }\n        ],\n        \"role\": \"model\"\n      },\n      \"finishReason\": \"STOP\",\n      \"index\": 0\n    }\n  ],\n  \"usageMetadata\": {\n    \"promptTokenCount\": 18,\n    \"candidatesTokenCount\": 1,\n    \"totalTokenCount\": 19,\n    \"promptTokensDetails\": [\n      {\n        \"modality\": \"TEXT\",\n        \"tokenCount\": 18\n      }\n    ]\n  },\n  \"modelVersion\": \"gemini-3-flash-preview-lite\",\n  \"responseId\": \"HxQgadrbF8fVxs0PhPeZ6A8\"\n}\n"
+        string: "{\n  \"candidates\": [\n    {\n      \"content\": {\n        \"parts\": [\n          {\n            \"text\": \"Cyan\"\n          }\n        ],\n        \"role\": \"model\"\n      },\n      \"finishReason\": \"STOP\",\n      \"index\": 0\n    }\n  ],\n  \"usageMetadata\": {\n    \"promptTokenCount\": 18,\n    \"candidatesTokenCount\": 1,\n    \"totalTokenCount\": 19,\n    \"promptTokensDetails\": [\n      {\n        \"modality\": \"TEXT\",\n        \"tokenCount\": 18\n      }\n    ]\n  },\n  \"modelVersion\": \"gemini-2.5-flash-lite\",\n  \"responseId\": \"HxQgadrbF8fVxs0PhPeZ6A8\"\n}\n"
       headers:
         Alt-Svc:
           - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
@@ -135,10 +135,10 @@ interactions:
         x-goog-api-client:
           - google-genai-sdk/1.38.0 gl-python/3.13.7
       method: post
-      uri: https://generativelanguage.googleapis.com/v1beta/models/gemini-3-flash-preview-lite:generateContent
+      uri: https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-lite:generateContent
     response:
       body:
-        string: "{\n  \"candidates\": [\n    {\n      \"content\": {\n        \"parts\": [\n          {\n            \"text\": \"Red\"\n          }\n        ],\n        \"role\": \"model\"\n      },\n      \"finishReason\": \"STOP\",\n      \"index\": 0\n    }\n  ],\n  \"usageMetadata\": {\n    \"promptTokenCount\": 18,\n    \"candidatesTokenCount\": 1,\n    \"totalTokenCount\": 19,\n    \"promptTokensDetails\": [\n      {\n        \"modality\": \"TEXT\",\n        \"tokenCount\": 18\n      }\n    ]\n  },\n  \"modelVersion\": \"gemini-3-flash-preview-lite\",\n  \"responseId\": \"y1QgadGcJrK-vdIPqerLsQs\"\n}\n"
+        string: "{\n  \"candidates\": [\n    {\n      \"content\": {\n        \"parts\": [\n          {\n            \"text\": \"Red\"\n          }\n        ],\n        \"role\": \"model\"\n      },\n      \"finishReason\": \"STOP\",\n      \"index\": 0\n    }\n  ],\n  \"usageMetadata\": {\n    \"promptTokenCount\": 18,\n    \"candidatesTokenCount\": 1,\n    \"totalTokenCount\": 19,\n    \"promptTokensDetails\": [\n      {\n        \"modality\": \"TEXT\",\n        \"tokenCount\": 18\n      }\n    ]\n  },\n  \"modelVersion\": \"gemini-2.5-flash-lite\",\n  \"responseId\": \"y1QgadGcJrK-vdIPqerLsQs\"\n}\n"
       headers:
         Alt-Svc:
           - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
@@ -177,10 +177,10 @@ interactions:
         x-goog-api-client:
           - google-genai-sdk/1.38.0 gl-python/3.13.7
       method: post
-      uri: https://generativelanguage.googleapis.com/v1beta/models/gemini-3-flash-preview-lite:generateContent
+      uri: https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-lite:generateContent
     response:
       body:
-        string: "{\n  \"candidates\": [\n    {\n      \"content\": {\n        \"parts\": [\n          {\n            \"text\": \"Red\"\n          }\n        ],\n        \"role\": \"model\"\n      },\n      \"finishReason\": \"STOP\",\n      \"index\": 0\n    }\n  ],\n  \"usageMetadata\": {\n    \"promptTokenCount\": 18,\n    \"candidatesTokenCount\": 1,\n    \"totalTokenCount\": 19,\n    \"promptTokensDetails\": [\n      {\n        \"modality\": \"TEXT\",\n        \"tokenCount\": 18\n      }\n    ]\n  },\n  \"modelVersion\": \"gemini-3-flash-preview-lite\",\n  \"responseId\": \"WmAgabTjI8zxnsEPgZKXkQ8\"\n}\n"
+        string: "{\n  \"candidates\": [\n    {\n      \"content\": {\n        \"parts\": [\n          {\n            \"text\": \"Red\"\n          }\n        ],\n        \"role\": \"model\"\n      },\n      \"finishReason\": \"STOP\",\n      \"index\": 0\n    }\n  ],\n  \"usageMetadata\": {\n    \"promptTokenCount\": 18,\n    \"candidatesTokenCount\": 1,\n    \"totalTokenCount\": 19,\n    \"promptTokensDetails\": [\n      {\n        \"modality\": \"TEXT\",\n        \"tokenCount\": 18\n      }\n    ]\n  },\n  \"modelVersion\": \"gemini-2.5-flash-lite\",\n  \"responseId\": \"WmAgabTjI8zxnsEPgZKXkQ8\"\n}\n"
       headers:
         Alt-Svc:
           - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
@@ -219,10 +219,10 @@ interactions:
         x-goog-api-client:
           - google-genai-sdk/1.38.0 gl-python/3.13.7
       method: post
-      uri: https://generativelanguage.googleapis.com/v1beta/models/gemini-3-flash-preview-lite:generateContent
+      uri: https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-lite:generateContent
     response:
       body:
-        string: "{\n  \"candidates\": [\n    {\n      \"content\": {\n        \"parts\": [\n          {\n            \"text\": \"Blue\"\n          }\n        ],\n        \"role\": \"model\"\n      },\n      \"finishReason\": \"STOP\",\n      \"index\": 0\n    }\n  ],\n  \"usageMetadata\": {\n    \"promptTokenCount\": 18,\n    \"candidatesTokenCount\": 1,\n    \"totalTokenCount\": 19,\n    \"promptTokensDetails\": [\n      {\n        \"modality\": \"TEXT\",\n        \"tokenCount\": 18\n      }\n    ]\n  },\n  \"modelVersion\": \"gemini-3-flash-preview-lite\",\n  \"responseId\": \"zmQgaZiDFfDfxs0P8fCXKA\"\n}\n"
+        string: "{\n  \"candidates\": [\n    {\n      \"content\": {\n        \"parts\": [\n          {\n            \"text\": \"Blue\"\n          }\n        ],\n        \"role\": \"model\"\n      },\n      \"finishReason\": \"STOP\",\n      \"index\": 0\n    }\n  ],\n  \"usageMetadata\": {\n    \"promptTokenCount\": 18,\n    \"candidatesTokenCount\": 1,\n    \"totalTokenCount\": 19,\n    \"promptTokensDetails\": [\n      {\n        \"modality\": \"TEXT\",\n        \"tokenCount\": 18\n      }\n    ]\n  },\n  \"modelVersion\": \"gemini-2.5-flash-lite\",\n  \"responseId\": \"zmQgaZiDFfDfxs0P8fCXKA\"\n}\n"
       headers:
         Alt-Svc:
           - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
@@ -261,10 +261,10 @@ interactions:
         x-goog-api-client:
           - google-genai-sdk/1.38.0 gl-python/3.13.7
       method: post
-      uri: https://generativelanguage.googleapis.com/v1beta/models/gemini-3-flash-preview-lite:generateContent
+      uri: https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-lite:generateContent
     response:
       body:
-        string: "{\n  \"candidates\": [\n    {\n      \"content\": {\n        \"parts\": [\n          {\n            \"text\": \"Blue\"\n          }\n        ],\n        \"role\": \"model\"\n      },\n      \"finishReason\": \"STOP\",\n      \"index\": 0\n    }\n  ],\n  \"usageMetadata\": {\n    \"promptTokenCount\": 283,\n    \"candidatesTokenCount\": 1,\n    \"totalTokenCount\": 284,\n    \"promptTokensDetails\": [\n      {\n        \"modality\": \"TEXT\",\n        \"tokenCount\": 25\n      },\n      {\n        \"modality\": \"IMAGE\",\n        \"tokenCount\": 258\n      }\n    ]\n  },\n  \"modelVersion\": \"gemini-3-flash-preview-lite\",\n  \"responseId\": \"3z8hacD4EI3qkdUP8_aJuQk\"\n}\n"
+        string: "{\n  \"candidates\": [\n    {\n      \"content\": {\n        \"parts\": [\n          {\n            \"text\": \"Blue\"\n          }\n        ],\n        \"role\": \"model\"\n      },\n      \"finishReason\": \"STOP\",\n      \"index\": 0\n    }\n  ],\n  \"usageMetadata\": {\n    \"promptTokenCount\": 283,\n    \"candidatesTokenCount\": 1,\n    \"totalTokenCount\": 284,\n    \"promptTokensDetails\": [\n      {\n        \"modality\": \"TEXT\",\n        \"tokenCount\": 25\n      },\n      {\n        \"modality\": \"IMAGE\",\n        \"tokenCount\": 258\n      }\n    ]\n  },\n  \"modelVersion\": \"gemini-2.5-flash-lite\",\n  \"responseId\": \"3z8hacD4EI3qkdUP8_aJuQk\"\n}\n"
       headers:
         Alt-Svc:
           - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
@@ -303,10 +303,10 @@ interactions:
         x-goog-api-client:
           - google-genai-sdk/1.38.0 gl-python/3.13.7
       method: post
-      uri: https://generativelanguage.googleapis.com/v1beta/models/gemini-3-flash-preview-lite:generateContent
+      uri: https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-lite:generateContent
     response:
       body:
-        string: "{\n  \"candidates\": [\n    {\n      \"content\": {\n        \"parts\": [\n          {\n            \"text\": \"Blue\"\n          }\n        ],\n        \"role\": \"model\"\n      },\n      \"finishReason\": \"STOP\",\n      \"index\": 0\n    }\n  ],\n  \"usageMetadata\": {\n    \"promptTokenCount\": 283,\n    \"candidatesTokenCount\": 1,\n    \"totalTokenCount\": 284,\n    \"promptTokensDetails\": [\n      {\n        \"modality\": \"TEXT\",\n        \"tokenCount\": 25\n      },\n      {\n        \"modality\": \"IMAGE\",\n        \"tokenCount\": 258\n      }\n    ]\n  },\n  \"modelVersion\": \"gemini-3-flash-preview-lite\",\n  \"responseId\": \"AuYiaaqNJr_j7M8P0Lb_uAw\"\n}\n"
+        string: "{\n  \"candidates\": [\n    {\n      \"content\": {\n        \"parts\": [\n          {\n            \"text\": \"Blue\"\n          }\n        ],\n        \"role\": \"model\"\n      },\n      \"finishReason\": \"STOP\",\n      \"index\": 0\n    }\n  ],\n  \"usageMetadata\": {\n    \"promptTokenCount\": 283,\n    \"candidatesTokenCount\": 1,\n    \"totalTokenCount\": 284,\n    \"promptTokensDetails\": [\n      {\n        \"modality\": \"TEXT\",\n        \"tokenCount\": 25\n      },\n      {\n        \"modality\": \"IMAGE\",\n        \"tokenCount\": 258\n      }\n    ]\n  },\n  \"modelVersion\": \"gemini-2.5-flash-lite\",\n  \"responseId\": \"AuYiaaqNJr_j7M8P0Lb_uAw\"\n}\n"
       headers:
         Alt-Svc:
           - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
@@ -345,10 +345,10 @@ interactions:
         x-goog-api-client:
           - google-genai-sdk/1.38.0 gl-python/3.13.7
       method: post
-      uri: https://generativelanguage.googleapis.com/v1beta/models/gemini-3-flash-preview-lite:generateContent
+      uri: https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-lite:generateContent
     response:
       body:
-        string: "{\n  \"candidates\": [\n    {\n      \"content\": {\n        \"parts\": [\n          {\n            \"text\": \"Blue\"\n          }\n        ],\n        \"role\": \"model\"\n      },\n      \"finishReason\": \"STOP\",\n      \"index\": 0\n    }\n  ],\n  \"usageMetadata\": {\n    \"promptTokenCount\": 283,\n    \"candidatesTokenCount\": 1,\n    \"totalTokenCount\": 284,\n    \"promptTokensDetails\": [\n      {\n        \"modality\": \"TEXT\",\n        \"tokenCount\": 25\n      },\n      {\n        \"modality\": \"IMAGE\",\n        \"tokenCount\": 258\n      }\n    ]\n  },\n  \"modelVersion\": \"gemini-3-flash-preview-lite\",\n  \"responseId\": \"5-giaa3_FsnyvdIPp4-z6Qg\"\n}\n"
+        string: "{\n  \"candidates\": [\n    {\n      \"content\": {\n        \"parts\": [\n          {\n            \"text\": \"Blue\"\n          }\n        ],\n        \"role\": \"model\"\n      },\n      \"finishReason\": \"STOP\",\n      \"index\": 0\n    }\n  ],\n  \"usageMetadata\": {\n    \"promptTokenCount\": 283,\n    \"candidatesTokenCount\": 1,\n    \"totalTokenCount\": 284,\n    \"promptTokensDetails\": [\n      {\n        \"modality\": \"TEXT\",\n        \"tokenCount\": 25\n      },\n      {\n        \"modality\": \"IMAGE\",\n        \"tokenCount\": 258\n      }\n    ]\n  },\n  \"modelVersion\": \"gemini-2.5-flash-lite\",\n  \"responseId\": \"5-giaa3_FsnyvdIPp4-z6Qg\"\n}\n"
       headers:
         Alt-Svc:
           - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
@@ -387,10 +387,10 @@ interactions:
         x-goog-api-client:
           - google-genai-sdk/1.38.0 gl-python/3.13.7
       method: post
-      uri: https://generativelanguage.googleapis.com/v1beta/models/gemini-3-flash-preview-lite:generateContent
+      uri: https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-lite:generateContent
     response:
       body:
-        string: "{\n  \"candidates\": [\n    {\n      \"content\": {\n        \"parts\": [\n          {\n            \"text\": \"Blue\"\n          }\n        ],\n        \"role\": \"model\"\n      },\n      \"finishReason\": \"STOP\",\n      \"index\": 0\n    }\n  ],\n  \"usageMetadata\": {\n    \"promptTokenCount\": 283,\n    \"candidatesTokenCount\": 1,\n    \"totalTokenCount\": 284,\n    \"promptTokensDetails\": [\n      {\n        \"modality\": \"TEXT\",\n        \"tokenCount\": 25\n      },\n      {\n        \"modality\": \"IMAGE\",\n        \"tokenCount\": 258\n      }\n    ]\n  },\n  \"modelVersion\": \"gemini-3-flash-preview-lite\",\n  \"responseId\": \"E_EiaffNE6fXvdIPj7K-YQ\"\n}\n"
+        string: "{\n  \"candidates\": [\n    {\n      \"content\": {\n        \"parts\": [\n          {\n            \"text\": \"Blue\"\n          }\n        ],\n        \"role\": \"model\"\n      },\n      \"finishReason\": \"STOP\",\n      \"index\": 0\n    }\n  ],\n  \"usageMetadata\": {\n    \"promptTokenCount\": 283,\n    \"candidatesTokenCount\": 1,\n    \"totalTokenCount\": 284,\n    \"promptTokensDetails\": [\n      {\n        \"modality\": \"TEXT\",\n        \"tokenCount\": 25\n      },\n      {\n        \"modality\": \"IMAGE\",\n        \"tokenCount\": 258\n      }\n    ]\n  },\n  \"modelVersion\": \"gemini-2.5-flash-lite\",\n  \"responseId\": \"E_EiaffNE6fXvdIPj7K-YQ\"\n}\n"
       headers:
         Alt-Svc:
           - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
@@ -429,10 +429,10 @@ interactions:
         x-goog-api-client:
           - google-genai-sdk/1.38.0 gl-python/3.13.7
       method: post
-      uri: https://generativelanguage.googleapis.com/v1beta/models/gemini-3-flash-preview-lite:generateContent
+      uri: https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-lite:generateContent
     response:
       body:
-        string: "{\n  \"candidates\": [\n    {\n      \"content\": {\n        \"parts\": [\n          {\n            \"text\": \"Blue\"\n          }\n        ],\n        \"role\": \"model\"\n      },\n      \"finishReason\": \"STOP\",\n      \"index\": 0\n    }\n  ],\n  \"usageMetadata\": {\n    \"promptTokenCount\": 283,\n    \"candidatesTokenCount\": 1,\n    \"totalTokenCount\": 284,\n    \"promptTokensDetails\": [\n      {\n        \"modality\": \"TEXT\",\n        \"tokenCount\": 25\n      },\n      {\n        \"modality\": \"IMAGE\",\n        \"tokenCount\": 258\n      }\n    ]\n  },\n  \"modelVersion\": \"gemini-3-flash-preview-lite\",\n  \"responseId\": \"mfQiaeqSJrKhkdUP9M3S2A0\"\n}\n"
+        string: "{\n  \"candidates\": [\n    {\n      \"content\": {\n        \"parts\": [\n          {\n            \"text\": \"Blue\"\n          }\n        ],\n        \"role\": \"model\"\n      },\n      \"finishReason\": \"STOP\",\n      \"index\": 0\n    }\n  ],\n  \"usageMetadata\": {\n    \"promptTokenCount\": 283,\n    \"candidatesTokenCount\": 1,\n    \"totalTokenCount\": 284,\n    \"promptTokensDetails\": [\n      {\n        \"modality\": \"TEXT\",\n        \"tokenCount\": 25\n      },\n      {\n        \"modality\": \"IMAGE\",\n        \"tokenCount\": 258\n      }\n    ]\n  },\n  \"modelVersion\": \"gemini-2.5-flash-lite\",\n  \"responseId\": \"mfQiaeqSJrKhkdUP9M3S2A0\"\n}\n"
       headers:
         Alt-Svc:
           - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000

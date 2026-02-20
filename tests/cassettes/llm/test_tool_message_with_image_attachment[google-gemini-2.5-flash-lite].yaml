@@ -9,10 +9,10 @@ interactions:
         x-goog-api-client:
           - google-genai-sdk/1.38.0 gl-python/3.13.7
       method: post
-      uri: https://generativelanguage.googleapis.com/v1beta/models/gemini-3-flash-preview:generateContent
+      uri: https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-lite:generateContent
     response:
       body:
-        string: "{\n  \"candidates\": [\n    {\n      \"content\": {\n        \"parts\": [\n          {\n            \"text\": \"I see a simple, solid green square.\"\n          }\n        ],\n        \"role\": \"model\"\n      },\n      \"finishReason\": \"STOP\",\n      \"index\": 0\n    }\n  ],\n  \"usageMetadata\": {\n    \"promptTokenCount\": 338,\n    \"candidatesTokenCount\": 9,\n    \"totalTokenCount\": 347,\n    \"promptTokensDetails\": [\n      {\n        \"modality\": \"TEXT\",\n        \"tokenCount\": 80\n      },\n      {\n        \"modality\": \"IMAGE\",\n        \"tokenCount\": 258\n      }\n    ]\n  },\n  \"modelVersion\": \"gemini-3-flash-preview\",\n  \"responseId\": \"HdIgacCTN56evdIP1f6IsAY\"\n}\n"
+        string: "{\n  \"candidates\": [\n    {\n      \"content\": {\n        \"parts\": [\n          {\n            \"text\": \"I see a simple, solid green square.\"\n          }\n        ],\n        \"role\": \"model\"\n      },\n      \"finishReason\": \"STOP\",\n      \"index\": 0\n    }\n  ],\n  \"usageMetadata\": {\n    \"promptTokenCount\": 338,\n    \"candidatesTokenCount\": 9,\n    \"totalTokenCount\": 347,\n    \"promptTokensDetails\": [\n      {\n        \"modality\": \"TEXT\",\n        \"tokenCount\": 80\n      },\n      {\n        \"modality\": \"IMAGE\",\n        \"tokenCount\": 258\n      }\n    ]\n  },\n  \"modelVersion\": \"gemini-2.5-flash-lite\",\n  \"responseId\": \"HdIgacCTN56evdIP1f6IsAY\"\n}\n"
       headers:
         Alt-Svc:
           - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
@@ -51,10 +51,10 @@ interactions:
         x-goog-api-client:
           - google-genai-sdk/1.38.0 gl-python/3.13.7
       method: post
-      uri: https://generativelanguage.googleapis.com/v1beta/models/gemini-3-flash-preview:generateContent
+      uri: https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-lite:generateContent
     response:
       body:
-        string: "{\n  \"candidates\": [\n    {\n      \"content\": {\n        \"parts\": [\n          {\n            \"text\": \"I see a solid, bright green square.\"\n          }\n        ],\n        \"role\": \"model\"\n      },\n      \"finishReason\": \"STOP\",\n      \"index\": 0\n    }\n  ],\n  \"usageMetadata\": {\n    \"promptTokenCount\": 338,\n    \"candidatesTokenCount\": 9,\n    \"totalTokenCount\": 347,\n    \"promptTokensDetails\": [\n      {\n        \"modality\": \"TEXT\",\n        \"tokenCount\": 80\n      },\n      {\n        \"modality\": \"IMAGE\",\n        \"tokenCount\": 258\n      }\n    ]\n  },\n  \"modelVersion\": \"gemini-3-flash-preview\",\n  \"responseId\": \"3D8hadSeHIHc7M8PjJayoQk\"\n}\n"
+        string: "{\n  \"candidates\": [\n    {\n      \"content\": {\n        \"parts\": [\n          {\n            \"text\": \"I see a solid, bright green square.\"\n          }\n        ],\n        \"role\": \"model\"\n      },\n      \"finishReason\": \"STOP\",\n      \"index\": 0\n    }\n  ],\n  \"usageMetadata\": {\n    \"promptTokenCount\": 338,\n    \"candidatesTokenCount\": 9,\n    \"totalTokenCount\": 347,\n    \"promptTokensDetails\": [\n      {\n        \"modality\": \"TEXT\",\n        \"tokenCount\": 80\n      },\n      {\n        \"modality\": \"IMAGE\",\n        \"tokenCount\": 258\n      }\n    ]\n  },\n  \"modelVersion\": \"gemini-2.5-flash-lite\",\n  \"responseId\": \"3D8hadSeHIHc7M8PjJayoQk\"\n}\n"
       headers:
         Alt-Svc:
           - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
@@ -93,10 +93,10 @@ interactions:
         x-goog-api-client:
           - google-genai-sdk/1.38.0 gl-python/3.13.7
       method: post
-      uri: https://generativelanguage.googleapis.com/v1beta/models/gemini-3-flash-preview:generateContent
+      uri: https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-lite:generateContent
     response:
       body:
-        string: "{\n  \"candidates\": [\n    {\n      \"content\": {\n        \"parts\": [\n          {\n            \"text\": \"The image you sent is a solid green square.\"\n          }\n        ],\n        \"role\": \"model\"\n      },\n      \"finishReason\": \"STOP\",\n      \"index\": 0\n    }\n  ],\n  \"usageMetadata\": {\n    \"promptTokenCount\": 338,\n    \"candidatesTokenCount\": 10,\n    \"totalTokenCount\": 348,\n    \"promptTokensDetails\": [\n      {\n        \"modality\": \"TEXT\",\n        \"tokenCount\": 80\n      },\n      {\n        \"modality\": \"IMAGE\",\n        \"tokenCount\": 258\n      }\n    ]\n  },\n  \"modelVersion\": \"gemini-3-flash-preview\",\n  \"responseId\": \"9-UiacHmOJeRnsEP2OGB4Q0\"\n}\n"
+        string: "{\n  \"candidates\": [\n    {\n      \"content\": {\n        \"parts\": [\n          {\n            \"text\": \"The image you sent is a solid green square.\"\n          }\n        ],\n        \"role\": \"model\"\n      },\n      \"finishReason\": \"STOP\",\n      \"index\": 0\n    }\n  ],\n  \"usageMetadata\": {\n    \"promptTokenCount\": 338,\n    \"candidatesTokenCount\": 10,\n    \"totalTokenCount\": 348,\n    \"promptTokensDetails\": [\n      {\n        \"modality\": \"TEXT\",\n        \"tokenCount\": 80\n      },\n      {\n        \"modality\": \"IMAGE\",\n        \"tokenCount\": 258\n      }\n    ]\n  },\n  \"modelVersion\": \"gemini-2.5-flash-lite\",\n  \"responseId\": \"9-UiacHmOJeRnsEP2OGB4Q0\"\n}\n"
       headers:
         Alt-Svc:
           - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
@@ -135,10 +135,10 @@ interactions:
         x-goog-api-client:
           - google-genai-sdk/1.38.0 gl-python/3.13.7
       method: post
-      uri: https://generativelanguage.googleapis.com/v1beta/models/gemini-3-flash-preview:generateContent
+      uri: https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-lite:generateContent
     response:
       body:
-        string: "{\n  \"candidates\": [\n    {\n      \"content\": {\n        \"parts\": [\n          {\n            \"text\": \"I see a solid green image.\"\n          }\n        ],\n        \"role\": \"model\"\n      },\n      \"finishReason\": \"STOP\",\n      \"index\": 0\n    }\n  ],\n  \"usageMetadata\": {\n    \"promptTokenCount\": 338,\n    \"candidatesTokenCount\": 7,\n    \"totalTokenCount\": 345,\n    \"promptTokensDetails\": [\n      {\n        \"modality\": \"TEXT\",\n        \"tokenCount\": 80\n      },\n      {\n        \"modality\": \"IMAGE\",\n        \"tokenCount\": 258\n      }\n    ]\n  },\n  \"modelVersion\": \"gemini-3-flash-preview\",\n  \"responseId\": \"6ugiaeenHtbVxs0Psc7QGA\"\n}\n"
+        string: "{\n  \"candidates\": [\n    {\n      \"content\": {\n        \"parts\": [\n          {\n            \"text\": \"I see a solid green image.\"\n          }\n        ],\n        \"role\": \"model\"\n      },\n      \"finishReason\": \"STOP\",\n      \"index\": 0\n    }\n  ],\n  \"usageMetadata\": {\n    \"promptTokenCount\": 338,\n    \"candidatesTokenCount\": 7,\n    \"totalTokenCount\": 345,\n    \"promptTokensDetails\": [\n      {\n        \"modality\": \"TEXT\",\n        \"tokenCount\": 80\n      },\n      {\n        \"modality\": \"IMAGE\",\n        \"tokenCount\": 258\n      }\n    ]\n  },\n  \"modelVersion\": \"gemini-2.5-flash-lite\",\n  \"responseId\": \"6ugiaeenHtbVxs0Psc7QGA\"\n}\n"
       headers:
         Alt-Svc:
           - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
@@ -177,10 +177,10 @@ interactions:
         x-goog-api-client:
           - google-genai-sdk/1.38.0 gl-python/3.13.7
       method: post
-      uri: https://generativelanguage.googleapis.com/v1beta/models/gemini-3-flash-preview:generateContent
+      uri: https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-lite:generateContent
     response:
       body:
-        string: "{\n  \"candidates\": [\n    {\n      \"content\": {\n        \"parts\": [\n          {\n            \"text\": \"I see a solid green square.\"\n          }\n        ],\n        \"role\": \"model\"\n      },\n      \"finishReason\": \"STOP\",\n      \"index\": 0\n    }\n  ],\n  \"usageMetadata\": {\n    \"promptTokenCount\": 338,\n    \"candidatesTokenCount\": 7,\n    \"totalTokenCount\": 345,\n    \"promptTokensDetails\": [\n      {\n        \"modality\": \"TEXT\",\n        \"tokenCount\": 80\n      },\n      {\n        \"modality\": \"IMAGE\",\n        \"tokenCount\": 258\n      }\n    ]\n  },\n  \"modelVersion\": \"gemini-3-flash-preview\",\n  \"responseId\": \"FvEiaZOLAuu_vdIP9tzPYA\"\n}\n"
+        string: "{\n  \"candidates\": [\n    {\n      \"content\": {\n        \"parts\": [\n          {\n            \"text\": \"I see a solid green square.\"\n          }\n        ],\n        \"role\": \"model\"\n      },\n      \"finishReason\": \"STOP\",\n      \"index\": 0\n    }\n  ],\n  \"usageMetadata\": {\n    \"promptTokenCount\": 338,\n    \"candidatesTokenCount\": 7,\n    \"totalTokenCount\": 345,\n    \"promptTokensDetails\": [\n      {\n        \"modality\": \"TEXT\",\n        \"tokenCount\": 80\n      },\n      {\n        \"modality\": \"IMAGE\",\n        \"tokenCount\": 258\n      }\n    ]\n  },\n  \"modelVersion\": \"gemini-2.5-flash-lite\",\n  \"responseId\": \"FvEiaZOLAuu_vdIP9tzPYA\"\n}\n"
       headers:
         Alt-Svc:
           - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
@@ -219,10 +219,10 @@ interactions:
         x-goog-api-client:
           - google-genai-sdk/1.38.0 gl-python/3.13.7
       method: post
-      uri: https://generativelanguage.googleapis.com/v1beta/models/gemini-3-flash-preview:generateContent
+      uri: https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-lite:generateContent
     response:
       body:
-        string: "{\n  \"candidates\": [\n    {\n      \"content\": {\n        \"parts\": [\n          {\n            \"text\": \"I see a solid green square.\"\n          }\n        ],\n        \"role\": \"model\"\n      },\n      \"finishReason\": \"STOP\",\n      \"index\": 0\n    }\n  ],\n  \"usageMetadata\": {\n    \"promptTokenCount\": 338,\n    \"candidatesTokenCount\": 7,\n    \"totalTokenCount\": 345,\n    \"promptTokensDetails\": [\n      {\n        \"modality\": \"TEXT\",\n        \"tokenCount\": 80\n      },\n      {\n        \"modality\": \"IMAGE\",\n        \"tokenCount\": 258\n      }\n    ]\n  },\n  \"modelVersion\": \"gemini-3-flash-preview\",\n  \"responseId\": \"mvQiaea4N5mJ7M8PmN722A0\"\n}\n"
+        string: "{\n  \"candidates\": [\n    {\n      \"content\": {\n        \"parts\": [\n          {\n            \"text\": \"I see a solid green square.\"\n          }\n        ],\n        \"role\": \"model\"\n      },\n      \"finishReason\": \"STOP\",\n      \"index\": 0\n    }\n  ],\n  \"usageMetadata\": {\n    \"promptTokenCount\": 338,\n    \"candidatesTokenCount\": 7,\n    \"totalTokenCount\": 345,\n    \"promptTokensDetails\": [\n      {\n        \"modality\": \"TEXT\",\n        \"tokenCount\": 80\n      },\n      {\n        \"modality\": \"IMAGE\",\n        \"tokenCount\": 258\n      }\n    ]\n  },\n  \"modelVersion\": \"gemini-2.5-flash-lite\",\n  \"responseId\": \"mvQiaea4N5mJ7M8PmN722A0\"\n}\n"
       headers:
         Alt-Svc:
           - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000

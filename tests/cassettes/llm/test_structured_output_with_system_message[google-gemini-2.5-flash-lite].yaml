@@ -9,10 +9,10 @@ interactions:
         x-goog-api-client:
           - google-genai-sdk/1.56.0 gl-python/3.13.9
       method: post
-      uri: https://generativelanguage.googleapis.com/v1beta/models/gemini-3-flash-preview:generateContent
+      uri: https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-lite:generateContent
     response:
       body:
-        string: "{\n  \"candidates\": [\n    {\n      \"content\": {\n        \"parts\": [\n          {\n            \"text\": \"```json\\n{\\n  \\\"name\\\": \\\"John\\\",\\n  \\\"age\\\": 25,\\n  \\\"occupation\\\": \\\"Software Developer\\\"\\n}\\n```\"\n          }\n        ],\n        \"role\": \"model\"\n      },\n      \"finishReason\": \"STOP\",\n      \"index\": 0\n    }\n  ],\n  \"usageMetadata\": {\n    \"promptTokenCount\": 254,\n    \"candidatesTokenCount\": 34,\n    \"totalTokenCount\": 288,\n    \"promptTokensDetails\": [\n      {\n        \"modality\": \"TEXT\",\n        \"tokenCount\": 254\n      }\n    ]\n  },\n  \"modelVersion\": \"gemini-3-flash-preview\",\n  \"responseId\": \"yl2RaYXzDLr6vdIPx_WK0AM\"\n}\n"
+        string: "{\n  \"candidates\": [\n    {\n      \"content\": {\n        \"parts\": [\n          {\n            \"text\": \"```json\\n{\\n  \\\"name\\\": \\\"John\\\",\\n  \\\"age\\\": 25,\\n  \\\"occupation\\\": \\\"Software Developer\\\"\\n}\\n```\"\n          }\n        ],\n        \"role\": \"model\"\n      },\n      \"finishReason\": \"STOP\",\n      \"index\": 0\n    }\n  ],\n  \"usageMetadata\": {\n    \"promptTokenCount\": 254,\n    \"candidatesTokenCount\": 34,\n    \"totalTokenCount\": 288,\n    \"promptTokensDetails\": [\n      {\n        \"modality\": \"TEXT\",\n        \"tokenCount\": 254\n      }\n    ]\n  },\n  \"modelVersion\": \"gemini-2.5-flash-lite\",\n  \"responseId\": \"yl2RaYXzDLr6vdIPx_WK0AM\"\n}\n"
       headers:
         Alt-Svc:
           - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000

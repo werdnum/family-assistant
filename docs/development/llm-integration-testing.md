@@ -174,7 +174,7 @@ python scripts/validate_cassettes.py
 Use the most affordable models for testing:
 
 - **OpenAI**: `gpt-4.1-nano` (cheapest option)
-- **Google**: `gemini-3-flash-preview-preview-06-17` (most cost-effective)
+- **Google**: `gemini-2.5-flash-lite-preview-06-17` (most cost-effective)
 - **Anthropic**: `claude-3-haiku` (when implemented)
 
 ### Minimizing Costs

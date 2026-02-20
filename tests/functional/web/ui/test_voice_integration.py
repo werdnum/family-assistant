@@ -133,7 +133,7 @@ async def _setup_mock_token_endpoint(page: Page, base_url: str) -> None:
                     }
                 ],
                 "system_instruction": "You are a helpful voice assistant.",
-                "model": "gemini-3-flash-preview-preview-native-audio-dialog",
+                "model": "gemini-3-flash-preview-native-audio-dialog",
             }),
         )
 

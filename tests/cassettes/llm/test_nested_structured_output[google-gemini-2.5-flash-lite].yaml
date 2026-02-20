@@ -9,10 +9,10 @@ interactions:
         x-goog-api-client:
           - google-genai-sdk/1.56.0 gl-python/3.13.9
       method: post
-      uri: https://generativelanguage.googleapis.com/v1beta/models/gemini-3-flash-preview:generateContent
+      uri: https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-lite:generateContent
     response:
       body:
-        string: "{\n  \"candidates\": [\n    {\n      \"content\": {\n        \"parts\": [\n          {\n            \"text\": \"```json\\n{\\n  \\\"person\\\": {\\n    \\\"name\\\": \\\"Sarah\\\",\\n    \\\"age\\\": 35,\\n    \\\"occupation\\\": \\\"Doctor\\\"\\n  },\\n  \\\"summary\\\": \\\"Sarah is a 35-year-old doctor dedicated to her profession.\\\"\\n}\\n```\"\n          }\n        ],\n        \"role\": \"model\"\n      },\n      \"finishReason\": \"STOP\",\n      \"index\": 0\n    }\n  ],\n  \"usageMetadata\": {\n    \"promptTokenCount\": 371,\n    \"candidatesTokenCount\": 64,\n    \"totalTokenCount\": 435,\n    \"promptTokensDetails\": [\n      {\n        \"modality\": \"TEXT\",\n        \"tokenCount\": 371\n      }\n    ]\n  },\n  \"modelVersion\": \"gemini-3-flash-preview\",\n  \"responseId\": \"yl2Rae-iNaLv7M8PsbbEwQY\"\n}\n"
+        string: "{\n  \"candidates\": [\n    {\n      \"content\": {\n        \"parts\": [\n          {\n            \"text\": \"```json\\n{\\n  \\\"person\\\": {\\n    \\\"name\\\": \\\"Sarah\\\",\\n    \\\"age\\\": 35,\\n    \\\"occupation\\\": \\\"Doctor\\\"\\n  },\\n  \\\"summary\\\": \\\"Sarah is a 35-year-old doctor dedicated to her profession.\\\"\\n}\\n```\"\n          }\n        ],\n        \"role\": \"model\"\n      },\n      \"finishReason\": \"STOP\",\n      \"index\": 0\n    }\n  ],\n  \"usageMetadata\": {\n    \"promptTokenCount\": 371,\n    \"candidatesTokenCount\": 64,\n    \"totalTokenCount\": 435,\n    \"promptTokensDetails\": [\n      {\n        \"modality\": \"TEXT\",\n        \"tokenCount\": 371\n      }\n    ]\n  },\n  \"modelVersion\": \"gemini-2.5-flash-lite\",\n  \"responseId\": \"yl2Rae-iNaLv7M8PsbbEwQY\"\n}\n"
       headers:
         Alt-Svc:
           - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
