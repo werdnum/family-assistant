@@ -826,7 +826,7 @@ processing_config:
   retry_config:
     primary:
       provider: "google"
-      model: "gemini-3-pro-preview"
+      model: "gemini-3.1-pro-preview"
     fallback:
       provider: "openai"
       model: "gpt-5.2"
@@ -918,7 +918,7 @@ service_profiles:
       retry_config:
         primary:
           provider: "google"
-          model: "gemini-3-pro-preview"
+          model: "gemini-3.1-pro-preview"
           api_base: "https://generativelanguage.googleapis.com/v1beta"
         fallback:
           provider: "openai"  # Using OpenRouter as OpenAI-compatible

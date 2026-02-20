@@ -29,7 +29,7 @@ RED_IMAGE_PNG = create_solid_color_png((255, 0, 0))
 @pytest.mark.parametrize(
     "model_name,should_support_multimodal",
     [
-        ("gemini-2.5-flash", False),
+        ("gemini-3-flash-preview", False),
         ("gemini-3-flash-preview", True),
     ],
 )

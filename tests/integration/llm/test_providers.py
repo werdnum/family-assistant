@@ -619,7 +619,7 @@ async def test_gemini_url_grounding() -> None:
     # Create Gemini client with URL context enabled
     config = {
         "provider": "google",
-        "model": "gemini-2.5-flash",
+        "model": "gemini-3-flash-preview",
         "api_key": os.getenv("GEMINI_API_KEY", "test-gemini-key"),
         "enable_url_context": True,
     }
@@ -664,7 +664,7 @@ async def test_gemini_google_search_grounding(
     # Create Gemini client with Google Search grounding enabled
     config = {
         "provider": "google",
-        "model": "gemini-2.5-flash",
+        "model": "gemini-3-flash-preview",
         "api_key": os.getenv("GEMINI_API_KEY", "test-gemini-key"),
         "enable_google_search": True,
     }

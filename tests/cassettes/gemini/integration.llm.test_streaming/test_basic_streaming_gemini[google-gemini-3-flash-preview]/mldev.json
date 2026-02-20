@@ -1,10 +1,10 @@
 {
-  "replay_id": "integration.llm.test_streaming/test_basic_streaming_gemini[google-gemini-2.5-flash]/mldev",
+  "replay_id": "integration.llm.test_streaming/test_basic_streaming_gemini[google-gemini-3-flash-preview]/mldev",
   "interactions": [
     {
       "request": {
         "method": "post",
-        "url": "{MLDEV_URL_PREFIX}/models/gemini-2.5-flash:streamGenerateContent?alt=sse",
+        "url": "{MLDEV_URL_PREFIX}/models/gemini-3-flash-preview:streamGenerateContent?alt=sse",
         "headers": {
           "Content-Type": "application/json",
           "x-goog-api-key": "{REDACTED}",
@@ -70,7 +70,7 @@
               ],
               "thoughtsTokenCount": 52
             },
-            "modelVersion": "gemini-2.5-flash",
+            "modelVersion": "gemini-3-flash-preview",
             "responseId": "7BcpadvZIbKjkdUPrOGAgQ0"
           }
         ],
@@ -104,7 +104,7 @@
                 "index": 0
               }
             ],
-            "model_version": "gemini-2.5-flash",
+            "model_version": "gemini-3-flash-preview",
             "response_id": "7BcpadvZIbKjkdUPrOGAgQ0",
             "usage_metadata": {
               "candidates_token_count": 9,

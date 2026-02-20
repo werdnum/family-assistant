@@ -1,10 +1,10 @@
 {
-  "replay_id": "integration.llm.test_streaming/test_streaming_reasoning_info_gemini[google-gemini-2.5-flash]/mldev",
+  "replay_id": "integration.llm.test_streaming/test_streaming_with_system_message_gemini[google-gemini-3-flash-preview]/mldev",
   "interactions": [
     {
       "request": {
         "method": "post",
-        "url": "{MLDEV_URL_PREFIX}/models/gemini-2.5-flash:streamGenerateContent?alt=sse",
+        "url": "{MLDEV_URL_PREFIX}/models/gemini-3-flash-preview:streamGenerateContent?alt=sse",
         "headers": {
           "Content-Type": "application/json",
           "x-goog-api-key": "{REDACTED}",
@@ -17,7 +17,15 @@
               {
                 "parts": [
                   {
-                    "text": "Say 'hello world'"
+                    "text": "System: You are a helpful assistant that responds in a very concise manner."
+                  }
+                ],
+                "role": "user"
+              },
+              {
+                "parts": [
+                  {
+                    "text": "What is the capital of France? Reply in exactly one word."
                   }
                 ],
                 "role": "user"
@@ -49,7 +57,7 @@
                 "content": {
                   "parts": [
                     {
-                      "text": "hello world"
+                      "text": "Paris"
                     }
                   ],
                   "role": "model"
@@ -59,19 +67,19 @@
               }
             ],
             "usageMetadata": {
-              "promptTokenCount": 6,
-              "candidatesTokenCount": 2,
-              "totalTokenCount": 27,
+              "promptTokenCount": 30,
+              "candidatesTokenCount": 1,
+              "totalTokenCount": 60,
               "promptTokensDetails": [
                 {
                   "modality": "TEXT",
-                  "tokenCount": 6
+                  "tokenCount": 30
                 }
               ],
-              "thoughtsTokenCount": 19
+              "thoughtsTokenCount": 29
             },
-            "modelVersion": "gemini-2.5-flash",
-            "responseId": "hRgpaZeOObr6nsEPqIWPmAk"
+            "modelVersion": "gemini-3-flash-preview",
+            "responseId": "ZBgpaaSyG5SlkdUPlLrIkQo"
           }
         ],
         "byte_segments": [],
@@ -95,7 +103,7 @@
                 "content": {
                   "parts": [
                     {
-                      "text": "hello world"
+                      "text": "Paris"
                     }
                   ],
                   "role": "model"
@@ -104,19 +112,19 @@
                 "index": 0
               }
             ],
-            "model_version": "gemini-2.5-flash",
-            "response_id": "hRgpaZeOObr6nsEPqIWPmAk",
+            "model_version": "gemini-3-flash-preview",
+            "response_id": "ZBgpaaSyG5SlkdUPlLrIkQo",
             "usage_metadata": {
-              "candidates_token_count": 2,
-              "prompt_token_count": 6,
+              "candidates_token_count": 1,
+              "prompt_token_count": 30,
               "prompt_tokens_details": [
                 {
                   "modality": "TEXT",
-                  "token_count": 6
+                  "token_count": 30
                 }
               ],
-              "thoughts_token_count": 19,
-              "total_token_count": 27
+              "thoughts_token_count": 29,
+              "total_token_count": 60
             }
           }
         ]

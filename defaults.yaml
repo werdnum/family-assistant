@@ -49,7 +49,7 @@ llm_parameters:
 # See: https://ai.google.dev/gemini-api/docs/live
 gemini_live_config:
   # Model to use for Gemini Live voice sessions
-  model: "gemini-2.5-flash-native-audio-preview-12-2025"
+  model: "gemini-3-flash-preview"
 
   # Voice configuration
   voice:
@@ -793,7 +793,7 @@ service_profiles:
     description: "Creative assistant specialized in generating and manipulating images and videos using advanced AI models."
     processing_config:
       provider: "google"
-      llm_model: "gemini-3-pro-preview"
+      llm_model: "gemini-3.1-pro-preview"
       prompts:
         system_prompt: |
           You are an expert digital artist and video producer specialized in using advanced AI models (Gemini Nano Banana/Pro and Veo) to create stunning visuals.

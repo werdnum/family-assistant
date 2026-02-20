@@ -68,7 +68,7 @@ class GeminiLiveGreetingConfig(BaseModel):
 class GeminiLiveConfig(BaseModel):
     """Full Gemini Live Voice API configuration."""
 
-    model: str = "gemini-2.5-flash-native-audio-preview-09-2025"
+    model: str = "gemini-3-flash-preview"
     voice: GeminiLiveVoiceConfig = GeminiLiveVoiceConfig()
     session: GeminiLiveSessionConfig = GeminiLiveSessionConfig()
     transcription: GeminiLiveTranscriptionConfig = GeminiLiveTranscriptionConfig()
