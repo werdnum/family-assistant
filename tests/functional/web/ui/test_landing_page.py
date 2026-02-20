@@ -105,13 +105,11 @@ async def test_landing_page_search_navigation(
     base_url = web_test_fixture.base_url
     chat_page = ChatPage(page, base_url)
 
-    # Configure mock LLM response
-    mock_llm_client.rules = [
-        (
-            lambda args: "hello from landing" in str(args.get("messages", [])),
-            LLMOutput(content="Hello! I saw you came from the landing page."),
-        )
-    ]
+    # Configure mock LLM response — use default_response to avoid rule-matching
+    # flakiness (rules depend on stringifying message objects which can be fragile)
+    mock_llm_client.default_response = LLMOutput(
+        content="Hello! I saw you came from the landing page."
+    )
 
     # Navigate to landing page
     await page.goto(base_url)

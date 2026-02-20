@@ -1,9 +1,10 @@
 """A2A (Agent-to-Agent) protocol endpoints.
 
 Provides:
-- GET /.well-known/agent.json - Agent Card discovery
-- POST /a2a - JSON-RPC 2.0 dispatch (message/send, tasks/get, tasks/cancel)
-- POST /a2a/stream - SSE streaming (message/stream)
+- GET /.well-known/agent.json - Agent Card discovery (legacy path)
+- GET /.well-known/agent-card.json - Agent Card discovery (spec v0.3.0 path)
+- POST /a2a - JSON-RPC 2.0 dispatch (message/send, message/stream, tasks/get, tasks/cancel)
+- POST /a2a/stream - SSE streaming (message/stream, legacy separate endpoint)
 """
 
 import json
@@ -16,6 +17,7 @@ from fastapi import APIRouter, Depends, Request
 from fastapi.responses import JSONResponse
 from pydantic import ValidationError
 from sse_starlette.sse import EventSourceResponse
+from starlette.responses import Response
 
 from family_assistant.a2a.converters import (
     a2a_message_to_content_parts,
@@ -29,10 +31,12 @@ from family_assistant.a2a.types import (
     AgentSkill,
     Artifact,
     JSONRPCError,
+    JSONRPCErrorResponse,
     JSONRPCRequest,
-    JSONRPCResponse,
     Message,
-    SendMessageParams,
+    MessageSendParams,
+    Part,
+    Role,
     Task,
     TaskArtifactUpdateEvent,
     TaskIdParams,
@@ -73,6 +77,7 @@ def _get_default_service(request: Request) -> ProcessingService | None:
 
 
 @a2a_wellknown_router.get("/.well-known/agent.json")
+@a2a_wellknown_router.get("/.well-known/agent-card.json")
 async def get_agent_card(request: Request) -> AgentCard:
     """Return the A2A Agent Card describing this server's capabilities."""
     registry = _get_processing_services(request)
@@ -100,14 +105,15 @@ async def get_agent_card(request: Request) -> AgentCard:
         name=f"Family Assistant ({default_id})",
         description="Family Assistant AI agent with multiple service profiles",
         url=f"{base_url}/api/a2a",
+        version="0.1.0",
         capabilities=AgentCapabilities(
             streaming=True,
-            pushNotifications=False,
-            stateTransitionHistory=True,
+            push_notifications=False,
+            state_transition_history=True,
         ),
         skills=skills,
-        defaultInputModes=["text/plain"],
-        defaultOutputModes=["text/plain"],
+        default_input_modes=["text/plain"],
+        default_output_modes=["text/plain"],
     )
 
 
@@ -124,17 +130,19 @@ TASK_NOT_CANCELABLE = -32002
 
 
 def _jsonrpc_error(
-    request_id: str | int | None, code: int, message: str
+    request_id: str | int | None,
+    code: int,
+    message: str,
 ) -> JSONResponse:
-    resp = JSONRPCResponse(
+    resp = JSONRPCErrorResponse(
         id=request_id, error=JSONRPCError(code=code, message=message)
     )
     return JSONResponse(content=resp.model_dump(exclude_none=True))
 
 
 def _jsonrpc_result(request_id: str | int | None, result: object) -> JSONResponse:
-    resp = JSONRPCResponse(id=request_id, result=result)
-    return JSONResponse(content=resp.model_dump(exclude_none=True))
+    content = {"jsonrpc": "2.0", "id": request_id, "result": result}
+    return JSONResponse(content=content)
 
 
 @a2a_router.post("")
@@ -143,8 +151,12 @@ async def a2a_jsonrpc(
     request: Request,
     current_user: Annotated[dict[str, object], Depends(get_current_user)],
     db_context: Annotated[DatabaseContext, Depends(get_db)],
-) -> JSONResponse:
-    """JSON-RPC 2.0 endpoint for A2A protocol methods."""
+) -> Response:
+    """JSON-RPC 2.0 endpoint for A2A protocol methods.
+
+    Per A2A spec, both message/send and message/stream are dispatched to the
+    same URL (the agent card's ``url`` field).
+    """
     method = rpc_request.method
     params = rpc_request.params or {}
     request_id = rpc_request.id
@@ -154,6 +166,8 @@ async def a2a_jsonrpc(
             return await _handle_send_message(
                 request_id, params, request, current_user, db_context
             )
+        elif method == "message/stream":
+            return await a2a_stream(rpc_request, request, current_user)
         elif method == "tasks/get":
             return await _handle_get_task(request_id, params, db_context)
         elif method == "tasks/cancel":
@@ -171,7 +185,7 @@ async def a2a_jsonrpc(
 
 
 async def _handle_send_message(
-    request_id: str | int,
+    request_id: str | int | None,
     params: dict[str, object],
     request: Request,
     current_user: dict[str, object],
@@ -179,13 +193,13 @@ async def _handle_send_message(
 ) -> JSONResponse:
     """Handle the message/send JSON-RPC method."""
     try:
-        send_params = SendMessageParams.model_validate(params)
+        send_params = MessageSendParams.model_validate(params)
     except ValidationError as e:
         return _jsonrpc_error(request_id, INVALID_PARAMS, f"Invalid params: {e}")
 
     message = send_params.message
-    task_id = message.taskId or str(uuid.uuid4())
-    context_id = message.contextId or str(uuid.uuid4())
+    task_id = message.task_id or str(uuid.uuid4())
+    context_id = message.context_id or str(uuid.uuid4())
     conversation_id = f"a2a-{context_id}"
 
     service = _resolve_service(request, message)
@@ -214,7 +228,7 @@ async def _handle_send_message(
         profile_id=profile_id,
         conversation_id=conversation_id,
         context_id=context_id,
-        status=TaskState.WORKING,
+        status=TaskState.working,
         history_json=[history_entry],
     )
 
@@ -224,7 +238,7 @@ async def _handle_send_message(
         interface_type="a2a",
         conversation_id=conversation_id,
         trigger_content_parts=content_parts,
-        trigger_interface_message_id=message.messageId,
+        trigger_interface_message_id=message.message_id,
         user_name=user_id,
         user_id=user_id,
     )
@@ -232,10 +246,10 @@ async def _handle_send_message(
     # Build response
     if result.has_error:
         artifact = error_to_artifact(result.error_traceback or "Unknown error")
-        final_status = TaskState.FAILED
+        final_status = TaskState.failed
     else:
         artifact = chat_result_to_artifact(result)
-        final_status = TaskState.COMPLETED
+        final_status = TaskState.completed
 
     artifacts = [artifact] if artifact else []
     artifacts_dicts = [a.model_dump(exclude_none=True) for a in artifacts]
@@ -248,11 +262,11 @@ async def _handle_send_message(
     )
 
     agent_message = Message(
-        role="agent",
-        parts=response_parts or [TextPart(text="")],
-        messageId=str(uuid.uuid4()),
-        taskId=task_id,
-        contextId=context_id,
+        role=Role.agent,
+        parts=response_parts or [Part(root=TextPart(text=""))],
+        message_id=str(uuid.uuid4()),
+        task_id=task_id,
+        context_id=context_id,
     )
 
     history = [history_entry, agent_message.model_dump(exclude_none=True)]
@@ -266,7 +280,7 @@ async def _handle_send_message(
 
     task = Task(
         id=task_id,
-        contextId=context_id,
+        context_id=context_id,
         status=TaskStatus(
             state=final_status,
             message=agent_message,
@@ -282,7 +296,7 @@ async def _handle_send_message(
 
 
 async def _handle_get_task(
-    request_id: str | int,
+    request_id: str | int | None,
     params: dict[str, object],
     db_context: DatabaseContext,
 ) -> JSONResponse:
@@ -306,7 +320,7 @@ async def _handle_get_task(
 
 
 async def _handle_cancel_task(
-    request_id: str | int,
+    request_id: str | int | None,
     params: dict[str, object],
     db_context: DatabaseContext,
 ) -> JSONResponse:
@@ -350,7 +364,7 @@ async def a2a_stream(
 ) -> EventSourceResponse:
     """SSE streaming endpoint for A2A message/stream method."""
     if rpc_request.method != "message/stream":
-        err = JSONRPCResponse(
+        err = JSONRPCErrorResponse(
             id=rpc_request.id,
             error=JSONRPCError(
                 code=METHOD_NOT_FOUND,
@@ -365,9 +379,9 @@ async def a2a_stream(
 
     params = rpc_request.params or {}
     try:
-        send_params = SendMessageParams.model_validate(params)
+        send_params = MessageSendParams.model_validate(params)
     except ValidationError as e:
-        validation_err = JSONRPCResponse(
+        validation_err = JSONRPCErrorResponse(
             id=rpc_request.id,
             error=JSONRPCError(code=INVALID_PARAMS, message=f"Invalid params: {e}"),
         )
@@ -387,60 +401,68 @@ async def a2a_stream(
     )
 
 
+def _sse_jsonrpc(
+    request_id: str | int | None, event_type: str, result: object
+) -> dict[str, str]:
+    """Wrap an A2A event in a JSON-RPC 2.0 response envelope for SSE."""
+    envelope = {"jsonrpc": "2.0", "id": request_id, "result": result}
+    return {"event": event_type, "data": json.dumps(envelope)}
+
+
 async def _stream_message(
-    request_id: str | int,
-    send_params: SendMessageParams,
+    request_id: str | int | None,
+    send_params: MessageSendParams,
     request: Request,
     current_user: dict[str, object],
 ) -> AsyncIterator[dict[str, str]]:
     """Generate SSE events for a streaming A2A message interaction."""
     message = send_params.message
-    task_id = message.taskId or str(uuid.uuid4())
-    context_id = message.contextId or str(uuid.uuid4())
+    task_id = message.task_id or str(uuid.uuid4())
+    context_id = message.context_id or str(uuid.uuid4())
     conversation_id = f"a2a-{context_id}"
 
     service = _resolve_service(request, message)
 
     if service is None:
         event = TaskStatusUpdateEvent(
-            taskId=task_id,
-            contextId=context_id,
+            task_id=task_id,
+            context_id=context_id,
             status=TaskStatus(
-                state=TaskState.FAILED,
+                state=TaskState.failed,
                 message=Message(
-                    role="agent",
-                    parts=[TextPart(text="No processing service available")],
+                    role=Role.agent,
+                    parts=[Part(root=TextPart(text="No processing service available"))],
+                    message_id=str(uuid.uuid4()),
                 ),
             ),
             final=True,
         )
-        yield {
-            "event": "status",
-            "data": json.dumps(event.model_dump(exclude_none=True)),
-        }
+        yield _sse_jsonrpc(request_id, "status", event.model_dump(exclude_none=True))
         return
 
     profile_id = service.service_config.id
     content_parts: list[ContentPartDict] = a2a_message_to_content_parts(message)
     if not content_parts:
         event = TaskStatusUpdateEvent(
-            taskId=task_id,
-            contextId=context_id,
+            task_id=task_id,
+            context_id=context_id,
             status=TaskStatus(
-                state=TaskState.FAILED,
+                state=TaskState.failed,
                 message=Message(
-                    role="agent",
+                    role=Role.agent,
                     parts=[
-                        TextPart(text="Message contained no processable content parts")
+                        Part(
+                            root=TextPart(
+                                text="Message contained no processable content parts"
+                            )
+                        )
                     ],
+                    message_id=str(uuid.uuid4()),
                 ),
             ),
             final=True,
         )
-        yield {
-            "event": "status",
-            "data": json.dumps(event.model_dump(exclude_none=True)),
-        }
+        yield _sse_jsonrpc(request_id, "status", event.model_dump(exclude_none=True))
         return
 
     user_id = str(current_user.get("user_identifier", "a2a_user"))
@@ -454,25 +476,26 @@ async def _stream_message(
             profile_id=profile_id,
             conversation_id=conversation_id,
             context_id=context_id,
-            status=TaskState.WORKING,
+            status=TaskState.working,
             history_json=[history_entry],
         )
 
         # Emit initial "working" status
         working_event = TaskStatusUpdateEvent(
-            taskId=task_id,
-            contextId=context_id,
-            status=TaskStatus(state=TaskState.WORKING),
+            task_id=task_id,
+            context_id=context_id,
+            status=TaskStatus(state=TaskState.working),
+            final=False,
         )
-        yield {
-            "event": "status",
-            "data": json.dumps(working_event.model_dump(exclude_none=True)),
-        }
+        yield _sse_jsonrpc(
+            request_id, "status", working_event.model_dump(exclude_none=True)
+        )
 
         # Stream the interaction
         accumulated_text = ""
         has_error = False
         error_msg = ""
+        artifact_id = uuid.uuid4().hex
 
         try:
             async for stream_event in service.handle_chat_interaction_stream(
@@ -480,27 +503,26 @@ async def _stream_message(
                 interface_type="a2a",
                 conversation_id=conversation_id,
                 trigger_content_parts=content_parts,
-                trigger_interface_message_id=message.messageId,
+                trigger_interface_message_id=message.message_id,
                 user_name=user_id,
                 user_id=user_id,
             ):
                 if stream_event.type == "content" and stream_event.content:
                     accumulated_text += stream_event.content
                     artifact_event = TaskArtifactUpdateEvent(
-                        taskId=task_id,
-                        contextId=context_id,
+                        task_id=task_id,
+                        context_id=context_id,
                         artifact=Artifact(
-                            parts=[TextPart(text=stream_event.content)],
-                            index=0,
-                            append=True,
+                            artifact_id=artifact_id,
+                            parts=[Part(root=TextPart(text=stream_event.content))],
                         ),
+                        append=True,
                     )
-                    yield {
-                        "event": "artifact",
-                        "data": json.dumps(
-                            artifact_event.model_dump(exclude_none=True)
-                        ),
-                    }
+                    yield _sse_jsonrpc(
+                        request_id,
+                        "artifact",
+                        artifact_event.model_dump(exclude_none=True),
+                    )
                 elif stream_event.type == "error":
                     has_error = True
                     error_msg = stream_event.error or "Unknown error"
@@ -514,47 +536,46 @@ async def _stream_message(
         # Emit final artifact chunk
         if accumulated_text and not has_error:
             final_artifact = TaskArtifactUpdateEvent(
-                taskId=task_id,
-                contextId=context_id,
+                task_id=task_id,
+                context_id=context_id,
                 artifact=Artifact(
+                    artifact_id=artifact_id,
                     name="response",
-                    parts=[TextPart(text=accumulated_text)],
-                    index=0,
-                    lastChunk=True,
+                    parts=[Part(root=TextPart(text=accumulated_text))],
                 ),
+                last_chunk=True,
             )
-            yield {
-                "event": "artifact",
-                "data": json.dumps(final_artifact.model_dump(exclude_none=True)),
-            }
+            yield _sse_jsonrpc(
+                request_id, "artifact", final_artifact.model_dump(exclude_none=True)
+            )
 
         # Final status
         if has_error:
-            final_status = TaskState.FAILED
+            final_status = TaskState.failed
             status_message = Message(
-                role="agent",
-                parts=[TextPart(text=error_msg)],
+                role=Role.agent,
+                parts=[Part(root=TextPart(text=error_msg))],
+                message_id=str(uuid.uuid4()),
             )
         else:
-            final_status = TaskState.COMPLETED
+            final_status = TaskState.completed
             status_message = Message(
-                role="agent",
-                parts=[TextPart(text=accumulated_text or "")],
-                messageId=str(uuid.uuid4()),
-                taskId=task_id,
-                contextId=context_id,
+                role=Role.agent,
+                parts=[Part(root=TextPart(text=accumulated_text or ""))],
+                message_id=str(uuid.uuid4()),
+                task_id=task_id,
+                context_id=context_id,
             )
 
         final_event = TaskStatusUpdateEvent(
-            taskId=task_id,
-            contextId=context_id,
+            task_id=task_id,
+            context_id=context_id,
             status=TaskStatus(state=final_status, message=status_message),
             final=True,
         )
-        yield {
-            "event": "status",
-            "data": json.dumps(final_event.model_dump(exclude_none=True)),
-        }
+        yield _sse_jsonrpc(
+            request_id, "status", final_event.model_dump(exclude_none=True)
+        )
 
         # Update DB with artifacts and history (consistent with sync handler)
         artifacts_json: list[dict[str, object]] = []
@@ -563,10 +584,9 @@ async def _stream_message(
             artifacts_json = [err_art.model_dump(exclude_none=True)]
         elif accumulated_text:
             art = Artifact(
+                artifact_id=uuid.uuid4().hex,
                 name="response",
-                parts=[TextPart(text=accumulated_text)],
-                index=0,
-                lastChunk=True,
+                parts=[Part(root=TextPart(text=accumulated_text))],
             )
             artifacts_json = [art.model_dump(exclude_none=True)]
 
@@ -617,16 +637,22 @@ def _row_to_task(row: A2ATaskRow) -> Task:
     if isinstance(raw_history, list):
         history = [Message.model_validate(m) for m in raw_history]
 
+    context_id = (
+        str(row["context_id"]) if row.get("context_id") else str(row.get("task_id", ""))
+    )
+
     # Reconstruct status message from artifacts for terminal states
     status_message = None
-    if state in {TaskState.COMPLETED, TaskState.FAILED} and artifacts:
+    if state in {TaskState.completed, TaskState.failed} and artifacts:
         parts = [part for art in artifacts for part in art.parts]
         if parts:
-            status_message = Message(role="agent", parts=parts)
+            status_message = Message(
+                role=Role.agent, parts=parts, message_id=str(uuid.uuid4())
+            )
 
     return Task(
         id=str(row.get("task_id", "")),
-        contextId=str(row["context_id"]) if row.get("context_id") else None,
+        context_id=context_id,
         status=TaskStatus(state=state, message=status_message),
         artifacts=artifacts,
         history=history,

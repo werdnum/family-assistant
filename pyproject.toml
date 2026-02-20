@@ -17,6 +17,7 @@ classifiers = [
     "Operating System :: OS Independent",
 ]
 dependencies = [
+    "a2a-sdk>=0.3.0",
     "python-telegram-bot[ext]>=21.0,<22.0",
     # Use [ext] instead of [job-queue] for v21+
     "litellm>=1.75.0",
@@ -426,5 +427,9 @@ explicit = true
 [tool.uv.sources]
 torch = { index = "torch-cpu" }
 telegram-bot-api-mock = { git = "https://github.com/werdnum/telegram-bot-api-mock" }
+
+[dependency-groups]
+dev = [
+]
 
 
