@@ -366,12 +366,10 @@ async def a2a_stream(
     params = rpc_request.params or {}
     try:
         send_params = SendMessageParams.model_validate(params)
-    except ValidationError:
+    except ValidationError as e:
         validation_err = JSONRPCResponse(
             id=rpc_request.id,
-            error=JSONRPCError(
-                code=INVALID_PARAMS, message="Invalid params for message/stream"
-            ),
+            error=JSONRPCError(code=INVALID_PARAMS, message=f"Invalid params: {e}"),
         )
 
         async def validation_error_gen() -> AsyncIterator[str]:
@@ -446,6 +444,7 @@ async def _stream_message(
         return
 
     user_id = str(current_user.get("user_identifier", "a2a_user"))
+    history_entry = message.model_dump(exclude_none=True)
 
     # Create a fresh DB context for the SSE generator lifetime
     # (FastAPI Depends context managers exit before the generator runs)
@@ -456,6 +455,7 @@ async def _stream_message(
             conversation_id=conversation_id,
             context_id=context_id,
             status=TaskState.WORKING,
+            history_json=[history_entry],
         )
 
         # Emit initial "working" status
@@ -556,9 +556,12 @@ async def _stream_message(
             "data": json.dumps(final_event.model_dump(exclude_none=True)),
         }
 
-        # Update DB
+        # Update DB with artifacts and history (consistent with sync handler)
         artifacts_json: list[dict[str, object]] = []
-        if accumulated_text:
+        if has_error:
+            err_art = error_to_artifact(error_msg)
+            artifacts_json = [err_art.model_dump(exclude_none=True)]
+        elif accumulated_text:
             art = Artifact(
                 name="response",
                 parts=[TextPart(text=accumulated_text)],
@@ -567,10 +570,16 @@ async def _stream_message(
             )
             artifacts_json = [art.model_dump(exclude_none=True)]
 
+        history = [
+            history_entry,
+            status_message.model_dump(exclude_none=True),
+        ]
+
         await db_context.a2a_tasks.update_task_status(
             task_id=task_id,
             status=final_status,
             artifacts_json=artifacts_json or None,
+            history_json=history,
         )
 
 
