@@ -207,8 +207,10 @@ async def search_source_code(
 
     output = stdout.decode("utf-8", errors="replace")
     prefix = str(project_root) + "/"
+    all_lines = output.splitlines()
+    max_total_matches = 250
     matches: list[str] = []
-    for raw_line in output.splitlines():
+    for raw_line in all_lines[:max_total_matches]:
         display_line = (
             raw_line[:_MAX_LINE_LENGTH] + "..."
             if len(raw_line) > _MAX_LINE_LENGTH
@@ -221,7 +223,8 @@ async def search_source_code(
         data={
             "pattern": pattern,
             "matches": matches,
-            "match_count": len(matches),
+            "match_count": len(all_lines),
+            "truncated": len(all_lines) > max_total_matches,
         }
     )
 
@@ -259,7 +262,9 @@ async def query_database(
                 await conn.execute(text("SET TRANSACTION READ ONLY"))
 
             result = await conn.execute(text(query))
-            rows = [dict(row) for row in result.mappings().fetchall()]
+            rows = [
+                dict(row) for row in result.mappings().fetchmany(_MAX_QUERY_ROWS + 1)
+            ]
 
         if len(rows) > _MAX_QUERY_ROWS:
             rows = rows[:_MAX_QUERY_ROWS]
@@ -305,7 +310,7 @@ async def read_error_logs(
         "read_error_logs: level=%s, logger=%s, limit=%d", level, logger_name, limit
     )
 
-    limit = min(limit, 200)
+    limit = max(1, min(limit, 200))
 
     db_context = exec_context.db_context
     logs = await db_context.error_logs.get_all(
