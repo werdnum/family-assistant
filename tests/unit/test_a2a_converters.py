@@ -52,10 +52,10 @@ class TestA2APartsToContentParts:
         assert result[0]["type"] == "attachment"
         assert "data:text/plain;base64,dGVzdA==" in result[0]["attachment_id"]
 
-    def test_file_part_with_no_content_skipped(self) -> None:
+    def test_file_part_with_no_content_raises(self) -> None:
         parts: list[Part] = [FilePart(file=FileContent())]
-        result = a2a_parts_to_content_parts(parts)
-        assert len(result) == 0
+        with pytest.raises(ValueError, match="neither URI nor bytes"):
+            a2a_parts_to_content_parts(parts)
 
     def test_data_part_serialized_as_json(self) -> None:
         parts: list[Part] = [DataPart(data={"key": "value", "num": 42})]

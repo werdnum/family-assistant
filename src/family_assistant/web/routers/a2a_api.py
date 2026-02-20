@@ -14,6 +14,7 @@ from typing import Annotated
 
 from fastapi import APIRouter, Depends, Request
 from fastapi.responses import JSONResponse
+from pydantic import ValidationError
 from sse_starlette.sse import EventSourceResponse
 
 from family_assistant.a2a.converters import (
@@ -80,14 +81,8 @@ async def get_agent_card(request: Request) -> AgentCard:
     skills: list[AgentSkill] = []
     for profile_id, service in registry.items():
         config = service.service_config
-        try:
-            tool_defs = await service.tools_provider.get_tool_definitions()
-            tool_names = [
-                d.get("function", {}).get("name", "unknown") for d in tool_defs
-            ]
-        except Exception:
-            logger.exception("Error fetching tools for profile %s", profile_id)
-            tool_names = []
+        tool_defs = await service.tools_provider.get_tool_definitions()
+        tool_names = [d.get("function", {}).get("name", "unknown") for d in tool_defs]
 
         skills.append(
             AgentSkill(
@@ -185,7 +180,7 @@ async def _handle_send_message(
     """Handle the message/send JSON-RPC method."""
     try:
         send_params = SendMessageParams.model_validate(params)
-    except Exception as e:
+    except ValidationError as e:
         return _jsonrpc_error(request_id, INVALID_PARAMS, f"Invalid params: {e}")
 
     message = send_params.message
@@ -204,7 +199,11 @@ async def _handle_send_message(
     # Convert A2A message to FA content parts
     content_parts: list[ContentPartDict] = a2a_message_to_content_parts(message)
     if not content_parts:
-        content_parts = [text_content("")]
+        return _jsonrpc_error(
+            request_id,
+            INVALID_PARAMS,
+            "Message contained no processable content parts",
+        )
 
     # Create task record
     user_id = str(current_user.get("user_identifier", "a2a_user"))
@@ -290,7 +289,7 @@ async def _handle_get_task(
     """Handle the tasks/get JSON-RPC method."""
     try:
         task_params = TaskIdParams.model_validate(params)
-    except Exception as e:
+    except ValidationError as e:
         return _jsonrpc_error(request_id, INVALID_PARAMS, f"Invalid params: {e}")
 
     row = await db_context.a2a_tasks.get_task(task_params.id)
@@ -314,7 +313,7 @@ async def _handle_cancel_task(
     """Handle the tasks/cancel JSON-RPC method."""
     try:
         task_params = TaskIdParams.model_validate(params)
-    except Exception as e:
+    except ValidationError as e:
         return _jsonrpc_error(request_id, INVALID_PARAMS, f"Invalid params: {e}")
 
     canceled = await db_context.a2a_tasks.cancel_task(task_params.id)
@@ -367,7 +366,7 @@ async def a2a_stream(
     params = rpc_request.params or {}
     try:
         send_params = SendMessageParams.model_validate(params)
-    except Exception:
+    except ValidationError:
         validation_err = JSONRPCResponse(
             id=rpc_request.id,
             error=JSONRPCError(
@@ -426,7 +425,25 @@ async def _stream_message(
     profile_id = service.service_config.id
     content_parts: list[ContentPartDict] = a2a_message_to_content_parts(message)
     if not content_parts:
-        content_parts = [text_content("")]
+        event = TaskStatusUpdateEvent(
+            taskId=task_id,
+            contextId=context_id,
+            status=TaskStatus(
+                state=TaskState.FAILED,
+                message=Message(
+                    role="agent",
+                    parts=[
+                        TextPart(text="Message contained no processable content parts")
+                    ],
+                ),
+            ),
+            final=True,
+        )
+        yield {
+            "event": "status",
+            "data": json.dumps(event.model_dump(exclude_none=True)),
+        }
+        return
 
     user_id = str(current_user.get("user_identifier", "a2a_user"))
 
@@ -579,10 +596,7 @@ def _resolve_service(request: Request, message: Message) -> ProcessingService | 
 def _row_to_task(row: A2ATaskRow) -> Task:
     """Convert a database row to an A2A Task object."""
     status_str = str(row.get("status", "submitted"))
-    try:
-        state = TaskState(status_str)
-    except ValueError:
-        state = TaskState.SUBMITTED
+    state = TaskState(status_str)
 
     artifacts = None
     raw_artifacts = row.get("artifacts_json")

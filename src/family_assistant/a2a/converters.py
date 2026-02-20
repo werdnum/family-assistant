@@ -9,7 +9,6 @@ Handles conversion of:
 from __future__ import annotations
 
 import json
-import logging
 from typing import TYPE_CHECKING, cast
 
 from family_assistant.a2a.types import (
@@ -33,11 +32,13 @@ from family_assistant.llm.content_parts import (
 if TYPE_CHECKING:
     from family_assistant.processing import ChatInteractionResult
 
-logger = logging.getLogger(__name__)
-
 
 def a2a_parts_to_content_parts(parts: list[Part]) -> list[ContentPartDict]:
-    """Convert A2A message parts to FA ContentPartDict list."""
+    """Convert A2A message parts to FA ContentPartDict list.
+
+    Raises:
+        ValueError: If a part cannot be converted (e.g. FilePart with no content).
+    """
     result: list[ContentPartDict] = []
     for part in parts:
         if isinstance(part, TextPart):
@@ -51,11 +52,11 @@ def a2a_parts_to_content_parts(parts: list[Part]) -> list[ContentPartDict]:
                     attachment_content(f"data:{mime};base64,{part.file.bytes}")
                 )
             else:
-                logger.warning("FilePart with no URI or bytes, skipping")
+                raise ValueError("FilePart has neither URI nor bytes content")
         elif isinstance(part, DataPart):
             result.append(text_content(json.dumps(part.data)))
         else:
-            logger.warning("Unknown part type: %s", type(part))
+            raise ValueError(f"Unknown A2A part type: {type(part).__name__}")
     return result
 
 
@@ -83,7 +84,11 @@ def _convert_image_url_part(part: ImageUrlContentPartDict) -> FilePart:
 
 
 def content_parts_to_a2a_parts(parts: list[ContentPartDict]) -> list[Part]:
-    """Convert FA ContentPartDict list to A2A parts."""
+    """Convert FA ContentPartDict list to A2A parts.
+
+    Raises:
+        ValueError: If a content part type is not recognized.
+    """
     result: list[Part] = []
     for part in parts:
         part_type = part["type"]
@@ -98,7 +103,7 @@ def content_parts_to_a2a_parts(parts: list[ContentPartDict]) -> list[Part]:
                 _convert_image_url_part(cast("ImageUrlContentPartDict", part))
             )
         else:
-            logger.warning("Unknown content part type: %s", part_type)
+            raise ValueError(f"Unknown content part type: {part_type}")
     return result
 
 
