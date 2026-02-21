@@ -18,7 +18,15 @@ class LLMProviderError(Exception):
 class RateLimitError(LLMProviderError):
     """Raised when hitting provider rate limits."""
 
-    pass
+    def __init__(
+        self,
+        message: str,
+        provider: str,
+        model: str,
+        retry_after: float | None = None,
+    ) -> None:
+        super().__init__(message, provider, model)
+        self.retry_after = retry_after
 
 
 class AuthenticationError(LLMProviderError):

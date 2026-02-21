@@ -37,6 +37,11 @@ from .interfaces import ChatInterface  # Import ChatInterface
 
 # Import the LLM interface and output structure
 from .llm import LLMInterface, LLMStreamEvent, ToolCallItem
+from .llm.base import (
+    ContextLengthError,
+    LLMProviderError,
+    RateLimitError,
+)
 from .llm.google_types import GeminiProviderMetadata
 from .llm.messages import (
     AssistantMessage,
@@ -89,6 +94,55 @@ class ToolExecutionResult:
     # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
     history_message: dict[str, Any]
     auto_attachment_ids: list[str] | None = None  # list of attachment IDs
+
+
+_ERROR_TYPE_TO_EXCEPTION: dict[str, type[LLMProviderError]] = {
+    "RateLimitError": RateLimitError,
+    "ContextLengthError": ContextLengthError,
+}
+
+
+def _user_friendly_error_message(exc: Exception) -> str:
+    """Return a user-friendly error message based on the exception type."""
+    if isinstance(exc, RateLimitError):
+        if exc.retry_after:
+            return (
+                f"I'm temporarily rate-limited by my AI provider. "
+                f"Please try again in about {int(exc.retry_after)} seconds."
+            )
+        return (
+            "I'm temporarily rate-limited by my AI provider. "
+            "Please try again in a minute or two."
+        )
+    if isinstance(exc, ContextLengthError):
+        return (
+            "Our conversation has grown too long for me to process. "
+            "Please start a new conversation."
+        )
+    return (
+        "I encountered an error while processing your message. "
+        "Please try again, and if the problem persists, contact support."
+    )
+
+
+def _map_stream_error_to_exception(event: LLMStreamEvent) -> Exception:
+    """Map an LLM stream error event to a typed exception.
+
+    When the streaming provider yields an error event (because content was already
+    emitted and it can't raise), this converts the metadata back to a typed exception
+    so the caller can handle it appropriately.
+    """
+    error_msg = event.error or "Unknown streaming error"
+    metadata = event.metadata or {}
+    error_type = metadata.get("error_type", "")
+    provider = metadata.get("provider", "unknown")
+    model = metadata.get("model", "unknown")
+
+    exc_class = _ERROR_TYPE_TO_EXCEPTION.get(error_type)
+    if exc_class:
+        return exc_class(error_msg, provider=provider, model=model)
+
+    return RuntimeError(f"LLM streaming error: {error_msg}")
 
 
 # --- Configuration for ProcessingService ---
@@ -560,10 +614,10 @@ class ProcessingService:
                             else None
                         )
 
-                    # Handle errors
+                    # Handle errors — map to typed exceptions when possible
                     elif event.type == "error":
                         logger.error(f"Stream error: {event.error}")
-                        raise RuntimeError(f"LLM streaming error: {event.error}")
+                        raise _map_stream_error_to_exception(event)
 
             except Exception as e:
                 logger.error(f"Error in LLM streaming: {e}", exc_info=True)
@@ -2182,7 +2236,7 @@ Call attach_to_response with your selected attachment IDs."""
                 attachment_ids=response_attachment_ids,
             )
 
-        except Exception:
+        except Exception as exc:
             logger.error(
                 f"Error in handle_chat_interaction for conversation {conversation_id}, turn {turn_id}",
                 exc_info=True,
@@ -2190,11 +2244,8 @@ Call attach_to_response with your selected attachment IDs."""
             # Capture the full traceback as a string
             processing_error_traceback = traceback.format_exc()
 
-            # Create a user-friendly error message
-            error_message = (
-                "I encountered an error while processing your message. "
-                "Please try again, and if the problem persists, contact support."
-            )
+            # Create a user-friendly error message based on exception type
+            error_message = _user_friendly_error_message(exc)
 
             # Save error message to conversation history
             try:
@@ -2551,8 +2602,11 @@ Call attach_to_response with your selected attachment IDs."""
 
         except Exception as e:
             logger.error(f"Error in streaming chat interaction: {e}", exc_info=True)
+            error_message = _user_friendly_error_message(e)
             yield LLMStreamEvent(
-                type="error", error=str(e), metadata={"error_id": str(uuid.uuid4())}
+                type="error",
+                error=error_message,
+                metadata={"error_id": str(uuid.uuid4())},
             )
 
     def _generate_attachment_metadata_lines(
