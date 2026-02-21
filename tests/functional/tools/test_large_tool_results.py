@@ -15,6 +15,7 @@ from family_assistant.tools.attachments import read_text_attachment_tool
 from family_assistant.tools.execute_script import execute_script_tool
 from family_assistant.tools.types import (
     ToolExecutionContext,
+    ToolResult,
 )
 from family_assistant.utils.clock import SystemClock
 
@@ -336,3 +337,87 @@ content
             f"Script should be able to read attachment created in same transaction. "
             f"Got: {result.text}"
         )
+
+
+@pytest.mark.asyncio
+async def test_large_tool_result_data_field_triggers_auto_attachment(
+    db_engine: AsyncEngine, tmp_path: Path
+) -> None:
+    """Test that ToolResult(data=large_dict) triggers auto-attachment conversion.
+
+    Regression test: Previously, _execute_single_tool used result.text (which is None
+    for data-only ToolResults) for the size check, so large data results bypassed
+    the auto-attachment threshold entirely.
+    """
+    storage_path = tmp_path / "attachments"
+    storage_path.mkdir()
+    attachment_registry = AttachmentRegistry(
+        storage_path=str(storage_path),
+        db_engine=db_engine,
+        config={
+            "max_file_size": 100 * 1024 * 1024,
+            "max_multimodal_size": 20 * 1024 * 1024,
+        },
+    )
+
+    config = ProcessingServiceConfig(
+        prompts={},
+        timezone_str="UTC",
+        max_history_messages=10,
+        history_max_age_hours=1.0,
+        tools_config={},
+        delegation_security_level="unrestricted",
+        id="test-profile",
+    )
+
+    mock_llm = Mock()
+    mock_tools_provider = AsyncMock()
+
+    mock_app_config = Mock()
+    mock_app_config.attachment_selection_threshold = 5
+    mock_app_config.attachment_config = Mock()
+    mock_app_config.attachment_config.large_tool_result_threshold_kb = 20
+
+    service = ProcessingService(
+        llm_client=mock_llm,
+        tools_provider=mock_tools_provider,
+        service_config=config,
+        context_providers=[],
+        server_url="http://localhost:8000",
+        app_config=mock_app_config,
+        attachment_registry=attachment_registry,
+        clock=SystemClock(),
+    )
+
+    async with DatabaseContext(engine=db_engine) as db:
+        large_data = {
+            "entries": [{"key": f"item_{i}", "value": "x" * 100} for i in range(200)]
+        }
+        mock_tools_provider.execute_tool.return_value = ToolResult(data=large_data)
+
+        tool_call = ToolCallItem(
+            id="call_data_1",
+            type="function",
+            function=ToolCallFunction(name="data_tool", arguments={}),
+        )
+
+        result = await service._execute_single_tool(
+            tool_call,
+            interface_type="test",
+            conversation_id="conv_data_1",
+            user_name="test_user",
+            turn_id="turn_data_1",
+            db_context=db,
+            chat_interface=None,
+        )
+
+        assert result.llm_message.content is not None
+        assert "was too large and was saved as attachment" in result.llm_message.content
+        assert result.auto_attachment_ids is not None
+        assert len(result.auto_attachment_ids) == 1
+        att_id = result.auto_attachment_ids[0]
+
+        saved_content = await attachment_registry.get_attachment_content(db, att_id)
+        assert saved_content is not None
+        saved_json = json.loads(saved_content.decode("utf-8"))
+        assert saved_json == large_data

@@ -981,7 +981,7 @@ class ProcessingService:
 
             # Handle both string and ToolResult
             if isinstance(result, ToolResult):
-                content_for_stream = result.text or ""
+                content_for_stream = result.get_text()
                 auto_attachment_ids: list[
                     str
                 ] = []  # Track attachment IDs for auto-queuing
@@ -997,8 +997,9 @@ class ProcessingService:
                 if auto_att_id:
                     content_for_stream = new_content
                     auto_attachment_ids.append(auto_att_id)
-                    # Update ToolResult so subsequent message creation uses the attachment notice
+                    # Update ToolResult so get_text() returns the hint, not the original data
                     result.text = new_content
+                    result.data = None
 
                 # Extract attachment metadata for streaming
                 stream_metadata = None
