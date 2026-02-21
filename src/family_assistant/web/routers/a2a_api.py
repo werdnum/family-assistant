@@ -7,6 +7,7 @@ Provides:
 - POST /a2a/stream - SSE streaming (message/stream, legacy separate endpoint)
 """
 
+import asyncio
 import json
 import logging
 import uuid
@@ -56,6 +57,10 @@ logger = logging.getLogger(__name__)
 a2a_router = APIRouter()
 a2a_wellknown_router = APIRouter()
 
+# Registry of cancellation events for running A2A streaming tasks.
+# When tasks/cancel is called, the event is set to signal cooperative cancellation.
+_cancel_events: dict[str, asyncio.Event] = {}
+
 
 # ===== Helper: resolve processing service by profile =====
 
@@ -94,7 +99,7 @@ async def get_agent_card(request: Request) -> AgentCard:
                 id=profile_id,
                 name=profile_id,
                 description=config.description or f"Profile: {profile_id}",
-                tags=sorted(tool_names[:10]),
+                tags=sorted(tool_names)[:10],
             )
         )
 
@@ -346,6 +351,11 @@ async def _handle_cancel_task(
             f"Task is in state '{row['status']}' and cannot be canceled",
         )
 
+    # Signal cooperative cancellation to any running streaming generator
+    cancel_event = _cancel_events.get(task_params.id)
+    if cancel_event is not None:
+        cancel_event.set()
+
     row = await db_context.a2a_tasks.get_task(task_params.id)
     if row is None:
         return _jsonrpc_error(
@@ -487,10 +497,11 @@ async def _stream_message(
 
     user_id = str(current_user.get("user_identifier", "a2a_user"))
     history_entry = message.model_dump(exclude_none=True)
+    db_engine = request.app.state.database_engine
 
-    # Create a fresh DB context for the SSE generator lifetime
-    # (FastAPI Depends context managers exit before the generator runs)
-    async with get_db_context(request.app.state.database_engine) as db_context:
+    # Create task in a short-lived context so it's immediately visible to
+    # concurrent tasks/get and tasks/cancel requests.
+    async with get_db_context(db_engine) as db_context:
         await db_context.a2a_tasks.create_task(
             task_id=task_id,
             profile_id=profile_id,
@@ -500,121 +511,139 @@ async def _stream_message(
             history_json=[history_entry],
         )
 
-        # Emit initial "working" status
-        working_event = TaskStatusUpdateEvent(
+    # Emit initial "working" status
+    working_event = TaskStatusUpdateEvent(
+        task_id=task_id,
+        context_id=context_id,
+        status=TaskStatus(state=TaskState.working),
+        final=False,
+    )
+    yield _sse_jsonrpc(
+        request_id, "status", working_event.model_dump(exclude_none=True)
+    )
+
+    # Stream the interaction with a separate DB context for ProcessingService
+    accumulated_text = ""
+    has_error = False
+    is_canceled = False
+    error_msg = ""
+    artifact_id = uuid.uuid4().hex
+
+    # Register cancellation event so tasks/cancel can signal us
+    cancel_event = asyncio.Event()
+    _cancel_events[task_id] = cancel_event
+    try:
+        async with get_db_context(db_engine) as db_context:
+            try:
+                async for stream_event in service.handle_chat_interaction_stream(
+                    db_context=db_context,
+                    interface_type="a2a",
+                    conversation_id=conversation_id,
+                    trigger_content_parts=content_parts,
+                    trigger_interface_message_id=message.message_id,
+                    user_name=user_id,
+                    user_id=user_id,
+                ):
+                    # Check for cooperative cancellation between chunks
+                    if cancel_event.is_set():
+                        is_canceled = True
+                        break
+                    if stream_event.type == "content" and stream_event.content:
+                        accumulated_text += stream_event.content
+                        artifact_event = TaskArtifactUpdateEvent(
+                            task_id=task_id,
+                            context_id=context_id,
+                            artifact=Artifact(
+                                artifact_id=artifact_id,
+                                parts=[Part(root=TextPart(text=stream_event.content))],
+                            ),
+                            append=True,
+                        )
+                        yield _sse_jsonrpc(
+                            request_id,
+                            "artifact",
+                            artifact_event.model_dump(exclude_none=True),
+                        )
+                    elif stream_event.type == "error":
+                        has_error = True
+                        error_msg = stream_event.error or "Unknown error"
+                    elif stream_event.type == "done":
+                        break
+            except Exception:
+                logger.exception("Error during A2A streaming for task %s", task_id)
+                has_error = True
+                error_msg = "Internal streaming error"
+    finally:
+        _cancel_events.pop(task_id, None)
+
+    # Emit final artifact chunk
+    if accumulated_text and not has_error and not is_canceled:
+        final_artifact = TaskArtifactUpdateEvent(
             task_id=task_id,
             context_id=context_id,
-            status=TaskStatus(state=TaskState.working),
-            final=False,
-        )
-        yield _sse_jsonrpc(
-            request_id, "status", working_event.model_dump(exclude_none=True)
-        )
-
-        # Stream the interaction
-        accumulated_text = ""
-        has_error = False
-        error_msg = ""
-        artifact_id = uuid.uuid4().hex
-
-        try:
-            async for stream_event in service.handle_chat_interaction_stream(
-                db_context=db_context,
-                interface_type="a2a",
-                conversation_id=conversation_id,
-                trigger_content_parts=content_parts,
-                trigger_interface_message_id=message.message_id,
-                user_name=user_id,
-                user_id=user_id,
-            ):
-                if stream_event.type == "content" and stream_event.content:
-                    accumulated_text += stream_event.content
-                    artifact_event = TaskArtifactUpdateEvent(
-                        task_id=task_id,
-                        context_id=context_id,
-                        artifact=Artifact(
-                            artifact_id=artifact_id,
-                            parts=[Part(root=TextPart(text=stream_event.content))],
-                        ),
-                        append=True,
-                    )
-                    yield _sse_jsonrpc(
-                        request_id,
-                        "artifact",
-                        artifact_event.model_dump(exclude_none=True),
-                    )
-                elif stream_event.type == "error":
-                    has_error = True
-                    error_msg = stream_event.error or "Unknown error"
-                elif stream_event.type == "done":
-                    break
-        except Exception:
-            logger.exception("Error during A2A streaming for task %s", task_id)
-            has_error = True
-            error_msg = "Internal streaming error"
-
-        # Emit final artifact chunk
-        if accumulated_text and not has_error:
-            final_artifact = TaskArtifactUpdateEvent(
-                task_id=task_id,
-                context_id=context_id,
-                artifact=Artifact(
-                    artifact_id=artifact_id,
-                    name="response",
-                    parts=[Part(root=TextPart(text=accumulated_text))],
-                ),
-                last_chunk=True,
-            )
-            yield _sse_jsonrpc(
-                request_id, "artifact", final_artifact.model_dump(exclude_none=True)
-            )
-
-        # Final status
-        if has_error:
-            final_status = TaskState.failed
-            status_message = Message(
-                role=Role.agent,
-                parts=[Part(root=TextPart(text=error_msg))],
-                message_id=str(uuid.uuid4()),
-            )
-        else:
-            final_status = TaskState.completed
-            status_message = Message(
-                role=Role.agent,
-                parts=[Part(root=TextPart(text=accumulated_text or ""))],
-                message_id=str(uuid.uuid4()),
-                task_id=task_id,
-                context_id=context_id,
-            )
-
-        final_event = TaskStatusUpdateEvent(
-            task_id=task_id,
-            context_id=context_id,
-            status=TaskStatus(state=final_status, message=status_message),
-            final=True,
-        )
-        yield _sse_jsonrpc(
-            request_id, "status", final_event.model_dump(exclude_none=True)
-        )
-
-        # Update DB with artifacts and history (consistent with sync handler)
-        artifacts_json: list[dict[str, object]] = []
-        if has_error:
-            err_art = error_to_artifact(error_msg)
-            artifacts_json = [err_art.model_dump(exclude_none=True)]
-        elif accumulated_text:
-            art = Artifact(
+            artifact=Artifact(
                 artifact_id=artifact_id,
                 name="response",
                 parts=[Part(root=TextPart(text=accumulated_text))],
-            )
-            artifacts_json = [art.model_dump(exclude_none=True)]
+            ),
+            last_chunk=True,
+        )
+        yield _sse_jsonrpc(
+            request_id, "artifact", final_artifact.model_dump(exclude_none=True)
+        )
 
-        history = [
-            history_entry,
-            status_message.model_dump(exclude_none=True),
-        ]
+    # Final status
+    if is_canceled:
+        final_status = TaskState.canceled
+        status_message = Message(
+            role=Role.agent,
+            parts=[Part(root=TextPart(text="Task canceled"))],
+            message_id=str(uuid.uuid4()),
+        )
+    elif has_error:
+        final_status = TaskState.failed
+        status_message = Message(
+            role=Role.agent,
+            parts=[Part(root=TextPart(text=error_msg))],
+            message_id=str(uuid.uuid4()),
+        )
+    else:
+        final_status = TaskState.completed
+        status_message = Message(
+            role=Role.agent,
+            parts=[Part(root=TextPart(text=accumulated_text or ""))],
+            message_id=str(uuid.uuid4()),
+            task_id=task_id,
+            context_id=context_id,
+        )
 
+    final_event = TaskStatusUpdateEvent(
+        task_id=task_id,
+        context_id=context_id,
+        status=TaskStatus(state=final_status, message=status_message),
+        final=True,
+    )
+    yield _sse_jsonrpc(request_id, "status", final_event.model_dump(exclude_none=True))
+
+    # Persist final artifacts and history in a short-lived context
+    artifacts_json: list[dict[str, object]] = []
+    if has_error:
+        err_art = error_to_artifact(error_msg)
+        artifacts_json = [err_art.model_dump(exclude_none=True)]
+    elif accumulated_text:
+        art = Artifact(
+            artifact_id=artifact_id,
+            name="response",
+            parts=[Part(root=TextPart(text=accumulated_text))],
+        )
+        artifacts_json = [art.model_dump(exclude_none=True)]
+
+    history = [
+        history_entry,
+        status_message.model_dump(exclude_none=True),
+    ]
+
+    async with get_db_context(db_engine) as db_context:
         await db_context.a2a_tasks.update_task_status(
             task_id=task_id,
             status=final_status,

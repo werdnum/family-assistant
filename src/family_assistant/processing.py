@@ -1362,7 +1362,6 @@ class ProcessingService:
                             ]
                         )
                     )
-                modified_parts.append(part)
             else:
                 # Not an attachment part, keep as-is
                 modified_parts.append(part)
