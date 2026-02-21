@@ -1530,7 +1530,6 @@ class ProcessingService:
                             ]
                         )
                     )
-                modified_parts.append(part)
             else:
                 modified_parts.append(part)
 

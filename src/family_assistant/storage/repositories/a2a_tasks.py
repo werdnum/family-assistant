@@ -89,7 +89,7 @@ class A2ATasksRepository(BaseRepository):
         context_id: str | None = None,
         status: str = "submitted",
         history_json: list[dict[str, object]] | None = None,
-    ) -> A2ATaskRow:
+    ) -> None:
         """Create a new A2A task record."""
         stmt = insert(a2a_tasks_table).values(
             task_id=task_id,
@@ -100,15 +100,6 @@ class A2ATasksRepository(BaseRepository):
             history_json=history_json,
         )
         await self._execute_with_logging("create_a2a_task", stmt)
-        return A2ATaskRow(
-            id=0,
-            task_id=task_id,
-            context_id=context_id,
-            profile_id=profile_id,
-            conversation_id=conversation_id,
-            status=status,
-            created_at=datetime.now(UTC).isoformat(),
-        )
 
     async def get_task(self, task_id: str) -> A2ATaskRow | None:
         """Get an A2A task by its task ID."""
@@ -128,7 +119,6 @@ class A2ATasksRepository(BaseRepository):
         """Update the status and optionally artifacts/history of a task."""
         values: dict[str, object] = {
             "status": status,
-            "updated_at": datetime.now(UTC),
         }
         if artifacts_json is not None:
             values["artifacts_json"] = artifacts_json
