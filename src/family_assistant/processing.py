@@ -38,9 +38,15 @@ from .interfaces import ChatInterface  # Import ChatInterface
 # Import the LLM interface and output structure
 from .llm import LLMInterface, LLMStreamEvent, ToolCallItem
 from .llm.base import (
+    AuthenticationError,
     ContextLengthError,
+    InvalidRequestError,
     LLMProviderError,
+    ModelNotFoundError,
+    ProviderConnectionError,
+    ProviderTimeoutError,
     RateLimitError,
+    ServiceUnavailableError,
 )
 from .llm.google_types import GeminiProviderMetadata
 from .llm.messages import (
@@ -99,13 +105,19 @@ class ToolExecutionResult:
 _ERROR_TYPE_TO_EXCEPTION: dict[str, type[LLMProviderError]] = {
     "RateLimitError": RateLimitError,
     "ContextLengthError": ContextLengthError,
+    "AuthenticationError": AuthenticationError,
+    "InvalidRequestError": InvalidRequestError,
+    "ModelNotFoundError": ModelNotFoundError,
+    "ProviderConnectionError": ProviderConnectionError,
+    "ProviderTimeoutError": ProviderTimeoutError,
+    "ServiceUnavailableError": ServiceUnavailableError,
 }
 
 
 def _user_friendly_error_message(exc: Exception) -> str:
     """Return a user-friendly error message based on the exception type."""
     if isinstance(exc, RateLimitError):
-        if exc.retry_after:
+        if exc.retry_after is not None:
             return (
                 f"I'm temporarily rate-limited by my AI provider. "
                 f"Please try again in about {int(exc.retry_after)} seconds."

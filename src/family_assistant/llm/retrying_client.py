@@ -231,12 +231,15 @@ class RetryingLLMClient:
                             tools=tools,
                             tool_choice=tool_choice,
                         ):
+                            events_yielded = True
                             yield event
                         return
                     except Exception as retry_err:
                         logger.warning(
                             f"Retry after rate limit delay also failed: {retry_err}"
                         )
+                        if events_yielded:
+                            raise retry_err
                         # Fall through to fallback logic below
 
                 if self.fallback_client:
