@@ -1380,6 +1380,24 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
                             f"Video from message {update.message.message_id} loaded."
                         )
 
+        except BadRequest as br_err:
+            error_msg = str(br_err)
+            if "file is too big" in error_msg.lower():
+                logger.warning(
+                    f"File too large in message {update.message.message_id}: {br_err}"
+                )
+                await update.message.reply_text(
+                    "Sorry, that file is too large. Telegram limits file downloads to 20MB."
+                )
+            else:
+                logger.error(
+                    f"BadRequest processing attachments for message {update.message.message_id}: {br_err}",
+                    exc_info=True,
+                )
+                await update.message.reply_text(
+                    "Sorry, error processing attached media."
+                )
+            return
         except Exception as img_err:
             logger.error(
                 f"Failed to process attachments for message {update.message.message_id}: {img_err}",
