@@ -5,7 +5,7 @@ import logging
 import re
 import traceback  # Added for error traceback
 import uuid  # Added for unique task IDs
-from collections.abc import AsyncIterator, Awaitable, Callable  # Added Union, Awaitable
+from collections.abc import AsyncIterator, Awaitable, Callable, Sequence
 from dataclasses import dataclass  # Added
 from datetime import (  # Added timezone
     UTC,
@@ -112,6 +112,93 @@ _ERROR_TYPE_TO_EXCEPTION: dict[str, type[LLMProviderError]] = {
     "ProviderTimeoutError": ProviderTimeoutError,
     "ServiceUnavailableError": ServiceUnavailableError,
 }
+
+
+def prune_messages_for_context(
+    messages: Sequence[LLMMessage],
+) -> list[LLMMessage]:
+    """Prune messages to reduce context length.
+
+    Strategy:
+    1. Replace old ToolMessage content with compact placeholders (preserving the
+       latest turn's tool results intact).
+    2. Drop the oldest non-system turns when there are more than 3 user/assistant
+       turns, keeping only the 3 most recent user/assistant turns and all system
+       messages.
+
+    Returns a new list; the input list is not modified.
+    """
+    # --- Step 1: identify tool_call_ids from the latest assistant tool-call block ---
+    # Find the most recent AssistantMessage that issued tool calls,
+    # even if the message list ends with a UserMessage.
+    last_turn_tool_ids: set[str] = set()
+    for msg in reversed(messages):
+        if isinstance(msg, AssistantMessage) and msg.tool_calls:
+            last_turn_tool_ids.update(tc.id for tc in msg.tool_calls)
+            # We've found the latest assistant tool-call block; stop scanning.
+            break
+
+    # Replace old tool results with compact placeholders
+    pruned: list[LLMMessage] = []
+    total_before = 0
+    total_after = 0
+    for msg in messages:
+        if isinstance(msg, ToolMessage):
+            original_size = len(msg.content)
+            placeholder = f"[Tool result truncated — originally {original_size} chars]"
+
+            if (
+                msg.tool_call_id not in last_turn_tool_ids
+                and original_size > len(placeholder)
+                and not msg.content.startswith("[Tool result truncated")
+            ):
+                total_before += original_size
+                total_after += len(placeholder)
+                pruned.append(msg.model_copy(update={"content": placeholder}))
+            else:
+                total_before += original_size
+                total_after += original_size
+                pruned.append(msg)
+        else:
+            pruned.append(msg)
+
+    if total_before > 0 and (total_before - total_after) > total_before * 0.3:
+        logger.info(
+            "Context pruning: truncated old tool results "
+            f"({total_before} -> {total_after} chars)"
+        )
+
+    # --- Step 2: drop oldest non-system turns ---
+    # Identify turn boundaries: a "turn" starts with a UserMessage
+    system_messages: list[LLMMessage] = []
+    turns: list[list[LLMMessage]] = []
+    current_turn: list[LLMMessage] = []
+
+    for msg in pruned:
+        if isinstance(msg, SystemMessage):
+            system_messages.append(msg)
+            continue
+        if isinstance(msg, UserMessage) and current_turn:
+            turns.append(current_turn)
+            current_turn = []
+        current_turn.append(msg)
+    if current_turn:
+        turns.append(current_turn)
+
+    min_turns = 3
+    if len(turns) > min_turns:
+        kept_turns = turns[-min_turns:]
+        dropped = len(turns) - min_turns
+        logger.info(
+            f"Context pruning: dropped {dropped} oldest turns, "
+            f"keeping {min_turns} most recent"
+        )
+        result: list[LLMMessage] = list(system_messages)
+        for turn in kept_turns:
+            result.extend(turn)
+        return result
+
+    return pruned
 
 
 def _user_friendly_error_message(exc: Exception) -> str:
@@ -589,51 +676,69 @@ class ProcessingService:
                 messages.append(final_iteration_instruction)
                 logger.info("Added final iteration instruction as user message")
 
-            # Stream from LLM
-            accumulated_content = []
-            tool_calls_from_stream = []
-            done_provider_metadata = None  # Initialize before loop
-
             # On final iteration, don't offer any tools to ensure we get a response
             tools_to_offer = None if is_final_iteration else tools_for_llm
             tool_choice_mode = (
                 "none" if is_final_iteration or not tools_to_offer else "auto"
             )
 
-            try:
-                async for event in self.llm_client.generate_response_stream(
-                    messages=messages,
-                    tools=tools_to_offer,
-                    tool_choice=tool_choice_mode,
-                ):
-                    # Yield content events as they come
-                    if event.type == "content" and event.content:
-                        accumulated_content.append(event.content)
-                        yield (event, {})  # No message to save yet
+            # Stream from LLM (with one context-length retry)
+            context_retry_attempted = False
+            while True:
+                accumulated_content = []
+                tool_calls_from_stream = []
+                done_provider_metadata = None
 
-                    # Collect tool calls
-                    elif event.type == "tool_call" and event.tool_call:
-                        tool_calls_from_stream.append(event.tool_call)
-                        yield (event, {})  # No message to save yet
+                try:
+                    async for event in self.llm_client.generate_response_stream(
+                        messages=messages,
+                        tools=tools_to_offer,
+                        tool_choice=tool_choice_mode,
+                    ):
+                        # Yield content events as they come
+                        if event.type == "content" and event.content:
+                            accumulated_content.append(event.content)
+                            yield (event, {})  # No message to save yet
 
-                    # Handle done event
-                    elif event.type == "done":
-                        final_reasoning_info = event.metadata
-                        # Extract provider_metadata from done event if present
-                        done_provider_metadata = (
-                            event.metadata.get("provider_metadata")
-                            if event.metadata
-                            else None
-                        )
+                        # Collect tool calls
+                        elif event.type == "tool_call" and event.tool_call:
+                            tool_calls_from_stream.append(event.tool_call)
+                            yield (event, {})  # No message to save yet
 
-                    # Handle errors — map to typed exceptions when possible
-                    elif event.type == "error":
-                        logger.error(f"Stream error: {event.error}")
-                        raise _map_stream_error_to_exception(event)
+                        # Handle done event
+                        elif event.type == "done":
+                            final_reasoning_info = event.metadata
+                            # Extract provider_metadata from done event if present
+                            done_provider_metadata = (
+                                event.metadata.get("provider_metadata")
+                                if event.metadata
+                                else None
+                            )
 
-            except Exception as e:
-                logger.error(f"Error in LLM streaming: {e}", exc_info=True)
-                raise
+                        # Handle errors — map to typed exceptions when possible
+                        elif event.type == "error":
+                            logger.error(f"Stream error: {event.error}")
+                            raise _map_stream_error_to_exception(event)
+
+                    break  # Success, exit while loop
+
+                except ContextLengthError as e:
+                    if (
+                        context_retry_attempted
+                        or accumulated_content
+                        or tool_calls_from_stream
+                    ):
+                        raise
+                    logger.warning(
+                        f"Context length exceeded, pruning messages and retrying: {e}"
+                    )
+                    messages = prune_messages_for_context(messages)
+                    context_retry_attempted = True
+                    continue
+
+                except Exception as e:
+                    logger.error(f"Error in LLM streaming: {e}", exc_info=True)
+                    raise
 
             # Combine accumulated content
             final_content = (
