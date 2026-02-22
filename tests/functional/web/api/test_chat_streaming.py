@@ -424,3 +424,51 @@ async def test_api_chat_send_message_stream_with_tools(
     note = await db_context.notes.get_by_title(note_title, visibility_grants=None)
     assert note is not None
     assert note.content == note_content
+
+
+async def test_streaming_no_database_connection_errors(
+    test_client: AsyncClient,
+    mock_llm_client: RuleBasedMockLLMClient,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Regression test: streaming should not produce database connection errors.
+
+    Previously, the DB context was owned by the SSE generator. When the generator
+    exited (e.g. client disconnect), the DB context closed and killed the
+    processing task's connection mid-operation. Now process_stream() owns its own
+    DB context, so no "No active database connection" errors should occur.
+    """
+    user_prompt = "Hello, test DB lifecycle"
+    llm_response = "Response received successfully."
+
+    mock_llm_client.rules.append((
+        lambda args: any(
+            msg.role == "user" and user_prompt in str(msg.content or "")
+            for msg in args.get("messages", [])
+        ),
+        LLMOutput(
+            content=llm_response,
+            tool_calls=None,
+            reasoning_info={"model": "test-model", "usage": {"total_tokens": 50}},
+        ),
+    ))
+
+    with caplog.at_level(logging.ERROR):
+        response = await test_client.post(
+            "/api/v1/chat/send_message_stream",
+            json={"prompt": user_prompt},
+        )
+
+    assert response.status_code == 200
+
+    # Verify no database connection errors in logs
+    db_error_messages = [
+        record.message
+        for record in caplog.records
+        if "NoneType" in record.message
+        or "No active database connection" in record.message
+        or "database connection" in record.message.lower()
+    ]
+    assert db_error_messages == [], (
+        f"Database connection errors found in logs: {db_error_messages}"
+    )
