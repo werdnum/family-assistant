@@ -140,16 +140,23 @@ def prune_messages_for_context(
     total_before = 0
     total_after = 0
     for msg in messages:
-        if isinstance(msg, ToolMessage) and msg.tool_call_id not in last_turn_tool_ids:
+        if isinstance(msg, ToolMessage):
             original_size = len(msg.content)
-            total_before += original_size
             placeholder = f"[Tool result truncated — originally {original_size} chars]"
-            total_after += len(placeholder)
-            pruned.append(msg.model_copy(update={"content": placeholder}))
+
+            if (
+                msg.tool_call_id not in last_turn_tool_ids
+                and original_size > len(placeholder)
+                and not msg.content.startswith("[Tool result truncated")
+            ):
+                total_before += original_size
+                total_after += len(placeholder)
+                pruned.append(msg.model_copy(update={"content": placeholder}))
+            else:
+                total_before += original_size
+                total_after += original_size
+                pruned.append(msg)
         else:
-            if isinstance(msg, ToolMessage):
-                total_before += len(msg.content)
-                total_after += len(msg.content)
             pruned.append(msg)
 
     if total_before > 0 and (total_before - total_after) > total_before * 0.3:
@@ -713,7 +720,11 @@ class ProcessingService:
                     break  # Success, exit while loop
 
                 except ContextLengthError as e:
-                    if context_retry_attempted:
+                    if (
+                        context_retry_attempted
+                        or accumulated_content
+                        or tool_calls_from_stream
+                    ):
                         raise
                     logger.warning(
                         f"Context length exceeded, pruning messages and retrying: {e}"
