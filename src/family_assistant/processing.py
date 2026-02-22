@@ -54,6 +54,7 @@ from .llm.messages import (
     ContentPart,
     ContentPartDict,
     ErrorMessage,
+    ImageUrlContentPart,
     LLMMessage,
     SystemMessage,
     TextContentPart,
@@ -1346,11 +1347,11 @@ class ProcessingService:
             f"_process_attachment_content_parts called with {len(content_parts)} parts, "
             f"attachment_registry={'present' if self.attachment_registry else 'MISSING'}"
         )
-        if not self.attachment_registry:
+        has_registry = bool(self.attachment_registry)
+        if not has_registry:
             logger.warning(
                 "Attachment registry not available - skipping attachment content part processing"
             )
-            return content_parts, []
 
         modified_parts = []
         injection_messages = []
@@ -1358,6 +1359,9 @@ class ProcessingService:
         for part in content_parts:
             logger.debug(f"Processing content part: {part}")
             if part.get("type") == "attachment":
+                if not has_registry:
+                    continue
+                assert self.attachment_registry is not None
                 attachment_id = part.get("attachment_id")
                 if not attachment_id:
                     logger.warning(
@@ -1412,6 +1416,20 @@ class ProcessingService:
                         exc_info=True,
                     )
                     continue
+            elif part.get("type") == "image_url":
+                # image_url parts (e.g. from A2A FileParts) go directly to the LLM
+                # as injection messages — the LLM handles URLs and data URIs natively
+                url = part.get("image_url", {}).get("url", "")
+                if url:
+                    injection_messages.append(
+                        UserMessage(
+                            content=[
+                                ImageUrlContentPart(
+                                    type="image_url", image_url={"url": url}
+                                )
+                            ]
+                        )
+                    )
             else:
                 # Not an attachment part, keep as-is
                 modified_parts.append(part)

@@ -42,6 +42,7 @@ if TYPE_CHECKING:
         VectorRepository,
         WorkerTasksRepository,
     )
+    from family_assistant.storage.repositories.a2a_tasks import A2ATasksRepository
     from family_assistant.web.message_notifier import MessageNotifier
 
 
@@ -174,6 +175,7 @@ class DatabaseContext:
         self._automations = None
         self._push_subscriptions = None
         self._worker_tasks = None
+        self._a2a_tasks = None
 
     async def __aenter__(self) -> "DatabaseContext":
         """Enter the async context manager, starting a transaction."""
@@ -496,6 +498,17 @@ class DatabaseContext:
 
             self._worker_tasks = WorkerTasksRepository(self)
         return self._worker_tasks
+
+    @property
+    def a2a_tasks(self) -> "A2ATasksRepository":
+        """Get the A2A tasks repository instance."""
+        if self._a2a_tasks is None:
+            from family_assistant.storage.repositories.a2a_tasks import (  # noqa: PLC0415
+                A2ATasksRepository,
+            )
+
+            self._a2a_tasks = A2ATasksRepository(self)
+        return self._a2a_tasks
 
     async def init_vector_db(self) -> None:
         """Initialize vector database components."""
