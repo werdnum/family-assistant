@@ -25,41 +25,44 @@ def mock_exec_context() -> MagicMock:
 
 @pytest.fixture
 def mock_genai_client() -> Generator[MagicMock]:
-    """Mock the genai.Client."""
+    """Mock _create_genai_client to avoid importing google.genai.Client.
+
+    Only the Client (external API boundary) is mocked. The google.genai.types
+    data classes are used as-is since they're just data structures, not external
+    services. This lets tests verify actual API request structure.
+    """
+    mock_client = MagicMock()
+
+    # Mock async operation
+    mock_operation = MagicMock()
+    mock_operation.name = "operation/123"
+    mock_operation.done = True
+    mock_operation.error = None
+
+    # Mock response
+    mock_video_asset = MagicMock()
+    mock_video_asset.video = "file-ref"
+
+    mock_response = MagicMock()
+    mock_response.generated_videos = [mock_video_asset]
+    mock_operation.response = mock_response
+
+    # Create an async client that will be yielded by the context manager
+    mock_async_client = MagicMock()
+    mock_async_client.models.generate_videos = AsyncMock(return_value=mock_operation)
+    mock_async_client.operations.get = AsyncMock(return_value=mock_operation)
+    mock_async_client.files.download = AsyncMock(return_value=b"video-content")
+
+    # Setup .aio as an async context manager that yields mock_async_client
+    mock_aio = MagicMock()
+    mock_aio.__aenter__ = AsyncMock(return_value=mock_async_client)
+    mock_aio.__aexit__ = AsyncMock(return_value=None)
+    mock_client.aio = mock_aio
+
     with patch(
-        "family_assistant.tools.video_generation.genai.Client"
-    ) as mock_client_cls:
-        mock_client = MagicMock()
-        mock_client_cls.return_value = mock_client
-
-        # Mock async operation
-        mock_operation = MagicMock()
-        mock_operation.name = "operation/123"
-        mock_operation.done = True
-        mock_operation.error = None
-
-        # Mock response
-        mock_video_asset = MagicMock()
-        mock_video_asset.video = "file-ref"
-
-        mock_response = MagicMock()
-        mock_response.generated_videos = [mock_video_asset]
-        mock_operation.response = mock_response
-
-        # Create an async client that will be yielded by the context manager
-        mock_async_client = MagicMock()
-        mock_async_client.models.generate_videos = AsyncMock(
-            return_value=mock_operation
-        )
-        mock_async_client.operations.get = AsyncMock(return_value=mock_operation)
-        mock_async_client.files.download = AsyncMock(return_value=b"video-content")
-
-        # Setup .aio as an async context manager that yields mock_async_client
-        mock_aio = MagicMock()
-        mock_aio.__aenter__ = AsyncMock(return_value=mock_async_client)
-        mock_aio.__aexit__ = AsyncMock(return_value=None)
-        mock_client.aio = mock_aio
-
+        "family_assistant.tools.video_generation._create_genai_client",
+        return_value=mock_client,
+    ):
         yield mock_async_client
 
 
@@ -68,7 +71,7 @@ async def test_generate_video_tool_success(
     mock_exec_context: MagicMock, mock_genai_client: MagicMock
 ) -> None:
     """Test successful video generation."""
-    # Lazy import to avoid xdist worker crashes from concurrent genai initialization
+    # Lazy import to avoid xdist worker crashes from concurrent genai init
     from google.genai import types  # noqa: PLC0415 - intentional lazy import
 
     with (
@@ -101,15 +104,14 @@ async def test_generate_video_tool_success(
         mock_genai_client.models.generate_videos.assert_called_once()
         _, kwargs = mock_genai_client.models.generate_videos.call_args
 
-        # Verify source
+        # Verify source uses real types
         assert "source" in kwargs
         assert isinstance(kwargs["source"], types.GenerateVideosSource)
         assert kwargs["source"].prompt == "A video of a cat"
 
         # Verify config parameters
         config = kwargs["config"]
-        # Check duration_seconds access via snake_case (sdk default) or raw dict check if model dump
-        # We assume the object is passed correctly
+        assert isinstance(config, types.GenerateVideosConfig)
         assert config.duration_seconds == 8
 
         mock_genai_client.files.download.assert_called_once_with(file="file-ref")
@@ -120,6 +122,9 @@ async def test_generate_video_multimodal(
     mock_exec_context: MagicMock, mock_genai_client: MagicMock
 ) -> None:
     """Test video generation with reference images and first/last frame."""
+    # Lazy import to avoid xdist worker crashes from concurrent genai init
+    from google.genai import types  # noqa: PLC0415 - intentional lazy import
+
     with (
         patch.dict("os.environ", {"GEMINI_API_KEY": "test-key"}),
         patch("asyncio.sleep", AsyncMock()),
@@ -161,18 +166,27 @@ async def test_generate_video_multimodal(
         source = kwargs["source"]
         config = kwargs["config"]
 
+        # Verify real types are used
+        assert isinstance(source, types.GenerateVideosSource)
+        assert isinstance(config, types.GenerateVideosConfig)
+
         # Check First Frame in Source
         assert source.image is not None
+        assert isinstance(source.image, types.Image)
         assert source.image.image_bytes == b"first"
 
         # Check Last Frame in Config
         assert config.last_frame is not None
+        assert isinstance(config.last_frame, types.Image)
         assert config.last_frame.image_bytes == b"last"
 
         # Check Reference Images in Config
         assert config.reference_images is not None
         assert len(config.reference_images) == 1
-        assert config.reference_images[0].image.image_bytes == b"img1"
+        ref_image = config.reference_images[0]
+        assert isinstance(ref_image, types.VideoGenerationReferenceImage)
+        assert ref_image.image is not None
+        assert ref_image.image.image_bytes == b"img1"
 
         # Check Duration Forced to 8s
         assert config.duration_seconds == 8
@@ -183,6 +197,9 @@ async def test_generate_video_invalid_attachments(
     mock_exec_context: MagicMock, mock_genai_client: MagicMock
 ) -> None:
     """Test video generation with invalid attachments (should skip them)."""
+    # Lazy import to avoid xdist worker crashes from concurrent genai init
+    from google.genai import types  # noqa: PLC0415 - intentional lazy import
+
     with (
         patch.dict("os.environ", {"GEMINI_API_KEY": "test-key"}),
         patch("asyncio.sleep", AsyncMock()),
@@ -211,9 +228,12 @@ async def test_generate_video_invalid_attachments(
         source = kwargs["source"]
         config = kwargs["config"]
 
+        assert isinstance(source, types.GenerateVideosSource)
+        assert isinstance(config, types.GenerateVideosConfig)
+
         # Should be None/Empty because inputs were invalid
         assert source.image is None
-        assert not hasattr(config, "reference_images") or not config.reference_images
+        assert not config.reference_images
 
 
 @pytest.mark.asyncio
@@ -248,7 +268,6 @@ async def test_generate_video_tool_api_error(
         mock_operation.error.code = 400
 
         mock_genai_client.models.generate_videos.return_value = mock_operation
-        # Mock immediate return for polling loop if it checks 'done' immediately
         mock_genai_client.operations.get.return_value = mock_operation
 
         result = await generate_video_tool(mock_exec_context, prompt="Unsafe prompt")
