@@ -127,12 +127,13 @@ def prune_messages_for_context(
 
     Returns a new list; the input list is not modified.
     """
-    # --- Step 1: identify tool_call_ids from the last assistant turn ---
+    # --- Step 1: identify tool_call_ids from the latest turn ---
     last_turn_tool_ids: set[str] = set()
     for msg in reversed(messages):
-        if isinstance(msg, AssistantMessage) and msg.tool_calls:
-            last_turn_tool_ids = {tc.id for tc in msg.tool_calls}
+        if isinstance(msg, UserMessage):
             break
+        if isinstance(msg, AssistantMessage) and msg.tool_calls:
+            last_turn_tool_ids.update(tc.id for tc in msg.tool_calls)
 
     # Replace old tool results with compact placeholders
     pruned: list[LLMMessage] = []
@@ -144,29 +145,18 @@ def prune_messages_for_context(
             total_before += original_size
             placeholder = f"[Tool result truncated — originally {original_size} chars]"
             total_after += len(placeholder)
-            pruned.append(
-                ToolMessage(
-                    tool_call_id=msg.tool_call_id,
-                    content=placeholder,
-                    name=msg.name,
-                    error_traceback=msg.error_traceback,
-                    provider_metadata=msg.provider_metadata,
-                    attachments=msg.attachments,
-                )
-            )
+            pruned.append(msg.model_copy(update={"content": placeholder}))
         else:
             if isinstance(msg, ToolMessage):
                 total_before += len(msg.content)
                 total_after += len(msg.content)
             pruned.append(msg)
 
-    # If tool-result pruning removed a significant amount of content, return early
     if total_before > 0 and (total_before - total_after) > total_before * 0.3:
         logger.info(
             "Context pruning: truncated old tool results "
             f"({total_before} -> {total_after} chars)"
         )
-        return pruned
 
     # --- Step 2: drop oldest non-system turns ---
     # Identify turn boundaries: a "turn" starts with a UserMessage
