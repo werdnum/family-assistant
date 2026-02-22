@@ -997,7 +997,8 @@ class ProcessingService:
                 if auto_att_id:
                     content_for_stream = new_content
                     auto_attachment_ids.append(auto_att_id)
-                    # Update ToolResult so get_text() returns the hint, not the original data
+                    # Update ToolResult so get_text() returns the hint.
+                    # We also clear data to free memory, as it is now stored as an attachment.
                     result.text = new_content
                     result.data = None
 
