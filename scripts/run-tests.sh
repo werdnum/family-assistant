@@ -267,6 +267,25 @@ else
     echo ""
 fi
 
+# Ensure frontend dependencies are installed (needed in worktrees or fresh checkouts)
+if [ ! -d frontend/node_modules ]; then
+    echo -n "${BLUE}  ▸ Installing frontend dependencies...${NC}"
+    NPM_CI_LOG=$(mktemp)
+    timer_start
+    if npm ci --prefix frontend > "$NPM_CI_LOG" 2>&1; then
+        echo -n "${GREEN} ✓${NC}"
+        timer_end
+        rm -f "$NPM_CI_LOG"
+    else
+        timer_end
+        echo ""
+        echo "${RED}❌ Frontend dependency installation failed:${NC}"
+        cat "$NPM_CI_LOG"
+        rm -f "$NPM_CI_LOG"
+        exit 1
+    fi
+fi
+
 # Force a rebuild of the frontend
 echo -n "${BLUE}  ▸ Building frontend...${NC}"
 FRONTEND_BUILD_LOG=$(mktemp)
