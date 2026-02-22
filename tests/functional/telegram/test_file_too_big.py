@@ -43,7 +43,7 @@ async def test_photo_file_too_big_shows_specific_error(
     context = create_context(fix.application)
 
     with patch(
-        "telegram.ext.ExtBot.get_file",
+        "telegram.Bot.get_file",
         AsyncMock(side_effect=BadRequest("File is too big")),
     ):
         await fix.handler.message_handler(photo_update, context)
@@ -72,7 +72,7 @@ async def test_other_bad_request_shows_generic_error(
     context = create_context(fix.application)
 
     with patch(
-        "telegram.ext.ExtBot.get_file",
+        "telegram.Bot.get_file",
         AsyncMock(
             side_effect=BadRequest(
                 "Wrong file_id or the file is temporarily unavailable"
