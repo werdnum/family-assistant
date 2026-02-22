@@ -186,6 +186,44 @@ class TestPruneMessagesForContext:
         for i in range(17, 20):
             assert any(f"Question {i}" in str(m.content) for m in user_messages)
 
+    def test_trailing_user_message_preserves_recent_tool_results(self) -> None:
+        """When the last message is a UserMessage, recent tool results are still preserved."""
+        messages: list[LLMMessage] = [
+            SystemMessage(content="System prompt"),
+            UserMessage(content="First question"),
+            AssistantMessage(
+                content=None,
+                tool_calls=[_make_tool_call("tc1")],
+            ),
+            ToolMessage(tool_call_id="tc1", content="A" * 10000, name="search"),
+            AssistantMessage(content="Here's the result"),
+            UserMessage(content="Second question"),
+            AssistantMessage(
+                content=None,
+                tool_calls=[_make_tool_call("tc2")],
+            ),
+            ToolMessage(tool_call_id="tc2", content="B" * 5000, name="search"),
+            AssistantMessage(content="Latest result"),
+            # Trailing UserMessage — e.g. retrying with a new prompt
+            UserMessage(content="Follow-up question"),
+        ]
+
+        pruned = prune_messages_for_context(messages)
+
+        # Old tool result (tc1) should be truncated
+        tool_msg_1 = [
+            m for m in pruned if isinstance(m, ToolMessage) and m.tool_call_id == "tc1"
+        ][0]
+        assert len(tool_msg_1.content) < 200
+        assert "truncated" in tool_msg_1.content.lower()
+
+        # Most recent tool result (tc2) should be preserved even though
+        # the message list ends with a UserMessage
+        tool_msg_2 = [
+            m for m in pruned if isinstance(m, ToolMessage) and m.tool_call_id == "tc2"
+        ][0]
+        assert tool_msg_2.content == "B" * 5000
+
     def test_no_tool_messages_still_works(self) -> None:
         """Conversations without tool messages still prune by dropping old turns."""
         messages: list[LLMMessage] = [SystemMessage(content="System")]

@@ -122,18 +122,21 @@ def prune_messages_for_context(
     Strategy:
     1. Replace old ToolMessage content with compact placeholders (preserving the
        latest turn's tool results intact).
-    2. If the conversation is still large, drop the oldest non-system turns while
-       keeping at least the last 3 user/assistant turns.
+    2. Drop the oldest non-system turns when there are more than 3 user/assistant
+       turns, keeping only the 3 most recent user/assistant turns and all system
+       messages.
 
     Returns a new list; the input list is not modified.
     """
-    # --- Step 1: identify tool_call_ids from the latest turn ---
+    # --- Step 1: identify tool_call_ids from the latest assistant tool-call block ---
+    # Find the most recent AssistantMessage that issued tool calls,
+    # even if the message list ends with a UserMessage.
     last_turn_tool_ids: set[str] = set()
     for msg in reversed(messages):
-        if isinstance(msg, UserMessage):
-            break
         if isinstance(msg, AssistantMessage) and msg.tool_calls:
             last_turn_tool_ids.update(tc.id for tc in msg.tool_calls)
+            # We've found the latest assistant tool-call block; stop scanning.
+            break
 
     # Replace old tool results with compact placeholders
     pruned: list[LLMMessage] = []
