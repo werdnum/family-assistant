@@ -7,6 +7,7 @@ This implementation mimics LiteLLM's simple retry strategy:
 - Attempt 3: Fallback model (if configured and previous attempts failed)
 """
 
+import asyncio
 import logging
 from collections.abc import AsyncIterator, Sequence
 from typing import TYPE_CHECKING, Any, TypeVar
@@ -211,40 +212,69 @@ class RetryingLLMClient:
                 exc_info=True,
             )
 
-            # Only fallback if no content has been sent to the client
-            if not events_yielded and self.fallback_client:
-                # Check if fallback model is same as primary
-                if self.fallback_model == self.primary_model:
-                    logger.warning(
-                        f"Fallback model '{self.fallback_model}' is the same as the primary model '{self.primary_model}'. "
-                        f"Skipping fallback."
+            # Only retry/fallback if no content has been sent to the client
+            if not events_yielded:
+                # For rate limits with a short retry_after, wait and retry on primary
+                if (
+                    isinstance(e, RateLimitError)
+                    and e.retry_after is not None
+                    and e.retry_after <= 60
+                ):
+                    logger.info(
+                        f"Rate limited. Waiting {e.retry_after:.0f}s before retrying primary model."
                     )
-                    raise
+                    # ast-grep-ignore: no-asyncio-sleep-in-tests - Production retry delay, not test code
+                    await asyncio.sleep(e.retry_after)
+                    try:
+                        async for event in self.primary_client.generate_response_stream(
+                            messages=messages,
+                            tools=tools,
+                            tool_choice=tool_choice,
+                        ):
+                            events_yielded = True
+                            yield event
+                        return
+                    except Exception as retry_err:
+                        logger.warning(
+                            f"Retry after rate limit delay also failed: {retry_err}"
+                        )
+                        if events_yielded:
+                            raise retry_err
+                        # Fall through to fallback logic below
 
-                logger.info(
-                    f"Falling back to {self.fallback_model} (no content emitted yet)"
-                )
-                try:
-                    async for event in self.fallback_client.generate_response_stream(
-                        messages=messages,
-                        tools=tools,
-                        tool_choice=tool_choice,
-                    ):
-                        yield event
-                except Exception as fallback_error:
-                    logger.error(
-                        f"Fallback streaming model {self.fallback_model} also failed: {fallback_error}",
-                        exc_info=True,
+                if self.fallback_client:
+                    # Check if fallback model is same as primary
+                    if self.fallback_model == self.primary_model:
+                        logger.warning(
+                            f"Fallback model '{self.fallback_model}' is the same as the primary model '{self.primary_model}'. "
+                            f"Skipping fallback."
+                        )
+                        raise
+
+                    logger.info(
+                        f"Falling back to {self.fallback_model} (no content emitted yet)"
                     )
-                    # Raise the original error as it's likely more relevant
-                    raise e from fallback_error
-            else:
-                if events_yielded:
-                    logger.warning(
-                        "Cannot fallback: Content already emitted to stream."
-                    )
+                    try:
+                        async for (
+                            event
+                        ) in self.fallback_client.generate_response_stream(
+                            messages=messages,
+                            tools=tools,
+                            tool_choice=tool_choice,
+                        ):
+                            yield event
+                    except Exception as fallback_error:
+                        logger.error(
+                            f"Fallback streaming model {self.fallback_model} also failed: {fallback_error}",
+                            exc_info=True,
+                        )
+                        # Raise the original error as it's likely more relevant
+                        raise e from fallback_error
                 else:
                     logger.warning("Cannot fallback: No fallback client configured.")
+                    raise
+            else:
+                logger.warning("Cannot fallback: Content already emitted to stream.")
                 raise
 
     async def format_user_message_with_file(

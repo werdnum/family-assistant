@@ -7,6 +7,7 @@ import json
 import logging
 import mimetypes
 import os
+import re
 import time
 import uuid
 from collections.abc import AsyncIterator, Sequence
@@ -1045,45 +1046,61 @@ class GoogleGenAIClient(BaseLLMClient):
                 )
             except Exception as record_err:
                 logger.debug(f"Failed to record LLM request error: {record_err}")
-            # Map Google exceptions to our exception hierarchy
-            error_message = str(e)
+            raise self._map_error_to_typed_exception(e) from e
 
-            if "401" in error_message or "api key" in error_message.lower():
-                raise AuthenticationError(
-                    error_message, provider="google", model=self.model_name
-                ) from e
-            elif "429" in error_message or "quota" in error_message.lower():
-                raise RateLimitError(
-                    error_message, provider="google", model=self.model_name
-                ) from e
-            elif "404" in error_message or "not found" in error_message.lower():
-                raise ModelNotFoundError(
-                    error_message, provider="google", model=self.model_name
-                ) from e
-            elif "token" in error_message.lower() and "limit" in error_message.lower():
-                raise ContextLengthError(
-                    error_message, provider="google", model=self.model_name
-                ) from e
-            elif "invalid" in error_message.lower() or "400" in error_message:
-                raise InvalidRequestError(
-                    error_message, provider="google", model=self.model_name
-                ) from e
-            elif (
-                "connection" in error_message.lower()
-                or "network" in error_message.lower()
-            ):
-                raise ProviderConnectionError(
-                    error_message, provider="google", model=self.model_name
-                ) from e
-            elif "timeout" in error_message.lower():
-                raise ProviderTimeoutError(
-                    error_message, provider="google", model=self.model_name
-                ) from e
-            else:
-                logger.error(f"Google GenAI API error: {e}", exc_info=True)
-                raise LLMProviderError(
-                    error_message, provider="google", model=self.model_name
-                ) from e
+    def _map_error_to_typed_exception(self, e: Exception) -> LLMProviderError:
+        """Map a raw exception to a typed LLMProviderError subclass."""
+        error_message = str(e)
+
+        if "401" in error_message or "api key" in error_message.lower():
+            return AuthenticationError(
+                error_message, provider="google", model=self.model_name
+            )
+        elif "429" in error_message or "quota" in error_message.lower():
+            return RateLimitError(
+                error_message,
+                provider="google",
+                model=self.model_name,
+                retry_after=self._parse_retry_after(error_message),
+            )
+        elif "404" in error_message or "not found" in error_message.lower():
+            return ModelNotFoundError(
+                error_message, provider="google", model=self.model_name
+            )
+        elif "token" in error_message.lower() and "limit" in error_message.lower():
+            return ContextLengthError(
+                error_message, provider="google", model=self.model_name
+            )
+        elif "invalid" in error_message.lower() or "400" in error_message:
+            return InvalidRequestError(
+                error_message, provider="google", model=self.model_name
+            )
+        elif (
+            "connection" in error_message.lower() or "network" in error_message.lower()
+        ):
+            return ProviderConnectionError(
+                error_message, provider="google", model=self.model_name
+            )
+        elif "timeout" in error_message.lower():
+            return ProviderTimeoutError(
+                error_message, provider="google", model=self.model_name
+            )
+        else:
+            logger.error(f"Google GenAI API error: {e}", exc_info=True)
+            return LLMProviderError(
+                error_message, provider="google", model=self.model_name
+            )
+
+    @staticmethod
+    def _parse_retry_after(error_message: str) -> float | None:
+        """Extract retry delay from Gemini error messages.
+
+        Gemini errors may include 'retryDelay: 36s' or similar patterns.
+        """
+        match = re.search(r"retryDelay[\":\s]*(\d+(?:\.\d+)?)s", error_message)
+        if match:
+            return float(match.group(1))
+        return None
 
     async def format_user_message_with_file(
         self,
@@ -1318,6 +1335,7 @@ class GoogleGenAIClient(BaseLLMClient):
         request_id = f"google_stream_{uuid.uuid4().hex[:16]}"
         message_dicts = [message_to_json_dict(msg) for msg in messages]
 
+        content_yielded = False
         try:
             # Keep messages as typed objects for processing
             typed_messages = list(messages)
@@ -1420,6 +1438,7 @@ class GoogleGenAIClient(BaseLLMClient):
                 # Extract text content from chunk
                 if hasattr(chunk, "text") and chunk.text:
                     yield LLMStreamEvent(type="content", content=chunk.text)
+                    content_yielded = True
 
                 # Handle candidates structure for more complex responses
                 elif hasattr(chunk, "candidates") and chunk.candidates:
@@ -1450,6 +1469,7 @@ class GoogleGenAIClient(BaseLLMClient):
                                     yield LLMStreamEvent(
                                         type="content", content=part.text
                                     )
+                                    content_yielded = True
 
                                 # Accumulate function calls with their thought signatures
                                 if (
@@ -1580,38 +1600,24 @@ class GoogleGenAIClient(BaseLLMClient):
                     f"Failed to record streaming LLM request error: {record_err}"
                 )
 
-            # Handle errors the same way as non-streaming
-            error_message = str(e)
-
-            # Categorize the error type for metadata
-            error_type = "unknown"
-            if "401" in error_message or "api key" in error_message.lower():
-                error_type = "authentication"
-            elif "429" in error_message or "quota" in error_message.lower():
-                error_type = "rate_limit"
-            elif "404" in error_message or "not found" in error_message.lower():
-                error_type = "model_not_found"
-            elif "token" in error_message.lower() and "limit" in error_message.lower():
-                error_type = "context_length"
-            elif "invalid" in error_message.lower() or "400" in error_message:
-                error_type = "invalid_request"
-            elif (
-                "connection" in error_message.lower()
-                or "network" in error_message.lower()
-            ):
-                error_type = "connection"
-            elif "timeout" in error_message.lower():
-                error_type = "timeout"
-
+            typed_error = self._map_error_to_typed_exception(e)
             logger.error(
-                f"Google GenAI streaming error ({error_type}): {e}", exc_info=True
+                f"Google GenAI streaming error ({type(typed_error).__name__}): {e}",
+                exc_info=True,
             )
+
+            # If no content has been yielded, raise typed exception so
+            # RetryingLLMClient can catch it and retry/fallback
+            if not content_yielded:
+                raise typed_error from e
+
+            # Content already yielded — can't retry, yield error event instead
             yield LLMStreamEvent(
                 type="error",
-                error=error_message,
+                error=str(e),
                 metadata={
                     "error_id": str(e.__class__.__name__),
-                    "error_type": error_type,
+                    "error_type": type(typed_error).__name__,
                     "provider": "google",
                     "model": self.model_name,
                 },
