@@ -67,6 +67,7 @@ def parse_sse_events(response_text: str) -> list[SSEEvent]:
                 events.append(
                     SSEEvent(type=current_event_type, data=json.loads(data_str))
                 )
+                current_event_type = None
     return events
 
 

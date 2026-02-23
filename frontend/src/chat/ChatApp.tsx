@@ -209,6 +209,12 @@ const ChatApp: React.FC<ChatAppProps> = ({ profileId = 'default_assistant' }) =>
 
         if (hasContent) {
           // Has text content: update message with text + preserved tool calls
+          const diagnosticsUrl = lastError
+            ? getDiagnosticsUrl({ conversationId: conversationId ?? undefined })
+            : null;
+          const errorSuffix = lastError
+            ? `\n\n---\n*An error also occurred during this response. [View diagnostics](${diagnosticsUrl}) for details.*`
+            : '';
           setMessages((prev) =>
             prev.map((msg) => {
               if (msg.id === messageId) {
@@ -216,7 +222,7 @@ const ChatApp: React.FC<ChatAppProps> = ({ profileId = 'default_assistant' }) =>
                   msg.content?.filter((part) => part.type === 'tool-call') || [];
                 return {
                   ...msg,
-                  content: [{ type: 'text', text: content }, ...existingToolCalls],
+                  content: [{ type: 'text', text: content + errorSuffix }, ...existingToolCalls],
                   status: { type: 'complete' as const },
                   isLoading: false,
                 };
