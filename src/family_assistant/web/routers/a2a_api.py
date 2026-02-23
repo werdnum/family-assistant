@@ -134,10 +134,12 @@ def _jsonrpc_error(
     code: int,
     message: str,
 ) -> JSONResponse:
-    resp = JSONRPCErrorResponse(
-        id=request_id, error=JSONRPCError(code=code, message=message)
-    )
-    return JSONResponse(content=resp.model_dump(exclude_none=True))
+    content = {
+        "jsonrpc": "2.0",
+        "id": request_id,
+        "error": {"code": code, "message": message},
+    }
+    return JSONResponse(content=content)
 
 
 def _jsonrpc_result(request_id: str | int | None, result: object) -> JSONResponse:
@@ -251,7 +253,8 @@ async def _handle_send_message(
         artifact = error_to_artifact(result.error_traceback or "Unknown error")
         final_status = TaskState.failed
     else:
-        artifact = chat_result_to_artifact(result)
+        attachment_urls = _resolve_attachment_urls(request, result.attachment_ids)
+        artifact = chat_result_to_artifact(result, attachment_urls=attachment_urls)
         final_status = TaskState.completed
 
     artifacts = [artifact] if artifact else []
@@ -671,6 +674,17 @@ async def _stream_message(
 
 
 # ===== Helpers =====
+
+
+def _resolve_attachment_urls(
+    request: Request,
+    attachment_ids: list[str] | None,
+) -> dict[str, str]:
+    """Build absolute download URLs for attachment IDs."""
+    if not attachment_ids:
+        return {}
+    base_url = str(request.base_url).rstrip("/")
+    return {att_id: f"{base_url}/api/attachments/{att_id}" for att_id in attachment_ids}
 
 
 def _resolve_service(request: Request, message: Message) -> ProcessingService | None:
