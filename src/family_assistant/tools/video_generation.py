@@ -6,7 +6,13 @@ import asyncio
 import logging
 import os
 import time
-from typing import Any, cast
+from typing import TYPE_CHECKING, Any, cast
+
+if TYPE_CHECKING:
+    import types
+
+    from google import genai
+    from google.genai import types as genai_types
 
 from family_assistant.scripting.apis.attachments import ScriptAttachment
 from family_assistant.tools.types import (
@@ -74,7 +80,7 @@ VIDEO_GENERATION_TOOLS_DEFINITION: list[ToolDefinition] = [
 ]
 
 
-def _lazy_import_genai_types() -> Any:  # noqa: ANN401 - returns google.genai.types module
+def _lazy_import_genai_types() -> types.ModuleType:
     """Lazy-import google.genai.types to avoid xdist worker crashes from concurrent native init."""
     from google.genai import (  # noqa: PLC0415 - intentional lazy import
         types,
@@ -83,7 +89,7 @@ def _lazy_import_genai_types() -> Any:  # noqa: ANN401 - returns google.genai.ty
     return types
 
 
-def _create_genai_client(api_key: str) -> Any:  # noqa: ANN401 - returns google.genai.Client, lazy-imported
+def _create_genai_client(api_key: str) -> genai.Client:
     """Create a genai Client with lazy import to avoid xdist worker crashes."""
     from google import (  # noqa: PLC0415 - intentional lazy import
         genai,
@@ -92,7 +98,9 @@ def _create_genai_client(api_key: str) -> Any:  # noqa: ANN401 - returns google.
     return genai.Client(api_key=api_key)
 
 
-async def _process_image_attachment(attachment: ScriptAttachment, label: str) -> Any:  # noqa: ANN401 - returns google.genai.types.Image | None, lazy-imported
+async def _process_image_attachment(
+    attachment: ScriptAttachment, label: str
+) -> genai_types.Image | None:
     """
     Helper to process a single attachment into a Google GenAI Image object.
 
