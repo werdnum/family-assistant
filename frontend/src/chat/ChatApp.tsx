@@ -209,6 +209,12 @@ const ChatApp: React.FC<ChatAppProps> = ({ profileId = 'default_assistant' }) =>
 
         if (hasContent) {
           // Has text content: update message with text + preserved tool calls
+          const diagnosticsUrl = lastError
+            ? getDiagnosticsUrl({ conversationId: conversationId ?? undefined })
+            : null;
+          const errorSuffix = lastError
+            ? `\n\n---\n*An error also occurred during this response. [View diagnostics](${diagnosticsUrl}) for details.*`
+            : '';
           setMessages((prev) =>
             prev.map((msg) => {
               if (msg.id === messageId) {
@@ -216,7 +222,35 @@ const ChatApp: React.FC<ChatAppProps> = ({ profileId = 'default_assistant' }) =>
                   msg.content?.filter((part) => part.type === 'tool-call') || [];
                 return {
                   ...msg,
-                  content: [{ type: 'text', text: content }, ...existingToolCalls],
+                  content: [{ type: 'text', text: content + errorSuffix }, ...existingToolCalls],
+                  status: { type: 'complete' as const },
+                  isLoading: false,
+                };
+              }
+              return msg;
+            })
+          );
+        } else if (hasToolCalls && lastError) {
+          // Tool calls present but stream ended with an error before generating
+          // a text response (e.g., tool error caused a follow-up LLM failure).
+          // Show the error so the user knows what happened.
+          const diagnosticsUrl = getDiagnosticsUrl({
+            conversationId: conversationId ?? undefined,
+          });
+          setMessages((prev) =>
+            prev.map((msg) => {
+              if (msg.id === messageId) {
+                const existingToolCalls =
+                  msg.content?.filter((part) => part.type === 'tool-call') || [];
+                return {
+                  ...msg,
+                  content: [
+                    {
+                      type: 'text',
+                      text: `Sorry, I encountered an error after running tools. [View diagnostics](${diagnosticsUrl}) for debugging details.`,
+                    },
+                    ...existingToolCalls,
+                  ],
                   status: { type: 'complete' as const },
                   isLoading: false,
                 };
@@ -225,7 +259,7 @@ const ChatApp: React.FC<ChatAppProps> = ({ profileId = 'default_assistant' }) =>
             })
           );
         } else if (hasToolCalls) {
-          // No text but has tool calls: just clear loading state and set complete
+          // No text but has tool calls, no error: just clear loading state and set complete
           setMessages((prev) =>
             prev.map((msg) => {
               if (msg.id === messageId) {
