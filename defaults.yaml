@@ -253,8 +253,8 @@ default_profile_settings:
     max_history_messages: 10
     history_max_age_hours: 2
     # Web-specific history settings for better conversation context
-    # web_max_history_messages: 100  # Uncomment to override default of 100
-    # web_history_max_age_hours: 720  # Uncomment to override default of 720 (30 days)
+    web_max_history_messages: 100
+    web_history_max_age_hours: 720 # 30 days
     max_iterations: 10 # Maximum number of tool call iterations
     delegation_security_level: "confirm" # Default: "blocked", "confirm", or "unrestricted"
   tools_config:
