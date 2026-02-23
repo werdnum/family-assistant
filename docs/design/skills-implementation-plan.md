@@ -124,6 +124,7 @@ def load_skills_from_directory(directory: Path) -> list[ParsedSkill]:
 - Filters files: requires both `name` and `description` in frontmatter
 - Supports visibility labels from frontmatter
 - Sorts files alphabetically for consistent loading order
+- Logs a warning when a configured directory does not exist (helps debug configuration issues)
 - Unit tests in `tests/unit/skills/test_loader.py` (8 tests)
 
 ### Milestone 3: NoteRegistry -- DONE

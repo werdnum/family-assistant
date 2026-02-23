@@ -18,6 +18,7 @@ def load_skills_from_directory(directory: Path) -> list[ParsedSkill]:
     """
     skills: list[ParsedSkill] = []
     if not directory.is_dir():
+        logger.warning("Skills directory does not exist: %s", directory)
         return skills
 
     for md_file in sorted(directory.glob("*.md")):

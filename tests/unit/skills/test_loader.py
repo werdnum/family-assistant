@@ -2,6 +2,8 @@
 
 from pathlib import Path
 
+import pytest
+
 from family_assistant.paths import PACKAGE_ROOT
 from family_assistant.skills.loader import load_skills_from_directory
 
@@ -59,9 +61,12 @@ class TestLoadSkillsFromDirectory:
         skills = load_skills_from_directory(tmp_path)
         assert len(skills) == 0
 
-    def test_nonexistent_directory(self, tmp_path: Path) -> None:
+    def test_nonexistent_directory(
+        self, tmp_path: Path, caplog: pytest.LogCaptureFixture
+    ) -> None:
         skills = load_skills_from_directory(tmp_path / "nonexistent")
         assert len(skills) == 0
+        assert "Skills directory does not exist" in caplog.text
 
     def test_empty_directory(self, tmp_path: Path) -> None:
         skills = load_skills_from_directory(tmp_path)
