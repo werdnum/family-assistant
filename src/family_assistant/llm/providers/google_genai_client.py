@@ -57,9 +57,32 @@ from ..base import (
     ProviderConnectionError,
     ProviderTimeoutError,
     RateLimitError,
+    ServiceUnavailableError,
 )
 
 logger = logging.getLogger(__name__)
+
+# Maps Interactions API ErrorEvent.error.code values to our typed exception classes.
+# See https://cloud.google.com/apis/design/errors for canonical error codes.
+_STREAM_ERROR_CODE_TO_EXCEPTION: dict[str, type[LLMProviderError]] = {
+    "resource_exhausted": RateLimitError,
+    "deadline_exceeded": ProviderTimeoutError,
+    "unauthenticated": AuthenticationError,
+    "permission_denied": AuthenticationError,
+    "not_found": ModelNotFoundError,
+    "invalid_argument": InvalidRequestError,
+    "internal": ServiceUnavailableError,
+    "unavailable": ServiceUnavailableError,
+}
+
+# Maps SDK HTTP status codes (from APIStatusError.status_code) to our typed exceptions.
+_SDK_STATUS_CODE_TO_EXCEPTION: dict[int, type[LLMProviderError]] = {
+    400: InvalidRequestError,
+    401: AuthenticationError,
+    403: AuthenticationError,
+    404: ModelNotFoundError,
+    429: RateLimitError,
+}
 
 
 def _normalize_thought_signature(raw_value: bytes | None) -> bytes | None:
@@ -1102,6 +1125,35 @@ class GoogleGenAIClient(BaseLLMClient):
             return float(match.group(1))
         return None
 
+    def _map_interactions_error(self, e: Exception) -> LLMProviderError:
+        """Map an Interactions API exception to a typed LLMProviderError.
+
+        Uses duck-typing to check for status_code (SDK APIStatusError) and
+        falls back to string-based matching for non-HTTP errors.
+        """
+        error_message = str(e)
+        status_code: int | None = getattr(e, "status_code", None)
+
+        if status_code is not None:
+            exc_class = _SDK_STATUS_CODE_TO_EXCEPTION.get(status_code)
+            if exc_class:
+                if exc_class is RateLimitError:
+                    return RateLimitError(
+                        error_message,
+                        provider="google",
+                        model=self.model_name,
+                        retry_after=self._parse_retry_after(error_message),
+                    )
+                return exc_class(
+                    error_message, provider="google", model=self.model_name
+                )
+            if status_code >= 500:
+                return ServiceUnavailableError(
+                    error_message, provider="google", model=self.model_name
+                )
+
+        return self._map_error_to_typed_exception(e)
+
     async def format_user_message_with_file(
         self,
         prompt_text: str | None,
@@ -1167,6 +1219,12 @@ class GoogleGenAIClient(BaseLLMClient):
 
         Deep Research requires background execution and polling/streaming via interactions.create.
         """
+        start_time = time.monotonic()
+        request_timestamp = datetime.now(UTC)
+        request_id = f"google_deep_research_{uuid.uuid4().hex[:16]}"
+        message_dicts = [message_to_json_dict(msg) for msg in messages]
+
+        content_yielded = False
         try:
             # 1. Extract input and history context
             previous_interaction_id = None
@@ -1235,13 +1293,8 @@ class GoogleGenAIClient(BaseLLMClient):
                 f"Prev ID: {previous_interaction_id}"
             )
 
-            # We need to strip 'models/' prefix if present for 'agent' parameter?
-            # The docs say: agent='deep-research-pro-preview-12-2025'
-            # self.model_name likely has 'models/' prefix.
             agent_name = self.model_name.replace("models/", "")
 
-            # Create the interaction stream
-            # Using loop for potential reconnection logic could be added here
             create_kwargs = {
                 "input": input_text,
                 "agent": agent_name,
@@ -1255,72 +1308,191 @@ class GoogleGenAIClient(BaseLLMClient):
             stream = await self.client.aio.interactions.create(**create_kwargs)
 
             interaction_id = None
-            thought_summaries = []
+            last_event_id: str | None = None
+            thought_summaries: list[str] = []
 
             # 3. Process stream
             async for chunk in stream:
+                # Track event IDs for potential stream reconnection
+                if chunk.event_id:
+                    last_event_id = chunk.event_id
+
                 # Capture Interaction ID
                 if chunk.event_type == "interaction.start":
                     interaction_id = chunk.interaction.id
                     logger.info(f"Deep Research interaction started: {interaction_id}")
 
-                # Track IDs for potential reconnection (not fully implemented in this loop yet)
-                if chunk.event_id:
-                    # TODO: Implement resumption logic using chunk.event_id
-                    pass
-
-                # Handle Content
-                if chunk.event_type == "content.delta":
+                elif chunk.event_type == "content.delta":
                     if chunk.delta.type == "text":
                         yield LLMStreamEvent(type="content", content=chunk.delta.text)
+                        content_yielded = True
                     elif chunk.delta.type == "thought_summary":
                         thought_text = chunk.delta.content.text
                         thought_summaries.append(thought_text)
-                        # Yield thoughts as special content or just log?
-                        # Yielding as content with prefix allows user to see progress
                         yield LLMStreamEvent(
                             type="content", content=f"\n*Thinking: {thought_text}*\n"
                         )
+                        content_yielded = True
 
                 elif chunk.event_type == "interaction.complete":
                     logger.info("Deep Research interaction complete")
 
+                elif chunk.event_type == "interaction.status_update":
+                    status = getattr(chunk, "status", None) or getattr(
+                        getattr(chunk, "interaction", None), "status", None
+                    )
+                    if status in {"failed", "cancelled"}:
+                        error_msg = f"Deep Research interaction {status}"
+                        logger.error(error_msg)
+                        exc = ServiceUnavailableError(
+                            error_msg, provider="google", model=self.model_name
+                        )
+                        if not content_yielded:
+                            raise exc
+                        yield LLMStreamEvent(
+                            type="error",
+                            error=error_msg,
+                            metadata={
+                                "error_type": type(exc).__name__,
+                                "provider": "google",
+                                "model": self.model_name,
+                            },
+                        )
+
                 elif chunk.event_type == "error":
-                    logger.error(f"Deep Research stream error: {chunk.error}")
+                    error_obj = chunk.error
+                    error_code = getattr(error_obj, "code", None)
+                    error_message = getattr(error_obj, "message", None) or str(
+                        error_obj
+                    )
+                    logger.error(
+                        f"Deep Research stream error: code={error_code} msg={error_message}"
+                    )
+
+                    # Map error code to typed exception
+                    exc_class = _STREAM_ERROR_CODE_TO_EXCEPTION.get(
+                        error_code or "", LLMProviderError
+                    )
+                    if exc_class is RateLimitError:
+                        typed_exc = RateLimitError(
+                            error_message,
+                            provider="google",
+                            model=self.model_name,
+                            retry_after=self._parse_retry_after(error_message),
+                        )
+                    else:
+                        typed_exc = exc_class(
+                            error_message,
+                            provider="google",
+                            model=self.model_name,
+                        )
+
+                    if not content_yielded:
+                        raise typed_exc
+
                     yield LLMStreamEvent(
                         type="error",
-                        error=str(chunk.error),
-                        metadata={"provider": "google", "model": self.model_name},
+                        error=error_message,
+                        metadata={
+                            "error_type": type(typed_exc).__name__,
+                            "provider": "google",
+                            "model": self.model_name,
+                        },
                     )
 
             # 4. Finalize
             done_metadata = {}
             if interaction_id:
-                # Pass interaction_id back via provider_metadata for storage
                 done_metadata["provider_metadata"] = GeminiProviderMetadata(
                     interaction_id=interaction_id
                 )
+            if last_event_id:
+                done_metadata["last_event_id"] = last_event_id
 
             if thought_summaries:
-                if "reasoning_info" not in done_metadata:
-                    done_metadata["reasoning_info"] = {}
-                done_metadata["reasoning_info"]["thought_summaries"] = [
-                    {"summary": t} for t in thought_summaries
-                ]
+                done_metadata["reasoning_info"] = {
+                    "thought_summaries": [{"summary": t} for t in thought_summaries]
+                }
+
+            # Record successful request to diagnostics buffer
+            duration_ms = (time.monotonic() - start_time) * 1000
+            try:
+                get_request_buffer().add(
+                    LLMRequestRecord(
+                        timestamp=request_timestamp,
+                        request_id=request_id,
+                        model_id=self.model_name,
+                        messages=message_dicts,
+                        tools=None,
+                        tool_choice=None,
+                        response={"streaming": True, "metadata": done_metadata},
+                        duration_ms=duration_ms,
+                        error=None,
+                    )
+                )
+            except Exception as record_err:
+                logger.debug(f"Failed to record Deep Research request: {record_err}")
 
             yield LLMStreamEvent(type="done", metadata=done_metadata)
 
         except Exception as e:
-            logger.error(f"Error in Deep Research stream: {e}", exc_info=True)
+            # Record failed request to diagnostics buffer
+            duration_ms = (time.monotonic() - start_time) * 1000
+            try:
+                get_request_buffer().add(
+                    LLMRequestRecord(
+                        timestamp=request_timestamp,
+                        request_id=request_id,
+                        model_id=self.model_name,
+                        messages=message_dicts,
+                        tools=None,
+                        tool_choice=None,
+                        response=None,
+                        duration_ms=duration_ms,
+                        error=str(e),
+                    )
+                )
+            except Exception as record_err:
+                logger.debug(
+                    f"Failed to record Deep Research request error: {record_err}"
+                )
+
+            # If the exception is already a typed LLMProviderError (e.g. raised by
+            # stream error/status handlers above), use it directly.
+            if isinstance(e, LLMProviderError):
+                typed_error = e
+            else:
+                typed_error = self._map_interactions_error(e)
+            logger.error(
+                f"Google Deep Research error ({type(typed_error).__name__}): {e}",
+                exc_info=True,
+            )
+
+            # If no content has been yielded, raise typed exception so
+            # RetryingLLMClient can catch it and retry/fallback
+            if not content_yielded:
+                raise typed_error from e
+
+            # Content already yielded — can't retry, yield error event then done
             yield LLMStreamEvent(
                 type="error",
                 error=str(e),
                 metadata={
-                    "error_id": str(e.__class__.__name__),
+                    "error_type": type(typed_error).__name__,
                     "provider": "google",
                     "model": self.model_name,
                 },
             )
+
+            # Yield done event to preserve interaction_id for session resumption
+            error_done_metadata = {}
+            if interaction_id:
+                error_done_metadata["provider_metadata"] = GeminiProviderMetadata(
+                    interaction_id=interaction_id
+                )
+            if last_event_id:
+                error_done_metadata["last_event_id"] = last_event_id
+            yield LLMStreamEvent(type="done", metadata=error_done_metadata)
 
     async def _generate_response_stream(
         self,
