@@ -16,6 +16,7 @@ import httpx
 import sqlparse
 from sqlalchemy import text
 
+from family_assistant.llm.request_buffer import get_request_buffer
 from family_assistant.paths import PROJECT_ROOT
 from family_assistant.tools.types import ToolDefinition, ToolResult
 
@@ -332,6 +333,38 @@ async def read_error_logs(
     )
 
 
+async def get_llm_request_history(
+    limit: int = 5,
+    minutes: int | None = None,
+) -> ToolResult:
+    """Get recent LLM request/response history from the in-memory ring buffer.
+
+    Args:
+        limit: Maximum number of records to return (default 5, max 100).
+        minutes: Optional filter to only include records from the last N minutes.
+
+    Returns:
+        ToolResult with LLM request history records.
+    """
+    logger.info("get_llm_request_history: limit=%d, minutes=%s", limit, minutes)
+
+    limit = max(1, min(limit, 100))
+
+    buffer = get_request_buffer()
+    records = buffer.get_recent(limit=limit, since_minutes=minutes)
+
+    return ToolResult(
+        data={
+            "records": [r.to_dict() for r in records],
+            "count": len(records),
+            "filters": {
+                "limit": limit,
+                "minutes": minutes,
+            },
+        }
+    )
+
+
 async def create_github_issue(
     exec_context: ToolExecutionContext,
     title: str,
@@ -496,6 +529,33 @@ ENGINEERING_TOOLS_DEFINITION: list[ToolDefinition] = [
                         "type": "integer",
                         "description": "Maximum number of logs to return (default 50, max 200).",
                         "default": 50,
+                    },
+                },
+                "required": [],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "get_llm_request_history",
+            "description": (
+                "Get recent LLM request/response history from the in-memory ring buffer. "
+                "Shows what requests were sent to the LLM and what responses were received, "
+                "including model ID, messages, tools, and timing. "
+                "Useful for debugging LLM behavior, understanding tool calls, and diagnosing issues."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "limit": {
+                        "type": "integer",
+                        "description": "Maximum number of records to return (default 5, max 100).",
+                        "default": 5,
+                    },
+                    "minutes": {
+                        "type": "integer",
+                        "description": "Optional filter to only include records from the last N minutes.",
                     },
                 },
                 "required": [],
