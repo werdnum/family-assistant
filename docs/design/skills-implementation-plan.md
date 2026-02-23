@@ -61,6 +61,11 @@ consolidate into the full unified `NoteRegistry` from the design doc if needed.
 
 ### Skill Detection
 
+**Write-time detection**: Rather than parsing frontmatter on every read, skill metadata is detected
+at write time and stored in dedicated DB columns (`is_skill`, `skill_name`, `skill_description`).
+This was chosen over read-time parsing for performance and query simplicity — the DB can filter
+skills vs regular notes directly in SQL.
+
 A note is detected as a skill when its content contains YAML frontmatter with both `name` and
 `description` fields. This follows the [Agent Skills](https://agentskills.io/specification)
 convention.
@@ -69,9 +74,11 @@ convention.
 
 ```
 src/family_assistant/skills/
-├── __init__.py          # ParsedSkill dataclass, load_skills_from_directory()
+├── __init__.py          # Public API exports
 ├── frontmatter.py       # parse_frontmatter() utility
-└── registry.py          # NoteRegistry class
+├── loader.py            # load_skills_from_directory()
+├── registry.py          # NoteRegistry class
+├── types.py             # ParsedSkill dataclass
 src/family_assistant/skills/builtin/
 ├── README.md            # Explains what goes here
 └── (initial skill files)
@@ -79,9 +86,9 @@ src/family_assistant/skills/builtin/
 
 ## Implementation Milestones
 
-### Milestone 1: Frontmatter Parser
+### Milestone 1: Frontmatter Parser -- DONE
 
-Create `src/family_assistant/skills/frontmatter.py`:
+Created `src/family_assistant/skills/frontmatter.py`:
 
 ```python
 def parse_frontmatter(content: str) -> tuple[dict[str, Any] | None, str]:
@@ -94,11 +101,11 @@ def parse_frontmatter(content: str) -> tuple[dict[str, Any] | None, str]:
 
 - Handles: `---` delimiters, malformed YAML (returns None), no frontmatter, empty body
 - Uses `yaml.safe_load` (no arbitrary code execution)
-- Unit tests in `tests/unit/test_frontmatter.py`
+- Unit tests in `tests/unit/skills/test_frontmatter.py` (14 tests)
 
-### Milestone 2: Skill Loading + ParsedSkill
+### Milestone 2: Skill Loading + ParsedSkill -- DONE
 
-Create `src/family_assistant/skills/__init__.py`:
+Created `src/family_assistant/skills/types.py` and `src/family_assistant/skills/loader.py`:
 
 ```python
 @dataclass(frozen=True)
@@ -114,17 +121,14 @@ def load_skills_from_directory(directory: Path) -> list[ParsedSkill]:
     """Load markdown files with skill frontmatter from a directory."""
 ```
 
-Why `ParsedSkill` instead of `ParsedNote` from the design doc:
+- Filters files: requires both `name` and `description` in frontmatter
+- Supports visibility labels from frontmatter
+- Sorts files alphabetically for consistent loading order
+- Unit tests in `tests/unit/skills/test_loader.py` (8 tests)
 
-- At this stage, file-based skills and DB notes are different types with different storage
-- `ParsedSkill` has exactly the fields needed for file-based skills, no DB-specific fields
-- If we unify later, we can merge the types then
+### Milestone 3: NoteRegistry -- DONE
 
-Unit tests in `tests/unit/test_skill_loading.py`.
-
-### Milestone 3: NoteRegistry
-
-Create `src/family_assistant/skills/registry.py`:
+Created `src/family_assistant/skills/registry.py`:
 
 ```python
 class NoteRegistry:
@@ -139,95 +143,200 @@ class NoteRegistry:
         """Get a skill by name, respecting access control."""
 ```
 
-Simple and focused: holds pre-loaded skills, provides access-controlled lookups.
+Simple and focused: holds pre-loaded skills, provides access-controlled lookups. Unit tests in
+`tests/unit/skills/test_registry.py` (7 tests).
 
-### Milestone 4: Configuration
+### Milestone 4: Configuration -- PARTIAL
 
-Add to `config_models.py`:
+`SkillsConfig` exists in `config_models.py` with `user_dir` field only:
 
 ```python
 class SkillsConfig(BaseModel):
-    builtin_dir: str | None = None    # Default: bundled with app
     user_dir: str | None = None       # User-mounted volume
 ```
 
-Add to `AppConfig`:
+**Not yet done**: `builtin_dir` field, default pointing to shipped skills directory.
 
-```python
-skills_config: SkillsConfig = Field(default_factory=SkillsConfig)
-```
+### Milestone 5: Extend NotesContextProvider -- DONE
 
-### Milestone 5: Extend NotesContextProvider
+`NotesContextProvider` in `context_providers.py`:
 
-Partition DB notes into regular notes vs skills, and add a unified skill catalog section.
+- Accepts `note_registry: NoteRegistry | None` parameter
+- DB skill detection uses write-time columns (`is_skill`, `skill_name`, `skill_description`) — no
+  read-time frontmatter parsing needed
+- `get_prompt_notes()` excludes skills (SQL: `is_skill=False`)
+- `get_skills()` returns only skills (SQL: `is_skill=True`)
+- Merges DB skills + file-based skills into unified "Available Skills" catalog section
+- Respects visibility grants for both sources
 
-The new flow in `get_context_fragments()`:
+Functional tests in `tests/functional/notes/test_skill_catalog.py`.
 
-1. Get all accessible DB notes (both prompt and excluded)
-2. Parse frontmatter on each to detect skills (has `name` + `description`)
-3. **Regular notes** with `include_in_prompt=True` → Notes section (as today)
-4. **DB skills** → Skill Catalog section (metadata only, regardless of `include_in_prompt`)
-5. **File-based skills** from NoteRegistry → also Skill Catalog section
-6. **Regular notes** with `include_in_prompt=False` → "Other notes" section (titles only)
+### Milestone 6: Extend get_note Tool -- DONE
 
-Catalog output:
+`get_note_tool` in `tools/notes.py`:
 
-```
-## Available Skills
-Use the `get_note` tool to load a skill's full instructions.
-- **Meeting Notes**: Format meeting notes with attendees, agenda, decisions, and action items.
-- **Research Assistant**: Help with research tasks...
-```
+- Primary lookup: DB notes via repository
+- Fallback: file-based skills via `NoteRegistry`
+- Respects visibility grants at both layers
+- Returns structured data with `exists`, `title`, `content`, `source` (for file skills)
+- DB notes take priority over file skills with same name
 
-Changes to `NotesContextProvider`:
+Functional tests in `tests/functional/notes/test_get_note_skills.py`.
 
-- Add `note_registry: NoteRegistry | None = None` parameter
-- Parse frontmatter on DB notes to detect skills
-- Partition notes into regular vs skill before formatting
-- Merge DB skills + file-based skills into unified catalog
-
-### Milestone 6: Extend get_note Tool
-
-When `get_note_tool` doesn't find a note in the DB, fall back to `NoteRegistry`:
-
-```python
-# Existing DB lookup
-note = await db_context.notes.get_by_title(title, visibility_grants=grants)
-if note:
-    return format_note(note)
-
-# Fall back to file-based skills
-if note_registry:
-    skill = note_registry.get_skill_by_name(title, visibility_grants=grants)
-    if skill:
-        return format_skill(skill)
-
-return "Note not found..."
-```
-
-Changes to `ToolExecutionContext`: add `note_registry: NoteRegistry | None = None`.
-
-### Milestone 7: Wiring in Assistant
+### Milestone 7: Wiring in Assistant -- DONE
 
 In `Assistant.setup_dependencies()`:
 
-1. Load file-based skills from configured directories
-2. Create `NoteRegistry` with loaded skills
-3. Pass to `NotesContextProvider` and `ProcessingServiceConfig`
+1. Loads file-based skills from configured `skills_config.user_dir`
+2. Creates `NoteRegistry` if any skills are loaded
+3. Passes registry to `NotesContextProvider` and `ProcessingServiceConfig`
 
-### Milestone 8: Built-in Skills
+### Milestone 8: Built-in Skills -- NOT STARTED
 
-Create 2-3 initial skill files in `src/family_assistant/skills/builtin/`. These serve as examples
-and demonstrate the feature working end-to-end.
+Create initial skill files in `src/family_assistant/skills/builtin/`. These serve as examples and
+demonstrate the feature working end-to-end.
 
-### Milestone 9: Tests + Verification
+### Milestone 9: Tests + Verification -- DONE
 
-- Unit tests for frontmatter parser
-- Unit tests for skill loading
-- Unit tests for NoteRegistry
-- Functional tests for skill catalog in system prompt
-- Functional tests for get_note loading file-based skills
-- Full `poe test` pass
+Test coverage:
+
+- `tests/unit/skills/test_frontmatter.py` — 14 tests (frontmatter parsing edge cases)
+- `tests/unit/skills/test_loader.py` — 8 tests (file loading, filtering, sorting)
+- `tests/unit/skills/test_registry.py` — 7 tests (catalog access, visibility filtering)
+- `tests/functional/notes/test_skill_catalog.py` — DB skills in catalog, file skills, mixed
+  catalogs, visibility filtering
+- `tests/functional/notes/test_skill_write_detection.py` — write-time skill detection, metadata
+  extraction, filtering
+- `tests/functional/notes/test_get_note_skills.py` — tool fallback behavior, override behavior,
+  visibility enforcement
+
+All tests pass with both SQLite and PostgreSQL backends.
+
+______________________________________________________________________
+
+## Remaining Work
+
+### Status Summary
+
+| Milestone                      | Status                              |
+| ------------------------------ | ----------------------------------- |
+| 1. Frontmatter Parser          | **Done**                            |
+| 2. Skill Loading + ParsedSkill | **Done**                            |
+| 3. NoteRegistry                | **Done**                            |
+| 4. Configuration               | **Partial** (missing `builtin_dir`) |
+| 5. NotesContextProvider        | **Done**                            |
+| 6. get_note Tool               | **Done**                            |
+| 7. Wiring in Assistant         | **Done**                            |
+| 8. Built-in Skills             | **Not started**                     |
+| 9. Tests + Verification        | **Done**                            |
+
+### Cross-reference with Design Doc Phases
+
+| Design Phase | Description                             | Status      |
+| ------------ | --------------------------------------- | ----------- |
+| Phase 1      | Core Infrastructure                     | **Done**    |
+| Phase 2      | Profile-Aware Context                   | **Done**    |
+| Phase 3      | On-Demand Access (`get_note`)           | **Done**    |
+| Phase 4      | Preflight Routing (`SkillRouter`)       | Not started |
+| Phase 5      | Polish (built-in skills, docs, prompts) | Not started |
+
+______________________________________________________________________
+
+## Next Milestones
+
+### Milestone 10: Built-in Skills + Configuration
+
+**Goal**: Ship built-in skill files with the app so users see the feature working out of the box.
+
+**Steps**:
+
+1. **Create `src/family_assistant/skills/builtin/` directory** with 2-3 initial skill files. Good
+   candidates from the design doc:
+
+   - `home-automation.md` — Home Assistant integration guidance (if Home Assistant tools are
+     available)
+   - `research-assistant.md` — Research methodology and output formatting
+   - `meeting-notes.md` — Meeting notes structure and template
+
+   Each file follows [Agent Skills](https://agentskills.io/specification) frontmatter format:
+
+   ```yaml
+   ---
+   name: Skill Name
+   description: One-line description for the catalog.
+   ---
+   ```
+
+   The skill content should be genuinely useful instructions that the LLM can follow, not just
+   placeholder text.
+
+2. **Add `builtin_dir` to `SkillsConfig`**:
+
+   ```python
+   class SkillsConfig(BaseModel):
+       builtin_dir: str | None = None    # Default: bundled with app
+       user_dir: str | None = None       # User-mounted volume
+   ```
+
+3. **Wire builtin loading in `Assistant.setup_dependencies()`**: Load from `builtin_dir` (lower
+   priority) then `user_dir` (higher priority), same as how the design doc describes the file → DB
+   override chain.
+
+4. **Set default `builtin_dir`** either in `config.yaml` or as a code default pointing to the
+   `src/family_assistant/skills/builtin/` directory (using `importlib.resources` or `__file__`
+   relative path).
+
+5. **Verify** with existing functional tests that built-in skills appear in the catalog.
+
+**Testing**: Existing test suite already covers file-based skill loading and catalog generation. New
+builtin skills should be validated by an integration-style test confirming they load without errors
+(valid frontmatter, non-empty content).
+
+### Milestone 11: Documentation + Prompt Instructions
+
+**Goal**: Users and the assistant both know how skills work.
+
+**Steps**:
+
+1. **Update `docs/user/USER_GUIDE.md`** with a Skills section:
+
+   - What skills are and how they differ from regular notes
+   - How to create a DB-based skill (add a note with `name` + `description` frontmatter)
+   - How to create file-based skills (place `.md` files in configured directory)
+   - Frontmatter format reference
+   - How visibility labels apply to skills
+
+2. **Add skill creation instructions to `prompts.yaml`**: The assistant should know how to create
+   skills when asked. Something like:
+
+   > To create a skill, use the `add_or_update_note` tool with YAML frontmatter containing `name`
+   > and `description` fields at the top of the content. The skill will appear in the Available
+   > Skills catalog instead of the regular notes section.
+
+3. **Update `src/family_assistant/tools/notes.py` tool descriptions**: The `add_or_update_note` tool
+   description should mention that notes with frontmatter containing `name` and `description` are
+   treated as skills.
+
+### Milestone 12: Preflight Routing (Phase 4 from Design Doc)
+
+**Goal**: Optionally pre-load relevant skills before the main model starts, for reliability.
+
+This is an optimization — the system works without it since the main model can always load skills
+via `get_note`. Implement when there are enough skills that catalog-only metadata is insufficient
+for the model to reliably self-select the right one.
+
+**Steps**:
+
+1. **Create `SkillRouter`** class using a lightweight LLM (e.g., Gemini Flash Lite)
+2. **Structured output schema** for reliable skill selection parsing
+3. **`prepare_for_request()` hook** in `NotesContextProvider`
+4. **Configuration**: `skills.preflight_model` and `skills.preflight_enabled`
+5. **"Pre-loaded Skills" section** in system prompt with full instructions for selected skills
+
+**Deferred until**: There are 5+ skills and empirical evidence that the model struggles to
+self-select.
+
+______________________________________________________________________
 
 ## Files Changed
 
@@ -235,16 +344,20 @@ New files:
 
 - `src/family_assistant/skills/__init__.py`
 - `src/family_assistant/skills/frontmatter.py`
+- `src/family_assistant/skills/loader.py`
 - `src/family_assistant/skills/registry.py`
-- `src/family_assistant/skills/builtin/*.md`
-- `tests/unit/test_frontmatter.py`
-- `tests/unit/test_skill_loading.py`
-- `tests/unit/test_note_registry.py`
+- `src/family_assistant/skills/types.py`
+- `src/family_assistant/skills/builtin/*.md` (Milestone 10)
+- `tests/unit/skills/test_frontmatter.py`
+- `tests/unit/skills/test_loader.py`
+- `tests/unit/skills/test_registry.py`
 
 Modified files:
 
 - `src/family_assistant/config_models.py` — add `SkillsConfig`
 - `src/family_assistant/context_providers.py` — extend `NotesContextProvider`
 - `src/family_assistant/tools/notes.py` — extend `get_note_tool`
-- `src/family_assistant/tools/types.py` — add `note_registry` to `ToolExecutionContext`
+- `src/family_assistant/tools/types.py` — add `note_registry` to context
 - `src/family_assistant/assistant.py` — wire NoteRegistry
+- `docs/user/USER_GUIDE.md` — skills documentation (Milestone 11)
+- `prompts.yaml` — skill creation instructions (Milestone 11)
