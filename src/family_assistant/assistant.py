@@ -194,6 +194,7 @@ class Assistant:
         self.shared_httpx_client: httpx.AsyncClient | None = None
         self.embedding_generator: EmbeddingGenerator | None = None
         self.processing_services_registry: dict[str, ProcessingService] = {}
+        self.a2a_cancel_events: dict[str, asyncio.Event] = {}
         self.default_processing_service: ProcessingService | None = None
         self.scraper_instance: PlaywrightScraper | None = None
         self.attachment_registry: AttachmentRegistry | None = None
@@ -936,6 +937,7 @@ class Assistant:
             )
 
         self.fastapi_app.state.processing_services = self.processing_services_registry
+        self.fastapi_app.state.a2a_cancel_events = self.a2a_cancel_events
 
         self.default_processing_service = self.processing_services_registry.get(
             default_service_profile_id

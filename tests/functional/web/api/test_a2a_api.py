@@ -39,6 +39,7 @@ async def a2a_client(
     app_fixture.state.processing_services = {
         profile_id: api_test_processing_service,
     }
+    app_fixture.state.a2a_cancel_events = {}
     transport = ASGITransport(app=app_fixture)
     async with AsyncClient(transport=transport, base_url="http://testserver") as client:
         yield client
@@ -460,6 +461,7 @@ async def sdk_client(
     app_fixture.state.processing_services = {
         profile_id: api_test_processing_service,
     }
+    app_fixture.state.a2a_cancel_events = {}
     transport = ASGITransport(app=app_fixture)
     async with AsyncClient(
         transport=transport, base_url="http://testserver"

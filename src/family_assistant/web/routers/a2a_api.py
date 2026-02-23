@@ -57,11 +57,6 @@ logger = logging.getLogger(__name__)
 a2a_router = APIRouter()
 a2a_wellknown_router = APIRouter()
 
-# Registry of cancellation events for running A2A streaming tasks.
-# When tasks/cancel is called, the event is set to signal cooperative cancellation.
-_cancel_events: dict[str, asyncio.Event] = {}
-
-
 # ===== Helper: resolve processing service by profile =====
 
 
@@ -176,7 +171,7 @@ async def a2a_jsonrpc(
         elif method == "tasks/get":
             return await _handle_get_task(request_id, params, db_context)
         elif method == "tasks/cancel":
-            return await _handle_cancel_task(request_id, params, db_context)
+            return await _handle_cancel_task(request_id, params, request, db_context)
         else:
             return _jsonrpc_error(
                 request_id, METHOD_NOT_FOUND, f"Unknown method: {method}"
@@ -330,6 +325,7 @@ async def _handle_get_task(
 async def _handle_cancel_task(
     request_id: str | int | None,
     params: dict[str, object],
+    request: Request,
     db_context: DatabaseContext,
 ) -> JSONResponse:
     """Handle the tasks/cancel JSON-RPC method."""
@@ -352,7 +348,8 @@ async def _handle_cancel_task(
         )
 
     # Signal cooperative cancellation to any running streaming generator
-    cancel_event = _cancel_events.get(task_params.id)
+    cancel_events: dict[str, asyncio.Event] = request.app.state.a2a_cancel_events
+    cancel_event = cancel_events.get(task_params.id)
     if cancel_event is not None:
         cancel_event.set()
 
@@ -501,15 +498,35 @@ async def _stream_message(
 
     # Create task in a short-lived context so it's immediately visible to
     # concurrent tasks/get and tasks/cancel requests.
-    async with get_db_context(db_engine) as db_context:
-        await db_context.a2a_tasks.create_task(
+    try:
+        async with get_db_context(db_engine) as db_context:
+            await db_context.a2a_tasks.create_task(
+                task_id=task_id,
+                profile_id=profile_id,
+                conversation_id=conversation_id,
+                context_id=context_id,
+                status=TaskState.working,
+                history_json=[history_entry],
+            )
+    except Exception:
+        logger.exception("Failed to create A2A task %s", task_id)
+        error_event = TaskStatusUpdateEvent(
             task_id=task_id,
-            profile_id=profile_id,
-            conversation_id=conversation_id,
             context_id=context_id,
-            status=TaskState.working,
-            history_json=[history_entry],
+            status=TaskStatus(
+                state=TaskState.failed,
+                message=Message(
+                    role=Role.agent,
+                    parts=[Part(root=TextPart(text="Failed to initialize task"))],
+                    message_id=str(uuid.uuid4()),
+                ),
+            ),
+            final=True,
         )
+        yield _sse_jsonrpc(
+            request_id, "status", error_event.model_dump(exclude_none=True)
+        )
+        return
 
     # Emit initial "working" status
     working_event = TaskStatusUpdateEvent(
@@ -530,8 +547,9 @@ async def _stream_message(
     artifact_id = uuid.uuid4().hex
 
     # Register cancellation event so tasks/cancel can signal us
+    cancel_events: dict[str, asyncio.Event] = request.app.state.a2a_cancel_events
     cancel_event = asyncio.Event()
-    _cancel_events[task_id] = cancel_event
+    cancel_events[task_id] = cancel_event
     try:
         async with get_db_context(db_engine) as db_context:
             try:
@@ -574,7 +592,7 @@ async def _stream_message(
                 has_error = True
                 error_msg = "Internal streaming error"
     finally:
-        _cancel_events.pop(task_id, None)
+        cancel_events.pop(task_id, None)
 
     # Emit final artifact chunk
     if accumulated_text and not has_error and not is_canceled:
