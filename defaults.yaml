@@ -231,6 +231,14 @@ mcp_config:
 notes_config:
   default_visibility_labels: ["default"]
 
+# --- Skills Configuration ---
+# Directories for file-based skills (loaded at startup, shown in skill catalog).
+# builtin_dir defaults to the package's skills/builtin/ directory when not set.
+# User skills override builtin skills with the same name.
+# skills_config:
+#   user_dir: "path/to/user/skills"
+#   builtin_dir: "path/to/override/builtin/skills"  # Optional override
+
 # --- Default Service Profile Configuration ---
 # Settings for the primary, default assistant behavior.
 default_profile_settings:
