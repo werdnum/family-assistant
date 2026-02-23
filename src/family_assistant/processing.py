@@ -1507,8 +1507,6 @@ class ProcessingService:
                         exc_info=True,
                     )
                     continue
-            elif part.get("type") == "image_url":
-                modified_parts.append(part)
             else:
                 modified_parts.append(part)
 
