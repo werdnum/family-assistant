@@ -101,7 +101,12 @@ class ToolTag(StrEnum):
     DELEGATION = "delegation"          # Delegates to another processing profile
     FILE_SYSTEM = "file_system"        # Reads/writes local filesystem
 
-    # === Output trust tags (how safe is the output) ===
+    # === Output safety tags (is the output at risk of containing prompt injections?) ===
+    # Note: these describe the *output content*, not whether we trust the tool itself.
+    # A trusted, correctly-functioning tool can still return output containing prompt
+    # injection payloads (e.g., a web scraper faithfully returning malicious page content).
+    # The concern is whether a prompt-injected LLM could exploit the output, not whether
+    # the tool is behaving correctly.
     OUTPUT_TRUSTED = "output_trusted"          # Output is from own DB or user-created content
     OUTPUT_UNTRUSTED = "output_untrusted"      # Output may contain prompt injection payloads
     OUTPUT_UNSPECIFIED = "output_unspecified"   # Output safety unknown (untagged MCP tools)
@@ -147,7 +152,7 @@ Tool metadata is declared inline as part of the tool definition itself, using a 
 class ToolDefinition(TypedDict):
     type: str
     function: ToolFunctionSchema
-    tags: NotRequired[set[str]]  # Security-relevant metadata tags
+    tags: set[str]  # Security-relevant metadata tags (required for all local tools)
 ```
 
 Each tool module declares tags alongside its tool definitions:
@@ -323,8 +328,9 @@ class ToolMatcher(BaseModel):
     # Match by tag -- tool must have ANY of specified tags (OR logic)
     tags_any: list[str] | None = None  # e.g., ["destructive", "external_comm"]
 
-    # Match by MCP server ID -- tool must originate from one of these servers
-    mcp_server_ids: list[str] | None = None  # e.g., ["browser", "brave"]
+    # Match by MCP server ID -- tool must originate from one of these servers.
+    # Supports "*" as a special value to match all MCP servers (see section 5.2 example).
+    mcp_server_ids: list[str] | None = None  # e.g., ["browser", "brave"] or ["*"] for all
 ```
 
 ```python
@@ -342,7 +348,7 @@ class ToolPolicyConfig(BaseModel):
     """Complete policy configuration for a profile or config layer."""
 
     rules: list[PolicyRule] = Field(default_factory=list)
-    default_decision: str = "deny"                  # Decision when no rule matches
+    default_decision: str | None = None              # None = inherit from lower layer
 ```
 
 ### 4.2. Matching Semantics
@@ -383,14 +389,15 @@ match:
 ### 4.3. Evaluation Algorithm
 
 ```
-function evaluate(tool_name, mcp_server_id):
+function evaluate(tool_name, mcp_server_id) -> PolicyDecision:
     # Sort rules by priority descending
     for rule in rules sorted by -priority:
         # Check if tool matches this rule
         if rule.match matches (tool_name, tool_tags, mcp_server_id):
-            return rule.decision
+            return PolicyDecision(rule.decision, reason=rule.description)
 
-    return default_decision
+    # default_decision is resolved during config merge (defaults.yaml provides "deny")
+    return PolicyDecision(default_decision, reason="no matching rule (default)")
 ```
 
 When multiple rules have the same priority, the **first matching rule** (in declaration order) wins.
@@ -546,7 +553,7 @@ application default rule (0-99). This means operators write rules with simple, l
 and the system ensures they override defaults:
 
 ```python
-# During config merge
+# During config merge (this behavior is documented in config.yaml template for operator awareness)
 for rule in operator_rules:
     rule.effective_priority = rule.priority + OPERATOR_PRIORITY_OFFSET  # +1000
 ```
@@ -671,6 +678,7 @@ class PolicyEnforcingToolsProvider(ToolsProvider):
         )
 
         if decision == PolicyDecision.DENY:
+            logger.debug("Tool '%s' access denied by policy rule: %s", tool_name, decision.reason)
             raise ToolNotFoundError(tool_name)
 
         if decision == PolicyDecision.CONFIRM:
@@ -753,7 +761,7 @@ class PolicyRuleConfig(BaseModel):
 class ToolPolicyConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
     rules: list[PolicyRuleConfig] = Field(default_factory=list)
-    default_decision: str = "deny"
+    default_decision: str | None = None  # None = inherit from lower layer; defaults.yaml sets "deny"
 
 class ToolsConfig(BaseModel):
     """Configuration for tool-related settings (non-policy)."""
@@ -786,8 +794,8 @@ class MCPServerConfig(BaseModel):
     command: str | None = None
     args: list[str] = Field(default_factory=list)
     env: dict[str, str] = Field(default_factory=dict)
-    # NEW: metadata tags for tools from this server
-    tool_metadata: dict[str, list[str]] = Field(default_factory=dict)
+    # NEW: metadata tags for tools from this server (set for dedup and fast lookup)
+    tool_metadata: dict[str, set[str]] = Field(default_factory=dict)
 ```
 
 ### 8.5. ProcessingConfig Changes
