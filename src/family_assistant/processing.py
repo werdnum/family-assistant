@@ -1447,22 +1447,16 @@ class ProcessingService:
         Returns:
             Tuple of (modified_content_parts, injection_messages)
         """
-        logger.info(
-            f"_process_attachment_content_parts called with {len(content_parts)} parts, "
-            f"attachment_registry={'present' if self.attachment_registry else 'MISSING'}"
-        )
-        if not self.attachment_registry:
-            logger.warning(
-                "Attachment registry not available - skipping attachment content part processing"
-            )
-            return content_parts, []
-
-        modified_parts = []
-        injection_messages = []
+        modified_parts: list[ContentPartDict] = []
+        injection_messages: list[LLMMessage] = []
 
         for part in content_parts:
-            logger.debug(f"Processing content part: {part}")
             if part.get("type") == "attachment":
+                if not self.attachment_registry:
+                    raise RuntimeError(
+                        "Received attachment content part but no attachment_registry is configured"
+                    )
+
                 attachment_id = part.get("attachment_id")
                 if not attachment_id:
                     logger.warning(
@@ -1471,7 +1465,6 @@ class ProcessingService:
                     continue
 
                 try:
-                    # Fetch attachment metadata
                     attachment_metadata = await self.attachment_registry.get_attachment(
                         db_context, attachment_id
                     )
@@ -1482,7 +1475,6 @@ class ProcessingService:
                         )
                         continue
 
-                    # Fetch attachment content
                     content = await self.attachment_registry.get_attachment_content(
                         db_context, attachment_id
                     )
@@ -1493,7 +1485,6 @@ class ProcessingService:
                         )
                         continue
 
-                    # Create ToolAttachment object
                     tool_attachment = ToolAttachment(
                         content=content,
                         mime_type=attachment_metadata.mime_type,
@@ -1501,7 +1492,6 @@ class ProcessingService:
                         description=attachment_metadata.description or "Attachment",
                     )
 
-                    # Generate injection message using LLM client's logic
                     injection_msg = self.llm_client.create_attachment_injection(
                         tool_attachment
                     )
@@ -1517,8 +1507,9 @@ class ProcessingService:
                         exc_info=True,
                     )
                     continue
+            elif part.get("type") == "image_url":
+                modified_parts.append(part)
             else:
-                # Not an attachment part, keep as-is
                 modified_parts.append(part)
 
         return modified_parts, injection_messages
