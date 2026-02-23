@@ -6,10 +6,13 @@ import asyncio
 import logging
 import os
 import time
-from typing import Any, cast
+from typing import TYPE_CHECKING, Any, cast
 
-from google import genai
-from google.genai import types
+if TYPE_CHECKING:
+    import types
+
+    from google import genai
+    from google.genai import types as genai_types
 
 from family_assistant.scripting.apis.attachments import ScriptAttachment
 from family_assistant.tools.types import (
@@ -77,9 +80,27 @@ VIDEO_GENERATION_TOOLS_DEFINITION: list[ToolDefinition] = [
 ]
 
 
+def _lazy_import_genai_types() -> types.ModuleType:
+    """Lazy-import google.genai.types to avoid xdist worker crashes from concurrent native init."""
+    from google.genai import (  # noqa: PLC0415 - intentional lazy import
+        types,
+    )
+
+    return types
+
+
+def _create_genai_client(api_key: str) -> genai.Client:
+    """Create a genai Client with lazy import to avoid xdist worker crashes."""
+    from google import (  # noqa: PLC0415 - intentional lazy import
+        genai,
+    )
+
+    return genai.Client(api_key=api_key)
+
+
 async def _process_image_attachment(
     attachment: ScriptAttachment, label: str
-) -> types.Image | None:
+) -> genai_types.Image | None:
     """
     Helper to process a single attachment into a Google GenAI Image object.
 
@@ -90,6 +111,8 @@ async def _process_image_attachment(
     Returns:
         A types.Image object if successful, or None if content retrieval fails.
     """
+    types = _lazy_import_genai_types()
+
     if not isinstance(attachment, ScriptAttachment):
         logger.warning(f"Invalid object for {label}: {type(attachment)}")
         return None
@@ -148,8 +171,10 @@ async def generate_video_tool(
             data={"error": "GEMINI_API_KEY missing"},
         )
 
+    types = _lazy_import_genai_types()
+
     # Use client.aio as async context manager
-    async with genai.Client(api_key=api_key).aio as client:
+    async with _create_genai_client(api_key).aio as client:
         try:
             # Configure video generation
             config_params = {}
