@@ -1,7 +1,7 @@
 import json
 import logging
 from collections.abc import AsyncGenerator
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING, Any, TypedDict, cast
 from unittest.mock import AsyncMock
 
 import pytest
@@ -46,6 +46,28 @@ if TYPE_CHECKING:
     from family_assistant.tools.types import CalendarConfig
 
 logger = logging.getLogger(__name__)
+
+
+class SSEEvent(TypedDict):
+    type: str
+    # ast-grep-ignore: no-dict-any - JSON-parsed SSE data is genuinely arbitrary
+    data: dict[str, Any]
+
+
+def parse_sse_events(response_text: str) -> list[SSEEvent]:
+    """Parse SSE events from a streaming HTTP response body."""
+    events: list[SSEEvent] = []
+    current_event_type = None
+    for line in response_text.split("\n"):
+        if line.startswith("event:"):
+            current_event_type = line.split(":", 1)[1].strip()
+        elif line.startswith("data:") and current_event_type:
+            data_str = line.split(":", 1)[1].strip()
+            if data_str:
+                events.append(
+                    SSEEvent(type=current_event_type, data=json.loads(data_str))
+                )
+    return events
 
 
 # --- Fixtures ---
@@ -257,14 +279,7 @@ async def test_api_chat_send_message_stream_minimal(
     assert response.headers["content-type"].startswith("text/event-stream")
 
     # Parse SSE events
-    events = []
-    for line in response.text.split("\n"):
-        if line.startswith("event:"):
-            event_type = line.split(":", 1)[1].strip()
-        elif line.startswith("data:"):
-            data_str = line.split(":", 1)[1].strip()
-            if data_str:
-                events.append({"type": event_type, "data": json.loads(data_str)})
+    events = parse_sse_events(response.text)
 
     # Assert we got the expected events
     text_events = [e for e in events if e["type"] == "text"]
@@ -381,18 +396,7 @@ async def test_api_chat_send_message_stream_with_tools(
     assert response.status_code == 200
 
     # Parse SSE events
-    events = []
-    current_event_type = None
-    for line in response.text.split("\n"):
-        if line.startswith("event:"):
-            current_event_type = line.split(":", 1)[1].strip()
-        elif line.startswith("data:") and current_event_type:
-            data_str = line.split(":", 1)[1].strip()
-            if data_str:
-                events.append({
-                    "type": current_event_type,
-                    "data": json.loads(data_str),
-                })
+    events = parse_sse_events(response.text)
 
     # Assert we got the expected event types
     event_types = [e["type"] for e in events]
@@ -424,6 +428,230 @@ async def test_api_chat_send_message_stream_with_tools(
     note = await db_context.notes.get_by_title(note_title, visibility_grants=None)
     assert note is not None
     assert note.content == note_content
+
+
+async def test_streaming_continues_after_tool_error(
+    test_client: AsyncClient,
+    mock_llm_client: RuleBasedMockLLMClient,
+) -> None:
+    """Test that streaming continues after a non-fatal tool error.
+
+    When the LLM calls a tool that fails (e.g., tool not found), the error
+    should be returned as a tool_result, and the LLM should continue
+    generating a response. The stream should NOT be terminated.
+    """
+    user_prompt = "Please add a note for me"
+    tool_call_id = "error_tool_call_123"
+    llm_final_reply = "I'm sorry, that didn't work. Let me help you another way."
+
+    # First LLM call: tries to call a tool with invalid (non-JSON) arguments
+    def first_call_matcher(args: MatcherArgs) -> bool:
+        messages = args.get("messages", [])
+        return any(
+            msg.role == "user" and user_prompt in str(msg.content or "")
+            for msg in messages
+        ) and not any(msg.role == "tool" for msg in messages)
+
+    mock_llm_client.rules.append((
+        first_call_matcher,
+        LLMOutput(
+            content=None,
+            tool_calls=[
+                ToolCallItem(
+                    id=tool_call_id,
+                    type="function",
+                    function=ToolCallFunction(
+                        name="add_or_update_note",
+                        arguments="not valid json {{{",
+                    ),
+                )
+            ],
+            reasoning_info={"model": "test-model"},
+        ),
+    ))
+
+    # Second LLM call: after receiving the tool error, generate a helpful response
+    def second_call_matcher(args: MatcherArgs) -> bool:
+        messages = args.get("messages", [])
+        return any(
+            msg.role == "tool" and msg.tool_call_id == tool_call_id for msg in messages
+        )
+
+    mock_llm_client.rules.append((
+        second_call_matcher,
+        LLMOutput(
+            content=llm_final_reply,
+            tool_calls=None,
+            reasoning_info={"model": "test-model"},
+        ),
+    ))
+
+    # Act
+    response = await test_client.post(
+        "/api/v1/chat/send_message_stream",
+        json={"prompt": user_prompt},
+    )
+
+    assert response.status_code == 200
+
+    # Parse SSE events
+    events = parse_sse_events(response.text)
+
+    event_types = [e["type"] for e in events]
+
+    # Should have tool_call event
+    assert "tool_call" in event_types, f"Expected tool_call event, got: {event_types}"
+
+    # Should have tool_result event with error
+    tool_result_events = [e for e in events if e["type"] == "tool_result"]
+    assert len(tool_result_events) >= 1, (
+        f"Expected tool_result event, got: {event_types}"
+    )
+    tool_result_text = tool_result_events[0]["data"]["result"]
+    assert "Error" in tool_result_text or "Invalid" in tool_result_text, (
+        f"Expected error in tool result, got: {tool_result_text}"
+    )
+
+    # CRITICAL: Stream should continue after tool error - LLM should generate final response
+    assert "text" in event_types, (
+        f"Stream was cut off after tool error! Expected text events after tool_result "
+        f"but got event types: {event_types}"
+    )
+    text_events = [e for e in events if e["type"] == "text"]
+    combined_text = "".join(e["data"]["content"] for e in text_events)
+    assert combined_text == llm_final_reply
+
+    # Should complete normally with end and close events
+    assert "end" in event_types, f"Missing end event. Events: {event_types}"
+    assert "close" in event_types, f"Missing close event. Events: {event_types}"
+
+    # Should have exactly 1 end event (deferred to stream_end, not per-turn)
+    end_events = [e for e in events if e["type"] == "end"]
+    assert len(end_events) == 1, (
+        f"Expected exactly 1 end event (at stream_end), got {len(end_events)}: {event_types}"
+    )
+
+    # Should NOT have error events
+    error_events = [e for e in events if e["type"] == "error"]
+    assert len(error_events) == 0, f"Unexpected error events in stream: {error_events}"
+
+
+async def test_streaming_continues_after_tool_execution_exception(
+    test_client: AsyncClient,
+    mock_llm_client: RuleBasedMockLLMClient,
+    test_processing_service: ProcessingService,
+) -> None:
+    """Test that streaming continues when a tool raises an exception during execution.
+
+    This tests the code path in _execute_single_tool where execute_tool() raises
+    an Exception, which should be caught and returned as a tool_result error,
+    allowing the LLM to continue generating a response.
+    """
+    user_prompt = "Create a note called Test"
+    tool_call_id = "exec_error_call_456"
+    llm_final_reply = "The tool encountered an error. How else can I help?"
+
+    # First LLM call: calls add_or_update_note
+    def first_call_matcher(args: MatcherArgs) -> bool:
+        messages = args.get("messages", [])
+        return any(
+            msg.role == "user" and user_prompt in str(msg.content or "")
+            for msg in messages
+        ) and not any(msg.role == "tool" for msg in messages)
+
+    mock_llm_client.rules.append((
+        first_call_matcher,
+        LLMOutput(
+            content=None,
+            tool_calls=[
+                ToolCallItem(
+                    id=tool_call_id,
+                    type="function",
+                    function=ToolCallFunction(
+                        name="add_or_update_note",
+                        arguments=json.dumps({"title": "Test", "content": "test"}),
+                    ),
+                )
+            ],
+            reasoning_info={"model": "test-model"},
+        ),
+    ))
+
+    # Second LLM call: after receiving the tool error
+    def second_call_matcher(args: MatcherArgs) -> bool:
+        messages = args.get("messages", [])
+        return any(
+            msg.role == "tool" and msg.tool_call_id == tool_call_id for msg in messages
+        )
+
+    mock_llm_client.rules.append((
+        second_call_matcher,
+        LLMOutput(
+            content=llm_final_reply,
+            tool_calls=None,
+            reasoning_info={"model": "test-model"},
+        ),
+    ))
+
+    # Patch the tools_provider to raise an exception for our tool call
+    original_execute = test_processing_service.tools_provider.execute_tool
+
+    async def raise_on_target_call(*args: object, **kwargs: object) -> object:
+        # call_id is passed as 4th positional arg: execute_tool(name, args, ctx, call_id)
+        actual_call_id = args[3] if len(args) > 3 else kwargs.get("call_id")
+        if actual_call_id == tool_call_id:
+            raise RuntimeError(
+                "Simulated tool execution failure: database connection lost"
+            )
+        return await original_execute(*args, **kwargs)  # type: ignore[arg-type]  # test monkey-patch forwards args
+
+    test_processing_service.tools_provider.execute_tool = raise_on_target_call  # type: ignore[assignment]  # test monkey-patch
+
+    try:
+        response = await test_client.post(
+            "/api/v1/chat/send_message_stream",
+            json={"prompt": user_prompt},
+        )
+
+        assert response.status_code == 200
+
+        # Parse SSE events
+        events = parse_sse_events(response.text)
+
+        event_types = [e["type"] for e in events]
+
+        # Should have tool_call event
+        assert "tool_call" in event_types, f"Expected tool_call. Events: {event_types}"
+
+        # Should have tool_result with error from the exception
+        tool_result_events = [e for e in events if e["type"] == "tool_result"]
+        assert len(tool_result_events) >= 1, (
+            f"Expected tool_result. Events: {event_types}"
+        )
+        tool_result_text = tool_result_events[0]["data"]["result"]
+        assert "Error" in tool_result_text, (
+            f"Expected error in tool result, got: {tool_result_text}"
+        )
+        assert "database connection lost" in tool_result_text
+
+        # CRITICAL: Stream should continue after tool execution error
+        assert "text" in event_types, (
+            f"Stream was cut off after tool execution error! Expected text events "
+            f"but got: {event_types}"
+        )
+        text_events = [e for e in events if e["type"] == "text"]
+        combined_text = "".join(e["data"]["content"] for e in text_events)
+        assert combined_text == llm_final_reply
+
+        # Should complete normally
+        assert "end" in event_types, f"Missing end event. Events: {event_types}"
+        assert "close" in event_types, f"Missing close event. Events: {event_types}"
+
+        # Should NOT have error events (tool errors are returned as tool_results, not errors)
+        error_events = [e for e in events if e["type"] == "error"]
+        assert len(error_events) == 0, f"Unexpected error events: {error_events}"
+    finally:
+        test_processing_service.tools_provider.execute_tool = original_execute  # type: ignore[assignment] - restoring original method after test monkey-patch
 
 
 async def test_streaming_no_database_connection_errors(

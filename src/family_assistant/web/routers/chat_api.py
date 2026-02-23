@@ -1023,6 +1023,10 @@ async def api_chat_send_message_stream(
         # Start the stream processing task
         stream_task = asyncio.create_task(process_stream())
 
+        # Track the last reasoning_info across done events for the final end SSE
+        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
+        last_reasoning_info: dict[str, Any] | None = None
+
         try:
             # Process events from queue and yield SSE events
             while True:
@@ -1135,14 +1139,12 @@ async def api_chat_send_message_stream(
                                             f"Error emitting attachment event for {attachment_id}: {e}"
                                         )
 
-                        # Send completion event with optional metadata
-                        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
-                        done_data: dict[str, Any] = {}
+                        # Store reasoning_info for the final end event.
+                        # Don't send event: end here — multiple done events are
+                        # emitted (one per agentic turn) and sending end mid-stream
+                        # can cause proxies/clients to close the connection early.
                         if event.metadata and event.metadata.get("reasoning_info"):
-                            done_data["reasoning_info"] = event.metadata[
-                                "reasoning_info"
-                            ]
-                        yield f"event: end\ndata: {json.dumps(done_data)}\n\n"
+                            last_reasoning_info = event.metadata["reasoning_info"]
 
                     elif event.type == "error":
                         # Send error event
@@ -1152,6 +1154,12 @@ async def api_chat_send_message_stream(
                         yield f"event: error\ndata: {json.dumps(error_data)}\n\n"
 
                 elif queue_event["type"] == "stream_end":
+                    # Send the end event once at the true end of the stream
+                    # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
+                    done_data: dict[str, Any] = {}
+                    if last_reasoning_info:
+                        done_data["reasoning_info"] = last_reasoning_info
+                    yield f"event: end\ndata: {json.dumps(done_data)}\n\n"
                     break
 
                 elif queue_event["type"] == "error":
