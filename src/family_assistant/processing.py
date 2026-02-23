@@ -2418,6 +2418,7 @@ Call attach_to_response with your selected attachment IDs."""
         ) = None,
         # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
         trigger_attachments: list[dict[str, Any]] | None = None,
+        subconversation_id: str | None = None,
     ) -> AsyncIterator[LLMStreamEvent]:
         """
         Streaming version of handle_chat_interaction.
@@ -2507,6 +2508,7 @@ Call attach_to_response with your selected attachment IDs."""
                         tool_call_id=None,
                         processing_profile_id=self.service_config.id,
                         attachments=trigger_attachments,
+                        subconversation_id=subconversation_id,
                         user_id=user_id,
                     )
             else:
@@ -2525,6 +2527,7 @@ Call attach_to_response with your selected attachment IDs."""
                     tool_call_id=None,
                     processing_profile_id=self.service_config.id,
                     attachments=trigger_attachments,
+                    subconversation_id=subconversation_id,
                     user_id=user_id,
                 )
 
@@ -2547,6 +2550,7 @@ Call attach_to_response with your selected attachment IDs."""
                     limit=history_limit,
                     max_age=history_max_age,
                     processing_profile_id=self.service_config.id,
+                    subconversation_id=subconversation_id,
                     current_time=self.clock.now(),
                 )
             except Exception as hist_err:
@@ -2565,6 +2569,7 @@ Call attach_to_response with your selected attachment IDs."""
                     full_thread_messages_db = (
                         await db_context.message_history.get_by_thread_id(
                             thread_root_id=thread_root_id_for_turn,
+                            subconversation_id=subconversation_id,
                         )
                     )
                     # Note: Repository now returns typed LLMMessage objects without database metadata fields
@@ -2690,6 +2695,7 @@ Call attach_to_response with your selected attachment IDs."""
                     )
                     msg_to_save.setdefault("interface_message_id", None)
                     msg_to_save["processing_profile_id"] = self.service_config.id
+                    msg_to_save["subconversation_id"] = subconversation_id
                     msg_to_save["user_id"] = user_id
 
                     # Remove fields that shouldn't be saved to database
