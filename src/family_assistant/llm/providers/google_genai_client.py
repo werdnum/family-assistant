@@ -1342,21 +1342,10 @@ class GoogleGenAIClient(BaseLLMClient):
                         getattr(chunk, "interaction", None), "status", None
                     )
                     if status in {"failed", "cancelled"}:
-                        error_msg = f"Deep Research interaction {status}"
-                        logger.error(error_msg)
-                        exc = ServiceUnavailableError(
-                            error_msg, provider="google", model=self.model_name
-                        )
-                        if not content_yielded:
-                            raise exc
-                        yield LLMStreamEvent(
-                            type="error",
-                            error=error_msg,
-                            metadata={
-                                "error_type": type(exc).__name__,
-                                "provider": "google",
-                                "model": self.model_name,
-                            },
+                        raise ServiceUnavailableError(
+                            f"Deep Research interaction {status}",
+                            provider="google",
+                            model=self.model_name,
                         )
 
                 elif chunk.event_type == "error":
@@ -1387,18 +1376,7 @@ class GoogleGenAIClient(BaseLLMClient):
                             model=self.model_name,
                         )
 
-                    if not content_yielded:
-                        raise typed_exc
-
-                    yield LLMStreamEvent(
-                        type="error",
-                        error=error_message,
-                        metadata={
-                            "error_type": type(typed_exc).__name__,
-                            "provider": "google",
-                            "model": self.model_name,
-                        },
-                    )
+                    raise typed_exc
 
             # 4. Finalize
             done_metadata = {}
