@@ -2,6 +2,9 @@
 
 from pathlib import Path
 
+import pytest
+
+from family_assistant.paths import PACKAGE_ROOT
 from family_assistant.skills.loader import load_skills_from_directory
 
 
@@ -58,9 +61,12 @@ class TestLoadSkillsFromDirectory:
         skills = load_skills_from_directory(tmp_path)
         assert len(skills) == 0
 
-    def test_nonexistent_directory(self, tmp_path: Path) -> None:
+    def test_nonexistent_directory(
+        self, tmp_path: Path, caplog: pytest.LogCaptureFixture
+    ) -> None:
         skills = load_skills_from_directory(tmp_path / "nonexistent")
         assert len(skills) == 0
+        assert "Skills directory does not exist" in caplog.text
 
     def test_empty_directory(self, tmp_path: Path) -> None:
         skills = load_skills_from_directory(tmp_path)
@@ -95,3 +101,17 @@ class TestLoadSkillsFromDirectory:
         skills = load_skills_from_directory(tmp_path)
         assert len(skills) == 1
         assert skills[0].name == "Valid"
+
+    def test_load_builtin_skills_directory(self) -> None:
+        """Builtin skills directory should contain valid, loadable skill files."""
+        builtin_dir = PACKAGE_ROOT / "skills" / "builtin"
+        skills = load_skills_from_directory(builtin_dir)
+        assert len(skills) >= 4
+        names = {s.name for s in skills}
+        assert "Browser Automation" in names
+        assert "Camera Integration" in names
+        assert "Image Tools" in names
+        assert "Scheduling and Task Management" in names
+        for skill in skills:
+            assert skill.description
+            assert skill.content

@@ -177,6 +177,7 @@ class SkillsConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     user_dir: str | None = None
+    builtin_dir: str | None = None
 
 
 class CalDAVConfig(BaseModel):

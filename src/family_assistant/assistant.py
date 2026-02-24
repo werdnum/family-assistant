@@ -45,6 +45,7 @@ from family_assistant.indexing.email_indexer import EmailIndexer
 from family_assistant.indexing.notes_indexer import NotesIndexer
 from family_assistant.indexing.tasks import handle_embed_and_store_batch
 from family_assistant.llm.factory import LLMClientFactory
+from family_assistant.paths import PACKAGE_ROOT
 from family_assistant.processing import ProcessingService, ProcessingServiceConfig
 from family_assistant.services.push_notification import PushNotificationService
 from family_assistant.services.worker_backend import get_worker_backend
@@ -580,8 +581,16 @@ class Assistant:
         )
 
         # Load file-based skills and create NoteRegistry
+        # Builtin skills load first; user skills override builtins with the same name.
         all_skills = []
         skills_config = self.config.skills_config
+        builtin_dir = (
+            Path(skills_config.builtin_dir)
+            if skills_config.builtin_dir
+            else PACKAGE_ROOT / "skills" / "builtin"
+        )
+        if builtin_dir.is_dir():
+            all_skills.extend(load_skills_from_directory(builtin_dir))
         user_dir = Path(skills_config.user_dir) if skills_config.user_dir else None
         if user_dir:
             all_skills.extend(load_skills_from_directory(user_dir))
