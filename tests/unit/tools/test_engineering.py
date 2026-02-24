@@ -6,11 +6,17 @@ Database-dependent tests are in tests/functional/tools/test_engineering_database
 
 from __future__ import annotations
 
+from datetime import UTC, datetime
 from unittest.mock import AsyncMock, Mock, patch
 
 import httpx
 import pytest
 
+from family_assistant.llm.request_buffer import (
+    LLMRequestRecord,
+    get_request_buffer,
+    reset_request_buffer,
+)
 from family_assistant.tools import AVAILABLE_FUNCTIONS, TOOLS_DEFINITION
 from family_assistant.tools.engineering import (
     ENGINEERING_TOOLS_DEFINITION,
@@ -327,16 +333,13 @@ class TestCreateGithubIssue:
 
 
 class TestGetLlmRequestHistory:
+    @pytest.fixture(autouse=True)
+    def clean_buffer(self) -> None:
+        reset_request_buffer()
+
     @pytest.mark.anyio
     async def test_returns_empty_when_no_records(self) -> None:
-        with patch(
-            "family_assistant.tools.engineering.get_request_buffer"
-        ) as mock_get_buffer:
-            mock_buffer = Mock()
-            mock_buffer.get_recent.return_value = []
-            mock_get_buffer.return_value = mock_buffer
-
-            result = await get_llm_request_history()
+        result = await get_llm_request_history()
 
         data = result.get_data()
         assert isinstance(data, dict)
@@ -345,27 +348,19 @@ class TestGetLlmRequestHistory:
 
     @pytest.mark.anyio
     async def test_returns_records(self) -> None:
-        mock_record = Mock()
-        mock_record.to_dict.return_value = {
-            "timestamp": "2026-02-23T10:00:00+00:00",
-            "request_id": "req-1",
-            "model_id": "gpt-4",
-            "messages": [],
-            "tools": None,
-            "tool_choice": None,
-            "response": "Hello",
-            "duration_ms": 150,
-            "error": None,
-        }
+        buffer = get_request_buffer()
+        buffer.add(
+            LLMRequestRecord(
+                timestamp=datetime.now(tz=UTC),
+                request_id="req-1",
+                model_id="gpt-4",
+                messages=[],
+                response={"text": "Hello"},
+                duration_ms=150,
+            )
+        )
 
-        with patch(
-            "family_assistant.tools.engineering.get_request_buffer"
-        ) as mock_get_buffer:
-            mock_buffer = Mock()
-            mock_buffer.get_recent.return_value = [mock_record]
-            mock_get_buffer.return_value = mock_buffer
-
-            result = await get_llm_request_history(limit=10, minutes=30)
+        result = await get_llm_request_history(limit=10, minutes=30)
 
         data = result.get_data()
         assert isinstance(data, dict)
@@ -373,33 +368,22 @@ class TestGetLlmRequestHistory:
         assert data["records"][0]["request_id"] == "req-1"
         assert data["filters"]["limit"] == 10
         assert data["filters"]["minutes"] == 30
-        mock_buffer.get_recent.assert_called_once_with(limit=10, since_minutes=30)
 
     @pytest.mark.anyio
     async def test_limit_clamped_to_max(self) -> None:
-        with patch(
-            "family_assistant.tools.engineering.get_request_buffer"
-        ) as mock_get_buffer:
-            mock_buffer = Mock()
-            mock_buffer.get_recent.return_value = []
-            mock_get_buffer.return_value = mock_buffer
+        result = await get_llm_request_history(limit=999)
 
-            await get_llm_request_history(limit=999)
-
-        mock_buffer.get_recent.assert_called_once_with(limit=100, since_minutes=None)
+        data = result.get_data()
+        assert isinstance(data, dict)
+        assert data["filters"]["limit"] == 100
 
     @pytest.mark.anyio
     async def test_limit_clamped_to_min(self) -> None:
-        with patch(
-            "family_assistant.tools.engineering.get_request_buffer"
-        ) as mock_get_buffer:
-            mock_buffer = Mock()
-            mock_buffer.get_recent.return_value = []
-            mock_get_buffer.return_value = mock_buffer
+        result = await get_llm_request_history(limit=0)
 
-            await get_llm_request_history(limit=0)
-
-        mock_buffer.get_recent.assert_called_once_with(limit=1, since_minutes=None)
+        data = result.get_data()
+        assert isinstance(data, dict)
+        assert data["filters"]["limit"] == 1
 
 
 # --- Tool definitions tests ---
