@@ -5,6 +5,12 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from family_assistant.llm.base import (
+    LLMProviderError,
+    ModelNotFoundError,
+    RateLimitError,
+    ServiceUnavailableError,
+)
 from family_assistant.llm.google_types import GeminiProviderMetadata
 from family_assistant.llm.messages import AssistantMessage, SystemMessage, UserMessage
 from family_assistant.llm.providers.google_genai_client import GoogleGenAIClient
@@ -171,3 +177,324 @@ async def test_deep_research_thought_summaries(mock_genai_client: MagicMock) -> 
         events[1].metadata["reasoning_info"]["thought_summaries"][0]["summary"]
         == "Thinking about query..."
     )
+
+
+@pytest.mark.asyncio
+async def test_deep_research_pre_content_error_raises(
+    mock_genai_client: MagicMock,
+) -> None:
+    """Pre-content errors should raise typed exceptions (enabling retry/fallback)."""
+    client = GoogleGenAIClient(
+        api_key="test", model="deep-research-pro-preview-12-2025"
+    )
+
+    mock_genai_client.aio.interactions.create = AsyncMock(
+        side_effect=Exception("429 Resource has been exhausted")
+    )
+
+    messages = [UserMessage(content="Research something")]
+
+    with pytest.raises(RateLimitError):
+        async for _ in client.generate_response_stream(messages):
+            pass
+
+
+@pytest.mark.asyncio
+async def test_deep_research_post_content_error_yields_error_and_done(
+    mock_genai_client: MagicMock,
+) -> None:
+    """Post-content errors should yield error event with error_type, followed by done."""
+    client = GoogleGenAIClient(
+        api_key="test", model="deep-research-pro-preview-12-2025"
+    )
+
+    async def mock_stream_with_error() -> AsyncGenerator[MagicMock]:
+        mock_start = MagicMock()
+        mock_start.event_type = "interaction.start"
+        mock_start.interaction.id = "inter_789"
+        mock_start.event_id = "evt_0"
+        yield mock_start
+
+        mock_content = MagicMock()
+        mock_content.event_type = "content.delta"
+        mock_content.delta.type = "text"
+        mock_content.delta.text = "Some research output"
+        mock_content.event_id = "evt_1"
+        yield mock_content
+
+        err = Exception("Internal server error")
+        err.status_code = 500  # type: ignore[attr-defined]  # Simulating SDK APIStatusError duck type
+        raise err
+
+    mock_genai_client.aio.interactions.create = AsyncMock(
+        return_value=mock_stream_with_error()
+    )
+
+    messages = [UserMessage(content="Research something")]
+    events = []
+    async for event in client.generate_response_stream(messages):
+        events.append(event)
+
+    # Should get: content, error, done
+    assert events[0].type == "content"
+    assert events[0].content == "Some research output"
+
+    assert events[1].type == "error"
+    assert events[1].metadata["error_type"] == "ServiceUnavailableError"
+
+    assert events[2].type == "done"
+    assert events[2].metadata["provider_metadata"].interaction_id == "inter_789"
+
+
+@pytest.mark.asyncio
+async def test_deep_research_stream_error_event_maps_code(
+    mock_genai_client: MagicMock,
+) -> None:
+    """ErrorEvent with error.code should be mapped to the correct typed exception."""
+    client = GoogleGenAIClient(
+        api_key="test", model="deep-research-pro-preview-12-2025"
+    )
+
+    async def mock_stream_with_error_event() -> AsyncGenerator[MagicMock]:
+        mock_start = MagicMock()
+        mock_start.event_type = "interaction.start"
+        mock_start.interaction.id = "inter_abc"
+        mock_start.event_id = "evt_0"
+        yield mock_start
+
+        mock_error = MagicMock()
+        mock_error.event_type = "error"
+        mock_error.event_id = "evt_1"
+        mock_error.error.code = "resource_exhausted"
+        mock_error.error.message = "Quota exceeded"
+        yield mock_error
+
+    mock_genai_client.aio.interactions.create = AsyncMock(
+        return_value=mock_stream_with_error_event()
+    )
+
+    messages = [UserMessage(content="Research something")]
+
+    # No content yielded before error, so it should raise
+    with pytest.raises(RateLimitError, match="Quota exceeded"):
+        async for _ in client.generate_response_stream(messages):
+            pass
+
+
+@pytest.mark.asyncio
+async def test_deep_research_stream_error_event_post_content(
+    mock_genai_client: MagicMock,
+) -> None:
+    """ErrorEvent after content should yield error with error_type metadata."""
+    client = GoogleGenAIClient(
+        api_key="test", model="deep-research-pro-preview-12-2025"
+    )
+
+    async def mock_stream() -> AsyncGenerator[MagicMock]:
+        mock_start = MagicMock()
+        mock_start.event_type = "interaction.start"
+        mock_start.interaction.id = "inter_abc"
+        mock_start.event_id = "evt_0"
+        yield mock_start
+
+        mock_content = MagicMock()
+        mock_content.event_type = "content.delta"
+        mock_content.delta.type = "text"
+        mock_content.delta.text = "Partial result"
+        mock_content.event_id = "evt_1"
+        yield mock_content
+
+        mock_error = MagicMock()
+        mock_error.event_type = "error"
+        mock_error.event_id = "evt_2"
+        mock_error.error.code = "deadline_exceeded"
+        mock_error.error.message = "Request timed out"
+        yield mock_error
+
+        mock_complete = MagicMock()
+        mock_complete.event_type = "interaction.complete"
+        mock_complete.event_id = "evt_3"
+        yield mock_complete
+
+    mock_genai_client.aio.interactions.create = AsyncMock(return_value=mock_stream())
+
+    messages = [UserMessage(content="Research something")]
+    events = []
+    async for event in client.generate_response_stream(messages):
+        events.append(event)
+
+    content_events = [e for e in events if e.type == "content"]
+    error_events = [e for e in events if e.type == "error"]
+    assert len(content_events) == 1
+    assert len(error_events) == 1
+    assert error_events[0].metadata["error_type"] == "ProviderTimeoutError"
+
+
+@pytest.mark.asyncio
+async def test_deep_research_status_update_failed(
+    mock_genai_client: MagicMock,
+) -> None:
+    """interaction.status_update with status='failed' before content should raise."""
+    client = GoogleGenAIClient(
+        api_key="test", model="deep-research-pro-preview-12-2025"
+    )
+
+    async def mock_stream_failed() -> AsyncGenerator[MagicMock]:
+        mock_start = MagicMock()
+        mock_start.event_type = "interaction.start"
+        mock_start.interaction.id = "inter_fail"
+        mock_start.event_id = "evt_0"
+        yield mock_start
+
+        mock_status = MagicMock()
+        mock_status.event_type = "interaction.status_update"
+        mock_status.event_id = "evt_1"
+        mock_status.status = "failed"
+        mock_status.interaction = None
+        yield mock_status
+
+    mock_genai_client.aio.interactions.create = AsyncMock(
+        return_value=mock_stream_failed()
+    )
+
+    messages = [UserMessage(content="Research something")]
+
+    with pytest.raises(ServiceUnavailableError, match="failed"):
+        async for _ in client.generate_response_stream(messages):
+            pass
+
+
+@pytest.mark.asyncio
+async def test_deep_research_status_update_failed_post_content(
+    mock_genai_client: MagicMock,
+) -> None:
+    """interaction.status_update with status='failed' after content should yield error."""
+    client = GoogleGenAIClient(
+        api_key="test", model="deep-research-pro-preview-12-2025"
+    )
+
+    async def mock_stream() -> AsyncGenerator[MagicMock]:
+        mock_start = MagicMock()
+        mock_start.event_type = "interaction.start"
+        mock_start.interaction.id = "inter_fail2"
+        mock_start.event_id = "evt_0"
+        yield mock_start
+
+        mock_content = MagicMock()
+        mock_content.event_type = "content.delta"
+        mock_content.delta.type = "text"
+        mock_content.delta.text = "Partial output"
+        mock_content.event_id = "evt_1"
+        yield mock_content
+
+        mock_status = MagicMock()
+        mock_status.event_type = "interaction.status_update"
+        mock_status.event_id = "evt_2"
+        mock_status.status = "cancelled"
+        mock_status.interaction = None
+        yield mock_status
+
+    mock_genai_client.aio.interactions.create = AsyncMock(return_value=mock_stream())
+
+    messages = [UserMessage(content="Research something")]
+    events = []
+    async for event in client.generate_response_stream(messages):
+        events.append(event)
+
+    error_events = [e for e in events if e.type == "error"]
+    assert len(error_events) == 1
+    assert error_events[0].metadata["error_type"] == "ServiceUnavailableError"
+    assert "cancelled" in error_events[0].error
+
+
+@pytest.mark.asyncio
+async def test_deep_research_sdk_status_code_mapping(
+    mock_genai_client: MagicMock,
+) -> None:
+    """SDK exceptions with status_code should be mapped to typed errors."""
+    client = GoogleGenAIClient(
+        api_key="test", model="deep-research-pro-preview-12-2025"
+    )
+
+    # Create an exception that looks like an SDK APIStatusError (has status_code)
+    sdk_error = Exception("The model is not found")
+    sdk_error.status_code = 404  # type: ignore[attr-defined]  # Simulating SDK APIStatusError duck type
+
+    mock_genai_client.aio.interactions.create = AsyncMock(side_effect=sdk_error)
+
+    messages = [UserMessage(content="Research something")]
+
+    with pytest.raises(ModelNotFoundError):
+        async for _ in client.generate_response_stream(messages):
+            pass
+
+
+@pytest.mark.asyncio
+async def test_deep_research_done_event_has_last_event_id(
+    mock_genai_client: MagicMock,
+) -> None:
+    """Done event should include last_event_id for stream reconnection."""
+    client = GoogleGenAIClient(
+        api_key="test", model="deep-research-pro-preview-12-2025"
+    )
+
+    async def mock_stream() -> AsyncGenerator[MagicMock]:
+        mock_start = MagicMock()
+        mock_start.event_type = "interaction.start"
+        mock_start.interaction.id = "inter_123"
+        mock_start.event_id = "evt_0"
+        yield mock_start
+
+        mock_content = MagicMock()
+        mock_content.event_type = "content.delta"
+        mock_content.delta.type = "text"
+        mock_content.delta.text = "Result"
+        mock_content.event_id = "evt_42"
+        yield mock_content
+
+        mock_complete = MagicMock()
+        mock_complete.event_type = "interaction.complete"
+        mock_complete.event_id = "evt_43"
+        yield mock_complete
+
+    mock_genai_client.aio.interactions.create = AsyncMock(return_value=mock_stream())
+
+    messages = [UserMessage(content="Test")]
+    events = []
+    async for event in client.generate_response_stream(messages):
+        events.append(event)
+
+    done_event = [e for e in events if e.type == "done"][0]
+    assert done_event.metadata["last_event_id"] == "evt_43"
+
+
+@pytest.mark.asyncio
+async def test_deep_research_unknown_error_code_yields_generic(
+    mock_genai_client: MagicMock,
+) -> None:
+    """Unknown error codes should produce LLMProviderError."""
+    client = GoogleGenAIClient(
+        api_key="test", model="deep-research-pro-preview-12-2025"
+    )
+
+    async def mock_stream() -> AsyncGenerator[MagicMock]:
+        mock_start = MagicMock()
+        mock_start.event_type = "interaction.start"
+        mock_start.interaction.id = "inter_abc"
+        mock_start.event_id = "evt_0"
+        yield mock_start
+
+        mock_error = MagicMock()
+        mock_error.event_type = "error"
+        mock_error.event_id = "evt_1"
+        mock_error.error.code = "some_unknown_code"
+        mock_error.error.message = "Something went wrong"
+        yield mock_error
+
+    mock_genai_client.aio.interactions.create = AsyncMock(return_value=mock_stream())
+
+    messages = [UserMessage(content="Research something")]
+
+    with pytest.raises(LLMProviderError, match="Something went wrong"):
+        async for _ in client.generate_response_stream(messages):
+            pass
