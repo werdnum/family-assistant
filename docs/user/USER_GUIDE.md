@@ -111,6 +111,42 @@ You can ask the assistant a wide variety of things:
   instead of replacing them!) \*These notes act as the assistant's long-term memory for specific
   facts you provide. You can view and manage them easily through the Web Interface.
 
+- **Skills (Reusable Instructions):** Skills are special notes that give the assistant specialized
+  knowledge or step-by-step instructions for particular tasks. Unlike regular notes (which store
+  facts), skills contain procedural guidance the assistant follows when a topic comes up.
+
+  - \*\*How skills work:\*\*The assistant sees a catalog of available skills (name + short
+    description) in every conversation. When a skill is relevant, it loads the full instructions on
+    demand using the `get_note` tool. This keeps conversations lightweight while making specialized
+    knowledge available.
+
+  - \*\*Built-in skills:\*\*The assistant ships with several built-in skills including browser
+    automation, camera integration, image tools, and scheduling guidance. These work out of the box.
+
+  - \*\*Creating your own skills (DB-based):\*\*Ask the assistant to create a skill by providing
+    YAML frontmatter with `name` and `description` fields at the top of the note content:
+
+    ```
+    Remember this as a note titled "Cooking Helper":
+    ---
+    name: Cooking Helper
+    description: Guides meal planning and recipe adaptation for the family's dietary preferences.
+    ---
+    When asked about meal planning:
+    1. Check the family's dietary preferences note
+    2. Consider the weekly schedule for time constraints
+    3. Suggest recipes that match both preferences and available time
+    ```
+
+    Notes with this frontmatter appear in the skill catalog instead of the regular notes section.
+
+  - \*\*File-based skills:\*\*Advanced users can place `.md` files with frontmatter in a configured
+    directory. File-based skills are loaded at startup and can be overridden by DB-based skills with
+    the same name.
+
+  - \*\*Visibility:\*\*Skills support the same visibility labels as regular notes. Add
+    `visibility_labels` in the frontmatter to restrict which profiles can see a skill.
+
 - **Ingest Documents (Files and URLs):**
 
   - \*\*From URLs:\*\*Ask the assistant to "Save this page for later: [Full URL]" or "Index this
