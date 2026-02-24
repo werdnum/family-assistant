@@ -1023,8 +1023,10 @@ service_profiles:
         - "search_source_code"
         - "query_database"
         - "read_error_logs"
+        - "get_llm_request_history"
         - "create_github_issue"
         # Read-only data tools
+        - "get_message_history"
         - "list_notes"
         - "get_note"
         - "search_documents"

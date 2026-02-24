@@ -90,6 +90,7 @@ from family_assistant.tools.documents import (
 from family_assistant.tools.engineering import (
     ENGINEERING_TOOLS_DEFINITION,
     create_github_issue,
+    get_llm_request_history,
     query_database,
     read_error_logs,
     read_source_file,
@@ -317,6 +318,7 @@ __all__ = [
     "query_database",
     "read_error_logs",
     "create_github_issue",
+    "get_llm_request_history",
 ]
 
 
@@ -446,6 +448,7 @@ AVAILABLE_FUNCTIONS: dict[str, Callable] = {
     "query_database": query_database,
     "read_error_logs": read_error_logs,
     "create_github_issue": create_github_issue,
+    "get_llm_request_history": get_llm_request_history,
 }
 
 

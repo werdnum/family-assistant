@@ -6,17 +6,24 @@ Database-dependent tests are in tests/functional/tools/test_engineering_database
 
 from __future__ import annotations
 
+from datetime import UTC, datetime
 from unittest.mock import AsyncMock, Mock, patch
 
 import httpx
 import pytest
 
+from family_assistant.llm.request_buffer import (
+    LLMRequestRecord,
+    get_request_buffer,
+    reset_request_buffer,
+)
 from family_assistant.tools import AVAILABLE_FUNCTIONS, TOOLS_DEFINITION
 from family_assistant.tools.engineering import (
     ENGINEERING_TOOLS_DEFINITION,
     _is_select_only,  # noqa: PLC2701  # Testing private validation logic
     _validate_source_path,  # noqa: PLC2701  # Testing private path validation
     create_github_issue,
+    get_llm_request_history,
     read_source_file,
     search_source_code,
 )
@@ -322,6 +329,63 @@ class TestCreateGithubIssue:
         assert "403" in data["error"]
 
 
+# --- get_llm_request_history tests ---
+
+
+class TestGetLlmRequestHistory:
+    @pytest.fixture(autouse=True)
+    def clean_buffer(self) -> None:
+        reset_request_buffer()
+
+    @pytest.mark.anyio
+    async def test_returns_empty_when_no_records(self) -> None:
+        result = await get_llm_request_history()
+
+        data = result.get_data()
+        assert isinstance(data, dict)
+        assert data["count"] == 0
+        assert data["records"] == []
+
+    @pytest.mark.anyio
+    async def test_returns_records(self) -> None:
+        buffer = get_request_buffer()
+        buffer.add(
+            LLMRequestRecord(
+                timestamp=datetime.now(tz=UTC),
+                request_id="req-1",
+                model_id="gpt-4",
+                messages=[],
+                response={"text": "Hello"},
+                duration_ms=150,
+            )
+        )
+
+        result = await get_llm_request_history(limit=10, minutes=30)
+
+        data = result.get_data()
+        assert isinstance(data, dict)
+        assert data["count"] == 1
+        assert data["records"][0]["request_id"] == "req-1"
+        assert data["filters"]["limit"] == 10
+        assert data["filters"]["minutes"] == 30
+
+    @pytest.mark.anyio
+    async def test_limit_clamped_to_max(self) -> None:
+        result = await get_llm_request_history(limit=999)
+
+        data = result.get_data()
+        assert isinstance(data, dict)
+        assert data["filters"]["limit"] == 100
+
+    @pytest.mark.anyio
+    async def test_limit_clamped_to_min(self) -> None:
+        result = await get_llm_request_history(limit=0)
+
+        data = result.get_data()
+        assert isinstance(data, dict)
+        assert data["filters"]["limit"] == 1
+
+
 # --- Tool definitions tests ---
 
 
@@ -333,6 +397,7 @@ class TestToolDefinitions:
             "search_source_code",
             "query_database",
             "read_error_logs",
+            "get_llm_request_history",
             "create_github_issue",
         }
         assert tool_names == expected
@@ -343,6 +408,7 @@ class TestToolDefinitions:
             "search_source_code",
             "query_database",
             "read_error_logs",
+            "get_llm_request_history",
             "create_github_issue",
         ]
         for tool_name in expected_tools:
@@ -357,6 +423,7 @@ class TestToolDefinitions:
             "search_source_code",
             "query_database",
             "read_error_logs",
+            "get_llm_request_history",
             "create_github_issue",
         ]
         for tool_name in expected_tools:
