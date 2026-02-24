@@ -326,7 +326,7 @@ async def test_api_chat_send_message_stream_minimal(
 async def test_api_chat_send_message_stream_with_tools(
     test_client: AsyncClient,
     mock_llm_client: RuleBasedMockLLMClient,
-    db_context: DatabaseContext,
+    db_engine: AsyncEngine,
 ) -> None:
     """Test the streaming chat API endpoint with tool calls."""
     # Arrange
@@ -426,7 +426,10 @@ async def test_api_chat_send_message_stream_with_tools(
     assert combined_text == llm_final_reply
 
     # Check database - note should be created
-    note = await db_context.notes.get_by_title(note_title, visibility_grants=None)
+    # Use a fresh DatabaseContext to avoid PostgreSQL snapshot isolation issues
+    # where a pre-existing transaction may not see data committed by the API handler.
+    async with get_db_context(engine=db_engine) as fresh_ctx:
+        note = await fresh_ctx.notes.get_by_title(note_title, visibility_grants=None)
     assert note is not None
     assert note.content == note_content
 
