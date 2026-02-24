@@ -177,9 +177,10 @@ def setup_observability(otel_config: OTelConfig) -> ObservabilityHandle | None:
     HTTPXClientInstrumentor.instrument()
     SQLAlchemyInstrumentor().instrument()
 
-    # Log correlation
+    # Log correlation (set_logging_format=False so our custom format in
+    # __main__.py controls how trace_id/span_id are displayed)
     if otel_config.log_correlation:
-        LoggingInstrumentor().instrument(set_logging_format=True)
+        LoggingInstrumentor().instrument(set_logging_format=False)
 
     return ObservabilityHandle(tracer_provider, meter_provider)
 
@@ -377,9 +378,16 @@ OTel's Python SDK uses `contextvars`, which is natively compatible with asyncio:
 
 **Attention areas**:
 
+- **Non-HTTP entry points need explicit root spans**: FastAPI auto-instrumentation creates root
+  spans for web requests, but Telegram messages, email webhooks processed outside HTTP context, and
+  scheduled tasks have no automatic root span. These entry points must create their own root spans
+  explicitly:
+  - `TelegramUpdateHandler` (in `telegram/handler.py`): Create a root span when a Telegram update is
+    received, before dispatching to `ProcessingService`.
+  - `TaskWorker._process_task()`: Create a root span per background task.
+  - `EventProcessor`: Create a root span per event processed.
 - Tool parallel execution (via `asyncio.create_task()` + `asyncio.as_completed()`): Each tool task
   inherits the parent span context and creates its own child span.
-- Task worker: Creates new root spans per processed task (no incoming request context).
 
 ## 9. Privacy
 
@@ -387,9 +395,9 @@ OTel's Python SDK uses `contextvars`, which is natively compatible with asyncio:
 - Record only metadata: model names, token counts, tool names, result sizes.
 - Full conversation content stays in existing logging/database systems.
 
-## 10. End-to-End Trace Example
+## 10. End-to-End Trace Examples
 
-A typical conversation trace tree:
+### Web request (root span from FastAPI auto-instrumentation)
 
 ```
 [HTTP POST /api/chat/stream]                          (FastAPI auto-span)
@@ -405,6 +413,26 @@ A typical conversation trace tree:
        └─ llm.generate                                 (manual - continuation)
             └─ llm.generate.attempt                    (manual)
                  └─ [POST https://generativelanguage...] (httpx auto-span)
+```
+
+### Telegram message (manual root span)
+
+```
+telegram.update                                        (manual root span)
+  ├─ telegram.message_batch                            (manual - batched messages)
+  └─ conversation.process                              (manual)
+       ├─ context.aggregate                            (manual)
+       ├─ llm.generate                                 (manual)
+       │    └─ llm.generate.attempt                    (manual)
+       └─ [POST https://api.telegram.org/...]          (httpx auto-span, response)
+```
+
+### Background task (manual root span)
+
+```
+task.process.llm_callback                              (manual root span)
+  └─ conversation.process                              (manual)
+       └─ llm.generate                                 (manual)
 ```
 
 ## 11. Implementation Milestones
@@ -473,4 +501,5 @@ A typical conversation trace tree:
 | `src/family_assistant/llm/retrying_client.py` | Manual LLM spans (outer)          |
 | `src/family_assistant/llm/providers/*.py`     | Manual LLM spans (per-provider)   |
 | `src/family_assistant/processing.py`          | Conversation, tool, context spans |
-| `src/family_assistant/task_worker.py`         | Task worker spans                 |
+| `src/family_assistant/telegram/handler.py`    | Root spans for Telegram updates   |
+| `src/family_assistant/task_worker.py`         | Root spans for background tasks   |
