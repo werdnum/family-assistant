@@ -192,7 +192,7 @@ In `Assistant.setup_dependencies()`:
 2. Creates `NoteRegistry` if any skills are loaded
 3. Passes registry to `NotesContextProvider` and `ProcessingServiceConfig`
 
-### Milestone 8: Built-in Skills -- NOT STARTED
+### Milestone 8: Built-in Skills -- DONE
 
 Create initial skill files in `src/family_assistant/skills/builtin/`. These serve as examples and
 demonstrate the feature working end-to-end.
@@ -219,17 +219,17 @@ ______________________________________________________________________
 
 ### Status Summary
 
-| Milestone                      | Status                              |
-| ------------------------------ | ----------------------------------- |
-| 1. Frontmatter Parser          | **Done**                            |
-| 2. Skill Loading + ParsedSkill | **Done**                            |
-| 3. NoteRegistry                | **Done**                            |
-| 4. Configuration               | **Partial** (missing `builtin_dir`) |
-| 5. NotesContextProvider        | **Done**                            |
-| 6. get_note Tool               | **Done**                            |
-| 7. Wiring in Assistant         | **Done**                            |
-| 8. Built-in Skills             | **Not started**                     |
-| 9. Tests + Verification        | **Done**                            |
+| Milestone                      | Status   |
+| ------------------------------ | -------- |
+| 1. Frontmatter Parser          | **Done** |
+| 2. Skill Loading + ParsedSkill | **Done** |
+| 3. NoteRegistry                | **Done** |
+| 4. Configuration               | **Done** |
+| 5. NotesContextProvider        | **Done** |
+| 6. get_note Tool               | **Done** |
+| 7. Wiring in Assistant         | **Done** |
+| 8. Built-in Skills             | **Done** |
+| 9. Tests + Verification        | **Done** |
 
 ### Cross-reference with Design Doc Phases
 
@@ -239,84 +239,31 @@ ______________________________________________________________________
 | Phase 2      | Profile-Aware Context                   | **Done**    |
 | Phase 3      | On-Demand Access (`get_note`)           | **Done**    |
 | Phase 4      | Preflight Routing (`SkillRouter`)       | Not started |
-| Phase 5      | Polish (built-in skills, docs, prompts) | Not started |
+| Phase 5      | Polish (built-in skills, docs, prompts) | **Done**    |
 
 ______________________________________________________________________
 
 ## Next Milestones
 
-### Milestone 10: Built-in Skills + Configuration
+### Milestone 10: Built-in Skills + Configuration -- DONE
 
-**Goal**: Ship built-in skill files with the app so users see the feature working out of the box.
+Built-in skill files created in `src/family_assistant/skills/builtin/`:
 
-**Steps**:
+- `browser-automation.md` — Guide for `/browse` command and web workflows
+- `camera-integration.md` — Camera feeds, event search, investigation workflow
+- `image-tools.md` — AI image generation, transformation, and annotation
+- `scheduling.md` — Reminders, callbacks, recurring tasks, RRULE format
 
-1. **Create `src/family_assistant/skills/builtin/` directory** with 2-3 initial skill files. Good
-   candidates from the design doc:
+`builtin_dir` added to `SkillsConfig`. Default loading path wired in
+`Assistant.setup_dependencies()` using `PACKAGE_ROOT / "skills" / "builtin"` fallback. User skills
+from `user_dir` override builtins with the same name.
 
-   - `home-automation.md` — Home Assistant integration guidance (if Home Assistant tools are
-     available)
-   - `research-assistant.md` — Research methodology and output formatting
-   - `meeting-notes.md` — Meeting notes structure and template
+### Milestone 11: Documentation + Prompt Instructions -- DONE
 
-   Each file follows [Agent Skills](https://agentskills.io/specification) frontmatter format:
-
-   ```yaml
-   ---
-   name: Skill Name
-   description: One-line description for the catalog.
-   ---
-   ```
-
-   The skill content should be genuinely useful instructions that the LLM can follow, not just
-   placeholder text.
-
-2. **Add `builtin_dir` to `SkillsConfig`**:
-
-   ```python
-   class SkillsConfig(BaseModel):
-       builtin_dir: str | None = None    # Default: bundled with app
-       user_dir: str | None = None       # User-mounted volume
-   ```
-
-3. **Wire builtin loading in `Assistant.setup_dependencies()`**: Load from `builtin_dir` (lower
-   priority) then `user_dir` (higher priority), same as how the design doc describes the file → DB
-   override chain.
-
-4. **Set default `builtin_dir`** either in `config.yaml` or as a code default pointing to the
-   `src/family_assistant/skills/builtin/` directory (using `importlib.resources` or `__file__`
-   relative path).
-
-5. **Verify** with existing functional tests that built-in skills appear in the catalog.
-
-**Testing**: Existing test suite already covers file-based skill loading and catalog generation. New
-builtin skills should be validated by an integration-style test confirming they load without errors
-(valid frontmatter, non-empty content).
-
-### Milestone 11: Documentation + Prompt Instructions
-
-**Goal**: Users and the assistant both know how skills work.
-
-**Steps**:
-
-1. **Update `docs/user/USER_GUIDE.md`** with a Skills section:
-
-   - What skills are and how they differ from regular notes
-   - How to create a DB-based skill (add a note with `name` + `description` frontmatter)
-   - How to create file-based skills (place `.md` files in configured directory)
-   - Frontmatter format reference
-   - How visibility labels apply to skills
-
-2. **Add skill creation instructions to `prompts.yaml`**: The assistant should know how to create
-   skills when asked. Something like:
-
-   > To create a skill, use the `add_or_update_note` tool with YAML frontmatter containing `name`
-   > and `description` fields at the top of the content. The skill will appear in the Available
-   > Skills catalog instead of the regular notes section.
-
-3. **Update `src/family_assistant/tools/notes.py` tool descriptions**: The `add_or_update_note` tool
-   description should mention that notes with frontmatter containing `name` and `description` are
-   treated as skills.
+1. **USER_GUIDE.md** updated with Skills section covering: what skills are, built-in skills,
+   creating DB-based skills with frontmatter, file-based skills, and visibility labels.
+2. **prompts.yaml** updated with skill creation instructions in the system prompt reminders.
+3. **`add_or_update_note` tool description** updated to explain frontmatter-based skill creation.
 
 ### Milestone 12: Preflight Routing (Phase 4 from Design Doc)
 
