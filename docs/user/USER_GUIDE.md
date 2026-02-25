@@ -5,13 +5,13 @@ and what it can do to help manage your family's information and schedule.
 
 ## 1. Introduction: Meet Your Family Assistant
 
-\*\*What is it?\*\*Think of this as a central helper designed to keep track of shared family
+**What is it?** Think of this as a central helper designed to keep track of shared family
 information, schedules, notes, and even interact with some of your home devices.
 
-\*\*What's the goal?\*\*To simplify managing the details of family life by having one place to ask
+**What's the goal?** To simplify managing the details of family life by having one place to ask
 questions, store information, and get updates.
 
-\*\*How does it work?\*\*You interact with the assistant primarily by chatting with it on Telegram,
+**How does it work?** You interact with the assistant primarily by chatting with it on Telegram,
 just like talking to a person. It understands your requests and uses its knowledge and connected
 services to respond or perform actions.
 
@@ -19,7 +19,7 @@ services to respond or perform actions.
 
 - **Telegram (Primary):** \*Find the bot contact in your Telegram app (the person who set it up will
   tell you its name). \*Start a chat and simply send messages with your questions or requests. \*You
-  can also use **slash commands**to activate specialized modes for certain tasks. For example,
+  can also use **slash commands** to activate specialized modes for certain tasks. For example,
   typing `/browse` before your query activates a powerful web browsing mode for complex web tasks or
   research, while `/research` focuses the assistant on in-depth research questions.
 
@@ -44,65 +44,65 @@ You can ask the assistant a wide variety of things:
 
 - **Answer Your Questions:**
 
-  - **About upcoming events:**"What's happening tomorrow?", "Do we have anything scheduled next
+  - **About upcoming events:** "What's happening tomorrow?", "Do we have anything scheduled next
     Saturday?", "List events for the next 14 days." (The assistant reads from connected family
     calendars.)
-  - **About things you've told it (Notes):**"What was the Wi-Fi password?", "Remind me about the
+  - **About things you've told it (Notes):** "What was the Wi-Fi password?", "Remind me about the
     gift ideas we saved.", "Where did we put the spare keys?" (It uses the notes you've asked it to
     remember.)
-  - \*\*Add/Modify/Delete Calendar Events:\*\*You can manage your calendar directly:
-    - **Add:**"Add dentist appointment for June 5th at 10 AM." or "Schedule 'Team Lunch' tomorrow
+  - **Add/Modify/Delete Calendar Events:** You can manage your calendar directly:
+    - **Add:** "Add dentist appointment for June 5th at 10 AM." or "Schedule 'Team Lunch' tomorrow
       from 12 PM to 1 PM."
-    - **Search:**"Are there any events next Tuesday?", "Find the dentist appointment in June." (This
-      helps find events before modifying/deleting).
-    - **Modify:**"Change the 'Team Lunch' to 12:30 PM." (Requires finding the event first. You will
+    - **Search:** "Are there any events next Tuesday?", "Find the dentist appointment in June."
+      (This helps find events before modifying/deleting).
+    - **Modify:** "Change the 'Team Lunch' to 12:30 PM." (Requires finding the event first. You will
       see a confirmation dialog to approve the change.)
-    - **Delete:**"Delete the 'Dentist Appointment' on June 5th." (Requires finding the event first.
+    - **Delete:** "Delete the 'Dentist Appointment' on June 5th." (Requires finding the event first.
       You will see a confirmation dialog to approve the deletion.)
-  - **About the current time/date:**"What time is it?", "What day is it today?" (Uses its built-in
+  - **About the current time/date:** "What time is it?", "What day is it today?" (Uses its built-in
     time service.)
-  - **About the weather:**"What's the weather like today?", "Will it rain tomorrow in London?"
-  - **About locations or directions:**"Find coffee shops near me.", "How do I get to the Eiffel
+  - **About the weather:** "What's the weather like today?", "Will it rain tomorrow in London?"
+  - **About locations or directions:** "Find coffee shops near me.", "How do I get to the Eiffel
     Tower?" (If enabled, uses Google Maps.)
-  - **About web content:**"Can you summarize this article: `[Full URL]`?", "What's the main point of
-    this webpage: `[Full URL]`?" (For simple page summaries, the assistant can often fetch the
+  - **About web content:** "Can you summarize this article: `[Full URL]`?", "What's the main point
+    of this webpage: `[Full URL]`?" (For simple page summaries, the assistant can often fetch the
     content directly. If it has trouble or if the page is very complex (e.g., requires logins or
     interactions), you can try prefacing your request with `/browse`. Always provide the complete
     web address starting with `http://` or `https://`.)
-  - **Search Your Documents:**"Search my notes for 'plumber number'.", "Find emails about the flight
-    booking.", "Look for PDF documents related to 'insurance policy'." (The assistant can search
-    through notes, indexed emails, PDFs, and other documents it has access to. Search results will
-    be grouped by document, showing relevant snippets.)
-  - \*\*Manage Your Notes:\*\*The notes system has been enhanced with powerful new features:
-    - **Get specific notes:**"Get the note titled 'Wi-Fi Password'", "Show me the grocery list note"
-    - **List all notes:**"List all my notes", "Show me all notes"
-    - **Delete notes:**"Delete the note 'Old Shopping List'"
-    - \*\*Automatic indexing:\*\*All notes are now automatically indexed for better search
-      capabilities
-    - \*\*Smart inclusion:\*\*Notes can be marked to automatically include in conversations when
+  - **Search Your Documents:** "Search my notes for 'plumber number'.", "Find emails about the
+    flight booking.", "Look for PDF documents related to 'insurance policy'." (The assistant can
+    search through notes, indexed emails, PDFs, and other documents it has access to. Search results
+    will be grouped by document, showing relevant snippets.)
+  - **Manage Your Notes:** The notes system has been enhanced with powerful new features:
+    - **Get specific notes:** "Get the note titled 'Wi-Fi Password'", "Show me the grocery list
+      note"
+    - **List all notes:** "List all my notes", "Show me all notes"
+    - **Delete notes:** "Delete the note 'Old Shopping List'"
+    - **Automatic indexing:** All notes are now automatically indexed for better search capabilities
+    - **Smart inclusion:** Notes can be marked to automatically include in conversations when
       relevant
-    - \*\*Note visibility:\*\*The assistant shows which notes are excluded from its context - when
-      you have notes marked as `include_in_prompt=False`, their titles are listed in the system
-      prompt so you know they exist but aren't loaded into every conversation for efficiency
-  - \*\*Retrieve Full Documents:\*\*After a search, if the assistant finds a document (e.g.,
-    "Document ID 123: Insurance Policy Scan"), you can ask: "Show me the full content of document
-    123." You can also click on search results in the Web UI to see a detailed view of the document.
-    The document detail view now shows the complete text content at the top of the page, making it
-    easy to read the full document without having to reconstruct it from search snippets. Large
-    documents (like PDFs or long web pages) are fully accessible even if they were too large to
-    process for search indexing.
-  - **General knowledge & web searches:**"Search the web for reviews of the new park.", "Who won the
-    game last night?", "Find me a recipe for banana bread." (The assistant can search the web for
-    information using its default search capabilities. For more complex web research that might
+    - **Note visibility:** The assistant shows which notes are excluded from its context - when you
+      have notes marked as `include_in_prompt=False`, their titles are listed in the system prompt
+      so you know they exist but aren't loaded into every conversation for efficiency
+  - **Retrieve Full Documents:** After a search, if the assistant finds a document (e.g., "Document
+    ID 123: Insurance Policy Scan"), you can ask: "Show me the full content of document 123." You
+    can also click on search results in the Web UI to see a detailed view of the document. The
+    document detail view now shows the complete text content at the top of the page, making it easy
+    to read the full document without having to reconstruct it from search snippets. Large documents
+    (like PDFs or long web pages) are fully accessible even if they were too large to process for
+    search indexing.
+  - **General knowledge & web searches:** "Search the web for reviews of the new park.", "Who won
+    the game last night?", "Find me a recipe for banana bread." (The assistant can search the web
+    for information using its default search capabilities. For more complex web research that might
     involve navigating multiple pages or interacting with sites, you can use the `/browse` command
     followed by your research query, e.g.,
     `/browse find recent reviews for the XZ-100 camera and compare its features to the YZ-200`. Uses
     the Brave Search service for some searches.)
-  - \*\*Run Automation Scripts:\*\*You can ask the assistant to execute scripts for complex
-    automation: \*"Execute a script that finds all TODO notes and creates a summary" \*"Run a script
-    to create prep notes for tomorrow's meetings" \*"Write and execute a script that searches for
-    project updates and emails me a digest" \*See the [Scripting Guide](scripting.md) for more
-    details on what scripts can do.
+  - **Run Automation Scripts:** You can ask the assistant to execute scripts for complex automation:
+    \*"Execute a script that finds all TODO notes and creates a summary" \*"Run a script to create
+    prep notes for tomorrow's meetings" \*"Write and execute a script that searches for project
+    updates and emails me a digest" \*See the [Scripting Guide](scripting.md) for more details on
+    what scripts can do.
 
 - **Remember Things (Notes):** \*Tell it to save information permanently: \*"Remember: The plumber's
   number is 555-1234." \*"Add a note titled 'Vacation Ideas' with the content 'Visit the Grand
@@ -115,16 +115,16 @@ You can ask the assistant a wide variety of things:
   knowledge or step-by-step instructions for particular tasks. Unlike regular notes (which store
   facts), skills contain procedural guidance the assistant follows when a topic comes up.
 
-  - \*\*How skills work:\*\*The assistant sees a catalog of available skills (name + short
-    description) in every conversation. When a skill is relevant, it loads the full instructions on
-    demand using the `get_note` tool. This keeps conversations lightweight while making specialized
-    knowledge available.
+  - **How skills work:** The assistant sees a catalog of available skills (name + short description)
+    in every conversation. When a skill is relevant, it loads the full instructions on demand using
+    the `get_note` tool. This keeps conversations lightweight while making specialized knowledge
+    available.
 
-  - \*\*Built-in skills:\*\*The assistant ships with several built-in skills including browser
+  - **Built-in skills:** The assistant ships with several built-in skills including browser
     automation, camera integration, image tools, and scheduling guidance. These work out of the box.
 
-  - \*\*Creating your own skills (DB-based):\*\*Ask the assistant to create a skill by providing
-    YAML frontmatter with `name` and `description` fields at the top of the note content:
+  - **Creating your own skills (DB-based):** Ask the assistant to create a skill by providing YAML
+    frontmatter with `name` and `description` fields at the top of the note content:
 
     ```
     Remember this as a note titled "Cooking Helper":
@@ -140,19 +140,19 @@ You can ask the assistant a wide variety of things:
 
     Notes with this frontmatter appear in the skill catalog instead of the regular notes section.
 
-  - \*\*File-based skills:\*\*Advanced users can place `.md` files with frontmatter in a configured
+  - **File-based skills:** Advanced users can place `.md` files with frontmatter in a configured
     directory. File-based skills are loaded at startup and can be overridden by DB-based skills with
     the same name.
 
-  - \*\*Visibility:\*\*Skills support the same visibility labels as regular notes. Add
+  - **Visibility:** Skills support the same visibility labels as regular notes. Add
     `visibility_labels` in the frontmatter to restrict which profiles can see a skill.
 
 - **Ingest Documents (Files and URLs):**
 
-  - \*\*From URLs:\*\*Ask the assistant to "Save this page for later: [Full URL]" or "Index this
+  - **From URLs:** Ask the assistant to "Save this page for later: [Full URL]" or "Index this
     article: [Full URL] with title 'My Article Title'". If you don't provide a title, the assistant
     will try to extract one automatically.
-  - \*\*From Files:\*\*You can upload files (like PDFs, text files, etc.) directly through the Web
+  - **From Files:** You can upload files (like PDFs, text files, etc.) directly through the Web
     Interface on the "Upload Document" page. The assistant will then process and index these files
     so you can search their content later.
 
@@ -163,22 +163,22 @@ You can ask the assistant a wide variety of things:
   the meantime. \*Beyond simple follow-ups, the assistant can schedule tasks to happen regularly.
   For example, you could ask it to "Send a reminder every Sunday evening to take out the bins."
 
-  - \*\*Quick Reminders:\*\*There's now a dedicated reminder feature for simple time-based
-    reminders: \*"Remind me to call the dentist in 2 hours" \*"Set a reminder for tomorrow at 3pm to
-    pick up groceries" \*"Remind me about the meeting at 4:30 PM" \*"Don't let me forget to submit
-    the report" - Creates a reminder with automatic follow-ups if you don't respond
+  - **Quick Reminders:** There's now a dedicated reminder feature for simple time-based reminders:
+    \*"Remind me to call the dentist in 2 hours" \*"Set a reminder for tomorrow at 3pm to pick up
+    groceries" \*"Remind me about the meeting at 4:30 PM" \*"Don't let me forget to submit the
+    report" - Creates a reminder with automatic follow-ups if you don't respond
 
-  - \*\*Schedule Script Execution:\*\*You can now schedule scripts to run at specific times or on
+  - **Schedule Script Execution:** You can now schedule scripts to run at specific times or on
     recurring schedules: \*"Schedule a script to clean up old notes every Sunday at midnight" \*"Run
     a script tomorrow at 9am that summarizes all my TODO notes" \*"Execute a script every hour to
     check if any tasks are overdue" \*Scripts run automatically without waking the assistant, making
     them perfect for automated maintenance tasks
 
-  - \*\*Managing Scheduled Tasks:\*\*You can view and manage all scheduled tasks: \*"Show me my
-    pending callbacks" - Lists all scheduled tasks, reminders, and script executions \*"Cancel the
-    daily weather update" - The assistant will find and cancel matching tasks \*"Stop all recurring
-    tasks about X" - The assistant will cancel all matching instances \*"Modify the reminder about
-    the dentist to 3pm instead" - Changes the time of a scheduled task \*For recurring tasks, each
+  - **Managing Scheduled Tasks:** You can view and manage all scheduled tasks: \*"Show me my pending
+    callbacks" - Lists all scheduled tasks, reminders, and script executions \*"Cancel the daily
+    weather update" - The assistant will find and cancel matching tasks \*"Stop all recurring tasks
+    about X" - The assistant will cancel all matching instances \*"Modify the reminder about the
+    dentist to 3pm instead" - Changes the time of a scheduled task \*For recurring tasks, each
     future instance is listed separately and can be cancelled individually \*If a scheduled task
     fails, you can often retry it manually from the "Tasks" page in the Web Interface.
 
@@ -334,22 +334,22 @@ You can ask the assistant about any attachment:
 
 The assistant learns and gets information from a few places:
 
-- \*\*You Tell It:\*\*When you use commands like "Remember:" or "Add Note:".
+- **You Tell It:** When you use commands like "Remember:" or "Add Note:".
 
-- \*\*Connected Calendars:\*\*It automatically checks any shared family calendars that have been
-  linked (like Google Calendar, iCloud Calendar, etc.) for upcoming events.
+- **Connected Calendars:** It automatically checks any shared family calendars that have been linked
+  (like Google Calendar, iCloud Calendar, etc.) for upcoming events.
 
-- \*\*Recent Conversation:\*\*It remembers the last few messages exchanged in your chat to
-  understand the context of your current request.
+- **Recent Conversation:** It remembers the last few messages exchanged in your chat to understand
+  the context of your current request.
 
-- \*\*Stored Documents:\*\*It can search and retrieve information from notes you've added, and
+- **Stored Documents:** It can search and retrieve information from notes you've added, and
   potentially from emails or files you've uploaded or forwarded (depending on setup).
 
-- \*\*Smart Home Events:\*\*If connected to Home Assistant, the assistant can now: \*Track who is
-  home and their locations in real-time \*Monitor device states and sensor readings \*Watch for
-  specific events you've asked it to track
+- **Smart Home Events:** If connected to Home Assistant, the assistant can now: \*Track who is home
+  and their locations in real-time \*Monitor device states and sensor readings \*Watch for specific
+  events you've asked it to track
 
-- \*\*System Events:\*\*The assistant monitors its own operations, including when documents are
+- **System Events:** The assistant monitors its own operations, including when documents are
   indexed, tasks complete, or errors occur.
 
 ## 5. Automatic Features
@@ -386,7 +386,7 @@ various tasks with dark mode support and mobile optimization.
 - **Accessing it:**`{{ SERVER_URL }}` (This link will be replaced with the actual URL). The
   interface automatically opens to the chat page for immediate access.
 
-- \*\*Chat Features:\*\*
+- **Chat Features:**
 
   - Real-time streaming responses - see the assistant's replies as they're being generated
   - Live tool usage display - watch what tools are being used during responses
@@ -396,19 +396,19 @@ various tasks with dark mode support and mobile optimization.
   ![Chat Interface](../../screenshots/desktop/chat-empty.png) *The web chat interface provides
   real-time streaming responses and conversation management*
 
-- \*\*Navigation:\*\*The web interface features a dropdown menu organized into clear sections:
+- **Navigation:** The web interface features a dropdown menu organized into clear sections:
 
-  - **Information**- View and manage your notes, documents, and conversation history with enhanced
+  - **Information** - View and manage your notes, documents, and conversation history with enhanced
     filtering
-  - **Operations**- Access background tasks and tool testing
-  - **Settings**- Manage API tokens and other configuration
+  - **Operations** - Access background tasks and tool testing
+  - **Settings** - Manage API tokens and other configuration
 
 - **What it's for:**
 
-  - \*\*Viewing/Managing Notes:\*\*The Notes page has been enhanced with: \*A clean, organized list
-    of all your notes \*Easy editing - click on any note to modify its content \*Control whether
-    notes are automatically included in conversations \*Delete notes that are no longer needed
-    \*Search through notes quickly
+  - **Viewing/Managing Notes:** The Notes page has been enhanced with: \*A clean, organized list of
+    all your notes \*Easy editing - click on any note to modify its content \*Control whether notes
+    are automatically included in conversations \*Delete notes that are no longer needed \*Search
+    through notes quickly
 
     ![Notes List](../../screenshots/desktop/notes-list.png) *The Notes page shows all your saved
     notes with editing and management options*
@@ -416,28 +416,28 @@ various tasks with dark mode support and mobile optimization.
     ![Add Note Form](../../screenshots/desktop/notes-add-form.png) *Creating a new note with title,
     content, and visibility options*
 
-  - \*\*Document Management:\*\*The Documents section provides: \*A comprehensive list of all
-    indexed documents \*Document details including type, source, and metadata \*Direct links to view
-    full document content \*Search capabilities across all document types
+  - **Document Management:** The Documents section provides: \*A comprehensive list of all indexed
+    documents \*Document details including type, source, and metadata \*Direct links to view full
+    document content \*Search capabilities across all document types
 
     ![Documents Page](../../screenshots/desktop/documents.png) *The Documents page displays all
     indexed documents with search and filtering*
 
-  - \*\*Viewing History:\*\*Look back through past conversations the assistant has had across all
+  - **Viewing History:** Look back through past conversations the assistant has had across all
     interfaces (Telegram, Web, Email). Use enhanced filtering options to find specific conversations
     or messages.
 
     ![History Page](../../screenshots/desktop/history.png) *The History page shows past
     conversations with filtering and search options*
 
-  - \*\*Viewing Background Tasks:\*\*See a log of tasks the assistant has performed automatically in
+  - **Viewing Background Tasks:** See a log of tasks the assistant has performed automatically in
     the background (like fetching calendar updates or future scheduled actions). You can also
     manually retry failed tasks from this page.
 
     ![Tasks Page](../../screenshots/desktop/tasks.png) *The Tasks page displays background
     operations and scheduled actions*
 
-  - \*\*Searching Documents:\*\*Use the "Vector Search" page to search through all indexed documents
+  - **Searching Documents:** Use the "Vector Search" page to search through all indexed documents
     (notes, emails, uploaded files, web pages). Results are grouped by document, and you can click
     to see a "Document Detail View" with complete document content. The detail view displays the
     full text at the top for easy reading, along with all metadata and search snippets. Even
@@ -446,22 +446,22 @@ various tasks with dark mode support and mobile optimization.
     ![Vector Search](../../screenshots/desktop/vector-search.png) *The Vector Search page allows
     semantic search across all indexed documents*
 
-  - \*\*Uploading Documents:\*\*Use the "Upload Document" page to add new files (PDFs, text files,
+  - **Uploading Documents:** Use the "Upload Document" page to add new files (PDFs, text files,
     etc.) for the assistant to index and learn from.
 
-  - \*\*Managing API Tokens:\*\*If you need programmatic access to the assistant, you can manage
-    your API tokens on the "API Tokens" page under "Settings".
+  - **Managing API Tokens:** If you need programmatic access to the assistant, you can manage your
+    API tokens on the "API Tokens" page under "Settings".
 
     ![Settings Page](../../screenshots/desktop/settings.png) *The Settings page for managing API
     tokens and configuration*
 
-  - \*\*Tool Testing:\*\*A "Tools" page allows developers to test and debug tool interactions
-    directly from the web interface.
+  - **Tool Testing:** A "Tools" page allows developers to test and debug tool interactions directly
+    from the web interface.
 
     ![Tools Page](../../screenshots/desktop/tools.png) *The Tools Explorer shows all available tools
     with their descriptions and parameters*
 
-  - \*\*Automations Management:\*\*The Automations page provides: \*A comprehensive list of all
+  - **Automations Management:** The Automations page provides: \*A comprehensive list of all
     automations (both event-based and schedule-based) \*Create new automations directly from the UI
     \*Detailed view of each automation's configuration and execution history \*Edit functionality to
     modify automation conditions, scripts, and settings (including changing between LLM callback and
@@ -474,18 +474,18 @@ various tasks with dark mode support and mobile optimization.
 
 ## 8. Tips for Best Results
 
-- \*\*Be Clear:\*\*The more specific your request, the better the assistant can understand and help.
+- **Be Clear:** The more specific your request, the better the assistant can understand and help.
 
-- \*\*Use "Remember" for Facts:\*\*For specific pieces of information you want recalled later (like
+- **Use "Remember" for Facts:** For specific pieces of information you want recalled later (like
   numbers, addresses, instructions), use the "Remember:" or "Add Note:" command.
 
-- \*\*Managing Notes:\*\*You can now use more natural language to work with notes: \*"Get the Wi-Fi
+- **Managing Notes:** You can now use more natural language to work with notes: \*"Get the Wi-Fi
   password note" instead of searching \*"List all my notes" to see everything at once \*"Delete the
   old shopping list" to remove outdated notes
 
-- \*\*Setting Up Event Automations:\*\*You can create event automations either by asking the
-  assistant or through the Web UI. When creating event automations: \*Start by exploring what events
-  are available: "Show me recent home assistant events" \*Test your conditions before creating the
+- **Setting Up Event Automations:** You can create event automations either by asking the assistant
+  or through the Web UI. When creating event automations: \*Start by exploring what events are
+  available: "Show me recent home assistant events" \*Test your conditions before creating the
   automation: "Test if entity_id equals 'person.alex' would match recent events" \*Be specific with
   field names - use the exact names you see in the event data \*You can filter by event type: "Test
   if event_type equals 'state_changed' and entity_id equals 'person.alex'" \*For complex conditions
@@ -499,62 +499,62 @@ various tasks with dark mode support and mobile optimization.
     to conditionally wake the assistant with specific context \*Via the Web UI: Navigate to
     Automations and click "Create New Automation" to use the visual form with live script validation
 
-- \*\*Reply Directly:\*\*If you're responding to something the assistant just said, use Telegram's
+- **Reply Directly:** If you're responding to something the assistant just said, use Telegram's
   "Reply" feature so it knows exactly what message you're referring to. This is especially helpful
   if the assistant was using a special mode (activated by a slash command), as it helps keep the
   conversation in that mode.
 
-- \*\*Provide Full URLs:\*\*When asking about web content, always include the full address (e.g.,
+- **Provide Full URLs:** When asking about web content, always include the full address (e.g.,
   `https://www.example.com/article`).
 
-- \*\*Use Correct Smart Home Names:\*\*For controlling Home Assistant devices, use the exact names
+- **Use Correct Smart Home Names:** For controlling Home Assistant devices, use the exact names
   configured in your Home Assistant setup (e.g., "Living Room Lamp", "Downstairs Thermostat"). If
   you're unsure, ask the person who manages your Home Assistant setup.
 
-- \*\*Use Slash Commands:\*\*For specialized tasks like complex web browsing (e.g.,
+- **Use Slash Commands:** For specialized tasks like complex web browsing (e.g.,
   `/browse find travel options to Paris for next June`), in-depth research (e.g.,
   `/research Tell me about the history of Python`), or engineering diagnostics (e.g.,
   `/engineer Why isn't my daily brief automation triggering?`), using the appropriate slash command
   can provide more focused and effective responses.
 
-- \*\*Mobile Experience:\*\*The web interface is fully optimized for mobile devices. All features
-  are accessible on phones and tablets with responsive design that adapts to your screen size.
+- **Mobile Experience:** The web interface is fully optimized for mobile devices. All features are
+  accessible on phones and tablets with responsive design that adapts to your screen size.
 
 ## 9. Troubleshooting & Help
 
-- \*\*Calendar Modifications:\*\*If you ask to modify or delete an event, the assistant might first
-  ask you to clarify which event using a search ("Find the dentist appointment") and will then show
-  you a confirmation dialog (buttons in Telegram, dialog box in Web UI) to approve the action.
+- **Calendar Modifications:** If you ask to modify or delete an event, the assistant might first ask
+  you to clarify which event using a search ("Find the dentist appointment") and will then show you
+  a confirmation dialog (buttons in Telegram, dialog box in Web UI) to approve the action.
 
-- \*\*Unknown Commands:\*\*If you type a command the assistant doesn't recognize (e.g.,
+- **Unknown Commands:** If you type a command the assistant doesn't recognize (e.g.,
   `/someunknowncommand`), it will now reply with a "command not recognized" message.
 
-- \*\*Switching Modes or Asking for Confirmation:\*\*To best handle your request, the assistant
-  might sometimes switch to a different specialized mode or ask for your permission to use one
-  (e.g., "Is it okay to use the web browser for this?"). This is normal and helps it use the most
-  appropriate tools.
+- **Switching Modes or Asking for Confirmation:** To best handle your request, the assistant might
+  sometimes switch to a different specialized mode or ask for your permission to use one (e.g., "Is
+  it okay to use the web browser for this?"). This is normal and helps it use the most appropriate
+  tools.
 
-- \*\*Event Automations:\*\*If an event automation isn't triggering as expected: \*Use "Show me
-  recent events from [source]" to see what events are being captured \*Use the test tool to check if
-  your conditions would match recent events \*Make sure you're using the exact field names from the
-  event data (use dot notation for nested fields like "new_state.state") \*For condition scripts,
-  test them first: "Test this condition script with a sample event: [your script]" \*Remember that
+- **Event Automations:** If an event automation isn't triggering as expected: \*Use "Show me recent
+  events from [source]" to see what events are being captured \*Use the test tool to check if your
+  conditions would match recent events \*Make sure you're using the exact field names from the event
+  data (use dot notation for nested fields like "new_state.state") \*For condition scripts, test
+  them first: "Test this condition script with a sample event: [your script]" \*Remember that
   condition scripts must return a boolean value \*Common issue: Home Assistant sends state_changed
   events even when only attributes change - use condition scripts to detect actual state transitions
 
-- \*\*Connection Issues:\*\*The assistant now automatically reconnects to Home Assistant and other
+- **Connection Issues:** The assistant now automatically reconnects to Home Assistant and other
   services if the connection is lost. You may see brief interruptions in event monitoring during
   reconnection.
 
-- \*\*If it doesn't understand:\*\*Try rephrasing your request. Sometimes slightly different wording
+- **If it doesn't understand:** Try rephrasing your request. Sometimes slightly different wording
   makes a big difference.
 
-- \*\*If it makes a mistake or gives wrong information:\*\*You can often correct it by giving it the
+- **If it makes a mistake or gives wrong information:** You can often correct it by giving it the
   right information ("Actually, the appointment is at 3 PM") or by updating a relevant note via the
   Web UI or a command ("Update the note 'Plumber Number' with content '555-9876'").
 
-- \*\*If you need more help:\*\*Contact the family member who set up and manages the assistant for
-  your family. They can help with configuration issues or more complex problems.
+- **If you need more help:** Contact the family member who set up and manages the assistant for your
+  family. They can help with configuration issues or more complex problems.
 
 ## Additional Resources
 
