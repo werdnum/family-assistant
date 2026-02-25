@@ -367,6 +367,8 @@ def _parse_local_time(time_str: str, timezone_str: str) -> datetime:
 
 def _to_local_isoformat(dt: datetime, timezone_str: str) -> str:
     """Convert a datetime to ISO format in the user's local timezone."""
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=UTC)
     return dt.astimezone(ZoneInfo(timezone_str)).isoformat()
 
 
@@ -953,7 +955,9 @@ async def scan_camera_frames_tool(
         else:
             local_tz = ZoneInfo(exec_context.timezone_str)
             match_times = [
-                r.timestamp.astimezone(local_tz).strftime("%H:%M:%S")
+                (r.timestamp if r.timestamp.tzinfo else r.timestamp.replace(tzinfo=UTC))
+                .astimezone(local_tz)
+                .strftime("%H:%M:%S")
                 for r in matching_results
                 if r.matches_query
             ]

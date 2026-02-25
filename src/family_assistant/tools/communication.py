@@ -164,11 +164,14 @@ async def get_message_history_tool(
             role = msg.get("role", "unknown")
             content = msg.get("content", "")
             timestamp = msg.get("timestamp")
-            time_str = (
-                timestamp.astimezone(local_tz).strftime("%Y-%m-%d %H:%M:%S %Z")
-                if timestamp
-                else "Unknown Time"
-            )
+            if timestamp:
+                if timestamp.tzinfo is None:
+                    timestamp = timestamp.replace(tzinfo=UTC)
+                time_str = timestamp.astimezone(local_tz).strftime(
+                    "%Y-%m-%d %H:%M:%S %Z"
+                )
+            else:
+                time_str = "Unknown Time"
 
             # Basic formatting, include full content
             formatted_history.append(f"[{time_str}] {role.capitalize()}: {content}")

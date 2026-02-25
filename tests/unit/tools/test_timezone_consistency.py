@@ -59,6 +59,14 @@ class TestAutomationsFormatDatetime:
         assert "12:00" in result
         assert "UTC" in result
 
+    def testformat_automation_datetime_naive_assumed_utc(self) -> None:
+        """A naive datetime (no tzinfo) should be assumed UTC before converting."""
+        dt_naive = datetime(2025, 1, 15, 0, 0, 0)  # No tzinfo
+        result = format_automation_datetime(dt_naive, "Australia/Sydney")
+        # Naive assumed UTC 00:00 -> AEDT 11:00
+        assert "11:00" in result
+        assert "AEDT" in result
+
 
 # --- Camera: timestamps in tool results should be in local timezone ---
 

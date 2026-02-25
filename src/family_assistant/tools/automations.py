@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+from datetime import UTC
 from typing import TYPE_CHECKING, Any
 from zoneinfo import ZoneInfo
 
@@ -32,6 +33,8 @@ def format_automation_datetime(dt: datetime | None, timezone_str: str = "UTC") -
     """
     if dt is None:
         return "Never"
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=UTC)
     local_dt = dt.astimezone(ZoneInfo(timezone_str))
     return local_dt.strftime("%Y-%m-%d %H:%M %Z")
 
