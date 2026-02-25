@@ -182,13 +182,13 @@ async def _check_for_duplicate_events(
                                 uid = str(vevent.get("uid", ""))
                                 dtstart = vevent.get("dtstart")
 
-                                # Format start time for display
+                                # Format start time for display in user's timezone
                                 if dtstart:
                                     start_val = dtstart.dt
                                     if isinstance(start_val, datetime):
-                                        start_str = start_val.strftime(
-                                            "%Y-%m-%d %H:%M %Z"
-                                        )
+                                        start_str = start_val.astimezone(
+                                            local_tz
+                                        ).strftime("%Y-%m-%d %H:%M %Z")
                                     else:
                                         start_str = str(start_val)
                                 else:
@@ -750,13 +750,13 @@ async def search_calendar_events_tool(
                                 dtstart = vevent.get("dtstart")
                                 dtend = vevent.get("dtend")
 
-                                # Format event info
+                                # Format event info in user's timezone
                                 if dtstart:
                                     start_val = dtstart.dt
                                     if isinstance(start_val, datetime):
-                                        start_str = start_val.strftime(
-                                            "%Y-%m-%d %H:%M %Z"
-                                        )
+                                        start_str = start_val.astimezone(
+                                            local_tz
+                                        ).strftime("%Y-%m-%d %H:%M %Z")
                                     else:
                                         start_str = str(start_val)
                                 else:
@@ -765,7 +765,9 @@ async def search_calendar_events_tool(
                                 if dtend:
                                     end_val = dtend.dt
                                     if isinstance(end_val, datetime):
-                                        end_str = end_val.strftime("%Y-%m-%d %H:%M %Z")
+                                        end_str = end_val.astimezone(local_tz).strftime(
+                                            "%Y-%m-%d %H:%M %Z"
+                                        )
                                     else:
                                         end_str = str(end_val)
                                 else:

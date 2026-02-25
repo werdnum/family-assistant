@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 from typing import TYPE_CHECKING, Any
+from zoneinfo import ZoneInfo
 
 from family_assistant.tools.types import ToolDefinition, ToolResult
 
@@ -18,19 +19,21 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-def _format_datetime(dt: datetime | None) -> str:
+def format_automation_datetime(dt: datetime | None, timezone_str: str = "UTC") -> str:
     """
-    Format a datetime object to human-readable format.
+    Format a datetime object to human-readable format in the given timezone.
 
     Args:
         dt: Datetime object or None
+        timezone_str: IANA timezone name (e.g. "Australia/Sydney")
 
     Returns:
         Formatted datetime string or "Never" if input was None
     """
     if dt is None:
         return "Never"
-    return dt.strftime("%Y-%m-%d %H:%M UTC")
+    local_dt = dt.astimezone(ZoneInfo(timezone_str))
+    return local_dt.strftime("%Y-%m-%d %H:%M %Z")
 
 
 def _to_isoformat(dt: datetime | None) -> str | None:
@@ -436,7 +439,9 @@ async def create_automation_tool(
             next_scheduled_at = (
                 automation.get("next_scheduled_at") if automation else None
             )
-            next_run = _format_datetime(next_scheduled_at)
+            next_run = format_automation_datetime(
+                next_scheduled_at, exec_context.timezone_str
+            )
 
             # Return structured data with human-readable text
             result_data = {
@@ -510,7 +515,9 @@ async def list_automations_tool(
             else:  # schedule
                 next_run = auto.next_scheduled_at
                 if next_run:
-                    lines.append(f"      Next run: {_format_datetime(next_run)}")
+                    lines.append(
+                        f"      Next run: {format_automation_datetime(next_run, exec_context.timezone_str)}"
+                    )
 
             # Build structured data
             auto_data = {
@@ -586,10 +593,14 @@ async def get_automation_tool(
             lines.append(f"Recurrence rule: {automation.recurrence_rule}")
             next_scheduled = automation.next_scheduled_at
             if next_scheduled:
-                lines.append(f"Next run: {_format_datetime(next_scheduled)}")
+                lines.append(
+                    f"Next run: {format_automation_datetime(next_scheduled, exec_context.timezone_str)}"
+                )
             last_execution = automation.last_execution_at
             if last_execution:
-                lines.append(f"Last run: {_format_datetime(last_execution)}")
+                lines.append(
+                    f"Last run: {format_automation_datetime(last_execution, exec_context.timezone_str)}"
+                )
 
         # Action info
         action_type = automation.action_type
@@ -934,12 +945,16 @@ async def get_automation_stats_tool(
 
         last_execution_at = stats.get("last_execution_at")
         if last_execution_at:
-            lines.append(f"Last execution: {_format_datetime(last_execution_at)}")
+            lines.append(
+                f"Last execution: {format_automation_datetime(last_execution_at, exec_context.timezone_str)}"
+            )
             stats_data["last_execution_at"] = _to_isoformat(last_execution_at)
 
         next_scheduled_at = stats.get("next_scheduled_at")
         if next_scheduled_at:
-            lines.append(f"Next scheduled: {_format_datetime(next_scheduled_at)}")
+            lines.append(
+                f"Next scheduled: {format_automation_datetime(next_scheduled_at, exec_context.timezone_str)}"
+            )
             stats_data["next_scheduled_at"] = _to_isoformat(next_scheduled_at)
 
         recent = stats.get("recent_executions", [])
@@ -950,7 +965,9 @@ async def get_automation_stats_tool(
                 status = execution.get("status", "unknown")
                 created = execution.get("created_at")
                 if created:
-                    lines.append(f"  - {_format_datetime(created)}: {status}")
+                    lines.append(
+                        f"  - {format_automation_datetime(created, exec_context.timezone_str)}: {status}"
+                    )
                     recent_list.append({
                         "created_at": _to_isoformat(created),
                         "status": status,

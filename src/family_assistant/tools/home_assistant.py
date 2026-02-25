@@ -10,6 +10,7 @@ import json
 import logging
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Any
+from zoneinfo import ZoneInfo
 
 from family_assistant.tools.types import (
     ToolAttachment,
@@ -546,9 +547,10 @@ async def download_state_history_tool(
         # Build description
         entity_count = len(histories)
         state_count = sum(len(h["states"]) for h in histories)
+        local_tz = ZoneInfo(exec_context.timezone_str)
         description = (
             f"State history for {entity_count} entities ({state_count} states) "
-            f"from {start_timestamp.strftime('%Y-%m-%d %H:%M:%S')} to {end_timestamp.strftime('%Y-%m-%d %H:%M:%S')}"
+            f"from {start_timestamp.astimezone(local_tz).strftime('%Y-%m-%d %H:%M:%S %Z')} to {end_timestamp.astimezone(local_tz).strftime('%Y-%m-%d %H:%M:%S %Z')}"
         )
 
         # Return JSON as attachment

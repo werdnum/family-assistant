@@ -365,6 +365,11 @@ def _parse_local_time(time_str: str, timezone_str: str) -> datetime:
     return dt
 
 
+def _to_local_isoformat(dt: datetime, timezone_str: str) -> str:
+    """Convert a datetime to ISO format in the user's local timezone."""
+    return dt.astimezone(ZoneInfo(timezone_str)).isoformat()
+
+
 async def list_cameras_tool(
     exec_context: ToolExecutionContext,
 ) -> ToolResult:
@@ -418,9 +423,10 @@ async def search_camera_events_tool(
     now = datetime.now(UTC)
     date_warning = ""
     if now - end_dt > OLD_DATE_THRESHOLD:
+        local_now = now.astimezone(ZoneInfo(exec_context.timezone_str))
         date_warning = (
             f" WARNING: These dates are more than {OLD_DATE_THRESHOLD.days} days in the past. "
-            f"Current time is {now.strftime('%Y-%m-%d %H:%M UTC')}. "
+            f"Current time is {local_now.strftime('%Y-%m-%d %H:%M %Z')}. "
             "Did you mean to search a more recent time range?"
         )
 
@@ -431,11 +437,14 @@ async def search_camera_events_tool(
             end_time=end_dt,
             event_types=event_types,
         )
+        tz_str = exec_context.timezone_str
         event_list = [
             {
                 "camera_id": evt.camera_id,
-                "start_time": evt.start_time.isoformat(),
-                "end_time": evt.end_time.isoformat() if evt.end_time else None,
+                "start_time": _to_local_isoformat(evt.start_time, tz_str),
+                "end_time": _to_local_isoformat(evt.end_time, tz_str)
+                if evt.end_time
+                else None,
                 "event_type": evt.event_type,
                 "confidence": evt.confidence,
                 "metadata": evt.metadata,
@@ -534,11 +543,12 @@ async def get_camera_frames_batch_tool(
                 data={"camera_id": camera_id, "timestamps": [], "count": 0}
             )
 
+        tz_str = exec_context.timezone_str
         attachments = [
             ToolAttachment(
                 mime_type="image/jpeg",
                 content=frame.jpeg_bytes,
-                description=f"Frame {i + 1}/{len(frames)} at {frame.timestamp.isoformat()}",
+                description=f"Frame {i + 1}/{len(frames)} at {_to_local_isoformat(frame.timestamp, tz_str)}",
             )
             for i, frame in enumerate(frames)
         ]
@@ -546,7 +556,9 @@ async def get_camera_frames_batch_tool(
         return ToolResult(
             data={
                 "camera_id": camera_id,
-                "timestamps": [f.timestamp.isoformat() for f in frames],
+                "timestamps": [
+                    _to_local_isoformat(f.timestamp, tz_str) for f in frames
+                ],
                 "count": len(frames),
             },
             attachments=attachments,
@@ -585,11 +597,12 @@ async def get_camera_recordings_tool(
             start_time=start_dt,
             end_time=end_dt,
         )
+        tz_str = exec_context.timezone_str
         recording_list = [
             {
                 "camera_id": rec.camera_id,
-                "start_time": rec.start_time.isoformat(),
-                "end_time": rec.end_time.isoformat(),
+                "start_time": _to_local_isoformat(rec.start_time, tz_str),
+                "end_time": _to_local_isoformat(rec.end_time, tz_str),
                 "filename": rec.filename,
                 "size_bytes": rec.size_bytes,
                 "duration_seconds": (rec.end_time - rec.start_time).total_seconds(),
@@ -876,8 +889,9 @@ async def scan_camera_frames_tool(
         analysis_summaries: list[AnalysisSummaryDict] = []
         attachments: list[ToolAttachment] = []
 
+        tz_str = exec_context.timezone_str
         for result in matching_results:
-            ts_str = result.timestamp.isoformat()
+            ts_str = _to_local_isoformat(result.timestamp, tz_str)
             summary: AnalysisSummaryDict = {
                 "timestamp": ts_str,
                 "matches_query": result.matches_query,
@@ -937,8 +951,9 @@ async def scan_camera_frames_tool(
                 f"No frames matched the query: '{query}'"
             )
         else:
+            local_tz = ZoneInfo(exec_context.timezone_str)
             match_times = [
-                r.timestamp.strftime("%H:%M:%S")
+                r.timestamp.astimezone(local_tz).strftime("%H:%M:%S")
                 for r in matching_results
                 if r.matches_query
             ]

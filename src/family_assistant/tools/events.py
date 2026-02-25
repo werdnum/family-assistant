@@ -6,7 +6,9 @@ import json
 import logging
 from datetime import UTC, datetime, timedelta
 from typing import Any
+from zoneinfo import ZoneInfo
 
+from dateutil.parser import parse as parse_datetime
 from sqlalchemy import text
 
 # get_db_context import removed - using exec_context.db_context for dependency injection
@@ -188,9 +190,18 @@ async def query_recent_events_tool(
             # Handle timestamp format (SQLite returns strings)
             timestamp = row["timestamp"]
             if isinstance(timestamp, str):
-                timestamp_str = timestamp
+                parsed_ts = parse_datetime(timestamp)
+                if parsed_ts.tzinfo is None:
+                    parsed_ts = parsed_ts.replace(tzinfo=UTC)
+                timestamp_str = parsed_ts.astimezone(
+                    ZoneInfo(exec_context.timezone_str)
+                ).isoformat()
             else:
-                timestamp_str = timestamp.isoformat()
+                if timestamp.tzinfo is None:
+                    timestamp = timestamp.replace(tzinfo=UTC)
+                timestamp_str = timestamp.astimezone(
+                    ZoneInfo(exec_context.timezone_str)
+                ).isoformat()
 
             events.append({
                 "event_id": row["event_id"],
@@ -327,12 +338,21 @@ async def test_event_listener_tool(
 
             # Check if event matches conditions
             if _check_match_conditions(event_data, match_conditions):
-                # Handle timestamp format
+                # Handle timestamp format - convert to local timezone
                 timestamp = row["timestamp"]
                 if isinstance(timestamp, str):
-                    timestamp_str = timestamp
+                    parsed_ts = parse_datetime(timestamp)
+                    if parsed_ts.tzinfo is None:
+                        parsed_ts = parsed_ts.replace(tzinfo=UTC)
+                    timestamp_str = parsed_ts.astimezone(
+                        ZoneInfo(exec_context.timezone_str)
+                    ).isoformat()
                 else:
-                    timestamp_str = timestamp.isoformat()
+                    if timestamp.tzinfo is None:
+                        timestamp = timestamp.replace(tzinfo=UTC)
+                    timestamp_str = timestamp.astimezone(
+                        ZoneInfo(exec_context.timezone_str)
+                    ).isoformat()
 
                 matched_events.append({
                     "event_id": row["event_id"],

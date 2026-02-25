@@ -11,6 +11,7 @@ import datetime
 import logging
 import os
 from typing import Annotated, Any
+from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel
@@ -177,9 +178,10 @@ async def _get_formatted_system_prompt(
 
         # Format the system prompt
         now = datetime.datetime.now(datetime.UTC)
+        local_now = now.astimezone(ZoneInfo(processing_service.timezone_str))
         format_args = {
             "user_name": user_name,
-            "current_time": now.strftime("%Y-%m-%d %H:%M:%S UTC"),
+            "current_time": local_now.strftime("%Y-%m-%d %H:%M:%S %Z"),
             "aggregated_other_context": aggregated_context,
             "server_url": processing_service.server_url,
             "profile_id": processing_service.service_config.id,

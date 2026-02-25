@@ -11,6 +11,7 @@ import base64
 import logging
 from datetime import datetime
 from typing import TYPE_CHECKING, Any
+from zoneinfo import ZoneInfo
 
 import aiofiles
 import aiofiles.os
@@ -381,7 +382,9 @@ async def workspace_glob_tool(
                     "path": rel_path,
                     "is_file": match_path.is_file(),
                     "size": stat.st_size if match_path.is_file() else None,
-                    "modified": datetime.fromtimestamp(stat.st_mtime).isoformat(),
+                    "modified": datetime.fromtimestamp(
+                        stat.st_mtime, tz=ZoneInfo(exec_context.timezone_str)
+                    ).isoformat(),
                 })
             else:
                 matches.append({"path": rel_path, "is_file": match_path.is_file()})
