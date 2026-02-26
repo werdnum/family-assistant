@@ -60,7 +60,7 @@ def create_test_execution_context(
         user_name="TestUser",
         turn_id="test-turn",
         db_context=db_context,
-        timezone_str=TEST_TIMEZONE_STR,
+        timezone=ZoneInfo(TEST_TIMEZONE_STR),
         tools_provider=tools_provider,
         processing_service=None,
         clock=None,
@@ -111,7 +111,7 @@ async def create_test_event_in_radicale(
             event_sources=None,
             attachment_registry=None,
             chat_interface=None,
-            timezone_str=TEST_TIMEZONE_STR,
+            timezone=ZoneInfo(TEST_TIMEZONE_STR),
             request_confirmation_callback=None,
             camera_backend=None,
         )
@@ -418,7 +418,7 @@ async def test_confirming_tools_provider_with_calendar_events(
             event_sources=None,
             attachment_registry=None,
             chat_interface=None,
-            timezone_str=TEST_TIMEZONE_STR,
+            timezone=ZoneInfo(TEST_TIMEZONE_STR),
             request_confirmation_callback=capture_confirmation_callback,
             camera_backend=None,
         )

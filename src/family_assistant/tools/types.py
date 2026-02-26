@@ -7,8 +7,9 @@ from __future__ import annotations
 
 import base64
 import json
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Literal, NotRequired, TypedDict
+from zoneinfo import ZoneInfo
 
 # Note: CalendarConfig TypedDict kept here for backward compatibility with tool functions
 # The Pydantic CalendarConfig in config_models.py is used for config file validation
@@ -206,7 +207,7 @@ class ToolExecutionContext:
         turn_id: Optional ID for the current processing turn.
         db_context: Database context for data access.
         chat_interface: Optional interface for sending messages back to the chat.
-        timezone_str: Timezone string for localization, defaults to "UTC".
+        timezone: ZoneInfo for localization, defaults to UTC.
         request_confirmation_callback: Optional callback to request user confirmation.
             This function is typically called by `ConfirmingToolsProvider`.
             Expected signature:
@@ -250,7 +251,7 @@ class ToolExecutionContext:
     chat_interfaces: dict[str, ChatInterface] | None = (
         None  # Dict of interface_type -> ChatInterface for cross-interface messaging
     )
-    timezone_str: str = "UTC"  # Timezone string for localization
+    timezone: ZoneInfo = field(default_factory=lambda: ZoneInfo("UTC"))
     processing_profile_id: str | None = (
         None  # Processing profile associated with the request
     )

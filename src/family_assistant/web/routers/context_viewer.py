@@ -151,7 +151,10 @@ async def _get_context_data(
 
         format_args = {
             "user_name": user_name,
-            "current_time": datetime.now(UTC).strftime("%Y-%m-%d %H:%M:%S UTC"),
+            "current_time": datetime
+            .now(UTC)
+            .astimezone(target_service.timezone)
+            .strftime("%Y-%m-%d %H:%M:%S %Z"),
             "aggregated_other_context": aggregated_context,
             "server_url": target_service.server_url,
             "profile_id": target_service.service_config.id,

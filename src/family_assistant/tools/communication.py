@@ -157,16 +157,20 @@ async def get_message_history_tool(
             return "No message history found matching the specified criteria."
 
         # Format the history for the LLM
+        local_tz = exec_context.timezone
         formatted_history = ["Retrieved message history:"]
         for msg in history_messages:
             role = msg.get("role", "unknown")
             content = msg.get("content", "")
             timestamp = msg.get("timestamp")
-            time_str = (
-                timestamp.strftime("%Y-%m-%d %H:%M:%S %Z")
-                if timestamp
-                else "Unknown Time"
-            )
+            if timestamp:
+                if timestamp.tzinfo is None:
+                    timestamp = timestamp.replace(tzinfo=UTC)
+                time_str = timestamp.astimezone(local_tz).strftime(
+                    "%Y-%m-%d %H:%M:%S %Z"
+                )
+            else:
+                time_str = "Unknown Time"
 
             # Basic formatting, include full content
             formatted_history.append(f"[{time_str}] {role.capitalize()}: {content}")

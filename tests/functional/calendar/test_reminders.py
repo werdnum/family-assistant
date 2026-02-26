@@ -6,6 +6,7 @@ from collections.abc import Callable
 from datetime import UTC, timedelta
 from typing import TYPE_CHECKING
 from unittest.mock import AsyncMock, MagicMock
+from zoneinfo import ZoneInfo
 
 import pytest
 from sqlalchemy.ext.asyncio import AsyncEngine
@@ -193,7 +194,7 @@ async def test_schedule_and_execute_callback(
 
     test_service_config_obj_callback = ProcessingServiceConfig(
         prompts=dummy_prompts,
-        timezone_str=dummy_timezone_str,
+        timezone=ZoneInfo(dummy_timezone_str),
         max_history_messages=dummy_max_history,
         history_max_age_hours=dummy_history_age,
         tools_config={},  # Added missing tools_config
@@ -476,7 +477,7 @@ async def test_modify_pending_callback(
     dummy_prompts = {"system_prompt": "Test system prompt for modify."}
     test_service_config_obj_modify = ProcessingServiceConfig(
         prompts=dummy_prompts,
-        timezone_str="UTC",
+        timezone=ZoneInfo("UTC"),
         max_history_messages=5,
         history_max_age_hours=24,
         tools_config={},
@@ -803,7 +804,7 @@ async def test_cancel_pending_callback(
     dummy_prompts = {"system_prompt": "Test system prompt for cancel."}
     test_service_config_obj_cancel = ProcessingServiceConfig(
         prompts=dummy_prompts,
-        timezone_str="UTC",
+        timezone=ZoneInfo("UTC"),
         max_history_messages=5,
         history_max_age_hours=24,
         tools_config={},
@@ -1104,7 +1105,7 @@ async def test_schedule_reminder_with_follow_up(
 
     test_service_config = ProcessingServiceConfig(
         prompts={"system_prompt": "Test system prompt for reminders."},
-        timezone_str="UTC",
+        timezone=ZoneInfo("UTC"),
         max_history_messages=10,
         history_max_age_hours=24,
         tools_config={},
@@ -1454,7 +1455,7 @@ async def test_schedule_recurring_callback(
 
     test_service_config = ProcessingServiceConfig(
         prompts={"system_prompt": "Test system prompt for recurring callbacks."},
-        timezone_str="UTC",
+        timezone=ZoneInfo("UTC"),
         max_history_messages=10,
         history_max_age_hours=24,
         tools_config={},
@@ -1680,7 +1681,7 @@ async def test_list_pending_callbacks(db_engine: AsyncEngine) -> None:
 
     test_service_config = ProcessingServiceConfig(
         prompts={"system_prompt": "Test system prompt for list callbacks."},
-        timezone_str="UTC",
+        timezone=ZoneInfo("UTC"),
         max_history_messages=5,
         history_max_age_hours=24,
         tools_config={},

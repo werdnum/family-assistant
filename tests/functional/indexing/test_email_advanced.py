@@ -12,6 +12,7 @@ from collections.abc import AsyncGenerator
 from datetime import UTC, datetime
 from typing import Any
 from unittest.mock import MagicMock
+from zoneinfo import ZoneInfo
 
 import httpx
 import numpy as np
@@ -424,7 +425,7 @@ async def test_vector_ranking(
         chat_interface=mock_chat_interface_kw,
         embedding_generator=mock_embedder,  # Pass the embedder directly
         calendar_config=None,
-        timezone_str=dummy_timezone_str_kw,
+        timezone=ZoneInfo(dummy_timezone_str_kw),
         shutdown_event_instance=test_shutdown_event,  # Pass the shutdown event
         engine=pg_vector_db_engine,  # Pass the engine for database operations
     )
@@ -615,7 +616,7 @@ async def test_metadata_filtering(
         chat_interface=mock_chat_interface_meta,
         embedding_generator=mock_embedder,  # Pass the embedder directly
         calendar_config=None,
-        timezone_str=dummy_timezone_str_meta,
+        timezone=ZoneInfo(dummy_timezone_str_meta),
         shutdown_event_instance=test_shutdown_event,  # Pass the shutdown event
         engine=pg_vector_db_engine,  # Pass the engine for database operations
     )
@@ -796,7 +797,7 @@ async def test_keyword_filtering(
         chat_interface=mock_chat_interface_keyword_test,
         embedding_generator=mock_embedder,  # Pass the embedder directly
         calendar_config=None,
-        timezone_str=dummy_timezone_str_kw,
+        timezone=ZoneInfo(dummy_timezone_str_kw),
         shutdown_event_instance=test_shutdown_event,  # Pass the shutdown event
         engine=pg_vector_db_engine,  # Pass the engine for database operations
     )

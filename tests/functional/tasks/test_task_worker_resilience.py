@@ -9,6 +9,7 @@ from collections.abc import Callable
 from datetime import UTC, datetime
 from typing import Any
 from unittest.mock import MagicMock
+from zoneinfo import ZoneInfo
 
 import pytest
 from sqlalchemy import select
@@ -39,7 +40,7 @@ async def test_task_handler_timeout(
         processing_service=MagicMock(),
         chat_interface=MagicMock(),
         calendar_config={},
-        timezone_str="UTC",
+        timezone=ZoneInfo("UTC"),
         embedding_generator=MagicMock(),
         shutdown_event_instance=shutdown_event,
         engine=db_engine,
@@ -265,7 +266,7 @@ async def test_worker_activity_tracking(db_engine: AsyncEngine) -> None:
         processing_service=MagicMock(),
         chat_interface=MagicMock(),
         calendar_config={},
-        timezone_str="UTC",
+        timezone=ZoneInfo("UTC"),
         embedding_generator=MagicMock(),
         engine=db_engine,
         shutdown_event_instance=asyncio.Event(),  # Create fresh shutdown event for test
@@ -333,7 +334,7 @@ async def test_health_check_properties(db_engine: AsyncEngine) -> None:
         processing_service=MagicMock(),
         chat_interface=MagicMock(),
         calendar_config={},
-        timezone_str="UTC",
+        timezone=ZoneInfo("UTC"),
         embedding_generator=MagicMock(),
         engine=db_engine,
         shutdown_event_instance=asyncio.Event(),  # Create fresh shutdown event for test
@@ -366,7 +367,7 @@ async def test_shutdown_stops_worker(db_engine: AsyncEngine) -> None:
         processing_service=MagicMock(),
         chat_interface=MagicMock(),
         calendar_config={},
-        timezone_str="UTC",
+        timezone=ZoneInfo("UTC"),
         embedding_generator=MagicMock(),
         engine=db_engine,
         shutdown_event_instance=asyncio.Event(),  # Create fresh shutdown event for test

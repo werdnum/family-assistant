@@ -3,6 +3,7 @@ import json
 import logging
 import uuid
 from typing import Annotated, Any
+from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import JSONResponse
@@ -49,10 +50,10 @@ async def execute_tool_api(
     app_config = getattr(request.app.state, "config", None)
     if not app_config:
         logger.error("Main application configuration not found in app state.")
-        timezone_str = "UTC"
+        timezone = ZoneInfo("UTC")
     else:
-        # Get default timezone from default profile settings
-        timezone_str = app_config.default_profile_settings.processing_config.timezone
+        # Get default timezone from default profile settings (already a ZoneInfo object)
+        timezone = app_config.default_profile_settings.processing_config.timezone
 
     # Get infrastructure dependencies from app state
     processing_service = getattr(request.app.state, "processing_service", None)
@@ -91,7 +92,7 @@ async def execute_tool_api(
         camera_backend=camera_backend,
         # Optional fields (with defaults)
         chat_interface=None,  # No direct chat interface for API calls
-        timezone_str=timezone_str,  # Pass fetched timezone string
+        timezone=timezone,  # Pass fetched timezone
         request_confirmation_callback=None,  # No confirmation from API for now
         tools_provider=root_tools_provider,  # Pass root tools provider for execute_script
     )

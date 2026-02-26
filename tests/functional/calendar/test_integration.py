@@ -61,15 +61,14 @@ async def test_format_datetime_or_date_all_day_tomorrow_with_mock_clock() -> Non
     Test that an all-day event for tomorrow is correctly formatted as "Tomorrow"
     using MockClock.
     """
-    timezone_str = "America/New_York"
-    local_tz = ZoneInfo(timezone_str)
+    local_tz = ZoneInfo("America/New_York")
     mock_now = datetime(2025, 6, 23, 10, 0, 0, tzinfo=local_tz)
     mock_clock = MockClock(initial_time=mock_now)
 
     event_dt = datetime(2025, 6, 24, 0, 0, 0, tzinfo=ZoneInfo("UTC"))
 
     formatted_str = format_datetime_or_date(
-        dt_obj=event_dt, timezone_str=timezone_str, is_end=False, clock=mock_clock
+        dt_obj=event_dt, timezone=local_tz, is_end=False, clock=mock_clock
     )
 
     assert "Tomorrow" in formatted_str
@@ -266,12 +265,12 @@ async def test_add_event_and_verify_in_system_prompt(
     calendar_context_provider = CalendarContextProvider(
         calendar_config=test_calendar_config,
         prompts=dummy_prompts,
-        timezone_str=TEST_TIMEZONE_STR,
+        timezone=ZoneInfo(TEST_TIMEZONE_STR),
     )
     service_config = ProcessingServiceConfig(
         id="test_cal_add_profile",
         prompts=dummy_prompts,
-        timezone_str=TEST_TIMEZONE_STR,
+        timezone=ZoneInfo(TEST_TIMEZONE_STR),
         max_history_messages=5,
         history_max_age_hours=24,
         tools_config={"confirmation_required": []},

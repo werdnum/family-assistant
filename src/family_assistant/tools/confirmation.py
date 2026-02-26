@@ -14,6 +14,8 @@ import telegramify_markdown
 from family_assistant import calendar_integration
 
 if TYPE_CHECKING:
+    from zoneinfo import ZoneInfo
+
     from family_assistant.tools.infrastructure import ToolsProvider
     from family_assistant.tools.types import (
         CalendarConfig,
@@ -88,7 +90,7 @@ class ConfirmationRenderer(Protocol):
 
 def _format_event_details_for_confirmation(
     details: CalendarEvent | None,
-    timezone_str: str,
+    timezone: ZoneInfo,
 ) -> str:
     """Formats fetched event details for inclusion in confirmation prompts."""
     if not details:
@@ -98,22 +100,17 @@ def _format_event_details_for_confirmation(
     end_obj = details.get("end")
 
     start_str = (
-        calendar_integration.format_datetime_or_date(
-            start_obj, timezone_str, is_end=False
-        )
+        calendar_integration.format_datetime_or_date(start_obj, timezone, is_end=False)
         if start_obj
         else "Unknown Start Time"
     )
     end_str = (
-        calendar_integration.format_datetime_or_date(end_obj, timezone_str, is_end=True)
+        calendar_integration.format_datetime_or_date(end_obj, timezone, is_end=True)
         if end_obj
         else "Unknown End Time"
     )
     all_day = details.get("all_day", False)
     if all_day:
-        # All-day events typically don't need timezone formatting, but pass it anyway for consistency
-        # Or adjust format_datetime_or_date to handle date objects without requiring timezone_str
-        # Assuming format_datetime_or_date handles date objects gracefully.
         return f"'{summary}' (All Day: {start_str})"
     else:
         return f"'{summary}' ({start_str} - {end_str})"
@@ -155,9 +152,7 @@ async def render_delete_calendar_event_confirmation(
 
     # Use the helper to format event details
     # It handles the None case by returning "Event details not found."
-    event_desc = _format_event_details_for_confirmation(
-        event_details, context.timezone_str
-    )
+    event_desc = _format_event_details_for_confirmation(event_details, context.timezone)
 
     # Use MarkdownV2 compatible formatting
     return (
@@ -202,9 +197,7 @@ async def render_modify_calendar_event_confirmation(
 
     # Use the helper to format event details
     # It handles the None case by returning "Event details not found."
-    event_desc = _format_event_details_for_confirmation(
-        event_details, context.timezone_str
-    )
+    event_desc = _format_event_details_for_confirmation(event_details, context.timezone)
 
     changes = []
     # Use MarkdownV2 compatible formatting for code blocks/inline code

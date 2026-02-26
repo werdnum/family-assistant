@@ -8,6 +8,7 @@ import logging
 from datetime import UTC, datetime, timedelta
 from typing import Any
 from unittest.mock import MagicMock
+from zoneinfo import ZoneInfo
 
 import pytest
 from sqlalchemy.ext.asyncio import AsyncEngine
@@ -54,7 +55,7 @@ async def test_stale_task_pickup_prevented_by_timeout_buffer(
         processing_service=MagicMock(),
         chat_interface=MagicMock(),
         calendar_config={},
-        timezone_str="UTC",
+        timezone=ZoneInfo("UTC"),
         embedding_generator=MagicMock(),
         shutdown_event_instance=shutdown_event,
         engine=db_engine,
@@ -67,7 +68,7 @@ async def test_stale_task_pickup_prevented_by_timeout_buffer(
         processing_service=MagicMock(),
         chat_interface=MagicMock(),
         calendar_config={},
-        timezone_str="UTC",
+        timezone=ZoneInfo("UTC"),
         embedding_generator=MagicMock(),
         shutdown_event_instance=shutdown_event,
         engine=db_engine,

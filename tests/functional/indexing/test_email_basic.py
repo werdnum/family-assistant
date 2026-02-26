@@ -13,6 +13,7 @@ from collections.abc import AsyncGenerator
 from datetime import UTC, datetime
 from typing import Any
 from unittest.mock import MagicMock
+from zoneinfo import ZoneInfo
 
 import httpx
 import numpy as np
@@ -399,7 +400,7 @@ async def test_email_indexing_and_query_e2e(
         chat_interface=mock_chat_interface_e2e,
         embedding_generator=mock_embedder,  # Pass the embedder directly
         calendar_config=None,
-        timezone_str=dummy_timezone_str,
+        timezone=ZoneInfo(dummy_timezone_str),
         shutdown_event_instance=test_shutdown_event,  # Pass the shutdown event
         engine=pg_vector_db_engine,  # Pass the engine for database operations
     )

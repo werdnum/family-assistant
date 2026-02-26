@@ -4,6 +4,7 @@ import logging
 import uuid  # Added for turn_id
 from typing import TYPE_CHECKING
 from unittest.mock import MagicMock
+from zoneinfo import ZoneInfo
 
 import pytest
 from sqlalchemy import text  # To query DB directly for assertion
@@ -177,7 +178,7 @@ async def test_add_and_retrieve_note_rule_mock(
     # --- Create ServiceConfig ---
     test_service_config_obj_notes = ProcessingServiceConfig(
         prompts=dummy_prompts,
-        timezone_str=dummy_timezone_str,
+        timezone=ZoneInfo(dummy_timezone_str),
         max_history_messages=dummy_max_history,
         history_max_age_hours=dummy_history_age,
         tools_config={},  # Added missing tools_config

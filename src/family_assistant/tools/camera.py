@@ -12,7 +12,6 @@ import logging
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Any, TypedDict, cast
-from zoneinfo import ZoneInfo
 
 from pydantic import BaseModel, Field
 
@@ -23,6 +22,8 @@ from family_assistant.tools.types import ToolAttachment, ToolDefinition, ToolRes
 OLD_DATE_THRESHOLD = timedelta(days=30)
 
 if TYPE_CHECKING:
+    from zoneinfo import ZoneInfo
+
     from family_assistant.llm import LLMInterface
     from family_assistant.llm.content_parts import (
         ImageUrlContentPartDict,
@@ -337,12 +338,12 @@ CAMERA_TOOLS_DEFINITION: list[ToolDefinition] = [
 ]
 
 
-def _parse_local_time(time_str: str, timezone_str: str) -> datetime:
+def _parse_local_time(time_str: str, timezone: ZoneInfo) -> datetime:
     """Parse a time string, assuming local timezone if not specified.
 
     Args:
         time_str: ISO 8601 formatted time string, with or without timezone.
-        timezone_str: The local timezone to use if not specified in time_str.
+        timezone: The local timezone to use if not specified in time_str.
 
     Returns:
         A timezone-aware datetime object.
@@ -358,11 +359,17 @@ def _parse_local_time(time_str: str, timezone_str: str) -> datetime:
 
     # If no timezone info, assume local timezone
     if dt.tzinfo is None:
-        local_tz = ZoneInfo(timezone_str)
-        dt = dt.replace(tzinfo=local_tz)
-        logger.debug(f"Time '{time_str}' lacks timezone, assuming {timezone_str}")
+        dt = dt.replace(tzinfo=timezone)
+        logger.debug(f"Time '{time_str}' lacks timezone, assuming {timezone}")
 
     return dt
+
+
+def _to_local_isoformat(dt: datetime, timezone: ZoneInfo) -> str:
+    """Convert a datetime to ISO format in the user's local timezone."""
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=UTC)
+    return dt.astimezone(timezone).isoformat()
 
 
 async def list_cameras_tool(
@@ -409,8 +416,8 @@ async def search_camera_events_tool(
         )
 
     try:
-        start_dt = _parse_local_time(start_time, exec_context.timezone_str)
-        end_dt = _parse_local_time(end_time, exec_context.timezone_str)
+        start_dt = _parse_local_time(start_time, exec_context.timezone)
+        end_dt = _parse_local_time(end_time, exec_context.timezone)
     except ValueError as e:
         return ToolResult(data={"error": f"Invalid timestamp format: {e}"})
 
@@ -418,9 +425,10 @@ async def search_camera_events_tool(
     now = datetime.now(UTC)
     date_warning = ""
     if now - end_dt > OLD_DATE_THRESHOLD:
+        local_now = now.astimezone(exec_context.timezone)
         date_warning = (
             f" WARNING: These dates are more than {OLD_DATE_THRESHOLD.days} days in the past. "
-            f"Current time is {now.strftime('%Y-%m-%d %H:%M UTC')}. "
+            f"Current time is {local_now.strftime('%Y-%m-%d %H:%M %Z')}. "
             "Did you mean to search a more recent time range?"
         )
 
@@ -434,8 +442,12 @@ async def search_camera_events_tool(
         event_list = [
             {
                 "camera_id": evt.camera_id,
-                "start_time": evt.start_time.isoformat(),
-                "end_time": evt.end_time.isoformat() if evt.end_time else None,
+                "start_time": _to_local_isoformat(
+                    evt.start_time, exec_context.timezone
+                ),
+                "end_time": _to_local_isoformat(evt.end_time, exec_context.timezone)
+                if evt.end_time
+                else None,
                 "event_type": evt.event_type,
                 "confidence": evt.confidence,
                 "metadata": evt.metadata,
@@ -471,7 +483,7 @@ async def get_camera_frame_tool(
         )
 
     try:
-        ts = _parse_local_time(timestamp, exec_context.timezone_str)
+        ts = _parse_local_time(timestamp, exec_context.timezone)
     except ValueError as e:
         return ToolResult(data={"error": f"Invalid timestamp format: {e}"})
 
@@ -515,8 +527,8 @@ async def get_camera_frames_batch_tool(
         )
 
     try:
-        start_dt = _parse_local_time(start_time, exec_context.timezone_str)
-        end_dt = _parse_local_time(end_time, exec_context.timezone_str)
+        start_dt = _parse_local_time(start_time, exec_context.timezone)
+        end_dt = _parse_local_time(end_time, exec_context.timezone)
     except ValueError as e:
         return ToolResult(data={"error": f"Invalid timestamp format: {e}"})
 
@@ -538,7 +550,7 @@ async def get_camera_frames_batch_tool(
             ToolAttachment(
                 mime_type="image/jpeg",
                 content=frame.jpeg_bytes,
-                description=f"Frame {i + 1}/{len(frames)} at {frame.timestamp.isoformat()}",
+                description=f"Frame {i + 1}/{len(frames)} at {_to_local_isoformat(frame.timestamp, exec_context.timezone)}",
             )
             for i, frame in enumerate(frames)
         ]
@@ -546,7 +558,10 @@ async def get_camera_frames_batch_tool(
         return ToolResult(
             data={
                 "camera_id": camera_id,
-                "timestamps": [f.timestamp.isoformat() for f in frames],
+                "timestamps": [
+                    _to_local_isoformat(f.timestamp, exec_context.timezone)
+                    for f in frames
+                ],
                 "count": len(frames),
             },
             attachments=attachments,
@@ -574,8 +589,8 @@ async def get_camera_recordings_tool(
         )
 
     try:
-        start_dt = _parse_local_time(start_time, exec_context.timezone_str)
-        end_dt = _parse_local_time(end_time, exec_context.timezone_str)
+        start_dt = _parse_local_time(start_time, exec_context.timezone)
+        end_dt = _parse_local_time(end_time, exec_context.timezone)
     except ValueError as e:
         return ToolResult(data={"error": f"Invalid timestamp format: {e}"})
 
@@ -588,8 +603,10 @@ async def get_camera_recordings_tool(
         recording_list = [
             {
                 "camera_id": rec.camera_id,
-                "start_time": rec.start_time.isoformat(),
-                "end_time": rec.end_time.isoformat(),
+                "start_time": _to_local_isoformat(
+                    rec.start_time, exec_context.timezone
+                ),
+                "end_time": _to_local_isoformat(rec.end_time, exec_context.timezone),
                 "filename": rec.filename,
                 "size_bytes": rec.size_bytes,
                 "duration_seconds": (rec.end_time - rec.start_time).total_seconds(),
@@ -808,8 +825,8 @@ async def scan_camera_frames_tool(
 
     # Parse time range
     try:
-        start_dt = _parse_local_time(start_time, exec_context.timezone_str)
-        end_dt = _parse_local_time(end_time, exec_context.timezone_str)
+        start_dt = _parse_local_time(start_time, exec_context.timezone)
+        end_dt = _parse_local_time(end_time, exec_context.timezone)
     except ValueError as e:
         return ToolResult(data={"error": f"Invalid timestamp format: {e}"})
 
@@ -877,7 +894,7 @@ async def scan_camera_frames_tool(
         attachments: list[ToolAttachment] = []
 
         for result in matching_results:
-            ts_str = result.timestamp.isoformat()
+            ts_str = _to_local_isoformat(result.timestamp, exec_context.timezone)
             summary: AnalysisSummaryDict = {
                 "timestamp": ts_str,
                 "matches_query": result.matches_query,
@@ -938,7 +955,9 @@ async def scan_camera_frames_tool(
             )
         else:
             match_times = [
-                r.timestamp.strftime("%H:%M:%S")
+                (r.timestamp if r.timestamp.tzinfo else r.timestamp.replace(tzinfo=UTC))
+                .astimezone(exec_context.timezone)
+                .strftime("%H:%M:%S")
                 for r in matching_results
                 if r.matches_query
             ]

@@ -30,9 +30,8 @@ from family_assistant.config_loader import (
     resolve_all_service_profiles,
     resolve_service_profile,
     set_nested_value,
-    validate_timezone,
 )
-from family_assistant.config_models import AppConfig
+from family_assistant.config_models import AppConfig, ProcessingConfig
 from family_assistant.config_sources import (
     DeepMergedYamlSource,
     deep_merge_dicts,
@@ -557,32 +556,17 @@ class TestApplyCalendarEnvVars:
 
 
 class TestValidateTimezone:
-    """Tests for validate_timezone function."""
+    """Tests for timezone validation via Pydantic field_validator on ProcessingConfig."""
 
-    def test_valid_timezone(self) -> None:
-        """Test that valid timezone is accepted."""
-        config: dict[str, Any] = {
-            "default_profile_settings": {
-                "processing_config": {"timezone": "America/New_York"}
-            }
-        }
-        validate_timezone(config)
-        assert (
-            config["default_profile_settings"]["processing_config"]["timezone"]
-            == "America/New_York"
-        )
+    def test_valid_timezone_accepted(self) -> None:
+        """Test that valid timezone is accepted by Pydantic validation."""
+        config = ProcessingConfig(timezone="America/New_York")
+        assert config.timezone == "America/New_York"
 
-    def test_invalid_timezone_defaults_to_utc(self) -> None:
-        """Test that invalid timezone defaults to UTC."""
-        config: dict[str, Any] = {
-            "default_profile_settings": {
-                "processing_config": {"timezone": "Invalid/Timezone"}
-            }
-        }
-        validate_timezone(config)
-        assert (
-            config["default_profile_settings"]["processing_config"]["timezone"] == "UTC"
-        )
+    def test_invalid_timezone_raises_error(self) -> None:
+        """Test that invalid timezone raises a ValidationError instead of silently defaulting."""
+        with pytest.raises(ValidationError, match="Invalid timezone"):
+            ProcessingConfig(timezone="Invalid/Timezone")
 
 
 class TestResolveServiceProfile:

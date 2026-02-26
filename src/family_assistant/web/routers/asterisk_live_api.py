@@ -21,7 +21,7 @@ import time
 import uuid
 import wave
 from array import array
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import IO, TYPE_CHECKING, Annotated, Protocol, TypeAlias, cast
 from zoneinfo import ZoneInfo
 
@@ -1272,7 +1272,7 @@ class AsteriskLiveHandler:
                         db_context=db_context,
                         chat_interface=None,
                         chat_interfaces=self.chat_interfaces,
-                        timezone_str=self.processing_service.timezone_str,
+                        timezone=self.processing_service.timezone,
                         processing_profile_id=self.processing_service.service_config.id,
                         subconversation_id=None,
                         request_confirmation_callback=None,
@@ -1477,17 +1477,8 @@ async def asterisk_live_endpoint(
             prompts = telephone_service.service_config.prompts
             sys_prompt_template = prompts.get("system_prompt", "")
             if sys_prompt_template:
-                # Use configured timezone if available
-                timezone_str = telephone_service.service_config.timezone_str
-                tz = None
-                if timezone_str:
-                    try:
-                        tz = ZoneInfo(timezone_str)
-                    except Exception:
-                        logger.warning(
-                            f"Invalid timezone '{timezone_str}' configured for telephone profile. Falling back to system time."
-                        )
-
+                # Use configured timezone
+                tz = telephone_service.service_config.timezone
                 current_time = datetime.now(tz).strftime("%I:%M %p, %A, %B %d, %Y")
                 system_instruction = sys_prompt_template.replace(
                     "{current_time}", current_time

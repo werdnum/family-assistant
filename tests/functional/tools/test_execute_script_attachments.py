@@ -2,6 +2,7 @@
 
 from pathlib import Path
 from unittest.mock import Mock
+from zoneinfo import ZoneInfo
 
 import pytest
 from sqlalchemy.ext.asyncio import AsyncEngine
@@ -505,7 +506,7 @@ async def test_tool_chaining_json_query_workflow(
 
     service_config = ProcessingServiceConfig(
         prompts={},
-        timezone_str="UTC",
+        timezone=ZoneInfo("UTC"),
         max_history_messages=10,
         history_max_age_hours=24,
         tools_config={},  # type: ignore[arg-type]

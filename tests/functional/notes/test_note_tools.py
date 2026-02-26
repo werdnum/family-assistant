@@ -5,6 +5,7 @@ import logging
 import uuid
 from typing import TYPE_CHECKING
 from unittest.mock import MagicMock
+from zoneinfo import ZoneInfo
 
 import pytest
 from sqlalchemy import text
@@ -76,7 +77,7 @@ async def create_processing_service(
     # Create service config
     service_config = ProcessingServiceConfig(
         prompts={"system_prompt": "Test system prompt."},
-        timezone_str="UTC",
+        timezone=ZoneInfo("UTC"),
         max_history_messages=5,
         history_max_age_hours=24,
         tools_config={},

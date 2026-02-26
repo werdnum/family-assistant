@@ -6,7 +6,9 @@ import json
 import logging
 from datetime import UTC, datetime, timedelta
 from typing import Any
+from zoneinfo import ZoneInfo
 
+from dateutil.parser import parse as parse_datetime
 from sqlalchemy import text
 
 # get_db_context import removed - using exec_context.db_context for dependency injection
@@ -14,6 +16,29 @@ from family_assistant.events.validation import format_validation_errors
 from family_assistant.tools.types import ToolDefinition, ToolExecutionContext
 
 logger = logging.getLogger(__name__)
+
+
+def _format_event_timestamp(timestamp: str | datetime, timezone: ZoneInfo) -> str:
+    """Convert a raw event timestamp to local timezone ISO format.
+
+    Handles both string timestamps (from SQLite) and datetime objects,
+    ensuring naive datetimes are treated as UTC.
+
+    Args:
+        timestamp: Timestamp as a string or datetime object.
+        timezone: ZoneInfo object for the user's local timezone.
+
+    Returns:
+        ISO format string in the user's local timezone.
+    """
+    if isinstance(timestamp, str):
+        parsed = parse_datetime(timestamp)
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=UTC)
+        return parsed.astimezone(timezone).isoformat()
+    if timestamp.tzinfo is None:
+        timestamp = timestamp.replace(tzinfo=UTC)
+    return timestamp.astimezone(timezone).isoformat()
 
 
 # Tool definitions
@@ -185,17 +210,12 @@ async def query_recent_events_tool(
                 except json.JSONDecodeError:
                     triggered_listeners = []
 
-            # Handle timestamp format (SQLite returns strings)
-            timestamp = row["timestamp"]
-            if isinstance(timestamp, str):
-                timestamp_str = timestamp
-            else:
-                timestamp_str = timestamp.isoformat()
-
             events.append({
                 "event_id": row["event_id"],
                 "source_id": row["source_id"],
-                "timestamp": timestamp_str,
+                "timestamp": _format_event_timestamp(
+                    row["timestamp"], exec_context.timezone
+                ),
                 "event_data": event_data,
                 "triggered_listeners": triggered_listeners,
             })
@@ -327,16 +347,11 @@ async def test_event_listener_tool(
 
             # Check if event matches conditions
             if _check_match_conditions(event_data, match_conditions):
-                # Handle timestamp format
-                timestamp = row["timestamp"]
-                if isinstance(timestamp, str):
-                    timestamp_str = timestamp
-                else:
-                    timestamp_str = timestamp.isoformat()
-
                 matched_events.append({
                     "event_id": row["event_id"],
-                    "timestamp": timestamp_str,
+                    "timestamp": _format_event_timestamp(
+                        row["timestamp"], exec_context.timezone
+                    ),
                     "event_data": event_data,
                 })
 

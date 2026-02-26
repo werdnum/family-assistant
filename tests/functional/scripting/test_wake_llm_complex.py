@@ -10,6 +10,7 @@ import tempfile
 import uuid
 from collections.abc import Callable
 from unittest.mock import AsyncMock, MagicMock
+from zoneinfo import ZoneInfo
 
 import aiofiles
 import pytest
@@ -152,7 +153,7 @@ if motion_detected:
             service_config=ProcessingServiceConfig(
                 id="security_assistant",
                 prompts={"system_prompt": "You are a security monitoring assistant."},
-                timezone_str="UTC",
+                timezone=ZoneInfo("UTC"),
                 max_history_messages=1,
                 history_max_age_hours=1,
                 tools_config={},
@@ -195,7 +196,7 @@ if motion_detected:
         task_worker = TaskWorker(
             processing_service=mock_processing_service,
             chat_interface=mock_chat_interface,
-            timezone_str="UTC",
+            timezone=ZoneInfo("UTC"),
             embedding_generator=MagicMock(),
             calendar_config={},
             shutdown_event_instance=shutdown_event,
@@ -400,7 +401,7 @@ wake_llm({
             service_config=ProcessingServiceConfig(
                 id="camera_assistant",
                 prompts={"system_prompt": "You are a security camera assistant."},
-                timezone_str="UTC",
+                timezone=ZoneInfo("UTC"),
                 max_history_messages=1,
                 history_max_age_hours=1,
                 tools_config={},
@@ -430,7 +431,7 @@ wake_llm({
         task_worker = TaskWorker(
             processing_service=mock_processing_service,
             chat_interface=mock_chat_interface,
-            timezone_str="UTC",
+            timezone=ZoneInfo("UTC"),
             embedding_generator=MagicMock(),
             calendar_config={},
             shutdown_event_instance=shutdown_event,

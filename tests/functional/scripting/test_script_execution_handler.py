@@ -7,6 +7,7 @@ import logging
 import uuid
 from collections.abc import Callable
 from unittest.mock import AsyncMock
+from zoneinfo import ZoneInfo
 
 import pytest
 from sqlalchemy.ext.asyncio import AsyncEngine
@@ -93,7 +94,7 @@ add_or_update_note(
         service_config=ProcessingServiceConfig(
             id="event_handler",
             prompts={"system_prompt": "Event handler"},
-            timezone_str="UTC",
+            timezone=ZoneInfo("UTC"),
             max_history_messages=1,
             history_max_age_hours=1,
             tools_config={},
@@ -191,7 +192,7 @@ async def test_script_with_syntax_error_creates_no_note(
         service_config=ProcessingServiceConfig(
             id="event_handler",
             prompts={"system_prompt": "Event handler"},
-            timezone_str="UTC",
+            timezone=ZoneInfo("UTC"),
             max_history_messages=1,
             history_max_age_hours=1,
             tools_config={},
@@ -303,7 +304,7 @@ add_or_update_note(
         service_config=ProcessingServiceConfig(
             id="event_handler",
             prompts={"system_prompt": "Event handler"},
-            timezone_str="UTC",
+            timezone=ZoneInfo("UTC"),
             max_history_messages=1,
             history_max_age_hours=1,
             tools_config={},
@@ -450,7 +451,7 @@ add_or_update_note(
         service_config=ProcessingServiceConfig(
             id="event_handler",
             prompts={"system_prompt": "Event handler"},
-            timezone_str="UTC",
+            timezone=ZoneInfo("UTC"),
             max_history_messages=1,
             history_max_age_hours=1,
             tools_config={},

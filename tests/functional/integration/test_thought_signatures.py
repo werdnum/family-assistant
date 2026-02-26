@@ -2,6 +2,7 @@
 
 from collections.abc import AsyncIterator, Sequence
 from typing import TYPE_CHECKING, Any, TypeVar
+from zoneinfo import ZoneInfo
 
 import pytest
 from sqlalchemy.ext.asyncio import AsyncEngine
@@ -257,7 +258,7 @@ async def test_thought_signatures_persist_and_roundtrip(
     mock_llm = MockLLMWithThoughtSignatures()
     config = ProcessingServiceConfig(
         prompts={"system_prompt": "You are a helpful assistant."},
-        timezone_str="UTC",
+        timezone=ZoneInfo("UTC"),
         max_history_messages=10,
         history_max_age_hours=24,
         tools_config={"enable_local_tools": [], "enable_mcp_server_ids": []},
@@ -336,7 +337,7 @@ async def test_thought_signatures_without_tool_calls(
     mock_llm = MockLLMWithThoughtSignaturesNoToolCalls()
     config = ProcessingServiceConfig(
         prompts={"system_prompt": "You are a helpful assistant."},
-        timezone_str="UTC",
+        timezone=ZoneInfo("UTC"),
         max_history_messages=10,
         history_max_age_hours=24,
         tools_config={"enable_local_tools": [], "enable_mcp_server_ids": []},

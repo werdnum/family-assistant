@@ -7,6 +7,7 @@ user journey via the HTTP API with real LLM integration.
 import os
 from collections.abc import AsyncGenerator
 from typing import TYPE_CHECKING
+from zoneinfo import ZoneInfo
 
 import pytest
 import pytest_asyncio
@@ -67,7 +68,7 @@ async def llm_integration_processing_service(
     # Create processing service config
     config = ProcessingServiceConfig(
         prompts={"system_prompt": "You are a helpful assistant."},
-        timezone_str="UTC",
+        timezone=ZoneInfo("UTC"),
         max_history_messages=20,
         history_max_age_hours=72,
         delegation_security_level="high",
@@ -82,7 +83,7 @@ async def llm_integration_processing_service(
 
     calendar_provider = CalendarContextProvider(
         calendar_config={},  # type: ignore[arg-type]
-        timezone_str=config.timezone_str,
+        timezone=config.timezone,
         prompts=config.prompts,
     )
     notes_provider = NotesContextProvider(

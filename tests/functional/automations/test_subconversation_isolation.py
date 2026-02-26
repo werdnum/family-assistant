@@ -5,6 +5,7 @@ import logging
 import uuid
 from typing import Any
 from unittest.mock import MagicMock
+from zoneinfo import ZoneInfo
 
 import pytest
 import pytest_asyncio
@@ -64,7 +65,7 @@ def dummy_prompts() -> dict[str, str]:
 def primary_service_config(dummy_prompts: dict[str, str]) -> ProcessingServiceConfig:
     return ProcessingServiceConfig(
         prompts=dummy_prompts,
-        timezone_str="UTC",
+        timezone=ZoneInfo("UTC"),
         max_history_messages=10,
         history_max_age_hours=24,
         tools_config={
@@ -80,7 +81,7 @@ def primary_service_config(dummy_prompts: dict[str, str]) -> ProcessingServiceCo
 def delegated_service_config(dummy_prompts: dict[str, str]) -> ProcessingServiceConfig:
     return ProcessingServiceConfig(
         prompts=dummy_prompts,
-        timezone_str="UTC",
+        timezone=ZoneInfo("UTC"),
         max_history_messages=10,
         history_max_age_hours=24,
         tools_config={

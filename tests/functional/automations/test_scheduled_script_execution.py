@@ -6,6 +6,7 @@ import logging
 from collections.abc import Callable
 from datetime import timedelta
 from unittest.mock import AsyncMock
+from zoneinfo import ZoneInfo
 
 import pytest
 from sqlalchemy.ext.asyncio import AsyncEngine
@@ -131,7 +132,7 @@ print("Script executed - note created: " + str(result))
         tools_provider=composite_provider,
         service_config=ProcessingServiceConfig(
             prompts={"system_prompt": "Test assistant"},
-            timezone_str="UTC",
+            timezone=ZoneInfo("UTC"),
             max_history_messages=5,
             history_max_age_hours=24,
             tools_config={},
@@ -300,7 +301,7 @@ print("Recurring script executed - note created")
         tools_provider=composite_provider,
         service_config=ProcessingServiceConfig(
             prompts={"system_prompt": "Test assistant"},
-            timezone_str="UTC",
+            timezone=ZoneInfo("UTC"),
             max_history_messages=5,
             history_max_age_hours=24,
             tools_config={},
@@ -468,7 +469,7 @@ if True  # Missing colon
         tools_provider=composite_provider,
         service_config=ProcessingServiceConfig(
             prompts={"system_prompt": "Test"},
-            timezone_str="UTC",
+            timezone=ZoneInfo("UTC"),
             max_history_messages=5,
             history_max_age_hours=24,
             tools_config={},

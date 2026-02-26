@@ -8,6 +8,7 @@ import signal  # Import the signal module
 import uuid  # Added for turn_id
 from typing import TYPE_CHECKING, cast
 from unittest.mock import MagicMock  # Keep mocks for LLM
+from zoneinfo import ZoneInfo
 
 import pytest
 import pytest_asyncio  # Import pytest_asyncio
@@ -276,7 +277,7 @@ async def test_mcp_time_conversion_stdio(db_engine: AsyncEngine) -> None:
 
     test_service_config_obj_stdio = ProcessingServiceConfig(
         prompts=dummy_prompts,
-        timezone_str=dummy_timezone_str,
+        timezone=ZoneInfo(dummy_timezone_str),
         max_history_messages=dummy_max_history,
         history_max_age_hours=dummy_history_age,
         tools_config={},  # Added missing tools_config
@@ -473,7 +474,7 @@ async def test_mcp_time_conversion_sse(
 
     test_service_config_obj_sse = ProcessingServiceConfig(
         prompts=dummy_prompts,
-        timezone_str=dummy_timezone_str,
+        timezone=ZoneInfo(dummy_timezone_str),
         max_history_messages=dummy_max_history,
         history_max_age_hours=dummy_history_age,
         tools_config={},  # Added missing tools_config

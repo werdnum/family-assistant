@@ -20,7 +20,6 @@ import logging
 import os
 import pathlib
 import string
-import zoneinfo
 from dataclasses import dataclass
 from typing import Any
 
@@ -395,25 +394,6 @@ def apply_calendar_env_vars(
             config_data["calendar_config"]["duplicate_detection"] = (
                 existing_dup_detection
             )
-
-
-def validate_timezone(
-    config_data: dict[str, Any],  # noqa: ANN401
-) -> None:
-    """Validate and fix timezone in profile settings.
-
-    Args:
-        config_data: The configuration dictionary to check/modify
-    """
-    profile_settings = config_data.get("default_profile_settings", {})
-    proc_config = profile_settings.get("processing_config", {})
-    timezone = proc_config.get("timezone", "UTC")
-
-    try:
-        zoneinfo.ZoneInfo(timezone)
-    except zoneinfo.ZoneInfoNotFoundError:
-        logger.error(f"Invalid timezone '{timezone}'. Defaulting to UTC.")
-        proc_config["timezone"] = "UTC"
 
 
 def load_prompts_yaml(
@@ -793,7 +773,6 @@ def load_config(
     apply_env_var_overrides(config_data)
     apply_calendar_env_vars(config_data)
     config_data["telegram_enabled"] = bool(config_data.get("telegram_token"))
-    validate_timezone(config_data)
 
     # 3. Load prompts and resolve service profiles
     default_prompts, service_profile_prompts = load_prompts_yaml(prompts_file_path)

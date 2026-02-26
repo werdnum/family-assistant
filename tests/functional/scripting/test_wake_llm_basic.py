@@ -7,6 +7,7 @@ import logging
 import uuid
 from collections.abc import Callable
 from unittest.mock import AsyncMock, MagicMock
+from zoneinfo import ZoneInfo
 
 import pytest
 from sqlalchemy.ext.asyncio import AsyncEngine
@@ -130,7 +131,7 @@ if temp > 25.0:
         service_config=ProcessingServiceConfig(
             id="event_handler",
             prompts={"system_prompt": "Event handler"},
-            timezone_str="UTC",
+            timezone=ZoneInfo("UTC"),
             max_history_messages=1,
             history_max_age_hours=1,
             tools_config={},
@@ -145,7 +146,7 @@ if temp > 25.0:
     task_worker = TaskWorker(
         processing_service=processing_service,
         chat_interface=mock_chat_interface,
-        timezone_str="UTC",
+        timezone=ZoneInfo("UTC"),
         embedding_generator=MagicMock(),
         calendar_config={},
         shutdown_event_instance=shutdown_event,
@@ -315,7 +316,7 @@ if air_quality < 50:
         service_config=ProcessingServiceConfig(
             id="event_handler",
             prompts={"system_prompt": "Event handler"},
-            timezone_str="UTC",
+            timezone=ZoneInfo("UTC"),
             max_history_messages=1,
             history_max_age_hours=1,
             tools_config={},
@@ -329,7 +330,7 @@ if air_quality < 50:
     task_worker = TaskWorker(
         processing_service=processing_service,
         chat_interface=mock_chat_interface,
-        timezone_str="UTC",
+        timezone=ZoneInfo("UTC"),
         embedding_generator=MagicMock(),
         calendar_config={},
         shutdown_event_instance=shutdown_event,
@@ -473,7 +474,7 @@ if temp > 30 or temp < 10:
         service_config=ProcessingServiceConfig(
             id="event_handler",
             prompts={"system_prompt": "Event handler"},
-            timezone_str="UTC",
+            timezone=ZoneInfo("UTC"),
             max_history_messages=1,
             history_max_age_hours=1,
             tools_config={},
@@ -487,7 +488,7 @@ if temp > 30 or temp < 10:
     task_worker = TaskWorker(
         processing_service=processing_service,
         chat_interface=mock_chat_interface,
-        timezone_str="UTC",
+        timezone=ZoneInfo("UTC"),
         embedding_generator=MagicMock(),
         calendar_config={},
         shutdown_event_instance=shutdown_event,

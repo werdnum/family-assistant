@@ -7,6 +7,7 @@ from io import BytesIO
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 from unittest.mock import MagicMock
+from zoneinfo import ZoneInfo
 
 import pytest
 from PIL import Image
@@ -66,7 +67,7 @@ def processing_service() -> ProcessingService:
     """Provides a ProcessingService instance with mock dependencies."""
     mock_service_config = ProcessingServiceConfig(
         prompts={},  # Not used by _format_history_for_llm
-        timezone_str="UTC",  # Not used
+        timezone=ZoneInfo("UTC"),  # Not used
         max_history_messages=10,  # Not used
         history_max_age_hours=1,  # Not used
         tools_config={},  # Added missing tools_config
@@ -284,7 +285,7 @@ def test_web_specific_history_configuration() -> None:
     # Create a service config with web-specific settings
     mock_service_config = ProcessingServiceConfig(
         prompts={},
-        timezone_str="UTC",
+        timezone=ZoneInfo("UTC"),
         max_history_messages=5,  # Default for telegram
         history_max_age_hours=24,  # Default for telegram
         web_max_history_messages=100,  # Web-specific
@@ -327,7 +328,7 @@ def test_web_history_configuration_fallback() -> None:
     # Create a service config WITHOUT web-specific settings
     mock_service_config = ProcessingServiceConfig(
         prompts={},
-        timezone_str="UTC",
+        timezone=ZoneInfo("UTC"),
         max_history_messages=10,
         history_max_age_hours=48,
         web_max_history_messages=None,  # Not specified
@@ -360,7 +361,7 @@ def test_web_history_configuration_with_zero_values() -> None:
     # Create a service config with web-specific settings set to 0
     mock_service_config = ProcessingServiceConfig(
         prompts={},
-        timezone_str="UTC",
+        timezone=ZoneInfo("UTC"),
         max_history_messages=10,
         history_max_age_hours=48,
         web_max_history_messages=0,  # Explicitly set to 0

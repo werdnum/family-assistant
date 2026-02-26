@@ -4,6 +4,7 @@ import json
 import logging
 import uuid
 from unittest.mock import AsyncMock, MagicMock
+from zoneinfo import ZoneInfo
 
 import pytest
 from sqlalchemy.ext.asyncio import AsyncEngine
@@ -165,7 +166,7 @@ async def test_list_home_assistant_entities_with_filter(
     service_config = ProcessingServiceConfig(
         id="test_ha_list_entities_profile",
         prompts=dummy_prompts,
-        timezone_str=TEST_TIMEZONE_STR,
+        timezone=ZoneInfo(TEST_TIMEZONE_STR),
         max_history_messages=5,
         history_max_age_hours=24,
         tools_config={"confirmation_required": []},
@@ -325,7 +326,7 @@ async def test_list_home_assistant_entities_with_area_filter(
     service_config = ProcessingServiceConfig(
         id="test_ha_area_filter_profile",
         prompts=dummy_prompts,
-        timezone_str=TEST_TIMEZONE_STR,
+        timezone=ZoneInfo(TEST_TIMEZONE_STR),
         max_history_messages=5,
         history_max_age_hours=24,
         tools_config={"confirmation_required": []},
@@ -448,7 +449,7 @@ async def test_list_home_assistant_entities_no_client(
     service_config = ProcessingServiceConfig(
         id="test_ha_no_client_profile",
         prompts=dummy_prompts,
-        timezone_str=TEST_TIMEZONE_STR,
+        timezone=ZoneInfo(TEST_TIMEZONE_STR),
         max_history_messages=5,
         history_max_age_hours=24,
         tools_config={"confirmation_required": []},

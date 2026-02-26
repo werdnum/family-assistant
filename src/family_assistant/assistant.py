@@ -6,11 +6,11 @@ import copy
 import logging
 import os
 import sys
-import zoneinfo
 from asyncio import subprocess as asyncio_subprocess
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
+from zoneinfo import ZoneInfo
 
 import httpx
 import uvicorn
@@ -759,7 +759,7 @@ class Assistant:
             )
             calendar_provider = CalendarContextProvider(
                 calendar_config=_calendar_config_to_dict(self.config.calendar_config),
-                timezone_str=profile_proc_conf.timezone,
+                timezone=ZoneInfo(profile_proc_conf.timezone),
                 prompts=profile_proc_conf.prompts,
             )
             known_users_provider = KnownUsersContextProvider(
@@ -783,7 +783,7 @@ class Assistant:
                     location_id=willyweather_location_id,
                     api_key=willyweather_api_key,
                     prompts=profile_proc_conf.prompts,
-                    timezone_str=profile_proc_conf.timezone,
+                    timezone=ZoneInfo(profile_proc_conf.timezone),
                     httpx_client=self.shared_httpx_client,
                 )
                 context_providers.append(weather_provider)
@@ -852,7 +852,7 @@ class Assistant:
 
             service_config = ProcessingServiceConfig(
                 prompts=profile_proc_conf.prompts,
-                timezone_str=profile_proc_conf.timezone,
+                timezone=ZoneInfo(profile_proc_conf.timezone),
                 max_history_messages=profile_proc_conf.max_history_messages,
                 history_max_age_hours=profile_proc_conf.history_max_age_hours,
                 web_max_history_messages=profile_proc_conf.web_max_history_messages,
@@ -1122,7 +1122,7 @@ class Assistant:
             if self.telegram_service
             else NullChatInterface(),
             calendar_config=_calendar_config_to_dict(self.config.calendar_config),
-            timezone_str=default_profile_conf.processing_config.timezone,
+            timezone=ZoneInfo(default_profile_conf.processing_config.timezone),
             embedding_generator=self.embedding_generator,
             # shutdown_event is likely handled internally by TaskWorker or passed differently
             indexing_source=getattr(
@@ -1254,13 +1254,7 @@ class Assistant:
                     )
                     return
 
-                default_profile_conf = next(
-                    p
-                    for p in self.config.service_profiles
-                    if p.id == self.default_processing_service.service_config.id
-                )
-                timezone_str = default_profile_conf.processing_config.timezone
-                local_tz = zoneinfo.ZoneInfo(timezone_str)
+                local_tz = self.default_processing_service.timezone
 
                 # Get current time in local timezone and calculate next 3 AM local time
                 now_local = datetime.now(local_tz)
@@ -1286,7 +1280,7 @@ class Assistant:
                         max_retries_override=5,  # Higher retry count for system tasks
                     )
                     logger.info(
-                        f"System event cleanup task scheduled for {next_3am_local} ({timezone_str})"
+                        f"System event cleanup task scheduled for {next_3am_local} ({local_tz})"
                     )
                 except Exception as e:
                     # If task already exists, this is fine - just log it
@@ -1308,7 +1302,7 @@ class Assistant:
                         max_retries_override=5,  # Higher retry count for system tasks
                     )
                     logger.info(
-                        f"System error log cleanup task scheduled for {next_3am_local} ({timezone_str}) with {error_log_retention_days} day retention"
+                        f"System error log cleanup task scheduled for {next_3am_local} ({local_tz}) with {error_log_retention_days} day retention"
                     )
                 except Exception as e:
                     # If task already exists, this is fine - just log it
@@ -1325,7 +1319,7 @@ class Assistant:
                         max_retries_override=5,
                     )
                     logger.info(
-                        f"Worker task cleanup task scheduled for {next_3am_local} ({timezone_str})"
+                        f"Worker task cleanup task scheduled for {next_3am_local} ({local_tz})"
                     )
                 except Exception as e:
                     logger.info(f"Worker task cleanup task setup: {e}")

@@ -381,7 +381,9 @@ async def workspace_glob_tool(
                     "path": rel_path,
                     "is_file": match_path.is_file(),
                     "size": stat.st_size if match_path.is_file() else None,
-                    "modified": datetime.fromtimestamp(stat.st_mtime).isoformat(),
+                    "modified": datetime.fromtimestamp(
+                        stat.st_mtime, tz=exec_context.timezone
+                    ).isoformat(),
                 })
             else:
                 matches.append({"path": rel_path, "is_file": match_path.is_file()})

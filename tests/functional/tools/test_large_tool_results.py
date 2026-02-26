@@ -3,6 +3,7 @@
 import json
 from pathlib import Path
 from unittest.mock import AsyncMock, Mock
+from zoneinfo import ZoneInfo
 
 import pytest
 from sqlalchemy.ext.asyncio import AsyncEngine
@@ -40,7 +41,7 @@ async def test_large_tool_result_auto_attachment(
     # Setup ProcessingService
     config = ProcessingServiceConfig(
         prompts={},
-        timezone_str="UTC",
+        timezone=ZoneInfo("UTC"),
         max_history_messages=10,
         history_max_age_hours=1.0,
         tools_config={},
@@ -362,7 +363,7 @@ async def test_large_tool_result_data_field_triggers_auto_attachment(
 
     config = ProcessingServiceConfig(
         prompts={},
-        timezone_str="UTC",
+        timezone=ZoneInfo("UTC"),
         max_history_messages=10,
         history_max_age_hours=1.0,
         tools_config={},

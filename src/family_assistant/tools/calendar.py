@@ -63,7 +63,7 @@ async def _check_for_duplicate_events(
     """
     try:
         # Parse the event time to determine search window
-        local_tz = ZoneInfo(exec_context.timezone_str)
+        local_tz = exec_context.timezone
         if all_day:
             # For all-day events, search on the same date
             event_date = isoparse(start_time).date()
@@ -182,13 +182,17 @@ async def _check_for_duplicate_events(
                                 uid = str(vevent.get("uid", ""))
                                 dtstart = vevent.get("dtstart")
 
-                                # Format start time for display
+                                # Format start time for display in user's timezone
                                 if dtstart:
                                     start_val = dtstart.dt
                                     if isinstance(start_val, datetime):
-                                        start_str = start_val.strftime(
-                                            "%Y-%m-%d %H:%M %Z"
-                                        )
+                                        if start_val.tzinfo is None:
+                                            start_val = start_val.replace(
+                                                tzinfo=local_tz
+                                            )
+                                        start_str = start_val.astimezone(
+                                            local_tz
+                                        ).strftime("%Y-%m-%d %H:%M %Z")
                                     else:
                                         start_str = str(start_val)
                                 else:
@@ -504,15 +508,15 @@ async def add_calendar_event_tool(
             dtstart = isoparse(start_time)
             dtend = isoparse(end_time)
             # Assume configured timezone if none is provided in the input string
-            local_tz = ZoneInfo(exec_context.timezone_str)
+            local_tz = exec_context.timezone
             if dtstart.tzinfo is None:
                 logger.warning(
-                    f"Start time '{start_time}' lacks timezone. Assuming {exec_context.timezone_str}."
+                    f"Start time '{start_time}' lacks timezone. Assuming {exec_context.timezone}."
                 )
                 dtstart = dtstart.replace(tzinfo=local_tz)
             if dtend.tzinfo is None:
                 logger.warning(
-                    f"End time '{end_time}' lacks timezone. Assuming {exec_context.timezone_str}."
+                    f"End time '{end_time}' lacks timezone. Assuming {exec_context.timezone}."
                 )
                 dtend = dtend.replace(tzinfo=local_tz)
 
@@ -684,7 +688,7 @@ async def search_calendar_events_tool(
 
     try:
         # Parse search dates
-        local_tz = ZoneInfo(exec_context.timezone_str)
+        local_tz = exec_context.timezone
         now = datetime.now(local_tz)
 
         if start_date:
@@ -750,13 +754,17 @@ async def search_calendar_events_tool(
                                 dtstart = vevent.get("dtstart")
                                 dtend = vevent.get("dtend")
 
-                                # Format event info
+                                # Format event info in user's timezone
                                 if dtstart:
                                     start_val = dtstart.dt
                                     if isinstance(start_val, datetime):
-                                        start_str = start_val.strftime(
-                                            "%Y-%m-%d %H:%M %Z"
-                                        )
+                                        if start_val.tzinfo is None:
+                                            start_val = start_val.replace(
+                                                tzinfo=local_tz
+                                            )
+                                        start_str = start_val.astimezone(
+                                            local_tz
+                                        ).strftime("%Y-%m-%d %H:%M %Z")
                                     else:
                                         start_str = str(start_val)
                                 else:
@@ -765,7 +773,11 @@ async def search_calendar_events_tool(
                                 if dtend:
                                     end_val = dtend.dt
                                     if isinstance(end_val, datetime):
-                                        end_str = end_val.strftime("%Y-%m-%d %H:%M %Z")
+                                        if end_val.tzinfo is None:
+                                            end_val = end_val.replace(tzinfo=local_tz)
+                                        end_str = end_val.astimezone(local_tz).strftime(
+                                            "%Y-%m-%d %H:%M %Z"
+                                        )
                                     else:
                                         end_str = str(end_val)
                                 else:
@@ -1007,7 +1019,7 @@ async def modify_calendar_event_tool(
                         old_vevent.dtend.value if hasattr(old_vevent, "dtend") else None
                     )
 
-                    local_tz = ZoneInfo(exec_context.timezone_str)
+                    local_tz = exec_context.timezone
 
                     # Parse new times if provided
                     if new_start_time:

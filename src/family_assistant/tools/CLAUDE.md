@@ -188,7 +188,7 @@ Tools receive a `ToolExecutionContext` object with the following attributes:
 - `turn_id`: Optional turn identifier
 - `db_context`: Database context for data access
 - `chat_interface`: Optional interface for sending messages
-- `timezone_str`: User's timezone (default: "UTC")
+- `timezone`: User's timezone as a `ZoneInfo` object (default: `ZoneInfo("UTC")`)
 - `request_confirmation_callback`: Optional callback for user confirmation
 - `processing_service`: The processing service instance
 - `embedding_generator`: Optional embedding generator

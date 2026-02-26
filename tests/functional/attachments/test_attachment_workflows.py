@@ -6,6 +6,7 @@ import asyncio
 import uuid
 from typing import TYPE_CHECKING
 from unittest.mock import AsyncMock, MagicMock
+from zoneinfo import ZoneInfo
 
 import pytest
 
@@ -526,7 +527,7 @@ else:
             service_config=ProcessingServiceConfig(
                 id="event_handler",
                 prompts={"system_prompt": "Security event handler"},
-                timezone_str="UTC",
+                timezone=ZoneInfo("UTC"),
                 max_history_messages=1,
                 history_max_age_hours=1,
                 tools_config={},
@@ -541,7 +542,7 @@ else:
         task_worker = TaskWorker(
             processing_service=processing_service,
             chat_interface=mock_chat_interface,
-            timezone_str="UTC",
+            timezone=ZoneInfo("UTC"),
             embedding_generator=MagicMock(),
             calendar_config={},
             shutdown_event_instance=shutdown_event,

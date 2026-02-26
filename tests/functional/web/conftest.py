@@ -12,6 +12,7 @@ from collections.abc import AsyncGenerator, Awaitable, Callable, Generator
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, NamedTuple, cast
 from unittest.mock import AsyncMock
+from zoneinfo import ZoneInfo
 
 import httpx
 import pytest
@@ -1061,7 +1062,7 @@ def api_mock_processing_service_config() -> ProcessingServiceConfig:
                 "Context: {aggregated_other_context}"
             )
         },
-        timezone_str="UTC",
+        timezone=ZoneInfo("UTC"),
         max_history_messages=5,
         history_max_age_hours=24,
         tools_config={
@@ -1148,7 +1149,7 @@ def api_test_processing_service(
     )
     calendar_provider = CalendarContextProvider(
         calendar_config=cast("CalendarConfig", {}),  # Empty calendar config for tests
-        timezone_str=api_mock_processing_service_config.timezone_str,
+        timezone=api_mock_processing_service_config.timezone,
         prompts=api_mock_processing_service_config.prompts,
     )
     known_users_provider = KnownUsersContextProvider(

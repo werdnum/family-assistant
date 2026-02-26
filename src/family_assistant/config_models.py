@@ -16,11 +16,12 @@ Configuration priority (lowest to highest):
 from __future__ import annotations
 
 import contextlib
+import zoneinfo
 from contextvars import ContextVar
 from typing import TYPE_CHECKING, Any, ClassVar, Literal
 
 import cloudcoil.models.kubernetes.core.v1 as k8s_models  # noqa: TC002 - Pydantic needs at runtime
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 if TYPE_CHECKING:
@@ -97,6 +98,17 @@ class ProcessingConfig(BaseModel):
 
     prompts: dict[str, str] = Field(default_factory=dict)
     timezone: str = "UTC"
+
+    @field_validator("timezone")
+    @classmethod
+    def validate_timezone(cls, v: str) -> str:
+        try:
+            zoneinfo.ZoneInfo(v)
+        except (zoneinfo.ZoneInfoNotFoundError, KeyError) as e:
+            msg = f"Invalid timezone '{v}'. Must be a valid IANA timezone (e.g. 'Australia/Sydney', 'America/New_York', 'UTC')."
+            raise ValueError(msg) from e
+        return v
+
     max_history_messages: int = 5
     history_max_age_hours: float = 24.0
     web_max_history_messages: int | None = None

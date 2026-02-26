@@ -10,7 +10,6 @@ import logging
 import uuid
 from datetime import UTC
 from typing import TYPE_CHECKING, Any
-from zoneinfo import ZoneInfo
 
 from dateutil import rrule
 from dateutil.parser import isoparse
@@ -412,11 +411,9 @@ async def schedule_reminder_tool(
         scheduled_dt = isoparse(reminder_time)
         if scheduled_dt.tzinfo is None:
             logger.warning(
-                f"Reminder time '{reminder_time}' lacks timezone. Assuming {exec_context.timezone_str}."
+                f"Reminder time '{reminder_time}' lacks timezone. Assuming {exec_context.timezone}."
             )
-            scheduled_dt = scheduled_dt.replace(
-                tzinfo=ZoneInfo(exec_context.timezone_str)
-            )
+            scheduled_dt = scheduled_dt.replace(tzinfo=exec_context.timezone)
 
         # Ensure it's in the future
         if scheduled_dt <= clock.now():
@@ -493,7 +490,7 @@ async def schedule_recurring_task_tool(
     Schedules a recurring LLM callback task.
 
     Args:
-        exec_context: The execution context containing db_context and timezone_str.
+        exec_context: The execution context containing db_context and timezone.
         initial_schedule_time: ISO 8601 datetime string for the *first* run.
         recurrence_rule: RRULE string specifying the recurrence (e.g., 'FREQ=DAILY;INTERVAL=1;BYHOUR=8;BYMINUTE=0').
         callback_context: The context/instructions for the LLM when the callback triggers.
@@ -530,9 +527,9 @@ async def schedule_recurring_task_tool(
         initial_dt = isoparse(initial_schedule_time)
         if initial_dt.tzinfo is None:
             logger.warning(
-                f"RECURRING TASK CREATION WARNING: Initial schedule time '{initial_schedule_time}' lacks timezone. Assuming {exec_context.timezone_str}."
+                f"RECURRING TASK CREATION WARNING: Initial schedule time '{initial_schedule_time}' lacks timezone. Assuming {exec_context.timezone}."
             )
-            initial_dt = initial_dt.replace(tzinfo=ZoneInfo(exec_context.timezone_str))
+            initial_dt = initial_dt.replace(tzinfo=exec_context.timezone)
 
         # Ensure it's in the future (optional, but good practice)
         # Use the clock from context to ensure test compatibility
@@ -619,11 +616,9 @@ async def schedule_future_callback_tool(
         if scheduled_dt.tzinfo is None:
             # Or raise error, forcing LLM to provide timezone
             logger.warning(
-                f"Callback time '{callback_time}' lacks timezone. Assuming {exec_context.timezone_str}."
+                f"Callback time '{callback_time}' lacks timezone. Assuming {exec_context.timezone}."
             )
-            scheduled_dt = scheduled_dt.replace(
-                tzinfo=ZoneInfo(exec_context.timezone_str)
-            )
+            scheduled_dt = scheduled_dt.replace(tzinfo=exec_context.timezone)
 
         # Ensure it's in the future (optional, but good practice)
         if (
@@ -676,7 +671,7 @@ async def list_pending_callbacks_tool(
     db_context = exec_context.db_context
     conversation_id = exec_context.conversation_id
     interface_type = exec_context.interface_type
-    timezone_str = exec_context.timezone_str
+    tz = exec_context.timezone
     logger.info(
         f"Executing list_pending_callbacks_tool for {interface_type}:{conversation_id}, limit={limit}"
     )
@@ -730,7 +725,7 @@ async def list_pending_callbacks_tool(
                 # Ensure scheduled_at_utc is timezone-aware (should be if stored correctly)
                 if scheduled_at_utc.tzinfo is None:
                     scheduled_at_utc = scheduled_at_utc.replace(tzinfo=UTC)
-                scheduled_at_local = scheduled_at_utc.astimezone(ZoneInfo(timezone_str))
+                scheduled_at_local = scheduled_at_utc.astimezone(tz)
                 scheduled_at_local_str = scheduled_at_local.strftime(
                     "%Y-%m-%d %H:%M:%S %Z"
                 )
@@ -769,7 +764,7 @@ async def modify_pending_callback_tool(
     db_context = exec_context.db_context
     conversation_id = exec_context.conversation_id
     interface_type = exec_context.interface_type
-    timezone_str = exec_context.timezone_str
+    tz = exec_context.timezone
     clock = exec_context.clock or SystemClock()
     logger.info(
         f"Executing modify_pending_callback_tool for task_id='{task_id}' in {interface_type}:{conversation_id}"
@@ -809,7 +804,7 @@ async def modify_pending_callback_tool(
             try:
                 scheduled_dt = isoparse(new_callback_time)
                 if scheduled_dt.tzinfo is None:
-                    scheduled_dt = scheduled_dt.replace(tzinfo=ZoneInfo(timezone_str))
+                    scheduled_dt = scheduled_dt.replace(tzinfo=tz)
                 if scheduled_dt <= clock.now():  # Use clock from context
                     raise ValueError("New callback time must be in the future.")
                 updates["scheduled_at"] = scheduled_dt.astimezone(UTC)  # Store as UTC
@@ -947,11 +942,9 @@ async def schedule_action_tool(
         scheduled_dt = isoparse(schedule_time)
         if scheduled_dt.tzinfo is None:
             logger.warning(
-                f"Schedule time lacks timezone, assuming {exec_context.timezone_str}"
+                f"Schedule time lacks timezone, assuming {exec_context.timezone}"
             )
-            scheduled_dt = scheduled_dt.replace(
-                tzinfo=ZoneInfo(exec_context.timezone_str)
-            )
+            scheduled_dt = scheduled_dt.replace(tzinfo=exec_context.timezone)
 
         if scheduled_dt <= clock.now():
             return "Error: Schedule time must be in the future"
@@ -1020,9 +1013,9 @@ async def schedule_recurring_action_tool(
         start_dt = isoparse(start_time)
         if start_dt.tzinfo is None:
             logger.warning(
-                f"Start time lacks timezone, assuming {exec_context.timezone_str}"
+                f"Start time lacks timezone, assuming {exec_context.timezone}"
             )
-            start_dt = start_dt.replace(tzinfo=ZoneInfo(exec_context.timezone_str))
+            start_dt = start_dt.replace(tzinfo=exec_context.timezone)
 
         if start_dt <= clock.now():
             return "Error: Start time must be in the future"

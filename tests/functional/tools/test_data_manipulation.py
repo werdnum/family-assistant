@@ -9,6 +9,7 @@ from __future__ import annotations
 import json
 import uuid
 from typing import TYPE_CHECKING
+from zoneinfo import ZoneInfo
 
 import pytest
 
@@ -39,7 +40,7 @@ def _create_processing_service() -> ProcessingService:
     # Create minimal service config
     service_config = ProcessingServiceConfig(
         prompts={},
-        timezone_str="UTC",
+        timezone=ZoneInfo("UTC"),
         max_history_messages=10,
         history_max_age_hours=24,
         # ast-grep-ignore: no-dict-any - Test code

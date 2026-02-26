@@ -11,6 +11,7 @@ from collections.abc import AsyncGenerator
 from datetime import UTC, datetime
 from typing import Any
 from unittest.mock import MagicMock
+from zoneinfo import ZoneInfo
 
 import httpx
 import numpy as np
@@ -285,7 +286,7 @@ async def test_document_indexing_and_query_e2e(
         processing_service=_create_mock_processing_service(),  # No processing service needed for this handler
         chat_interface=mock_chat_interface,  # Pass mock ChatInterface
         calendar_config=None,
-        timezone_str=dummy_timezone_str,
+        timezone=ZoneInfo(dummy_timezone_str),
         embedding_generator=mock_embedding_generator,  # Pass the mock generator
         engine=pg_vector_db_engine,  # Pass the database engine
     )

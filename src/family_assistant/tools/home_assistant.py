@@ -514,11 +514,23 @@ async def download_state_history_tool(
                 text="No history data found for the specified parameters."
             )
 
+        # Convert timestamps to user's local timezone
+        local_tz = exec_context.timezone
+        for history_dict in histories:
+            for state in history_dict.get("states", []):
+                for ts_field in ("last_changed", "last_updated"):
+                    ts_val = state.get(ts_field)
+                    if isinstance(ts_val, str) and ts_val:
+                        parsed = datetime.fromisoformat(ts_val)
+                        if parsed.tzinfo is None:
+                            parsed = parsed.replace(tzinfo=UTC)
+                        state[ts_field] = parsed.astimezone(local_tz).isoformat()
+
         # Convert to JSON
         json_data = json.dumps(
             {
-                "start_time": start_timestamp.isoformat(),
-                "end_time": end_timestamp.isoformat(),
+                "start_time": start_timestamp.astimezone(local_tz).isoformat(),
+                "end_time": end_timestamp.astimezone(local_tz).isoformat(),
                 "significant_changes_only": significant_changes_only,
                 "entities": histories,
             },
@@ -548,7 +560,7 @@ async def download_state_history_tool(
         state_count = sum(len(h["states"]) for h in histories)
         description = (
             f"State history for {entity_count} entities ({state_count} states) "
-            f"from {start_timestamp.strftime('%Y-%m-%d %H:%M:%S')} to {end_timestamp.strftime('%Y-%m-%d %H:%M:%S')}"
+            f"from {start_timestamp.astimezone(local_tz).strftime('%Y-%m-%d %H:%M:%S %Z')} to {end_timestamp.astimezone(local_tz).strftime('%Y-%m-%d %H:%M:%S %Z')}"
         )
 
         # Return JSON as attachment
