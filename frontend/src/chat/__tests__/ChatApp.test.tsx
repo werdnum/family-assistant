@@ -40,8 +40,8 @@ describe('ChatApp', () => {
     const user = userEvent.setup();
     await renderChatApp({ waitForReady: true });
 
-    // Find the message input by placeholder text (we know it says "Write a message...")
-    const messageInput = screen.getByPlaceholderText('Write a message...');
+    // Find the message input by placeholder text
+    const messageInput = screen.getByPlaceholderText('Message Family Assistant...');
     expect(messageInput).toBeInTheDocument();
 
     // Type a message
@@ -51,7 +51,7 @@ describe('ChatApp', () => {
     await user.keyboard('{Enter}');
 
     // Get fresh reference (input may have been re-rendered after submission)
-    const submittedInput = screen.getByPlaceholderText('Write a message...');
+    const submittedInput = screen.getByPlaceholderText('Message Family Assistant...');
 
     // Verify the message was sent by checking if the input was cleared
     await waitForMessageSent(submittedInput);
@@ -109,7 +109,7 @@ describe('ChatApp', () => {
     const user = userEvent.setup();
     await renderChatApp({ waitForReady: true });
 
-    const messageInput = screen.getByPlaceholderText('Write a message...');
+    const messageInput = screen.getByPlaceholderText('Message Family Assistant...');
 
     // Send first message
     await user.type(messageInput, 'First message');
@@ -139,7 +139,7 @@ describe('ChatApp', () => {
 
     // Ensure input is ready for the next message
     await waitFor(() => {
-      const input = screen.getByPlaceholderText('Write a message...');
+      const input = screen.getByPlaceholderText('Message Family Assistant...');
       expect(input).toBeEnabled();
       expect(input).toHaveValue('');
     });
@@ -153,7 +153,7 @@ describe('ChatApp', () => {
     await new Promise((resolve) => setTimeout(resolve, 2000));
 
     // Get a fresh reference and send second message
-    const input2 = screen.getByPlaceholderText('Write a message...');
+    const input2 = screen.getByPlaceholderText('Message Family Assistant...');
     await user.click(input2);
     await user.type(input2, 'Second message');
 
@@ -179,7 +179,7 @@ describe('ChatApp', () => {
     const user = userEvent.setup();
     await renderChatApp({ waitForReady: true });
 
-    const messageInput = screen.getByPlaceholderText('Write a message...');
+    const messageInput = screen.getByPlaceholderText('Message Family Assistant...');
 
     // Send a message that will trigger our streaming response
     await user.type(messageInput, 'Hello there!');
@@ -196,7 +196,7 @@ describe('ChatApp', () => {
     const user = userEvent.setup();
     await renderChatApp({ waitForReady: true });
 
-    const messageInput = screen.getByPlaceholderText('Write a message...');
+    const messageInput = screen.getByPlaceholderText('Message Family Assistant...');
 
     // Send message in first conversation
     await user.type(messageInput, 'Message in first conversation');
@@ -229,7 +229,7 @@ describe('ChatApp', () => {
     await renderChatApp({ waitForReady: true });
 
     // Chat input should be available even with no messages
-    const messageInput = screen.getByPlaceholderText('Write a message...');
+    const messageInput = screen.getByPlaceholderText('Message Family Assistant...');
     expect(messageInput).toBeInTheDocument();
     expect(messageInput).not.toBeDisabled();
 
@@ -257,7 +257,7 @@ describe('ChatApp', () => {
 
     // Chat should still be functional on mobile
     expect(screen.getByText('Chat')).toBeInTheDocument();
-    expect(screen.getByPlaceholderText('Write a message...')).toBeInTheDocument();
+    expect(screen.getByPlaceholderText('Message Family Assistant...')).toBeInTheDocument();
 
     // Reset viewport
     Object.defineProperty(window, 'innerWidth', {

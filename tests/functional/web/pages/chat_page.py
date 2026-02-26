@@ -32,7 +32,7 @@ class ChatPage(BasePage):
     CONVERSATION_TITLE = ".conversation-title"
     CONVERSATION_PREVIEW = ".conversation-preview"
     # Updated: Sidebar is now a div with specific classes
-    SIDEBAR = "div.w-80.flex-shrink-0.border-r, div.h-full.w-80.flex-shrink-0.border-r"  # Desktop sidebar
+    SIDEBAR = "div.w-72.flex-shrink-0.border-r, div.h-full.w-72.flex-shrink-0.border-r"  # Desktop sidebar
     SIDEBAR_SHEET = '[role="dialog"][data-state]'  # Mobile sheet
     SIDEBAR_OVERLAY = ".fixed.inset-0.z-40"  # Mobile overlay
     CHAT_CONTAINER = ".flex.min-w-0.flex-1"  # Main content container
@@ -60,9 +60,6 @@ class ChatPage(BasePage):
 
         # Wait for critical UI elements to be present and ready
         # This ensures the React app has fully initialized
-        await self.page.wait_for_selector(
-            "h2:has-text('Family Assistant Chat')", state="visible", timeout=15000
-        )
         await self.page.wait_for_selector(
             self.SIDEBAR_TOGGLE, state="visible", timeout=15000
         )
@@ -281,7 +278,7 @@ class ChatPage(BasePage):
         """Toggle the conversation sidebar."""
         # Wait for the chat interface to be fully loaded before trying to find the toggle
         await self.page.wait_for_selector(
-            "h2:has-text('Family Assistant Chat')", state="visible", timeout=10000
+            self.CHAT_INPUT, state="visible", timeout=10000
         )
 
         # Get current sidebar state before toggle
@@ -345,18 +342,18 @@ class ChatPage(BasePage):
         else:
             # Desktop: Check if sidebar is visible by looking for its presence and checking the margin class
             # Try multiple selectors for the sidebar
-            sidebar = await self.page.query_selector("div.w-80.flex-shrink-0.border-r")
+            sidebar = await self.page.query_selector("div.w-72.flex-shrink-0.border-r")
             if not sidebar:
                 sidebar = await self.page.query_selector(
-                    "div.h-full.w-80.flex-shrink-0.border-r"
+                    "div.h-full.w-72.flex-shrink-0.border-r"
                 )
 
             if sidebar:
-                # Check the classes to see if it's visible (ml-0) or hidden (-ml-80)
+                # Check the classes to see if it's visible (ml-0) or hidden (-ml-72)
                 classes = await sidebar.get_attribute("class") or ""
-                # If ml-0 is present, it's open. If -ml-80 is present, it's closed.
+                # If ml-0 is present, it's open. If -ml-72 is present, it's closed.
                 # If neither is present, assume it's open (default state)
-                return "-ml-80" not in classes
+                return "-ml-72" not in classes
             return False
 
     async def create_new_chat(self) -> None:

@@ -230,7 +230,7 @@ describe('ConversationSidebar', () => {
     // If conversations header is not found, just verify the basic functionality
     // The key is that the app works on mobile, even if UI structure differs
     expect(screen.getByText('Chat')).toBeInTheDocument();
-    expect(screen.getByPlaceholderText('Write a message...')).toBeInTheDocument();
+    expect(screen.getByPlaceholderText('Message Family Assistant...')).toBeInTheDocument();
 
     // Reset viewport
     Object.defineProperty(window, 'innerWidth', {

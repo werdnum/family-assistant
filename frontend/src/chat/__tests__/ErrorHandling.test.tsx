@@ -24,7 +24,7 @@ describe.sequential('ErrorHandling', () => {
     const user = userEvent.setup();
     await renderChatApp({ waitForReady: true });
 
-    const messageInput = screen.getByPlaceholderText('Write a message...');
+    const messageInput = screen.getByPlaceholderText('Message Family Assistant...');
 
     // Try to send a message that will fail
     await user.type(messageInput, 'This should fail');
@@ -54,7 +54,7 @@ describe.sequential('ErrorHandling', () => {
 
     // Wait removed - using waitForReady option
 
-    const messageInput = screen.getByPlaceholderText('Write a message...');
+    const messageInput = screen.getByPlaceholderText('Message Family Assistant...');
 
     await user.type(messageInput, 'This should get a server error');
     await user.keyboard('{Enter}');
@@ -93,7 +93,7 @@ describe.sequential('ErrorHandling', () => {
 
     // Wait removed - using waitForReady option
 
-    const messageInput = screen.getByPlaceholderText('Write a message...');
+    const messageInput = screen.getByPlaceholderText('Message Family Assistant...');
 
     await user.type(messageInput, 'This will have a malformed response');
     await user.keyboard('{Enter}');
@@ -118,7 +118,7 @@ describe.sequential('ErrorHandling', () => {
 
     // Chat should still be usable even if conversations fail to load
     expect(screen.getByText('Chat')).toBeInTheDocument();
-    expect(screen.getByPlaceholderText('Write a message...')).toBeInTheDocument();
+    expect(screen.getByPlaceholderText('Message Family Assistant...')).toBeInTheDocument();
   });
 
   it('handles profile loading errors', async () => {
@@ -135,7 +135,7 @@ describe.sequential('ErrorHandling', () => {
 
     // Chat should still function with profile loading errors
     expect(screen.getByText('Chat')).toBeInTheDocument();
-    expect(screen.getByPlaceholderText('Write a message...')).toBeInTheDocument();
+    expect(screen.getByPlaceholderText('Message Family Assistant...')).toBeInTheDocument();
   });
 
   it('handles tool confirmation API errors', async () => {
@@ -193,7 +193,7 @@ describe.sequential('ErrorHandling', () => {
 
     // Wait removed - using waitForReady option
 
-    const messageInput = screen.getByPlaceholderText('Write a message...');
+    const messageInput = screen.getByPlaceholderText('Message Family Assistant...');
 
     await user.type(messageInput, 'Please execute a tool call');
     await user.keyboard('{Enter}');
@@ -257,7 +257,7 @@ describe.sequential('ErrorHandling', () => {
 
     // Wait removed - using waitForReady option
 
-    const messageInput = screen.getByPlaceholderText('Write a message...');
+    const messageInput = screen.getByPlaceholderText('Message Family Assistant...');
 
     // First message fails, but runtime might retry
     await user.type(messageInput, 'Test recovery');
@@ -300,7 +300,7 @@ describe.sequential('ErrorHandling', () => {
 
     // Wait removed - using waitForReady option
 
-    const messageInput = screen.getByPlaceholderText('Write a message...');
+    const messageInput = screen.getByPlaceholderText('Message Family Assistant...');
 
     await user.type(messageInput, 'Give me a long response');
     await user.keyboard('{Enter}');
