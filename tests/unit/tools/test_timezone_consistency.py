@@ -15,12 +15,16 @@ import pytest
 
 from family_assistant.camera.fake import FakeCameraBackend
 from family_assistant.camera.protocol import CameraEvent, Recording
-from family_assistant.tools.automations import format_automation_datetime
+from family_assistant.tools.automations import (
+    _to_isoformat,  # noqa: PLC2701
+    format_automation_datetime,
+)
 from family_assistant.tools.camera import (
     get_camera_frames_batch_tool,
     get_camera_recordings_tool,
     search_camera_events_tool,
 )
+from family_assistant.tools.events import _format_event_timestamp  # noqa: PLC2701
 from family_assistant.tools.types import ToolExecutionContext, ToolResult
 
 # --- Automations: format_automation_datetime should format in local timezone ---
@@ -237,3 +241,69 @@ class TestWorkspaceFilesTimezone:
         iso_str = dt.isoformat()
         # Should contain timezone offset like +11:00 or +10:00
         assert "+" in iso_str
+
+
+# --- Automations: _to_isoformat should convert to local timezone ---
+
+
+class TestAutomationsToIsoformat:
+    """Test that _to_isoformat converts to user's local timezone, not UTC."""
+
+    def test_to_isoformat_converts_to_local_timezone(self) -> None:
+        """UTC datetime should be converted to the specified local timezone."""
+        dt_utc = datetime(2025, 1, 15, 0, 0, 0, tzinfo=UTC)
+        result = _to_isoformat(dt_utc, "Australia/Sydney")
+        assert result is not None
+        # UTC 00:00 = AEDT 11:00, should have +11:00 offset
+        assert "+11:00" in result
+        assert "11:00:00" in result
+
+    def test_to_isoformat_none_returns_none(self) -> None:
+        """None input should return None."""
+        result = _to_isoformat(None, "Australia/Sydney")
+        assert result is None
+
+    def test_to_isoformat_naive_assumed_utc(self) -> None:
+        """Naive datetime should be assumed UTC before converting."""
+        dt_naive = datetime(2025, 1, 15, 0, 0, 0)
+        result = _to_isoformat(dt_naive, "Australia/Sydney")
+        assert result is not None
+        assert "+11:00" in result
+
+    def test_to_isoformat_utc_timezone_keeps_utc(self) -> None:
+        """When user timezone is UTC, timestamps should stay UTC."""
+        dt_utc = datetime(2025, 1, 15, 12, 0, 0, tzinfo=UTC)
+        result = _to_isoformat(dt_utc, "UTC")
+        assert result is not None
+        assert "+00:00" in result
+
+
+# --- Events: _format_event_timestamp should convert to local timezone ---
+
+
+class TestEventsFormatTimestamp:
+    """Test that _format_event_timestamp converts to user's local timezone."""
+
+    def test_format_datetime_to_local_timezone(self) -> None:
+        """UTC datetime should be converted to the specified local timezone."""
+        dt_utc = datetime(2025, 1, 15, 0, 0, 0, tzinfo=UTC)
+        result = _format_event_timestamp(dt_utc, "Australia/Sydney")
+        assert "+11:00" in result
+
+    def test_format_string_timestamp_to_local_timezone(self) -> None:
+        """String timestamp should be parsed and converted to local timezone."""
+        result = _format_event_timestamp(
+            "2025-01-15T00:00:00+00:00", "Australia/Sydney"
+        )
+        assert "+11:00" in result
+
+    def test_format_naive_string_assumed_utc(self) -> None:
+        """Naive string timestamp should be assumed UTC."""
+        result = _format_event_timestamp("2025-01-15T00:00:00", "Australia/Sydney")
+        assert "+11:00" in result
+
+    def test_format_naive_datetime_assumed_utc(self) -> None:
+        """Naive datetime should be assumed UTC before converting."""
+        dt_naive = datetime(2025, 1, 15, 0, 0, 0)
+        result = _format_event_timestamp(dt_naive, "Australia/Sydney")
+        assert "+11:00" in result

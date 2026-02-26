@@ -39,19 +39,22 @@ def format_automation_datetime(dt: datetime | None, timezone_str: str = "UTC") -
     return local_dt.strftime("%Y-%m-%d %H:%M %Z")
 
 
-def _to_isoformat(dt: datetime | None) -> str | None:
+def _to_isoformat(dt: datetime | None, timezone_str: str = "UTC") -> str | None:
     """
-    Convert a datetime object to ISO format.
+    Convert a datetime object to ISO format in the given timezone.
 
     Args:
         dt: Datetime object or None
+        timezone_str: IANA timezone name (e.g. "Australia/Sydney")
 
     Returns:
-        ISO format string or None if input was None
+        ISO format string in local timezone or None if input was None
     """
     if dt is None:
         return None
-    return dt.isoformat()
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=UTC)
+    return dt.astimezone(ZoneInfo(timezone_str)).isoformat()
 
 
 # Tool Definitions
@@ -451,7 +454,7 @@ async def create_automation_tool(
                 "id": automation_id,
                 "name": name,
                 "type": "schedule",
-                "next_run": _to_isoformat(next_scheduled_at),
+                "next_run": _to_isoformat(next_scheduled_at, exec_context.timezone_str),
             }
             text = f"Created schedule automation '{name}' (ID: {automation_id}). Next run: {next_run}"
             return ToolResult(text=text, data=result_data)
@@ -534,7 +537,9 @@ async def list_automations_tool(
             if auto_type == "event":
                 auto_data["event_source"] = auto.source_id
             elif next_run:
-                auto_data["next_scheduled_at"] = _to_isoformat(next_run)
+                auto_data["next_scheduled_at"] = _to_isoformat(
+                    next_run, exec_context.timezone_str
+                )
             automation_list.append(auto_data)
 
         text = "\n".join(lines)
@@ -633,10 +638,14 @@ async def get_automation_tool(
             result_data["recurrence_rule"] = automation.recurrence_rule
             next_scheduled = automation.next_scheduled_at
             if next_scheduled:
-                result_data["next_scheduled_at"] = _to_isoformat(next_scheduled)
+                result_data["next_scheduled_at"] = _to_isoformat(
+                    next_scheduled, exec_context.timezone_str
+                )
             last_execution = automation.last_execution_at
             if last_execution:
-                result_data["last_execution_at"] = _to_isoformat(last_execution)
+                result_data["last_execution_at"] = _to_isoformat(
+                    last_execution, exec_context.timezone_str
+                )
         if automation.action_config:
             result_data["action_config"] = automation.action_config
 
@@ -951,14 +960,18 @@ async def get_automation_stats_tool(
             lines.append(
                 f"Last execution: {format_automation_datetime(last_execution_at, exec_context.timezone_str)}"
             )
-            stats_data["last_execution_at"] = _to_isoformat(last_execution_at)
+            stats_data["last_execution_at"] = _to_isoformat(
+                last_execution_at, exec_context.timezone_str
+            )
 
         next_scheduled_at = stats.get("next_scheduled_at")
         if next_scheduled_at:
             lines.append(
                 f"Next scheduled: {format_automation_datetime(next_scheduled_at, exec_context.timezone_str)}"
             )
-            stats_data["next_scheduled_at"] = _to_isoformat(next_scheduled_at)
+            stats_data["next_scheduled_at"] = _to_isoformat(
+                next_scheduled_at, exec_context.timezone_str
+            )
 
         recent = stats.get("recent_executions", [])
         if recent:
@@ -972,7 +985,7 @@ async def get_automation_stats_tool(
                         f"  - {format_automation_datetime(created, exec_context.timezone_str)}: {status}"
                     )
                     recent_list.append({
-                        "created_at": _to_isoformat(created),
+                        "created_at": _to_isoformat(created, exec_context.timezone_str),
                         "status": status,
                     })
             stats_data["recent_executions"] = recent_list
