@@ -51,7 +51,7 @@ describe.sequential('Streaming Error Recovery', () => {
       const user = userEvent.setup();
       await renderChatApp({ waitForReady: true });
 
-      const messageInput = screen.getByPlaceholderText('Write a message...');
+      const messageInput = screen.getByPlaceholderText('Message Family Assistant...');
       await user.type(messageInput, 'Test mid-stream error');
       await user.keyboard('{Enter}');
 
@@ -84,7 +84,7 @@ describe.sequential('Streaming Error Recovery', () => {
       const user = userEvent.setup();
       await renderChatApp({ waitForReady: true });
 
-      const messageInput = screen.getByPlaceholderText('Write a message...');
+      const messageInput = screen.getByPlaceholderText('Message Family Assistant...');
       await user.type(messageInput, 'This will fail completely');
       await user.keyboard('{Enter}');
 
@@ -133,7 +133,7 @@ describe.sequential('Streaming Error Recovery', () => {
       const user = userEvent.setup();
       await renderChatApp({ waitForReady: true });
 
-      const messageInput = screen.getByPlaceholderText('Write a message...');
+      const messageInput = screen.getByPlaceholderText('Message Family Assistant...');
       await user.type(messageInput, 'Search for test notes');
       await user.keyboard('{Enter}');
 
@@ -173,7 +173,7 @@ describe.sequential('Streaming Error Recovery', () => {
       const user = userEvent.setup();
       await renderChatApp({ waitForReady: true });
 
-      const messageInput = screen.getByPlaceholderText('Write a message...');
+      const messageInput = screen.getByPlaceholderText('Message Family Assistant...');
 
       // First message triggers error
       await user.type(messageInput, 'First message fails');

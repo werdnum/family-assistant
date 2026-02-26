@@ -33,7 +33,7 @@ export async function renderChatApp(options: RenderChatAppOptions = {}) {
 
   if (waitForReady) {
     // Wait for the chat interface to be interactive
-    await screen.findByPlaceholderText('Write a message...', {}, { timeout: 5000 });
+    await screen.findByPlaceholderText('Message Family Assistant...', {}, { timeout: 5000 });
   }
 
   return result;

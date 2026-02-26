@@ -495,8 +495,8 @@ async def test_mobile_chat_input_visibility(
     last_message_box = await last_message.bounding_box()
     assert last_message_box is not None, "Last message bounding box should be available"
 
-    # Get the input container position (the flex-shrink-0 container, not just the input)
-    input_container = await page.query_selector(".flex-shrink-0.bg-background.border-t")
+    # Get the input container position
+    input_container = await page.query_selector('[data-testid="composer-container"]')
     assert input_container is not None, "Input container should exist"
     container_box = await input_container.bounding_box()
     assert container_box is not None, "Input container bounding box should be available"
@@ -509,7 +509,7 @@ async def test_mobile_chat_input_visibility(
             if (messages.length === 0) return false;
             const lastMessage = messages[messages.length - 1];
             const rect = lastMessage.getBoundingClientRect();
-            const inputContainer = document.querySelector('.flex-shrink-0.bg-background.border-t');
+            const inputContainer = document.querySelector('[data-testid="composer-container"]');
             const inputTop = inputContainer ? inputContainer.getBoundingClientRect().top : window.innerHeight;
             // Check if last message is above the input container
             return rect.bottom <= inputTop;

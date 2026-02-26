@@ -80,7 +80,7 @@ describe('ToolWithConfirmation', () => {
 
       // Wait removed - using waitForReady option
 
-      const messageInput = screen.getByPlaceholderText('Write a message...');
+      const messageInput = screen.getByPlaceholderText('Message Family Assistant...');
 
       // Send a message that triggers a tool call
       await user.type(messageInput, 'Please add a note with title "Test Note"');
@@ -278,7 +278,7 @@ describe('ToolWithConfirmation', () => {
 
       // Wait removed - using waitForReady option
 
-      const messageInput = screen.getByPlaceholderText('Write a message...');
+      const messageInput = screen.getByPlaceholderText('Message Family Assistant...');
 
       // Send a message that triggers a tool call
       await user.type(messageInput, 'Please add a note');

@@ -58,7 +58,7 @@ describe('Streaming with Tool Calls', () => {
       const user = userEvent.setup();
       await renderChatApp({ waitForReady: true });
 
-      const messageInput = screen.getByPlaceholderText('Write a message...');
+      const messageInput = screen.getByPlaceholderText('Message Family Assistant...');
       await user.type(messageInput, 'Send the image');
       await user.keyboard('{Enter}');
 

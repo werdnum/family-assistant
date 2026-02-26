@@ -8,12 +8,16 @@ import {
 } from '@assistant-ui/react';
 import {
   ArrowDownIcon,
+  ArrowUpIcon,
   BotIcon,
+  CalendarIcon,
+  CheckCircle2Icon,
   CheckIcon,
   CopyIcon,
+  FileSearchIcon,
   Loader2Icon,
-  SendHorizontalIcon,
-  UserIcon,
+  StickyNoteIcon,
+  SquareIcon,
 } from 'lucide-react';
 import React, { createContext, useContext, useEffect, useState } from 'react';
 import {
@@ -117,7 +121,7 @@ export const Thread: React.FC = () => {
 
 const ThreadContent: React.FC = () => {
   return (
-    <ThreadPrimitive.Root className="flex flex-1 flex-col bg-background min-h-0">
+    <ThreadPrimitive.Root className="flex flex-1 flex-col min-h-0">
       <ThreadPrimitive.Viewport className="flex-1 overflow-y-auto overflow-x-hidden scrollbar-thin scrollbar-thumb-muted-foreground/20 min-h-0">
         <div className="pb-6">
           <ThreadWelcome />
@@ -138,7 +142,10 @@ const ThreadContent: React.FC = () => {
         <ThreadScrollToBottom />
       </ThreadPrimitive.Viewport>
 
-      <div className="flex-shrink-0 bg-background border-t p-4 md:p-6">
+      <div
+        className="flex-shrink-0 border-t border-border/50 bg-background/80 backdrop-blur-sm px-4 py-3 md:px-6 md:py-4"
+        data-testid="composer-container"
+      >
         <Composer />
       </div>
     </ThreadPrimitive.Root>
@@ -152,7 +159,7 @@ const ThreadScrollToBottom: React.FC = () => {
       <TooltipIconButton
         tooltip="Scroll to bottom"
         variant="outline"
-        className="absolute bottom-4 right-4 md:right-8 z-10 shadow-lg bg-background opacity-0 scale-75 transition-all duration-200 data-[enabled]:opacity-100 data-[enabled]:scale-100"
+        className="absolute bottom-2 right-4 md:right-8 z-10 rounded-full shadow-md bg-background/90 backdrop-blur-sm border-border/50 opacity-0 scale-75 transition-all duration-200 data-[enabled]:opacity-100 data-[enabled]:scale-100 h-8 w-8"
       >
         <ArrowDownIcon size={16} />
       </TooltipIconButton>
@@ -163,19 +170,19 @@ const ThreadScrollToBottom: React.FC = () => {
 const ThreadWelcome: React.FC = () => {
   return (
     <ThreadPrimitive.Empty>
-      <div className="flex min-h-[40vh] md:min-h-[60vh] flex-col items-center justify-center p-8 animate-in fade-in duration-300">
-        <Card className="p-8 text-center">
-          <div className="mb-6 text-primary animate-in slide-in-from-bottom-4 duration-500 delay-150">
-            <BotIcon size={48} strokeWidth={1.5} className="mx-auto animate-bounce" />
+      <div className="flex min-h-[50vh] md:min-h-[65vh] flex-col items-center justify-center px-6 py-12 animate-in fade-in duration-500">
+        <div className="text-center mb-10 animate-in slide-in-from-bottom-4 duration-500">
+          <div className="inline-flex items-center justify-center w-16 h-16 rounded-2xl bg-primary/10 mb-6">
+            <BotIcon size={32} strokeWidth={1.5} className="text-primary" />
           </div>
-          <h3 className="text-2xl font-semibold mb-2 animate-in slide-in-from-bottom-4 duration-500 delay-300">
-            Welcome to Family Assistant
-          </h3>
-          <p className="text-lg text-muted-foreground mb-8 animate-in slide-in-from-bottom-4 duration-500 delay-500">
-            How can I help you today?
+          <h2 className="text-2xl md:text-3xl font-semibold tracking-tight mb-2">
+            How can I help you?
+          </h2>
+          <p className="text-muted-foreground text-base">
+            Ask me anything about your calendar, notes, documents, or tasks.
           </p>
-          <ThreadWelcomeSuggestions />
-        </Card>
+        </div>
+        <ThreadWelcomeSuggestions />
       </div>
     </ThreadPrimitive.Empty>
   );
@@ -185,55 +192,79 @@ const ThreadWelcomeSuggestions: React.FC = () => {
   const suggestions = [
     {
       prompt: "What's on my calendar today?",
-      icon: '📅',
+      label: 'Calendar',
+      icon: CalendarIcon,
+      color: 'text-blue-500',
+      bgColor: 'bg-blue-500/10',
     },
     {
       prompt: 'Add a note about groceries',
-      icon: '📝',
+      label: 'Notes',
+      icon: StickyNoteIcon,
+      color: 'text-amber-500',
+      bgColor: 'bg-amber-500/10',
     },
     {
       prompt: 'Search my documents for recipes',
-      icon: '🔍',
+      label: 'Documents',
+      icon: FileSearchIcon,
+      color: 'text-purple-500',
+      bgColor: 'bg-purple-500/10',
     },
     {
       prompt: 'What tasks do I have pending?',
-      icon: '✅',
+      label: 'Tasks',
+      icon: CheckCircle2Icon,
+      color: 'text-emerald-500',
+      bgColor: 'bg-emerald-500/10',
     },
   ];
 
   return (
-    <div className="grid grid-cols-1 md:grid-cols-2 gap-3 max-w-2xl animate-in slide-in-from-bottom-8 duration-700 delay-700">
-      {suggestions.map((suggestion, index) => (
-        <ThreadPrimitive.Suggestion
-          key={index}
-          className="flex items-center gap-3 p-4 text-left border rounded-lg hover:border-primary hover:bg-accent transition-all duration-200 hover:-translate-y-0.5 hover:shadow-sm cursor-pointer group"
-          prompt={suggestion.prompt}
-          method="replace"
-          autoSend
-        >
-          <span className="text-2xl group-hover:scale-110 transition-transform duration-200">
-            {suggestion.icon}
-          </span>
-          <span className="text-sm font-medium">{suggestion.prompt}</span>
-        </ThreadPrimitive.Suggestion>
-      ))}
+    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 w-full max-w-xl animate-in slide-in-from-bottom-6 duration-600 delay-200">
+      {suggestions.map((suggestion, index) => {
+        const Icon = suggestion.icon;
+        return (
+          <ThreadPrimitive.Suggestion
+            key={index}
+            className="flex items-center gap-3 px-4 py-3.5 text-left rounded-xl border border-border/60 bg-card hover:bg-accent/50 hover:border-border transition-all duration-200 hover:shadow-sm cursor-pointer group"
+            prompt={suggestion.prompt}
+            method="replace"
+            autoSend
+          >
+            <div
+              className={`flex items-center justify-center w-9 h-9 rounded-lg ${suggestion.bgColor} shrink-0`}
+            >
+              <Icon size={18} className={suggestion.color} />
+            </div>
+            <div className="min-w-0">
+              <div className="text-xs font-medium text-muted-foreground mb-0.5">
+                {suggestion.label}
+              </div>
+              <div className="text-sm font-medium">{suggestion.prompt}</div>
+            </div>
+          </ThreadPrimitive.Suggestion>
+        );
+      })}
     </div>
   );
 };
 
 const Composer: React.FC = () => {
   return (
-    <ComposerPrimitive.Root className="flex flex-col gap-3 max-w-4xl mx-auto">
+    <ComposerPrimitive.Root className="flex flex-col gap-3 max-w-3xl mx-auto w-full">
       <ComposerAttachments />
-      <div className="flex gap-3 items-end">
+      <div className="flex gap-2 items-end">
         <ComposerAddAttachment />
-        <ComposerPrimitive.Input
-          rows={1}
-          autoFocus
-          placeholder="Write a message..."
-          className="flex-1 min-h-12 max-h-48 px-4 py-3 text-base border rounded-xl bg-muted/50 border-border resize-none focus:outline-none focus:ring-2 focus:ring-ring focus:border-transparent transition-all duration-200"
-          data-testid="chat-input"
-        />
+        <div className="flex-1 relative">
+          <ComposerPrimitive.Input
+            rows={1}
+            autoFocus
+            placeholder="Message Family Assistant..."
+            className="w-full min-h-11 max-h-48 pl-4 pr-4 py-2.5 text-sm border rounded-2xl bg-muted/40 border-border/60 resize-none focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary/40 transition-all duration-200 placeholder:text-muted-foreground/60"
+            data-testid="chat-input"
+          />
+        </div>
         <ComposerAction />
       </div>
     </ComposerPrimitive.Root>
@@ -256,14 +287,14 @@ const ComposerAction: React.FC = () => {
             tooltip={hasUploadingAttachments ? 'Uploading attachments...' : 'Send message'}
             variant="default"
             side="top"
-            className="h-12 w-12 shrink-0 rounded-xl"
+            className="h-11 w-11 shrink-0 rounded-full"
             data-testid="send-button"
             disabled={hasUploadingAttachments}
           >
             {hasUploadingAttachments ? (
-              <Loader2Icon size={18} className="animate-spin" />
+              <Loader2Icon size={16} className="animate-spin" />
             ) : (
-              <SendHorizontalIcon size={18} />
+              <ArrowUpIcon size={16} />
             )}
           </TooltipIconButton>
         </ComposerPrimitive.Send>
@@ -275,9 +306,9 @@ const ComposerAction: React.FC = () => {
             tooltip="Stop generating"
             variant="default"
             side="top"
-            className="h-12 w-12 shrink-0 rounded-xl"
+            className="h-11 w-11 shrink-0 rounded-full"
           >
-            <div className="w-3 h-3 bg-current rounded-sm" />
+            <SquareIcon size={14} />
           </TooltipIconButton>
         </ComposerPrimitive.Cancel>
       </ThreadPrimitive.If>
@@ -288,26 +319,18 @@ const ComposerAction: React.FC = () => {
 const UserMessage: React.FC = () => {
   return (
     <MessagePrimitive.Root
-      className="p-6 animate-in slide-in-from-bottom-4 duration-300 group"
+      className="px-4 py-2 md:px-6 animate-in slide-in-from-bottom-2 duration-200 group"
       data-testid="user-message"
     >
-      <div className="max-w-4xl mx-auto relative">
-        <div className="flex items-center justify-end mb-2 h-5">
-          <MessageTimestamp />
-        </div>
+      <div className="max-w-3xl mx-auto relative">
         <UserMessageAttachments />
-        <div className="flex items-end gap-3 justify-end min-w-0">
+        <div className="flex items-end gap-2.5 justify-end min-w-0">
           <div
-            className="max-w-full md:max-w-[70%] min-w-0 p-4 bg-primary text-primary-foreground rounded-2xl rounded-br-md shadow-sm overflow-x-auto"
+            className="max-w-full md:max-w-[75%] min-w-0 px-4 py-2.5 bg-primary text-primary-foreground rounded-2xl rounded-br-md shadow-sm overflow-x-auto"
             data-testid="user-message-content"
           >
             <MessagePrimitive.Parts />
           </div>
-          <Avatar className="h-9 w-9 shrink-0">
-            <AvatarFallback className="bg-primary text-primary-foreground">
-              <UserIcon size={20} />
-            </AvatarFallback>
-          </Avatar>
         </div>
       </div>
     </MessagePrimitive.Root>
@@ -354,57 +377,51 @@ const AssistantMessage: React.FC = () => {
 
   return (
     <MessagePrimitive.Root
-      className="p-6 animate-in slide-in-from-bottom-4 duration-300 group"
+      className="px-4 py-2 md:px-6 animate-in slide-in-from-bottom-2 duration-200 group"
       data-testid="assistant-message"
     >
-      <div className="max-w-4xl mx-auto relative">
-        <div className="flex items-center justify-between mb-2 h-5">
-          <MessageTimestamp />
-          {profile && (
-            <Badge
-              variant="secondary"
-              className="text-xs ml-2"
-              title={`Generated by ${profile.description}`}
-            >
-              {profile.description}
-            </Badge>
-          )}
-          {profileId && !profile && !error && (
-            <Badge
-              variant="outline"
-              className="text-xs ml-2 opacity-50"
-              title="Profile information loading..."
-            >
-              Loading...
-            </Badge>
-          )}
-          {profileId && !profile && error && (
-            <Badge
-              variant="destructive"
-              className="text-xs ml-2 opacity-70"
-              title={`Profile unavailable: ${error}`}
-            >
-              Profile Error
-            </Badge>
-          )}
-        </div>
-        <div className="flex items-start gap-3">
-          <Avatar className="h-9 w-9 shrink-0">
-            <AvatarFallback className="bg-muted border border-border">
-              <BotIcon size={20} className="text-primary" />
+      <div className="max-w-3xl mx-auto relative">
+        <div className="flex items-start gap-2.5">
+          <Avatar className="h-8 w-8 shrink-0 mt-0.5">
+            <AvatarFallback className="bg-primary/10 border border-primary/20">
+              <BotIcon size={16} className="text-primary" />
             </AvatarFallback>
           </Avatar>
           <div className="flex-1 min-w-0">
-            <div className="relative inline-block max-w-full md:max-w-[70%] min-w-0">
-              <div
-                className="p-4 bg-muted border rounded-2xl rounded-bl-md shadow-sm overflow-x-auto"
-                data-testid="assistant-message-content"
+            {profile && (
+              <Badge
+                variant="secondary"
+                className="text-[10px] px-1.5 py-0 mb-1 font-normal"
+                title={`Generated by ${profile.description}`}
               >
+                {profile.description}
+              </Badge>
+            )}
+            {profileId && !profile && !error && (
+              <Badge
+                variant="outline"
+                className="text-[10px] px-1.5 py-0 mb-1 opacity-50"
+                title="Profile information loading..."
+              >
+                Loading...
+              </Badge>
+            )}
+            {profileId && !profile && error && (
+              <Badge
+                variant="destructive"
+                className="text-[10px] px-1.5 py-0 mb-1 opacity-70"
+                title={`Profile unavailable: ${error}`}
+              >
+                Profile Error
+              </Badge>
+            )}
+            <div className="relative">
+              <div className="prose-sm overflow-x-auto" data-testid="assistant-message-content">
                 {isLoading ? (
-                  <div className="flex items-center gap-1">
-                    <div className="w-2 h-2 bg-muted-foreground/50 rounded-full animate-bounce [animation-delay:-0.32s]"></div>
-                    <div className="w-2 h-2 bg-muted-foreground/50 rounded-full animate-bounce [animation-delay:-0.16s]"></div>
-                    <div className="w-2 h-2 bg-muted-foreground/50 rounded-full animate-bounce"></div>
+                  <div className="flex items-center gap-1.5 py-2">
+                    <div className="w-1.5 h-1.5 bg-primary/40 rounded-full animate-bounce [animation-delay:-0.32s]"></div>
+                    <div className="w-1.5 h-1.5 bg-primary/40 rounded-full animate-bounce [animation-delay:-0.16s]"></div>
+                    <div className="w-1.5 h-1.5 bg-primary/40 rounded-full animate-bounce"></div>
                   </div>
                 ) : (
                   <>
@@ -436,32 +453,19 @@ const AssistantActionBar: React.FC = () => {
       hideWhenRunning
       autohide="not-last"
       autohideFloat="single-branch"
-      className="absolute top-2 -right-9 flex items-start opacity-0 group-hover:opacity-100 transition-opacity duration-200"
+      className="flex items-center gap-1 mt-1 opacity-0 group-hover:opacity-100 transition-opacity duration-200"
     >
       <ActionBarPrimitive.Copy asChild>
         {/* @ts-expect-error - TooltipIconButton JSX component */}
-        <TooltipIconButton tooltip="Copy" size="sm" variant="ghost">
+        <TooltipIconButton tooltip="Copy" size="sm" variant="ghost" className="h-7 w-7 rounded-lg">
           <MessagePrimitive.If copied>
-            <CheckIcon size={14} />
+            <CheckIcon size={12} />
           </MessagePrimitive.If>
           <MessagePrimitive.If copied={false}>
-            <CopyIcon size={14} />
+            <CopyIcon size={12} />
           </MessagePrimitive.If>
         </TooltipIconButton>
       </ActionBarPrimitive.Copy>
     </ActionBarPrimitive.Root>
-  );
-};
-
-const MessageTimestamp: React.FC = () => {
-  // For now, showing relative time would require access to the message context
-  // which isn't readily available in the current assistant-ui primitives structure
-  // This would need to be passed down from the parent component in a real implementation
-  return (
-    <MessagePrimitive.If hasBranches={false}>
-      <time className="text-xs text-muted-foreground opacity-0 transition-opacity group-hover:opacity-100">
-        just now
-      </time>
-    </MessagePrimitive.If>
   );
 };

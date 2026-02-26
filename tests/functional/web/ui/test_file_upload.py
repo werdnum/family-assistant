@@ -365,7 +365,7 @@ async def test_drag_and_drop_upload(
         # Get the composer area for dropping files
         composer = page.locator('[class*="ComposerPrimitive.Root"]').first
         if not await composer.is_visible():
-            composer = page.locator(".flex.flex-col.gap-3.max-w-4xl.mx-auto").first
+            composer = page.locator(".flex.flex-col.gap-3.max-w-3xl.mx-auto").first
 
         await composer.wait_for(state="visible", timeout=10000)
 

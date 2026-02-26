@@ -1049,23 +1049,10 @@ const ChatApp: React.FC<ChatAppProps> = ({ profileId = 'default_assistant' }) =>
             <main className="flex flex-1 flex-col min-h-0">
               <AssistantRuntimeProvider runtime={runtime}>
                 <ToolConfirmationProvider value={{ pendingConfirmations, handleConfirmation }}>
-                  <div className="flex flex-1 flex-col min-h-0">
-                    <div className="border-b bg-muted/50 p-6 flex-shrink-0">
-                      <h2 className="text-xl font-semibold">Family Assistant Chat</h2>
-                      {conversationId && (
-                        <div className="mt-1 text-xs text-muted-foreground font-mono">
-                          Conversation: {conversationId.substring(0, 20)}...
-                        </div>
-                      )}
-                    </div>
-                    <Thread />
-                  </div>
+                  <Thread />
                 </ToolConfirmationProvider>
               </AssistantRuntimeProvider>
             </main>
-            <footer className="hidden md:block border-t p-4 text-center text-sm text-muted-foreground bg-background">
-              <p>&copy; {new Date().getFullYear()} Family Assistant</p>
-            </footer>
           </div>
         </div>
       </div>

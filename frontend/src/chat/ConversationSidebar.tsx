@@ -1,10 +1,8 @@
+import { MessageSquarePlusIcon, SearchIcon } from 'lucide-react';
 import React, { useState } from 'react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
-import { Card } from '@/components/ui/card';
-import { Input } from '@/components/ui/input';
 import { ScrollArea } from '@/components/ui/scroll-area';
-import { Separator } from '@/components/ui/separator';
 import { Conversation, ConversationSidebarProps } from './types';
 
 const ConversationSidebar: React.FC<ConversationSidebarProps> = ({
@@ -50,72 +48,84 @@ const ConversationSidebar: React.FC<ConversationSidebarProps> = ({
 
   const SidebarContent = () => (
     <div className="flex h-full flex-col min-h-0">
-      <div className="flex flex-col gap-3 p-6 pb-4">
-        <h2 className="text-lg font-semibold">Conversations</h2>
+      <div className="flex items-center gap-2 p-4 pb-3">
+        <h2 className="text-sm font-semibold text-muted-foreground uppercase tracking-wider flex-1">
+          Conversations
+        </h2>
         <Button
           onClick={onNewChat}
           aria-label="Start new chat"
           data-testid="new-chat-button"
-          className="w-full"
+          variant="ghost"
+          size="sm"
+          className="h-8 w-8 p-0 rounded-lg hover:bg-primary/10 hover:text-primary"
         >
-          <span className="mr-2 text-lg">+</span> New Chat
+          <MessageSquarePlusIcon size={18} />
         </Button>
       </div>
 
-      <div className="px-6 pb-4">
-        <Input
-          type="text"
-          placeholder="Search conversations..."
-          value={searchQuery}
-          onChange={(e) => setSearchQuery(e.target.value)}
-          className="w-full"
-        />
+      <div className="px-4 pb-3">
+        <div className="relative">
+          <SearchIcon
+            size={14}
+            className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground/50"
+          />
+          <input
+            type="text"
+            placeholder="Search..."
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+            className="w-full h-8 pl-8 pr-3 text-sm rounded-lg border border-border/60 bg-muted/30 placeholder:text-muted-foreground/40 focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary/40 transition-all"
+          />
+        </div>
       </div>
 
-      <Separator />
-
-      <ScrollArea className="flex-1 px-6 overflow-y-auto">
-        <div className="py-4">
+      <ScrollArea className="flex-1 px-2 overflow-y-auto">
+        <div className="py-1">
           {conversationsLoading ? (
             <div
-              className="py-8 text-center text-sm text-muted-foreground italic"
+              className="py-8 text-center text-sm text-muted-foreground/60"
               data-loading-indicator="true"
             >
-              Loading conversations...
+              Loading...
             </div>
           ) : filteredConversations.length === 0 ? (
-            <div className="py-8 text-center text-sm text-muted-foreground italic">
-              {searchQuery ? 'No conversations match your search' : 'No conversations yet'}
+            <div className="py-8 text-center text-sm text-muted-foreground/60">
+              {searchQuery ? 'No matches' : 'No conversations yet'}
             </div>
           ) : (
-            <div className="space-y-2">
-              {filteredConversations.map((conv: Conversation) => (
-                <Card
-                  key={conv.conversation_id}
-                  className={`cursor-pointer transition-all duration-200 ${
-                    conv.conversation_id === currentConversationId
-                      ? 'bg-primary text-primary-foreground border-primary'
-                      : 'hover:bg-accent hover:border-accent-foreground/20'
-                  }`}
-                  onClick={() => onConversationSelect(conv.conversation_id)}
-                  data-testid={`conversation-item-${conv.conversation_id}`}
-                  data-conversation-id={conv.conversation_id}
-                >
-                  <div className="p-4">
-                    <div className="text-sm leading-relaxed mb-2 line-clamp-2 overflow-hidden">
+            <div className="space-y-0.5">
+              {filteredConversations.map((conv: Conversation) => {
+                const isActive = conv.conversation_id === currentConversationId;
+                return (
+                  <button
+                    key={conv.conversation_id}
+                    className={`w-full text-left px-3 py-2.5 rounded-lg transition-all duration-150 ${
+                      isActive ? 'bg-primary/10 text-primary' : 'hover:bg-muted/60 text-foreground'
+                    }`}
+                    onClick={() => onConversationSelect(conv.conversation_id)}
+                    data-testid={`conversation-item-${conv.conversation_id}`}
+                    data-conversation-id={conv.conversation_id}
+                  >
+                    <div className="text-sm leading-snug line-clamp-2 mb-1">
                       {conv.last_message}
                     </div>
                     <div className="flex justify-between items-center">
-                      <span className="text-xs opacity-90 whitespace-nowrap">
+                      <span className="text-[11px] text-muted-foreground/70">
                         {formatTimestamp(conv.last_timestamp)}
                       </span>
-                      <Badge variant="secondary" className="text-xs whitespace-nowrap">
-                        {conv.message_count} messages
-                      </Badge>
+                      {conv.message_count > 1 && (
+                        <Badge
+                          variant="secondary"
+                          className="text-[10px] px-1.5 py-0 h-4 font-normal"
+                        >
+                          {conv.message_count}
+                        </Badge>
+                      )}
                     </div>
-                  </div>
-                </Card>
-              ))}
+                  </button>
+                );
+              })}
             </div>
           )}
         </div>
@@ -127,8 +137,8 @@ const ConversationSidebar: React.FC<ConversationSidebarProps> = ({
   // On mobile, the sidebar should be absolutely positioned as an overlay
   return (
     <div
-      className={`h-full w-80 flex-shrink-0 border-r bg-background transition-all duration-300 ${
-        isOpen ? 'ml-0' : '-ml-80'
+      className={`h-full w-72 flex-shrink-0 border-r border-border/50 bg-muted/30 transition-all duration-300 ${
+        isOpen ? 'ml-0' : '-ml-72'
       }`}
       style={{
         // On mobile (handled by overlay), ensure sidebar appears above content

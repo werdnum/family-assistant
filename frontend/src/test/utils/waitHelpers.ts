@@ -5,7 +5,7 @@ import { screen, waitFor } from '@testing-library/react';
  * This is a more robust alternative to arbitrary setTimeout delays.
  */
 export async function waitForChatReady(): Promise<void> {
-  await screen.findByPlaceholderText('Write a message...', {}, { timeout: 5000 });
+  await screen.findByPlaceholderText('Message Family Assistant...', {}, { timeout: 5000 });
 }
 
 /**
