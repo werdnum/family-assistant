@@ -9,6 +9,7 @@ import logging
 import uuid
 from typing import Any
 from unittest.mock import MagicMock
+from zoneinfo import ZoneInfo
 
 import numpy as np
 import pytest
@@ -219,7 +220,7 @@ async def test_note_update_reindexing_e2e(
         processing_service=_create_mock_processing_service(),
         chat_interface=mock_chat_interface,
         calendar_config={},
-        timezone_str="UTC",
+        timezone=ZoneInfo("UTC"),
         embedding_generator=mock_embedding_generator_notes,
         engine=pg_vector_db_engine,  # Pass the database engine
     )
@@ -467,7 +468,7 @@ async def test_notes_indexing_graceful_degradation(
         processing_service=_create_mock_processing_service(),
         chat_interface=mock_chat_interface,
         calendar_config={},
-        timezone_str="UTC",
+        timezone=ZoneInfo("UTC"),
         embedding_generator=mock_embedding_generator_notes,
         engine=pg_vector_db_engine,  # Pass the database engine
     )

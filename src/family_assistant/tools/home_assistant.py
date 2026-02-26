@@ -10,7 +10,6 @@ import json
 import logging
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Any
-from zoneinfo import ZoneInfo
 
 from family_assistant.tools.types import (
     ToolAttachment,
@@ -516,7 +515,7 @@ async def download_state_history_tool(
             )
 
         # Convert timestamps to user's local timezone
-        local_tz = ZoneInfo(exec_context.timezone_str)
+        local_tz = exec_context.timezone
         for history_dict in histories:
             for state in history_dict.get("states", []):
                 for ts_field in ("last_changed", "last_updated"):

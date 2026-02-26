@@ -6,6 +6,7 @@ from collections.abc import Callable
 from datetime import UTC, datetime
 from typing import Any
 from unittest.mock import AsyncMock
+from zoneinfo import ZoneInfo
 
 import pytest
 from sqlalchemy import text
@@ -314,7 +315,7 @@ async def test_end_to_end_event_listener_wakes_llm(
     # Setup processing service
     test_service_config = ProcessingServiceConfig(
         prompts={"system_prompt": "Test system prompt"},
-        timezone_str="UTC",
+        timezone=ZoneInfo("UTC"),
         max_history_messages=5,
         history_max_age_hours=24,
         tools_config={},

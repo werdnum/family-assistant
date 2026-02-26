@@ -4,6 +4,7 @@ import json
 import logging
 from pathlib import Path
 from unittest.mock import MagicMock
+from zoneinfo import ZoneInfo
 
 import pytest
 from sqlalchemy.ext.asyncio import AsyncEngine
@@ -145,7 +146,7 @@ async def test_delegate_to_service_with_attachments(
         service_config=ProcessingServiceConfig(
             id=PRIMARY_PROFILE_ID,
             prompts={"system_prompt": "I am a primary assistant."},
-            timezone_str="UTC",
+            timezone=ZoneInfo("UTC"),
             max_history_messages=10,
             history_max_age_hours=24,
             tools_config={},
@@ -163,7 +164,7 @@ async def test_delegate_to_service_with_attachments(
         service_config=ProcessingServiceConfig(
             id=SPECIALIZED_PROFILE_ID,
             prompts={"system_prompt": "I am a specialized assistant."},
-            timezone_str="UTC",
+            timezone=ZoneInfo("UTC"),
             max_history_messages=10,
             history_max_age_hours=24,
             tools_config={},
@@ -345,7 +346,7 @@ async def test_delegate_to_service_cross_conversation_attachment_allowed(
         service_config=ProcessingServiceConfig(
             id=PRIMARY_PROFILE_ID,
             prompts={"system_prompt": "I am a primary assistant."},
-            timezone_str="UTC",
+            timezone=ZoneInfo("UTC"),
             max_history_messages=10,
             history_max_age_hours=24,
             tools_config={},
@@ -363,7 +364,7 @@ async def test_delegate_to_service_cross_conversation_attachment_allowed(
         service_config=ProcessingServiceConfig(
             id=SPECIALIZED_PROFILE_ID,
             prompts={"system_prompt": "I am a specialized assistant."},
-            timezone_str="UTC",
+            timezone=ZoneInfo("UTC"),
             max_history_messages=10,
             history_max_age_hours=24,
             tools_config={},
@@ -530,7 +531,7 @@ async def test_delegate_to_service_propagates_generated_attachments(
         service_config=ProcessingServiceConfig(
             id=PRIMARY_PROFILE_ID,
             prompts={"system_prompt": "I am a primary assistant."},
-            timezone_str="UTC",
+            timezone=ZoneInfo("UTC"),
             max_history_messages=10,
             history_max_age_hours=24,
             tools_config={},
@@ -550,7 +551,7 @@ async def test_delegate_to_service_propagates_generated_attachments(
             prompts={
                 "system_prompt": "I am a specialized assistant with camera access."
             },
-            timezone_str="UTC",
+            timezone=ZoneInfo("UTC"),
             max_history_messages=10,
             history_max_age_hours=24,
             tools_config={},

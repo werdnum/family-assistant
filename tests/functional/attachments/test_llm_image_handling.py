@@ -11,6 +11,7 @@ import uuid
 from collections.abc import AsyncIterator
 from typing import Any
 from unittest.mock import AsyncMock
+from zoneinfo import ZoneInfo
 
 import pytest
 from sqlalchemy.ext.asyncio import AsyncEngine
@@ -108,7 +109,7 @@ async def test_image_handling_with_real_db(
             prompts={
                 "system_prompt": "You are a test assistant."
             },  # Corrected quote escaping
-            timezone_str="UTC",
+            timezone=ZoneInfo("UTC"),
             max_history_messages=10,
             history_max_age_hours=24,
             tools_config={},

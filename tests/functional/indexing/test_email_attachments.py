@@ -18,6 +18,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 from unittest.mock import MagicMock  # unittest.mock.AsyncMock removed
+from zoneinfo import ZoneInfo
 
 import httpx  # Added for http_client
 import numpy as np
@@ -475,7 +476,7 @@ async def test_email_with_pdf_attachment_indexing_e2e(
         chat_interface=mock_chat_interface_pdf,
         embedding_generator=mock_embedder,  # Pass the embedder directly
         calendar_config=None,
-        timezone_str=dummy_timezone_str_pdf,
+        timezone=ZoneInfo(dummy_timezone_str_pdf),
         shutdown_event_instance=test_shutdown_event,  # Pass the shutdown event
         engine=pg_vector_db_engine,  # Pass the engine for database operations
     )
@@ -761,7 +762,7 @@ async def test_email_indexing_with_llm_summary_e2e(
         chat_interface=mock_chat_interface_summary,
         embedding_generator=current_embedder,  # Use the updated embedder
         calendar_config={},
-        timezone_str="UTC",
+        timezone=ZoneInfo("UTC"),
         shutdown_event_instance=test_shutdown_event,  # Pass the shutdown event
         engine=pg_vector_db_engine,  # Pass the engine for database operations
     )
@@ -1040,7 +1041,7 @@ async def test_email_indexing_with_primary_link_extraction_e2e(
         chat_interface=mock_chat_interface_link_ext,
         embedding_generator=current_embedder,
         calendar_config={},
-        timezone_str="UTC",
+        timezone=ZoneInfo("UTC"),
         shutdown_event_instance=test_shutdown_event,  # Pass the shutdown event
         engine=pg_vector_db_engine,  # Pass the engine for database operations
     )

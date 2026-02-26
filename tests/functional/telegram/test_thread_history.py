@@ -5,6 +5,7 @@ and all child messages in a thread.
 """
 
 from datetime import UTC, datetime
+from zoneinfo import ZoneInfo
 
 import pytest
 from sqlalchemy.ext.asyncio import AsyncEngine
@@ -348,7 +349,7 @@ async def test_attachment_context_extraction(db_engine: AsyncEngine) -> None:
             prompts={
                 "thread_attachments_context_header": "Recent Attachments in Conversation:\n{attachments_list}"
             },
-            timezone_str="UTC",
+            timezone=ZoneInfo("UTC"),
             max_history_messages=10,
             history_max_age_hours=2,
             tools_config={},

@@ -4,6 +4,7 @@ import json
 import logging
 import uuid
 from unittest.mock import AsyncMock, MagicMock
+from zoneinfo import ZoneInfo
 
 import pytest
 from homeassistant_api.errors import HomeassistantAPIError
@@ -139,7 +140,7 @@ async def test_render_home_assistant_template_success(
     service_config = ProcessingServiceConfig(
         id="test_ha_template_profile",
         prompts=dummy_prompts,
-        timezone_str=TEST_TIMEZONE_STR,
+        timezone=ZoneInfo(TEST_TIMEZONE_STR),
         max_history_messages=5,
         history_max_age_hours=24,
         tools_config={"confirmation_required": []},
@@ -268,7 +269,7 @@ async def test_render_home_assistant_template_no_client(
     service_config = ProcessingServiceConfig(
         id="test_ha_no_client_profile",
         prompts=dummy_prompts,
-        timezone_str=TEST_TIMEZONE_STR,
+        timezone=ZoneInfo(TEST_TIMEZONE_STR),
         max_history_messages=5,
         history_max_age_hours=24,
         tools_config={"confirmation_required": []},
@@ -420,7 +421,7 @@ Status: Comfortable"""
     service_config = ProcessingServiceConfig(
         id="test_ha_complex_profile",
         prompts=dummy_prompts,
-        timezone_str=TEST_TIMEZONE_STR,
+        timezone=ZoneInfo(TEST_TIMEZONE_STR),
         max_history_messages=5,
         history_max_age_hours=24,
         tools_config={"confirmation_required": []},
@@ -563,7 +564,7 @@ async def test_render_home_assistant_template_api_error(
     service_config = ProcessingServiceConfig(
         id="test_ha_api_error_profile",
         prompts=dummy_prompts,
-        timezone_str=TEST_TIMEZONE_STR,
+        timezone=ZoneInfo(TEST_TIMEZONE_STR),
         max_history_messages=5,
         history_max_age_hours=24,
         tools_config={"confirmation_required": []},

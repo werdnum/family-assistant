@@ -2,9 +2,9 @@ import logging
 from collections.abc import Awaitable, Callable
 from datetime import date, datetime, timedelta
 from typing import TYPE_CHECKING, Any, Protocol, cast
+from zoneinfo import ZoneInfo
 
 import httpx
-import pytz
 
 from family_assistant import (
     calendar_integration,  # For calendar functions
@@ -382,7 +382,7 @@ class WeatherContextProvider(ContextProvider):
         location_id: int,
         api_key: str,
         prompts: PromptsType,
-        timezone_str: str,  # Target display timezone
+        timezone: ZoneInfo,  # Target display timezone
         httpx_client: httpx.AsyncClient,
     ) -> None:
         """
@@ -392,22 +392,13 @@ class WeatherContextProvider(ContextProvider):
             location_id: The WillyWeather location ID.
             api_key: The WillyWeather API key.
             prompts: A dictionary containing prompt templates for formatting.
-            timezone_str: The local timezone string for display (e.g., "Europe/London").
+            timezone: The local timezone for display.
             httpx_client: An instance of httpx.AsyncClient for making API calls.
         """
         self._location_id = location_id
         self._api_key = api_key
         self._prompts = prompts
-        self._display_tz_str = timezone_str
-        try:
-            self._display_pytz_tz = pytz.timezone(timezone_str)
-        except pytz.exceptions.UnknownTimeZoneError:
-            logger.error(
-                f"Unknown display timezone: {timezone_str}. Defaulting to UTC."
-            )
-            self._display_pytz_tz = pytz.utc
-            self._display_tz_str = "UTC"
-
+        self._display_tz = timezone
         self._httpx_client = httpx_client
         # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
         self._weather_data_cache: dict[str, Any] | None = None
@@ -419,12 +410,12 @@ class WeatherContextProvider(ContextProvider):
 
     def _get_today_date(self) -> date:
         """Gets today's date in the display timezone."""
-        return datetime.now(self._display_pytz_tz).date()
+        return datetime.now(self._display_tz).date()
 
     # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
     async def _fetch_and_cache_weather_data(self) -> dict[str, Any] | None:
         """Fetches weather data from WillyWeather API and caches it."""
-        now_utc = datetime.now(pytz.utc)
+        now_utc = datetime.now(ZoneInfo("UTC"))
         if (
             self._weather_data_cache
             and self._cache_expiry_time
@@ -491,9 +482,9 @@ class WeatherContextProvider(ContextProvider):
             return None
         try:
             naive_dt = datetime.strptime(dt_str, "%Y-%m-%d %H:%M:%S")
-            api_pytz_tz = pytz.timezone(api_tz_str)
-            return api_pytz_tz.localize(naive_dt)
-        except (ValueError, pytz.exceptions.UnknownTimeZoneError) as e:
+            api_tz = ZoneInfo(api_tz_str)
+            return naive_dt.replace(tzinfo=api_tz)
+        except (ValueError, KeyError) as e:
             logger.warning(
                 f"[{self.name}] Error parsing API datetime '{dt_str}' with timezone '{api_tz_str}': {e}"
             )
@@ -503,7 +494,7 @@ class WeatherContextProvider(ContextProvider):
         """Formats datetime object to HH:MM in display timezone."""
         if not dt_obj:
             return "N/A"
-        return dt_obj.astimezone(self._display_pytz_tz).strftime("%H:%M")
+        return dt_obj.astimezone(self._display_tz).strftime("%H:%M")
 
     # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
     def _format_uv_alert(self, uv_day_data: dict[str, Any], api_tz_str: str) -> str:
@@ -682,7 +673,7 @@ class WeatherContextProvider(ContextProvider):
                     point_time_unix and point_prob is not None and point_prob > 20
                 ):  # Threshold for "significant"
                     dt_obj = datetime.fromtimestamp(
-                        point_time_unix, tz=pytz.timezone(api_tz_str)
+                        point_time_unix, tz=ZoneInfo(api_tz_str)
                     )
                     rain_periods.append(f"{self._format_time(dt_obj)} ({point_prob}%)")
             if rain_periods:
@@ -705,8 +696,8 @@ class WeatherContextProvider(ContextProvider):
                 morning_temp, afternoon_temp, evening_temp = "N/A", "N/A", "N/A"
                 for p in points:
                     dt = datetime.fromtimestamp(
-                        p["x"], tz=pytz.timezone(api_tz_str)
-                    ).astimezone(self._display_pytz_tz)
+                        p["x"], tz=ZoneInfo(api_tz_str)
+                    ).astimezone(self._display_tz)
                     if dt.hour >= 8 and dt.hour <= 10:
                         morning_temp = p["y"]
                     if dt.hour >= 13 and dt.hour <= 15:
@@ -736,9 +727,7 @@ class WeatherContextProvider(ContextProvider):
             condition_changes = []
             last_precis = None
             for point in precis_graph["groups"][0].get("points", []):
-                dt_obj = datetime.fromtimestamp(
-                    point.get("x"), tz=pytz.timezone(api_tz_str)
-                )
+                dt_obj = datetime.fromtimestamp(point.get("x"), tz=ZoneInfo(api_tz_str))
                 precis_code = point.get(
                     "precisCode"
                 )  # You might need a mapping from precisCode to readable text
@@ -868,7 +857,7 @@ class CalendarContextProvider(ContextProvider):
     def __init__(
         self,
         calendar_config: "CalendarConfig",
-        timezone_str: str,
+        timezone: ZoneInfo,
         prompts: PromptsType,
         clock: calendar_integration.Clock | None = None,
     ) -> None:
@@ -877,12 +866,12 @@ class CalendarContextProvider(ContextProvider):
 
         Args:
             calendar_config: Configuration dictionary for calendar sources.
-            timezone_str: The local timezone string (e.g., "Europe/London").
+            timezone: The local timezone for display.
             prompts: A dictionary containing prompt templates for formatting.
             clock: A clock object for managing time.
         """
         self._calendar_config = calendar_config
-        self._timezone_str = timezone_str
+        self._timezone = timezone
         self._prompts = prompts
         self._clock = clock or calendar_integration.SystemClock()
 
@@ -903,7 +892,7 @@ class CalendarContextProvider(ContextProvider):
         try:
             upcoming_events = await calendar_integration.fetch_upcoming_events(
                 calendar_config=cast("CalendarConfig", self._calendar_config),
-                timezone_str=self._timezone_str,
+                timezone=self._timezone,
             )
             # format_events_for_prompt itself uses prompts for individual event lines
             # and messages for no events.
@@ -911,7 +900,7 @@ class CalendarContextProvider(ContextProvider):
                 calendar_integration.format_events_for_prompt(
                     events=upcoming_events,
                     prompts=self._prompts,  # Pass the prompts dict here
-                    timezone_str=self._timezone_str,
+                    timezone=self._timezone,
                     clock=self._clock,
                 )
             )

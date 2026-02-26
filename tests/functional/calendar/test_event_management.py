@@ -55,6 +55,7 @@ logger = logging.getLogger(__name__)
 TEST_CHAT_ID = "cal_test_chat_123"
 TEST_USER_NAME = "CalendarTestUser"
 TEST_TIMEZONE_STR = "Europe/Berlin"  # Example timezone for tests
+TEST_TIMEZONE = ZoneInfo(TEST_TIMEZONE_STR)
 
 
 def get_radicale_client(
@@ -256,12 +257,12 @@ async def test_modify_event(
     calendar_context_provider_for_add = CalendarContextProvider(
         calendar_config=test_calendar_config_for_add,
         prompts=dummy_prompts_for_add,
-        timezone_str=TEST_TIMEZONE_STR,
+        timezone=ZoneInfo(TEST_TIMEZONE_STR),
     )
     service_config_for_add = ProcessingServiceConfig(
         id="test_cal_initial_add_profile",  # Unique profile ID
         prompts=dummy_prompts_for_add,
-        timezone_str=TEST_TIMEZONE_STR,
+        timezone=ZoneInfo(TEST_TIMEZONE_STR),
         max_history_messages=5,
         history_max_age_hours=24,
         tools_config={"confirmation_required": []},
@@ -350,7 +351,7 @@ async def test_modify_event(
                 event_sources=None,
                 attachment_registry=None,
                 chat_interface=None,
-                timezone_str=TEST_TIMEZONE_STR,
+                timezone=ZoneInfo(TEST_TIMEZONE_STR),
                 request_confirmation_callback=None,
                 camera_backend=None,
             ),
@@ -485,12 +486,12 @@ async def test_modify_event(
     calendar_context_provider = CalendarContextProvider(
         calendar_config=test_calendar_config,
         prompts=dummy_prompts,
-        timezone_str=TEST_TIMEZONE_STR,
+        timezone=ZoneInfo(TEST_TIMEZONE_STR),
     )
     service_config = ProcessingServiceConfig(
         id="test_cal_mod_profile",
         prompts=dummy_prompts,
-        timezone_str=TEST_TIMEZONE_STR,
+        timezone=ZoneInfo(TEST_TIMEZONE_STR),
         max_history_messages=5,
         history_max_age_hours=24,
         tools_config={"confirmation_required": []},
@@ -555,7 +556,7 @@ async def test_modify_event(
     )
 
     formatted_day_after_tomorrow = format_datetime_or_date(
-        day_after_tomorrow.date(), TEST_TIMEZONE_STR
+        day_after_tomorrow.date(), TEST_TIMEZONE
     )
     expected_time_str_in_prompt_mod = f"{formatted_day_after_tomorrow} 15:00"  # 3 PM
     assert modified_summary in aggregated_context_str_mod, (
@@ -672,12 +673,12 @@ async def test_delete_event(
     calendar_context_provider = CalendarContextProvider(
         calendar_config=test_calendar_config,
         prompts=dummy_prompts,
-        timezone_str=TEST_TIMEZONE_STR,
+        timezone=ZoneInfo(TEST_TIMEZONE_STR),
     )
     service_config = ProcessingServiceConfig(
         id="test_cal_del_profile",
         prompts=dummy_prompts,  # type: ignore
-        timezone_str=TEST_TIMEZONE_STR,
+        timezone=ZoneInfo(TEST_TIMEZONE_STR),
         max_history_messages=5,
         history_max_age_hours=24,
         tools_config={"confirmation_required": []},
@@ -903,12 +904,12 @@ async def test_search_events(
     calendar_context_provider = CalendarContextProvider(
         calendar_config=test_calendar_config,
         prompts=dummy_prompts,
-        timezone_str=TEST_TIMEZONE_STR,
+        timezone=ZoneInfo(TEST_TIMEZONE_STR),
     )
     service_config = ProcessingServiceConfig(
         id="test_cal_search_profile_main",  # Main profile for the test
         prompts=dummy_prompts,
-        timezone_str=TEST_TIMEZONE_STR,
+        timezone=ZoneInfo(TEST_TIMEZONE_STR),
         max_history_messages=5,
         history_max_age_hours=24,
         tools_config={"confirmation_required": []},
@@ -1249,7 +1250,7 @@ END:VCALENDAR"""
     # Import and test the fetch function
 
     # Fetch events - this should not throw an error even with mixed date/datetime types
-    events = await fetch_upcoming_events(test_calendar_config, TEST_TIMEZONE_STR)
+    events = await fetch_upcoming_events(test_calendar_config, TEST_TIMEZONE)
 
     # Verify events were fetched and sorted correctly
     assert len(events) >= 2, "Should have fetched at least 2 events"
@@ -1362,12 +1363,12 @@ async def test_similarity_based_search_finds_similar_events(
     calendar_context_provider = CalendarContextProvider(
         calendar_config=test_calendar_config,
         prompts=dummy_prompts,
-        timezone_str=TEST_TIMEZONE_STR,
+        timezone=ZoneInfo(TEST_TIMEZONE_STR),
     )
     service_config = ProcessingServiceConfig(
         id="test_cal_similarity_profile",
         prompts=dummy_prompts,
-        timezone_str=TEST_TIMEZONE_STR,
+        timezone=ZoneInfo(TEST_TIMEZONE_STR),
         max_history_messages=5,
         history_max_age_hours=24,
         tools_config={"confirmation_required": []},
@@ -1579,7 +1580,7 @@ async def test_similarity_based_search_finds_similar_events(
             event_sources=None,
             attachment_registry=None,
             chat_interface=None,
-            timezone_str=TEST_TIMEZONE_STR,
+            timezone=ZoneInfo(TEST_TIMEZONE_STR),
             request_confirmation_callback=None,
             camera_backend=None,
         )
@@ -1681,7 +1682,7 @@ async def test_similarity_search_threshold_filtering(
             event_sources=None,
             attachment_registry=None,
             chat_interface=None,
-            timezone_str=TEST_TIMEZONE_STR,
+            timezone=ZoneInfo(TEST_TIMEZONE_STR),
             request_confirmation_callback=None,
             camera_backend=None,
         )
@@ -1795,7 +1796,7 @@ async def test_similarity_search_score_sorting(
             event_sources=None,
             attachment_registry=None,
             chat_interface=None,
-            timezone_str=TEST_TIMEZONE_STR,
+            timezone=ZoneInfo(TEST_TIMEZONE_STR),
             request_confirmation_callback=None,
             camera_backend=None,
         )
@@ -1909,7 +1910,7 @@ async def test_duplicate_detection_error_shown(
             home_assistant_client=None,
             event_sources=None,
             attachment_registry=None,
-            timezone_str="America/New_York",
+            timezone=ZoneInfo("America/New_York"),
             camera_backend=None,
         )
 
@@ -2044,7 +2045,7 @@ async def test_duplicate_detection_no_error_different_time(
             home_assistant_client=None,
             event_sources=None,
             attachment_registry=None,
-            timezone_str="America/New_York",
+            timezone=ZoneInfo("America/New_York"),
             camera_backend=None,
         )
 
@@ -2138,7 +2139,7 @@ async def test_duplicate_detection_disabled(
             home_assistant_client=None,
             event_sources=None,
             attachment_registry=None,
-            timezone_str="America/New_York",
+            timezone=ZoneInfo("America/New_York"),
             camera_backend=None,
         )
 
@@ -2228,7 +2229,7 @@ async def test_duplicate_detection_all_day_events(
             home_assistant_client=None,
             event_sources=None,
             attachment_registry=None,
-            timezone_str="America/New_York",
+            timezone=ZoneInfo("America/New_York"),
             camera_backend=None,
         )
 
@@ -2337,7 +2338,7 @@ async def test_duplicate_detection_exact_same_title(
             home_assistant_client=None,
             event_sources=None,
             attachment_registry=None,
-            timezone_str="America/New_York",
+            timezone=ZoneInfo("America/New_York"),
             camera_backend=None,
         )
 

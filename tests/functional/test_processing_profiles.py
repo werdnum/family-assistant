@@ -1,3 +1,5 @@
+from zoneinfo import ZoneInfo
+
 import pytest
 from sqlalchemy.ext.asyncio import AsyncEngine
 
@@ -102,7 +104,7 @@ async def test_reply_with_different_profile_includes_history(
     # --- Processing Services ---
     profile_a_config = ProcessingServiceConfig(
         prompts={"system_prompt": "You are Profile A."},
-        timezone_str="UTC",
+        timezone=ZoneInfo("UTC"),
         max_history_messages=10,
         history_max_age_hours=24,
         tools_config={"enable_local_tools": [], "enable_mcp_server_ids": []},
@@ -120,7 +122,7 @@ async def test_reply_with_different_profile_includes_history(
 
     profile_b_config = ProcessingServiceConfig(
         prompts={"system_prompt": "You are Profile B."},
-        timezone_str="UTC",
+        timezone=ZoneInfo("UTC"),
         max_history_messages=10,
         history_max_age_hours=24,
         tools_config={"enable_local_tools": [], "enable_mcp_server_ids": []},

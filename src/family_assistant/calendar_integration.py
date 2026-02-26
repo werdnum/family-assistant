@@ -28,20 +28,14 @@ logger = logging.getLogger(__name__)
 
 def format_datetime_or_date(
     dt_obj: datetime | date,
-    timezone_str: str,
+    timezone: ZoneInfo,
     is_end: bool = False,
     clock: Clock | None = None,
 ) -> str:
     """Formats datetime or date object into a user-friendly string, relative to the specified timezone."""
     if clock is None:
         clock = SystemClock()
-    try:
-        local_tz = ZoneInfo(timezone_str)
-    except Exception:
-        logger.warning(
-            f"Invalid timezone string '{timezone_str}' in format_datetime_or_date. Falling back to UTC."
-        )
-        local_tz = ZoneInfo("UTC")
+    local_tz = timezone
 
     now_local = clock.now().astimezone(local_tz)
     today_local = now_local.date()
@@ -104,20 +98,13 @@ def format_datetime_or_date(
 
 def parse_event(
     event_data: str,
-    timezone_str: str | None = None,
+    timezone: ZoneInfo | None = None,
 ) -> "CalendarEvent | None":
     """
     Parses VCALENDAR data into a dictionary, including the UID.
-    If timezone_str is provided, naive datetimes will be localized to that timezone.
+    If timezone is provided, naive datetimes will be localized to that timezone.
     """
-    local_tz: ZoneInfo | None = None
-    if timezone_str:
-        try:
-            local_tz = ZoneInfo(timezone_str)
-        except Exception:
-            logger.warning(
-                f"Invalid timezone string '{timezone_str}' provided to parse_event. Naive datetimes will not be localized."
-            )
+    local_tz: ZoneInfo | None = timezone
 
     try:
         # vobject.readComponents returns an iterator.
@@ -147,27 +134,21 @@ def parse_event(
                 if dtstart.tzinfo is None:
                     # Naive datetime: Assume it's in the target local timezone
                     dtstart = dtstart.replace(tzinfo=local_tz)
-                    logger.debug(
-                        f"Applied local timezone {timezone_str} to naive dtstart"
-                    )
+                    logger.debug(f"Applied local timezone {timezone} to naive dtstart")
                 else:
                     # Aware datetime: Convert it to the target local timezone
                     dtstart = dtstart.astimezone(local_tz)
                     logger.debug(
-                        f"Converted aware dtstart to target timezone {timezone_str}"
+                        f"Converted aware dtstart to target timezone {timezone}"
                     )
             # Repeat for dtend, checking if it exists first
             if isinstance(dtend, datetime):
                 if dtend.tzinfo is None:
                     dtend = dtend.replace(tzinfo=local_tz)
-                    logger.debug(
-                        f"Applied local timezone {timezone_str} to naive dtend"
-                    )
+                    logger.debug(f"Applied local timezone {timezone} to naive dtend")
                 else:
                     dtend = dtend.astimezone(local_tz)
-                    logger.debug(
-                        f"Converted aware dtend to target timezone {timezone_str}"
-                    )
+                    logger.debug(f"Converted aware dtend to target timezone {timezone}")
 
         # If dtend is missing, calculate it *after* ensuring dtstart is localized/converted
         if dtend is None and dtstart is not None:  # Check dtstart is not None
@@ -206,7 +187,7 @@ def parse_event(
 
 async def _fetch_ical_events_async(
     ical_urls: list[str],
-    timezone_str: str,  # Added timezone string
+    timezone: ZoneInfo,
 ) -> list["CalendarEvent"]:
     """Asynchronously fetches and parses events from a list of iCal URLs."""
     all_events: list[CalendarEvent] = []
@@ -242,7 +223,7 @@ async def _fetch_ical_events_async(
                         if component.name.upper() == "VEVENT":  # type: ignore[union-attr]
                             parsed = parse_event(
                                 component.serialize(),  # type: ignore[union-attr]
-                                timezone_str=timezone_str,  # Pass timezone here
+                                timezone=timezone,
                             )  # Reuse existing parser
                             if parsed:
                                 all_events.append(parsed)
@@ -273,7 +254,7 @@ def _fetch_caldav_events_sync(
     username: str,
     password: str,
     calendar_urls: list[str],
-    timezone_str: str,  # Added timezone string
+    timezone: ZoneInfo,
     base_url: str | None = None,  # Added base_url parameter
 ) -> list["CalendarEvent"]:
     """Synchronous function to connect to CalDAV servers using specific calendar URLs and fetch events."""
@@ -312,13 +293,7 @@ def _fetch_caldav_events_sync(
         return []
 
     # Define date range based on the provided timezone
-    try:
-        local_tz = ZoneInfo(timezone_str)
-    except Exception:
-        logger.warning(
-            f"Invalid timezone string '{timezone_str}' in _fetch_caldav_events_sync. Falling back to UTC."
-        )
-        local_tz = ZoneInfo("UTC")
+    local_tz = timezone
     start_date = datetime.now(local_tz).date()
     end_date = start_date + timedelta(
         days=16
@@ -376,8 +351,7 @@ def _fetch_caldav_events_sync(
                     event_data_str: str = (
                         event_resource.data
                     )  # Access data synchronously, it's a string
-                    # Pass the timezone_str to parse_event for localization
-                    parsed = parse_event(event_data_str, timezone_str=timezone_str)
+                    parsed = parse_event(event_data_str, timezone=timezone)
                     if parsed:
                         all_events.append(parsed)
                     else:
@@ -409,33 +383,25 @@ def _fetch_caldav_events_sync(
     def get_sort_key_caldav(event: "CalendarEvent") -> datetime:
         """Converts date/datetime to timezone-aware datetime in the local timezone for sorting."""
         start_val = event["start"]
-        try:
-            local_tz = ZoneInfo(timezone_str)
-        except Exception:
-            logger.warning(
-                f"Invalid timezone '{timezone_str}' in get_sort_key_caldav, falling back to UTC."
-            )
-            local_tz = ZoneInfo("UTC")  # Fallback
+        sort_tz = timezone
 
         if isinstance(start_val, date) and not isinstance(start_val, datetime):
             # Convert date to datetime at midnight *in the local timezone*
-            return datetime.combine(start_val, time.min, tzinfo=local_tz)
+            return datetime.combine(start_val, time.min, tzinfo=sort_tz)
         elif isinstance(start_val, datetime):
             # If it's a datetime, ensure it's timezone-aware and in the correct local timezone
             if start_val.tzinfo is None:
                 logger.warning(
-                    f"Found naive datetime {start_val} during sorting for event '{event['summary']}'. Applying local timezone {timezone_str}."
+                    f"Found naive datetime {start_val} during sorting for event '{event['summary']}'. Applying local timezone {timezone}."
                 )
-                return start_val.replace(
-                    tzinfo=local_tz
-                )  # Make aware assuming local TZ
+                return start_val.replace(tzinfo=sort_tz)  # Make aware assuming local TZ
             else:
-                return start_val.astimezone(local_tz)  # Convert to local TZ
+                return start_val.astimezone(sort_tz)  # Convert to local TZ
         # Fallback for unexpected types (shouldn't happen with proper parsing)
         logger.error(
             f"Unexpected type for event start time: {type(start_val)}. Returning epoch."
         )
-        return datetime.fromtimestamp(0, tz=local_tz)
+        return datetime.fromtimestamp(0, tz=sort_tz)
 
     try:
         all_events.sort(key=get_sort_key_caldav)
@@ -453,7 +419,7 @@ def _fetch_caldav_events_sync(
 
 async def fetch_upcoming_events(
     calendar_config: "CalendarConfig",
-    timezone_str: str,  # Added timezone string
+    timezone: ZoneInfo,
 ) -> list["CalendarEvent"]:
     """Fetches events from configured CalDAV and iCal sources and merges them."""
     logger.debug("Entering fetch_upcoming_events orchestrator.")
@@ -482,7 +448,7 @@ async def fetch_upcoming_events(
                 username,
                 password,
                 calendar_urls,  # Pass list of full collection URLs
-                timezone_str,
+                timezone,
                 base_url,  # Pass the server base_url
             )
             tasks.append(caldav_task)
@@ -498,9 +464,8 @@ async def fetch_upcoming_events(
         ical_urls = ical_config.get("urls", [])
         if ical_urls:
             logger.debug("Scheduling asynchronous iCal fetch.")
-            # Pass timezone_str to the iCal fetcher
             ical_task = asyncio.create_task(
-                _fetch_ical_events_async(ical_urls, timezone_str)
+                _fetch_ical_events_async(ical_urls, timezone)
             )
             tasks.append(ical_task)
         else:
@@ -539,13 +504,7 @@ async def fetch_upcoming_events(
     def get_sort_key(event: "CalendarEvent") -> datetime:
         """Converts date/datetime to timezone-aware datetime in the local timezone for sorting."""
         start_val = event["start"]
-        try:
-            local_tz = ZoneInfo(timezone_str)
-        except Exception:
-            logger.warning(
-                f"Invalid timezone '{timezone_str}' in get_sort_key, falling back to UTC."
-            )
-            local_tz = ZoneInfo("UTC")  # Fallback
+        local_tz = timezone
 
         if isinstance(start_val, date) and not isinstance(start_val, datetime):
             # Convert date to datetime at midnight *in the local timezone*
@@ -554,7 +513,7 @@ async def fetch_upcoming_events(
             # If it's a datetime, ensure it's timezone-aware and in the correct local timezone
             if start_val.tzinfo is None:
                 logger.warning(
-                    f"Found naive datetime {start_val} during sorting for event '{event['summary']}'. Applying local timezone {timezone_str}."
+                    f"Found naive datetime {start_val} during sorting for event '{event['summary']}'. Applying local timezone {timezone}."
                 )
                 return start_val.replace(
                     tzinfo=local_tz
@@ -589,19 +548,13 @@ async def fetch_upcoming_events(
 def format_events_for_prompt(
     events: list["CalendarEvent"],
     prompts: dict[str, str],  # Prompts can have varied structure
-    timezone_str: str,  # Added timezone string
+    timezone: ZoneInfo,
     clock: Clock | None = None,
 ) -> tuple[str, str]:
     """Formats the fetched events into strings suitable for the prompt."""
     if clock is None:
         clock = SystemClock()
-    try:
-        local_tz = ZoneInfo(timezone_str)
-    except Exception:
-        logger.warning(
-            f"Invalid timezone string '{timezone_str}' in format_events_for_prompt. Falling back to UTC."
-        )
-        local_tz = ZoneInfo("UTC")
+    local_tz = timezone
 
     today_local = clock.now().astimezone(local_tz).date()
     tomorrow_local = today_local + timedelta(days=1)
@@ -628,14 +581,14 @@ def format_events_for_prompt(
         start_dt = start_dt_orig
         if isinstance(start_dt, datetime) and start_dt.tzinfo is None:
             logger.debug(
-                f"Applying timezone {timezone_str} to naive start_dt {start_dt} in format_events_for_prompt"
+                f"Applying timezone {timezone} to naive start_dt {start_dt} in format_events_for_prompt"
             )
             start_dt = start_dt.replace(tzinfo=local_tz)
 
         end_dt = end_dt_orig
         if isinstance(end_dt, datetime) and end_dt.tzinfo is None:
             logger.debug(
-                f"Applying timezone {timezone_str} to naive end_dt {end_dt} in format_events_for_prompt"
+                f"Applying timezone {timezone} to naive end_dt {end_dt} in format_events_for_prompt"
             )
             end_dt = end_dt.replace(tzinfo=local_tz)
         # --- End timezone awareness check ---
@@ -670,11 +623,9 @@ def format_events_for_prompt(
 
         # Format start/end times (using potentially localized datetimes) using the timezone
         start_str = format_datetime_or_date(
-            start_dt, timezone_str, is_end=False, clock=clock
+            start_dt, timezone, is_end=False, clock=clock
         )
-        end_str = format_datetime_or_date(
-            end_dt, timezone_str, is_end=True, clock=clock
-        )
+        end_str = format_datetime_or_date(end_dt, timezone, is_end=True, clock=clock)
         summary = event["summary"]
 
         fmt = all_day_fmt if event["all_day"] else event_fmt
@@ -789,7 +740,7 @@ async def fetch_event_details_for_confirmation(
 
                 event_data_str: str = event_resource.data  # type: ignore
                 # Use UTC as default timezone for confirmation display
-                parsed_event = parse_event(event_data_str, timezone_str="UTC")
+                parsed_event = parse_event(event_data_str, timezone=ZoneInfo("UTC"))
 
                 if parsed_event:
                     logger.info(

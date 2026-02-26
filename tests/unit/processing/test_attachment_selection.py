@@ -7,6 +7,7 @@ Tests the _select_attachments_for_response method and related threshold logic.
 import json
 from datetime import datetime
 from unittest.mock import AsyncMock, MagicMock
+from zoneinfo import ZoneInfo
 
 import pytest
 
@@ -54,7 +55,7 @@ class TestAttachmentSelectionThreshold:
         service_config = ProcessingServiceConfig(
             id="test_profile",
             prompts={"system": "Test system prompt"},
-            timezone_str="UTC",
+            timezone=ZoneInfo("UTC"),
             max_history_messages=10,
             history_max_age_hours=24,
             tools_config={},
@@ -176,7 +177,7 @@ class TestSelectAttachmentsForResponse:
         service_config = ProcessingServiceConfig(
             id="test_profile",
             prompts={"system": "Test system prompt"},
-            timezone_str="UTC",
+            timezone=ZoneInfo("UTC"),
             max_history_messages=10,
             history_max_age_hours=24,
             tools_config={},

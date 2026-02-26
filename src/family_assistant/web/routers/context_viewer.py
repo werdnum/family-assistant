@@ -3,7 +3,6 @@ import re
 from datetime import UTC, datetime
 from string import Formatter
 from typing import Annotated
-from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import HTMLResponse
@@ -154,7 +153,7 @@ async def _get_context_data(
             "user_name": user_name,
             "current_time": datetime
             .now(UTC)
-            .astimezone(ZoneInfo(target_service.timezone_str))
+            .astimezone(target_service.timezone)
             .strftime("%Y-%m-%d %H:%M:%S %Z"),
             "aggregated_other_context": aggregated_context,
             "server_url": target_service.server_url,

@@ -10,7 +10,6 @@ import json
 import logging
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING
-from zoneinfo import ZoneInfo
 
 from family_assistant.scripting.apis.attachments import ScriptAttachment
 
@@ -158,7 +157,7 @@ async def get_message_history_tool(
             return "No message history found matching the specified criteria."
 
         # Format the history for the LLM
-        local_tz = ZoneInfo(exec_context.timezone_str)
+        local_tz = exec_context.timezone
         formatted_history = ["Retrieved message history:"]
         for msg in history_messages:
             role = msg.get("role", "unknown")

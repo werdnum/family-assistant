@@ -125,7 +125,7 @@ async def test_slash_command_routes_to_specific_profile(
     # For this test, the mock LLM client is shared, so system prompt is the main differentiator.
     focused_service_config = ProcessingServiceConfig(
         prompts=focused_prompts_config,
-        timezone_str=fix.processing_service.service_config.timezone_str,
+        timezone=fix.processing_service.service_config.timezone,
         max_history_messages=5,
         history_max_age_hours=24,
         tools_config={},  # Added missing tools_config

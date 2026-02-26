@@ -6,6 +6,7 @@ import logging
 import uuid
 from datetime import UTC, datetime
 from typing import Any
+from zoneinfo import ZoneInfo
 
 import numpy as np  # Using numpy for easy random vector generation
 import pytest
@@ -531,7 +532,7 @@ async def test_get_full_document_content_with_raw_content(
                 event_sources=None,
                 attachment_registry=None,
                 camera_backend=None,
-                timezone_str="UTC",
+                timezone=ZoneInfo("UTC"),
             )
 
             # Test retrieval of full content

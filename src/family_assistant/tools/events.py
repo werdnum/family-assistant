@@ -18,7 +18,7 @@ from family_assistant.tools.types import ToolDefinition, ToolExecutionContext
 logger = logging.getLogger(__name__)
 
 
-def _format_event_timestamp(timestamp: str | datetime, timezone_str: str) -> str:
+def _format_event_timestamp(timestamp: str | datetime, timezone: ZoneInfo) -> str:
     """Convert a raw event timestamp to local timezone ISO format.
 
     Handles both string timestamps (from SQLite) and datetime objects,
@@ -26,7 +26,7 @@ def _format_event_timestamp(timestamp: str | datetime, timezone_str: str) -> str
 
     Args:
         timestamp: Timestamp as a string or datetime object.
-        timezone_str: IANA timezone name (e.g. "Australia/Sydney").
+        timezone: ZoneInfo object for the user's local timezone.
 
     Returns:
         ISO format string in the user's local timezone.
@@ -35,10 +35,10 @@ def _format_event_timestamp(timestamp: str | datetime, timezone_str: str) -> str
         parsed = parse_datetime(timestamp)
         if parsed.tzinfo is None:
             parsed = parsed.replace(tzinfo=UTC)
-        return parsed.astimezone(ZoneInfo(timezone_str)).isoformat()
+        return parsed.astimezone(timezone).isoformat()
     if timestamp.tzinfo is None:
         timestamp = timestamp.replace(tzinfo=UTC)
-    return timestamp.astimezone(ZoneInfo(timezone_str)).isoformat()
+    return timestamp.astimezone(timezone).isoformat()
 
 
 # Tool definitions
@@ -214,7 +214,7 @@ async def query_recent_events_tool(
                 "event_id": row["event_id"],
                 "source_id": row["source_id"],
                 "timestamp": _format_event_timestamp(
-                    row["timestamp"], exec_context.timezone_str
+                    row["timestamp"], exec_context.timezone
                 ),
                 "event_data": event_data,
                 "triggered_listeners": triggered_listeners,
@@ -350,7 +350,7 @@ async def test_event_listener_tool(
                 matched_events.append({
                     "event_id": row["event_id"],
                     "timestamp": _format_event_timestamp(
-                        row["timestamp"], exec_context.timezone_str
+                        row["timestamp"], exec_context.timezone
                     ),
                     "event_data": event_data,
                 })

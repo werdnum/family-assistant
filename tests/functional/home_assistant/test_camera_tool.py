@@ -5,6 +5,7 @@ import json
 import uuid
 from typing import TYPE_CHECKING
 from unittest.mock import AsyncMock, MagicMock
+from zoneinfo import ZoneInfo
 
 import pytest
 from PIL import Image
@@ -114,7 +115,7 @@ async def create_processing_service_for_camera_tests(
     service_config = ProcessingServiceConfig(
         id=profile_id,
         prompts=dummy_prompts,
-        timezone_str=TEST_TIMEZONE_STR,
+        timezone=ZoneInfo(TEST_TIMEZONE_STR),
         max_history_messages=5,
         history_max_age_hours=24,
         tools_config={"confirmation_required": []},

@@ -15,6 +15,7 @@ import uuid
 from collections.abc import AsyncGenerator, Callable, Generator
 from contextlib import nullcontext
 from typing import TYPE_CHECKING, Any, Protocol
+from zoneinfo import ZoneInfo
 
 if TYPE_CHECKING:
     from fastapi import FastAPI
@@ -755,13 +756,12 @@ async def task_worker_manager(
         **kwargs: Any,  # noqa: ANN401
     ) -> tuple[TaskWorker, asyncio.Event, asyncio.Event]:
         nonlocal worker_task_handle
-        # Extract timezone_str from kwargs with default of "UTC"
-        timezone_str = kwargs.pop("timezone_str", "UTC")
+        timezone = kwargs.pop("timezone", ZoneInfo("UTC"))
         worker = TaskWorker(
             processing_service=processing_service,
             chat_interface=chat_interface,
             calendar_config={},
-            timezone_str=timezone_str,
+            timezone=timezone,
             embedding_generator=MagicMock(),
             shutdown_event_instance=shutdown_event,
             engine=db_engine,

@@ -16,13 +16,13 @@ from typing import (
     TYPE_CHECKING,
     Any,
 )
+from zoneinfo import ZoneInfo
 
 if TYPE_CHECKING:
     from family_assistant.camera.protocol import CameraBackend
     from family_assistant.home_assistant_wrapper import HomeAssistantClientWrapper
 
 import aiofiles
-import pytz  # Added
 from pydantic import TypeAdapter
 
 from family_assistant.config_models import AppConfig
@@ -250,7 +250,7 @@ class ProcessingServiceConfig:
     """Configuration specific to a ProcessingService instance."""
 
     prompts: dict[str, str]
-    timezone_str: str
+    timezone: ZoneInfo
     max_history_messages: int
     history_max_age_hours: float  # Can be fractional (e.g., 0.5 hours)
     # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
@@ -359,8 +359,8 @@ class ProcessingService:
         return self.service_config.prompts
 
     @property
-    def timezone_str(self) -> str:
-        return self.service_config.timezone_str
+    def timezone(self) -> ZoneInfo:
+        return self.service_config.timezone
 
     @property
     def max_history_messages(self) -> int:
@@ -1125,7 +1125,7 @@ class ProcessingService:
             db_context=db_context,
             chat_interface=chat_interface,
             chat_interfaces=chat_interfaces_dict,
-            timezone_str=self.timezone_str,
+            timezone=self.timezone,
             processing_profile_id=self.service_config.id,
             subconversation_id=subconversation_id,
             request_confirmation_callback=request_confirmation_callback,
@@ -2173,20 +2173,12 @@ Call attach_to_response with your selected attachment IDs."""
                 "system_prompt",
                 "You are a helpful assistant. Current time is {current_time}.",
             )
-            try:
-                local_tz = pytz.timezone(self.timezone_str)
-                # Use the injected clock's now() method
-                current_time_str = (
-                    self.clock
-                    .now()
-                    .astimezone(local_tz)
-                    .strftime("%Y-%m-%d %H:%M:%S %Z")
-                )
-            except Exception as tz_err:
-                logger.error(
-                    f"Error applying timezone {self.timezone_str}: {tz_err}. Defaulting time format."
-                )
-                current_time_str = datetime.now(UTC).strftime("%Y-%m-%d %H:%M:%S UTC")
+            current_time_str = (
+                self.clock
+                .now()
+                .astimezone(self.timezone)
+                .strftime("%Y-%m-%d %H:%M:%S %Z")
+            )
 
             aggregated_other_context_str = (
                 await self._aggregate_context_from_providers()
@@ -2601,16 +2593,12 @@ Call attach_to_response with your selected attachment IDs."""
                 "You are a helpful assistant. Current time is {current_time}.",
             )
 
-            try:
-                local_tz = pytz.timezone(self.timezone_str)
-                current_time_str = (
-                    self.clock
-                    .now()
-                    .astimezone(local_tz)
-                    .strftime("%Y-%m-%d %H:%M:%S %Z")
-                )
-            except Exception:
-                current_time_str = datetime.now(UTC).strftime("%Y-%m-%d %H:%M:%S UTC")
+            current_time_str = (
+                self.clock
+                .now()
+                .astimezone(self.timezone)
+                .strftime("%Y-%m-%d %H:%M:%S %Z")
+            )
 
             aggregated_other_context_str = (
                 await self._aggregate_context_from_providers()

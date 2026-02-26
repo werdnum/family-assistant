@@ -4,6 +4,7 @@ import asyncio
 import uuid
 from collections.abc import Callable
 from unittest.mock import AsyncMock
+from zoneinfo import ZoneInfo
 
 import pytest
 from sqlalchemy.ext.asyncio import AsyncEngine
@@ -187,7 +188,7 @@ log_event()
         service_config=ProcessingServiceConfig(
             id="event_handler",
             prompts={"system_prompt": "Event handler"},
-            timezone_str="UTC",
+            timezone=ZoneInfo("UTC"),
             max_history_messages=1,
             history_max_age_hours=1,
             tools_config={},

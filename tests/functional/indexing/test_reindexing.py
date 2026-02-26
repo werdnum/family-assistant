@@ -9,6 +9,7 @@ import uuid
 from collections.abc import AsyncGenerator
 from typing import TYPE_CHECKING, Any
 from unittest.mock import MagicMock
+from zoneinfo import ZoneInfo
 
 import httpx
 import numpy as np
@@ -218,7 +219,7 @@ async def test_reindex_document_e2e(
         processing_service=_create_mock_processing_service(),
         chat_interface=MagicMock(),
         calendar_config={},
-        timezone_str="UTC",
+        timezone=ZoneInfo("UTC"),
         embedding_generator=mock_embedding_generator,
         engine=pg_vector_db_engine,
     )

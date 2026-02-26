@@ -9,11 +9,11 @@ import random
 import shutil
 import traceback
 import uuid
-import zoneinfo  # Add this import
 from collections.abc import Awaitable, Callable  # Import Union
 from datetime import UTC, datetime, timedelta  # Added Union
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
+from zoneinfo import ZoneInfo
 
 import aiofiles.os
 from dateutil import rrule
@@ -315,10 +315,7 @@ async def handle_llm_callback(
         f"Handling LLM callback for conversation {interface_type}:{conversation_id} (scheduled at {scheduling_timestamp_str})"
     )
     current_time_str = (
-        clock
-        .now()
-        .astimezone(zoneinfo.ZoneInfo(exec_context.timezone_str))
-        .strftime("%Y-%m-%d %H:%M:%S %Z")
+        clock.now().astimezone(exec_context.timezone).strftime("%Y-%m-%d %H:%M:%S %Z")
     )  # Use timezone from context
 
     try:
@@ -496,7 +493,7 @@ class TaskWorker:
         processing_service: ProcessingService,
         chat_interface: ChatInterface,
         calendar_config: CalendarConfig | None,
-        timezone_str: str,
+        timezone: ZoneInfo,
         embedding_generator: EmbeddingGenerator,
         shutdown_event_instance: asyncio.Event | None = None,  # Made optional
         clock: Clock | None = None,
@@ -522,7 +519,7 @@ class TaskWorker:
         self.calendar_config: CalendarConfig = (
             calendar_config if calendar_config else {}
         )
-        self.timezone_str = timezone_str
+        self.timezone = timezone
         self.embedding_generator = embedding_generator
         self.clock = (
             clock if clock is not None else SystemClock()
@@ -601,10 +598,10 @@ class TaskWorker:
 
             # Convert UTC time to user's timezone before calculating recurrence
             # This ensures BYHOUR and other time-based rules work in the user's timezone
-            user_tz = zoneinfo.ZoneInfo(self.timezone_str)
+            user_tz = self.timezone
             last_scheduled_in_user_tz = last_scheduled_at.astimezone(user_tz)
             logger.debug(
-                f"RECURRENCE DEBUG: Converting scheduled time from {last_scheduled_at} UTC to {last_scheduled_in_user_tz} {self.timezone_str} for recurrence calculation"
+                f"RECURRENCE DEBUG: Converting scheduled time from {last_scheduled_at} UTC to {last_scheduled_in_user_tz} {self.timezone} for recurrence calculation"
             )
 
             # Get current time in user timezone to avoid scheduling in the past
@@ -760,7 +757,7 @@ class TaskWorker:
                     else self.chat_interface
                 ),
                 chat_interfaces=self.chat_interfaces,
-                timezone_str=self.timezone_str,
+                timezone=self.timezone,
                 processing_profile_id=(
                     self.processing_service.service_config.id
                     if self.processing_service

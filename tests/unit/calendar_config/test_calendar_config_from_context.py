@@ -2,6 +2,7 @@
 
 from typing import cast
 from unittest.mock import MagicMock
+from zoneinfo import ZoneInfo
 
 import pytest
 
@@ -76,7 +77,7 @@ async def test_calendar_config_from_provider() -> None:
         event_sources=None,
         attachment_registry=None,
         chat_interface=None,
-        timezone_str="UTC",
+        timezone=ZoneInfo("UTC"),
         camera_backend=None,
     )
 
@@ -140,7 +141,7 @@ async def test_calendar_tool_without_config() -> None:
         event_sources=None,
         attachment_registry=None,
         chat_interface=None,
-        timezone_str="UTC",
+        timezone=ZoneInfo("UTC"),
         camera_backend=None,
     )
 
@@ -222,7 +223,7 @@ async def test_calendar_config_preference() -> None:
         event_sources=None,
         attachment_registry=None,
         chat_interface=None,
-        timezone_str="UTC",
+        timezone=ZoneInfo("UTC"),
         camera_backend=None,
     )
 

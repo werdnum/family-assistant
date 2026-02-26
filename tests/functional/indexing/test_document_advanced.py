@@ -12,6 +12,7 @@ from collections.abc import AsyncGenerator
 from datetime import UTC, datetime
 from typing import Any
 from unittest.mock import MagicMock
+from zoneinfo import ZoneInfo
 
 import httpx
 import numpy as np
@@ -413,7 +414,7 @@ async def test_document_indexing_with_llm_summary_e2e(
         processing_service=_create_mock_processing_service(),
         chat_interface=mock_chat_interface_summary,
         calendar_config={},
-        timezone_str="UTC",
+        timezone=ZoneInfo("UTC"),
         embedding_generator=mock_embedding_generator,
         engine=pg_vector_db_engine,  # Pass the database engine
     )
@@ -671,7 +672,7 @@ async def test_url_indexing_e2e(
         processing_service=_create_mock_processing_service(),
         chat_interface=mock_chat_interface_url,
         calendar_config={},
-        timezone_str="UTC",
+        timezone=ZoneInfo("UTC"),
         embedding_generator=mock_embedding_generator,
         engine=pg_vector_db_engine,  # Pass the database engine
     )
@@ -955,7 +956,7 @@ async def test_url_indexing_auto_title_e2e(
         processing_service=_create_mock_processing_service(),
         chat_interface=mock_chat_interface_auto_title,
         calendar_config={},
-        timezone_str="UTC",
+        timezone=ZoneInfo("UTC"),
         embedding_generator=mock_embedding_generator,
         engine=pg_vector_db_engine,  # Pass the database engine
     )

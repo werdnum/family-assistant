@@ -11,6 +11,7 @@ from collections.abc import AsyncIterator
 from datetime import UTC, datetime
 from typing import Any
 from unittest.mock import MagicMock
+from zoneinfo import ZoneInfo
 
 import pytest
 import pytest_asyncio  # For async fixtures
@@ -152,7 +153,7 @@ async def indexing_task_worker(
         chat_interface=mock_chat_interface_for_worker,
         embedding_generator=mock_pipeline_embedding_generator,  # Pass directly
         calendar_config={},
-        timezone_str="UTC",
+        timezone=ZoneInfo("UTC"),
         engine=pg_vector_db_engine,  # Pass the database engine
     )
     worker.register_task_handler(

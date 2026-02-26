@@ -15,6 +15,7 @@ import tempfile
 from collections.abc import AsyncGenerator, Generator
 from typing import TYPE_CHECKING, cast
 from unittest.mock import AsyncMock
+from zoneinfo import ZoneInfo
 
 import pytest
 import pytest_asyncio
@@ -196,7 +197,7 @@ def mock_processing_service_config() -> ProcessingServiceConfig:
                 "Context: {aggregated_other_context}"
             )
         },
-        timezone_str="UTC",
+        timezone=ZoneInfo("UTC"),
         max_history_messages=5,
         history_max_age_hours=24,
         tools_config={
@@ -284,7 +285,7 @@ def test_processing_service(
         calendar_config=cast(
             "CalendarConfig", {"caldav": {"calendar_urls": ["http://test.com"]}}
         ),
-        timezone_str=mock_processing_service_config.timezone_str,
+        timezone=mock_processing_service_config.timezone,
         prompts=mock_processing_service_config.prompts,
     )
     known_users_provider = KnownUsersContextProvider(

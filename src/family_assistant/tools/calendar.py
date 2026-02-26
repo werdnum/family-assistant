@@ -63,7 +63,7 @@ async def _check_for_duplicate_events(
     """
     try:
         # Parse the event time to determine search window
-        local_tz = ZoneInfo(exec_context.timezone_str)
+        local_tz = exec_context.timezone
         if all_day:
             # For all-day events, search on the same date
             event_date = isoparse(start_time).date()
@@ -508,15 +508,15 @@ async def add_calendar_event_tool(
             dtstart = isoparse(start_time)
             dtend = isoparse(end_time)
             # Assume configured timezone if none is provided in the input string
-            local_tz = ZoneInfo(exec_context.timezone_str)
+            local_tz = exec_context.timezone
             if dtstart.tzinfo is None:
                 logger.warning(
-                    f"Start time '{start_time}' lacks timezone. Assuming {exec_context.timezone_str}."
+                    f"Start time '{start_time}' lacks timezone. Assuming {exec_context.timezone}."
                 )
                 dtstart = dtstart.replace(tzinfo=local_tz)
             if dtend.tzinfo is None:
                 logger.warning(
-                    f"End time '{end_time}' lacks timezone. Assuming {exec_context.timezone_str}."
+                    f"End time '{end_time}' lacks timezone. Assuming {exec_context.timezone}."
                 )
                 dtend = dtend.replace(tzinfo=local_tz)
 
@@ -688,7 +688,7 @@ async def search_calendar_events_tool(
 
     try:
         # Parse search dates
-        local_tz = ZoneInfo(exec_context.timezone_str)
+        local_tz = exec_context.timezone
         now = datetime.now(local_tz)
 
         if start_date:
@@ -1019,7 +1019,7 @@ async def modify_calendar_event_tool(
                         old_vevent.dtend.value if hasattr(old_vevent, "dtend") else None
                     )
 
-                    local_tz = ZoneInfo(exec_context.timezone_str)
+                    local_tz = exec_context.timezone
 
                     # Parse new times if provided
                     if new_start_time:

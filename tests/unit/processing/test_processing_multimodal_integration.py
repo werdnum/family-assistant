@@ -4,6 +4,7 @@ Integration tests for processing.py multimodal tool results handling.
 
 from typing import Any
 from unittest.mock import AsyncMock, Mock
+from zoneinfo import ZoneInfo
 
 import pytest
 
@@ -44,7 +45,7 @@ class TestProcessingServiceMultimodal:
         config = ProcessingServiceConfig(
             id="test_profile",
             prompts={"system": "Test prompt"},
-            timezone_str="UTC",
+            timezone=ZoneInfo("UTC"),
             max_history_messages=10,
             history_max_age_hours=24,
             tools_config={},

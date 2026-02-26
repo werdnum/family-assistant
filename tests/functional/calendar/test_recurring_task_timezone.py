@@ -171,7 +171,7 @@ async def test_recurring_task_respects_user_timezone(
 
     test_service_config = ProcessingServiceConfig(
         prompts={"system_prompt": "Test system prompt"},
-        timezone_str="Australia/Sydney",  # Sydney timezone
+        timezone=ZoneInfo("Australia/Sydney"),  # Sydney timezone
         max_history_messages=5,
         history_max_age_hours=24,
         tools_config={},
@@ -197,7 +197,7 @@ async def test_recurring_task_respects_user_timezone(
         task_worker_manager(
             processing_service=processing_service,
             chat_interface=mock_chat_interface,
-            timezone_str="Australia/Sydney",  # Override the default UTC timezone
+            timezone=ZoneInfo("Australia/Sydney"),  # Override the default UTC timezone
         )
     )
     task_worker_instance.register_task_handler("llm_callback", handle_llm_callback)

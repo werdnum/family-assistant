@@ -4,6 +4,7 @@ import uuid
 from collections.abc import Awaitable, Callable
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock
+from zoneinfo import ZoneInfo
 
 import pytest
 import pytest_asyncio
@@ -70,7 +71,7 @@ def dummy_prompts() -> dict[str, str]:
 def primary_service_config(dummy_prompts: dict[str, str]) -> ProcessingServiceConfig:
     return ProcessingServiceConfig(
         prompts=dummy_prompts,
-        timezone_str="UTC",
+        timezone=ZoneInfo("UTC"),
         max_history_messages=5,
         history_max_age_hours=24,
         tools_config={
@@ -89,7 +90,7 @@ def specialized_service_config_factory(
     def _factory(delegation_security_level: str) -> ProcessingServiceConfig:
         return ProcessingServiceConfig(
             prompts=dummy_prompts,
-            timezone_str="UTC",
+            timezone=ZoneInfo("UTC"),
             max_history_messages=5,
             history_max_age_hours=24,
             tools_config={  # Target profile might have its own tools or none
