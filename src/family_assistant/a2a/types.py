@@ -1,0 +1,66 @@
+"""A2A protocol types — re-exported from the official a2a-sdk.
+
+Using the SDK types directly ensures our server output always matches
+the protocol spec. Any spec changes are picked up by upgrading the SDK.
+"""
+
+# ruff: noqa: F401 — re-exports for downstream code
+from a2a.types import (
+    AgentCapabilities,
+    AgentCard,
+    AgentProvider,
+    AgentSkill,
+    Artifact,
+    DataPart,
+    FilePart,
+    FileWithBytes,
+    FileWithUri,
+    JSONRPCError,
+    JSONRPCErrorResponse,
+    JSONRPCRequest,
+    JSONRPCResponse,
+    Message,
+    MessageSendParams,
+    Part,
+    Role,
+    SendMessageSuccessResponse,
+    SendStreamingMessageSuccessResponse,
+    Task,
+    TaskArtifactUpdateEvent,
+    TaskIdParams,
+    TaskQueryParams,
+    TaskState,
+    TaskStatus,
+    TaskStatusUpdateEvent,
+    TextPart,
+)
+
+__all__ = [
+    "AgentCapabilities",
+    "AgentCard",
+    "AgentProvider",
+    "AgentSkill",
+    "Artifact",
+    "DataPart",
+    "FilePart",
+    "FileWithBytes",
+    "FileWithUri",
+    "JSONRPCError",
+    "JSONRPCErrorResponse",
+    "JSONRPCRequest",
+    "JSONRPCResponse",
+    "Message",
+    "MessageSendParams",
+    "Part",
+    "Role",
+    "SendMessageSuccessResponse",
+    "SendStreamingMessageSuccessResponse",
+    "Task",
+    "TaskArtifactUpdateEvent",
+    "TaskIdParams",
+    "TaskQueryParams",
+    "TaskState",
+    "TaskStatus",
+    "TaskStatusUpdateEvent",
+    "TextPart",
+]
