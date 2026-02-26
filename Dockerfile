@@ -11,6 +11,8 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     # Add CA certificates for HTTPS communication
     ca-certificates \
     curl \
+    # git for MCP servers installed from GitHub
+    git \
     # ripgrep for engineer profile source code search
     ripgrep \
     # FFmpeg for camera frame extraction from Reolink VOD streams
