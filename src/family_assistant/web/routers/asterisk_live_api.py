@@ -1479,9 +1479,7 @@ async def asterisk_live_endpoint(
             if sys_prompt_template:
                 # Use configured timezone
                 tz = telephone_service.service_config.timezone
-                current_time = (
-                    datetime.now(UTC).astimezone(tz).strftime("%I:%M %p, %A, %B %d, %Y")
-                )
+                current_time = datetime.now(tz).strftime("%I:%M %p, %A, %B %d, %Y")
                 system_instruction = sys_prompt_template.replace(
                     "{current_time}", current_time
                 )
