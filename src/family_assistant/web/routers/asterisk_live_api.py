@@ -21,7 +21,7 @@ import time
 import uuid
 import wave
 from array import array
-from datetime import UTC, datetime
+from datetime import datetime
 from typing import IO, TYPE_CHECKING, Annotated, Protocol, TypeAlias, cast
 from zoneinfo import ZoneInfo
 

@@ -1448,24 +1448,15 @@ class ProcessingService:
         Returns:
             Tuple of (modified_content_parts, injection_messages)
         """
-        logger.info(
-            f"_process_attachment_content_parts called with {len(content_parts)} parts, "
-            f"attachment_registry={'present' if self.attachment_registry else 'MISSING'}"
-        )
-        has_registry = bool(self.attachment_registry)
-        if not has_registry:
-            logger.warning(
-                "Attachment registry not available - skipping attachment content part processing"
-            )
-
         modified_parts: list[ContentPartDict] = []
         injection_messages: list[LLMMessage] = []
 
         for part in content_parts:
             if part.get("type") == "attachment":
-                if not has_registry:
-                    continue
-                assert self.attachment_registry is not None
+                if not self.attachment_registry:
+                    raise RuntimeError(
+                        "Received attachment content part but no attachment_registry is configured"
+                    )
                 attachment_id = part.get("attachment_id")
                 if not attachment_id:
                     logger.warning(
@@ -2977,4 +2968,3 @@ Call attach_to_response with your selected attachment IDs."""
         }
 
         return fallback_extensions.get(main_type, ".bin")
-
