@@ -41,31 +41,190 @@ errors silently degrade to generic `RuntimeError`s, bypassing the retry path ent
 - LLM-generated summarization of older messages
 - Summarized context replaces the original messages, preserving the thread
 
+### Interface Analysis: Conversation Patterns and Constraints
+
+The five chat interfaces have fundamentally different conversation lifecycles, which shapes when and
+how compaction should apply:
+
+#### Telegram (`interface_type="telegram"`)
+
+- **History window**: 10 messages / `history_max_age_hours` (default 24h, typically configured ~2h)
+- **Conversation model**: One long-running conversation per `chat_id`. Users send messages
+  throughout the day; the history window creates an implicit "session" boundary.
+- **Threading**: Telegram reply chains create thread trees (`thread_root_id`). When a user replies,
+  the full thread is loaded instead of recent history — thread history is **unbounded by the message
+  limit** and can grow arbitrarily large through deep reply chains.
+- **Message saving**: The Telegram handler saves the user message to history _before_ calling
+  `handle_chat_interaction`, so the trigger message is already in DB when history is fetched.
+- **Compaction relevance**: **High**. Long reply threads are the primary risk. A 20-message thread
+  with tool calls in each turn can easily exceed context limits, and currently the only recourse is
+  the hard prune-to-3-turns fallback.
+
+#### Web UI (`interface_type="web"`)
+
+- **History window**: `web_max_history_messages` (default: falls back to `max_history_messages` = 5)
+  / `web_history_max_age_hours` (default: falls back to `history_max_age_hours` = 24h). Proposal 3
+  notes these as 100 messages / 30 days, suggesting production config overrides the defaults.
+- **Conversation model**: Per-session conversations identified by a client-generated
+  `conversation_id`. Users explicitly start new conversations via the UI. Conversations can span
+  hours or days if the user returns to the same session.
+- **Streaming**: Web uses `handle_chat_interaction_stream()` which yields `LLMStreamEvent` objects
+  via SSE. The compaction path must work within the streaming flow — a summarization LLM call in the
+  middle of streaming would add noticeable latency before the first token.
+- **Subconversations**: Web supports `subconversation_id` for branching within a conversation.
+  History queries filter by subconversation, so compaction must be subconversation-aware.
+- **Compaction relevance**: **High**. With the large history window (potentially 100 messages), long
+  web sessions with tool-heavy interactions are the most likely to hit context limits. Streaming
+  latency is the main UX concern.
+
+#### A2A / Agent-to-Agent (`interface_type="a2a"`)
+
+- **History window**: Uses the default (non-web) limits.
+- **Conversation model**: Each A2A task creates a conversation, identified by a UUID. Typically
+  short-lived: a single request → response with possibly a few tool calls.
+- **State**: A2A tasks maintain their own task history in `a2a_tasks` table, separate from the
+  message history used for context.
+- **Compaction relevance**: **Low**. A2A interactions are typically single-turn. If a complex A2A
+  task exceeds context, it's likely a task design problem, not a compaction problem.
+
+#### System Callbacks / Task Worker (`interface_type` inherited from scheduling context)
+
+- **History window**: Uses the interface type from the original scheduling context (usually
+  "telegram" since callbacks are scheduled from Telegram conversations).
+- **Conversation model**: A scheduled callback fires into an existing conversation. The callback
+  saves a system trigger message, then calls `handle_chat_interaction` which loads recent history
+  from the target conversation. The callback's context includes both the recent conversation history
+  and the callback-specific trigger.
+- **Compaction relevance**: **Low-Medium**. Callbacks typically produce short interactions (a
+  reminder + response). However, if a callback fires into a conversation that's already near the
+  context limit, it inherits that problem.
+
+#### API (`interface_type="api"`)
+
+- **History window**: Uses the default (non-web) limits, though `interface_type` can be overridden
+  per request via `payload.interface_type`.
+- **Conversation model**: Similar to Web but without streaming (uses `handle_chat_interaction`
+  non-streaming path). The API caller manages conversation IDs.
+- **Compaction relevance**: **Medium**. Same risks as Web but without the streaming latency concern.
+
+### Design Constraints from Interface Analysis
+
+1. **`prune_messages_for_context` is synchronous** — it's a pure function that operates on
+   `Sequence[LLMMessage]`. To add summarization (which requires an async LLM call), we either need
+   to make the function async or move the summarization to the caller (`process_message_stream`).
+   Since `process_message_stream` is already async and is the single call site, moving summarization
+   there is cleaner.
+
+2. **Thread history bypasses the message limit** — When processing a Telegram reply,
+   `_get_history_limits_for_interface` is called but the result is overridden by
+   `get_by_thread_id()` which returns the _entire_ thread. Proactive compaction must handle this
+   case: the token estimate should run _after_ thread history is resolved, not just after
+   `get_recent` returns.
+
+3. **Streaming adds latency constraints** — For the web streaming path, a synchronous summarization
+   call before streaming starts would delay time-to-first-token. Options:
+
+   - Accept the latency (summarization via Haiku is fast, ~1-2s)
+   - Summarize asynchronously and include the summary in the _next_ turn instead of the current one
+   - Only trigger proactive compaction for the non-streaming path; rely on reactive compaction for
+     streaming (acceptable since reactive compaction already retries)
+
+   Recommendation: Accept the latency. Haiku summarization of ~50 conversational turns takes \<2s,
+   and the alternative (losing context) is worse.
+
+4. **Subconversation awareness** — The history for a given conversation is filtered by
+   `subconversation_id`. Compaction should operate on the same filtered set. Since compaction
+   operates on the already-fetched `messages_for_llm` list (post-filtering), this is automatic.
+
+5. **The bug affects only OpenAI streaming errors** — Non-streaming OpenAI errors raise
+   `ContextLengthError` directly. Google/Gemini streaming errors use different error type strings.
+   The fix needs to add `"context_length"` to the mapping (the key used by OpenAI's streaming error
+   classifier at `openai_client.py:594`).
+
 ### Proposed Design
 
-**Milestone 1: Fix the bug + improve reactive pruning**
+**Milestone 1: Fix the bug + improve reactive pruning** (Small)
 
-- Fix the OpenAI error type mapping (`"context_length"` → `ContextLengthError`)
-- Before dropping turns in `prune_messages_for_context`, generate a summary of the dropped turns
-  using a fast/cheap model call (e.g., Haiku). Insert the summary as a `SystemMessage` after the
-  main system prompt: `"[Earlier conversation summary: ...]"`
-- This preserves the conversational thread while reducing tokens
+1. **Fix the OpenAI error type mapping**: Add `"context_length": ContextLengthError` to
+   `_ERROR_TYPE_TO_EXCEPTION` (in addition to the existing `"ContextLengthError"` key — both are
+   needed since non-streaming errors may use the class name form).
 
-**Milestone 2: Proactive compaction**
+2. **Add an async summarization utility**: A single function in a new module
+   `src/family_assistant/llm/summarize.py`:
 
-- Add rough token estimation (character-based heuristic is fine — ~4 chars/token for English). No
-  need for exact tokenizer integration.
-- Before each LLM call, estimate current context size vs. model's context window
-- When exceeding a threshold (e.g., 70%), trigger summarization of older turns before the LLM call
-  rather than waiting for a ContextLengthError
-- Log the compaction for observability
+   ```python
+   async def summarize_conversation(
+       messages: Sequence[LLMMessage],
+       llm_client: LLMInterface,
+       max_summary_tokens: int = 500,
+   ) -> str:
+       """Summarize a sequence of conversation messages using a fast model."""
+   ```
+
+   The function formats messages into a simple transcript and asks the LLM to produce a concise
+   summary preserving key facts, decisions, and open questions. Uses the existing `LLMInterface`
+   (the same client, which may have a cheap fallback model configured).
+
+3. **Integrate summarization into the reactive path**: In `process_message_stream`, when
+   `ContextLengthError` is caught and `prune_messages_for_context` is called:
+
+   - Before the prune, extract the messages that _will_ be dropped (turns beyond the 3 most recent)
+   - Call `summarize_conversation` on the dropped messages
+   - Insert the summary as a `SystemMessage` at position 1 (after the main system prompt):
+     `"[Earlier conversation summary: ...]"`
+   - This means `prune_messages_for_context` remains a pure synchronous function (it still drops
+     turns as before), but the caller enriches the result with the summary
+
+4. **Test coverage**:
+
+   - Unit test: `_ERROR_TYPE_TO_EXCEPTION` correctly maps `"context_length"`
+   - Unit test: `summarize_conversation` produces output given mock messages
+   - Functional test: `ContextLengthError` during streaming triggers prune + summarize + retry
+
+**Milestone 2: Proactive compaction** (Medium)
+
+1. **Token estimation heuristic**: Add `estimate_token_count(messages: Sequence[LLMMessage]) -> int`
+   using a character-based heuristic (~4 chars/token for English text, with a multiplier for tool
+   call JSON which tends to be more token-dense). No external tokenizer needed.
+
+2. **Context window configuration**: Add `context_window_tokens: int` to `ProcessingServiceConfig`.
+   Default to a conservative value (e.g., 128k). This should be configurable per service profile
+   since different models have different limits.
+
+3. **Pre-LLM compaction check**: In both `handle_chat_interaction` and
+   `handle_chat_interaction_stream`, after `messages_for_llm` is fully assembled (including thread
+   history resolution, system prompt, and context provider fragments), but before calling
+   `process_message_stream`:
+
+   - Estimate total token count
+   - If > 70% of `context_window_tokens`, trigger compaction:
+     - Identify turns to summarize (oldest turns, keeping the 5 most recent)
+     - Call `summarize_conversation` on the older turns
+     - Replace the older turns with the summary `SystemMessage`
+   - Log the compaction event with before/after token estimates for observability
+
+4. **Compaction applies after thread resolution**: This is critical for the Telegram thread case.
+   The check runs on the final `messages_for_llm` list, which has already been populated from
+   `get_by_thread_id()` for reply chains. So a 30-message thread gets caught and compacted before it
+   hits the LLM.
+
+5. **No persistent compaction**: Summaries are ephemeral — they exist only in the in-memory message
+   list for the current LLM call. The full message history remains intact in the database. This
+   avoids complexity around storing compacted state and is consistent with how history is rebuilt
+   from DB on each interaction.
 
 ### Scope
 
-- `processing.py`: `prune_messages_for_context()`, `process_message_stream()`
-- `processing.py`: `_ERROR_TYPE_TO_EXCEPTION` dict
-- New: lightweight summarization utility (a single function that calls LLM with a "summarize this
-  conversation so far" prompt)
+| File                                                         | Changes                                                                             |
+| ------------------------------------------------------------ | ----------------------------------------------------------------------------------- |
+| `processing.py` L106-115                                     | Add `"context_length"` key to `_ERROR_TYPE_TO_EXCEPTION`                            |
+| `processing.py` `process_message_stream` ~L726-738           | Integrate summarization into reactive prune path                                    |
+| `processing.py` `handle_chat_interaction` ~L2092-2164        | Add proactive compaction check (M2)                                                 |
+| `processing.py` `handle_chat_interaction_stream` ~L2543-2589 | Same proactive check for streaming (M2)                                             |
+| `processing.py` `ProcessingServiceConfig`                    | Add `context_window_tokens` field (M2)                                              |
+| `llm/summarize.py` (new)                                     | `summarize_conversation()` function                                                 |
+| `config_models.py` `ProcessingConfig`                        | Add `context_window_tokens` field (M2)                                              |
+| `llm/providers/openai_client.py` L594                        | Verify error type string (already correct; the bug is in the mapping, not emission) |
 
 ### Complexity
 
