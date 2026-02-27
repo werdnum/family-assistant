@@ -409,6 +409,27 @@ class ProcessingService:
                 hours=self.history_max_age_hours
             )
 
+    def _build_profile_preamble(self) -> str:
+        """Build a preamble identifying the active processing profile.
+
+        Returns a string to prepend to the system prompt so the model knows
+        which profile it is operating as and that the user explicitly selected it.
+        """
+        profile_id = self.service_config.id
+        description = self.service_config.description
+        lines = [
+            f"[Active Processing Profile: {profile_id}]",
+            f'The user has explicitly selected the "{profile_id}" processing profile.',
+        ]
+        if description:
+            lines.append(f"Profile purpose: {description}")
+        lines.append(
+            "Your available tools and capabilities are specific to this profile. "
+            "Do not attempt actions outside your profile's scope."
+        )
+        lines.append("")  # trailing newline before system prompt
+        return "\n".join(lines)
+
     async def _aggregate_context_from_providers(self) -> str:
         """Gathers context fragments from all registered providers."""
         all_fragments: list[str] = []
@@ -2261,6 +2282,14 @@ Call attach_to_response with your selected attachment IDs."""
                 )
                 final_system_prompt = system_prompt_template.strip()
 
+            # Prepend profile identification preamble so the model knows
+            # which processing profile is active and that the user selected it
+            profile_preamble = self._build_profile_preamble()
+            if final_system_prompt:
+                final_system_prompt = profile_preamble + final_system_prompt
+            else:
+                final_system_prompt = profile_preamble.strip()
+
             if final_system_prompt:
                 messages_for_llm.insert(0, SystemMessage(content=final_system_prompt))
 
@@ -2633,6 +2662,14 @@ Call attach_to_response with your selected attachment IDs."""
                 ).strip()
             except Exception:
                 final_system_prompt = system_prompt_template.strip()
+
+            # Prepend profile identification preamble so the model knows
+            # which processing profile is active and that the user selected it
+            profile_preamble = self._build_profile_preamble()
+            if final_system_prompt:
+                final_system_prompt = profile_preamble + final_system_prompt
+            else:
+                final_system_prompt = profile_preamble.strip()
 
             if final_system_prompt:
                 messages_for_llm.insert(0, SystemMessage(content=final_system_prompt))
