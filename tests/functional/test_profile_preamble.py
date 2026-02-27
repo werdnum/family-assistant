@@ -201,3 +201,35 @@ class TestProfilePreambleInSystemPrompt:
 
         system_prompt = _get_system_prompt_from_calls(mock_llm)
         assert "Do not attempt actions outside your profile's scope" in system_prompt
+
+
+class TestProfilePreambleInStream:
+    """Test that handle_chat_interaction_stream also injects the preamble."""
+
+    @pytest.mark.asyncio
+    async def test_stream_preamble_matches_sync(self, db_engine: AsyncEngine) -> None:
+        """The streaming path should inject the same preamble as the sync path."""
+        service, mock_llm = _make_service(
+            "engineer",
+            description="Read-only diagnostic access",
+        )
+
+        async with DatabaseContext(engine=db_engine) as db_context:
+            async for _ in service.handle_chat_interaction_stream(
+                db_context=db_context,
+                interface_type="test",
+                conversation_id="test-conv-stream-1",
+                trigger_content_parts=[text_content("hello")],
+                trigger_interface_message_id="msg-stream-1",
+                user_name="TestUser",
+            ):
+                pass
+
+        system_prompt = _get_system_prompt_from_calls(mock_llm)
+        assert "[Active Processing Profile: engineer]" in system_prompt
+        assert (
+            'user has explicitly selected the "engineer" processing profile'
+            in system_prompt
+        )
+        assert "Read-only diagnostic access" in system_prompt
+        assert "Do not attempt actions outside your profile's scope" in system_prompt

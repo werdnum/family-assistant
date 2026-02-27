@@ -409,11 +409,12 @@ class ProcessingService:
                 hours=self.history_max_age_hours
             )
 
-    def _build_profile_preamble(self) -> str:
-        """Build a preamble identifying the active processing profile.
+    def _prepend_profile_preamble(self, system_prompt: str) -> str:
+        """Prepend a profile-identification preamble to *system_prompt*.
 
-        Returns a string to prepend to the system prompt so the model knows
-        which profile it is operating as and that the user explicitly selected it.
+        The preamble tells the model which processing profile is active and
+        that the user explicitly selected it.  If *system_prompt* is empty the
+        preamble is returned without a trailing newline.
         """
         profile_id = self.service_config.id
         description = self.service_config.description
@@ -427,8 +428,10 @@ class ProcessingService:
             "Your available tools and capabilities are specific to this profile. "
             "Do not attempt actions outside your profile's scope."
         )
-        lines.append("")  # trailing newline before system prompt
-        return "\n".join(lines)
+        preamble = "\n".join(lines)
+        if system_prompt:
+            return preamble + "\n\n" + system_prompt
+        return preamble
 
     async def _aggregate_context_from_providers(self) -> str:
         """Gathers context fragments from all registered providers."""
@@ -2282,13 +2285,7 @@ Call attach_to_response with your selected attachment IDs."""
                 )
                 final_system_prompt = system_prompt_template.strip()
 
-            # Prepend profile identification preamble so the model knows
-            # which processing profile is active and that the user selected it
-            profile_preamble = self._build_profile_preamble()
-            if final_system_prompt:
-                final_system_prompt = profile_preamble + final_system_prompt
-            else:
-                final_system_prompt = profile_preamble.strip()
+            final_system_prompt = self._prepend_profile_preamble(final_system_prompt)
 
             if final_system_prompt:
                 messages_for_llm.insert(0, SystemMessage(content=final_system_prompt))
@@ -2663,13 +2660,7 @@ Call attach_to_response with your selected attachment IDs."""
             except Exception:
                 final_system_prompt = system_prompt_template.strip()
 
-            # Prepend profile identification preamble so the model knows
-            # which processing profile is active and that the user selected it
-            profile_preamble = self._build_profile_preamble()
-            if final_system_prompt:
-                final_system_prompt = profile_preamble + final_system_prompt
-            else:
-                final_system_prompt = profile_preamble.strip()
+            final_system_prompt = self._prepend_profile_preamble(final_system_prompt)
 
             if final_system_prompt:
                 messages_for_llm.insert(0, SystemMessage(content=final_system_prompt))
