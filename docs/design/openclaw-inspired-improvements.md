@@ -238,34 +238,19 @@ state is non-trivial.
 
 ______________________________________________________________________
 
-## Proposal 5: AI Worker Sandbox (Existing Design)
+## Already Implemented: AI Worker Sandbox
 
-### Problem
+The AI Worker Sandbox (originally Proposal 5 in the comparison doc) is now fully implemented:
 
-Family Assistant's tool execution is in-process with limited filesystem/shell access. Complex tasks
-("write a Python script to analyze this CSV", "build me a chart from this data") require
-general-purpose computing.
+- `spawn_worker` tool with Claude Code and Gemini CLI agent options
+- `WorkerBackend` protocol with Kubernetes Jobs backend (production) and Docker backend (local dev)
+- Persistent shared workspace with `workspace_files` tools for reading results
+- Webhook-based result notification
+- Security: `V1SecurityContext` with capability drops, non-root execution, read-only root filesystem
 
-### Existing Design
-
-The `ai-worker-sandbox.md` design doc already covers this comprehensively: Kubernetes Jobs with
-gVisor isolation, persistent workspaces, Claude Code/Gemini CLI inside containers, results returned
-via webhook.
-
-### Recommendation
-
-This is the right design. The only update I'd suggest based on the OpenClaw/NanoClaw landscape:
-
-- **NanoClaw's approach** (Apple Container / lightweight VMs) is worth considering as an alternative
-  to Kubernetes Jobs for local development. Docker containers with
-  `--security-opt=no-new-privileges` and `seccomp` profiles achieve similar isolation with less
-  infrastructure.
-- **Skill accumulation** matters: the persistent workspace concept in the design doc is key. Workers
-  should be able to create reusable artifacts (scripts, templates) that persist across invocations.
-
-### Complexity
-
-Large. Already designed, not yet implemented.
+This closes the "Container/Sandbox Isolation" gap identified in the comparison doc. The
+implementation aligns well with both OpenClaw's sandboxed tool execution and NanoClaw's container
+isolation model.
 
 ______________________________________________________________________
 
@@ -277,8 +262,7 @@ ______________________________________________________________________
 | 2   | Structured identity notes           | S      | High   | Skills system, `NotesContextProvider`, prompts.yaml |
 | 3   | Conversation memory across sessions | M      | High   | Indexing pipeline, vector search, TaskWorker        |
 | 4   | Multi-step workflows                | M→L    | Medium | Starlark engine, TaskWorker, automations            |
-| 5   | AI Worker Sandbox                   | L      | Medium | Existing design doc, Kubernetes infrastructure      |
 
 Proposals 1-3 are the highest-leverage changes: they make the assistant _smarter over time_ (it
-remembers, it evolves, it doesn't lose context). Proposals 4-5 make it _more capable_ (it can handle
-complex workflows and general-purpose computing).
+remembers, it evolves, it doesn't lose context). Proposal 4 makes it _more capable_ (it can handle
+complex workflows with deterministic orchestration).
