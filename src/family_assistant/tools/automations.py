@@ -72,9 +72,13 @@ AUTOMATIONS_TOOLS_DEFINITION: list[ToolDefinition] = [
 Event automations trigger when specific events occur (e.g., email received, calendar event).
 Schedule automations run on a recurring schedule using RRULE format.
 
+IMPORTANT: Times in RRULE strings (BYHOUR, BYMINUTE, etc.) are interpreted in the user's
+configured timezone, NOT UTC. For example, if the user is in Australia/Sydney and asks for
+"every day at 9am", use BYHOUR=9 — the system will schedule it at 9am Sydney time.
+
 Examples:
 - Event: "Send me a reminder when I receive an email from work"
-- Schedule: "Wake me up every weekday at 7am" (RRULE: FREQ=DAILY;BYDAY=MO,TU,WE,TH,FR)""",
+- Schedule: "Wake me up every weekday at 7am" (RRULE: FREQ=DAILY;BYDAY=MO,TU,WE,TH,FR;BYHOUR=7;BYMINUTE=0)""",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -95,7 +99,7 @@ For event automations:
   - event_filter: object with filtering criteria
 
 For schedule automations:
-  - recurrence_rule: RRULE string (e.g., 'FREQ=DAILY;BYHOUR=7')""",
+  - recurrence_rule: RRULE string (e.g., 'FREQ=DAILY;BYHOUR=7;BYMINUTE=0'). Times are in the user's configured timezone.""",
                     },
                     "action_type": {
                         "type": "string",
@@ -440,6 +444,7 @@ async def create_automation_tool(
                 conversation_id=exec_context.conversation_id,
                 interface_type=exec_context.interface_type,
                 description=description,
+                timezone=exec_context.timezone,
             )
 
             # Get the automation to show next scheduled time
@@ -741,6 +746,7 @@ async def update_automation_tool(
             update_kwargs: dict[str, Any] = {
                 "automation_id": automation_id,
                 "conversation_id": existing.conversation_id,
+                "timezone": exec_context.timezone,
             }
             if recurrence_rule is not None:
                 update_kwargs["recurrence_rule"] = recurrence_rule

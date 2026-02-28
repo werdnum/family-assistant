@@ -3,6 +3,7 @@
 import uuid
 from datetime import UTC, datetime
 from typing import Any
+from zoneinfo import ZoneInfo
 
 from dateutil import rrule
 from dateutil.parser import ParserError
@@ -60,29 +61,45 @@ class ScheduleAutomationsRepository(BaseRepository):
         )
 
     def _parse_rrule_and_get_next(
-        self, recurrence_rule: str, after: datetime | None = None
+        self,
+        recurrence_rule: str,
+        after: datetime | None = None,
+        timezone: ZoneInfo | None = None,
     ) -> datetime | None:
         """
         Parse RRULE and calculate next execution time.
 
+        Times in the RRULE (e.g. BYHOUR=9) are interpreted in the given
+        timezone.  The returned datetime is always UTC so it can be stored
+        directly in the database.
+
         Args:
             recurrence_rule: RRULE string
             after: Calculate next execution after this time (defaults to now)
+            timezone: Interpret RRULE times in this timezone. When provided,
+                ``after`` is converted to this timezone before being used as
+                the RRULE dtstart so that hour/minute constraints are
+                evaluated in local time.  Defaults to UTC when not provided.
 
         Returns:
-            Next execution datetime or None if no more executions
+            Next execution datetime in UTC, or None if no more executions
         """
         try:
-            if after is None:
-                after = datetime.now(UTC)
+            tz = timezone or ZoneInfo("UTC")
+            after = datetime.now(tz) if after is None else after.astimezone(tz)
 
-            # Parse the RRULE
+            # Parse the RRULE — dtstart is in the user's timezone so that
+            # BYHOUR/BYMINUTE are evaluated in local time.
             rule = rrule.rrulestr(recurrence_rule, dtstart=after)
 
-            # Get the next occurrence
+            # Get the next occurrence (in the user's timezone)
             next_occurrence = rule.after(after)
 
-            return next_occurrence
+            if next_occurrence is None:
+                return None
+
+            # Convert to UTC for storage
+            return next_occurrence.astimezone(UTC)
         except (ValueError, ParserError) as e:
             self._logger.error(f"Failed to parse RRULE '{recurrence_rule}': {e}")
             return None
@@ -98,6 +115,7 @@ class ScheduleAutomationsRepository(BaseRepository):
         interface_type: str = "telegram",
         description: str | None = None,
         enabled: bool = True,
+        timezone: ZoneInfo | None = None,
     ) -> int:
         """
         Create a schedule automation and schedule first task instance.
@@ -122,7 +140,9 @@ class ScheduleAutomationsRepository(BaseRepository):
                 )
 
             # Calculate first execution time
-            next_scheduled_at = self._parse_rrule_and_get_next(recurrence_rule)
+            next_scheduled_at = self._parse_rrule_and_get_next(
+                recurrence_rule, timezone=timezone
+            )
             if next_scheduled_at is None:
                 raise ValueError(f"Invalid RRULE: {recurrence_rule}")
 
@@ -221,6 +241,7 @@ class ScheduleAutomationsRepository(BaseRepository):
         conversation_id: str,
         interface_type: str = "telegram",
         description: str | None = None,
+        timezone: ZoneInfo | None = None,
     ) -> ScheduleAutomationDict:
         """
         Create automation and return full entity (avoids extra query).
@@ -239,6 +260,7 @@ class ScheduleAutomationsRepository(BaseRepository):
             conversation_id=conversation_id,
             interface_type=interface_type,
             description=description,
+            timezone=timezone,
         )
 
         # Fetch and return the full entity
@@ -380,6 +402,7 @@ class ScheduleAutomationsRepository(BaseRepository):
         action_config: dict[str, Any] | None | object = _UNSET,
         description: str | None | object = _UNSET,
         enabled: bool | None | object = _UNSET,
+        timezone: ZoneInfo | None = None,
     ) -> bool:
         """
         Update automation configuration.
@@ -421,7 +444,9 @@ class ScheduleAutomationsRepository(BaseRepository):
 
         if isinstance(recurrence_rule, str):
             # Validate and calculate new next_scheduled_at
-            next_scheduled_at = self._parse_rrule_and_get_next(recurrence_rule)
+            next_scheduled_at = self._parse_rrule_and_get_next(
+                recurrence_rule, timezone=timezone
+            )
             if next_scheduled_at is None:
                 raise ValueError(f"Invalid RRULE: {recurrence_rule}")
 
@@ -595,6 +620,7 @@ class ScheduleAutomationsRepository(BaseRepository):
         self,
         automation_id: int,
         execution_time: datetime,
+        timezone: ZoneInfo | None = None,
     ) -> None:
         """
         Update automation after task execution and schedule next instance.
@@ -602,6 +628,7 @@ class ScheduleAutomationsRepository(BaseRepository):
         Args:
             automation_id: Automation ID
             execution_time: When the task executed
+            timezone: User's timezone for interpreting RRULE times
         """
         try:
             # Get the automation
@@ -634,7 +661,7 @@ class ScheduleAutomationsRepository(BaseRepository):
             # Calculate next execution time
             recurrence_rule = automation["recurrence_rule"]
             next_scheduled_at = self._parse_rrule_and_get_next(
-                recurrence_rule, after=execution_time
+                recurrence_rule, after=execution_time, timezone=timezone
             )
 
             if next_scheduled_at is None:

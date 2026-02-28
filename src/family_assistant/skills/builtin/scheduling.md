@@ -54,10 +54,14 @@ The assistant provides several scheduling mechanisms:
 
 ## RRULE Format
 
+**Times in RRULE strings are always interpreted in the user's configured timezone.** For example, if
+the user's timezone is `Australia/Sydney`, `BYHOUR=9` means 9:00 AM Sydney time. You do NOT need to
+convert to UTC — the system handles that automatically and correctly across DST transitions.
+
 Common patterns:
 
 - Every day at 8am: `FREQ=DAILY;BYHOUR=8;BYMINUTE=0`
-- Every weekday: `FREQ=DAILY;BYDAY=MO,TU,WE,TH,FR`
+- Every weekday at 7am: `FREQ=DAILY;BYDAY=MO,TU,WE,TH,FR;BYHOUR=7;BYMINUTE=0`
 - Every Monday and Friday at 9am: `FREQ=WEEKLY;BYDAY=MO,FR;BYHOUR=9;BYMINUTE=0`
 - Every 4 hours: `FREQ=HOURLY;INTERVAL=4`
 - Monthly on the 15th: `FREQ=MONTHLY;BYMONTHDAY=15`
@@ -66,7 +70,7 @@ Common patterns:
 
 ## Best Practices
 
-- Always include timezone in time specifications
+- Use the user's local time when specifying BYHOUR/BYMINUTE — the system handles timezone conversion
 - Use descriptive task names for recurring tasks
 - Use scripts for deterministic tasks, LLM callbacks for tasks requiring judgment
 - Manage tasks via "Show me pending callbacks" or the Tasks page in the web UI
