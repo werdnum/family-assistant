@@ -86,7 +86,12 @@ class ScheduleAutomationsRepository(BaseRepository):
         """
         try:
             tz = timezone or ZoneInfo("UTC")
-            after = datetime.now(tz) if after is None else after.astimezone(tz)
+            if after is None:
+                after = datetime.now(tz)
+            else:
+                if after.tzinfo is None:
+                    after = after.replace(tzinfo=UTC)
+                after = after.astimezone(tz)
 
             # Parse the RRULE — dtstart is in the user's timezone so that
             # BYHOUR/BYMINUTE are evaluated in local time.
@@ -356,34 +361,111 @@ class ScheduleAutomationsRepository(BaseRepository):
         automation_id: int,
         conversation_id: str,
         enabled: bool,
+        timezone: ZoneInfo | None = None,
     ) -> bool:
         """
         Enable or disable automation.
+
+        When re-enabling, recalculates next_scheduled_at from now and
+        reschedules the task so the automation fires at the correct time.
 
         Args:
             automation_id: Automation ID
             conversation_id: Conversation ID for verification
             enabled: New enabled status
+            timezone: User's timezone for interpreting RRULE times when
+                re-enabling
 
         Returns:
             True if updated, False if not found
         """
+        # When enabling, fetch the automation so we can reschedule
+        if enabled:
+            automation = await self.get_by_id(automation_id, conversation_id)
+            if not automation:
+                self._logger.warning(
+                    f"Schedule automation {automation_id} not found "
+                    f"for conversation {conversation_id}"
+                )
+                return False
+
+            next_scheduled_at = self._parse_rrule_and_get_next(
+                automation["recurrence_rule"], timezone=timezone
+            )
+            if next_scheduled_at is None:
+                self._logger.error(
+                    f"Cannot enable automation {automation_id}: "
+                    f"RRULE '{automation['recurrence_rule']}' yields no future occurrences"
+                )
+                raise ValueError(
+                    f"Cannot enable: RRULE '{automation['recurrence_rule']}' "
+                    "yields no future occurrences"
+                )
+
+            # Cancel stale pending tasks and schedule a fresh one
+            await self._cancel_pending_tasks(automation_id)
+
+            action_type = automation["action_type"]
+            task_type = (
+                "llm_callback" if action_type == "wake_llm" else "script_execution"
+            )
+            task_id = f"sched_auto_{automation_id}_{uuid.uuid4().hex[:8]}"
+
+            payload = {
+                "conversation_id": conversation_id,
+                "interface_type": automation["interface_type"],
+                "automation_id": str(automation_id),
+                "automation_type": "schedule",
+            }
+            action_config = automation["action_config"]
+            if action_type == "wake_llm":
+                payload["callback_context"] = action_config.get("context", "")
+            else:
+                payload["script_code"] = action_config.get("script_code", "")
+                payload["task_name"] = action_config.get(
+                    "task_name", automation["name"]
+                )
+
+            await enqueue_task(
+                db_context=self._db,
+                task_id=task_id,
+                task_type=task_type,
+                payload=payload,
+                scheduled_at=next_scheduled_at,
+            )
+
+            stmt = (
+                update(schedule_automations_table)
+                .where(
+                    (schedule_automations_table.c.id == automation_id)
+                    & (schedule_automations_table.c.conversation_id == conversation_id)
+                )
+                .values(enabled=True, next_scheduled_at=next_scheduled_at)
+            )
+            await self._db.execute_with_retry(stmt)
+
+            self._logger.info(
+                f"Enabled schedule automation {automation_id}, "
+                f"next execution at {next_scheduled_at}"
+            )
+            return True
+
+        # Disabling — simple update
         stmt = (
             update(schedule_automations_table)
             .where(
                 (schedule_automations_table.c.id == automation_id)
                 & (schedule_automations_table.c.conversation_id == conversation_id)
             )
-            .values(enabled=enabled)
+            .values(enabled=False)
         )
 
         result = await self._db.execute_with_retry(stmt)
         updated_count = result.rowcount  # type: ignore[attr-defined]
 
         if updated_count > 0:
-            status = "enabled" if enabled else "disabled"
             self._logger.info(
-                f"Updated schedule automation {automation_id} to {status}"
+                f"Updated schedule automation {automation_id} to disabled"
             )
             return True
         else:

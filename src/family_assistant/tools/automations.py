@@ -804,6 +804,7 @@ async def enable_automation_tool(
             automation_type=type_param,
             conversation_id=automation.conversation_id,
             enabled=True,
+            timezone=exec_context.timezone,
         )
 
         if success:

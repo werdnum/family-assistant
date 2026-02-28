@@ -531,6 +531,7 @@ async def update_automation_enabled(
         str, Query(description="Conversation ID for permission check")
     ],
     db: Annotated[DatabaseContext, Depends(get_db)],
+    processing_service: Annotated[ProcessingService, Depends(get_processing_service)],
 ) -> AutomationResponse:
     """Enable or disable an automation."""
     # Validate automation_type
@@ -545,6 +546,7 @@ async def update_automation_enabled(
         automation_type=automation_type,  # type: ignore[arg-type]
         conversation_id=conversation_id,
         enabled=enabled,
+        timezone=processing_service.timezone,
     )
 
     if not success:
