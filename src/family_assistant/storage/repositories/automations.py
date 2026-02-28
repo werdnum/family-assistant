@@ -1,6 +1,7 @@
 """Unified repository for managing both event and schedule-based automations."""
 
 from typing import Any, Literal
+from zoneinfo import ZoneInfo
 
 from sqlalchemy import literal, select, union_all
 from sqlalchemy.sql import functions as func
@@ -344,6 +345,7 @@ class AutomationsRepository(BaseRepository):
         automation_type: AutomationType,
         conversation_id: str,
         enabled: bool,
+        timezone: ZoneInfo | None = None,
     ) -> bool:
         """
         Enable or disable an automation.
@@ -353,6 +355,7 @@ class AutomationsRepository(BaseRepository):
             automation_type: Type (event or schedule)
             conversation_id: Conversation ID for verification
             enabled: New enabled status
+            timezone: User's timezone for recalculating schedule on re-enable
 
         Returns:
             True if updated, False if not found
@@ -368,6 +371,7 @@ class AutomationsRepository(BaseRepository):
                 automation_id=automation_id,
                 conversation_id=conversation_id,
                 enabled=enabled,
+                timezone=timezone,
             )
 
     async def delete(

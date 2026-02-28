@@ -3,6 +3,7 @@
 import uuid
 from collections.abc import AsyncGenerator
 from datetime import UTC, datetime
+from zoneinfo import ZoneInfo
 
 import pytest
 import pytest_asyncio
@@ -740,3 +741,186 @@ class TestScheduleAutomationsRepository:
         assert automation is not None
         assert automation["execution_count"] == 1  # Should be incremented
         assert automation["last_execution_at"] is not None  # Should be set
+
+    @pytest.mark.asyncio
+    async def test_create_with_timezone_interprets_rrule_in_local_time(
+        self, db_context: DatabaseContext
+    ) -> None:
+        """Test that RRULE BYHOUR is interpreted in the given timezone, not UTC."""
+        conversation_id = str(uuid.uuid4())
+        sydney_tz = ZoneInfo("Australia/Sydney")
+
+        automation_id = await db_context.schedule_automations.create(
+            name="Sydney Morning",
+            recurrence_rule="FREQ=DAILY;BYHOUR=9;BYMINUTE=0",
+            action_type="wake_llm",
+            action_config={"context": "Good morning Sydney"},
+            conversation_id=conversation_id,
+            timezone=sydney_tz,
+        )
+
+        automation = await db_context.schedule_automations.get_by_id(automation_id)
+        assert automation is not None
+        next_at = automation["next_scheduled_at"]
+        assert next_at is not None
+
+        # The stored time is UTC. Convert to Sydney to verify it's 9:00 local.
+        next_sydney = next_at.astimezone(sydney_tz)
+        assert next_sydney.hour == 9
+        assert next_sydney.minute == 0
+
+    @pytest.mark.asyncio
+    async def test_timezone_differs_from_utc(self, db_context: DatabaseContext) -> None:
+        """Test that timezone-aware scheduling differs from UTC-based scheduling."""
+        conversation_id = str(uuid.uuid4())
+        sydney_tz = ZoneInfo("Australia/Sydney")
+
+        # Create with Sydney timezone
+        auto_sydney = await db_context.schedule_automations.create(
+            name="Sydney Auto",
+            recurrence_rule="FREQ=DAILY;BYHOUR=9;BYMINUTE=0",
+            action_type="wake_llm",
+            action_config={"context": "test"},
+            conversation_id=conversation_id,
+            timezone=sydney_tz,
+        )
+
+        # Create with UTC (no timezone)
+        auto_utc = await db_context.schedule_automations.create(
+            name="UTC Auto",
+            recurrence_rule="FREQ=DAILY;BYHOUR=9;BYMINUTE=0",
+            action_type="wake_llm",
+            action_config={"context": "test"},
+            conversation_id=conversation_id,
+        )
+
+        sydney_auto = await db_context.schedule_automations.get_by_id(auto_sydney)
+        utc_auto = await db_context.schedule_automations.get_by_id(auto_utc)
+        assert sydney_auto is not None
+        assert utc_auto is not None
+
+        sydney_next = sydney_auto["next_scheduled_at"]
+        utc_next = utc_auto["next_scheduled_at"]
+        assert sydney_next is not None
+        assert utc_next is not None
+
+        # 9am Sydney and 9am UTC should schedule at different UTC instants.
+        assert sydney_next != utc_next
+
+        # Verify each is 9:00 in its respective timezone
+        assert sydney_next.astimezone(sydney_tz).hour == 9
+        assert utc_next.astimezone(ZoneInfo("UTC")).hour == 9
+
+    @pytest.mark.asyncio
+    async def test_after_task_execution_with_timezone(
+        self, db_context: DatabaseContext
+    ) -> None:
+        """Test that after_task_execution schedules next occurrence in the correct timezone."""
+        conversation_id = str(uuid.uuid4())
+        sydney_tz = ZoneInfo("Australia/Sydney")
+
+        automation_id = await db_context.schedule_automations.create(
+            name="Sydney Recurring",
+            recurrence_rule="FREQ=DAILY;BYHOUR=9;BYMINUTE=0",
+            action_type="wake_llm",
+            action_config={"context": "test"},
+            conversation_id=conversation_id,
+            timezone=sydney_tz,
+        )
+
+        # Simulate execution at 2026-02-28 22:05 UTC = March 1 09:05 AEDT
+        execution_time = datetime(2026, 2, 28, 22, 5, 0, tzinfo=UTC)
+        await db_context.schedule_automations.after_task_execution(
+            automation_id, execution_time, timezone=sydney_tz
+        )
+
+        automation = await db_context.schedule_automations.get_by_id(automation_id)
+        assert automation is not None
+        next_at = automation["next_scheduled_at"]
+        assert next_at is not None
+
+        # Next 9am Sydney after March 1 09:05 AEDT is March 2 09:00 AEDT
+        next_sydney = next_at.astimezone(sydney_tz)
+        assert next_sydney.hour == 9
+        assert next_sydney.minute == 0
+        assert next_sydney.day == 2
+
+    @pytest.mark.asyncio
+    async def test_parse_rrule_naive_after_treated_as_utc(
+        self, db_context: DatabaseContext
+    ) -> None:
+        """Naive ``after`` datetime should be assumed UTC before timezone conversion."""
+        conversation_id = str(uuid.uuid4())
+        sydney_tz = ZoneInfo("Australia/Sydney")
+
+        automation_id = await db_context.schedule_automations.create(
+            name="Naive After",
+            recurrence_rule="FREQ=DAILY;BYHOUR=9;BYMINUTE=0",
+            action_type="wake_llm",
+            action_config={"context": "test"},
+            conversation_id=conversation_id,
+            timezone=sydney_tz,
+        )
+
+        # Simulate execution with a naive datetime (no tzinfo).
+        # The code should treat it as UTC, not system-local time.
+        naive_execution = datetime(2026, 2, 28, 22, 5, 0)  # noqa: DTZ001 - intentionally naive to test the guard
+        await db_context.schedule_automations.after_task_execution(
+            automation_id, naive_execution, timezone=sydney_tz
+        )
+
+        automation = await db_context.schedule_automations.get_by_id(automation_id)
+        assert automation is not None
+        next_at = automation["next_scheduled_at"]
+        assert next_at is not None
+
+        # Naive 22:05 UTC = March 1 09:05 AEDT, so next 9am Sydney is March 2
+        next_sydney = next_at.astimezone(sydney_tz)
+        assert next_sydney.hour == 9
+        assert next_sydney.minute == 0
+
+    @pytest.mark.asyncio
+    async def test_re_enable_recalculates_next_scheduled_at(
+        self, db_context: DatabaseContext
+    ) -> None:
+        """Re-enabling an automation should recalculate next_scheduled_at from now."""
+        conversation_id = str(uuid.uuid4())
+        sydney_tz = ZoneInfo("Australia/Sydney")
+
+        automation_id = await db_context.schedule_automations.create(
+            name="Re-enable Test",
+            recurrence_rule="FREQ=DAILY;BYHOUR=9;BYMINUTE=0",
+            action_type="wake_llm",
+            action_config={"context": "test"},
+            conversation_id=conversation_id,
+            timezone=sydney_tz,
+        )
+
+        # Record original next_scheduled_at
+        automation = await db_context.schedule_automations.get_by_id(automation_id)
+        assert automation is not None
+        original_next = automation["next_scheduled_at"]
+        assert original_next is not None
+
+        # Disable
+        result = await db_context.schedule_automations.update_enabled(
+            automation_id, conversation_id, enabled=False
+        )
+        assert result is True
+
+        # Re-enable with timezone
+        result = await db_context.schedule_automations.update_enabled(
+            automation_id, conversation_id, enabled=True, timezone=sydney_tz
+        )
+        assert result is True
+
+        automation = await db_context.schedule_automations.get_by_id(automation_id)
+        assert automation is not None
+        assert automation["enabled"] is True
+        new_next = automation["next_scheduled_at"]
+        assert new_next is not None
+
+        # The recalculated time should still be 9am Sydney
+        next_sydney = new_next.astimezone(sydney_tz)
+        assert next_sydney.hour == 9
+        assert next_sydney.minute == 0

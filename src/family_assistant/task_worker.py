@@ -71,6 +71,7 @@ async def _handle_schedule_automation_recurrence(
             await exec_context.db_context.schedule_automations.after_task_execution(
                 automation_id=int(automation_id),
                 execution_time=clock.now(),
+                timezone=exec_context.timezone,
             )
             logger.info(
                 f"Scheduled next instance for schedule automation {automation_id}"

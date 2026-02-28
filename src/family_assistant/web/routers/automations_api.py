@@ -7,9 +7,10 @@ from typing import Annotated, Any, cast
 from fastapi import APIRouter, Body, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
 
+from family_assistant.processing import ProcessingService
 from family_assistant.storage.context import DatabaseContext
 from family_assistant.storage.models import Automation
-from family_assistant.web.dependencies import get_db
+from family_assistant.web.dependencies import get_db, get_processing_service
 
 logger = logging.getLogger(__name__)
 
@@ -308,6 +309,7 @@ async def create_event_automation(
 async def create_schedule_automation(
     request: CreateScheduleAutomationRequest,
     db: Annotated[DatabaseContext, Depends(get_db)],
+    processing_service: Annotated[ProcessingService, Depends(get_processing_service)],
 ) -> AutomationResponse:
     """Create a new schedule automation."""
     # Validate action_type
@@ -343,6 +345,7 @@ async def create_schedule_automation(
             action_config=request.action_config,
             description=request.description,
             enabled=request.enabled,
+            timezone=processing_service.timezone,
         )
 
         # Fetch the created automation
@@ -377,6 +380,7 @@ async def update_automation(
     # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
     request_body: Annotated[dict[str, Any], Body(...)],
     db: Annotated[DatabaseContext, Depends(get_db)],
+    processing_service: Annotated[ProcessingService, Depends(get_processing_service)],
 ) -> AutomationResponse:
     """Update an existing automation."""
     # Validate automation_type
@@ -491,6 +495,7 @@ async def update_automation(
                 recurrence_rule=request.recurrence_rule,
                 action_config=request.action_config,
                 enabled=request.enabled,
+                timezone=processing_service.timezone,
             )
 
         if not success:
@@ -526,6 +531,7 @@ async def update_automation_enabled(
         str, Query(description="Conversation ID for permission check")
     ],
     db: Annotated[DatabaseContext, Depends(get_db)],
+    processing_service: Annotated[ProcessingService, Depends(get_processing_service)],
 ) -> AutomationResponse:
     """Enable or disable an automation."""
     # Validate automation_type
@@ -540,6 +546,7 @@ async def update_automation_enabled(
         automation_type=automation_type,  # type: ignore[arg-type]
         conversation_id=conversation_id,
         enabled=enabled,
+        timezone=processing_service.timezone,
     )
 
     if not success:
