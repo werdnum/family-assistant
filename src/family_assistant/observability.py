@@ -45,10 +45,12 @@ class ObservabilityHandle:
     def shutdown(self) -> None:
         """Flush pending spans/metrics and shut down providers."""
         logger.info("Shutting down OpenTelemetry providers...")
-        self.tracer_provider.shutdown()
-        if self.meter_provider and hasattr(self.meter_provider, "shutdown"):
-            # SDK MeterProvider has shutdown() but the base API interface does not
-            self.meter_provider.shutdown()  # type: ignore[union-attr]
+        try:
+            self.tracer_provider.shutdown()
+        finally:
+            if self.meter_provider and hasattr(self.meter_provider, "shutdown"):
+                # SDK MeterProvider has shutdown() but the base API interface does not
+                self.meter_provider.shutdown()  # type: ignore[union-attr]
         logger.info("OpenTelemetry providers shut down.")
 
 
