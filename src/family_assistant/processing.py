@@ -409,6 +409,30 @@ class ProcessingService:
                 hours=self.history_max_age_hours
             )
 
+    def _prepend_profile_preamble(self, system_prompt: str) -> str:
+        """Prepend a profile-identification preamble to *system_prompt*.
+
+        The preamble tells the model which processing profile is active and
+        that the user explicitly selected it.  If *system_prompt* is empty the
+        preamble is returned without a trailing newline.
+        """
+        profile_id = self.service_config.id
+        description = self.service_config.description
+        lines = [
+            f"[Active Processing Profile: {profile_id}]",
+            f'The user has explicitly selected the "{profile_id}" processing profile.',
+        ]
+        if description:
+            lines.append(f"Profile purpose: {description}")
+        lines.append(
+            "Your available tools and capabilities are specific to this profile. "
+            "Do not attempt actions outside your profile's scope."
+        )
+        preamble = "\n".join(lines)
+        if system_prompt:
+            return preamble + "\n\n" + system_prompt
+        return preamble
+
     async def _aggregate_context_from_providers(self) -> str:
         """Gathers context fragments from all registered providers."""
         all_fragments: list[str] = []
@@ -2261,6 +2285,8 @@ Call attach_to_response with your selected attachment IDs."""
                 )
                 final_system_prompt = system_prompt_template.strip()
 
+            final_system_prompt = self._prepend_profile_preamble(final_system_prompt)
+
             if final_system_prompt:
                 messages_for_llm.insert(0, SystemMessage(content=final_system_prompt))
 
@@ -2633,6 +2659,8 @@ Call attach_to_response with your selected attachment IDs."""
                 ).strip()
             except Exception:
                 final_system_prompt = system_prompt_template.strip()
+
+            final_system_prompt = self._prepend_profile_preamble(final_system_prompt)
 
             if final_system_prompt:
                 messages_for_llm.insert(0, SystemMessage(content=final_system_prompt))
