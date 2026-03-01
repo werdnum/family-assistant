@@ -128,6 +128,17 @@ ENV_VAR_MAPPINGS: list[EnvVarMapping] = [
     ),
     EnvVarMapping("AI_WORKER_K8S_NAMESPACE", "ai_worker_config.kubernetes.namespace"),
     EnvVarMapping("AI_WORKER_K8S_IMAGE", "ai_worker_config.kubernetes.ai_coder_image"),
+    # OpenTelemetry
+    EnvVarMapping("OTEL_ENABLED", "otel.enabled", bool),
+    EnvVarMapping("OTEL_SERVICE_NAME", "otel.service_name"),
+    EnvVarMapping("OTEL_TRACES_EXPORTER", "otel.traces_exporter"),
+    EnvVarMapping("OTEL_METRICS_EXPORTER", "otel.metrics_exporter"),
+    EnvVarMapping("OTEL_EXPORTER_OTLP_ENDPOINT", "otel.otlp_endpoint"),
+    EnvVarMapping("OTEL_EXPORTER_OTLP_TRACES_ENDPOINT", "otel.otlp_traces_endpoint"),
+    EnvVarMapping("OTEL_EXPORTER_OTLP_METRICS_ENDPOINT", "otel.otlp_metrics_endpoint"),
+    EnvVarMapping("OTEL_LOG_CORRELATION", "otel.log_correlation", bool),
+    EnvVarMapping("OTEL_TRACES_SAMPLE_RATE", "otel.traces_sample_rate", float),
+    EnvVarMapping("OTEL_DEBUG_CONSOLE_EXPORTER", "otel.debug_console_exporter", bool),
 ]
 
 
@@ -201,6 +212,9 @@ def parse_env_value(
 
     if value_type is int:
         return int(value)
+
+    if value_type is float:
+        return float(value)
 
     if value_type is bool:
         return value.lower() in {"true", "1", "yes"}

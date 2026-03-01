@@ -187,6 +187,14 @@ class TestParseEnvValue:
         # Since "bob" can't be int, all keys become strings
         assert result == {"123": "Alice", "bob": "Bob"}
 
+    def test_parse_float(self) -> None:
+        """Test parsing float values."""
+        assert parse_env_value("0.5", float) == 0.5
+        assert parse_env_value("1.0", float) == 1.0
+        assert parse_env_value("0.0", float) == 0.0
+        with pytest.raises(ValueError):
+            parse_env_value("not-a-float", float)
+
 
 class TestLoadYamlFile:
     """Tests for load_yaml_file function."""
@@ -511,6 +519,22 @@ class TestApplyEnvVarOverrides:
         with mock.patch.dict(os.environ, env, clear=True):
             apply_env_var_overrides(config)
         assert config["model"] == "original-model"
+
+    def test_applies_otel_enabled_env_var(self) -> None:
+        """Test applying OTEL_ENABLED boolean env var."""
+        config: dict[str, Any] = {"otel": {}}
+        with mock.patch.dict(os.environ, {"OTEL_ENABLED": "true"}, clear=False):
+            apply_env_var_overrides(config)
+        assert config["otel"]["enabled"] is True
+
+    def test_applies_otel_sample_rate_env_var(self) -> None:
+        """Test applying OTEL_TRACES_SAMPLE_RATE float env var."""
+        config: dict[str, Any] = {"otel": {}}
+        with mock.patch.dict(
+            os.environ, {"OTEL_TRACES_SAMPLE_RATE": "0.25"}, clear=False
+        ):
+            apply_env_var_overrides(config)
+        assert config["otel"]["traces_sample_rate"] == 0.25
 
 
 class TestApplyCalendarEnvVars:
