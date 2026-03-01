@@ -7,10 +7,12 @@ from zoneinfo import ZoneInfo
 
 import pytest
 import pytest_asyncio
+from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncEngine
 
 from family_assistant.storage.context import DatabaseContext
+from family_assistant.storage.tasks import tasks_table
 
 
 @pytest_asyncio.fixture(scope="function")
@@ -924,3 +926,467 @@ class TestScheduleAutomationsRepository:
         next_sydney = new_next.astimezone(sydney_tz)
         assert next_sydney.hour == 9
         assert next_sydney.minute == 0
+
+
+async def _get_pending_tasks_for_automation(
+    db_context: DatabaseContext, automation_id: int
+) -> list[dict]:
+    """Helper to query pending tasks for a specific automation."""
+    stmt = select(tasks_table).where(
+        tasks_table.c.status == "pending",
+        tasks_table.c.task_id.like(f"sched_auto_{automation_id}_%"),
+    )
+    rows = await db_context.fetch_all(stmt)
+    return [dict(row) for row in rows]
+
+
+async def _get_all_tasks_for_automation(
+    db_context: DatabaseContext, automation_id: int
+) -> list[dict]:
+    """Helper to query all tasks (any status) for a specific automation."""
+    stmt = select(tasks_table).where(
+        tasks_table.c.task_id.like(f"sched_auto_{automation_id}_%"),
+    )
+    rows = await db_context.fetch_all(stmt)
+    return [dict(row) for row in rows]
+
+
+class TestTaskQueueSync:
+    """Tests for task queue synchronization when automations are modified."""
+
+    @pytest.mark.asyncio
+    async def test_disable_cancels_pending_tasks(
+        self, db_context: DatabaseContext
+    ) -> None:
+        """Disabling an automation cancels its pending task queue items."""
+        conversation_id = str(uuid.uuid4())
+
+        automation_id = await db_context.schedule_automations.create(
+            name="Daily Task",
+            recurrence_rule="FREQ=DAILY;BYHOUR=9",
+            action_type="wake_llm",
+            action_config={"context": "daily check"},
+            conversation_id=conversation_id,
+        )
+
+        # Verify a pending task was created
+        pending = await _get_pending_tasks_for_automation(db_context, automation_id)
+        assert len(pending) == 1
+
+        # Disable the automation
+        await db_context.schedule_automations.update_enabled(
+            automation_id, conversation_id, enabled=False
+        )
+
+        # Verify pending task was cancelled
+        pending = await _get_pending_tasks_for_automation(db_context, automation_id)
+        assert len(pending) == 0
+
+        all_tasks = await _get_all_tasks_for_automation(db_context, automation_id)
+        assert len(all_tasks) == 1
+        assert all_tasks[0]["status"] == "cancelled"
+
+    @pytest.mark.asyncio
+    async def test_enable_schedules_new_task(self, db_context: DatabaseContext) -> None:
+        """Re-enabling an automation schedules a new task."""
+        conversation_id = str(uuid.uuid4())
+
+        automation_id = await db_context.schedule_automations.create(
+            name="Daily Task",
+            recurrence_rule="FREQ=DAILY;BYHOUR=9",
+            action_type="wake_llm",
+            action_config={"context": "daily check"},
+            conversation_id=conversation_id,
+        )
+
+        # Disable (cancels pending tasks)
+        await db_context.schedule_automations.update_enabled(
+            automation_id, conversation_id, enabled=False
+        )
+        pending = await _get_pending_tasks_for_automation(db_context, automation_id)
+        assert len(pending) == 0
+
+        # Re-enable (should schedule a new task)
+        await db_context.schedule_automations.update_enabled(
+            automation_id, conversation_id, enabled=True
+        )
+        pending = await _get_pending_tasks_for_automation(db_context, automation_id)
+        assert len(pending) == 1
+
+    @pytest.mark.asyncio
+    async def test_update_action_config_reschedules_task(
+        self, db_context: DatabaseContext
+    ) -> None:
+        """Updating action_config cancels old task and creates new one with updated payload."""
+        conversation_id = str(uuid.uuid4())
+
+        automation_id = await db_context.schedule_automations.create(
+            name="Daily Task",
+            recurrence_rule="FREQ=DAILY;BYHOUR=9",
+            action_type="wake_llm",
+            action_config={"context": "old context"},
+            conversation_id=conversation_id,
+        )
+
+        # Verify initial task has old context
+        pending = await _get_pending_tasks_for_automation(db_context, automation_id)
+        assert len(pending) == 1
+        assert pending[0]["payload"]["callback_context"] == "old context"
+
+        # Update action_config
+        await db_context.schedule_automations.update(
+            automation_id,
+            conversation_id,
+            action_config={"context": "new context"},
+        )
+
+        # Verify old task was cancelled and new one created with new context
+        pending = await _get_pending_tasks_for_automation(db_context, automation_id)
+        assert len(pending) == 1
+        assert pending[0]["payload"]["callback_context"] == "new context"
+
+    @pytest.mark.asyncio
+    async def test_update_action_config_script_reschedules_task(
+        self, db_context: DatabaseContext
+    ) -> None:
+        """Updating script action_config creates new task with updated script code."""
+        conversation_id = str(uuid.uuid4())
+
+        automation_id = await db_context.schedule_automations.create(
+            name="Script Task",
+            recurrence_rule="FREQ=DAILY;BYHOUR=9",
+            action_type="script",
+            action_config={"script_code": "print('old')", "task_name": "Old Script"},
+            conversation_id=conversation_id,
+        )
+
+        # Verify initial task
+        pending = await _get_pending_tasks_for_automation(db_context, automation_id)
+        assert len(pending) == 1
+        assert pending[0]["payload"]["script_code"] == "print('old')"
+
+        # Update action_config
+        await db_context.schedule_automations.update(
+            automation_id,
+            conversation_id,
+            action_config={"script_code": "print('new')", "task_name": "New Script"},
+        )
+
+        # Verify new task has updated payload
+        pending = await _get_pending_tasks_for_automation(db_context, automation_id)
+        assert len(pending) == 1
+        assert pending[0]["payload"]["script_code"] == "print('new')"
+        assert pending[0]["payload"]["task_name"] == "New Script"
+
+    @pytest.mark.asyncio
+    async def test_update_enabled_false_via_update_cancels_tasks(
+        self, db_context: DatabaseContext
+    ) -> None:
+        """Setting enabled=False via update() cancels pending tasks."""
+        conversation_id = str(uuid.uuid4())
+
+        automation_id = await db_context.schedule_automations.create(
+            name="Daily Task",
+            recurrence_rule="FREQ=DAILY;BYHOUR=9",
+            action_type="wake_llm",
+            action_config={"context": "test"},
+            conversation_id=conversation_id,
+        )
+
+        # Verify pending task exists
+        pending = await _get_pending_tasks_for_automation(db_context, automation_id)
+        assert len(pending) == 1
+
+        # Disable via update method
+        await db_context.schedule_automations.update(
+            automation_id, conversation_id, enabled=False
+        )
+
+        # Verify pending task was cancelled
+        pending = await _get_pending_tasks_for_automation(db_context, automation_id)
+        assert len(pending) == 0
+
+    @pytest.mark.asyncio
+    async def test_update_enabled_true_via_update_schedules_task(
+        self, db_context: DatabaseContext
+    ) -> None:
+        """Setting enabled=True via update() on a disabled automation schedules a new task."""
+        conversation_id = str(uuid.uuid4())
+
+        automation_id = await db_context.schedule_automations.create(
+            name="Daily Task",
+            recurrence_rule="FREQ=DAILY;BYHOUR=9",
+            action_type="wake_llm",
+            action_config={"context": "test"},
+            conversation_id=conversation_id,
+        )
+
+        # Disable first
+        await db_context.schedule_automations.update_enabled(
+            automation_id, conversation_id, enabled=False
+        )
+        pending = await _get_pending_tasks_for_automation(db_context, automation_id)
+        assert len(pending) == 0
+
+        # Re-enable via update method
+        await db_context.schedule_automations.update(
+            automation_id, conversation_id, enabled=True
+        )
+
+        # Verify new task was scheduled
+        pending = await _get_pending_tasks_for_automation(db_context, automation_id)
+        assert len(pending) == 1
+
+    @pytest.mark.asyncio
+    async def test_delete_cancels_pending_tasks(
+        self, db_context: DatabaseContext
+    ) -> None:
+        """Deleting an automation cancels its pending task queue items."""
+        conversation_id = str(uuid.uuid4())
+
+        automation_id = await db_context.schedule_automations.create(
+            name="Daily Task",
+            recurrence_rule="FREQ=DAILY;BYHOUR=9",
+            action_type="wake_llm",
+            action_config={"context": "test"},
+            conversation_id=conversation_id,
+        )
+
+        # Verify pending task exists
+        pending = await _get_pending_tasks_for_automation(db_context, automation_id)
+        assert len(pending) == 1
+
+        # Delete the automation
+        await db_context.schedule_automations.delete(automation_id, conversation_id)
+
+        # Verify pending task was cancelled
+        all_tasks = await _get_all_tasks_for_automation(db_context, automation_id)
+        assert all(t["status"] == "cancelled" for t in all_tasks)
+
+    @pytest.mark.asyncio
+    async def test_update_recurrence_rule_reschedules_task(
+        self, db_context: DatabaseContext
+    ) -> None:
+        """Updating recurrence_rule cancels old task and schedules new one."""
+        conversation_id = str(uuid.uuid4())
+
+        automation_id = await db_context.schedule_automations.create(
+            name="Daily Task",
+            recurrence_rule="FREQ=DAILY;BYHOUR=9",
+            action_type="wake_llm",
+            action_config={"context": "test"},
+            conversation_id=conversation_id,
+        )
+
+        # Get initial pending task
+        pending_before = await _get_pending_tasks_for_automation(
+            db_context, automation_id
+        )
+        assert len(pending_before) == 1
+        old_task_id = pending_before[0]["task_id"]
+
+        # Update recurrence rule
+        await db_context.schedule_automations.update(
+            automation_id,
+            conversation_id,
+            recurrence_rule="FREQ=DAILY;BYHOUR=15",
+        )
+
+        # Verify new pending task exists with a different task_id
+        pending_after = await _get_pending_tasks_for_automation(
+            db_context, automation_id
+        )
+        assert len(pending_after) == 1
+        assert pending_after[0]["task_id"] != old_task_id
+
+    @pytest.mark.asyncio
+    async def test_enable_already_enabled_reschedules(
+        self, db_context: DatabaseContext
+    ) -> None:
+        """Calling update_enabled(True) on an already-enabled automation reschedules."""
+        conversation_id = str(uuid.uuid4())
+
+        automation_id = await db_context.schedule_automations.create(
+            name="Daily Task",
+            recurrence_rule="FREQ=DAILY;BYHOUR=9",
+            action_type="wake_llm",
+            action_config={"context": "test"},
+            conversation_id=conversation_id,
+        )
+
+        # Get initial task ID
+        pending = await _get_pending_tasks_for_automation(db_context, automation_id)
+        assert len(pending) == 1
+        original_task_id = pending[0]["task_id"]
+
+        # Update enabled to True (same as current) — reschedules to recalculate next_at
+        await db_context.schedule_automations.update_enabled(
+            automation_id, conversation_id, enabled=True
+        )
+
+        # Verify a new task was scheduled (old one cancelled, new one created)
+        pending = await _get_pending_tasks_for_automation(db_context, automation_id)
+        assert len(pending) == 1
+        assert pending[0]["task_id"] != original_task_id
+
+    @pytest.mark.asyncio
+    async def test_update_description_no_task_sync(
+        self, db_context: DatabaseContext
+    ) -> None:
+        """Updating non-task-affecting fields doesn't cancel/reschedule tasks."""
+        conversation_id = str(uuid.uuid4())
+
+        automation_id = await db_context.schedule_automations.create(
+            name="Daily Task",
+            recurrence_rule="FREQ=DAILY;BYHOUR=9",
+            action_type="wake_llm",
+            action_config={"context": "test"},
+            conversation_id=conversation_id,
+        )
+
+        # Get initial task ID
+        pending = await _get_pending_tasks_for_automation(db_context, automation_id)
+        assert len(pending) == 1
+        original_task_id = pending[0]["task_id"]
+
+        # Update description only
+        await db_context.schedule_automations.update(
+            automation_id, conversation_id, description="Updated description"
+        )
+
+        # Verify same task still exists
+        pending = await _get_pending_tasks_for_automation(db_context, automation_id)
+        assert len(pending) == 1
+        assert pending[0]["task_id"] == original_task_id
+
+    @pytest.mark.asyncio
+    async def test_enable_updates_next_scheduled_at_in_db(
+        self, db_context: DatabaseContext
+    ) -> None:
+        """Re-enabling via update_enabled persists next_scheduled_at to the automation record."""
+        conversation_id = str(uuid.uuid4())
+
+        automation_id = await db_context.schedule_automations.create(
+            name="Daily Task",
+            recurrence_rule="FREQ=DAILY;BYHOUR=9",
+            action_type="wake_llm",
+            action_config={"context": "test"},
+            conversation_id=conversation_id,
+        )
+
+        # Disable
+        await db_context.schedule_automations.update_enabled(
+            automation_id, conversation_id, enabled=False
+        )
+
+        # Re-enable
+        await db_context.schedule_automations.update_enabled(
+            automation_id, conversation_id, enabled=True
+        )
+
+        # Verify next_scheduled_at matches the newly scheduled task
+        automation = await db_context.schedule_automations.get_by_id(
+            automation_id, conversation_id
+        )
+        assert automation is not None
+
+        pending = await _get_pending_tasks_for_automation(db_context, automation_id)
+        assert len(pending) == 1
+        # Compare without tzinfo since SQLite returns naive datetimes
+        assert automation["next_scheduled_at"] is not None
+        auto_dt = automation["next_scheduled_at"].replace(tzinfo=None)
+        task_dt = pending[0]["scheduled_at"]
+        if task_dt.tzinfo is not None:
+            task_dt = task_dt.replace(tzinfo=None)
+        assert auto_dt == task_dt
+
+    @pytest.mark.asyncio
+    async def test_update_name_reschedules_script_task(
+        self, db_context: DatabaseContext
+    ) -> None:
+        """Updating name on a script automation (without explicit task_name) reschedules task."""
+        conversation_id = str(uuid.uuid4())
+
+        automation_id = await db_context.schedule_automations.create(
+            name="Old Script Name",
+            recurrence_rule="FREQ=DAILY;BYHOUR=9",
+            action_type="script",
+            action_config={"script_code": "print('hello')"},
+            conversation_id=conversation_id,
+        )
+
+        # Verify initial task uses automation name as task_name
+        pending = await _get_pending_tasks_for_automation(db_context, automation_id)
+        assert len(pending) == 1
+        assert pending[0]["payload"]["task_name"] == "Old Script Name"
+        old_task_id = pending[0]["task_id"]
+
+        # Update name only
+        await db_context.schedule_automations.update(
+            automation_id, conversation_id, name="New Script Name"
+        )
+
+        # Verify task was rescheduled with new name
+        pending = await _get_pending_tasks_for_automation(db_context, automation_id)
+        assert len(pending) == 1
+        assert pending[0]["task_id"] != old_task_id
+        assert pending[0]["payload"]["task_name"] == "New Script Name"
+
+    @pytest.mark.asyncio
+    async def test_update_name_no_resched_when_task_name_in_action_config(
+        self, db_context: DatabaseContext
+    ) -> None:
+        """Updating name on a script automation with explicit task_name doesn't reschedule."""
+        conversation_id = str(uuid.uuid4())
+
+        automation_id = await db_context.schedule_automations.create(
+            name="Automation Name",
+            recurrence_rule="FREQ=DAILY;BYHOUR=9",
+            action_type="script",
+            action_config={
+                "script_code": "print('hello')",
+                "task_name": "Explicit Name",
+            },
+            conversation_id=conversation_id,
+        )
+
+        pending = await _get_pending_tasks_for_automation(db_context, automation_id)
+        assert len(pending) == 1
+        original_task_id = pending[0]["task_id"]
+
+        # Update name only - should NOT trigger resched since task_name is in action_config
+        await db_context.schedule_automations.update(
+            automation_id, conversation_id, name="New Automation Name"
+        )
+
+        pending = await _get_pending_tasks_for_automation(db_context, automation_id)
+        assert len(pending) == 1
+        assert pending[0]["task_id"] == original_task_id
+
+    @pytest.mark.asyncio
+    async def test_update_name_no_resched_for_wake_llm(
+        self, db_context: DatabaseContext
+    ) -> None:
+        """Updating name on a wake_llm automation doesn't reschedule (name not in payload)."""
+        conversation_id = str(uuid.uuid4())
+
+        automation_id = await db_context.schedule_automations.create(
+            name="Daily Summary",
+            recurrence_rule="FREQ=DAILY;BYHOUR=9",
+            action_type="wake_llm",
+            action_config={"context": "test"},
+            conversation_id=conversation_id,
+        )
+
+        pending = await _get_pending_tasks_for_automation(db_context, automation_id)
+        assert len(pending) == 1
+        original_task_id = pending[0]["task_id"]
+
+        # Update name only - should NOT trigger resched for wake_llm
+        await db_context.schedule_automations.update(
+            automation_id, conversation_id, name="Updated Summary"
+        )
+
+        pending = await _get_pending_tasks_for_automation(db_context, automation_id)
+        assert len(pending) == 1
+        assert pending[0]["task_id"] == original_task_id

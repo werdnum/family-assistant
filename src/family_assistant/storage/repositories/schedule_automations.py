@@ -7,8 +7,7 @@ from zoneinfo import ZoneInfo
 
 from dateutil import rrule
 from dateutil.parser import ParserError
-from sqlalchemy import String, delete, insert, select, update
-from sqlalchemy import cast as sa_cast
+from sqlalchemy import delete, insert, select, update
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 
 from family_assistant.storage.datetime_utils import normalize_datetime
@@ -364,7 +363,10 @@ class ScheduleAutomationsRepository(BaseRepository):
         timezone: ZoneInfo | None = None,
     ) -> bool:
         """
-        Enable or disable automation.
+        Enable or disable automation, synchronizing task queue accordingly.
+
+        When disabling, cancels all pending task queue items.
+        When enabling, schedules a new task based on the current RRULE.
 
         When re-enabling, recalculates next_scheduled_at from now and
         reschedules the task so the automation fires at the correct time.
@@ -450,7 +452,9 @@ class ScheduleAutomationsRepository(BaseRepository):
             )
             return True
 
-        # Disabling — simple update
+        # Disabling — cancel pending tasks and update
+        await self._cancel_pending_tasks(automation_id)
+
         stmt = (
             update(schedule_automations_table)
             .where(
@@ -464,9 +468,7 @@ class ScheduleAutomationsRepository(BaseRepository):
         updated_count = result.rowcount  # type: ignore[attr-defined]
 
         if updated_count > 0:
-            self._logger.info(
-                f"Updated schedule automation {automation_id} to disabled"
-            )
+            self._logger.info(f"Disabled schedule automation {automation_id}")
             return True
         else:
             self._logger.warning(
@@ -487,7 +489,10 @@ class ScheduleAutomationsRepository(BaseRepository):
         timezone: ZoneInfo | None = None,
     ) -> bool:
         """
-        Update automation configuration.
+        Update automation configuration, synchronizing task queue as needed.
+
+        When task-affecting fields change (recurrence_rule, action_config, enabled),
+        pending task queue items are cancelled and rescheduled with the new config.
 
         Args:
             automation_id: Automation ID
@@ -524,64 +529,60 @@ class ScheduleAutomationsRepository(BaseRepository):
         if isinstance(enabled, bool):
             update_values["enabled"] = enabled
 
-        if isinstance(recurrence_rule, str):
+        recurrence_changing = isinstance(recurrence_rule, str)
+        if recurrence_changing:
             # Validate and calculate new next_scheduled_at
-            next_scheduled_at = self._parse_rrule_and_get_next(
-                recurrence_rule, timezone=timezone
-            )
-            if next_scheduled_at is None:
+            next_at = self._parse_rrule_and_get_next(recurrence_rule, timezone=timezone)
+            if next_at is None:
                 raise ValueError(f"Invalid RRULE: {recurrence_rule}")
-
             update_values["recurrence_rule"] = recurrence_rule
-            update_values["next_scheduled_at"] = next_scheduled_at
+            update_values["next_scheduled_at"] = next_at
 
-            # Cancel all pending task instances for this automation
-            await self._cancel_pending_tasks(automation_id)
+        # Determine if task queue needs synchronization
+        action_config_changing = (
+            isinstance(action_config, dict)
+            and action_config != existing["action_config"]
+        )
+        enabled_changing = isinstance(enabled, bool) and enabled != existing["enabled"]
+        name_changing = isinstance(name, str) and name != existing["name"]
+        name_affects_task = (
+            name_changing
+            and existing["action_type"] == "script"
+            and "task_name" not in (existing["action_config"] or {})
+        )
 
-            # Schedule new first task with updated RRULE
-            action_type = existing["action_type"]
-            task_type = (
-                "llm_callback" if action_type == "wake_llm" else "script_execution"
+        needs_task_sync = (
+            recurrence_changing
+            or action_config_changing
+            or enabled_changing
+            or name_affects_task
+        )
+
+        if needs_task_sync:
+            will_be_enabled = (
+                enabled if isinstance(enabled, bool) else existing["enabled"]
             )
-            task_id = f"sched_auto_{automation_id}_{uuid.uuid4().hex[:8]}"
 
-            payload = {
-                "conversation_id": conversation_id,
-                "interface_type": existing["interface_type"],
-                "automation_id": str(automation_id),
-                "automation_type": "schedule",
-            }
-
-            # Add action-specific payload
-            # Use updated action_config if provided, otherwise use existing
-            final_action_config = (
-                action_config
+            next_scheduled_at = await self._sync_pending_tasks(
+                automation_id,
+                existing,
+                enabled=will_be_enabled,
+                action_config_override=action_config
                 if isinstance(action_config, dict)
-                else existing["action_config"]
-            )
-            if action_type == "wake_llm":
-                payload["callback_context"] = final_action_config.get("context", "")
-            else:  # script
-                payload["script_code"] = final_action_config.get("script_code", "")
-                payload["task_name"] = final_action_config.get(
-                    "task_name", existing["name"]
-                )
-
-            # Note: We do NOT pass recurrence_rule here because recurrence
-            # is managed manually via after_task_execution callback, not
-            # by the task worker's automatic recurrence system
-            await enqueue_task(
-                db_context=self._db,
-                task_id=task_id,
-                task_type=task_type,
-                payload=payload,
-                scheduled_at=next_scheduled_at,
+                else None,
+                recurrence_rule_override=recurrence_rule
+                if recurrence_changing
+                else None,
+                name_override=name if isinstance(name, str) else None,
+                timezone=timezone,
+                next_at_override=next_at if recurrence_changing else None,
             )
 
-            self._logger.info(
-                f"Updated schedule automation {automation_id} RRULE, "
-                f"next execution at {next_scheduled_at}"
-            )
+            if (
+                next_scheduled_at is not None
+                and "next_scheduled_at" not in update_values
+            ):
+                update_values["next_scheduled_at"] = next_scheduled_at
 
         if not update_values:
             self._logger.warning("No update values provided for automation update")
@@ -670,14 +671,13 @@ class ScheduleAutomationsRepository(BaseRepository):
         """
         try:
             # Find pending tasks with this automation_id in payload
-            payload_automation_id = sa_cast(
-                tasks_table.c.payload["automation_id"], String
-            )
-
             stmt = (
                 update(tasks_table)
                 .where(tasks_table.c.status == "pending")
-                .where(payload_automation_id == str(automation_id))
+                .where(
+                    tasks_table.c.payload["automation_id"].as_string()
+                    == str(automation_id)
+                )
                 .values(status="cancelled")
             )
 
@@ -697,6 +697,96 @@ class ScheduleAutomationsRepository(BaseRepository):
                 exc_info=True,
             )
             return 0
+
+    async def _sync_pending_tasks(
+        self,
+        automation_id: int,
+        automation: ScheduleAutomationDict,
+        enabled: bool,
+        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
+        action_config_override: dict[str, Any] | None = None,
+        recurrence_rule_override: str | None = None,
+        name_override: str | None = None,
+        timezone: ZoneInfo | None = None,
+        next_at_override: datetime | None = None,
+    ) -> datetime | None:
+        """
+        Synchronize pending task queue items with automation state.
+
+        Cancels all pending tasks and, if the automation is enabled,
+        schedules a new task with the current configuration.
+
+        Args:
+            automation_id: Automation ID
+            automation: Current automation data from DB
+            enabled: Whether the automation will be enabled after the update
+            action_config_override: New action_config (if changing), otherwise uses existing
+            recurrence_rule_override: New recurrence_rule (if changing), otherwise uses existing
+            name_override: New name (if changing), otherwise uses existing
+            timezone: User's timezone for interpreting RRULE times
+            next_at_override: Pre-calculated next execution time. When provided,
+                skips recalculation to avoid race conditions from clock drift
+                between validation and scheduling.
+
+        Returns:
+            The next_scheduled_at datetime if a task was scheduled, None otherwise
+        """
+        await self._cancel_pending_tasks(automation_id)
+
+        if not enabled:
+            return None
+
+        final_recurrence_rule = (
+            recurrence_rule_override
+            if recurrence_rule_override is not None
+            else automation["recurrence_rule"]
+        )
+        final_action_config = (
+            action_config_override
+            if action_config_override is not None
+            else automation["action_config"]
+        )
+        final_name = name_override if name_override is not None else automation["name"]
+
+        next_scheduled_at = next_at_override or self._parse_rrule_and_get_next(
+            final_recurrence_rule, timezone=timezone
+        )
+        if next_scheduled_at is None:
+            self._logger.info(
+                f"No future executions for automation {automation_id} "
+                f"based on RRULE {final_recurrence_rule}"
+            )
+            return None
+
+        action_type = automation["action_type"]
+        task_type = "llm_callback" if action_type == "wake_llm" else "script_execution"
+        task_id = f"sched_auto_{automation_id}_{uuid.uuid4().hex[:8]}"
+
+        payload = {
+            "conversation_id": automation["conversation_id"],
+            "interface_type": automation["interface_type"],
+            "automation_id": str(automation_id),
+            "automation_type": "schedule",
+        }
+
+        if action_type == "wake_llm":
+            payload["callback_context"] = final_action_config.get("context", "")
+        else:  # script
+            payload["script_code"] = final_action_config.get("script_code", "")
+            payload["task_name"] = final_action_config.get("task_name", final_name)
+
+        await enqueue_task(
+            db_context=self._db,
+            task_id=task_id,
+            task_type=task_type,
+            payload=payload,
+            scheduled_at=next_scheduled_at,
+        )
+
+        self._logger.info(
+            f"Scheduled task for automation {automation_id} at {next_scheduled_at}"
+        )
+        return next_scheduled_at
 
     async def after_task_execution(
         self,
@@ -827,12 +917,8 @@ class ScheduleAutomationsRepository(BaseRepository):
                 return {}
 
             # Query tasks table for execution history
-            # Use sa_cast for cross-database compatibility (SQLite and PostgreSQL)
-            payload_automation_id = sa_cast(
-                tasks_table.c.payload["automation_id"], String
-            )
             stmt = select(tasks_table).where(
-                payload_automation_id == str(automation_id)
+                tasks_table.c.payload["automation_id"].as_string() == str(automation_id)
             )
 
             stmt = stmt.where(tasks_table.c.status.in_(["completed", "failed"]))
