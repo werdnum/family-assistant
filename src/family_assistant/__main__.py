@@ -98,7 +98,7 @@ def main() -> int:
     logger.info("Stored final AppConfig in FastAPI app state.")
 
     # Initialize OpenTelemetry (no-op when disabled)
-    otel_handle = setup_observability(config.otel)
+    otel_handle = setup_observability(config.otel, fastapi_app)
 
     if otel_handle and config.otel.log_correlation:
         root_logger = logging.getLogger()

@@ -665,7 +665,7 @@ class OTelConfig(BaseModel):
     otlp_traces_endpoint: str | None = None
     otlp_metrics_endpoint: str | None = None
     log_correlation: bool = True
-    traces_sample_rate: float = 1.0
+    traces_sample_rate: float = Field(default=1.0, ge=0.0, le=1.0)
     debug_console_exporter: bool = False
 
 

@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from opentelemetry import metrics, trace
 from opentelemetry.sdk.resources import Resource
@@ -118,8 +118,16 @@ def _create_meter_provider(
     raise ValueError(msg)
 
 
-def setup_observability(config: OTelConfig) -> ObservabilityHandle | None:
+def setup_observability(
+    config: OTelConfig,
+    fastapi_app: Any = None,  # noqa: ANN401
+) -> ObservabilityHandle | None:
     """Initialize OpenTelemetry tracing, metrics, and auto-instrumentation.
+
+    Args:
+        config: OTel configuration.
+        fastapi_app: Optional FastAPI app instance to instrument directly.
+            If provided, uses instrument_app() for the already-instantiated app.
 
     Returns an ObservabilityHandle for shutdown, or None if OTel is disabled.
     """
@@ -156,7 +164,10 @@ def setup_observability(config: OTelConfig) -> ObservabilityHandle | None:
     from opentelemetry.instrumentation.httpx import HTTPXClientInstrumentor
     from opentelemetry.instrumentation.sqlalchemy import SQLAlchemyInstrumentor
 
-    FastAPIInstrumentor().instrument()
+    if fastapi_app is not None:
+        FastAPIInstrumentor().instrument_app(fastapi_app)
+    else:
+        FastAPIInstrumentor().instrument()
     HTTPXClientInstrumentor().instrument()
     SQLAlchemyInstrumentor().instrument()
 

@@ -57,6 +57,12 @@ class TestOTelConfig:
         cfg_one = OTelConfig(traces_sample_rate=1.0)
         assert cfg_one.traces_sample_rate == 1.0
 
+    def test_sample_rate_out_of_range_rejected(self) -> None:
+        with pytest.raises(ValidationError):
+            OTelConfig(traces_sample_rate=-0.1)
+        with pytest.raises(ValidationError):
+            OTelConfig(traces_sample_rate=1.1)
+
 
 class TestSetupObservabilityDisabled:
     """Tests for setup_observability when disabled."""
