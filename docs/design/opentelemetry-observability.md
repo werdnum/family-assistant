@@ -415,15 +415,23 @@ task.process.llm_callback                              (manual root span)
 
 ### Milestone 3: Manual LLM Spans
 
-- Add spans to `RetryingLLMClient`, `LiteLLMClient`, `AnthropicClient`, `GoogleGenAIClient`
-- Capture model name, token usage, finish reason, retry attempt
-- Tests verifying LLM span attributes
+- [x] `RetryingLLMClient`: `llm.generate`, `llm.generate_stream`, `llm.generate_structured` spans
+  with attempt events, usage attributes, fallback tracking, error recording
+- [x] `AnthropicClient`: `llm.provider.generate`, `llm.provider.generate_stream` spans with GenAI
+  semantic convention attributes (`gen_ai.system`, token usage)
+- [x] `GoogleGenAIClient`: `llm.provider.generate`, `llm.provider.generate_stream` spans
+- [x] `LiteLLMClient`: `llm.provider.generate`, `llm.provider.generate_stream`,
+  `llm.provider.generate_structured` spans
+- [x] Unit tests: `tests/unit/test_otel_llm_spans.py` (7 tests)
 
 ### Milestone 4: Manual Tool + Conversation Spans
 
-- Add spans to `_execute_single_tool()`, `handle_chat_interaction_stream()`,
-  `_aggregate_context_from_providers()`, `TaskWorker._process_task()`
-- Tests verifying trace tree structure
+- [x] `_execute_single_tool()`: `tool.execute.{tool_name}` spans with status and result size
+- [x] `handle_chat_interaction_stream()`: `conversation.process` spans with interface/user context
+- [x] `_aggregate_context_from_providers()`: `context.aggregate` spans with provider/fragment counts
+- [x] `TelegramUpdateHandler.process_batch()`: `telegram.process_batch` root spans
+- [x] `TaskWorker._process_task()`: `task.process.{task_type}` root spans
+- [x] Unit tests: `tests/unit/test_otel_processing_spans.py` (16 tests)
 
 ### Milestone 5: Metrics
 
