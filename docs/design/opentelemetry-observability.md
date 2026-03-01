@@ -144,65 +144,32 @@ otel:
 
 ### 4.1. New File: `src/family_assistant/observability.py`
 
-Single entry point: `setup_observability(config: OTelConfig) -> ObservabilityHandle | None`.
+Entry point: `setup_observability(config, fastapi_app) -> ObservabilityHandle | None`.
 
-Called early in `__main__.py` after config loading but before any components are created.
+Called in `__main__.py` after config loading. The `fastapi_app` instance is passed so that the
+already-instantiated app is instrumented via `instrument_app()` (calling `instrument()` alone would
+miss it).
 
-```python
-def setup_observability(otel_config: OTelConfig) -> ObservabilityHandle | None:
-    if not otel_config.enabled:
-        logger.info("OpenTelemetry is disabled")
-        return None
+See `src/family_assistant/observability.py` for the full implementation. Key design points:
 
-    resource = Resource.create({SERVICE_NAME: otel_config.service_name})
-
-    # Traces
-    sampler = TraceIdRatioBased(otel_config.traces_sample_rate)
-    tracer_provider = TracerProvider(resource=resource, sampler=sampler)
-    tracer_provider.add_span_processor(
-        BatchSpanProcessor(_create_trace_exporter(otel_config))
-    )
-    if otel_config.debug_console_exporter:
-        tracer_provider.add_span_processor(
-            SimpleSpanProcessor(ConsoleSpanExporter())
-        )
-    trace.set_tracer_provider(tracer_provider)
-
-    # Metrics
-    meter_provider = _create_meter_provider(otel_config, resource)
-    metrics.set_meter_provider(meter_provider)
-
-    # Auto-instrumentation
-    FastAPIInstrumentor.instrument()
-    HTTPXClientInstrumentor.instrument()
-    SQLAlchemyInstrumentor().instrument()
-
-    # Log correlation (set_logging_format=False so our custom format in
-    # __main__.py controls how trace_id/span_id are displayed)
-    if otel_config.log_correlation:
-        LoggingInstrumentor().instrument(set_logging_format=False)
-
-    return ObservabilityHandle(tracer_provider, meter_provider)
-
-
-class ObservabilityHandle:
-    """Handle for graceful OTel shutdown (flush pending spans/metrics)."""
-
-    def shutdown(self) -> None:
-        self._tracer_provider.shutdown()
-        self._meter_provider.shutdown()
-```
+- `BatchSpanProcessor` for network exporters (OTLP gRPC/HTTP) to avoid blocking the event loop
+- `SimpleSpanProcessor` only for the debug console exporter (immediate output)
+- Lazy imports for OTLP exporters to avoid loading grpcio when using HTTP/console/none
+- Returns `None` when disabled; callers just check `if otel_handle:`
 
 ### 4.2. Initialization Point
 
-In `__main__.py`, after config loading:
+In `__main__.py`, after config loading and before creating the Assistant:
 
 ```python
 config = load_config()
 # ... CLI overrides ...
 
-from family_assistant.observability import setup_observability
-otel_handle = setup_observability(config.otel)
+otel_handle = setup_observability(config.otel, fastapi_app)
+
+if otel_handle and config.otel.log_correlation:
+    # Reconfigure log format to include trace/span IDs
+    ...
 
 # ... create Assistant, start services ...
 
@@ -210,10 +177,6 @@ otel_handle = setup_observability(config.otel)
 if otel_handle:
     otel_handle.shutdown()
 ```
-
-Auto-instrumentors patch libraries globally, so they work regardless of import order. The key
-requirement is that `setup_observability()` is called before any requests are processed (not before
-imports).
 
 ## 5. Auto-Instrumentation
 
@@ -437,21 +400,18 @@ task.process.llm_callback                              (manual root span)
 
 ## 11. Implementation Milestones
 
-### Milestone 1: Foundation
+### Milestone 1+2: Foundation + Auto-Instrumentation — DONE (PR #655)
 
-- Add OTel dependencies to `pyproject.toml`
-- Add `OTelConfig` to `config_models.py`
-- Add env var mappings to `config_loader.py`
-- Add defaults to `defaults.yaml`
-- Create `observability.py` with `setup_observability()`
-- Wire into `__main__.py`
-- Unit tests for setup and config
-
-### Milestone 2: Auto-Instrumentation
-
-- Enable FastAPI, httpx, SQLAlchemy, and logging auto-instrumentors
-- Update log format for correlation
-- Integration test with `InMemorySpanExporter` verifying auto spans
+- [x] Add OTel dependencies to `pyproject.toml` (8 packages)
+- [x] Add `OTelConfig` to `config_models.py` with `Field(ge=0.0, le=1.0)` on `traces_sample_rate`
+- [x] Add `float` support to `parse_env_value()` in `config_loader.py`
+- [x] Add env var mappings to `config_loader.py` (10 `OTEL_*` vars)
+- [x] Add defaults to `defaults.yaml`
+- [x] Create `observability.py` with `setup_observability()` and `ObservabilityHandle`
+- [x] Wire into `__main__.py` (setup, log correlation format, shutdown in finally)
+- [x] Enable FastAPI (`instrument_app()`), httpx, SQLAlchemy, and logging auto-instrumentors
+- [x] `BatchSpanProcessor` for network exporters, `SimpleSpanProcessor` for debug console only
+- [x] Unit tests: `tests/unit/test_observability.py` (13 tests) + config loader tests (4 tests)
 
 ### Milestone 3: Manual LLM Spans
 

@@ -1100,6 +1100,16 @@ ai_worker_config:
     image: "ghcr.io/werdnum/ai-coding-base:latest"
     network: "bridge"
 
+otel:
+  enabled: false
+  service_name: "family-assistant"
+  traces_exporter: "otlp-grpc"
+  metrics_exporter: "otlp-grpc"
+  otlp_endpoint: "http://localhost:4317"
+  log_correlation: true
+  traces_sample_rate: 1.0
+  debug_console_exporter: false
+
 # Secrets (telegram_token, api_keys, database_url) are primarily from env.
 # Model, embedding_model, server_url, storage_paths are also top-level or env.
 
