@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 from opentelemetry import metrics, trace
 from opentelemetry.sdk.resources import Resource
@@ -26,6 +26,8 @@ from opentelemetry.sdk.trace.export import (
 from opentelemetry.sdk.trace.sampling import TraceIdRatioBased
 
 if TYPE_CHECKING:
+    from fastapi import FastAPI
+
     from family_assistant.config_models import OTelConfig
 
 logger = logging.getLogger(__name__)
@@ -125,7 +127,7 @@ def _create_meter_provider(
 
 def setup_observability(
     config: OTelConfig,
-    fastapi_app: Any = None,  # noqa: ANN401 - avoids top-level FastAPI import
+    fastapi_app: FastAPI | None = None,
 ) -> ObservabilityHandle | None:
     """Initialize OpenTelemetry tracing, metrics, and auto-instrumentation.
 
