@@ -539,7 +539,10 @@ class ScheduleAutomationsRepository(BaseRepository):
             update_values["next_scheduled_at"] = next_at
 
         # Determine if task queue needs synchronization
-        action_config_changing = isinstance(action_config, dict)
+        action_config_changing = (
+            isinstance(action_config, dict)
+            and action_config != existing["action_config"]
+        )
         enabled_changing = isinstance(enabled, bool) and enabled != existing["enabled"]
         name_changing = isinstance(name, str) and name != existing["name"]
         name_affects_task = (
@@ -565,13 +568,14 @@ class ScheduleAutomationsRepository(BaseRepository):
                 existing,
                 enabled=will_be_enabled,
                 action_config_override=action_config
-                if action_config_changing
+                if isinstance(action_config, dict)
                 else None,
                 recurrence_rule_override=recurrence_rule
                 if recurrence_changing
                 else None,
                 name_override=name if isinstance(name, str) else None,
                 timezone=timezone,
+                next_at_override=next_at if recurrence_changing else None,
             )
 
             if (
@@ -704,6 +708,7 @@ class ScheduleAutomationsRepository(BaseRepository):
         recurrence_rule_override: str | None = None,
         name_override: str | None = None,
         timezone: ZoneInfo | None = None,
+        next_at_override: datetime | None = None,
     ) -> datetime | None:
         """
         Synchronize pending task queue items with automation state.
@@ -719,6 +724,9 @@ class ScheduleAutomationsRepository(BaseRepository):
             recurrence_rule_override: New recurrence_rule (if changing), otherwise uses existing
             name_override: New name (if changing), otherwise uses existing
             timezone: User's timezone for interpreting RRULE times
+            next_at_override: Pre-calculated next execution time. When provided,
+                skips recalculation to avoid race conditions from clock drift
+                between validation and scheduling.
 
         Returns:
             The next_scheduled_at datetime if a task was scheduled, None otherwise
@@ -740,7 +748,7 @@ class ScheduleAutomationsRepository(BaseRepository):
         )
         final_name = name_override if name_override is not None else automation["name"]
 
-        next_scheduled_at = self._parse_rrule_and_get_next(
+        next_scheduled_at = next_at_override or self._parse_rrule_and_get_next(
             final_recurrence_rule, timezone=timezone
         )
         if next_scheduled_at is None:
