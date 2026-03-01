@@ -49,6 +49,7 @@ class TestOTelConfig:
 
     def test_extra_fields_forbidden(self) -> None:
         with pytest.raises(ValidationError):
+            # Intentionally passing invalid argument to test extra="forbid"
             OTelConfig(unknown_field="bad")  # type: ignore[call-arg]
 
     def test_sample_rate_boundaries(self) -> None:

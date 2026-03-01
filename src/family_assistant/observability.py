@@ -18,7 +18,11 @@ from typing import TYPE_CHECKING, Any
 from opentelemetry import metrics, trace
 from opentelemetry.sdk.resources import Resource
 from opentelemetry.sdk.trace import TracerProvider
-from opentelemetry.sdk.trace.export import SimpleSpanProcessor, SpanExporter
+from opentelemetry.sdk.trace.export import (
+    BatchSpanProcessor,
+    SimpleSpanProcessor,
+    SpanExporter,
+)
 from opentelemetry.sdk.trace.sampling import TraceIdRatioBased
 
 if TYPE_CHECKING:
@@ -41,6 +45,7 @@ class ObservabilityHandle:
         logger.info("Shutting down OpenTelemetry providers...")
         self.tracer_provider.shutdown()
         if self.meter_provider and hasattr(self.meter_provider, "shutdown"):
+            # SDK MeterProvider has shutdown() but the base API interface does not
             self.meter_provider.shutdown()  # type: ignore[union-attr]
         logger.info("OpenTelemetry providers shut down.")
 
@@ -120,7 +125,7 @@ def _create_meter_provider(
 
 def setup_observability(
     config: OTelConfig,
-    fastapi_app: Any = None,  # noqa: ANN401
+    fastapi_app: Any = None,  # noqa: ANN401 - avoids top-level FastAPI import
 ) -> ObservabilityHandle | None:
     """Initialize OpenTelemetry tracing, metrics, and auto-instrumentation.
 
@@ -145,7 +150,7 @@ def setup_observability(
 
     trace_exporter = _create_trace_exporter(config)
     if trace_exporter is not None:
-        tracer_provider.add_span_processor(SimpleSpanProcessor(trace_exporter))
+        tracer_provider.add_span_processor(BatchSpanProcessor(trace_exporter))
 
     if config.debug_console_exporter:
         from opentelemetry.sdk.trace.export import ConsoleSpanExporter
