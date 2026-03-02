@@ -202,18 +202,13 @@ class RetryingLLMClient:
                         f"Skipping fallback."
                     )
                     if last_exception:
-                        span.set_status(StatusCode.ERROR, str(last_exception))
-                        span.record_exception(last_exception)
                         raise last_exception
                     # This case should ideally not happen
-                    err = LLMProviderError(
+                    raise LLMProviderError(
                         message="All attempts failed without a specific error to raise.",
                         provider="unknown",
                         model=self.primary_model,
                     )
-                    span.set_status(StatusCode.ERROR, str(err))
-                    span.record_exception(err)
-                    raise err
 
                 span.add_event(
                     "llm.attempt",
@@ -251,8 +246,6 @@ class RetryingLLMClient:
                         exc_info=True,
                     )
                     # Re-raise the last exception from primary attempts as it's likely more informative
-                    span.set_status(StatusCode.ERROR, str(last_exception))
-                    span.record_exception(last_exception)
                     raise last_exception from e
 
             # If all attempts failed, raise the last exception
@@ -260,22 +253,17 @@ class RetryingLLMClient:
                 logger.error(
                     f"All LLM attempts failed. Raising last recorded exception: {last_exception}"
                 )
-                span.set_status(StatusCode.ERROR, str(last_exception))
-                span.record_exception(last_exception)
                 raise last_exception
             else:
                 # Should not be reached if logic is correct, but as a safeguard:
                 logger.error(
                     "All LLM attempts failed without a specific exception captured."
                 )
-                err = LLMProviderError(
+                raise LLMProviderError(
                     message="All LLM attempts failed without a specific exception.",
                     provider="unknown",
                     model=self.primary_model,
                 )
-                span.set_status(StatusCode.ERROR, str(err))
-                span.record_exception(err)
-                raise err
 
     async def generate_response_stream(
         self,
@@ -359,6 +347,13 @@ class RetryingLLMClient:
                                     span.set_status(StatusCode.ERROR, str(retry_err))
                                     span.record_exception(retry_err)
                                     raise retry_err
+                                span.add_event(
+                                    "llm.rate_limit_retry_failed",
+                                    attributes={
+                                        "error": str(retry_err),
+                                        "model": self.primary_model,
+                                    },
+                                )
                                 # Fall through to fallback logic below
 
                         if self.fallback_client:
@@ -558,8 +553,6 @@ class RetryingLLMClient:
                         f"Fallback model '{self.fallback_model}' is the same as the primary model "
                         f"'{self.primary_model}'. Skipping fallback."
                     )
-                    span.set_status(StatusCode.ERROR, str(last_exception))
-                    span.record_exception(last_exception)
                     raise last_exception
 
                 span.add_event(
@@ -588,8 +581,6 @@ class RetryingLLMClient:
                         f"also failed: {e}",
                         exc_info=True,
                     )
-                    span.set_status(StatusCode.ERROR, str(last_exception))
-                    span.record_exception(last_exception)
                     raise last_exception from e
 
             # If all attempts failed, raise the last exception
@@ -598,15 +589,10 @@ class RetryingLLMClient:
                     f"All structured output attempts failed. "
                     f"Raising last recorded exception: {last_exception}"
                 )
-                span.set_status(StatusCode.ERROR, str(last_exception))
-                span.record_exception(last_exception)
                 raise last_exception
             else:
-                err = LLMProviderError(
+                raise LLMProviderError(
                     message="All structured output attempts failed without a specific exception.",
                     provider="unknown",
                     model=self.primary_model,
                 )
-                span.set_status(StatusCode.ERROR, str(err))
-                span.record_exception(err)
-                raise err

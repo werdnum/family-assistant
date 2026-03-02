@@ -12,7 +12,6 @@ from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any, cast
 
 from opentelemetry import trace
-from opentelemetry.trace import StatusCode
 from sqlalchemy import update as sqlalchemy_update
 from telegram import (
     ForceReply,
@@ -293,318 +292,298 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
                 "conversation.interface": "telegram",
                 "conversation.user": user_name,
             },
-        ) as span:
+        ):
+            reply_target_message_id = (
+                last_update.message.message_id if last_update.message else None
+            )
+            user_message_id: int | None = None
+            logger.debug(
+                f"Extracted user='{user_name}', reply_target_id={reply_target_message_id} from last update."
+            )
+
+            replied_to_interface_id: str | None = None
+            if last_update.message and last_update.message.reply_to_message:
+                replied_to_interface_id = str(
+                    last_update.message.reply_to_message.message_id
+                )
+
+            all_texts = []
+            all_attachments: list[AttachmentData] = []
+            forward_context = ""
+
+            for update_item, attachments in batch:
+                if update_item.message:
+                    text = update_item.message.caption or update_item.message.text or ""
+                    if text:
+                        all_texts.append(text)
+
+                    if attachments:
+                        all_attachments.extend(attachments)
+                        logger.debug(
+                            f"Found {len(attachments)} attachment(s) in batch from message {update_item.message.message_id}"
+                        )
+
+                    if update_item.message.forward_origin:
+                        origin = update_item.message.forward_origin
+                        original_sender_name = "Unknown Sender"
+                        if isinstance(origin, MessageOriginUser):
+                            original_sender_name = (
+                                origin.sender_user.first_name or "User"
+                            )
+                        elif isinstance(origin, MessageOriginHiddenUser):
+                            original_sender_name = (
+                                origin.sender_user_name or "Hidden User"
+                            )
+                        elif isinstance(origin, MessageOriginChat):
+                            original_sender_name = origin.sender_chat.title or "Chat"
+                        elif isinstance(origin, MessageOriginChannel):
+                            original_sender_name = origin.chat.title or "Channel"
+                        forward_context = f"(forwarded from {original_sender_name}) "
+                        logger.debug(
+                            f"Detected forward context from {original_sender_name} in last message."
+                        )
+
+            combined_text = "\n\n".join(all_texts).strip()
+            logger.debug(f"Combined text: '{combined_text[:100]}...'")
+
+            formatted_user_text_content = f"{forward_context}{combined_text}".strip()
+            trigger_content_parts: list[ContentPartDict] = [
+                text_content(formatted_user_text_content)
+            ]
+
+            # Initialize trigger_attachments as None, will convert to list if successful attachments exist
+            trigger_attachments: list[TriggerAttachment] | None = None
+
+            if all_attachments:
+                valid_attachments: list[TriggerAttachment] = []
+
+                # Register user attachments with database record for cross-turn access
+                async with self.get_db_context() as db_context:
+                    user_id_str = str(user.id) if user else "unknown"
+
+                    for attachment in all_attachments:
+                        try:
+                            attachment_metadata = await self.telegram_service.attachment_registry.register_user_attachment(
+                                db_context=db_context,
+                                content=attachment.content,
+                                filename=attachment.filename,
+                                mime_type=attachment.mime_type,
+                                conversation_id=str(chat_id),
+                                # Don't pass message_id here - the message_history entry
+                                # doesn't exist yet and we use the internal DB ID, not
+                                # the Telegram message ID
+                                user_id=user_id_str,
+                                description=attachment.description
+                                or f"Telegram attachment from {user_name}",
+                            )
+
+                            # Pass images, videos, audio, and PDFs to LLM for processing
+                            # Gemini supports all of these; other providers may gracefully
+                            # handle or ignore unsupported types
+                            mime_type = attachment_metadata.mime_type
+                            if attachment_metadata.content_url and (
+                                mime_type.startswith("image/")
+                                or mime_type.startswith("video/")
+                                or mime_type.startswith("audio/")
+                                or mime_type == "application/pdf"
+                            ):
+                                trigger_content_parts.append(
+                                    image_url_content(attachment_metadata.content_url)
+                                )
+
+                            # Classify attachment type for metadata
+                            if mime_type.startswith("image/"):
+                                attachment_type = "image"
+                            elif mime_type.startswith("video/"):
+                                attachment_type = "video"
+                            elif mime_type.startswith("audio/"):
+                                attachment_type = "audio"
+                            else:
+                                attachment_type = "file"
+
+                            attachment_dict = {
+                                "type": attachment_type,
+                                "content_url": attachment_metadata.content_url,
+                                "name": attachment_metadata.description,
+                                "size": attachment_metadata.size,
+                                "content_type": attachment_metadata.mime_type,
+                                "attachment_id": attachment_metadata.attachment_id,
+                            }
+
+                            # Explicitly cast to satisfy basedpyright strict type checking
+                            # because TypedDict assignment from dict literal with optional/union types
+                            # can sometimes be inferred too broadly.
+                            valid_attachments.append(
+                                cast("TriggerAttachment", attachment_dict)
+                            )
+
+                            # Use metadata dictionary to access original_filename safely if needed
+                            # Or access the attribute we know AttachmentMetadata has
+                            filename_log = attachment_metadata.metadata.get(
+                                "original_filename", "unknown_filename"
+                            )
+                            logger.info(
+                                f"Stored Telegram attachment: {attachment_metadata.attachment_id} ({filename_log})"
+                            )
+                        except Exception as attach_err:
+                            logger.error(
+                                f"Error storing individual attachment '{attachment.filename}' from batch: {attach_err}",
+                                exc_info=True,
+                            )
+                            # Continue to process other attachments
+                            continue
+
+                if valid_attachments:
+                    trigger_attachments = valid_attachments
+                elif all_attachments:
+                    # All failed
+                    await context.bot.send_message(
+                        chat_id,
+                        "Error: Could not process any of the attached files.",
+                    )
+
+            sent_assistant_message: Message | None = None
+            processing_error_traceback: str | None = None
+            logger.debug(f"Proceeding with trigger content and user '{user_name}'.")
+
+            interface_type = "telegram"
+            conversation_id = str(chat_id)
+
             try:
-                reply_target_message_id = (
-                    last_update.message.message_id if last_update.message else None
-                )
-                user_message_id: int | None = None
-                logger.debug(
-                    f"Extracted user='{user_name}', reply_target_id={reply_target_message_id} from last update."
-                )
+                selected_processing_service: ProcessingService = self.processing_service
 
-                replied_to_interface_id: str | None = None
-                if last_update.message and last_update.message.reply_to_message:
-                    replied_to_interface_id = str(
-                        last_update.message.reply_to_message.message_id
+                if not selected_processing_service:
+                    logger.error(
+                        "Default ProcessingService not available in handler. Cannot generate response."
                     )
+                    await context.bot.send_message(
+                        chat_id,
+                        "Internal error: Default processing service unavailable.",
+                    )
+                    return
 
-                all_texts = []
-                all_attachments: list[AttachmentData] = []
-                forward_context = ""
+                db_context_getter = self.get_db_context()
+                async with db_context_getter as db_context:
+                    thread_root_id_for_turn: int | None = None
+                    replied_to_db_msg = None
 
-                for update_item, attachments in batch:
-                    if update_item.message:
-                        text = (
-                            update_item.message.caption
-                            or update_item.message.text
-                            or ""
-                        )
-                        if text:
-                            all_texts.append(text)
-
-                        if attachments:
-                            all_attachments.extend(attachments)
-                            logger.debug(
-                                f"Found {len(attachments)} attachment(s) in batch from message {update_item.message.message_id}"
+                    if replied_to_interface_id:
+                        try:
+                            replied_to_db_msg = await db_context.message_history.get_row_by_interface_id(
+                                interface_type=interface_type,
+                                interface_message_id=replied_to_interface_id,
                             )
-
-                        if update_item.message.forward_origin:
-                            origin = update_item.message.forward_origin
-                            original_sender_name = "Unknown Sender"
-                            if isinstance(origin, MessageOriginUser):
-                                original_sender_name = (
-                                    origin.sender_user.first_name or "User"
-                                )
-                            elif isinstance(origin, MessageOriginHiddenUser):
-                                original_sender_name = (
-                                    origin.sender_user_name or "Hidden User"
-                                )
-                            elif isinstance(origin, MessageOriginChat):
-                                original_sender_name = (
-                                    origin.sender_chat.title or "Chat"
-                                )
-                            elif isinstance(origin, MessageOriginChannel):
-                                original_sender_name = origin.chat.title or "Channel"
-                            forward_context = (
-                                f"(forwarded from {original_sender_name}) "
-                            )
-                            logger.debug(
-                                f"Detected forward context from {original_sender_name} in last message."
-                            )
-
-                combined_text = "\n\n".join(all_texts).strip()
-                logger.debug(f"Combined text: '{combined_text[:100]}...'")
-
-                formatted_user_text_content = (
-                    f"{forward_context}{combined_text}".strip()
-                )
-                trigger_content_parts: list[ContentPartDict] = [
-                    text_content(formatted_user_text_content)
-                ]
-
-                # Initialize trigger_attachments as None, will convert to list if successful attachments exist
-                trigger_attachments: list[TriggerAttachment] | None = None
-
-                if all_attachments:
-                    valid_attachments: list[TriggerAttachment] = []
-
-                    # Register user attachments with database record for cross-turn access
-                    async with self.get_db_context() as db_context:
-                        user_id_str = str(user.id) if user else "unknown"
-
-                        for attachment in all_attachments:
-                            try:
-                                attachment_metadata = await self.telegram_service.attachment_registry.register_user_attachment(
-                                    db_context=db_context,
-                                    content=attachment.content,
-                                    filename=attachment.filename,
-                                    mime_type=attachment.mime_type,
-                                    conversation_id=str(chat_id),
-                                    # Don't pass message_id here - the message_history entry
-                                    # doesn't exist yet and we use the internal DB ID, not
-                                    # the Telegram message ID
-                                    user_id=user_id_str,
-                                    description=attachment.description
-                                    or f"Telegram attachment from {user_name}",
-                                )
-
-                                # Pass images, videos, audio, and PDFs to LLM for processing
-                                # Gemini supports all of these; other providers may gracefully
-                                # handle or ignore unsupported types
-                                mime_type = attachment_metadata.mime_type
-                                if attachment_metadata.content_url and (
-                                    mime_type.startswith("image/")
-                                    or mime_type.startswith("video/")
-                                    or mime_type.startswith("audio/")
-                                    or mime_type == "application/pdf"
-                                ):
-                                    trigger_content_parts.append(
-                                        image_url_content(
-                                            attachment_metadata.content_url
-                                        )
-                                    )
-
-                                # Classify attachment type for metadata
-                                if mime_type.startswith("image/"):
-                                    attachment_type = "image"
-                                elif mime_type.startswith("video/"):
-                                    attachment_type = "video"
-                                elif mime_type.startswith("audio/"):
-                                    attachment_type = "audio"
-                                else:
-                                    attachment_type = "file"
-
-                                attachment_dict = {
-                                    "type": attachment_type,
-                                    "content_url": attachment_metadata.content_url,
-                                    "name": attachment_metadata.description,
-                                    "size": attachment_metadata.size,
-                                    "content_type": attachment_metadata.mime_type,
-                                    "attachment_id": attachment_metadata.attachment_id,
-                                }
-
-                                # Explicitly cast to satisfy basedpyright strict type checking
-                                # because TypedDict assignment from dict literal with optional/union types
-                                # can sometimes be inferred too broadly.
-                                valid_attachments.append(
-                                    cast("TriggerAttachment", attachment_dict)
-                                )
-
-                                # Use metadata dictionary to access original_filename safely if needed
-                                # Or access the attribute we know AttachmentMetadata has
-                                filename_log = attachment_metadata.metadata.get(
-                                    "original_filename", "unknown_filename"
-                                )
+                            if replied_to_db_msg:
+                                thread_root_id_for_turn = replied_to_db_msg.get(
+                                    "thread_root_id"
+                                ) or replied_to_db_msg.get("internal_id")
                                 logger.info(
-                                    f"Stored Telegram attachment: {attachment_metadata.attachment_id} ({filename_log})"
+                                    f"Determined thread_root_id {thread_root_id_for_turn} from replied-to message {replied_to_interface_id}"
                                 )
-                            except Exception as attach_err:
-                                logger.error(
-                                    f"Error storing individual attachment '{attachment.filename}' from batch: {attach_err}",
-                                    exc_info=True,
+
+                                original_profile_id = replied_to_db_msg.get(
+                                    "processing_profile_id"
                                 )
-                                # Continue to process other attachments
-                                continue
-
-                    if valid_attachments:
-                        trigger_attachments = valid_attachments
-                    elif all_attachments:
-                        # All failed
-                        await context.bot.send_message(
-                            chat_id,
-                            "Error: Could not process any of the attached files.",
-                        )
-
-                sent_assistant_message: Message | None = None
-                processing_error_traceback: str | None = None
-                logger.debug(f"Proceeding with trigger content and user '{user_name}'.")
-
-                interface_type = "telegram"
-                conversation_id = str(chat_id)
-
-                try:
-                    selected_processing_service: ProcessingService = (
-                        self.processing_service
-                    )
-
-                    if not selected_processing_service:
-                        logger.error(
-                            "Default ProcessingService not available in handler. Cannot generate response."
-                        )
-                        await context.bot.send_message(
-                            chat_id,
-                            "Internal error: Default processing service unavailable.",
-                        )
-                        return
-
-                    db_context_getter = self.get_db_context()
-                    async with db_context_getter as db_context:
-                        thread_root_id_for_turn: int | None = None
-                        replied_to_db_msg = None
-
-                        if replied_to_interface_id:
-                            try:
-                                replied_to_db_msg = await db_context.message_history.get_row_by_interface_id(
-                                    interface_type=interface_type,
-                                    interface_message_id=replied_to_interface_id,
-                                )
-                                if replied_to_db_msg:
-                                    thread_root_id_for_turn = replied_to_db_msg.get(
-                                        "thread_root_id"
-                                    ) or replied_to_db_msg.get("internal_id")
+                                if original_profile_id:
                                     logger.info(
-                                        f"Determined thread_root_id {thread_root_id_for_turn} from replied-to message {replied_to_interface_id}"
+                                        f"Replied-to message (ID: {replied_to_interface_id}) has processing_profile_id: {original_profile_id}"
                                     )
-
-                                    original_profile_id = replied_to_db_msg.get(
-                                        "processing_profile_id"
+                                    profile_specific_service = self.telegram_service.processing_services_registry.get(
+                                        original_profile_id
                                     )
-                                    if original_profile_id:
+                                    if profile_specific_service:
+                                        selected_processing_service = (
+                                            profile_specific_service
+                                        )
                                         logger.info(
-                                            f"Replied-to message (ID: {replied_to_interface_id}) has processing_profile_id: {original_profile_id}"
+                                            f"Switched to ProcessingService for profile '{original_profile_id}' for this reply."
                                         )
-                                        profile_specific_service = self.telegram_service.processing_services_registry.get(
-                                            original_profile_id
-                                        )
-                                        if profile_specific_service:
-                                            selected_processing_service = (
-                                                profile_specific_service
-                                            )
-                                            logger.info(
-                                                f"Switched to ProcessingService for profile '{original_profile_id}' for this reply."
-                                            )
-                                        else:
-                                            logger.warning(
-                                                f"Profile ID '{original_profile_id}' from replied-to message not found in registry. "
-                                                f"Falling back to default processing service ('{selected_processing_service.service_config.id}')."
-                                            )
                                     else:
-                                        logger.info(
-                                            f"Replied-to message (ID: {replied_to_interface_id}) does not have a specific profile_id. "
-                                            f"Using default processing service ('{selected_processing_service.service_config.id}')."
+                                        logger.warning(
+                                            f"Profile ID '{original_profile_id}' from replied-to message not found in registry. "
+                                            f"Falling back to default processing service ('{selected_processing_service.service_config.id}')."
                                         )
                                 else:
-                                    logger.warning(
-                                        f"Could not find replied-to message {replied_to_interface_id} in DB. "
+                                    logger.info(
+                                        f"Replied-to message (ID: {replied_to_interface_id}) does not have a specific profile_id. "
                                         f"Using default processing service ('{selected_processing_service.service_config.id}')."
                                     )
-                            except Exception as thread_err:
-                                logger.error(
-                                    f"Error determining thread root ID or profile from reply: {thread_err}",
-                                    exc_info=True,
+                            else:
+                                logger.warning(
+                                    f"Could not find replied-to message {replied_to_interface_id} in DB. "
+                                    f"Using default processing service ('{selected_processing_service.service_config.id}')."
                                 )
-                        else:
-                            logger.info(
-                                f"Not a reply. Using default processing service ('{selected_processing_service.service_config.id}')."
+                        except Exception as thread_err:
+                            logger.error(
+                                f"Error determining thread root ID or profile from reply: {thread_err}",
+                                exc_info=True,
                             )
-
-                        trigger_interface_message_id: str | None = None
-                        history_user_content = combined_text.strip()
-                        if all_attachments:
-                            history_user_content += (
-                                f" [{len(all_attachments)} Attachment(s)]"
-                            )
-
-                        user_message_id = (
-                            last_update.message.message_id
-                            if last_update.message
-                            else None
-                        )
-                        user_message_timestamp = (
-                            last_update.message.date
-                            if last_update.message
-                            else datetime.now(UTC)
+                    else:
+                        logger.info(
+                            f"Not a reply. Using default processing service ('{selected_processing_service.service_config.id}')."
                         )
 
-                        if user_message_id:
-                            trigger_interface_message_id = str(user_message_id)
-                            await db_context.message_history.add(
-                                interface_type=interface_type,
-                                conversation_id=conversation_id,
-                                interface_message_id=str(user_message_id),
-                                turn_id=None,
-                                thread_root_id=thread_root_id_for_turn,
-                                timestamp=user_message_timestamp,
-                                role="user",
-                                content=history_user_content,
-                                tool_calls=None,
-                                reasoning_info=None,
-                                error_traceback=None,
-                                tool_call_id=None,
-                            )
-                        else:
-                            logger.warning(
-                                f"Could not get user message ID for chat {chat_id} to save to history."
-                            )
+                    trigger_interface_message_id: str | None = None
+                    history_user_content = combined_text.strip()
+                    if all_attachments:
+                        history_user_content += (
+                            f" [{len(all_attachments)} Attachment(s)]"
+                        )
 
-                        async with self._typing_notifications(context, chat_id):
+                    user_message_id = (
+                        last_update.message.message_id if last_update.message else None
+                    )
+                    user_message_timestamp = (
+                        last_update.message.date
+                        if last_update.message
+                        else datetime.now(UTC)
+                    )
 
-                            async def confirmation_callback_wrapper(
-                                conversation_id: str,
-                                interface_type: str,
-                                turn_id: str | None,
-                                prompt_text: str,
-                                tool_name: str,
-                                # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
-                                tool_args: dict[str, Any],
-                                timeout_seconds: float,
-                                exec_context: ToolExecutionContext,
-                            ) -> bool:
-                                logger.debug("confirmation_callback_wrapper called!")
-                                # Allow custom renderers to override the prompt_text if available
-                                renderer = TOOL_CONFIRMATION_RENDERERS.get(tool_name)
-                                if renderer:
-                                    # Async renderer that fetches its own data from context
-                                    prompt_text = await renderer(
-                                        tool_args, exec_context
-                                    )
-                                else:
-                                    prompt_text = (
-                                        f"Confirm execution of tool: {tool_name}"
-                                    )
+                    if user_message_id:
+                        trigger_interface_message_id = str(user_message_id)
+                        await db_context.message_history.add(
+                            interface_type=interface_type,
+                            conversation_id=conversation_id,
+                            interface_message_id=str(user_message_id),
+                            turn_id=None,
+                            thread_root_id=thread_root_id_for_turn,
+                            timestamp=user_message_timestamp,
+                            role="user",
+                            content=history_user_content,
+                            tool_calls=None,
+                            reasoning_info=None,
+                            error_traceback=None,
+                            tool_call_id=None,
+                        )
+                    else:
+                        logger.warning(
+                            f"Could not get user message ID for chat {chat_id} to save to history."
+                        )
 
-                                result = await self.confirmation_manager.request_confirmation(
+                    async with self._typing_notifications(context, chat_id):
+
+                        async def confirmation_callback_wrapper(
+                            conversation_id: str,
+                            interface_type: str,
+                            turn_id: str | None,
+                            prompt_text: str,
+                            tool_name: str,
+                            # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
+                            tool_args: dict[str, Any],
+                            timeout_seconds: float,
+                            exec_context: ToolExecutionContext,
+                        ) -> bool:
+                            logger.debug("confirmation_callback_wrapper called!")
+                            # Allow custom renderers to override the prompt_text if available
+                            renderer = TOOL_CONFIRMATION_RENDERERS.get(tool_name)
+                            if renderer:
+                                # Async renderer that fetches its own data from context
+                                prompt_text = await renderer(tool_args, exec_context)
+                            else:
+                                prompt_text = f"Confirm execution of tool: {tool_name}"
+
+                            result = (
+                                await self.confirmation_manager.request_confirmation(
                                     conversation_id=conversation_id,
                                     interface_type=interface_type,
                                     turn_id=turn_id,
@@ -613,222 +592,207 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
                                     tool_args=tool_args,
                                     timeout=timeout_seconds,
                                 )
-                                return result
-
-                            chat_interfaces = self._get_chat_interfaces()
-
-                            result = await selected_processing_service.handle_chat_interaction(
-                                db_context=db_context,
-                                interface_type=interface_type,
-                                conversation_id=conversation_id,
-                                trigger_content_parts=trigger_content_parts,
-                                trigger_interface_message_id=trigger_interface_message_id,
-                                user_name=user_name,
-                                replied_to_interface_id=replied_to_interface_id,
-                                chat_interface=self.telegram_service.chat_interface,
-                                chat_interfaces=chat_interfaces,
-                                request_confirmation_callback=confirmation_callback_wrapper,
-                                trigger_attachments=trigger_attachments,  # type: ignore
                             )
+                            return result
 
-                            final_llm_content_to_send = result.text_reply
-                            last_assistant_internal_id = (
-                                result.assistant_message_internal_id
+                        chat_interfaces = self._get_chat_interfaces()
+
+                        result = await selected_processing_service.handle_chat_interaction(
+                            db_context=db_context,
+                            interface_type=interface_type,
+                            conversation_id=conversation_id,
+                            trigger_content_parts=trigger_content_parts,
+                            trigger_interface_message_id=trigger_interface_message_id,
+                            user_name=user_name,
+                            replied_to_interface_id=replied_to_interface_id,
+                            chat_interface=self.telegram_service.chat_interface,
+                            chat_interfaces=chat_interfaces,
+                            request_confirmation_callback=confirmation_callback_wrapper,
+                            trigger_attachments=trigger_attachments,  # type: ignore
+                        )
+
+                        final_llm_content_to_send = result.text_reply
+                        last_assistant_internal_id = (
+                            result.assistant_message_internal_id
+                        )
+                        _final_reasoning_info = result.reasoning_info
+                        processing_error_traceback = result.error_traceback
+                        response_attachment_ids = result.attachment_ids
+
+                    force_reply_markup = ForceReply(selective=False)
+
+                    if final_llm_content_to_send:
+                        # Convert to Telegram MarkdownV2 with bug fixes
+                        text_to_send, parse_mode = convert_to_telegram_markdown(
+                            final_llm_content_to_send
+                        )
+
+                        try:
+                            sent_assistant_message = await self._send_message_chunks(
+                                context=context,
+                                chat_id=chat_id,
+                                text=text_to_send,
+                                parse_mode=ParseMode.MARKDOWN_V2
+                                if parse_mode
+                                else None,
+                                reply_to_message_id=reply_target_message_id,
+                                reply_markup=force_reply_markup,
                             )
-                            _final_reasoning_info = result.reasoning_info
-                            processing_error_traceback = result.error_traceback
-                            response_attachment_ids = result.attachment_ids
-
-                        force_reply_markup = ForceReply(selective=False)
-
-                        if final_llm_content_to_send:
-                            # Convert to Telegram MarkdownV2 with bug fixes
-                            text_to_send, parse_mode = convert_to_telegram_markdown(
-                                final_llm_content_to_send
-                            )
-
-                            try:
+                        except BadRequest as parse_err:
+                            # Defense-in-depth: If Telegram still rejects due to parse errors, fall back to plain text
+                            if "Can't parse entities" in str(parse_err) and parse_mode:
+                                logger.warning(
+                                    f"Telegram rejected MarkdownV2 message (parse error): {parse_err}. Falling back to plain text.",
+                                    exc_info=False,
+                                )
                                 sent_assistant_message = (
                                     await self._send_message_chunks(
                                         context=context,
                                         chat_id=chat_id,
-                                        text=text_to_send,
-                                        parse_mode=ParseMode.MARKDOWN_V2
-                                        if parse_mode
-                                        else None,
+                                        text=final_llm_content_to_send,
+                                        parse_mode=None,
                                         reply_to_message_id=reply_target_message_id,
                                         reply_markup=force_reply_markup,
                                     )
                                 )
-                            except BadRequest as parse_err:
-                                # Defense-in-depth: If Telegram still rejects due to parse errors, fall back to plain text
-                                if (
-                                    "Can't parse entities" in str(parse_err)
-                                    and parse_mode
-                                ):
-                                    logger.warning(
-                                        f"Telegram rejected MarkdownV2 message (parse error): {parse_err}. Falling back to plain text.",
-                                        exc_info=False,
-                                    )
-                                    sent_assistant_message = (
-                                        await self._send_message_chunks(
-                                            context=context,
-                                            chat_id=chat_id,
-                                            text=final_llm_content_to_send,
-                                            parse_mode=None,
-                                            reply_to_message_id=reply_target_message_id,
-                                            reply_markup=force_reply_markup,
-                                        )
-                                    )
-                                else:
-                                    raise
-
-                            if (
-                                sent_assistant_message
-                                and last_assistant_internal_id is not None
-                            ):
-                                try:
-                                    await (
-                                        db_context.message_history.update_interface_id(
-                                            internal_id=last_assistant_internal_id,
-                                            interface_message_id=str(
-                                                sent_assistant_message.message_id
-                                            ),
-                                        )
-                                    )
-                                    logger.info(
-                                        f"Updated interface_message_id for internal_id {last_assistant_internal_id} to {sent_assistant_message.message_id}"
-                                    )
-                                except Exception as update_err:
-                                    logger.error(
-                                        f"Failed to update interface_message_id for internal_id {last_assistant_internal_id}: {update_err}",
-                                        exc_info=True,
-                                    )
-                            elif sent_assistant_message:
-                                logger.warning(
-                                    f"Sent assistant message {sent_assistant_message.message_id} but couldn't find its internal_id ({last_assistant_internal_id}) to update."
-                                )
-
-                            if response_attachment_ids:
-                                try:
-                                    await self.telegram_service.chat_interface._send_attachments(
-                                        chat_id=chat_id,
-                                        attachment_ids=response_attachment_ids,
-                                        reply_to_msg_id=reply_target_message_id,
-                                    )
-                                except Exception as attachment_err:
-                                    logger.error(
-                                        f"Failed to send attachments {response_attachment_ids}: {attachment_err}",
-                                        exc_info=True,
-                                    )
-                        elif processing_error_traceback and reply_target_message_id:
-                            error_message_to_send = "Sorry, something went wrong while processing your request."
-                            if self.debug_mode:
-                                logger.info(
-                                    f"Sending DEBUG error traceback to chat {chat_id}"
-                                )
-                                error_message_to_send = (
-                                    "Encountered error during processing \\(debug mode\\):\n"
-                                    f"<pre>{html.escape(processing_error_traceback)}</pre>"
-                                )
                             else:
-                                logger.info(
-                                    f"Sending generic error message to chat {chat_id}"
-                                )
+                                raise
 
+                        if (
+                            sent_assistant_message
+                            and last_assistant_internal_id is not None
+                        ):
+                            try:
+                                await db_context.message_history.update_interface_id(
+                                    internal_id=last_assistant_internal_id,
+                                    interface_message_id=str(
+                                        sent_assistant_message.message_id
+                                    ),
+                                )
+                                logger.info(
+                                    f"Updated interface_message_id for internal_id {last_assistant_internal_id} to {sent_assistant_message.message_id}"
+                                )
+                            except Exception as update_err:
+                                logger.error(
+                                    f"Failed to update interface_message_id for internal_id {last_assistant_internal_id}: {update_err}",
+                                    exc_info=True,
+                                )
+                        elif sent_assistant_message:
+                            logger.warning(
+                                f"Sent assistant message {sent_assistant_message.message_id} but couldn't find its internal_id ({last_assistant_internal_id}) to update."
+                            )
+
+                        if response_attachment_ids:
+                            try:
+                                await self.telegram_service.chat_interface._send_attachments(
+                                    chat_id=chat_id,
+                                    attachment_ids=response_attachment_ids,
+                                    reply_to_msg_id=reply_target_message_id,
+                                )
+                            except Exception as attachment_err:
+                                logger.error(
+                                    f"Failed to send attachments {response_attachment_ids}: {attachment_err}",
+                                    exc_info=True,
+                                )
+                    elif processing_error_traceback and reply_target_message_id:
+                        error_message_to_send = (
+                            "Sorry, something went wrong while processing your request."
+                        )
+                        if self.debug_mode:
+                            logger.info(
+                                f"Sending DEBUG error traceback to chat {chat_id}"
+                            )
+                            error_message_to_send = (
+                                "Encountered error during processing \\(debug mode\\):\n"
+                                f"<pre>{html.escape(processing_error_traceback)}</pre>"
+                            )
+                        else:
+                            logger.info(
+                                f"Sending generic error message to chat {chat_id}"
+                            )
+
+                        await self._send_message_chunks(
+                            context=context,
+                            chat_id=chat_id,
+                            text=error_message_to_send,
+                            parse_mode=(ParseMode.HTML if self.debug_mode else None),
+                            reply_to_message_id=reply_target_message_id,
+                            reply_markup=force_reply_markup,
+                        )
+                    else:
+                        logger.warning(
+                            "Received empty response from LLM (and no processing error detected)."
+                        )
+                        if reply_target_message_id:
                             await self._send_message_chunks(
                                 context=context,
                                 chat_id=chat_id,
-                                text=error_message_to_send,
-                                parse_mode=(
-                                    ParseMode.HTML if self.debug_mode else None
-                                ),
+                                text="Sorry, I couldn't process that request.",
+                                parse_mode=None,
                                 reply_to_message_id=reply_target_message_id,
                                 reply_markup=force_reply_markup,
                             )
-                        else:
-                            logger.warning(
-                                "Received empty response from LLM (and no processing error detected)."
-                            )
-                            if reply_target_message_id:
-                                await self._send_message_chunks(
-                                    context=context,
-                                    chat_id=chat_id,
-                                    text="Sorry, I couldn't process that request.",
-                                    parse_mode=None,
-                                    reply_to_message_id=reply_target_message_id,
-                                    reply_markup=force_reply_markup,
-                                )
-
-                except Exception as e:
-                    logger.exception(
-                        f"Unhandled error in process_chat_queue for chat {chat_id}: {e}",
-                        exc_info=True,
-                    )
-                    if not processing_error_traceback:
-                        processing_error_traceback = traceback.format_exc()
-                    if reply_target_message_id:
-                        with contextlib.suppress(Exception):
-                            error_text_to_send_unhandled = (
-                                f"An unexpected error occurred \\(debug mode\\):\n<pre>{html.escape(processing_error_traceback)}</pre>"
-                                if self.debug_mode and processing_error_traceback
-                                else "Sorry, an unexpected error occurred."
-                            )
-                            await self._send_message_chunks(
-                                context=context,
-                                chat_id=chat_id,
-                                text=error_text_to_send_unhandled,
-                                parse_mode=(
-                                    ParseMode.HTML
-                                    if self.debug_mode and processing_error_traceback
-                                    else None
-                                ),
-                                reply_to_message_id=reply_target_message_id,
-                            )
-                            logger.info(
-                                f"Sent {'debug' if self.debug_mode else 'generic'} unexpected error message to chat {chat_id} via _send_message_chunks"
-                            )
-
-                    if processing_error_traceback and user_message_id:
-                        try:
-                            async with self.get_db_context() as db_ctx_err:
-                                user_msg_record = await db_ctx_err.message_history.get_row_by_interface_id(
-                                    interface_type=interface_type,
-                                    interface_message_id=str(user_message_id),
-                                )
-                                if user_msg_record and user_msg_record.get(
-                                    "internal_id"
-                                ):
-                                    stmt = (
-                                        sqlalchemy_update(message_history_table)
-                                        .where(
-                                            message_history_table.c.internal_id
-                                            == user_msg_record["internal_id"]
-                                        )
-                                        .values(
-                                            error_traceback=processing_error_traceback
-                                        )
-                                    )
-                                    await db_ctx_err.execute_with_retry(stmt)
-                                    logger.info(
-                                        f"Saved error traceback to user message internal_id {user_msg_record['internal_id']}"
-                                    )
-                                else:
-                                    logger.error(
-                                        "Could not find user message record to attach error traceback."
-                                    )
-                        except Exception as db_err_save:
-                            logger.error(
-                                f"Failed to save error traceback to DB for chat {chat_id}: {db_err_save}",
-                                exc_info=True,
-                            )
-
-                    raise e
 
             except Exception as e:
-                span.set_status(StatusCode.ERROR, str(e))
-                span.record_exception(e)
-                raise
+                logger.exception(
+                    f"Unhandled error in process_chat_queue for chat {chat_id}: {e}",
+                    exc_info=True,
+                )
+                if not processing_error_traceback:
+                    processing_error_traceback = traceback.format_exc()
+                if reply_target_message_id:
+                    with contextlib.suppress(Exception):
+                        error_text_to_send_unhandled = (
+                            f"An unexpected error occurred \\(debug mode\\):\n<pre>{html.escape(processing_error_traceback)}</pre>"
+                            if self.debug_mode and processing_error_traceback
+                            else "Sorry, an unexpected error occurred."
+                        )
+                        await self._send_message_chunks(
+                            context=context,
+                            chat_id=chat_id,
+                            text=error_text_to_send_unhandled,
+                            parse_mode=(
+                                ParseMode.HTML
+                                if self.debug_mode and processing_error_traceback
+                                else None
+                            ),
+                            reply_to_message_id=reply_target_message_id,
+                        )
+                        logger.info(
+                            f"Sent {'debug' if self.debug_mode else 'generic'} unexpected error message to chat {chat_id} via _send_message_chunks"
+                        )
+
+                if processing_error_traceback and user_message_id:
+                    try:
+                        async with self.get_db_context() as db_ctx_err:
+                            user_msg_record = await db_ctx_err.message_history.get_row_by_interface_id(
+                                interface_type=interface_type,
+                                interface_message_id=str(user_message_id),
+                            )
+                            if user_msg_record and user_msg_record.get("internal_id"):
+                                stmt = (
+                                    sqlalchemy_update(message_history_table)
+                                    .where(
+                                        message_history_table.c.internal_id
+                                        == user_msg_record["internal_id"]
+                                    )
+                                    .values(error_traceback=processing_error_traceback)
+                                )
+                                await db_ctx_err.execute_with_retry(stmt)
+                                logger.info(
+                                    f"Saved error traceback to user message internal_id {user_msg_record['internal_id']}"
+                                )
+                            else:
+                                logger.error(
+                                    "Could not find user message record to attach error traceback."
+                                )
+                    except Exception as db_err_save:
+                        logger.error(
+                            f"Failed to save error traceback to DB for chat {chat_id}: {db_err_save}",
+                            exc_info=True,
+                        )
+
+                raise e
 
     def _serialize_update_for_error_log(
         self,

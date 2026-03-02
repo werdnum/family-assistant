@@ -1335,8 +1335,6 @@ class LiteLLMClient(BaseLLMClient):
                     f"Fallback model '{actual_fallback_model_id}' is the same as the primary model '{self.model}'. Skipping fallback."
                 )
                 if last_exception:
-                    span.set_status(OtelStatusCode.ERROR, str(last_exception))
-                    span.record_exception(last_exception)
                     raise last_exception
                 raise APIError(
                     message="All attempts failed without a specific error to raise.",
@@ -1376,8 +1374,6 @@ class LiteLLMClient(BaseLLMClient):
                 logger.error(
                     f"All LLM attempts failed. Raising last recorded exception: {last_exception}"
                 )
-                span.set_status(OtelStatusCode.ERROR, str(last_exception))
-                span.record_exception(last_exception)
                 raise last_exception
             else:
                 logger.error(
