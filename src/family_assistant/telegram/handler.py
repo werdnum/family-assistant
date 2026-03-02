@@ -159,45 +159,28 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
             for i, chunk_text in enumerate(chunks):
                 current_reply_to_id = reply_to_message_id if i == 0 else None
                 current_reply_markup = reply_markup if i == 0 else None
-                try:
-                    sent_msg = await context.bot.send_message(
-                        chat_id=chat_id,
-                        text=chunk_text,
-                        parse_mode=parse_mode,
-                        reply_to_message_id=current_reply_to_id,
-                        reply_markup=current_reply_markup,
-                    )
-                    if i == 0:
-                        first_sent_message = sent_msg
-                    if len(chunks) > 1 and i < len(chunks) - 1:
-                        await asyncio.sleep(0.2)  # 200ms delay
-                except Exception as e_chunk:
-                    logger.error(
-                        f"Failed to send chunk {i + 1}/{len(chunks)} to {chat_id}: {e_chunk}",
-                        exc_info=True,
-                    )
-                    if (
-                        i == 0
-                    ):  # If the first chunk fails, we can't return a message object
-                        return None
+                sent_msg = await context.bot.send_message(
+                    chat_id=chat_id,
+                    text=chunk_text,
+                    parse_mode=parse_mode,
+                    reply_to_message_id=current_reply_to_id,
+                    reply_markup=current_reply_markup,
+                )
+                if i == 0:
+                    first_sent_message = sent_msg
+                if len(chunks) > 1 and i < len(chunks) - 1:
+                    await asyncio.sleep(0.2)  # 200ms delay
             return first_sent_message
         else:
             # Message is within limit, send as a single part
-            try:
-                sent_msg = await context.bot.send_message(
-                    chat_id=chat_id,
-                    text=text,
-                    parse_mode=parse_mode,
-                    reply_to_message_id=reply_to_message_id,
-                    reply_markup=reply_markup,
-                )
-                return sent_msg
-            except Exception as e:
-                logger.error(
-                    f"Failed to send single message to {chat_id}: {e}",
-                    exc_info=True,
-                )
-                return None
+            sent_msg = await context.bot.send_message(
+                chat_id=chat_id,
+                text=text,
+                parse_mode=parse_mode,
+                reply_to_message_id=reply_to_message_id,
+                reply_markup=reply_markup,
+            )
+            return sent_msg
 
     @contextlib.asynccontextmanager
     async def _typing_notifications(
