@@ -47,6 +47,7 @@ class TestScheduleAutomationsRepository:
             conversation_id=conversation_id,
             interface_type="telegram",
             description="Daily morning summary",
+            timezone=ZoneInfo("UTC"),
         )
 
         assert automation_id > 0
@@ -81,6 +82,7 @@ class TestScheduleAutomationsRepository:
             },
             conversation_id=conversation_id,
             interface_type="telegram",
+            timezone=ZoneInfo("UTC"),
         )
 
         assert automation_id > 0
@@ -103,6 +105,7 @@ class TestScheduleAutomationsRepository:
                 action_type="wake_llm",
                 action_config={"context": "test"},
                 conversation_id=conversation_id,
+                timezone=ZoneInfo("UTC"),
             )
 
     @pytest.mark.asyncio
@@ -119,6 +122,7 @@ class TestScheduleAutomationsRepository:
                 action_type="invalid_action",
                 action_config={"context": "test"},
                 conversation_id=conversation_id,
+                timezone=ZoneInfo("UTC"),
             )
 
     @pytest.mark.asyncio
@@ -135,6 +139,7 @@ class TestScheduleAutomationsRepository:
             action_type="wake_llm",
             action_config={"context": "test"},
             conversation_id=conversation_id,
+            timezone=ZoneInfo("UTC"),
         )
 
         # Try to create second with same name
@@ -148,6 +153,7 @@ class TestScheduleAutomationsRepository:
                 action_type="wake_llm",
                 action_config={"context": "test2"},
                 conversation_id=conversation_id,
+                timezone=ZoneInfo("UTC"),
             )
 
     @pytest.mark.asyncio
@@ -165,6 +171,7 @@ class TestScheduleAutomationsRepository:
             action_type="wake_llm",
             action_config={"context": "test1"},
             conversation_id=conv1,
+            timezone=ZoneInfo("UTC"),
         )
 
         # Create in second conversation - should succeed
@@ -174,6 +181,7 @@ class TestScheduleAutomationsRepository:
             action_type="wake_llm",
             action_config={"context": "test2"},
             conversation_id=conv2,
+            timezone=ZoneInfo("UTC"),
         )
 
         assert id1 != id2
@@ -189,6 +197,7 @@ class TestScheduleAutomationsRepository:
             action_type="wake_llm",
             action_config={"context": "test"},
             conversation_id=conversation_id,
+            timezone=ZoneInfo("UTC"),
         )
 
         # Get without conversation filter
@@ -220,6 +229,7 @@ class TestScheduleAutomationsRepository:
             action_type="wake_llm",
             action_config={"context": "test"},
             conversation_id=conversation_id,
+            timezone=ZoneInfo("UTC"),
         )
 
         # Get by name
@@ -254,6 +264,7 @@ class TestScheduleAutomationsRepository:
             action_type="wake_llm",
             action_config={"context": "test1"},
             conversation_id=conv1,
+            timezone=ZoneInfo("UTC"),
         )
         await db_context.schedule_automations.create(
             name="Auto 2",
@@ -261,6 +272,7 @@ class TestScheduleAutomationsRepository:
             action_type="wake_llm",
             action_config={"context": "test2"},
             conversation_id=conv1,
+            timezone=ZoneInfo("UTC"),
         )
 
         # Create automation in conv2
@@ -270,6 +282,7 @@ class TestScheduleAutomationsRepository:
             action_type="wake_llm",
             action_config={"context": "test3"},
             conversation_id=conv2,
+            timezone=ZoneInfo("UTC"),
         )
 
         # List conv1 automations
@@ -295,6 +308,7 @@ class TestScheduleAutomationsRepository:
             action_config={"context": "test1"},
             conversation_id=conversation_id,
             enabled=True,
+            timezone=ZoneInfo("UTC"),
         )
 
         # Create disabled automation
@@ -305,10 +319,14 @@ class TestScheduleAutomationsRepository:
             action_config={"context": "test2"},
             conversation_id=conversation_id,
             enabled=True,
+            timezone=ZoneInfo("UTC"),
         )
         # Disable it
         await db_context.schedule_automations.update_enabled(
-            id2, conversation_id, enabled=False
+            id2,
+            conversation_id,
+            enabled=False,
+            timezone=ZoneInfo("UTC"),
         )
 
         # List all
@@ -334,6 +352,7 @@ class TestScheduleAutomationsRepository:
             action_config={"context": "test"},
             conversation_id=conversation_id,
             enabled=True,
+            timezone=ZoneInfo("UTC"),
         )
 
         # Verify initially enabled
@@ -343,7 +362,10 @@ class TestScheduleAutomationsRepository:
 
         # Disable
         result = await db_context.schedule_automations.update_enabled(
-            automation_id, conversation_id, enabled=False
+            automation_id,
+            conversation_id,
+            enabled=False,
+            timezone=ZoneInfo("UTC"),
         )
         assert result is True
 
@@ -353,7 +375,10 @@ class TestScheduleAutomationsRepository:
 
         # Re-enable
         result = await db_context.schedule_automations.update_enabled(
-            automation_id, conversation_id, enabled=True
+            automation_id,
+            conversation_id,
+            enabled=True,
+            timezone=ZoneInfo("UTC"),
         )
         assert result is True
 
@@ -374,11 +399,15 @@ class TestScheduleAutomationsRepository:
             action_type="wake_llm",
             action_config={"context": "test"},
             conversation_id=conversation_id,
+            timezone=ZoneInfo("UTC"),
         )
 
         # Try to update with wrong conversation
         result = await db_context.schedule_automations.update_enabled(
-            automation_id, "wrong_conversation", enabled=False
+            automation_id,
+            "wrong_conversation",
+            enabled=False,
+            timezone=ZoneInfo("UTC"),
         )
         assert result is False
 
@@ -393,11 +422,15 @@ class TestScheduleAutomationsRepository:
             action_type="wake_llm",
             action_config={"context": "test"},
             conversation_id=conversation_id,
+            timezone=ZoneInfo("UTC"),
         )
 
         # Update name
         result = await db_context.schedule_automations.update(
-            automation_id, conversation_id, name="New Name"
+            automation_id,
+            conversation_id,
+            name="New Name",
+            timezone=ZoneInfo("UTC"),
         )
         assert result is True
 
@@ -417,11 +450,15 @@ class TestScheduleAutomationsRepository:
             action_config={"context": "test"},
             conversation_id=conversation_id,
             description="Old description",
+            timezone=ZoneInfo("UTC"),
         )
 
         # Update description
         result = await db_context.schedule_automations.update(
-            automation_id, conversation_id, description="New description"
+            automation_id,
+            conversation_id,
+            description="New description",
+            timezone=ZoneInfo("UTC"),
         )
         assert result is True
 
@@ -431,7 +468,10 @@ class TestScheduleAutomationsRepository:
 
         # Clear description (set to None)
         result = await db_context.schedule_automations.update(
-            automation_id, conversation_id, description=None
+            automation_id,
+            conversation_id,
+            description=None,
+            timezone=ZoneInfo("UTC"),
         )
         assert result is True
 
@@ -450,12 +490,16 @@ class TestScheduleAutomationsRepository:
             action_type="wake_llm",
             action_config={"context": "old context"},
             conversation_id=conversation_id,
+            timezone=ZoneInfo("UTC"),
         )
 
         # Update action config
         new_config = {"context": "new context"}
         result = await db_context.schedule_automations.update(
-            automation_id, conversation_id, action_config=new_config
+            automation_id,
+            conversation_id,
+            action_config=new_config,
+            timezone=ZoneInfo("UTC"),
         )
         assert result is True
 
@@ -474,6 +518,7 @@ class TestScheduleAutomationsRepository:
             action_type="wake_llm",
             action_config={"context": "test"},
             conversation_id=conversation_id,
+            timezone=ZoneInfo("UTC"),
         )
 
         # Get original next_scheduled_at
@@ -482,7 +527,10 @@ class TestScheduleAutomationsRepository:
 
         # Update recurrence rule
         result = await db_context.schedule_automations.update(
-            automation_id, conversation_id, recurrence_rule="FREQ=DAILY;BYHOUR=15"
+            automation_id,
+            conversation_id,
+            recurrence_rule="FREQ=DAILY;BYHOUR=15",
+            timezone=ZoneInfo("UTC"),
         )
         assert result is True
 
@@ -507,12 +555,16 @@ class TestScheduleAutomationsRepository:
             action_type="wake_llm",
             action_config={"context": "test"},
             conversation_id=conversation_id,
+            timezone=ZoneInfo("UTC"),
         )
 
         # Try to update with invalid RRULE
         with pytest.raises(ValueError, match="Invalid RRULE"):
             await db_context.schedule_automations.update(
-                automation_id, conversation_id, recurrence_rule="INVALID"
+                automation_id,
+                conversation_id,
+                recurrence_rule="INVALID",
+                timezone=ZoneInfo("UTC"),
             )
 
     @pytest.mark.asyncio
@@ -527,6 +579,7 @@ class TestScheduleAutomationsRepository:
             action_type="wake_llm",
             action_config={"context": "test1"},
             conversation_id=conversation_id,
+            timezone=ZoneInfo("UTC"),
         )
 
         # Create second automation
@@ -536,13 +589,17 @@ class TestScheduleAutomationsRepository:
             action_type="wake_llm",
             action_config={"context": "test2"},
             conversation_id=conversation_id,
+            timezone=ZoneInfo("UTC"),
         )
 
         # Try to rename second automation to first automation's name
         # This should fail due to unique constraint
         with pytest.raises((ValueError, IntegrityError)):
             await db_context.schedule_automations.update(
-                auto2_id, conversation_id, name="First Auto"
+                auto2_id,
+                conversation_id,
+                name="First Auto",
+                timezone=ZoneInfo("UTC"),
             )
 
     @pytest.mark.asyncio
@@ -556,11 +613,15 @@ class TestScheduleAutomationsRepository:
             action_type="wake_llm",
             action_config={"context": "test"},
             conversation_id=conversation_id,
+            timezone=ZoneInfo("UTC"),
         )
 
         # Try to update with wrong conversation
         result = await db_context.schedule_automations.update(
-            automation_id, "wrong_conversation", name="New Name"
+            automation_id,
+            "wrong_conversation",
+            name="New Name",
+            timezone=ZoneInfo("UTC"),
         )
         assert result is False
 
@@ -575,6 +636,7 @@ class TestScheduleAutomationsRepository:
             action_type="wake_llm",
             action_config={"context": "test"},
             conversation_id=conversation_id,
+            timezone=ZoneInfo("UTC"),
         )
 
         # Verify exists
@@ -602,6 +664,7 @@ class TestScheduleAutomationsRepository:
             action_type="wake_llm",
             action_config={"context": "test"},
             conversation_id=conversation_id,
+            timezone=ZoneInfo("UTC"),
         )
 
         # Try to delete with wrong conversation
@@ -625,6 +688,7 @@ class TestScheduleAutomationsRepository:
             action_type="wake_llm",
             action_config={"context": "test"},
             conversation_id=conversation_id,
+            timezone=ZoneInfo("UTC"),
         )
 
         # Get stats for new automation
@@ -648,6 +712,7 @@ class TestScheduleAutomationsRepository:
             action_type="wake_llm",
             action_config={"context": "test"},
             conversation_id=conversation_id,
+            timezone=ZoneInfo("UTC"),
         )
 
         # Get initial state
@@ -659,7 +724,9 @@ class TestScheduleAutomationsRepository:
         # Simulate task execution
         execution_time = datetime.now(UTC)
         await db_context.schedule_automations.after_task_execution(
-            automation_id, execution_time
+            automation_id,
+            execution_time,
+            timezone=ZoneInfo("UTC"),
         )
 
         # Verify stats were updated
@@ -685,6 +752,7 @@ class TestScheduleAutomationsRepository:
             action_type="wake_llm",
             action_config={"context": "test"},
             conversation_id=conversation_id,
+            timezone=ZoneInfo("UTC"),
         )
 
         # Get initial next_scheduled_at
@@ -694,7 +762,9 @@ class TestScheduleAutomationsRepository:
         # Simulate task execution
         execution_time = datetime.now(UTC)
         await db_context.schedule_automations.after_task_execution(
-            automation_id, execution_time
+            automation_id,
+            execution_time,
+            timezone=ZoneInfo("UTC"),
         )
 
         # Verify next_scheduled_at was updated
@@ -719,11 +789,15 @@ class TestScheduleAutomationsRepository:
             action_config={"context": "test"},
             conversation_id=conversation_id,
             enabled=True,
+            timezone=ZoneInfo("UTC"),
         )
 
         # Disable the automation
         await db_context.schedule_automations.update_enabled(
-            automation_id, conversation_id, enabled=False
+            automation_id,
+            conversation_id,
+            enabled=False,
+            timezone=ZoneInfo("UTC"),
         )
 
         # Get initial execution count
@@ -734,7 +808,9 @@ class TestScheduleAutomationsRepository:
         # Simulate task execution
         execution_time = datetime.now(UTC)
         await db_context.schedule_automations.after_task_execution(
-            automation_id, execution_time
+            automation_id,
+            execution_time,
+            timezone=ZoneInfo("UTC"),
         )
 
         # Verify stats WERE updated (execution happened so it should be recorded)
@@ -794,6 +870,7 @@ class TestScheduleAutomationsRepository:
             action_type="wake_llm",
             action_config={"context": "test"},
             conversation_id=conversation_id,
+            timezone=ZoneInfo("UTC"),
         )
 
         sydney_auto = await db_context.schedule_automations.get_by_id(auto_sydney)
@@ -906,7 +983,10 @@ class TestScheduleAutomationsRepository:
 
         # Disable
         result = await db_context.schedule_automations.update_enabled(
-            automation_id, conversation_id, enabled=False
+            automation_id,
+            conversation_id,
+            enabled=False,
+            timezone=ZoneInfo("UTC"),
         )
         assert result is True
 
@@ -967,6 +1047,7 @@ class TestTaskQueueSync:
             action_type="wake_llm",
             action_config={"context": "daily check"},
             conversation_id=conversation_id,
+            timezone=ZoneInfo("UTC"),
         )
 
         # Verify a pending task was created
@@ -975,7 +1056,10 @@ class TestTaskQueueSync:
 
         # Disable the automation
         await db_context.schedule_automations.update_enabled(
-            automation_id, conversation_id, enabled=False
+            automation_id,
+            conversation_id,
+            enabled=False,
+            timezone=ZoneInfo("UTC"),
         )
 
         # Verify pending task was cancelled
@@ -997,18 +1081,25 @@ class TestTaskQueueSync:
             action_type="wake_llm",
             action_config={"context": "daily check"},
             conversation_id=conversation_id,
+            timezone=ZoneInfo("UTC"),
         )
 
         # Disable (cancels pending tasks)
         await db_context.schedule_automations.update_enabled(
-            automation_id, conversation_id, enabled=False
+            automation_id,
+            conversation_id,
+            enabled=False,
+            timezone=ZoneInfo("UTC"),
         )
         pending = await _get_pending_tasks_for_automation(db_context, automation_id)
         assert len(pending) == 0
 
         # Re-enable (should schedule a new task)
         await db_context.schedule_automations.update_enabled(
-            automation_id, conversation_id, enabled=True
+            automation_id,
+            conversation_id,
+            enabled=True,
+            timezone=ZoneInfo("UTC"),
         )
         pending = await _get_pending_tasks_for_automation(db_context, automation_id)
         assert len(pending) == 1
@@ -1026,6 +1117,7 @@ class TestTaskQueueSync:
             action_type="wake_llm",
             action_config={"context": "old context"},
             conversation_id=conversation_id,
+            timezone=ZoneInfo("UTC"),
         )
 
         # Verify initial task has old context
@@ -1038,6 +1130,7 @@ class TestTaskQueueSync:
             automation_id,
             conversation_id,
             action_config={"context": "new context"},
+            timezone=ZoneInfo("UTC"),
         )
 
         # Verify old task was cancelled and new one created with new context
@@ -1058,6 +1151,7 @@ class TestTaskQueueSync:
             action_type="script",
             action_config={"script_code": "print('old')", "task_name": "Old Script"},
             conversation_id=conversation_id,
+            timezone=ZoneInfo("UTC"),
         )
 
         # Verify initial task
@@ -1070,6 +1164,7 @@ class TestTaskQueueSync:
             automation_id,
             conversation_id,
             action_config={"script_code": "print('new')", "task_name": "New Script"},
+            timezone=ZoneInfo("UTC"),
         )
 
         # Verify new task has updated payload
@@ -1091,6 +1186,7 @@ class TestTaskQueueSync:
             action_type="wake_llm",
             action_config={"context": "test"},
             conversation_id=conversation_id,
+            timezone=ZoneInfo("UTC"),
         )
 
         # Verify pending task exists
@@ -1099,7 +1195,10 @@ class TestTaskQueueSync:
 
         # Disable via update method
         await db_context.schedule_automations.update(
-            automation_id, conversation_id, enabled=False
+            automation_id,
+            conversation_id,
+            enabled=False,
+            timezone=ZoneInfo("UTC"),
         )
 
         # Verify pending task was cancelled
@@ -1119,18 +1218,25 @@ class TestTaskQueueSync:
             action_type="wake_llm",
             action_config={"context": "test"},
             conversation_id=conversation_id,
+            timezone=ZoneInfo("UTC"),
         )
 
         # Disable first
         await db_context.schedule_automations.update_enabled(
-            automation_id, conversation_id, enabled=False
+            automation_id,
+            conversation_id,
+            enabled=False,
+            timezone=ZoneInfo("UTC"),
         )
         pending = await _get_pending_tasks_for_automation(db_context, automation_id)
         assert len(pending) == 0
 
         # Re-enable via update method
         await db_context.schedule_automations.update(
-            automation_id, conversation_id, enabled=True
+            automation_id,
+            conversation_id,
+            enabled=True,
+            timezone=ZoneInfo("UTC"),
         )
 
         # Verify new task was scheduled
@@ -1150,6 +1256,7 @@ class TestTaskQueueSync:
             action_type="wake_llm",
             action_config={"context": "test"},
             conversation_id=conversation_id,
+            timezone=ZoneInfo("UTC"),
         )
 
         # Verify pending task exists
@@ -1176,6 +1283,7 @@ class TestTaskQueueSync:
             action_type="wake_llm",
             action_config={"context": "test"},
             conversation_id=conversation_id,
+            timezone=ZoneInfo("UTC"),
         )
 
         # Get initial pending task
@@ -1190,6 +1298,7 @@ class TestTaskQueueSync:
             automation_id,
             conversation_id,
             recurrence_rule="FREQ=DAILY;BYHOUR=15",
+            timezone=ZoneInfo("UTC"),
         )
 
         # Verify new pending task exists with a different task_id
@@ -1212,6 +1321,7 @@ class TestTaskQueueSync:
             action_type="wake_llm",
             action_config={"context": "test"},
             conversation_id=conversation_id,
+            timezone=ZoneInfo("UTC"),
         )
 
         # Get initial task ID
@@ -1221,7 +1331,10 @@ class TestTaskQueueSync:
 
         # Update enabled to True (same as current) — reschedules to recalculate next_at
         await db_context.schedule_automations.update_enabled(
-            automation_id, conversation_id, enabled=True
+            automation_id,
+            conversation_id,
+            enabled=True,
+            timezone=ZoneInfo("UTC"),
         )
 
         # Verify a new task was scheduled (old one cancelled, new one created)
@@ -1242,6 +1355,7 @@ class TestTaskQueueSync:
             action_type="wake_llm",
             action_config={"context": "test"},
             conversation_id=conversation_id,
+            timezone=ZoneInfo("UTC"),
         )
 
         # Get initial task ID
@@ -1251,7 +1365,10 @@ class TestTaskQueueSync:
 
         # Update description only
         await db_context.schedule_automations.update(
-            automation_id, conversation_id, description="Updated description"
+            automation_id,
+            conversation_id,
+            description="Updated description",
+            timezone=ZoneInfo("UTC"),
         )
 
         # Verify same task still exists
@@ -1272,16 +1389,23 @@ class TestTaskQueueSync:
             action_type="wake_llm",
             action_config={"context": "test"},
             conversation_id=conversation_id,
+            timezone=ZoneInfo("UTC"),
         )
 
         # Disable
         await db_context.schedule_automations.update_enabled(
-            automation_id, conversation_id, enabled=False
+            automation_id,
+            conversation_id,
+            enabled=False,
+            timezone=ZoneInfo("UTC"),
         )
 
         # Re-enable
         await db_context.schedule_automations.update_enabled(
-            automation_id, conversation_id, enabled=True
+            automation_id,
+            conversation_id,
+            enabled=True,
+            timezone=ZoneInfo("UTC"),
         )
 
         # Verify next_scheduled_at matches the newly scheduled task
@@ -1313,6 +1437,7 @@ class TestTaskQueueSync:
             action_type="script",
             action_config={"script_code": "print('hello')"},
             conversation_id=conversation_id,
+            timezone=ZoneInfo("UTC"),
         )
 
         # Verify initial task uses automation name as task_name
@@ -1323,7 +1448,10 @@ class TestTaskQueueSync:
 
         # Update name only
         await db_context.schedule_automations.update(
-            automation_id, conversation_id, name="New Script Name"
+            automation_id,
+            conversation_id,
+            name="New Script Name",
+            timezone=ZoneInfo("UTC"),
         )
 
         # Verify task was rescheduled with new name
@@ -1348,6 +1476,7 @@ class TestTaskQueueSync:
                 "task_name": "Explicit Name",
             },
             conversation_id=conversation_id,
+            timezone=ZoneInfo("UTC"),
         )
 
         pending = await _get_pending_tasks_for_automation(db_context, automation_id)
@@ -1356,7 +1485,10 @@ class TestTaskQueueSync:
 
         # Update name only - should NOT trigger resched since task_name is in action_config
         await db_context.schedule_automations.update(
-            automation_id, conversation_id, name="New Automation Name"
+            automation_id,
+            conversation_id,
+            name="New Automation Name",
+            timezone=ZoneInfo("UTC"),
         )
 
         pending = await _get_pending_tasks_for_automation(db_context, automation_id)
@@ -1376,6 +1508,7 @@ class TestTaskQueueSync:
             action_type="wake_llm",
             action_config={"context": "test"},
             conversation_id=conversation_id,
+            timezone=ZoneInfo("UTC"),
         )
 
         pending = await _get_pending_tasks_for_automation(db_context, automation_id)
@@ -1384,7 +1517,10 @@ class TestTaskQueueSync:
 
         # Update name only - should NOT trigger resched for wake_llm
         await db_context.schedule_automations.update(
-            automation_id, conversation_id, name="Updated Summary"
+            automation_id,
+            conversation_id,
+            name="Updated Summary",
+            timezone=ZoneInfo("UTC"),
         )
 
         pending = await _get_pending_tasks_for_automation(db_context, automation_id)

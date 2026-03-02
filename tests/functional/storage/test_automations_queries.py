@@ -2,6 +2,7 @@
 
 import uuid
 from collections.abc import AsyncGenerator
+from zoneinfo import ZoneInfo
 
 import pytest
 import pytest_asyncio
@@ -40,6 +41,7 @@ class TestAutomationsRepository:
             action_type="wake_llm",
             action_config={"context": "test"},
             conversation_id=conversation_id,
+            timezone=ZoneInfo("UTC"),
         )
 
         # Create event listener (we'll use the events repository)
@@ -77,6 +79,7 @@ class TestAutomationsRepository:
             action_type="wake_llm",
             action_config={"context": "test"},
             conversation_id=conversation_id,
+            timezone=ZoneInfo("UTC"),
         )
 
         # Create event listener
@@ -126,6 +129,7 @@ class TestAutomationsRepository:
             action_config={"context": "test"},
             conversation_id=conversation_id,
             enabled=True,
+            timezone=ZoneInfo("UTC"),
         )
 
         # Create disabled schedule automation
@@ -136,6 +140,7 @@ class TestAutomationsRepository:
             action_config={"context": "test"},
             conversation_id=conversation_id,
             enabled=False,
+            timezone=ZoneInfo("UTC"),
         )
 
         # Create enabled event listener
@@ -185,6 +190,7 @@ class TestAutomationsRepository:
                 action_type="wake_llm",
                 action_config={"context": f"test{i}"},
                 conversation_id=conversation_id,
+                timezone=ZoneInfo("UTC"),
             )
 
         # Get all
@@ -224,6 +230,7 @@ class TestAutomationsRepository:
             action_type="wake_llm",
             action_config={"context": "test"},
             conversation_id=conversation_id,
+            timezone=ZoneInfo("UTC"),
         )
 
         # Get via unified repository
@@ -273,6 +280,7 @@ class TestAutomationsRepository:
             action_type="wake_llm",
             action_config={"context": "test"},
             conversation_id=conversation_id,
+            timezone=ZoneInfo("UTC"),
         )
 
         # Get by name
@@ -332,6 +340,7 @@ class TestAutomationsRepository:
             action_type="wake_llm",
             action_config={"context": "test"},
             conversation_id=conversation_id,
+            timezone=ZoneInfo("UTC"),
         )
 
         # Check name availability
@@ -387,6 +396,7 @@ class TestAutomationsRepository:
             action_type="wake_llm",
             action_config={"context": "test"},
             conversation_id=conversation_id,
+            timezone=ZoneInfo("UTC"),
         )
 
         # Try to check if we can create event automation with same name
@@ -411,6 +421,7 @@ class TestAutomationsRepository:
             action_type="wake_llm",
             action_config={"context": "test"},
             conversation_id=conversation_id,
+            timezone=ZoneInfo("UTC"),
         )
 
         # Check if we can "update" to same name (should be available when excluding self)
@@ -430,6 +441,7 @@ class TestAutomationsRepository:
             action_type="wake_llm",
             action_config={"context": "test2"},
             conversation_id=conversation_id,
+            timezone=ZoneInfo("UTC"),
         )
 
         # Check if we can update first automation to "Other Name" (should not be available)
@@ -455,11 +467,16 @@ class TestAutomationsRepository:
             action_config={"context": "test"},
             conversation_id=conversation_id,
             enabled=True,
+            timezone=ZoneInfo("UTC"),
         )
 
         # Disable via unified repository
         result = await db_context.automations.update_enabled(
-            automation_id, "schedule", conversation_id, enabled=False
+            automation_id,
+            "schedule",
+            conversation_id,
+            enabled=False,
+            timezone=ZoneInfo("UTC"),
         )
         assert result is True
 
@@ -490,7 +507,7 @@ class TestAutomationsRepository:
 
         # Disable via unified repository
         result = await db_context.automations.update_enabled(
-            event_id, "event", conversation_id, enabled=False
+            event_id, "event", conversation_id, enabled=False, timezone=ZoneInfo("UTC")
         )
         assert result is True
 
@@ -510,6 +527,7 @@ class TestAutomationsRepository:
             action_type="wake_llm",
             action_config={"context": "test"},
             conversation_id=conversation_id,
+            timezone=ZoneInfo("UTC"),
         )
 
         # Delete via unified repository
@@ -562,6 +580,7 @@ class TestAutomationsRepository:
             action_type="wake_llm",
             action_config={"context": "test"},
             conversation_id=conversation_id,
+            timezone=ZoneInfo("UTC"),
         )
 
         # Get stats via unified repository

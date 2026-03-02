@@ -345,7 +345,8 @@ class AutomationsRepository(BaseRepository):
         automation_type: AutomationType,
         conversation_id: str,
         enabled: bool,
-        timezone: ZoneInfo | None = None,
+        *,
+        timezone: ZoneInfo,
     ) -> bool:
         """
         Enable or disable an automation.
