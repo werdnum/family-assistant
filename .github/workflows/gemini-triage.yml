@@ -81,6 +81,10 @@ jobs:
           workflow_name: 'gemini-triage'
           settings: |-
             {
+              "general": {
+                "retryFetchErrors": true,
+                "maxAttempts": 10
+              },
               "model": {
                 "maxSessionTurns": 25
               },
@@ -156,3 +160,4 @@ jobs:
             } else {
               core.info(`Failed to determine labels to set. There may not be enough information in the issue or pull request.`)
             }
+

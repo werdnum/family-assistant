@@ -68,6 +68,10 @@ jobs:
           workflow_name: 'gemini-invoke'
           settings: |-
             {
+              "general": {
+                "retryFetchErrors": true,
+                "maxAttempts": 10
+              },
               "model": {
                 "maxSessionTurns": 25
               },
@@ -116,3 +120,4 @@ jobs:
               }
             }
           prompt: '/gemini-invoke'
+

@@ -114,6 +114,10 @@ jobs:
           workflow_name: 'gemini-scheduled-triage'
           settings: |-
             {
+              "general": {
+                "retryFetchErrors": true,
+                "maxAttempts": 10
+              },
               "model": {
                 "maxSessionTurns": 25
               },
@@ -215,3 +219,4 @@ jobs:
                 labels: labelsToSet,
               });
             }
+

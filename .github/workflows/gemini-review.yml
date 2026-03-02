@@ -82,6 +82,10 @@ jobs:
           workflow_name: 'gemini-review'
           settings: |-
             {
+              "general": {
+                "retryFetchErrors": true,
+                "maxAttempts": 10
+              },
               "model": {
                 "maxSessionTurns": 100
               },
@@ -122,3 +126,4 @@ jobs:
               }
             }
           prompt: '/gemini-review'
+
