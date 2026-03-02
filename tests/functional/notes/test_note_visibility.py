@@ -1,3 +1,5 @@
+from zoneinfo import ZoneInfo
+
 import pytest
 from sqlalchemy import delete
 from sqlalchemy.ext.asyncio import AsyncEngine
@@ -371,6 +373,7 @@ def _make_tool_context(
         camera_backend=None,
         visibility_grants=visibility_grants,
         default_note_visibility_labels=default_note_visibility_labels,
+        timezone=ZoneInfo("UTC"),
     )
 
 

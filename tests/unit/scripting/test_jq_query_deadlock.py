@@ -5,6 +5,7 @@ a script with a ConfirmingToolsProvider (which doesn't have get_raw_tool_definit
 """
 
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 import pytest
 from sqlalchemy.ext.asyncio import AsyncEngine
@@ -75,7 +76,8 @@ async def test_jq_query_from_script_no_deadlock(
             attachment_registry=attachment_registry,
             camera_backend=None,
             processing_service=None,
-            tools_provider=confirming_provider,  # Use confirming provider
+            tools_provider=confirming_provider,  # Use confirming provider,
+            timezone=ZoneInfo("UTC"),
         )
 
         # Script that creates an attachment and then calls jq_query() on it

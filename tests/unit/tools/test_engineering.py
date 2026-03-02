@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 from unittest.mock import AsyncMock, Mock, patch
+from zoneinfo import ZoneInfo
 
 import httpx
 import pytest
@@ -53,6 +54,7 @@ def exec_context() -> ToolExecutionContext:
         event_sources=None,
         attachment_registry=None,
         camera_backend=None,
+        timezone=ZoneInfo("UTC"),
     )
 
 

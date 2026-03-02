@@ -383,6 +383,7 @@ async def test_search_documents_tool(pg_vector_db_engine: AsyncEngine) -> None:
             camera_backend=None,
             chat_interface=None,  # Add chat_interface (None for this tool context)
             embedding_generator=mock_generator,
+            timezone=ZoneInfo("UTC"),
         )
 
         # --- Act: Execute the tool via the provider ---

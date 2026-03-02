@@ -9,6 +9,7 @@ from __future__ import annotations
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING
 from unittest.mock import MagicMock
+from zoneinfo import ZoneInfo
 
 import pytest
 from sqlalchemy import update
@@ -68,6 +69,7 @@ def _make_exec_context(
         event_sources=None,
         attachment_registry=None,
         camera_backend=None,
+        timezone=ZoneInfo("UTC"),
     )
 
 

@@ -4,6 +4,7 @@ import pathlib
 import tempfile
 from collections.abc import AsyncGenerator
 from io import BytesIO
+from zoneinfo import ZoneInfo
 
 import anyio
 import numpy as np
@@ -101,6 +102,7 @@ class TestDocumentRetrieval:
                 event_sources=None,
                 attachment_registry=None,
                 camera_backend=None,
+                timezone=ZoneInfo("UTC"),
             )
 
             # Ingest PDF document
@@ -188,6 +190,7 @@ class TestDocumentRetrieval:
                 event_sources=None,
                 attachment_registry=None,
                 camera_backend=None,
+                timezone=ZoneInfo("UTC"),
             )
 
             # Ingest image document
@@ -260,6 +263,7 @@ class TestDocumentRetrieval:
                 event_sources=None,
                 attachment_registry=None,
                 camera_backend=None,
+                timezone=ZoneInfo("UTC"),
             )
 
             # Ingest text-only document (no file)
@@ -337,6 +341,7 @@ class TestDocumentRetrieval:
                 event_sources=None,
                 attachment_registry=None,
                 camera_backend=None,
+                timezone=ZoneInfo("UTC"),
             )
 
             # Ingest PDF document
@@ -409,6 +414,7 @@ class TestDocumentRetrieval:
                 event_sources=None,
                 attachment_registry=None,
                 camera_backend=None,
+                timezone=ZoneInfo("UTC"),
             )
 
             # Create large dummy file content (over 20MB)

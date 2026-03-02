@@ -3,6 +3,7 @@ Tests for the scripting tools API bridge.
 """
 
 from typing import Any
+from zoneinfo import ZoneInfo
 
 import pytest
 from sqlalchemy.ext.asyncio import AsyncEngine
@@ -147,6 +148,7 @@ async def test_tools_api_list(db_engine: AsyncEngine) -> None:
             event_sources=None,
             attachment_registry=None,
             camera_backend=None,
+            timezone=ZoneInfo("UTC"),
         )
 
         # Create engine
@@ -184,6 +186,7 @@ async def test_tools_api_get(db_engine: AsyncEngine) -> None:
             event_sources=None,
             attachment_registry=None,
             camera_backend=None,
+            timezone=ZoneInfo("UTC"),
         )
 
         engine = MontyEngine(tools_provider=tools_provider)
@@ -225,6 +228,7 @@ async def test_tools_api_execute(db_engine: AsyncEngine) -> None:
             event_sources=None,
             attachment_registry=None,
             camera_backend=None,
+            timezone=ZoneInfo("UTC"),
         )
 
         engine = MontyEngine(tools_provider=tools_provider)
@@ -266,6 +270,7 @@ async def test_tools_api_execute_json(db_engine: AsyncEngine) -> None:
             event_sources=None,
             attachment_registry=None,
             camera_backend=None,
+            timezone=ZoneInfo("UTC"),
         )
 
         engine = MontyEngine(tools_provider=tools_provider)
@@ -328,6 +333,7 @@ async def test_tools_api_invalid_tool(db_engine: AsyncEngine) -> None:
             event_sources=None,
             attachment_registry=None,
             camera_backend=None,
+            timezone=ZoneInfo("UTC"),
         )
 
         engine = MontyEngine(tools_provider=tools_provider)

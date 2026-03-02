@@ -632,6 +632,49 @@ class TestResolveServiceProfile:
         # Timezone should still be from defaults
         assert result["processing_config"]["timezone"] == "UTC"
 
+    def test_profile_without_processing_config_inherits_timezone(self) -> None:
+        """Profile without processing_config inherits timezone from defaults."""
+        default_settings: dict[str, Any] = {
+            "processing_config": {"timezone": "Australia/Sydney", "max_iterations": 10},
+            "tools_config": {},
+            "chat_id_to_name_map": {},
+            "slash_commands": [],
+        }
+        profile_def = {"id": "test_profile", "description": "No processing_config"}
+        result = resolve_service_profile(profile_def, default_settings, {})
+        assert result["processing_config"]["timezone"] == "Australia/Sydney"
+
+    def test_profile_with_partial_processing_config_inherits_timezone(self) -> None:
+        """Profile with processing_config but no timezone inherits from defaults."""
+        default_settings: dict[str, Any] = {
+            "processing_config": {"timezone": "Australia/Sydney", "max_iterations": 10},
+            "tools_config": {},
+            "chat_id_to_name_map": {},
+            "slash_commands": [],
+        }
+        profile_def = {
+            "id": "test_profile",
+            "processing_config": {"llm_model": "gpt-4"},
+        }
+        result = resolve_service_profile(profile_def, default_settings, {})
+        assert result["processing_config"]["timezone"] == "Australia/Sydney"
+        assert result["processing_config"]["llm_model"] == "gpt-4"
+
+    def test_profile_with_explicit_timezone_overrides_default(self) -> None:
+        """Profile that explicitly sets timezone uses its own value."""
+        default_settings: dict[str, Any] = {
+            "processing_config": {"timezone": "Australia/Sydney", "max_iterations": 10},
+            "tools_config": {},
+            "chat_id_to_name_map": {},
+            "slash_commands": [],
+        }
+        profile_def = {
+            "id": "test_profile",
+            "processing_config": {"timezone": "America/New_York"},
+        }
+        result = resolve_service_profile(profile_def, default_settings, {})
+        assert result["processing_config"]["timezone"] == "America/New_York"
+
     def test_prompts_yaml_merged_before_config_yaml(self) -> None:
         """Test that prompts.yaml service_profiles are merged before config.yaml."""
         default_settings: dict[str, Any] = {
@@ -1011,6 +1054,149 @@ class TestLoadConfig:
         assert len(config.service_profiles) == 1
         assert config.service_profiles[0].id == "test_profile"
         assert config.service_profiles[0].processing_config.max_iterations == 25
+
+    def test_profile_inherits_timezone_from_defaults(self, tmp_path: Path) -> None:
+        """Regression: profile without explicit timezone inherits from defaults.
+
+        Previously, model_dump() serialized the Pydantic default timezone="UTC"
+        into the profile dict, causing resolve_service_profile() to think it was
+        explicitly set and overwrite the correct value from default_profile_settings.
+        """
+        defaults_file = tmp_path / "defaults.yaml"
+        defaults_file.write_text(
+            yaml.dump({
+                "default_profile_settings": {
+                    "processing_config": {
+                        "timezone": "Australia/Sydney",
+                    }
+                },
+                "service_profiles": [
+                    {"id": "my_profile", "description": "No explicit timezone"}
+                ],
+            })
+        )
+        config_file = tmp_path / "nonexistent_config.yaml"
+        prompts_file = tmp_path / "prompts.yaml"
+        prompts_file.write_text(yaml.dump({"system_prompt": "test"}))
+
+        env_to_clear = [m.env_var for m in ENV_VAR_MAPPINGS]
+        env_to_clear.extend([
+            "CALDAV_USERNAME",
+            "CALDAV_PASSWORD",
+            "CALDAV_CALENDAR_URLS",
+            "ICAL_URLS",
+            "MCP_CONFIG_PATH",
+            "INDEXING_PIPELINE_CONFIG_JSON",
+        ])
+        clean_env = {k: v for k, v in os.environ.items() if k not in env_to_clear}
+
+        with mock.patch.dict(os.environ, clean_env, clear=True):
+            config = load_config(
+                defaults_file_path=str(defaults_file),
+                config_file_path=str(config_file),
+                prompts_file_path=str(prompts_file),
+                load_dotenv_file=False,
+            )
+
+        assert len(config.service_profiles) == 1
+        assert (
+            config.service_profiles[0].processing_config.timezone == "Australia/Sydney"
+        )
+
+    def test_profile_with_partial_processing_config_inherits_timezone(
+        self, tmp_path: Path
+    ) -> None:
+        """Profile with processing_config but no timezone inherits from defaults."""
+        defaults_file = tmp_path / "defaults.yaml"
+        defaults_file.write_text(
+            yaml.dump({
+                "default_profile_settings": {
+                    "processing_config": {
+                        "timezone": "Australia/Sydney",
+                        "max_iterations": 5,
+                    }
+                },
+                "service_profiles": [
+                    {
+                        "id": "my_profile",
+                        "processing_config": {"llm_model": "gpt-4"},
+                    }
+                ],
+            })
+        )
+        config_file = tmp_path / "nonexistent_config.yaml"
+        prompts_file = tmp_path / "prompts.yaml"
+        prompts_file.write_text(yaml.dump({"system_prompt": "test"}))
+
+        env_to_clear = [m.env_var for m in ENV_VAR_MAPPINGS]
+        env_to_clear.extend([
+            "CALDAV_USERNAME",
+            "CALDAV_PASSWORD",
+            "CALDAV_CALENDAR_URLS",
+            "ICAL_URLS",
+            "MCP_CONFIG_PATH",
+            "INDEXING_PIPELINE_CONFIG_JSON",
+        ])
+        clean_env = {k: v for k, v in os.environ.items() if k not in env_to_clear}
+
+        with mock.patch.dict(os.environ, clean_env, clear=True):
+            config = load_config(
+                defaults_file_path=str(defaults_file),
+                config_file_path=str(config_file),
+                prompts_file_path=str(prompts_file),
+                load_dotenv_file=False,
+            )
+
+        profile = config.service_profiles[0]
+        assert profile.processing_config.timezone == "Australia/Sydney"
+        assert profile.processing_config.llm_model == "gpt-4"
+
+    def test_profile_with_explicit_timezone_overrides_default(
+        self, tmp_path: Path
+    ) -> None:
+        """Profile that explicitly sets timezone uses its own value."""
+        defaults_file = tmp_path / "defaults.yaml"
+        defaults_file.write_text(
+            yaml.dump({
+                "default_profile_settings": {
+                    "processing_config": {
+                        "timezone": "Australia/Sydney",
+                    }
+                },
+                "service_profiles": [
+                    {
+                        "id": "custom_tz_profile",
+                        "processing_config": {"timezone": "America/New_York"},
+                    }
+                ],
+            })
+        )
+        config_file = tmp_path / "nonexistent_config.yaml"
+        prompts_file = tmp_path / "prompts.yaml"
+        prompts_file.write_text(yaml.dump({"system_prompt": "test"}))
+
+        env_to_clear = [m.env_var for m in ENV_VAR_MAPPINGS]
+        env_to_clear.extend([
+            "CALDAV_USERNAME",
+            "CALDAV_PASSWORD",
+            "CALDAV_CALENDAR_URLS",
+            "ICAL_URLS",
+            "MCP_CONFIG_PATH",
+            "INDEXING_PIPELINE_CONFIG_JSON",
+        ])
+        clean_env = {k: v for k, v in os.environ.items() if k not in env_to_clear}
+
+        with mock.patch.dict(os.environ, clean_env, clear=True):
+            config = load_config(
+                defaults_file_path=str(defaults_file),
+                config_file_path=str(config_file),
+                prompts_file_path=str(prompts_file),
+                load_dotenv_file=False,
+            )
+
+        assert (
+            config.service_profiles[0].processing_config.timezone == "America/New_York"
+        )
 
     def test_invalid_config_raises_validation_error(self, tmp_path: Path) -> None:
         """Test that invalid config raises ValidationError."""

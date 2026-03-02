@@ -105,6 +105,7 @@ async def test_event_type_matching(db_engine: AsyncEngine) -> None:
             event_sources=None,
             attachment_registry=None,
             camera_backend=None,
+            timezone=ZoneInfo("UTC"),
         )
 
         result = await event_listener_test_tool(
@@ -138,6 +139,7 @@ async def test_event_type_matching(db_engine: AsyncEngine) -> None:
             event_sources=None,
             attachment_registry=None,
             camera_backend=None,
+            timezone=ZoneInfo("UTC"),
         )
 
         result = await event_listener_test_tool(

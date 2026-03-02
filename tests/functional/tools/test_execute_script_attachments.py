@@ -57,6 +57,7 @@ async def test_execute_script_return_single_attachment(
             attachment_registry=attachment_registry,
             processing_service=None,
             camera_backend=None,
+            timezone=ZoneInfo("UTC"),
         )
 
         # Create an attachment and return it
@@ -99,6 +100,7 @@ async def test_execute_script_return_multiple_attachments_list(
             attachment_registry=attachment_registry,
             processing_service=None,
             camera_backend=None,
+            timezone=ZoneInfo("UTC"),
         )
 
         # Create multiple attachments and return them as a list
@@ -196,6 +198,7 @@ async def test_execute_script_return_attachment_from_tool(
             attachment_registry=attachment_registry,
             processing_service=mock_service,
             camera_backend=None,
+            timezone=ZoneInfo("UTC"),
         )
 
         # Call tool and return its result
@@ -328,6 +331,7 @@ async def test_execute_script_functional_composition(
             attachment_registry=attachment_registry,
             processing_service=mock_service,
             camera_backend=None,
+            timezone=ZoneInfo("UTC"),
         )
 
         # Functional composition: pass result of one tool to another
@@ -416,6 +420,7 @@ async def test_execute_script_mixed_attachment_sources(
             attachment_registry=attachment_registry,
             processing_service=mock_service,
             camera_backend=None,
+            timezone=ZoneInfo("UTC"),
         )
 
         # Mix attachment_create and tool results
@@ -467,6 +472,7 @@ async def test_execute_script_nested_list_attachments(
             attachment_registry=attachment_registry,
             processing_service=None,
             camera_backend=None,
+            timezone=ZoneInfo("UTC"),
         )
 
         # Test nested structures
@@ -539,6 +545,7 @@ async def test_tool_chaining_json_query_workflow(
             attachment_registry=attachment_registry,
             processing_service=processing_service,
             camera_backend=None,
+            timezone=ZoneInfo("UTC"),
         )
 
         # Script that creates JSON data and queries it with jq_query

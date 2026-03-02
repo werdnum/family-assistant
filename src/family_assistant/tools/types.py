@@ -7,9 +7,8 @@ from __future__ import annotations
 
 import base64
 import json
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Literal, NotRequired, TypedDict
-from zoneinfo import ZoneInfo
 
 # Note: CalendarConfig TypedDict kept here for backward compatibility with tool functions
 # The Pydantic CalendarConfig in config_models.py is used for config file validation
@@ -162,6 +161,7 @@ class ToolDefinition(TypedDict):
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable
     from datetime import date, datetime
+    from zoneinfo import ZoneInfo
 
     from family_assistant.camera.protocol import CameraBackend
     from family_assistant.config_models import AppConfig
@@ -245,13 +245,13 @@ class ToolExecutionContext:
         AttachmentRegistry | None
     )  # NO DEFAULT - must specify explicitly
     camera_backend: CameraBackend | None  # NO DEFAULT - must specify explicitly
+    timezone: ZoneInfo  # NO DEFAULT - must specify explicitly
     # Optional fields with defaults (for backward compatibility and convenience)
     user_id: str | None = None  # User identifier
     chat_interface: ChatInterface | None = None  # Replaced application
     chat_interfaces: dict[str, ChatInterface] | None = (
         None  # Dict of interface_type -> ChatInterface for cross-interface messaging
     )
-    timezone: ZoneInfo = field(default_factory=lambda: ZoneInfo("UTC"))
     processing_profile_id: str | None = (
         None  # Processing profile associated with the request
     )

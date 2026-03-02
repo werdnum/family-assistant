@@ -9,6 +9,7 @@ failing on an active PostgreSQL transaction.
 from __future__ import annotations
 
 from typing import TYPE_CHECKING
+from zoneinfo import ZoneInfo
 
 import pytest
 from sqlalchemy import insert, text
@@ -35,6 +36,7 @@ def _make_exec_context(db: DatabaseContext) -> ToolExecutionContext:
         event_sources=None,
         attachment_registry=None,
         camera_backend=None,
+        timezone=ZoneInfo("UTC"),
     )
 
 

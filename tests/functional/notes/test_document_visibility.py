@@ -7,6 +7,7 @@ by vector search queries and get_full_document_content_tool.
 import json
 from datetime import UTC, datetime
 from typing import Any
+from zoneinfo import ZoneInfo
 
 import numpy as np
 import pytest
@@ -311,6 +312,7 @@ async def test_get_full_document_content_respects_visibility(
             attachment_registry=None,
             camera_backend=None,
             visibility_grants={"default"},
+            timezone=ZoneInfo("UTC"),
         )
         result = await get_full_document_content_tool(ctx, doc_id)
         assert isinstance(result, str)
@@ -331,6 +333,7 @@ async def test_get_full_document_content_respects_visibility(
             attachment_registry=None,
             camera_backend=None,
             visibility_grants={"top-secret"},
+            timezone=ZoneInfo("UTC"),
         )
         result = await get_full_document_content_tool(ctx, doc_id)
         assert isinstance(result, str)
@@ -367,6 +370,7 @@ async def test_get_full_document_content_no_grants_allows_all(
             attachment_registry=None,
             camera_backend=None,
             visibility_grants=None,
+            timezone=ZoneInfo("UTC"),
         )
         result = await get_full_document_content_tool(ctx, doc_id)
         assert isinstance(result, str)

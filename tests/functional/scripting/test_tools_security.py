@@ -2,6 +2,8 @@
 Tests for tools API security controls in the scripting engine.
 """
 
+from zoneinfo import ZoneInfo
+
 import pytest
 from sqlalchemy.ext.asyncio import AsyncEngine
 
@@ -37,6 +39,7 @@ async def test_deny_all_tools(db_engine: AsyncEngine) -> None:
             event_sources=None,
             attachment_registry=None,
             camera_backend=None,
+            timezone=ZoneInfo("UTC"),
         )
 
         # Create engine with security config
@@ -88,6 +91,7 @@ async def test_allowed_tools_filter(db_engine: AsyncEngine) -> None:
             event_sources=None,
             attachment_registry=None,
             camera_backend=None,
+            timezone=ZoneInfo("UTC"),
         )
 
         # Create engine with security config
@@ -156,6 +160,7 @@ async def test_no_restrictions_by_default(db_engine: AsyncEngine) -> None:
             event_sources=None,
             attachment_registry=None,
             camera_backend=None,
+            timezone=ZoneInfo("UTC"),
         )
 
         # Create engine with default config
@@ -202,6 +207,7 @@ async def test_empty_allowed_tools_denies_all(db_engine: AsyncEngine) -> None:
             event_sources=None,
             attachment_registry=None,
             camera_backend=None,
+            timezone=ZoneInfo("UTC"),
         )
 
         # Create engine with security config
@@ -246,6 +252,7 @@ async def test_denied_tool_raises_error(db_engine: AsyncEngine) -> None:
             event_sources=None,
             attachment_registry=None,
             camera_backend=None,
+            timezone=ZoneInfo("UTC"),
         )
 
         # Create engine with security config
@@ -288,6 +295,7 @@ async def test_multiple_allowed_tools(db_engine: AsyncEngine) -> None:
             event_sources=None,
             attachment_registry=None,
             camera_backend=None,
+            timezone=ZoneInfo("UTC"),
         )
 
         # Create engine with security config
@@ -335,6 +343,7 @@ async def test_deny_all_overrides_allowed_tools(db_engine: AsyncEngine) -> None:
             event_sources=None,
             attachment_registry=None,
             camera_backend=None,
+            timezone=ZoneInfo("UTC"),
         )
 
         # Create engine with security config

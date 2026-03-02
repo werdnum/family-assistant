@@ -2,6 +2,7 @@
 
 import json
 import tempfile
+from zoneinfo import ZoneInfo
 
 import pytest
 from sqlalchemy.ext.asyncio import AsyncEngine
@@ -54,6 +55,7 @@ class TestGetAttachmentInfoTool:
                     event_sources=None,
                     attachment_registry=attachment_registry,
                     camera_backend=None,
+                    timezone=ZoneInfo("UTC"),
                 )
 
                 # Execute the tool
@@ -100,6 +102,7 @@ class TestGetAttachmentInfoTool:
                     event_sources=None,
                     attachment_registry=attachment_registry,
                     camera_backend=None,
+                    timezone=ZoneInfo("UTC"),
                 )
 
                 # Try to get info for non-existent attachment
@@ -150,6 +153,7 @@ class TestGetAttachmentInfoTool:
                     event_sources=None,
                     attachment_registry=attachment_registry,
                     camera_backend=None,
+                    timezone=ZoneInfo("UTC"),
                 )
 
                 result = await get_attachment_info_tool(
@@ -180,6 +184,7 @@ class TestGetAttachmentInfoTool:
                 event_sources=None,
                 attachment_registry=None,  # No attachment registry
                 camera_backend=None,
+                timezone=ZoneInfo("UTC"),
             )
 
             result = await get_attachment_info_tool(
@@ -228,6 +233,7 @@ class TestGetAttachmentInfoTool:
                     event_sources=None,
                     attachment_registry=attachment_registry,
                     camera_backend=None,
+                    timezone=ZoneInfo("UTC"),
                 )
 
                 result = await get_attachment_info_tool(

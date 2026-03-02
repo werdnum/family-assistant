@@ -49,6 +49,7 @@ async def test_get_automation_stats_event(db_engine: AsyncEngine) -> None:
             event_sources=None,
             attachment_registry=None,
             camera_backend=None,
+            timezone=ZoneInfo("UTC"),
         )
 
         result = await create_automation_tool(
@@ -93,6 +94,7 @@ async def test_get_automation_stats_not_found(db_engine: AsyncEngine) -> None:
             event_sources=None,
             attachment_registry=None,
             camera_backend=None,
+            timezone=ZoneInfo("UTC"),
         )
 
         result = await get_automation_stats_tool(
@@ -140,6 +142,7 @@ async def test_event_automation_with_script_execution(
             attachment_registry=None,
             camera_backend=None,
             tools_provider=tools_provider,
+            timezone=ZoneInfo("UTC"),
         )
 
         script_code = f"""
