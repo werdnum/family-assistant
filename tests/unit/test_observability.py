@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 
 import pytest
-from opentelemetry import trace
+from opentelemetry import metrics, trace
 from opentelemetry.sdk.resources import Resource
 from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.sdk.trace.export import SimpleSpanProcessor
@@ -68,11 +68,44 @@ class TestOTelConfig:
 class TestSetupObservabilityDisabled:
     """Tests for setup_observability when disabled."""
 
+    def _reset_otel(self) -> None:
+        """Reset OTel global state to avoid polluting other tests."""
+        trace.set_tracer_provider(trace.NoOpTracerProvider())
+        metrics.set_meter_provider(metrics.NoOpMeterProvider())
+
     def test_returns_none_when_disabled(self, caplog: pytest.LogCaptureFixture) -> None:
-        with caplog.at_level(logging.INFO):
-            result = setup_observability(OTelConfig(enabled=False))
-        assert result is None
-        assert "disabled" in caplog.text.lower()
+        try:
+            with caplog.at_level(logging.INFO):
+                result = setup_observability(OTelConfig(enabled=False))
+            assert result is None
+            assert "disabled" in caplog.text.lower()
+        finally:
+            self._reset_otel()
+
+    def test_sets_noop_tracer_provider_when_disabled(self) -> None:
+        try:
+            setup_observability(OTelConfig(enabled=False))
+            provider = trace.get_tracer_provider()
+            assert isinstance(provider, trace.NoOpTracerProvider)
+        finally:
+            self._reset_otel()
+
+    def test_sets_noop_meter_provider_when_disabled(self) -> None:
+        try:
+            setup_observability(OTelConfig(enabled=False))
+            provider = metrics.get_meter_provider()
+            assert isinstance(provider, metrics.NoOpMeterProvider)
+        finally:
+            self._reset_otel()
+
+    def test_noop_tracer_produces_nonrecording_spans(self) -> None:
+        try:
+            setup_observability(OTelConfig(enabled=False))
+            tracer = trace.get_tracer("test")
+            with tracer.start_as_current_span("test-span") as span:
+                assert not span.is_recording()
+        finally:
+            self._reset_otel()
 
 
 class TestSetupObservabilityEnabled:

@@ -3,8 +3,9 @@
 Provides automatic instrumentation for FastAPI, HTTPX, SQLAlchemy, and logging
 correlation. When disabled (the default), all OTel APIs fall back to no-ops.
 
-Lazy imports are used throughout to avoid loading heavy dependencies (grpcio, etc.)
-when they aren't needed for the configured exporter type.
+Lazy imports are used throughout to avoid loading heavy SDK dependencies
+(grpcio, etc.) when OTel is disabled or when they aren't needed for the
+configured exporter type.
 """
 
 # ruff: noqa: PLC0415
@@ -16,17 +17,12 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 from opentelemetry import metrics, trace
-from opentelemetry.sdk.resources import Resource
-from opentelemetry.sdk.trace import TracerProvider
-from opentelemetry.sdk.trace.export import (
-    BatchSpanProcessor,
-    SimpleSpanProcessor,
-    SpanExporter,
-)
-from opentelemetry.sdk.trace.sampling import TraceIdRatioBased
 
 if TYPE_CHECKING:
     from fastapi import FastAPI
+    from opentelemetry.sdk.resources import Resource
+    from opentelemetry.sdk.trace import TracerProvider
+    from opentelemetry.sdk.trace.export import SpanExporter
 
     from family_assistant.config_models import OTelConfig
 
@@ -142,7 +138,17 @@ def setup_observability(
     """
     if not config.enabled:
         logger.info("OpenTelemetry is disabled (otel.enabled=false).")
+        # Explicitly set no-op providers to prevent the SDK from being
+        # auto-discovered via entry points (which could create exporters
+        # that attempt to connect to localhost:4317).
+        trace.set_tracer_provider(trace.NoOpTracerProvider())
+        metrics.set_meter_provider(metrics.NoOpMeterProvider())
         return None
+
+    from opentelemetry.sdk.resources import Resource
+    from opentelemetry.sdk.trace import TracerProvider
+    from opentelemetry.sdk.trace.export import BatchSpanProcessor, SimpleSpanProcessor
+    from opentelemetry.sdk.trace.sampling import TraceIdRatioBased
 
     logger.info("Initializing OpenTelemetry (service=%s)...", config.service_name)
 
