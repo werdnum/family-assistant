@@ -1,0 +1,96 @@
+id: no-silent-broad-except
+language: python
+severity: error
+message: "Broad 'except Exception' silently swallows errors (returns/passes without logging)"
+note: |
+  Catching `except Exception` and returning a value or passing without logging is a
+  silent failure anti-pattern. Callers cannot distinguish between normal results and
+  suppressed errors, leading to confusing bugs at other layers.
+
+  See docs/development/error-handling.md for the project's error handling guidelines.
+
+  ❌ BAD - Silent swallowing:
+    try:
+        result = process_data(data)
+    except Exception:
+        return None  # Caller has no idea something went wrong
+
+    try:
+        do_something()
+    except Exception:
+        pass  # Error silently lost
+
+  ✅ GOOD - Let it propagate:
+    result = process_data(data)  # Exception propagates naturally
+
+  ✅ GOOD - Catch specific exceptions:
+    try:
+        result = process_data(data)
+    except ValueError as e:
+        return None  # Known, expected failure mode
+
+  ✅ GOOD - Log before returning:
+    try:
+        result = process_data(data)
+    except Exception as e:
+        logger.error(f"Failed to process: {e}", exc_info=True)
+        return None
+
+  ✅ GOOD - Re-raise:
+    try:
+        result = process_data(data)
+    except Exception:
+        cleanup()
+        raise
+
+  For exemptions (e.g., best-effort utility where failure is expected):
+    # ast-grep-ignore: no-silent-broad-except - Timezone validation is best-effort
+    except Exception:
+        return False
+
+rule:
+  any:
+    # except Exception as e: ... return ... (no raise, no logging)
+    - all:
+        - pattern:
+            context: |
+              try:
+                  $$$A
+              except Exception as $E:
+                  $$$B
+            selector: except_clause
+        - has:
+            stopBy: end
+            any:
+              - kind: return_statement
+              - kind: pass_statement
+        - not:
+            has:
+              stopBy: end
+              kind: raise_statement
+        - not:
+            has:
+              stopBy: end
+              pattern: logger.$METHOD($$$)
+    # except Exception: ... return ... (without 'as' clause, no raise, no logging)
+    - all:
+        - pattern:
+            context: |
+              try:
+                  $$$A
+              except Exception:
+                  $$$B
+            selector: except_clause
+        - has:
+            stopBy: end
+            any:
+              - kind: return_statement
+              - kind: pass_statement
+        - not:
+            has:
+              stopBy: end
+              kind: raise_statement
+        - not:
+            has:
+              stopBy: end
+              pattern: logger.$METHOD($$$)

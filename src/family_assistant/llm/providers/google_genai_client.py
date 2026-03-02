@@ -105,6 +105,7 @@ def _normalize_thought_signature(raw_value: bytes | None) -> bytes | None:
         decoded = base64.b64decode(raw_value, validate=True)
         if base64.b64encode(decoded).rstrip(b"=") == raw_value.rstrip(b"="):
             return decoded
+    # ast-grep-ignore: no-silent-broad-except - Base64 round-trip check; falls back to original bytes if decode fails
     except Exception:  # noqa: BLE001
         pass
 

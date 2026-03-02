@@ -84,6 +84,7 @@ def create_engine_with_sqlite_optimizations(database_url: str) -> AsyncEngine:
                 cursor.execute("PRAGMA mmap_size=536870912")  # 512MB memory-mapped I/O
 
                 logger.debug("Applied SQLite optimizations")
+            # ast-grep-ignore: no-silent-broad-except - SQLite-specific PRAGMAs; non-SQLite engines are expected to fail
             except Exception:
                 # Not SQLite, ignore
                 pass

@@ -1025,6 +1025,7 @@ async def schedule_recurring_action_tool(
     # Validate RRULE
     try:
         rrule.rrulestr(recurrence_rule, dtstart=start_dt)
+    # ast-grep-ignore: no-silent-broad-except - rrule validation returns error details to caller
     except Exception as e:
         return f"Error: Invalid recurrence rule: {e}"
 

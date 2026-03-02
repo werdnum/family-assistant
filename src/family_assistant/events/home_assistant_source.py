@@ -237,6 +237,7 @@ class HomeAssistantSource(BaseEventSource, EventSource):
                             value = getattr(event_data, attr)
                             # Include all values - we'll handle complex objects later
                             event_dict[attr] = value
+                        # ast-grep-ignore: no-silent-broad-except - Best-effort attribute extraction from dynamic HA objects
                         except Exception:
                             pass
                 event_data = event_dict

@@ -642,6 +642,7 @@ class OpenAIClient(BaseLLMClient):
 
         try:
             raw_body = await response.aread()
+        # ast-grep-ignore: no-silent-broad-except - Best-effort raw response read for VCR replay detection
         except Exception:
             return None
 

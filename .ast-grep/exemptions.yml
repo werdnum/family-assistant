@@ -69,6 +69,28 @@ exemptions:
     ticket: "#TBD-refactor-sleep-to-wait-for-condition"
 
   # ===========================================================================
+  # no-silent-broad-except exemptions - Scripts and test infrastructure
+  # ===========================================================================
+  - rule: no-silent-broad-except
+    files:
+      - scripts/*.py
+    reason: |
+      Utility scripts use broad exception handling for robustness - script failures
+      should not crash the entire script when processing multiple items.
+    ticket: null
+
+  - rule: no-silent-broad-except
+    files:
+      - tests/functional/web/pages/*.py
+      - tests/functional/web/ui/*.py
+      - tests/functional/integration/*.py
+    reason: |
+      Test page objects and UI helpers use broad exception handling for resilient
+      element interaction (e.g., checking if an element exists, waiting for state).
+      Test infrastructure is more tolerant of swallowed exceptions.
+    ticket: null
+
+  # ===========================================================================
   # dict[str, Any] exemptions - Hook scripts with arbitrary JSON
   # ===========================================================================
   - rule: no-dict-any

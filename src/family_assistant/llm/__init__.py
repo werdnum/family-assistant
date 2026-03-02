@@ -478,6 +478,7 @@ def _truncate_content(content: str, max_length: int = 500) -> str:
             try:
                 decoded_size = len(base64.b64decode(b64_data, validate=True))
                 return f"[BASE64_DATA: {data_type}, {decoded_size} bytes]"
+            # ast-grep-ignore: no-silent-broad-except - Display utility; invalid base64 is expected and shown in output
             except Exception:
                 return f"[BASE64_DATA: {data_type}, invalid encoding]"
 
@@ -2144,6 +2145,7 @@ class LiteLLMClient(BaseLLMClient):
                                     "gen_ai.usage.output_tokens",
                                     usage_data.get("completion_tokens", 0),
                                 )
+                        # ast-grep-ignore: no-silent-broad-except - OpenTelemetry instrumentation is non-critical
                         except Exception:
                             pass
                     return result

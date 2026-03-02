@@ -74,6 +74,38 @@ return ToolResult(data=results)  # Auto-generates text from data
 `toolresult-text-literal-with-data`. This hint catches the subtler cases where text is dynamic but
 still doesn't convey the data content.
 
+### `broad-except-swallows-errors`
+
+**Pattern**: `except Exception` that logs and returns a value (no re-raise)
+
+**Why**: While logging is good, catching `Exception` broadly can mask unexpected bugs like
+`TypeError`, `AttributeError`, or `KeyError` that indicate programming errors rather than expected
+failure modes.
+
+**Guidance**: Consider whether you can catch a more specific exception type.
+
+**Example**:
+
+```python
+# ⚠️ Catches everything (including programming errors)
+try:
+    result = complex_operation()
+except Exception as e:
+    logger.error(f"Failed: {e}")
+    return default_value  # ← Hint appears here
+
+# ✅ Better
+try:
+    result = complex_operation()
+except (NetworkError, TimeoutError) as e:
+    logger.error(f"Failed: {e}")
+    return default_value
+```
+
+**Note**: The conformance rule `no-silent-broad-except` catches the worse case: broad except without
+*any* logging. This hint catches cases where logging exists but the exception type could be
+narrowed.
+
 ## Adding New Hints
 
 1. **Create hint rule file**: `.ast-grep/rules/hints/<hint-id>.yml`

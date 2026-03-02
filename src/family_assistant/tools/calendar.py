@@ -108,6 +108,7 @@ async def _check_for_duplicate_events(
                 )
                 if parsed_first_cal_url.port is not None:
                     client_url_to_use += f":{parsed_first_cal_url.port}"
+            # ast-grep-ignore: no-silent-broad-except - URL parsing fallback; returns None like the check below
             except Exception:
                 return None
 

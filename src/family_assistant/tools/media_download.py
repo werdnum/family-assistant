@@ -46,6 +46,7 @@ def _validate_url(url: str) -> str | None:
         if not parsed.netloc:
             return "URL must include a host"
         return None
+    # ast-grep-ignore: no-silent-broad-except - URL validation returns error details to caller
     except Exception as e:
         return f"Invalid URL format: {e}"
 

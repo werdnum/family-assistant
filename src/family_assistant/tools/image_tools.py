@@ -290,6 +290,7 @@ async def highlight_image_tool(
 
                         return (output_buffer.getvalue(), regions_drawn)
 
+                # ast-grep-ignore: no-silent-broad-except - Error message returned to caller with exception details
                 except Exception as e:
                     return (None, f"Failed to process image: {str(e)}")
 

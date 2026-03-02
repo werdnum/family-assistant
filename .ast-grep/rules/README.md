@@ -101,6 +101,52 @@ exemption:
 return ToolResult(text="Error: Invalid input", data={"error": "Invalid input"})
 ```
 
+### Error Handling Anti-Patterns
+
+#### `no-silent-broad-except`
+
+**Pattern**: `except Exception` that returns or passes without logging or re-raising
+
+**Why it's banned**: Catching `except Exception` and silently returning a value or passing is the
+"catch-and-return-null" anti-pattern. Callers cannot distinguish between normal results and
+suppressed errors, leading to confusing bugs at other layers. See
+[error-handling.md](../../docs/development/error-handling.md).
+
+**What triggers it**: An `except Exception` (or `except Exception as e`) clause that:
+
+- Contains a `return` or `pass` statement
+- Does NOT contain a `raise` statement
+- Does NOT contain a `logger.*()` call
+
+**What does NOT trigger it**: Catches with specific exception types (e.g., `except ValueError`),
+catches that log before returning, and catches that re-raise.
+
+**Replacement**:
+
+```python
+# ❌ BAD - Silent swallowing
+try:
+    result = process_data(data)
+except Exception:
+    return None
+
+# ✅ GOOD - Catch specific exceptions
+try:
+    result = process_data(data)
+except ValueError as e:
+    return None  # Known failure mode
+
+# ✅ GOOD - Log before returning
+try:
+    result = process_data(data)
+except Exception as e:
+    logger.error(f"Failed: {e}", exc_info=True)
+    return None
+
+# ✅ GOOD - Let it propagate
+result = process_data(data)
+```
+
 ### Type Annotation Quality
 
 #### `no-dict-any`
@@ -258,6 +304,34 @@ await button.click(timeout=10000)
 ```
 
 If you're only checking element state without interacting, `wait_for_selector()` is fine.
+
+### `broad-except-swallows-errors`
+
+**Pattern**: `except Exception` that logs and returns (no re-raise)
+
+**Guidance**: While logging is good, catching `Exception` broadly can mask unexpected bugs like
+`TypeError`, `AttributeError`, or `KeyError` that indicate programming errors. Consider narrowing to
+specific exception types.
+
+```python
+# ⚠️ Catches everything (including programming errors)
+try:
+    result = complex_operation()
+except Exception as e:
+    logger.error(f"Failed: {e}")
+    return default_value
+
+# ✅ Better - catch what you expect
+try:
+    result = complex_operation()
+except (NetworkError, TimeoutError) as e:
+    logger.error(f"Failed: {e}")
+    return default_value
+# TypeError, KeyError, etc. still propagate
+```
+
+This is a hint - there are valid reasons to catch `Exception` broadly (e.g., tool execution
+boundaries, top-level handlers).
 
 ## Resources
 

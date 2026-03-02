@@ -285,12 +285,14 @@ class AsteriskLiveHandler:
             if callable(func):
                 try:
                     return self._safe_serialize(func(), depth=depth - 1, seen=seen)
+                # ast-grep-ignore: no-silent-broad-except - Best-effort serialization of unknown objects
                 except Exception:
                     pass
 
         if hasattr(value, "__dict__"):
             try:
                 return self._safe_serialize(value.__dict__, depth=depth - 1, seen=seen)
+            # ast-grep-ignore: no-silent-broad-except - Best-effort serialization of unknown objects
             except Exception:
                 pass
 

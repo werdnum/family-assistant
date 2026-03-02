@@ -1,0 +1,71 @@
+id: broad-except-swallows-errors
+language: python
+severity: hint
+message: "Broad 'except Exception' catches and returns - consider narrowing the exception type"
+note: |
+  This 'except Exception' block catches all exceptions and returns a value instead
+  of propagating the error. While it does log the error (good!), catching Exception
+  broadly can mask unexpected bugs like TypeError, AttributeError, or KeyError that
+  indicate programming errors rather than expected failure modes.
+
+  Consider whether you can catch a more specific exception type instead:
+
+  ⚠️ Current pattern (catches everything):
+    try:
+        result = complex_operation()
+    except Exception as e:
+        logger.error(f"Operation failed: {e}")
+        return default_value
+
+  ✅ Better - catch specific exceptions:
+    try:
+        result = complex_operation()
+    except (NetworkError, TimeoutError) as e:
+        logger.error(f"Operation failed: {e}")
+        return default_value
+    # TypeError, KeyError, etc. still propagate as they should
+
+  This is a hint, not a conformance rule - there are valid reasons to catch Exception
+  broadly (e.g., top-level error handlers, tool execution boundaries). Use your
+  judgment about whether narrowing is appropriate.
+
+rule:
+  any:
+    # except Exception as e: ... logger + return ... (no raise)
+    - all:
+        - pattern:
+            context: |
+              try:
+                  $$$A
+              except Exception as $E:
+                  $$$B
+            selector: except_clause
+        - has:
+            stopBy: end
+            kind: return_statement
+        - has:
+            stopBy: end
+            pattern: logger.$METHOD($$$)
+        - not:
+            has:
+              stopBy: end
+              kind: raise_statement
+    # except Exception: ... logger + return ... (without 'as' clause, no raise)
+    - all:
+        - pattern:
+            context: |
+              try:
+                  $$$A
+              except Exception:
+                  $$$B
+            selector: except_clause
+        - has:
+            stopBy: end
+            kind: return_statement
+        - has:
+            stopBy: end
+            pattern: logger.$METHOD($$$)
+        - not:
+            has:
+              stopBy: end
+              kind: raise_statement

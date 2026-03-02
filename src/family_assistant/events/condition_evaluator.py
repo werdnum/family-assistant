@@ -126,6 +126,7 @@ _evaluate()
             return False, f"Syntax error: {str(e)}"
         except ScriptExecutionError as e:
             return False, f"Execution error: {str(e)}"
+        # ast-grep-ignore: no-silent-broad-except - Catch-all for script validation returns error details
         except Exception as e:
             return False, f"Validation error: {str(e)}"
 

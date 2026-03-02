@@ -518,6 +518,7 @@ class AttachmentRegistry:
         except asyncio.CancelledError:
             # Operation cancelled during shutdown - this is fine, access time isn't critical
             pass
+        # ast-grep-ignore: no-silent-broad-except - Non-critical access time tracking during teardown
         except Exception:
             # Silently ignore other errors (e.g., connection closed during teardown)
             # Access time tracking is informational and shouldn't break operations

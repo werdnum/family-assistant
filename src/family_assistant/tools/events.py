@@ -385,6 +385,7 @@ async def test_event_listener_tool(
                             analysis.append(
                                 f"Field '{key}' exists but has value: {repr(actual_value)}"
                             )
+            # ast-grep-ignore: no-silent-broad-except - Best-effort analysis; partial results still useful
             except Exception:
                 pass
 

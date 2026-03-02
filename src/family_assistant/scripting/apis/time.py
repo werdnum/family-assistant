@@ -193,6 +193,7 @@ def time_parse(
         try:
             dt = datetime.fromisoformat(time_string.replace("Z", "+00:00"))
             return _datetime_to_dict(dt)
+        # ast-grep-ignore: no-silent-broad-except - Falls through to try other date format parsers below
         except Exception:
             pass
 
@@ -538,6 +539,7 @@ def timezone_is_valid(timezone_name: str) -> bool:
     try:
         ZoneInfo(timezone_name)
         return True
+    # ast-grep-ignore: no-silent-broad-except - Timezone validation: invalid timezone names are expected input
     except Exception:
         return False
 
