@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import uuid
 from typing import TYPE_CHECKING
+from zoneinfo import ZoneInfo
 
 import pytest
 
@@ -406,6 +407,7 @@ class TestCreateAttachmentAPI:
                 event_sources=None,
                 attachment_registry=attachment_registry,
                 camera_backend=None,
+                timezone=ZoneInfo("UTC"),
             )
 
             api = create_attachment_api(execution_context)
@@ -431,6 +433,7 @@ class TestCreateAttachmentAPI:
                 event_sources=None,
                 attachment_registry=None,  # No attachment registry
                 camera_backend=None,
+                timezone=ZoneInfo("UTC"),
             )
 
             with pytest.raises(
@@ -461,6 +464,7 @@ class TestScriptIntegration:
                 event_sources=None,
                 attachment_registry=None,  # No attachment registry
                 camera_backend=None,
+                timezone=ZoneInfo("UTC"),
             )
 
             config = ScriptConfig(enable_print=True)
@@ -499,6 +503,7 @@ print("Hello world")
                 event_sources=None,
                 attachment_registry=attachment_registry,
                 camera_backend=None,
+                timezone=ZoneInfo("UTC"),
             )
 
             # Create tools provider with attachment tools
@@ -564,6 +569,7 @@ result
                 event_sources=None,
                 attachment_registry=attachment_registry,
                 camera_backend=None,
+                timezone=ZoneInfo("UTC"),
             )
 
             config = ScriptConfig(enable_print=True)
@@ -603,6 +609,7 @@ result == None
                 event_sources=None,
                 attachment_registry=attachment_registry,
                 camera_backend=None,
+                timezone=ZoneInfo("UTC"),
             )
 
             config = ScriptConfig(enable_print=True)
@@ -642,6 +649,7 @@ attachment_list()
                 event_sources=None,
                 attachment_registry=attachment_registry,
                 camera_backend=None,
+                timezone=ZoneInfo("UTC"),
             )
 
             config = ScriptConfig(enable_print=True)
@@ -713,6 +721,7 @@ attachment_id
                 event_sources=None,
                 attachment_registry=attachment_registry,
                 camera_backend=None,
+                timezone=ZoneInfo("UTC"),
             )
 
             config = ScriptConfig(enable_print=True)
@@ -787,6 +796,7 @@ attachment_id
                 event_sources=None,
                 attachment_registry=attachment_registry,
                 camera_backend=None,
+                timezone=ZoneInfo("UTC"),
             )
 
             config = ScriptConfig(enable_print=True)

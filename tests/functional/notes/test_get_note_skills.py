@@ -2,6 +2,7 @@
 
 from pathlib import Path
 from typing import Any, cast
+from zoneinfo import ZoneInfo
 
 import pytest
 from sqlalchemy import delete
@@ -39,6 +40,7 @@ def make_exec_context(
         camera_backend=None,
         note_registry=note_registry,
         visibility_grants=visibility_grants,
+        timezone=ZoneInfo("UTC"),
     )
 
 

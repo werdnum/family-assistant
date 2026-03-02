@@ -2,6 +2,7 @@
 
 from pathlib import Path
 from unittest.mock import Mock
+from zoneinfo import ZoneInfo
 
 import pytest
 from sqlalchemy.ext.asyncio import AsyncEngine
@@ -39,6 +40,7 @@ async def test_execute_script_without_tools_provider(db_engine: AsyncEngine) -> 
             attachment_registry=None,
             processing_service=None,
             camera_backend=None,
+            timezone=ZoneInfo("UTC"),
         )
 
         # Simple script should work
@@ -79,6 +81,7 @@ async def test_execute_script_with_empty_tools_provider(db_engine: AsyncEngine) 
             attachment_registry=None,
             processing_service=mock_service,
             camera_backend=None,
+            timezone=ZoneInfo("UTC"),
         )
 
         # Should be able to list tools (empty list)
@@ -140,6 +143,7 @@ async def test_execute_script_with_tools(db_engine: AsyncEngine) -> None:
             attachment_registry=None,
             processing_service=mock_service,
             camera_backend=None,
+            timezone=ZoneInfo("UTC"),
         )
 
         # Test listing tools
@@ -182,6 +186,7 @@ async def test_execute_script_syntax_error(db_engine: AsyncEngine) -> None:
             attachment_registry=None,
             processing_service=None,
             camera_backend=None,
+            timezone=ZoneInfo("UTC"),
         )
 
         # Invalid syntax
@@ -208,6 +213,7 @@ async def test_execute_script_with_globals(db_engine: AsyncEngine) -> None:
             attachment_registry=None,
             processing_service=None,
             camera_backend=None,
+            timezone=ZoneInfo("UTC"),
         )
 
         # Pass globals
@@ -237,6 +243,7 @@ async def test_execute_script_with_wake_llm(db_engine: AsyncEngine) -> None:
             attachment_registry=None,
             processing_service=None,
             camera_backend=None,
+            timezone=ZoneInfo("UTC"),
         )
 
         # Test single wake_llm call
@@ -442,6 +449,7 @@ async def test_script_attachment_composition_dict_format(
             attachment_registry=attachment_registry,
             processing_service=mock_service,
             camera_backend=None,
+            timezone=ZoneInfo("UTC"),
         )
 
         # Script that calls a tool returning ToolResult with attachments,

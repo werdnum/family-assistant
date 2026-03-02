@@ -5,6 +5,7 @@ import json
 from datetime import UTC, datetime, timedelta
 from typing import Any
 from unittest.mock import MagicMock
+from zoneinfo import ZoneInfo
 
 import janus
 import pytest
@@ -166,6 +167,7 @@ async def test_home_assistant_event_processing(db_engine: AsyncEngine) -> None:
             event_sources=None,
             attachment_registry=None,
             camera_backend=None,
+            timezone=ZoneInfo("UTC"),
         )
 
         result = await query_recent_events_tool(
@@ -314,6 +316,7 @@ async def test_test_event_listener_tool_matches_person_coming_home(
             event_sources=None,
             attachment_registry=None,
             camera_backend=None,
+            timezone=ZoneInfo("UTC"),
         )
 
         result = await event_listener_test_tool(
@@ -375,6 +378,7 @@ async def test_test_event_listener_tool_no_match_wrong_state(
             event_sources=None,
             attachment_registry=None,
             camera_backend=None,
+            timezone=ZoneInfo("UTC"),
         )
 
         result = await event_listener_test_tool(
@@ -419,6 +423,7 @@ async def test_test_event_listener_tool_empty_conditions_error(
             event_sources=None,
             attachment_registry=None,
             camera_backend=None,
+            timezone=ZoneInfo("UTC"),
         )
 
         result = await event_listener_test_tool(

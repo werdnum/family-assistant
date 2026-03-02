@@ -168,6 +168,7 @@ class TestJqQueryTool:
                 home_assistant_client=None,
                 event_sources={},
                 camera_backend=None,
+                timezone=ZoneInfo("UTC"),
             )
 
             # Query: get all items (via script)
@@ -216,6 +217,7 @@ result
                 home_assistant_client=None,
                 event_sources={},
                 camera_backend=None,
+                timezone=ZoneInfo("UTC"),
             )
 
             # Query: count items (via script)
@@ -259,6 +261,7 @@ result
                 home_assistant_client=None,
                 event_sources={},
                 camera_backend=None,
+                timezone=ZoneInfo("UTC"),
             )
 
             # Query: get first item (via script)
@@ -304,6 +307,7 @@ result
                 home_assistant_client=None,
                 event_sources={},
                 camera_backend=None,
+                timezone=ZoneInfo("UTC"),
             )
 
             # Query: extract all names (via script)
@@ -348,6 +352,7 @@ result
                 home_assistant_client=None,
                 event_sources={},
                 camera_backend=None,
+                timezone=ZoneInfo("UTC"),
             )
 
             # Query: get IDs of first and last item (via script)
@@ -392,6 +397,7 @@ result
                 home_assistant_client=None,
                 event_sources={},
                 camera_backend=None,
+                timezone=ZoneInfo("UTC"),
             )
 
             # Query: invalid jq syntax (via script)
@@ -435,6 +441,7 @@ result
                 home_assistant_client=None,
                 event_sources={},
                 camera_backend=None,
+                timezone=ZoneInfo("UTC"),
             )
 
             # Query with non-existent attachment ID (via script)
@@ -475,6 +482,7 @@ result = jq_query(
                 home_assistant_client=None,
                 event_sources={},
                 camera_backend=None,
+                timezone=ZoneInfo("UTC"),
             )
 
             # Try to query attachment from different conversation (via script)
@@ -535,6 +543,7 @@ result
                 home_assistant_client=None,
                 event_sources={},
                 camera_backend=None,
+                timezone=ZoneInfo("UTC"),
             )
 
             # Try to query non-JSON attachment (via script)
@@ -570,6 +579,7 @@ result
                 home_assistant_client=None,
                 event_sources={},
                 camera_backend=None,
+                timezone=ZoneInfo("UTC"),
             )
 
             # Try to query without attachment registry (via script)

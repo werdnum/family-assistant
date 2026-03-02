@@ -1,6 +1,7 @@
 """Integration tests for Home Assistant tools with real Home Assistant."""
 
 import json
+from zoneinfo import ZoneInfo
 
 import homeassistant_api
 import pytest
@@ -53,6 +54,7 @@ async def test_render_template_tool(
             event_sources=None,
             attachment_registry=None,
             camera_backend=None,
+            timezone=ZoneInfo("UTC"),
         )
 
         try:
@@ -106,6 +108,7 @@ async def test_camera_snapshot_tool_list_cameras(
             event_sources=None,
             attachment_registry=None,
             camera_backend=None,
+            timezone=ZoneInfo("UTC"),
         )
 
         try:
@@ -157,6 +160,7 @@ async def test_camera_snapshot_tool_get_snapshot(
             event_sources=None,
             attachment_registry=None,
             camera_backend=None,
+            timezone=ZoneInfo("UTC"),
         )
 
         try:
@@ -224,6 +228,7 @@ async def test_history_tool_with_entities(
             event_sources=None,
             attachment_registry=None,
             camera_backend=None,
+            timezone=ZoneInfo("UTC"),
         )
 
         try:

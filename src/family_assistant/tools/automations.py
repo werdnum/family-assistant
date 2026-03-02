@@ -852,6 +852,7 @@ async def disable_automation_tool(
             automation_type=type_param,
             conversation_id=automation.conversation_id,
             enabled=False,
+            timezone=exec_context.timezone,
         )
 
         if success:

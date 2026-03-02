@@ -9,6 +9,7 @@ making the scripting experience more natural and intuitive.
 import asyncio
 import logging
 from typing import Any
+from zoneinfo import ZoneInfo
 
 from family_assistant.scripting.monty_engine import MontyEngine
 from family_assistant.storage import init_db
@@ -126,6 +127,7 @@ async def main() -> None:
             event_sources=None,
             attachment_registry=None,
             camera_backend=None,
+            timezone=ZoneInfo("UTC"),
         )
 
         # Create engine

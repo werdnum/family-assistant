@@ -372,6 +372,7 @@ async def test_download_state_history_direct_call() -> None:
         event_sources=None,
         attachment_registry=None,
         camera_backend=None,
+        timezone=ZoneInfo("UTC"),
     )
 
     # Call the tool with a specific entity_id (common case)
@@ -415,6 +416,7 @@ async def test_download_state_history_no_client() -> None:
         event_sources=None,
         attachment_registry=None,
         camera_backend=None,
+        timezone=ZoneInfo("UTC"),
     )
 
     # Call the tool
@@ -483,6 +485,7 @@ async def test_download_state_history_empty() -> None:
         event_sources=None,
         attachment_registry=None,
         camera_backend=None,
+        timezone=ZoneInfo("UTC"),
     )
 
     # Call the tool
@@ -532,6 +535,7 @@ async def test_download_state_history_missing_entity() -> None:
         event_sources=None,
         attachment_registry=None,
         camera_backend=None,
+        timezone=ZoneInfo("UTC"),
     )
 
     # Call the tool with a mix of existing and non-existent entity_ids

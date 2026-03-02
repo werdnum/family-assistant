@@ -63,7 +63,8 @@ class ScheduleAutomationsRepository(BaseRepository):
         self,
         recurrence_rule: str,
         after: datetime | None = None,
-        timezone: ZoneInfo | None = None,
+        *,
+        timezone: ZoneInfo,
     ) -> datetime | None:
         """
         Parse RRULE and calculate next execution time.
@@ -75,16 +76,16 @@ class ScheduleAutomationsRepository(BaseRepository):
         Args:
             recurrence_rule: RRULE string
             after: Calculate next execution after this time (defaults to now)
-            timezone: Interpret RRULE times in this timezone. When provided,
+            timezone: Interpret RRULE times in this timezone.
                 ``after`` is converted to this timezone before being used as
                 the RRULE dtstart so that hour/minute constraints are
-                evaluated in local time.  Defaults to UTC when not provided.
+                evaluated in local time.
 
         Returns:
             Next execution datetime in UTC, or None if no more executions
         """
         try:
-            tz = timezone or ZoneInfo("UTC")
+            tz = timezone
             if after is None:
                 after = datetime.now(tz)
             else:
@@ -119,7 +120,8 @@ class ScheduleAutomationsRepository(BaseRepository):
         interface_type: str = "telegram",
         description: str | None = None,
         enabled: bool = True,
-        timezone: ZoneInfo | None = None,
+        *,
+        timezone: ZoneInfo,
     ) -> int:
         """
         Create a schedule automation and schedule first task instance.
@@ -245,7 +247,8 @@ class ScheduleAutomationsRepository(BaseRepository):
         conversation_id: str,
         interface_type: str = "telegram",
         description: str | None = None,
-        timezone: ZoneInfo | None = None,
+        *,
+        timezone: ZoneInfo,
     ) -> ScheduleAutomationDict:
         """
         Create automation and return full entity (avoids extra query).
@@ -360,7 +363,8 @@ class ScheduleAutomationsRepository(BaseRepository):
         automation_id: int,
         conversation_id: str,
         enabled: bool,
-        timezone: ZoneInfo | None = None,
+        *,
+        timezone: ZoneInfo,
     ) -> bool:
         """
         Enable or disable automation, synchronizing task queue accordingly.
@@ -486,7 +490,8 @@ class ScheduleAutomationsRepository(BaseRepository):
         action_config: dict[str, Any] | None | object = _UNSET,
         description: str | None | object = _UNSET,
         enabled: bool | None | object = _UNSET,
-        timezone: ZoneInfo | None = None,
+        *,
+        timezone: ZoneInfo,
     ) -> bool:
         """
         Update automation configuration, synchronizing task queue as needed.
@@ -707,7 +712,8 @@ class ScheduleAutomationsRepository(BaseRepository):
         action_config_override: dict[str, Any] | None = None,
         recurrence_rule_override: str | None = None,
         name_override: str | None = None,
-        timezone: ZoneInfo | None = None,
+        *,
+        timezone: ZoneInfo,
         next_at_override: datetime | None = None,
     ) -> datetime | None:
         """
@@ -792,7 +798,8 @@ class ScheduleAutomationsRepository(BaseRepository):
         self,
         automation_id: int,
         execution_time: datetime,
-        timezone: ZoneInfo | None = None,
+        *,
+        timezone: ZoneInfo,
     ) -> None:
         """
         Update automation after task execution and schedule next instance.

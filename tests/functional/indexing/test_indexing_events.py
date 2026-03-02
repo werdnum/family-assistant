@@ -10,6 +10,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock
+from zoneinfo import ZoneInfo
 
 import pytest
 from sqlalchemy import and_, cast, select
@@ -241,6 +242,7 @@ async def test_document_ready_event_emitted(db_engine: AsyncEngine) -> None:
                     camera_backend=None,
                     embedding_generator=embedding_generator,
                     indexing_source=indexing_source,
+                    timezone=ZoneInfo("UTC"),
                 )
 
                 assert task["payload"] is not None
@@ -365,6 +367,7 @@ async def test_document_ready_not_emitted_with_pending_tasks(
             camera_backend=None,
             embedding_generator=embedding_generator,
             indexing_source=indexing_source,
+            timezone=ZoneInfo("UTC"),
         )
 
         assert first_task["payload"] is not None
@@ -470,6 +473,7 @@ async def test_indexing_event_listener_integration(db_engine: AsyncEngine) -> No
             camera_backend=None,
             embedding_generator=embedding_generator,
             indexing_source=indexing_source,
+            timezone=ZoneInfo("UTC"),
         )
 
         # Create processor to handle events
@@ -597,6 +601,7 @@ async def test_document_ready_event_includes_rich_metadata(
                 camera_backend=None,
                 embedding_generator=embedding_generator,
                 indexing_source=indexing_source,
+                timezone=ZoneInfo("UTC"),
             )
 
             # Process task - should emit event with rich metadata
@@ -718,6 +723,7 @@ async def test_document_ready_event_handles_none_metadata(
                 camera_backend=None,
                 embedding_generator=embedding_generator,
                 indexing_source=indexing_source,
+                timezone=ZoneInfo("UTC"),
             )
 
             # Process task - should emit event even with None metadata

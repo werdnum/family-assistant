@@ -781,6 +781,14 @@ def load_config(
     # 2. Post-processing operates on dict, re-validates at end
     config_data = base_config.model_dump()
 
+    # Use exclude_unset=True for service_profiles so resolve_service_profile()
+    # can distinguish YAML-specified values from Pydantic defaults.
+    # Without this, ProcessingConfig defaults (e.g. timezone="UTC") overwrite
+    # the correct values from default_profile_settings during profile merging.
+    config_data["service_profiles"] = [
+        p.model_dump(exclude_unset=True) for p in base_config.service_profiles
+    ]
+
     if load_dotenv_file:
         load_dotenv()
 

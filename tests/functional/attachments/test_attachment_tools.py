@@ -8,6 +8,7 @@ import uuid
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, cast
 from unittest.mock import AsyncMock, Mock
+from zoneinfo import ZoneInfo
 
 import aiofiles
 import pytest
@@ -109,6 +110,7 @@ class TestAttachToResponseTool:
                 chat_interface=None,
                 attachment_registry=attachment_registry,
                 camera_backend=None,
+                timezone=ZoneInfo("UTC"),
             )
 
             # Create ScriptAttachment object for the tool
@@ -168,6 +170,7 @@ class TestAttachToResponseTool:
                 chat_interface=None,
                 attachment_registry=attachment_registry,
                 camera_backend=None,
+                timezone=ZoneInfo("UTC"),
             )
 
             # Create a mock ScriptAttachment that will fail validation
@@ -203,6 +206,7 @@ class TestAttachToResponseTool:
                 chat_interface=None,
                 attachment_registry=None,  # No attachment registry
                 camera_backend=None,
+                timezone=ZoneInfo("UTC"),
             )
 
             # Create a mock ScriptAttachment for this test
@@ -268,6 +272,7 @@ class TestSendMessageToUserWithAttachments:
                 chat_interface=mock_chat_interface,
                 attachment_registry=attachment_registry,
                 camera_backend=None,
+                timezone=ZoneInfo("UTC"),
             )
 
             result = await send_message_to_user_tool(
@@ -312,6 +317,7 @@ class TestSendMessageToUserWithAttachments:
                 chat_interface=mock_chat_interface,
                 attachment_registry=None,
                 camera_backend=None,
+                timezone=ZoneInfo("UTC"),
             )
 
             result = await send_message_to_user_tool(
@@ -452,6 +458,7 @@ class TestHighlightImageTool:
                 chat_interface=None,
                 attachment_registry=attachment_registry,
                 camera_backend=None,
+                timezone=ZoneInfo("UTC"),
             )
 
             # Get attachment metadata
@@ -559,6 +566,7 @@ class TestHighlightImageTool:
                 chat_interface=None,
                 attachment_registry=attachment_registry,
                 camera_backend=None,
+                timezone=ZoneInfo("UTC"),
             )
 
             attachment_metadata = await attachment_registry.get_attachment(
@@ -639,6 +647,7 @@ class TestHighlightImageTool:
                 chat_interface=None,
                 attachment_registry=attachment_registry,
                 camera_backend=None,
+                timezone=ZoneInfo("UTC"),
             )
 
             attachment_metadata = await attachment_registry.get_attachment(
@@ -725,6 +734,7 @@ class TestHighlightImageTool:
                 chat_interface=None,
                 attachment_registry=attachment_registry,
                 camera_backend=None,
+                timezone=ZoneInfo("UTC"),
             )
 
             attachment_metadata = await attachment_registry.get_attachment(

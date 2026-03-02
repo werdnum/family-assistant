@@ -6,6 +6,7 @@ without going through the tools_execute() wrapper.
 """
 
 from typing import Any
+from zoneinfo import ZoneInfo
 
 import pytest
 from sqlalchemy.ext.asyncio import AsyncEngine
@@ -201,6 +202,7 @@ async def test_direct_tool_callable(db_engine: AsyncEngine) -> None:
             event_sources=None,
             attachment_registry=None,
             camera_backend=None,
+            timezone=ZoneInfo("UTC"),
         )
 
         # Create engine
@@ -253,6 +255,7 @@ async def test_tool_prefix_fallback(db_engine: AsyncEngine) -> None:
             event_sources=None,
             attachment_registry=None,
             camera_backend=None,
+            timezone=ZoneInfo("UTC"),
         )
 
         # Create engine
@@ -304,6 +307,7 @@ async def test_direct_callable_with_security(db_engine: AsyncEngine) -> None:
             event_sources=None,
             attachment_registry=None,
             camera_backend=None,
+            timezone=ZoneInfo("UTC"),
         )
 
         # Create engine with only echo allowed
@@ -383,6 +387,7 @@ async def test_direct_callable_validates_parameters(db_engine: AsyncEngine) -> N
             event_sources=None,
             attachment_registry=None,
             camera_backend=None,
+            timezone=ZoneInfo("UTC"),
         )
 
         # Create engine
@@ -427,6 +432,7 @@ async def test_tools_api_still_works(db_engine: AsyncEngine) -> None:
             event_sources=None,
             attachment_registry=None,
             camera_backend=None,
+            timezone=ZoneInfo("UTC"),
         )
 
         # Create engine
@@ -485,6 +491,7 @@ async def test_no_tools_when_denied(db_engine: AsyncEngine) -> None:
             event_sources=None,
             attachment_registry=None,
             camera_backend=None,
+            timezone=ZoneInfo("UTC"),
         )
 
         # Create engine with all tools denied

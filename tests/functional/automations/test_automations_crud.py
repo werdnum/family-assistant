@@ -1,5 +1,7 @@
 """CRUD operations for automations (create, list, get, update, delete)."""
 
+from zoneinfo import ZoneInfo
+
 import pytest
 from sqlalchemy.ext.asyncio import AsyncEngine
 
@@ -32,6 +34,7 @@ async def test_create_event_automation_basic(db_engine: AsyncEngine) -> None:
             event_sources=None,
             attachment_registry=None,
             camera_backend=None,
+            timezone=ZoneInfo("UTC"),
         )
 
         # Act
@@ -72,6 +75,7 @@ async def test_create_schedule_automation_basic(db_engine: AsyncEngine) -> None:
             event_sources=None,
             attachment_registry=None,
             camera_backend=None,
+            timezone=ZoneInfo("UTC"),
         )
 
         # Act - create daily 7am reminder
@@ -111,6 +115,7 @@ async def test_create_automation_cross_type_name_uniqueness(
             event_sources=None,
             attachment_registry=None,
             camera_backend=None,
+            timezone=ZoneInfo("UTC"),
         )
 
         # Create event automation
@@ -140,6 +145,7 @@ async def test_create_automation_cross_type_name_uniqueness(
             event_sources=None,
             attachment_registry=None,
             camera_backend=None,
+            timezone=ZoneInfo("UTC"),
         )
 
         result = await create_automation_tool(
@@ -172,6 +178,7 @@ async def test_create_automation_with_script_action(db_engine: AsyncEngine) -> N
             event_sources=None,
             attachment_registry=None,
             camera_backend=None,
+            timezone=ZoneInfo("UTC"),
         )
 
         script_code = """
@@ -212,6 +219,7 @@ async def test_create_automation_invalid_type(db_engine: AsyncEngine) -> None:
             event_sources=None,
             attachment_registry=None,
             camera_backend=None,
+            timezone=ZoneInfo("UTC"),
         )
 
         result = await create_automation_tool(
@@ -243,6 +251,7 @@ async def test_create_automation_missing_trigger_config(db_engine: AsyncEngine) 
             event_sources=None,
             attachment_registry=None,
             camera_backend=None,
+            timezone=ZoneInfo("UTC"),
         )
 
         # Event automation missing event_source
@@ -277,6 +286,7 @@ async def test_create_automation_missing_recurrence_rule(
             event_sources=None,
             attachment_registry=None,
             camera_backend=None,
+            timezone=ZoneInfo("UTC"),
         )
 
         result = await create_automation_tool(
@@ -308,6 +318,7 @@ async def test_list_automations_empty(db_engine: AsyncEngine) -> None:
             event_sources=None,
             attachment_registry=None,
             camera_backend=None,
+            timezone=ZoneInfo("UTC"),
         )
 
         result = await list_automations_tool(exec_context=exec_context)
@@ -331,6 +342,7 @@ async def test_list_automations_with_both_types(db_engine: AsyncEngine) -> None:
             event_sources=None,
             attachment_registry=None,
             camera_backend=None,
+            timezone=ZoneInfo("UTC"),
         )
 
         # Create event automation
@@ -384,6 +396,7 @@ async def test_list_automations_filter_by_type(db_engine: AsyncEngine) -> None:
             event_sources=None,
             attachment_registry=None,
             camera_backend=None,
+            timezone=ZoneInfo("UTC"),
         )
 
         # Create multiple automations
@@ -444,6 +457,7 @@ async def test_list_automations_filter_enabled_only(db_engine: AsyncEngine) -> N
             event_sources=None,
             attachment_registry=None,
             camera_backend=None,
+            timezone=ZoneInfo("UTC"),
         )
 
         # Create automations
@@ -506,6 +520,7 @@ async def test_get_automation_event_type(db_engine: AsyncEngine) -> None:
             event_sources=None,
             attachment_registry=None,
             camera_backend=None,
+            timezone=ZoneInfo("UTC"),
         )
 
         # Create automation
@@ -561,6 +576,7 @@ async def test_get_automation_schedule_type(db_engine: AsyncEngine) -> None:
             event_sources=None,
             attachment_registry=None,
             camera_backend=None,
+            timezone=ZoneInfo("UTC"),
         )
 
         result = await create_automation_tool(
@@ -608,6 +624,7 @@ async def test_get_automation_not_found(db_engine: AsyncEngine) -> None:
             event_sources=None,
             attachment_registry=None,
             camera_backend=None,
+            timezone=ZoneInfo("UTC"),
         )
 
         result = await get_automation_tool(
@@ -636,6 +653,7 @@ async def test_update_automation_action_config(db_engine: AsyncEngine) -> None:
             event_sources=None,
             attachment_registry=None,
             camera_backend=None,
+            timezone=ZoneInfo("UTC"),
         )
 
         # Create automation
@@ -693,6 +711,7 @@ async def test_update_automation_description(db_engine: AsyncEngine) -> None:
             event_sources=None,
             attachment_registry=None,
             camera_backend=None,
+            timezone=ZoneInfo("UTC"),
         )
 
         result = await create_automation_tool(
@@ -750,6 +769,7 @@ async def test_update_automation_trigger_config_schedule(
             event_sources=None,
             attachment_registry=None,
             camera_backend=None,
+            timezone=ZoneInfo("UTC"),
         )
 
         result = await create_automation_tool(
@@ -804,6 +824,7 @@ async def test_update_automation_not_found(db_engine: AsyncEngine) -> None:
             event_sources=None,
             attachment_registry=None,
             camera_backend=None,
+            timezone=ZoneInfo("UTC"),
         )
 
         result = await update_automation_tool(
@@ -833,6 +854,7 @@ async def test_enable_disable_automation(db_engine: AsyncEngine) -> None:
             event_sources=None,
             attachment_registry=None,
             camera_backend=None,
+            timezone=ZoneInfo("UTC"),
         )
 
         result = await create_automation_tool(
@@ -912,6 +934,7 @@ async def test_delete_automation(db_engine: AsyncEngine) -> None:
             event_sources=None,
             attachment_registry=None,
             camera_backend=None,
+            timezone=ZoneInfo("UTC"),
         )
 
         result = await create_automation_tool(
@@ -968,6 +991,7 @@ async def test_delete_automation_not_found(db_engine: AsyncEngine) -> None:
             event_sources=None,
             attachment_registry=None,
             camera_backend=None,
+            timezone=ZoneInfo("UTC"),
         )
 
         result = await delete_automation_tool(

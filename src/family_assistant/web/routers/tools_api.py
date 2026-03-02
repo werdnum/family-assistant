@@ -49,11 +49,13 @@ async def execute_tool_api(
     # --- Retrieve necessary config and services from app state ---
     app_config = getattr(request.app.state, "config", None)
     if not app_config:
-        logger.error("Main application configuration not found in app state.")
-        timezone = ZoneInfo("UTC")
-    else:
-        # Get default timezone from default profile settings (already a ZoneInfo object)
-        timezone = app_config.default_profile_settings.processing_config.timezone
+        raise HTTPException(
+            status_code=500,
+            detail="Main application configuration not found in app state.",
+        )
+    # ProcessingConfig.timezone is a str; convert to ZoneInfo
+    timezone_str = app_config.default_profile_settings.processing_config.timezone
+    timezone = ZoneInfo(timezone_str)
 
     # Get infrastructure dependencies from app state
     processing_service = getattr(request.app.state, "processing_service", None)

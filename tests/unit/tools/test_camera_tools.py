@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
 from unittest.mock import Mock
+from zoneinfo import ZoneInfo
 
 import pytest
 
@@ -112,6 +113,7 @@ def exec_context(fake_camera_backend: FakeCameraBackend) -> ToolExecutionContext
         event_sources=None,
         attachment_registry=None,
         camera_backend=fake_camera_backend,
+        timezone=ZoneInfo("UTC"),
     )
 
 
@@ -154,6 +156,7 @@ async def test_list_cameras_no_backend() -> None:
         event_sources=None,
         attachment_registry=None,
         camera_backend=None,
+        timezone=ZoneInfo("UTC"),
     )
 
     result = await list_cameras_tool(exec_context)
@@ -245,6 +248,7 @@ async def test_search_camera_events_no_backend() -> None:
         event_sources=None,
         attachment_registry=None,
         camera_backend=None,
+        timezone=ZoneInfo("UTC"),
     )
 
     base_time = datetime(2024, 1, 15, 12, 0, 0, tzinfo=UTC)
@@ -322,6 +326,7 @@ async def test_get_camera_frame_no_backend() -> None:
         event_sources=None,
         attachment_registry=None,
         camera_backend=None,
+        timezone=ZoneInfo("UTC"),
     )
 
     timestamp = datetime(2024, 1, 15, 12, 0, 0, tzinfo=UTC).isoformat()
@@ -412,6 +417,7 @@ async def test_get_camera_frames_batch_no_backend() -> None:
         event_sources=None,
         attachment_registry=None,
         camera_backend=None,
+        timezone=ZoneInfo("UTC"),
     )
 
     base_time = datetime(2024, 1, 15, 12, 0, 0, tzinfo=UTC)
@@ -476,6 +482,7 @@ async def test_get_camera_recordings_no_backend() -> None:
         event_sources=None,
         attachment_registry=None,
         camera_backend=None,
+        timezone=ZoneInfo("UTC"),
     )
 
     base_time = datetime(2024, 1, 15, 12, 0, 0, tzinfo=UTC)
@@ -582,6 +589,7 @@ def exec_context_with_llm(
         event_sources=None,
         attachment_registry=None,
         camera_backend=fake_camera_backend,
+        timezone=ZoneInfo("UTC"),
     )
 
 
@@ -697,6 +705,7 @@ async def test_scan_camera_frames_no_matches() -> None:
         event_sources=None,
         attachment_registry=None,
         camera_backend=fake_backend,
+        timezone=ZoneInfo("UTC"),
     )
 
     result = await scan_camera_frames_tool(
@@ -736,6 +745,7 @@ async def test_scan_camera_frames_no_backend() -> None:
         event_sources=None,
         attachment_registry=None,
         camera_backend=None,
+        timezone=ZoneInfo("UTC"),
     )
 
     base_time = datetime(2024, 1, 15, 12, 0, 0, tzinfo=UTC)
@@ -771,6 +781,7 @@ async def test_scan_camera_frames_no_processing_service(
         event_sources=None,
         attachment_registry=None,
         camera_backend=fake_camera_backend,
+        timezone=ZoneInfo("UTC"),
     )
 
     base_time = datetime(2024, 1, 15, 12, 0, 0, tzinfo=UTC)
@@ -863,6 +874,7 @@ async def test_scan_camera_frames_handles_llm_errors() -> None:
         event_sources=None,
         attachment_registry=None,
         camera_backend=fake_backend,
+        timezone=ZoneInfo("UTC"),
     )
 
     result = await scan_camera_frames_tool(

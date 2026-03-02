@@ -4,6 +4,7 @@ import os
 import signal
 from typing import TYPE_CHECKING
 from unittest.mock import MagicMock
+from zoneinfo import ZoneInfo
 
 import pytest
 import pytest_asyncio
@@ -112,6 +113,7 @@ async def test_mcp_sse_restart(mcp_proxy_controller: MCPProxyController) -> None
         event_sources=None,
         attachment_registry=None,
         camera_backend=None,
+        timezone=ZoneInfo("UTC"),
     )
     args = {
         "time": "12:00",

@@ -254,6 +254,7 @@ async def test_indexing_pipeline_e2e(
                 camera_backend=None,
                 chat_interface=MagicMock(),  # Provide a mock ChatInterface
                 embedding_generator=mock_pipeline_embedding_generator,
+                timezone=ZoneInfo("UTC"),
             )
 
             # Create and store the document
@@ -477,6 +478,7 @@ async def test_indexing_pipeline_pdf_processing(
                 camera_backend=None,
                 chat_interface=MagicMock(),  # Provide a mock ChatInterface
                 embedding_generator=mock_pipeline_embedding_generator,
+                timezone=ZoneInfo("UTC"),
             )
 
             test_document_protocol = MockDocumentImpl(

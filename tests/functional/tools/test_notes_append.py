@@ -1,5 +1,7 @@
 """Test the append functionality for notes."""
 
+from zoneinfo import ZoneInfo
+
 import pytest
 from sqlalchemy.ext.asyncio import AsyncEngine
 
@@ -24,6 +26,7 @@ async def test_add_or_update_note_append(db_engine: AsyncEngine) -> None:
             event_sources=None,
             attachment_registry=None,
             camera_backend=None,
+            timezone=ZoneInfo("UTC"),
         )
 
         # Create initial note
@@ -103,6 +106,7 @@ async def test_append_multiple_times(db_engine: AsyncEngine) -> None:
             event_sources=None,
             attachment_registry=None,
             camera_backend=None,
+            timezone=ZoneInfo("UTC"),
         )
 
         # Create initial note
@@ -150,6 +154,7 @@ async def test_add_or_update_note_append_postgres(
             event_sources=None,
             attachment_registry=None,
             camera_backend=None,
+            timezone=ZoneInfo("UTC"),
         )
 
         # Create initial note
