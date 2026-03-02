@@ -29,6 +29,8 @@ from litellm.exceptions import (
     ServiceUnavailableError,
     Timeout,
 )
+from opentelemetry import trace as otel_trace
+from opentelemetry.trace import StatusCode as OtelStatusCode
 from pydantic import BaseModel, ValidationError
 
 from family_assistant.tools.types import ToolDefinition
@@ -66,6 +68,7 @@ if TYPE_CHECKING:
     )
 
 logger = logging.getLogger(__name__)
+_otel_tracer = otel_trace.get_tracer(__name__)
 
 # TypeVar for generic structured output support
 T = TypeVar("T", bound=BaseModel)
@@ -1230,129 +1233,158 @@ class LiteLLMClient(BaseLLMClient):
         tool_choice: str | None = "auto",
     ) -> LLMOutput:
         """Generates a response using LiteLLM, with one retry on primary model and fallback."""
-        # Validate user input before processing
         self._validate_user_input(messages)
 
-        # Keep messages as typed objects throughout processing
-        message_list = list(messages)
+        with _otel_tracer.start_as_current_span(
+            "llm.provider.generate",
+            attributes={
+                "gen_ai.system": "litellm",
+                "gen_ai.request.model": self.model,
+            },
+        ) as span:
+            message_list = list(messages)
 
-        retriable_errors = (
-            APIConnectionError,
-            Timeout,
-            RateLimitError,
-            ServiceUnavailableError,
-            BadRequestError,
-        )
-        last_exception: Exception | None = None
+            retriable_errors = (
+                APIConnectionError,
+                Timeout,
+                RateLimitError,
+                ServiceUnavailableError,
+                BadRequestError,
+            )
+            last_exception: Exception | None = None
 
-        # Attempt 1: Primary model
-        try:
-            logger.info(f"Attempt 1: Primary model ({self.model})")
-            return await self._attempt_completion(
-                model_id=self.model,
-                messages=message_list,
-                tools=tools,
-                tool_choice=tool_choice,
-                specific_model_params=self.model_parameters,
-            )
-        except retriable_errors as e:
-            logger.warning(
-                f"Attempt 1 (Primary model {self.model}) failed with retriable error: {e}. Retrying primary model."
-            )
-            last_exception = e
-        except APIError as e:  # Non-retriable APIError (but not BadRequestError)
-            logger.warning(
-                f"Attempt 1 (Primary model {self.model}) failed with APIError: {e}. Proceeding to fallback."
-            )
-            last_exception = e
-        except Exception as e:
-            logger.error(
-                f"Attempt 1 (Primary model {self.model}) failed with unexpected error: {e}",
-                exc_info=True,
-            )
-            last_exception = e  # Store for potential re-raise if fallback also fails or isn't attempted
-            # For truly unexpected errors, we might still want to try fallback if configured.
-
-        # Attempt 2: Retry Primary model (if Attempt 1 was a retriable error)
-        if isinstance(last_exception, retriable_errors):
+            # Attempt 1: Primary model
             try:
-                logger.info(f"Attempt 2: Retrying primary model ({self.model})")
-                return await self._attempt_completion(
+                logger.info(f"Attempt 1: Primary model ({self.model})")
+                result = await self._attempt_completion(
                     model_id=self.model,
                     messages=message_list,
                     tools=tools,
                     tool_choice=tool_choice,
                     specific_model_params=self.model_parameters,
                 )
+                if result.reasoning_info:
+                    span.set_attribute(
+                        "gen_ai.usage.input_tokens",
+                        result.reasoning_info.get("prompt_tokens", 0),
+                    )
+                    span.set_attribute(
+                        "gen_ai.usage.output_tokens",
+                        result.reasoning_info.get("completion_tokens", 0),
+                    )
+                return result
             except retriable_errors as e:
                 logger.warning(
-                    f"Attempt 2 (Retry Primary model {self.model}) failed with retriable error: {e}. Proceeding to fallback."
+                    f"Attempt 1 (Primary model {self.model}) failed with retriable error: {e}. Retrying primary model."
                 )
                 last_exception = e
-            except APIError as e:  # Non-retriable APIError on retry
+            except APIError as e:  # Non-retriable APIError (but not BadRequestError)
                 logger.warning(
-                    f"Attempt 2 (Retry Primary model {self.model}) failed with APIError: {e}. Proceeding to fallback."
+                    f"Attempt 1 (Primary model {self.model}) failed with APIError: {e}. Proceeding to fallback."
                 )
                 last_exception = e
             except Exception as e:
                 logger.error(
-                    f"Attempt 2 (Retry Primary model {self.model}) failed with unexpected error: {e}",
+                    f"Attempt 1 (Primary model {self.model}) failed with unexpected error: {e}",
                     exc_info=True,
                 )
                 last_exception = e
 
-        # Attempt 3: Fallback model
-        actual_fallback_model_id = self.fallback_model_id or "openai/gpt-5.2"
-        if actual_fallback_model_id == self.model:
-            logger.warning(
-                f"Fallback model '{actual_fallback_model_id}' is the same as the primary model '{self.model}'. Skipping fallback."
-            )
+            # Attempt 2: Retry Primary model (if Attempt 1 was a retriable error)
+            if isinstance(last_exception, retriable_errors):
+                try:
+                    logger.info(f"Attempt 2: Retrying primary model ({self.model})")
+                    result = await self._attempt_completion(
+                        model_id=self.model,
+                        messages=message_list,
+                        tools=tools,
+                        tool_choice=tool_choice,
+                        specific_model_params=self.model_parameters,
+                    )
+                    if result.reasoning_info:
+                        span.set_attribute(
+                            "gen_ai.usage.input_tokens",
+                            result.reasoning_info.get("prompt_tokens", 0),
+                        )
+                        span.set_attribute(
+                            "gen_ai.usage.output_tokens",
+                            result.reasoning_info.get("completion_tokens", 0),
+                        )
+                    return result
+                except retriable_errors as e:
+                    logger.warning(
+                        f"Attempt 2 (Retry Primary model {self.model}) failed with retriable error: {e}. Proceeding to fallback."
+                    )
+                    last_exception = e
+                except APIError as e:  # Non-retriable APIError on retry
+                    logger.warning(
+                        f"Attempt 2 (Retry Primary model {self.model}) failed with APIError: {e}. Proceeding to fallback."
+                    )
+                    last_exception = e
+                except Exception as e:
+                    logger.error(
+                        f"Attempt 2 (Retry Primary model {self.model}) failed with unexpected error: {e}",
+                        exc_info=True,
+                    )
+                    last_exception = e
+
+            # Attempt 3: Fallback model
+            actual_fallback_model_id = self.fallback_model_id or "openai/gpt-5.2"
+            if actual_fallback_model_id == self.model:
+                logger.warning(
+                    f"Fallback model '{actual_fallback_model_id}' is the same as the primary model '{self.model}'. Skipping fallback."
+                )
+                if last_exception:
+                    raise last_exception
+                raise APIError(
+                    message="All attempts failed without a specific error to raise.",
+                    llm_provider="litellm",
+                    model=self.model,
+                    status_code=500,
+                )
+
             if last_exception:
-                raise last_exception
-            # This case should ideally not happen if logic is correct, means no error but no success.
-            raise APIError(
-                message="All attempts failed without a specific error to raise.",
-                llm_provider="litellm",
-                model=self.model,
-                status_code=500,
-            )
+                logger.info(f"Attempt 3: Fallback model ({actual_fallback_model_id})")
+                try:
+                    result = await self._attempt_completion(
+                        model_id=actual_fallback_model_id,
+                        messages=message_list,
+                        tools=tools,
+                        tool_choice=tool_choice,
+                        specific_model_params=self.fallback_model_parameters,
+                    )
+                    if result.reasoning_info:
+                        span.set_attribute(
+                            "gen_ai.usage.input_tokens",
+                            result.reasoning_info.get("prompt_tokens", 0),
+                        )
+                        span.set_attribute(
+                            "gen_ai.usage.output_tokens",
+                            result.reasoning_info.get("completion_tokens", 0),
+                        )
+                    return result
+                except Exception as e:
+                    logger.error(
+                        f"Attempt 3 (Fallback model {actual_fallback_model_id}) also failed: {e}",
+                        exc_info=True,
+                    )
+                    last_exception = e
 
-        if last_exception:  # Ensure we only fallback if there was a prior failure
-            logger.info(f"Attempt 3: Fallback model ({actual_fallback_model_id})")
-            try:
-                return await self._attempt_completion(
-                    model_id=actual_fallback_model_id,
-                    messages=message_list,
-                    tools=tools,
-                    tool_choice=tool_choice,
-                    specific_model_params=self.fallback_model_parameters,
-                )
-            except Exception as e:
+            if last_exception:
                 logger.error(
-                    f"Attempt 3 (Fallback model {actual_fallback_model_id}) also failed: {e}",
-                    exc_info=True,
+                    f"All LLM attempts failed. Raising last recorded exception: {last_exception}"
                 )
-                # Fallthrough to raise last_exception from primary model attempts,
-                # or this new one if last_exception was None (though it shouldn't be here).
-                last_exception = e
-
-        # If all attempts failed, raise the last significant exception
-        if last_exception:
-            logger.error(
-                f"All LLM attempts failed. Raising last recorded exception: {last_exception}"
-            )
-            raise last_exception
-        else:
-            # Should not be reached if logic is correct, but as a safeguard:
-            logger.error(
-                "All LLM attempts failed without a specific exception captured."
-            )
-            raise APIError(
-                message="All LLM attempts failed without a specific exception.",
-                llm_provider="litellm",
-                model=self.model,  # Or some generic indicator
-                status_code=500,
-            )
+                raise last_exception
+            else:
+                logger.error(
+                    "All LLM attempts failed without a specific exception captured."
+                )
+                raise APIError(
+                    message="All LLM attempts failed without a specific exception.",
+                    llm_provider="litellm",
+                    model=self.model,
+                    status_code=500,
+                )
 
     async def format_user_message_with_file(
         self,
@@ -1545,272 +1577,310 @@ class LiteLLMClient(BaseLLMClient):
         specific_model_params: dict[str, dict[str, Any]],
     ) -> AsyncIterator[LLMStreamEvent]:
         """Internal async generator for streaming responses (single attempt)."""
-
-        def _safe_get_attr(obj: object, name: str) -> object | None:
-            """Get attribute or dict key safely."""
-            if isinstance(obj, dict):
-                return obj.get(name)
-            return getattr(obj, name, None)
-
-        def _extract_text_from_content(content: object) -> str | None:
-            """Extract concatenated text from mixed streaming payloads."""
-            if isinstance(content, str):
-                return content
-            if isinstance(content, list):
-                parts: list[str] = []
-                for part in content:
-                    text_val: Any = None
-                    if isinstance(part, dict):
-                        text_val = part.get("text") or part.get("content")
-                    else:
-                        text_val = getattr(part, "text", None)
-                        if not isinstance(text_val, str):
-                            value_attr = getattr(text_val, "value", None)
-                            if isinstance(value_attr, str):
-                                text_val = value_attr
-                        if not isinstance(text_val, str):
-                            content_attr = getattr(part, "content", None)
-                            if isinstance(content_attr, str):
-                                text_val = content_attr
-                    if isinstance(text_val, str):
-                        parts.append(text_val)
-                if parts:
-                    return "".join(parts)
-            return None
-
-        # Process tool attachments with typed messages
-        processed_messages = self._process_tool_messages(list(messages))
-
-        # Convert to dicts only at SDK boundary
-        message_dicts = [message_to_json_dict(msg) for msg in processed_messages]
-
-        # Use default kwargs as base
-        completion_params = self.default_kwargs.copy()
-
-        # Apply model-specific parameters
-        for pattern, params in specific_model_params.items():
-            matched = False
-            if pattern.endswith("-"):
-                if model_id.startswith(pattern[:-1]):
-                    matched = True
-            elif model_id == pattern:
-                matched = True
-
-            if matched:
-                logger.debug(
-                    f"Applying streaming parameters for model '{model_id}' using pattern '{pattern}': {params}"
-                )
-                params_to_merge = params.copy()
-                if "reasoning" in params_to_merge:
-                    params_to_merge.pop("reasoning")  # Not supported in streaming
-                completion_params.update(params_to_merge)
-                break
-
-        # Prepare streaming parameters
-        stream_params = {
-            "model": model_id,
-            "messages": message_dicts,
-            "stream": True,  # Enable streaming
-            **completion_params,
-        }
-
-        # Add tools if provided
-        if tools:
-            sanitized_tools = _sanitize_tools_for_litellm(tools)
-            stream_params["tools"] = sanitized_tools
-            stream_params["tool_choice"] = tool_choice
-
-        if DEBUG_LLM_MESSAGES_ENABLED:
-            logger.info(
-                f"LLM Streaming Request to {model_id}:\n"
-                f"{_format_serialized_messages_for_debug(message_dicts, tools, tool_choice)}"
-            )
-
-        logger.debug(
-            f"Starting streaming response from LiteLLM model {model_id} "
-            f"with {len(message_dicts)} messages. Tools: {bool(tools)}"
+        span = _otel_tracer.start_span(
+            "llm.provider.generate_stream",
+            attributes={
+                "gen_ai.system": "litellm",
+                "gen_ai.request.model": model_id,
+            },
         )
+        try:
+            with otel_trace.use_span(span, end_on_exit=False):
 
-        # Make streaming API call
-        stream = await acompletion(**stream_params)
+                def _safe_get_attr(obj: object, name: str) -> object | None:
+                    """Get attribute or dict key safely."""
+                    if isinstance(obj, dict):
+                        return obj.get(name)
+                    return getattr(obj, name, None)
 
-        # Track current tool calls being built
-        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
-        current_tool_calls: dict[int, dict[str, Any]] = {}
-        chunk: Any | None = None
-        last_chunk_with_usage: Any | None = None
-        content_emitted = False
+                def _extract_text_from_content(content: object) -> str | None:
+                    """Extract concatenated text from mixed streaming payloads."""
+                    if isinstance(content, str):
+                        return content
+                    if isinstance(content, list):
+                        parts: list[str] = []
+                        for part in content:
+                            text_val: Any = None
+                            if isinstance(part, dict):
+                                text_val = part.get("text") or part.get("content")
+                            else:
+                                text_val = getattr(part, "text", None)
+                                if not isinstance(text_val, str):
+                                    value_attr = getattr(text_val, "value", None)
+                                    if isinstance(value_attr, str):
+                                        text_val = value_attr
+                                if not isinstance(text_val, str):
+                                    content_attr = getattr(part, "content", None)
+                                    if isinstance(content_attr, str):
+                                        text_val = content_attr
+                            if isinstance(text_val, str):
+                                parts.append(text_val)
+                        if parts:
+                            return "".join(parts)
+                    return None
 
-        async for chunk in stream:  # type: ignore[misc]
-            if not chunk or not chunk.choices:
-                continue
+                # Process tool attachments with typed messages
+                processed_messages = self._process_tool_messages(list(messages))
 
-            try:
-                logger.debug(
-                    "Raw streaming chunk choice dump: %s",
-                    chunk.choices[0].model_dump()
-                    if hasattr(chunk.choices[0], "model_dump")
-                    else chunk.choices[0],
-                )
-            except Exception:
-                logger.debug("Could not dump streaming chunk choice", exc_info=True)
+                # Convert to dicts only at SDK boundary
+                message_dicts = [
+                    message_to_json_dict(msg) for msg in processed_messages
+                ]
 
-            delta = chunk.choices[0].delta
-            if not delta:
-                continue
+                # Use default kwargs as base
+                completion_params = self.default_kwargs.copy()
 
-            last_chunk_with_usage = chunk
+                # Apply model-specific parameters
+                for pattern, params in specific_model_params.items():
+                    matched = False
+                    if pattern.endswith("-"):
+                        if model_id.startswith(pattern[:-1]):
+                            matched = True
+                    elif model_id == pattern:
+                        matched = True
 
-            logger.debug("Streaming delta payload: %s (type=%s)", delta, type(delta))
+                    if matched:
+                        logger.debug(
+                            f"Applying streaming parameters for model '{model_id}' using pattern '{pattern}': {params}"
+                        )
+                        params_to_merge = params.copy()
+                        if "reasoning" in params_to_merge:
+                            params_to_merge.pop(
+                                "reasoning"
+                            )  # Not supported in streaming
+                        completion_params.update(params_to_merge)
+                        break
 
-            # Extract content
-            delta_content = _safe_get_attr(delta, "content")
-            if delta_content is None:
-                logger.debug(
-                    "Delta content missing; available attributes: %s",
-                    {
-                        attr: getattr(delta, attr)
-                        for attr in dir(delta)
-                        if not attr.startswith("_")
-                    },
-                )
+                # Prepare streaming parameters
+                stream_params = {
+                    "model": model_id,
+                    "messages": message_dicts,
+                    "stream": True,  # Enable streaming
+                    **completion_params,
+                }
 
-            text_chunk: str | None = _extract_text_from_content(delta_content)
+                # Add tools if provided
+                if tools:
+                    sanitized_tools = _sanitize_tools_for_litellm(tools)
+                    stream_params["tools"] = sanitized_tools
+                    stream_params["tool_choice"] = tool_choice
 
-            # Some SDKs wrap content under delta.message["content"]
-            if not text_chunk:
-                message_obj = _safe_get_attr(delta, "message")
-                if message_obj is not None:
-                    msg_content = _safe_get_attr(message_obj, "content")
-                    text_chunk = _extract_text_from_content(msg_content)
-
-            if not text_chunk and delta_content is not None:
-                # Fallback: coerce non-string content to string if present
-                text_chunk = str(delta_content)
-
-            if text_chunk:
-                logger.debug("Streaming content chunk: %s", text_chunk)
-                yield LLMStreamEvent(type="content", content=text_chunk)
-                content_emitted = True
-
-            # Extract tool calls
-            raw_tool_calls = _safe_get_attr(delta, "tool_calls")
-            tool_calls_delta = (
-                raw_tool_calls if isinstance(raw_tool_calls, list) else []
-            )
-
-            for tc_delta in tool_calls_delta:
-                raw_idx = _safe_get_attr(tc_delta, "index")
-                if isinstance(raw_idx, int):
-                    idx = raw_idx
-                else:
-                    logger.warning(
-                        "Tool call delta missing index attribute, defaulting to 0. "
-                        "This may cause issues with multiple tool calls."
+                if DEBUG_LLM_MESSAGES_ENABLED:
+                    logger.info(
+                        f"LLM Streaming Request to {model_id}:\n"
+                        f"{_format_serialized_messages_for_debug(message_dicts, tools, tool_choice)}"
                     )
-                    idx = 0
-                tc_id = _safe_get_attr(tc_delta, "id")
-                tc_type = _safe_get_attr(tc_delta, "type") or "function"
-                func_name = ""
-                func_args = ""
-                function_delta = _safe_get_attr(tc_delta, "function")
-                if function_delta:
-                    func_name_attr = _safe_get_attr(function_delta, "name")
-                    func_args_attr = _safe_get_attr(function_delta, "arguments")
-                    if isinstance(func_name_attr, str):
-                        func_name = func_name_attr
-                    if isinstance(func_args_attr, str):
-                        func_args = func_args_attr
-                    elif func_args_attr is not None:
-                        try:
-                            func_args = json.dumps(func_args_attr)
-                        except Exception:  # pragma: no cover - best effort fallback
-                            func_args = str(func_args_attr)
 
-                if idx not in current_tool_calls:
-                    current_tool_calls[idx] = {
-                        "id": tc_id,
-                        "type": tc_type,
-                        "function": {"name": "", "arguments": ""},
-                    }
-
-                tc_data = current_tool_calls[idx]
-                if tc_id:
-                    tc_data["id"] = tc_id
-                if tc_type:
-                    tc_data["type"] = tc_type
-                if func_name:
-                    tc_data["function"]["name"] = func_name
-                if func_args:
-                    tc_data["function"]["arguments"] += func_args
-
-        # Emit any remaining tool calls
-        for tc_data in current_tool_calls.values():
-            if tc_data["id"] and tc_data["function"]["name"]:
-                tool_call = ToolCallItem(
-                    id=tc_data["id"],
-                    type=tc_data["type"],
-                    function=ToolCallFunction(
-                        name=tc_data["function"]["name"],
-                        arguments=tc_data["function"]["arguments"] or "{}",
-                    ),
-                )
-                yield LLMStreamEvent(
-                    type="tool_call",
-                    tool_call=tool_call,
-                    tool_call_id=tc_data["id"],
+                logger.debug(
+                    f"Starting streaming response from LiteLLM model {model_id} "
+                    f"with {len(message_dicts)} messages. Tools: {bool(tools)}"
                 )
 
-        # If we never emitted content (e.g., provider returned only a terminal chunk),
-        # fall back to a non-streaming completion to preserve expected behaviour.
-        if not content_emitted:
-            try:
-                fallback_output = await self._attempt_completion(
-                    model_id=model_id,
-                    messages=list(messages),
-                    tools=tools,
-                    tool_choice=tool_choice,
-                    specific_model_params=specific_model_params,
-                )
-                if fallback_output.content:
-                    yield LLMStreamEvent(
-                        type="content", content=fallback_output.content
+                # Make streaming API call
+                stream = await acompletion(**stream_params)
+
+                # Track current tool calls being built
+                # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
+                current_tool_calls: dict[int, dict[str, Any]] = {}
+                chunk: Any | None = None
+                last_chunk_with_usage: Any | None = None
+                content_emitted = False
+
+                async for chunk in stream:  # type: ignore[misc]
+                    if not chunk or not chunk.choices:
+                        continue
+
+                    try:
+                        logger.debug(
+                            "Raw streaming chunk choice dump: %s",
+                            chunk.choices[0].model_dump()
+                            if hasattr(chunk.choices[0], "model_dump")
+                            else chunk.choices[0],
+                        )
+                    except Exception:
+                        logger.debug(
+                            "Could not dump streaming chunk choice", exc_info=True
+                        )
+
+                    delta = chunk.choices[0].delta
+                    if not delta:
+                        continue
+
+                    last_chunk_with_usage = chunk
+
+                    logger.debug(
+                        "Streaming delta payload: %s (type=%s)", delta, type(delta)
                     )
-                    content_emitted = True
-                if fallback_output.tool_calls:
-                    for tc in fallback_output.tool_calls:
+
+                    # Extract content
+                    delta_content = _safe_get_attr(delta, "content")
+                    if delta_content is None:
+                        logger.debug(
+                            "Delta content missing; available attributes: %s",
+                            {
+                                attr: getattr(delta, attr)
+                                for attr in dir(delta)
+                                if not attr.startswith("_")
+                            },
+                        )
+
+                    text_chunk: str | None = _extract_text_from_content(delta_content)
+
+                    # Some SDKs wrap content under delta.message["content"]
+                    if not text_chunk:
+                        message_obj = _safe_get_attr(delta, "message")
+                        if message_obj is not None:
+                            msg_content = _safe_get_attr(message_obj, "content")
+                            text_chunk = _extract_text_from_content(msg_content)
+
+                    if not text_chunk and delta_content is not None:
+                        # Fallback: coerce non-string content to string if present
+                        text_chunk = str(delta_content)
+
+                    if text_chunk:
+                        logger.debug("Streaming content chunk: %s", text_chunk)
+                        yield LLMStreamEvent(type="content", content=text_chunk)
+                        content_emitted = True
+
+                    # Extract tool calls
+                    raw_tool_calls = _safe_get_attr(delta, "tool_calls")
+                    tool_calls_delta = (
+                        raw_tool_calls if isinstance(raw_tool_calls, list) else []
+                    )
+
+                    for tc_delta in tool_calls_delta:
+                        raw_idx = _safe_get_attr(tc_delta, "index")
+                        if isinstance(raw_idx, int):
+                            idx = raw_idx
+                        else:
+                            logger.warning(
+                                "Tool call delta missing index attribute, defaulting to 0. "
+                                "This may cause issues with multiple tool calls."
+                            )
+                            idx = 0
+                        tc_id = _safe_get_attr(tc_delta, "id")
+                        tc_type = _safe_get_attr(tc_delta, "type") or "function"
+                        func_name = ""
+                        func_args = ""
+                        function_delta = _safe_get_attr(tc_delta, "function")
+                        if function_delta:
+                            func_name_attr = _safe_get_attr(function_delta, "name")
+                            func_args_attr = _safe_get_attr(function_delta, "arguments")
+                            if isinstance(func_name_attr, str):
+                                func_name = func_name_attr
+                            if isinstance(func_args_attr, str):
+                                func_args = func_args_attr
+                            elif func_args_attr is not None:
+                                try:
+                                    func_args = json.dumps(func_args_attr)
+                                except (
+                                    Exception
+                                ):  # pragma: no cover - best effort fallback
+                                    func_args = str(func_args_attr)
+
+                        if idx not in current_tool_calls:
+                            current_tool_calls[idx] = {
+                                "id": tc_id,
+                                "type": tc_type,
+                                "function": {"name": "", "arguments": ""},
+                            }
+
+                        tc_data = current_tool_calls[idx]
+                        if tc_id:
+                            tc_data["id"] = tc_id
+                        if tc_type:
+                            tc_data["type"] = tc_type
+                        if func_name:
+                            tc_data["function"]["name"] = func_name
+                        if func_args:
+                            tc_data["function"]["arguments"] += func_args
+
+                # Emit any remaining tool calls
+                for tc_data in current_tool_calls.values():
+                    if tc_data["id"] and tc_data["function"]["name"]:
+                        tool_call = ToolCallItem(
+                            id=tc_data["id"],
+                            type=tc_data["type"],
+                            function=ToolCallFunction(
+                                name=tc_data["function"]["name"],
+                                arguments=tc_data["function"]["arguments"] or "{}",
+                            ),
+                        )
                         yield LLMStreamEvent(
                             type="tool_call",
-                            tool_call=tc,
-                            tool_call_id=tc.id,
+                            tool_call=tool_call,
+                            tool_call_id=tc_data["id"],
                         )
-                if fallback_output.reasoning_info:
-                    yield LLMStreamEvent(
-                        type="done",
-                        metadata={"reasoning_info": fallback_output.reasoning_info},
-                    )
-                    return
-            except Exception as exc:  # pragma: no cover - best effort fallback
-                logger.debug("Fallback non-streaming completion failed: %s", exc)
 
-        # Extract usage info if available
-        metadata: StreamingMetadata = {}
-        if (
-            last_chunk_with_usage
-            and hasattr(last_chunk_with_usage, "usage")
-            and last_chunk_with_usage.usage
-        ):
-            try:
-                metadata["reasoning_info"] = last_chunk_with_usage.usage.model_dump(
-                    mode="json"
-                )
-            except Exception as e:
-                logger.warning(
-                    f"Could not serialize streaming usage data: {e}", exc_info=False
-                )
+                # If we never emitted content (e.g., provider returned only a terminal chunk),
+                # fall back to a non-streaming completion to preserve expected behaviour.
+                if not content_emitted:
+                    try:
+                        fallback_output = await self._attempt_completion(
+                            model_id=model_id,
+                            messages=list(messages),
+                            tools=tools,
+                            tool_choice=tool_choice,
+                            specific_model_params=specific_model_params,
+                        )
+                        if fallback_output.content:
+                            yield LLMStreamEvent(
+                                type="content", content=fallback_output.content
+                            )
+                            content_emitted = True
+                        if fallback_output.tool_calls:
+                            for tc in fallback_output.tool_calls:
+                                yield LLMStreamEvent(
+                                    type="tool_call",
+                                    tool_call=tc,
+                                    tool_call_id=tc.id,
+                                )
+                        if fallback_output.reasoning_info:
+                            yield LLMStreamEvent(
+                                type="done",
+                                metadata={
+                                    "reasoning_info": fallback_output.reasoning_info
+                                },
+                            )
+                            return
+                    except Exception as exc:  # pragma: no cover - best effort fallback
+                        logger.debug(
+                            "Fallback non-streaming completion failed: %s", exc
+                        )
 
-        # Signal completion
-        yield LLMStreamEvent(type="done", metadata=metadata)
+                # Extract usage info if available
+                metadata: StreamingMetadata = {}
+                if (
+                    last_chunk_with_usage
+                    and hasattr(last_chunk_with_usage, "usage")
+                    and last_chunk_with_usage.usage
+                ):
+                    try:
+                        usage_data = last_chunk_with_usage.usage.model_dump(mode="json")
+                        metadata["reasoning_info"] = usage_data
+                        if isinstance(usage_data, dict):
+                            span.set_attribute(
+                                "gen_ai.usage.input_tokens",
+                                usage_data.get("prompt_tokens", 0),
+                            )
+                            span.set_attribute(
+                                "gen_ai.usage.output_tokens",
+                                usage_data.get("completion_tokens", 0),
+                            )
+                    except Exception as e:
+                        logger.warning(
+                            f"Could not serialize streaming usage data: {e}",
+                            exc_info=False,
+                        )
+
+                # Signal completion
+                yield LLMStreamEvent(type="done", metadata=metadata)
+        except Exception as e:
+            span.set_status(OtelStatusCode.ERROR, str(e))
+            span.record_exception(e)
+            raise
+        finally:
+            span.end()
 
     async def _generate_response_stream(
         self,
@@ -2022,113 +2092,133 @@ class LiteLLMClient(BaseLLMClient):
         Raises:
             StructuredOutputError: If response cannot be parsed/validated after retries
         """
-        # Convert messages to dict format for LiteLLM
-        messages_list = list(messages)
-        messages_list = self._process_tool_messages(messages_list)
-        message_dicts = [message_to_json_dict(msg) for msg in messages_list]
+        with _otel_tracer.start_as_current_span(
+            "llm.provider.generate_structured",
+            attributes={
+                "gen_ai.system": "litellm",
+                "gen_ai.request.model": self.model,
+            },
+        ) as span:
+            messages_list = list(messages)
+            messages_list = self._process_tool_messages(messages_list)
+            message_dicts = [message_to_json_dict(msg) for msg in messages_list]
 
-        last_error: Exception | None = None
-        raw_response: str | None = None
+            last_error: Exception | None = None
+            raw_response: str | None = None
 
-        for attempt in range(max_retries + 1):
-            try:
-                # Use LiteLLM's native response_format with Pydantic model
-                # LiteLLM automatically handles conversion to provider-specific format
-                completion_params = self.default_kwargs.copy()
+            for attempt in range(max_retries + 1):
+                try:
+                    completion_params = self.default_kwargs.copy()
 
-                response_obj = await acompletion(
-                    model=self.model,
-                    messages=message_dicts,
-                    response_format=response_model,
-                    **completion_params,  # type: ignore[reportArgumentType] # LiteLLM accepts dynamic kwargs
-                )
-                response = cast("ModelResponse", response_obj)
+                    response_obj = await acompletion(
+                        model=self.model,
+                        messages=message_dicts,
+                        response_format=response_model,
+                        **completion_params,  # type: ignore[reportArgumentType] # LiteLLM accepts dynamic kwargs
+                    )
+                    response = cast("ModelResponse", response_obj)
 
-                # Extract the response content
-                # type: ignore needed - LiteLLM's ModelResponse type hints don't fully reflect
-                # that non-streaming responses have .message on choices
-                if not response.choices or not response.choices[0].message:  # type: ignore[attr-defined]
-                    raise ValueError("LLM returned empty response")
+                    # type: ignore needed - LiteLLM's ModelResponse type hints don't fully reflect
+                    # that non-streaming responses have .message on choices
+                    if not response.choices or not response.choices[0].message:  # type: ignore[attr-defined]
+                        raise ValueError("LLM returned empty response")
 
-                message = response.choices[0].message  # type: ignore[attr-defined]
-                content = message.content
+                    message = response.choices[0].message  # type: ignore[attr-defined]
+                    content = message.content
 
-                if not content:
-                    raise ValueError("LLM returned empty content")
+                    if not content:
+                        raise ValueError("LLM returned empty content")
 
-                raw_response = content
+                    raw_response = content
 
-                # LiteLLM should return valid JSON, but we still validate with Pydantic
-                return response_model.model_validate_json(content)
+                    result = response_model.model_validate_json(content)
+                    if hasattr(response, "usage") and response.usage:  # type: ignore[attr-defined]
+                        try:
+                            usage_data = response.usage.model_dump(mode="json")  # type: ignore[attr-defined]
+                            if isinstance(usage_data, dict):
+                                span.set_attribute(
+                                    "gen_ai.usage.input_tokens",
+                                    usage_data.get("prompt_tokens", 0),
+                                )
+                                span.set_attribute(
+                                    "gen_ai.usage.output_tokens",
+                                    usage_data.get("completion_tokens", 0),
+                                )
+                        except Exception:
+                            pass
+                    return result
 
-            except ValidationError as e:
-                last_error = e
-                logger.warning(
-                    f"Structured output validation failed (attempt {attempt + 1}/{max_retries + 1}): {e}"
-                )
+                except ValidationError as e:
+                    last_error = e
+                    logger.warning(
+                        f"Structured output validation failed (attempt {attempt + 1}/{max_retries + 1}): {e}"
+                    )
 
-                if attempt < max_retries:
-                    # Add error feedback for retry
-                    message_dicts.append({
-                        "role": "assistant",
-                        "content": raw_response or "",
-                    })
-                    message_dicts.append({
-                        "role": "user",
-                        "content": (
-                            f"Your response was not valid JSON matching the required schema. "
-                            f"Error: {e}\n\n"
-                            f"Please try again with valid JSON."
-                        ),
-                    })
+                    if attempt < max_retries:
+                        message_dicts.append({
+                            "role": "assistant",
+                            "content": raw_response or "",
+                        })
+                        message_dicts.append({
+                            "role": "user",
+                            "content": (
+                                f"Your response was not valid JSON matching the required schema. "
+                                f"Error: {e}\n\n"
+                                f"Please try again with valid JSON."
+                            ),
+                        })
 
-            except json.JSONDecodeError as e:
-                last_error = e
-                logger.warning(
-                    f"Structured output JSON parsing failed (attempt {attempt + 1}/{max_retries + 1}): {e}"
-                )
+                except json.JSONDecodeError as e:
+                    last_error = e
+                    logger.warning(
+                        f"Structured output JSON parsing failed (attempt {attempt + 1}/{max_retries + 1}): {e}"
+                    )
 
-                if attempt < max_retries:
-                    message_dicts.append({
-                        "role": "assistant",
-                        "content": raw_response or "",
-                    })
-                    message_dicts.append({
-                        "role": "user",
-                        "content": (
-                            f"Your response was not valid JSON. "
-                            f"Parse error: {e}\n\n"
-                            f"Please respond with valid JSON only."
-                        ),
-                    })
+                    if attempt < max_retries:
+                        message_dicts.append({
+                            "role": "assistant",
+                            "content": raw_response or "",
+                        })
+                        message_dicts.append({
+                            "role": "user",
+                            "content": (
+                                f"Your response was not valid JSON. "
+                                f"Parse error: {e}\n\n"
+                                f"Please respond with valid JSON only."
+                            ),
+                        })
 
-            except (
-                APIConnectionError,
-                APIError,
-                BadRequestError,
-                RateLimitError,
-                ServiceUnavailableError,
-                Timeout,
-            ) as e:
-                # For provider errors, don't retry at this level
-                # (the caller can use RetryingLLMClient for that)
-                last_error = e
-                logger.error(f"LLM provider error in structured output generation: {e}")
-                break
+                except (
+                    APIConnectionError,
+                    APIError,
+                    BadRequestError,
+                    RateLimitError,
+                    ServiceUnavailableError,
+                    Timeout,
+                ) as e:
+                    last_error = e
+                    logger.error(
+                        f"LLM provider error in structured output generation: {e}"
+                    )
+                    break
 
-            except Exception as e:
-                last_error = e
-                logger.error(f"Unexpected error in structured output generation: {e}")
-                break
+                except Exception as e:
+                    last_error = e
+                    logger.error(
+                        f"Unexpected error in structured output generation: {e}"
+                    )
+                    break
 
-        # All retries exhausted
-        raise StructuredOutputError(
-            message=f"Failed to generate valid structured output after {max_retries + 1} attempts",
-            provider=self.model.split("/")[0],
-            model=self.model,
-            raw_response=raw_response,
-            validation_error=last_error,
-        )
+            span.set_status(OtelStatusCode.ERROR, str(last_error))
+            if last_error:
+                span.record_exception(last_error)
+            raise StructuredOutputError(
+                message=f"Failed to generate valid structured output after {max_retries + 1} attempts",
+                provider=self.model.split("/")[0],
+                model=self.model,
+                raw_response=raw_response,
+                validation_error=last_error,
+            )
 
 
 class RecordingLLMClient:

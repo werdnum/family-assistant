@@ -23,6 +23,8 @@ import aiofiles
 from google import genai
 from google.genai import types
 from google.genai.client import DebugConfig
+from opentelemetry import trace
+from opentelemetry.trace import StatusCode
 
 from family_assistant.llm import (
     BaseLLMClient,
@@ -61,6 +63,7 @@ from ..base import (
 )
 
 logger = logging.getLogger(__name__)
+tracer = trace.get_tracer(__name__)
 
 # Maps Interactions API ErrorEvent.error.code values to our typed exception classes.
 # See https://cloud.google.com/apis/design/errors for canonical error codes.
@@ -785,291 +788,329 @@ class GoogleGenAIClient(BaseLLMClient):
         # Validate user input before processing
         self._validate_user_input(messages)
 
-        # Request tracking for diagnostics
-        start_time = time.monotonic()
-        request_timestamp = datetime.now(UTC)
-        request_id = f"google_{uuid.uuid4().hex[:16]}"
+        with tracer.start_as_current_span(
+            "llm.provider.generate",
+            attributes={
+                "gen_ai.system": "google-genai",
+                "gen_ai.request.model": self.model_name,
+            },
+        ) as span:
+            # Request tracking for diagnostics
+            start_time = time.monotonic()
+            request_timestamp = datetime.now(UTC)
+            request_id = f"google_{uuid.uuid4().hex[:16]}"
 
-        # Convert messages to dict format for request buffer recording
-        message_dicts = [message_to_json_dict(msg) for msg in messages]
+            # Convert messages to dict format for request buffer recording
+            message_dicts = [message_to_json_dict(msg) for msg in messages]
 
-        try:
-            # Keep messages as typed objects for processing
-            typed_messages = list(messages)
+            try:
+                # Keep messages as typed objects for processing
+                typed_messages = list(messages)
 
-            # Debug logging if enabled
-            if self.should_debug_messages:
-                logger.info(
-                    f"=== LLM Request to {self.model_name} ===\n"
-                    f"{_format_messages_for_debug(typed_messages, tools, tool_choice)}"
+                # Debug logging if enabled
+                if self.should_debug_messages:
+                    logger.info(
+                        f"=== LLM Request to {self.model_name} ===\n"
+                        f"{_format_messages_for_debug(typed_messages, tools, tool_choice)}"
+                    )
+
+                # Process tool attachments with typed messages
+                processed_typed_messages = self._process_tool_messages(typed_messages)
+
+                # Convert messages to format expected by new API
+                # _convert_messages_to_genai_format expects typed LLMMessage objects
+                contents = self._convert_messages_to_genai_format(
+                    processed_typed_messages
                 )
 
-            # Process tool attachments with typed messages
-            processed_typed_messages = self._process_tool_messages(typed_messages)
-
-            # Convert messages to format expected by new API
-            # _convert_messages_to_genai_format expects typed LLMMessage objects
-            contents = self._convert_messages_to_genai_format(processed_typed_messages)
-
-            # Debug: Log post-processed messages if enabled
-            if self.should_debug_messages:
-                logger.info(
-                    f"=== After _process_tool_messages ({len(processed_typed_messages)} messages) ===\n"
-                    f"{_format_messages_for_debug(processed_typed_messages, None, None)}"
-                )
-                debug_lines = ["--- Gemini SDK payload (pre-stream) ---"]
-                for content in contents:
-                    if not isinstance(content, types.Content):
-                        continue
-                    part_descriptions: list[str] = []
-                    for part in getattr(content, "parts", []) or []:
-                        ts = getattr(part, "thought_signature", None)
-                        fc = getattr(part, "function_call", None)
-                        fr = getattr(part, "function_response", None)
-                        ts_len = len(ts) if isinstance(ts, (bytes, bytearray)) else 0
-                        fc_name = fc.name if fc else None
-                        fr_name = fr.name if fr else None
-                        part_descriptions.append(
-                            f"part(ts_len={ts_len}, fc={fc_name}, fr={fr_name})"
+                # Debug: Log post-processed messages if enabled
+                if self.should_debug_messages:
+                    logger.info(
+                        f"=== After _process_tool_messages ({len(processed_typed_messages)} messages) ===\n"
+                        f"{_format_messages_for_debug(processed_typed_messages, None, None)}"
+                    )
+                    debug_lines = ["--- Gemini SDK payload (pre-stream) ---"]
+                    for content in contents:
+                        if not isinstance(content, types.Content):
+                            continue
+                        part_descriptions: list[str] = []
+                        for part in getattr(content, "parts", []) or []:
+                            ts = getattr(part, "thought_signature", None)
+                            fc = getattr(part, "function_call", None)
+                            fr = getattr(part, "function_response", None)
+                            ts_len = (
+                                len(ts) if isinstance(ts, (bytes, bytearray)) else 0
+                            )
+                            fc_name = fc.name if fc else None
+                            fr_name = fr.name if fr else None
+                            part_descriptions.append(
+                                f"part(ts_len={ts_len}, fc={fc_name}, fr={fr_name})"
+                            )
+                        debug_lines.append(
+                            f"{content.role}: " + ", ".join(part_descriptions)
                         )
-                    debug_lines.append(
-                        f"{content.role}: " + ", ".join(part_descriptions)
-                    )
-                logger.info("\n".join(debug_lines))
+                    logger.info("\n".join(debug_lines))
 
-            # Build generation config
-            config_params = {
-                **self.default_kwargs,
-                **self._get_model_specific_params(self.model_name),
-            }
-
-            # Map common parameters
-            generation_config = types.GenerateContentConfig()
-            # Set media resolution to HIGH for all requests (affects images, PDFs, videos)
-            generation_config.media_resolution = (
-                types.MediaResolution.MEDIA_RESOLUTION_HIGH
-            )
-
-            if "temperature" in config_params:
-                generation_config.temperature = float(config_params["temperature"])
-            if "max_tokens" in config_params:
-                generation_config.max_output_tokens = int(config_params["max_tokens"])
-            if "top_p" in config_params:
-                generation_config.top_p = float(config_params["top_p"])
-            if "top_k" in config_params:
-                generation_config.top_k = int(config_params["top_k"])
-
-            # Prepare all tools (function tools + grounding tools)
-            # Pass tool_choice to respect "none" mode which returns empty list
-            all_tools = self._prepare_all_tools(tools, tool_choice)
-
-            # Add tools to config if any are available
-            if all_tools:
-                generation_config.tools = all_tools
-                # Disable automatic function calling so we can manually handle
-                # function calls and thought signatures
-                generation_config.automatic_function_calling = (
-                    types.AutomaticFunctionCallingConfig(disable=True)
-                )
-
-            # Configure tool behavior based on tool_choice setting
-            if tool_choice == "none":
-                # Explicitly configure the model to not call functions
-                # This ensures the model returns text even if tools were provided earlier in conversation
-                generation_config.tool_config = types.ToolConfig(
-                    function_calling_config=types.FunctionCallingConfig(
-                        mode=types.FunctionCallingConfigMode.NONE
-                    )
-                )
-            elif tool_choice == "required":
-                # Force the model to call any available tool
-                generation_config.tool_config = types.ToolConfig(
-                    function_calling_config=types.FunctionCallingConfig(
-                        mode=types.FunctionCallingConfigMode.ANY
-                    )
-                )
-            elif tool_choice and tool_choice not in {"auto", "required"}:
-                # Specific tool name: restrict to calling only this tool
-                generation_config.tool_config = types.ToolConfig(
-                    function_calling_config=types.FunctionCallingConfig(
-                        mode=types.FunctionCallingConfigMode.ANY,
-                        allowed_function_names=[tool_choice],
-                    )
-                )
-
-            response = await self.client.aio.models.generate_content(
-                model=self.model_name,
-                contents=contents,
-                config=generation_config,
-            )
-
-            # Extract content from response
-            content = None
-            if hasattr(response, "text"):
-                content = response.text
-            elif hasattr(response, "candidates") and response.candidates:
-                # New API structure - get text from first candidate
-                candidate = response.candidates[0]
-                if (
-                    hasattr(candidate, "content")
-                    and candidate.content
-                    and hasattr(candidate.content, "parts")
-                ):
-                    parts = candidate.content.parts
-                    # Collect text from non-thought parts only
-                    if parts:
-                        text_parts = []
-                        for part in parts:
-                            # Skip thought parts - they're for debugging only
-                            is_thought = hasattr(part, "thought") and part.thought
-                            if not is_thought and hasattr(part, "text") and part.text:
-                                text_parts.append(part.text)
-                        if text_parts:
-                            content = "".join(text_parts)
-
-            # Extract tool calls and thought signatures from response
-            tool_calls = None
-            thought_summaries = []  # Initialize early to avoid UnboundLocalError
-
-            if hasattr(response, "candidates") and response.candidates:
-                candidate = response.candidates[0]
-                if (
-                    hasattr(candidate, "content")
-                    and candidate.content
-                    and hasattr(candidate.content, "parts")
-                    and candidate.content.parts
-                ):
-                    found_tool_calls = []
-
-                    for part_index, part in enumerate(candidate.content.parts):
-                        # Extract thought summary if present (readable for debugging/introspection)
-                        if hasattr(part, "thought") and part.thought:
-                            # When part.thought is True, the thought text is in part.text
-                            thought_text = getattr(part, "text", "")
-                            thought_summaries.append({
-                                "part_index": part_index,
-                                "summary": thought_text,
-                            })
-
-                        if hasattr(part, "function_call") and part.function_call:
-                            # Convert Google function call to our format
-                            func_call = part.function_call
-                            if not func_call.name:
-                                logger.warning(
-                                    "Received a tool call without a name: %s", func_call
-                                )
-                                continue
-
-                            # Extract thought signature for THIS specific part if present
-                            thought_sig = None
-                            if (
-                                hasattr(part, "thought_signature")
-                                and part.thought_signature
-                            ):
-                                # Wrap in opaque GeminiThoughtSignature - no processing
-                                thought_sig = GeminiThoughtSignature(
-                                    part.thought_signature
-                                )
-
-                            # Store func_call with its thought signature
-                            found_tool_calls.append((func_call, thought_sig))
-
-                    # Create ToolCallItem objects, each with its own thought signature if present
-                    if found_tool_calls:
-                        tool_calls = []
-                        for func_call, thought_sig in found_tool_calls:
-                            provider_metadata = None
-                            if thought_sig:
-                                # Create GeminiProviderMetadata object with thought signature
-                                provider_metadata = GeminiProviderMetadata(
-                                    thought_signature=thought_sig
-                                )
-
-                            # Preserve the original args structure as provided by the SDK
-                            args_value = (
-                                func_call.args if func_call.args is not None else {}
-                            )
-                            func_call_id = (
-                                func_call.id if isinstance(func_call.id, str) else None
-                            )
-                            call_id = func_call_id or f"call_{uuid.uuid4().hex[:24]}"
-
-                            tool_calls.append(
-                                ToolCallItem(
-                                    id=call_id,
-                                    type="function",
-                                    function=ToolCallFunction(
-                                        name=func_call.name,
-                                        arguments=args_value,
-                                    ),
-                                    provider_metadata=provider_metadata,
-                                )
-                            )
-
-            # Extract usage information if available
-            reasoning_info = None
-            if hasattr(response, "usage_metadata") and response.usage_metadata:
-                usage = response.usage_metadata
-                reasoning_info = {
-                    "prompt_tokens": getattr(usage, "prompt_token_count", 0),
-                    "completion_tokens": getattr(usage, "candidates_token_count", 0),
-                    "total_tokens": getattr(usage, "total_token_count", 0),
+                # Build generation config
+                config_params = {
+                    **self.default_kwargs,
+                    **self._get_model_specific_params(self.model_name),
                 }
 
-            # Add thought summaries to reasoning_info for debugging/introspection
-            if thought_summaries:
-                if reasoning_info is None:
-                    reasoning_info = {}
-                reasoning_info["thought_summaries"] = thought_summaries
-
-            llm_output = LLMOutput(
-                content=content,
-                tool_calls=tool_calls,
-                reasoning_info=reasoning_info,
-                provider_metadata=None,  # Thought signatures are now on individual tool calls
-            )
-
-            # Record successful request to diagnostics buffer
-            duration_ms = (time.monotonic() - start_time) * 1000
-            try:
-                get_request_buffer().add(
-                    LLMRequestRecord(
-                        timestamp=request_timestamp,
-                        request_id=request_id,
-                        model_id=self.model_name,
-                        messages=message_dicts,
-                        tools=tools,
-                        tool_choice=tool_choice,
-                        response=asdict(llm_output),
-                        duration_ms=duration_ms,
-                        error=None,
-                    )
+                # Map common parameters
+                generation_config = types.GenerateContentConfig()
+                # Set media resolution to HIGH for all requests (affects images, PDFs, videos)
+                generation_config.media_resolution = (
+                    types.MediaResolution.MEDIA_RESOLUTION_HIGH
                 )
-            except Exception as record_err:
-                logger.debug(f"Failed to record LLM request: {record_err}")
 
-            return llm_output
-
-        except Exception as e:
-            # Record failed request to diagnostics buffer
-            duration_ms = (time.monotonic() - start_time) * 1000
-            try:
-                get_request_buffer().add(
-                    LLMRequestRecord(
-                        timestamp=request_timestamp,
-                        request_id=request_id,
-                        model_id=self.model_name,
-                        messages=message_dicts,
-                        tools=tools,
-                        tool_choice=tool_choice,
-                        response=None,
-                        duration_ms=duration_ms,
-                        error=str(e),
+                if "temperature" in config_params:
+                    generation_config.temperature = float(config_params["temperature"])
+                if "max_tokens" in config_params:
+                    generation_config.max_output_tokens = int(
+                        config_params["max_tokens"]
                     )
+                if "top_p" in config_params:
+                    generation_config.top_p = float(config_params["top_p"])
+                if "top_k" in config_params:
+                    generation_config.top_k = int(config_params["top_k"])
+
+                # Prepare all tools (function tools + grounding tools)
+                # Pass tool_choice to respect "none" mode which returns empty list
+                all_tools = self._prepare_all_tools(tools, tool_choice)
+
+                # Add tools to config if any are available
+                if all_tools:
+                    generation_config.tools = all_tools
+                    # Disable automatic function calling so we can manually handle
+                    # function calls and thought signatures
+                    generation_config.automatic_function_calling = (
+                        types.AutomaticFunctionCallingConfig(disable=True)
+                    )
+
+                # Configure tool behavior based on tool_choice setting
+                if tool_choice == "none":
+                    # Explicitly configure the model to not call functions
+                    # This ensures the model returns text even if tools were provided earlier in conversation
+                    generation_config.tool_config = types.ToolConfig(
+                        function_calling_config=types.FunctionCallingConfig(
+                            mode=types.FunctionCallingConfigMode.NONE
+                        )
+                    )
+                elif tool_choice == "required":
+                    # Force the model to call any available tool
+                    generation_config.tool_config = types.ToolConfig(
+                        function_calling_config=types.FunctionCallingConfig(
+                            mode=types.FunctionCallingConfigMode.ANY
+                        )
+                    )
+                elif tool_choice and tool_choice not in {"auto", "required"}:
+                    # Specific tool name: restrict to calling only this tool
+                    generation_config.tool_config = types.ToolConfig(
+                        function_calling_config=types.FunctionCallingConfig(
+                            mode=types.FunctionCallingConfigMode.ANY,
+                            allowed_function_names=[tool_choice],
+                        )
+                    )
+
+                response = await self.client.aio.models.generate_content(
+                    model=self.model_name,
+                    contents=contents,
+                    config=generation_config,
                 )
-            except Exception as record_err:
-                logger.debug(f"Failed to record LLM request error: {record_err}")
-            raise self._map_error_to_typed_exception(e) from e
+
+                # Extract content from response
+                content = None
+                if hasattr(response, "text"):
+                    content = response.text
+                elif hasattr(response, "candidates") and response.candidates:
+                    # New API structure - get text from first candidate
+                    candidate = response.candidates[0]
+                    if (
+                        hasattr(candidate, "content")
+                        and candidate.content
+                        and hasattr(candidate.content, "parts")
+                    ):
+                        parts = candidate.content.parts
+                        # Collect text from non-thought parts only
+                        if parts:
+                            text_parts = []
+                            for part in parts:
+                                # Skip thought parts - they're for debugging only
+                                is_thought = hasattr(part, "thought") and part.thought
+                                if (
+                                    not is_thought
+                                    and hasattr(part, "text")
+                                    and part.text
+                                ):
+                                    text_parts.append(part.text)
+                            if text_parts:
+                                content = "".join(text_parts)
+
+                # Extract tool calls and thought signatures from response
+                tool_calls = None
+                thought_summaries = []  # Initialize early to avoid UnboundLocalError
+
+                if hasattr(response, "candidates") and response.candidates:
+                    candidate = response.candidates[0]
+                    if (
+                        hasattr(candidate, "content")
+                        and candidate.content
+                        and hasattr(candidate.content, "parts")
+                        and candidate.content.parts
+                    ):
+                        found_tool_calls = []
+
+                        for part_index, part in enumerate(candidate.content.parts):
+                            # Extract thought summary if present (readable for debugging/introspection)
+                            if hasattr(part, "thought") and part.thought:
+                                # When part.thought is True, the thought text is in part.text
+                                thought_text = getattr(part, "text", "")
+                                thought_summaries.append({
+                                    "part_index": part_index,
+                                    "summary": thought_text,
+                                })
+
+                            if hasattr(part, "function_call") and part.function_call:
+                                # Convert Google function call to our format
+                                func_call = part.function_call
+                                if not func_call.name:
+                                    logger.warning(
+                                        "Received a tool call without a name: %s",
+                                        func_call,
+                                    )
+                                    continue
+
+                                # Extract thought signature for THIS specific part if present
+                                thought_sig = None
+                                if (
+                                    hasattr(part, "thought_signature")
+                                    and part.thought_signature
+                                ):
+                                    # Wrap in opaque GeminiThoughtSignature - no processing
+                                    thought_sig = GeminiThoughtSignature(
+                                        part.thought_signature
+                                    )
+
+                                # Store func_call with its thought signature
+                                found_tool_calls.append((func_call, thought_sig))
+
+                        # Create ToolCallItem objects, each with its own thought signature if present
+                        if found_tool_calls:
+                            tool_calls = []
+                            for func_call, thought_sig in found_tool_calls:
+                                provider_metadata = None
+                                if thought_sig:
+                                    # Create GeminiProviderMetadata object with thought signature
+                                    provider_metadata = GeminiProviderMetadata(
+                                        thought_signature=thought_sig
+                                    )
+
+                                # Preserve the original args structure as provided by the SDK
+                                args_value = (
+                                    func_call.args if func_call.args is not None else {}
+                                )
+                                func_call_id = (
+                                    func_call.id
+                                    if isinstance(func_call.id, str)
+                                    else None
+                                )
+                                call_id = (
+                                    func_call_id or f"call_{uuid.uuid4().hex[:24]}"
+                                )
+
+                                tool_calls.append(
+                                    ToolCallItem(
+                                        id=call_id,
+                                        type="function",
+                                        function=ToolCallFunction(
+                                            name=func_call.name,
+                                            arguments=args_value,
+                                        ),
+                                        provider_metadata=provider_metadata,
+                                    )
+                                )
+
+                # Extract usage information if available
+                reasoning_info = None
+                if hasattr(response, "usage_metadata") and response.usage_metadata:
+                    usage = response.usage_metadata
+                    reasoning_info = {
+                        "prompt_tokens": getattr(usage, "prompt_token_count", 0),
+                        "completion_tokens": getattr(
+                            usage, "candidates_token_count", 0
+                        ),
+                        "total_tokens": getattr(usage, "total_token_count", 0),
+                    }
+
+                # Add thought summaries to reasoning_info for debugging/introspection
+                if thought_summaries:
+                    if reasoning_info is None:
+                        reasoning_info = {}
+                    reasoning_info["thought_summaries"] = thought_summaries
+
+                llm_output = LLMOutput(
+                    content=content,
+                    tool_calls=tool_calls,
+                    reasoning_info=reasoning_info,
+                    provider_metadata=None,  # Thought signatures are now on individual tool calls
+                )
+
+                # Record successful request to diagnostics buffer
+                duration_ms = (time.monotonic() - start_time) * 1000
+                try:
+                    get_request_buffer().add(
+                        LLMRequestRecord(
+                            timestamp=request_timestamp,
+                            request_id=request_id,
+                            model_id=self.model_name,
+                            messages=message_dicts,
+                            tools=tools,
+                            tool_choice=tool_choice,
+                            response=asdict(llm_output),
+                            duration_ms=duration_ms,
+                            error=None,
+                        )
+                    )
+                except Exception as record_err:
+                    logger.debug(f"Failed to record LLM request: {record_err}")
+
+                if llm_output.reasoning_info:
+                    if "prompt_tokens" in llm_output.reasoning_info:
+                        span.set_attribute(
+                            "gen_ai.usage.input_tokens",
+                            llm_output.reasoning_info["prompt_tokens"],
+                        )
+                    if "completion_tokens" in llm_output.reasoning_info:
+                        span.set_attribute(
+                            "gen_ai.usage.output_tokens",
+                            llm_output.reasoning_info["completion_tokens"],
+                        )
+
+                return llm_output
+
+            except Exception as e:
+                span.set_status(StatusCode.ERROR, str(e))
+                span.record_exception(e)
+                # Record failed request to diagnostics buffer
+                duration_ms = (time.monotonic() - start_time) * 1000
+                try:
+                    get_request_buffer().add(
+                        LLMRequestRecord(
+                            timestamp=request_timestamp,
+                            request_id=request_id,
+                            model_id=self.model_name,
+                            messages=message_dicts,
+                            tools=tools,
+                            tool_choice=tool_choice,
+                            response=None,
+                            duration_ms=duration_ms,
+                            error=str(e),
+                        )
+                    )
+                except Exception as record_err:
+                    logger.debug(f"Failed to record LLM request error: {record_err}")
+                raise self._map_error_to_typed_exception(e) from e
 
     def _map_error_to_typed_exception(self, e: Exception) -> LLMProviderError:
         """Map a raw exception to a typed LLMProviderError subclass."""
@@ -1479,6 +1520,13 @@ class GoogleGenAIClient(BaseLLMClient):
         tool_choice: str | None = "auto",
     ) -> AsyncIterator[LLMStreamEvent]:
         """Internal async generator for streaming responses using Google GenAI."""
+        span = tracer.start_span(
+            "llm.provider.generate_stream",
+            attributes={
+                "gen_ai.system": "google-genai",
+                "gen_ai.request.model": self.model_name,
+            },
+        )
         # Request tracking for diagnostics
         start_time = time.monotonic()
         request_timestamp = datetime.now(UTC)
@@ -1584,90 +1632,98 @@ class GoogleGenAIClient(BaseLLMClient):
             part_index = 0
 
             # Process stream chunks
-            async for chunk in stream_response:  # type: ignore[misc]
-                # Extract text content from chunk
-                if hasattr(chunk, "text") and chunk.text:
-                    yield LLMStreamEvent(type="content", content=chunk.text)
-                    content_yielded = True
+            with trace.use_span(span, end_on_exit=False):
+                async for chunk in stream_response:  # type: ignore[misc]
+                    # Extract text content from chunk
+                    if hasattr(chunk, "text") and chunk.text:
+                        yield LLMStreamEvent(type="content", content=chunk.text)
+                        content_yielded = True
 
-                # Handle candidates structure for more complex responses
-                elif hasattr(chunk, "candidates") and chunk.candidates:
-                    for candidate in chunk.candidates:
-                        if (
-                            hasattr(candidate, "content")
-                            and candidate.content
-                            and hasattr(candidate.content, "parts")
-                            and candidate.content.parts is not None  # Fix None check
-                        ):
-                            for part in candidate.content.parts:
-                                # Extract thought summary if present (readable for debugging/introspection)
-                                is_thought = hasattr(part, "thought") and part.thought
-                                if is_thought:
-                                    # When part.thought is True, the thought text is in part.text
-                                    thought_text = getattr(part, "text", "")
-                                    thought_summaries.append({
-                                        "part_index": part_index,
-                                        "summary": thought_text,
-                                    })
-
-                                # Handle text parts - but skip thought parts (they're for debugging only)
-                                if (
-                                    not is_thought
-                                    and hasattr(part, "text")
-                                    and part.text
-                                ):
-                                    yield LLMStreamEvent(
-                                        type="content", content=part.text
+                    # Handle candidates structure for more complex responses
+                    elif hasattr(chunk, "candidates") and chunk.candidates:
+                        for candidate in chunk.candidates:
+                            if (
+                                hasattr(candidate, "content")
+                                and candidate.content
+                                and hasattr(candidate.content, "parts")
+                                and candidate.content.parts
+                                is not None  # Fix None check
+                            ):
+                                for part in candidate.content.parts:
+                                    # Extract thought summary if present (readable for debugging/introspection)
+                                    is_thought = (
+                                        hasattr(part, "thought") and part.thought
                                     )
-                                    content_yielded = True
+                                    if is_thought:
+                                        # When part.thought is True, the thought text is in part.text
+                                        thought_text = getattr(part, "text", "")
+                                        thought_summaries.append({
+                                            "part_index": part_index,
+                                            "summary": thought_text,
+                                        })
 
-                                # Accumulate function calls with their thought signatures
-                                if (
-                                    hasattr(part, "function_call")
-                                    and part.function_call
-                                ):
-                                    func_call = part.function_call
-                                    if func_call.name:
-                                        # Generate a unique ID for the tool call
-                                        tool_call_id = f"call_{uuid.uuid4().hex[:24]}"
+                                    # Handle text parts - but skip thought parts (they're for debugging only)
+                                    if (
+                                        not is_thought
+                                        and hasattr(part, "text")
+                                        and part.text
+                                    ):
+                                        yield LLMStreamEvent(
+                                            type="content", content=part.text
+                                        )
+                                        content_yielded = True
 
-                                        # Check if this part also has a thought signature
-                                        thought_sig = None
-                                        if (
-                                            hasattr(part, "thought_signature")
-                                            and part.thought_signature
-                                        ):
-                                            # DEBUG LOGGING
-                                            sig_len = len(part.thought_signature)
-                                            sig_preview = part.thought_signature[:10]
-                                            logger.warning(
-                                                f"DEBUG: Received thought_signature from SDK. Len: {sig_len}, Preview: {sig_preview!r}"
+                                    # Accumulate function calls with their thought signatures
+                                    if (
+                                        hasattr(part, "function_call")
+                                        and part.function_call
+                                    ):
+                                        func_call = part.function_call
+                                        if func_call.name:
+                                            # Generate a unique ID for the tool call
+                                            tool_call_id = (
+                                                f"call_{uuid.uuid4().hex[:24]}"
                                             )
 
-                                            # Wrap in opaque GeminiThoughtSignature - no processing
-                                            thought_sig = GeminiThoughtSignature(
-                                                part.thought_signature
-                                            )
-                                            if self.should_debug_messages:
-                                                logger.info(
-                                                    "Captured thought_signature for tool_call %s (len=%d)",
-                                                    tool_call_id,
-                                                    len(part.thought_signature),
+                                            # Check if this part also has a thought signature
+                                            thought_sig = None
+                                            if (
+                                                hasattr(part, "thought_signature")
+                                                and part.thought_signature
+                                            ):
+                                                # DEBUG LOGGING
+                                                sig_len = len(part.thought_signature)
+                                                sig_preview = part.thought_signature[
+                                                    :10
+                                                ]
+                                                logger.warning(
+                                                    f"DEBUG: Received thought_signature from SDK. Len: {sig_len}, Preview: {sig_preview!r}"
                                                 )
-                                        elif self.should_debug_messages:
-                                            logger.info(
-                                                "No thought_signature present for tool_call %s",
+
+                                                # Wrap in opaque GeminiThoughtSignature - no processing
+                                                thought_sig = GeminiThoughtSignature(
+                                                    part.thought_signature
+                                                )
+                                                if self.should_debug_messages:
+                                                    logger.info(
+                                                        "Captured thought_signature for tool_call %s (len=%d)",
+                                                        tool_call_id,
+                                                        len(part.thought_signature),
+                                                    )
+                                            elif self.should_debug_messages:
+                                                logger.info(
+                                                    "No thought_signature present for tool_call %s",
+                                                    tool_call_id,
+                                                )
+
+                                            # Store func_call with its signature for later emission
+                                            accumulated_tool_calls.append((
                                                 tool_call_id,
-                                            )
+                                                func_call,
+                                                thought_sig,
+                                            ))
 
-                                        # Store func_call with its signature for later emission
-                                        accumulated_tool_calls.append((
-                                            tool_call_id,
-                                            func_call,
-                                            thought_sig,
-                                        ))
-
-                                part_index += 1
+                                    part_index += 1
 
             # Emit accumulated tool calls, each with its own thought signature if present
             for tool_call_id, func_call, thought_sig in accumulated_tool_calls:
@@ -1729,6 +1785,8 @@ class GoogleGenAIClient(BaseLLMClient):
             yield LLMStreamEvent(type="done", metadata=done_metadata)
 
         except Exception as e:
+            span.set_status(StatusCode.ERROR, str(e))
+            span.record_exception(e)
             # Record failed streaming request to diagnostics buffer
             duration_ms = (time.monotonic() - start_time) * 1000
             try:
@@ -1772,3 +1830,5 @@ class GoogleGenAIClient(BaseLLMClient):
                     "model": self.model_name,
                 },
             )
+        finally:
+            span.end()

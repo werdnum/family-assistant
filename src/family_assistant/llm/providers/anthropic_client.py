@@ -30,6 +30,8 @@ from anthropic.types import (
     ToolUseBlockParam,
     URLImageSourceParam,
 )
+from opentelemetry import trace
+from opentelemetry.trace import StatusCode
 
 from family_assistant.llm import (
     BaseLLMClient,
@@ -75,6 +77,7 @@ _VALID_IMAGE_MEDIA_TYPES: set[str] = {
 
 
 logger = logging.getLogger(__name__)
+tracer = trace.get_tracer(__name__)
 
 
 class _StreamingToolAccumulator(TypedDict):
@@ -465,116 +468,133 @@ class AnthropicClient(BaseLLMClient):
         """Generate response using Anthropic API."""
         self._validate_user_input(messages)
 
-        start_time = time.monotonic()
-        request_timestamp = datetime.now(UTC)
-        request_id = f"anthropic_{uuid.uuid4().hex[:16]}"
+        with tracer.start_as_current_span(
+            "llm.provider.generate",
+            attributes={
+                "gen_ai.system": "anthropic",
+                "gen_ai.request.model": self.model,
+            },
+        ) as span:
+            start_time = time.monotonic()
+            request_timestamp = datetime.now(UTC)
+            request_id = f"anthropic_{uuid.uuid4().hex[:16]}"
 
-        message_dicts = [message_to_json_dict(msg) for msg in messages]
+            message_dicts = [message_to_json_dict(msg) for msg in messages]
 
-        try:
-            processed_messages = self._process_tool_messages(list(messages))
+            try:
+                processed_messages = self._process_tool_messages(list(messages))
 
-            system_prompt, api_messages = self._convert_messages_to_anthropic_format(
-                processed_messages
-            )
-
-            # ast-grep-ignore: no-dict-any - Anthropic API params dict has heterogeneous value types
-            params: dict[str, Any] = {
-                "model": self.model,
-                "messages": api_messages,
-                "max_tokens": 8192,
-                **self.default_kwargs,
-                **self._get_model_specific_params(self.model),
-            }
-
-            if system_prompt:
-                params["system"] = system_prompt
-
-            if tools:
-                params["tools"] = self._convert_tools_to_anthropic_format(tools)
-                anthropic_tool_choice = self._convert_tool_choice_to_anthropic(
-                    tool_choice
+                system_prompt, api_messages = (
+                    self._convert_messages_to_anthropic_format(processed_messages)
                 )
-                if anthropic_tool_choice:
-                    params["tool_choice"] = anthropic_tool_choice
 
-            response = await self.client.messages.create(**params)
-
-            # Parse response
-            content_text = ""
-            tool_calls = []
-
-            for block in response.content:
-                if block.type == "text":
-                    content_text += block.text
-                elif block.type == "tool_use":
-                    tool_calls.append(
-                        ToolCallItem(
-                            id=block.id,
-                            type="function",
-                            function=ToolCallFunction(
-                                name=block.name,
-                                arguments=json.dumps(block.input),
-                            ),
-                        )
-                    )
-
-            # Extract usage information
-            reasoning_info = None
-            if response.usage:
-                reasoning_info = {
-                    "prompt_tokens": response.usage.input_tokens,
-                    "completion_tokens": response.usage.output_tokens,
-                    "total_tokens": response.usage.input_tokens
-                    + response.usage.output_tokens,
+                # ast-grep-ignore: no-dict-any - Anthropic API params dict has heterogeneous value types
+                params: dict[str, Any] = {
+                    "model": self.model,
+                    "messages": api_messages,
+                    "max_tokens": 8192,
+                    **self.default_kwargs,
+                    **self._get_model_specific_params(self.model),
                 }
 
-            llm_output = LLMOutput(
-                content=content_text or None,
-                tool_calls=tool_calls if tool_calls else None,
-                reasoning_info=reasoning_info,
-            )
+                if system_prompt:
+                    params["system"] = system_prompt
 
-            duration_ms = (time.monotonic() - start_time) * 1000
-            try:
-                get_request_buffer().add(
-                    LLMRequestRecord(
-                        timestamp=request_timestamp,
-                        request_id=request_id,
-                        model_id=self.model,
-                        messages=message_dicts,
-                        tools=tools,
-                        tool_choice=tool_choice,
-                        response=asdict(llm_output),
-                        duration_ms=duration_ms,
-                        error=None,
+                if tools:
+                    params["tools"] = self._convert_tools_to_anthropic_format(tools)
+                    anthropic_tool_choice = self._convert_tool_choice_to_anthropic(
+                        tool_choice
                     )
-                )
-            except Exception as record_err:
-                logger.debug(f"Failed to record LLM request: {record_err}")
+                    if anthropic_tool_choice:
+                        params["tool_choice"] = anthropic_tool_choice
 
-            return llm_output
+                response = await self.client.messages.create(**params)
 
-        except Exception as e:
-            duration_ms = (time.monotonic() - start_time) * 1000
-            try:
-                get_request_buffer().add(
-                    LLMRequestRecord(
-                        timestamp=request_timestamp,
-                        request_id=request_id,
-                        model_id=self.model,
-                        messages=message_dicts,
-                        tools=tools,
-                        tool_choice=tool_choice,
-                        response=None,
-                        duration_ms=duration_ms,
-                        error=str(e),
+                # Parse response
+                content_text = ""
+                tool_calls = []
+
+                for block in response.content:
+                    if block.type == "text":
+                        content_text += block.text
+                    elif block.type == "tool_use":
+                        tool_calls.append(
+                            ToolCallItem(
+                                id=block.id,
+                                type="function",
+                                function=ToolCallFunction(
+                                    name=block.name,
+                                    arguments=json.dumps(block.input),
+                                ),
+                            )
+                        )
+
+                # Extract usage information
+                reasoning_info = None
+                if response.usage:
+                    reasoning_info = {
+                        "prompt_tokens": response.usage.input_tokens,
+                        "completion_tokens": response.usage.output_tokens,
+                        "total_tokens": response.usage.input_tokens
+                        + response.usage.output_tokens,
+                    }
+                    span.set_attribute(
+                        "gen_ai.usage.input_tokens", response.usage.input_tokens
                     )
-                )
-            except Exception as record_err:
-                logger.debug(f"Failed to record LLM request error: {record_err}")
+                    span.set_attribute(
+                        "gen_ai.usage.output_tokens", response.usage.output_tokens
+                    )
 
-            self._raise_mapped_error(e)
+                span.set_attribute("gen_ai.response.model", self.model)
+
+                llm_output = LLMOutput(
+                    content=content_text or None,
+                    tool_calls=tool_calls if tool_calls else None,
+                    reasoning_info=reasoning_info,
+                )
+
+                duration_ms = (time.monotonic() - start_time) * 1000
+                try:
+                    get_request_buffer().add(
+                        LLMRequestRecord(
+                            timestamp=request_timestamp,
+                            request_id=request_id,
+                            model_id=self.model,
+                            messages=message_dicts,
+                            tools=tools,
+                            tool_choice=tool_choice,
+                            response=asdict(llm_output),
+                            duration_ms=duration_ms,
+                            error=None,
+                        )
+                    )
+                except Exception as record_err:
+                    logger.debug(f"Failed to record LLM request: {record_err}")
+
+                return llm_output
+
+            except Exception as e:
+                duration_ms = (time.monotonic() - start_time) * 1000
+                try:
+                    get_request_buffer().add(
+                        LLMRequestRecord(
+                            timestamp=request_timestamp,
+                            request_id=request_id,
+                            model_id=self.model,
+                            messages=message_dicts,
+                            tools=tools,
+                            tool_choice=tool_choice,
+                            response=None,
+                            duration_ms=duration_ms,
+                            error=str(e),
+                        )
+                    )
+                except Exception as record_err:
+                    logger.debug(f"Failed to record LLM request error: {record_err}")
+
+                span.set_status(StatusCode.ERROR, str(e))
+                span.record_exception(e)
+                self._raise_mapped_error(e)
 
     def _raise_mapped_error(self, e: Exception) -> NoReturn:
         """Map Anthropic SDK exceptions to our exception hierarchy."""
@@ -723,168 +743,196 @@ class AnthropicClient(BaseLLMClient):
         tool_choice: str | None = "auto",
     ) -> AsyncIterator[LLMStreamEvent]:
         """Internal async generator for streaming responses."""
-        start_time = time.monotonic()
-        request_timestamp = datetime.now(UTC)
-        request_id = f"anthropic_stream_{uuid.uuid4().hex[:16]}"
-
-        message_dicts = [message_to_json_dict(msg) for msg in messages]
-
+        span = tracer.start_span(
+            "llm.provider.generate_stream",
+            attributes={
+                "gen_ai.system": "anthropic",
+                "gen_ai.request.model": self.model,
+            },
+        )
         try:
-            processed_messages = self._process_tool_messages(list(messages))
+            start_time = time.monotonic()
+            request_timestamp = datetime.now(UTC)
+            request_id = f"anthropic_stream_{uuid.uuid4().hex[:16]}"
 
-            system_prompt, api_messages = self._convert_messages_to_anthropic_format(
-                processed_messages
-            )
+            message_dicts = [message_to_json_dict(msg) for msg in messages]
 
-            # ast-grep-ignore: no-dict-any - Anthropic API params dict has heterogeneous value types
-            params: dict[str, Any] = {
-                "model": self.model,
-                "messages": api_messages,
-                "max_tokens": 8192,
-                **self.default_kwargs,
-                **self._get_model_specific_params(self.model),
-            }
+            try:
+                processed_messages = self._process_tool_messages(list(messages))
 
-            if system_prompt:
-                params["system"] = system_prompt
-
-            if tools:
-                params["tools"] = self._convert_tools_to_anthropic_format(tools)
-                anthropic_tool_choice = self._convert_tool_choice_to_anthropic(
-                    tool_choice
+                system_prompt, api_messages = (
+                    self._convert_messages_to_anthropic_format(processed_messages)
                 )
-                if anthropic_tool_choice:
-                    params["tool_choice"] = anthropic_tool_choice
 
-            # Check for VCR replay mode
-            vcr_events = await self._maybe_parse_vcr_stream(params)
-            if vcr_events is not None:
-                for event in vcr_events:
-                    yield event
-                return
-
-            # Use Anthropic streaming
-            async with self.client.messages.stream(**params) as stream:
-                current_tool: _StreamingToolAccumulator | None = None
-
-                async for event in stream:
-                    if event.type == "content_block_start":
-                        block = event.content_block
-                        if block.type == "tool_use":
-                            current_tool = {
-                                "id": block.id,
-                                "name": block.name,
-                                "arguments": "",
-                            }
-
-                    elif event.type == "content_block_delta":
-                        delta = event.delta
-                        if delta.type == "text_delta":
-                            yield LLMStreamEvent(type="content", content=delta.text)
-                        elif (
-                            delta.type == "input_json_delta"
-                            and current_tool is not None
-                        ):
-                            current_tool["arguments"] += delta.partial_json
-
-                    elif event.type == "content_block_stop":
-                        if current_tool is not None:
-                            tool_call = ToolCallItem(
-                                id=current_tool["id"],
-                                type="function",
-                                function=ToolCallFunction(
-                                    name=current_tool["name"],
-                                    arguments=current_tool["arguments"] or "{}",
-                                ),
-                            )
-                            yield LLMStreamEvent(
-                                type="tool_call",
-                                tool_call=tool_call,
-                                tool_call_id=current_tool["id"],
-                            )
-                            current_tool = None
-
-                # Get final message for usage info
-                final_message = await stream.get_final_message()
-
-            metadata: StreamingMetadata = {}
-            if final_message and final_message.usage:
-                metadata["reasoning_info"] = {
-                    "prompt_tokens": final_message.usage.input_tokens,
-                    "completion_tokens": final_message.usage.output_tokens,
-                    "total_tokens": final_message.usage.input_tokens
-                    + final_message.usage.output_tokens,
+                # ast-grep-ignore: no-dict-any - Anthropic API params dict has heterogeneous value types
+                params: dict[str, Any] = {
+                    "model": self.model,
+                    "messages": api_messages,
+                    "max_tokens": 8192,
+                    **self.default_kwargs,
+                    **self._get_model_specific_params(self.model),
                 }
 
-            duration_ms = (time.monotonic() - start_time) * 1000
-            try:
-                get_request_buffer().add(
-                    LLMRequestRecord(
-                        timestamp=request_timestamp,
-                        request_id=request_id,
-                        model_id=self.model,
-                        messages=message_dicts,
-                        tools=tools,
-                        tool_choice=tool_choice,
-                        response={"streaming": True, "metadata": metadata},
-                        duration_ms=duration_ms,
-                        error=None,
+                if system_prompt:
+                    params["system"] = system_prompt
+
+                if tools:
+                    params["tools"] = self._convert_tools_to_anthropic_format(tools)
+                    anthropic_tool_choice = self._convert_tool_choice_to_anthropic(
+                        tool_choice
                     )
-                )
-            except Exception as record_err:
-                logger.debug(f"Failed to record streaming LLM request: {record_err}")
+                    if anthropic_tool_choice:
+                        params["tool_choice"] = anthropic_tool_choice
 
-            yield LLMStreamEvent(type="done", metadata=metadata)
+                # Check for VCR replay mode
+                vcr_events = await self._maybe_parse_vcr_stream(params)
+                if vcr_events is not None:
+                    for event in vcr_events:
+                        yield event
+                    return
 
-        except Exception as e:
-            duration_ms = (time.monotonic() - start_time) * 1000
-            try:
-                get_request_buffer().add(
-                    LLMRequestRecord(
-                        timestamp=request_timestamp,
-                        request_id=request_id,
-                        model_id=self.model,
-                        messages=message_dicts,
-                        tools=tools,
-                        tool_choice=tool_choice,
-                        response=None,
-                        duration_ms=duration_ms,
-                        error=str(e),
+                # Use Anthropic streaming
+                with trace.use_span(span, end_on_exit=False):
+                    async with self.client.messages.stream(**params) as stream:
+                        current_tool: _StreamingToolAccumulator | None = None
+
+                        async for event in stream:
+                            if event.type == "content_block_start":
+                                block = event.content_block
+                                if block.type == "tool_use":
+                                    current_tool = {
+                                        "id": block.id,
+                                        "name": block.name,
+                                        "arguments": "",
+                                    }
+
+                            elif event.type == "content_block_delta":
+                                delta = event.delta
+                                if delta.type == "text_delta":
+                                    yield LLMStreamEvent(
+                                        type="content", content=delta.text
+                                    )
+                                elif (
+                                    delta.type == "input_json_delta"
+                                    and current_tool is not None
+                                ):
+                                    current_tool["arguments"] += delta.partial_json
+
+                            elif event.type == "content_block_stop":
+                                if current_tool is not None:
+                                    tool_call = ToolCallItem(
+                                        id=current_tool["id"],
+                                        type="function",
+                                        function=ToolCallFunction(
+                                            name=current_tool["name"],
+                                            arguments=current_tool["arguments"] or "{}",
+                                        ),
+                                    )
+                                    yield LLMStreamEvent(
+                                        type="tool_call",
+                                        tool_call=tool_call,
+                                        tool_call_id=current_tool["id"],
+                                    )
+                                    current_tool = None
+
+                        # Get final message for usage info
+                        final_message = await stream.get_final_message()
+
+                metadata: StreamingMetadata = {}
+                if final_message and final_message.usage:
+                    metadata["reasoning_info"] = {
+                        "prompt_tokens": final_message.usage.input_tokens,
+                        "completion_tokens": final_message.usage.output_tokens,
+                        "total_tokens": final_message.usage.input_tokens
+                        + final_message.usage.output_tokens,
+                    }
+                    span.set_attribute(
+                        "gen_ai.usage.input_tokens", final_message.usage.input_tokens
                     )
-                )
-            except Exception as record_err:
-                logger.debug(
-                    f"Failed to record streaming LLM request error: {record_err}"
-                )
+                    span.set_attribute(
+                        "gen_ai.usage.output_tokens",
+                        final_message.usage.output_tokens,
+                    )
 
-            error_message = str(e)
-            error_type = "unknown"
-            if isinstance(e, anthropic.AuthenticationError):
-                error_type = "authentication"
-            elif isinstance(e, anthropic.RateLimitError):
-                error_type = "rate_limit"
-            elif isinstance(e, anthropic.NotFoundError):
-                error_type = "model_not_found"
-            elif isinstance(e, anthropic.BadRequestError):
-                error_type = "invalid_request"
-            elif isinstance(e, anthropic.APIConnectionError):
-                error_type = "connection"
-            elif isinstance(e, anthropic.APITimeoutError):
-                error_type = "timeout"
+                span.set_attribute("gen_ai.response.model", self.model)
 
-            logger.error(
-                f"Anthropic streaming API error ({error_type}): {e}", exc_info=True
-            )
-            yield LLMStreamEvent(
-                type="error",
-                error=error_message,
-                metadata={
-                    "error_id": str(e.__class__.__name__),
-                    "error_type": error_type,
-                    "provider": "anthropic",
-                    "model": self.model,
-                },
-            )
+                duration_ms = (time.monotonic() - start_time) * 1000
+                try:
+                    get_request_buffer().add(
+                        LLMRequestRecord(
+                            timestamp=request_timestamp,
+                            request_id=request_id,
+                            model_id=self.model,
+                            messages=message_dicts,
+                            tools=tools,
+                            tool_choice=tool_choice,
+                            response={"streaming": True, "metadata": metadata},
+                            duration_ms=duration_ms,
+                            error=None,
+                        )
+                    )
+                except Exception as record_err:
+                    logger.debug(
+                        f"Failed to record streaming LLM request: {record_err}"
+                    )
+
+                yield LLMStreamEvent(type="done", metadata=metadata)
+
+            except Exception as e:
+                duration_ms = (time.monotonic() - start_time) * 1000
+                try:
+                    get_request_buffer().add(
+                        LLMRequestRecord(
+                            timestamp=request_timestamp,
+                            request_id=request_id,
+                            model_id=self.model,
+                            messages=message_dicts,
+                            tools=tools,
+                            tool_choice=tool_choice,
+                            response=None,
+                            duration_ms=duration_ms,
+                            error=str(e),
+                        )
+                    )
+                except Exception as record_err:
+                    logger.debug(
+                        f"Failed to record streaming LLM request error: {record_err}"
+                    )
+
+                span.set_status(StatusCode.ERROR, str(e))
+                span.record_exception(e)
+
+                error_message = str(e)
+                error_type = "unknown"
+                if isinstance(e, anthropic.AuthenticationError):
+                    error_type = "authentication"
+                elif isinstance(e, anthropic.RateLimitError):
+                    error_type = "rate_limit"
+                elif isinstance(e, anthropic.NotFoundError):
+                    error_type = "model_not_found"
+                elif isinstance(e, anthropic.BadRequestError):
+                    error_type = "invalid_request"
+                elif isinstance(e, anthropic.APIConnectionError):
+                    error_type = "connection"
+                elif isinstance(e, anthropic.APITimeoutError):
+                    error_type = "timeout"
+
+                logger.error(
+                    f"Anthropic streaming API error ({error_type}): {e}",
+                    exc_info=True,
+                )
+                yield LLMStreamEvent(
+                    type="error",
+                    error=error_message,
+                    metadata={
+                        "error_id": str(e.__class__.__name__),
+                        "error_type": error_type,
+                        "provider": "anthropic",
+                        "model": self.model,
+                    },
+                )
+        finally:
+            span.end()
 
     async def _maybe_parse_vcr_stream(
         self,

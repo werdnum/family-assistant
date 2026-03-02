@@ -18,6 +18,8 @@ from zoneinfo import ZoneInfo
 import aiofiles.os
 from dateutil import rrule
 from dateutil.parser import isoparse
+from opentelemetry import trace
+from opentelemetry.trace import StatusCode
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncEngine
 
@@ -45,6 +47,7 @@ from family_assistant.tools import ToolExecutionContext
 from family_assistant.utils.clock import Clock, SystemClock
 
 logger = logging.getLogger(__name__)
+tracer = trace.get_tracer(__name__)
 
 
 async def _handle_schedule_automation_recurrence(
@@ -690,134 +693,148 @@ class TaskWorker:
             )
             return  # Stop processing this task
 
-        try:
-            # --- Create Execution Context ---
-            # Extract interface identifiers from payload
-            # Need to define these *before* using them in logging etc.
-            # payload_dict is guaranteed to be a dict
-            payload_dict = task["payload"] or {}
-            raw_interface_type: str | None = payload_dict.get("interface_type")
-            raw_conversation_id: str | None = payload_dict.get("conversation_id")
-
-            final_interface_type: str
-            final_conversation_id: str
-
-            if task["task_type"] == "llm_callback":
-                if not raw_interface_type or not raw_conversation_id:
-                    logger.error(
-                        f"PROCESS ERROR: Task {task['task_id']} (llm_callback) missing interface_type or conversation_id in payload."
-                    )
-                    await db_context.tasks.update_status(
-                        task_id=task["task_id"],
-                        status="failed",
-                        error="Missing interface_type or conversation_id in payload for llm_callback",
-                    )
-                    return  # Stop processing
-                final_interface_type = raw_interface_type
-                final_conversation_id = raw_conversation_id
-            else:
-                # For other task types, provide defaults if None, to satisfy linter if it expects str
-                final_interface_type = (
-                    raw_interface_type
-                    if raw_interface_type is not None
-                    else "unknown_interface"
-                )
-                final_conversation_id = (
-                    raw_conversation_id
-                    if raw_conversation_id is not None
-                    else "unknown_conversation"
-                )
-
-            # Extract user_name from payload if available, else default
-            user_name = payload_dict.get("user_name", "TaskWorkerUser")
-
-            exec_context = ToolExecutionContext(
-                # Pass new identifiers
-                interface_type=final_interface_type,
-                conversation_id=final_conversation_id,
-                user_name=user_name,  # Use user_name from payload or default
-                turn_id=str(
-                    uuid.uuid4()
-                ),  # Generate a new turn_id for this task execution
-                db_context=db_context,
-                # Infrastructure fields (required - no defaults)
-                processing_service=self.processing_service,
-                clock=self.clock,
-                home_assistant_client=self.processing_service.home_assistant_client
-                if self.processing_service
-                else None,
-                event_sources=self.event_sources,
-                attachment_registry=self.processing_service.attachment_registry
-                if self.processing_service
-                else None,
-                camera_backend=None,
-                # Optional fields (with defaults)
-                chat_interface=(
-                    self.chat_interfaces.get(final_interface_type, self.chat_interface)
-                    if self.chat_interfaces
-                    else self.chat_interface
-                ),
-                chat_interfaces=self.chat_interfaces,
-                timezone=self.timezone,
-                processing_profile_id=(
-                    self.processing_service.service_config.id
-                    if self.processing_service
-                    else None
-                ),
-                update_activity_callback=self._update_last_activity,  # Pass activity callback
-                embedding_generator=self.embedding_generator,
-                indexing_source=self.indexing_source,  # Pass the indexing source
-                visibility_grants=(
-                    set(self.processing_service.service_config.visibility_grants)
-                    if self.processing_service
-                    and self.processing_service.service_config.visibility_grants
-                    else None
-                ),
-                default_note_visibility_labels=(
-                    self.processing_service.service_config.default_note_visibility_labels
-                    if self.processing_service
-                    else None
-                ),
-            )
-            # --- Execute Handler with Context ---
-            logger.debug(
-                f"HANDLER START: Worker {self.worker_id} executing handler for task {task['task_id']} with context."
-            )
-            # Pass the context and the original payload with timeout
+        with tracer.start_as_current_span(
+            f"task.process.{task['task_type']}",
+            attributes={
+                "task.type": task["task_type"],
+                "task.id": str(task["task_id"]),
+            },
+        ) as span:
             try:
-                await asyncio.wait_for(
-                    handler(exec_context, task["payload"]), timeout=self.handler_timeout
+                # --- Create Execution Context ---
+                # Extract interface identifiers from payload
+                # Need to define these *before* using them in logging etc.
+                # payload_dict is guaranteed to be a dict
+                payload_dict = task["payload"] or {}
+                raw_interface_type: str | None = payload_dict.get("interface_type")
+                raw_conversation_id: str | None = payload_dict.get("conversation_id")
+
+                final_interface_type: str
+                final_conversation_id: str
+
+                if task["task_type"] == "llm_callback":
+                    if not raw_interface_type or not raw_conversation_id:
+                        logger.error(
+                            f"PROCESS ERROR: Task {task['task_id']} (llm_callback) missing interface_type or conversation_id in payload."
+                        )
+                        await db_context.tasks.update_status(
+                            task_id=task["task_id"],
+                            status="failed",
+                            error="Missing interface_type or conversation_id in payload for llm_callback",
+                        )
+                        return  # Stop processing
+                    final_interface_type = raw_interface_type
+                    final_conversation_id = raw_conversation_id
+                else:
+                    # For other task types, provide defaults if None, to satisfy linter if it expects str
+                    final_interface_type = (
+                        raw_interface_type
+                        if raw_interface_type is not None
+                        else "unknown_interface"
+                    )
+                    final_conversation_id = (
+                        raw_conversation_id
+                        if raw_conversation_id is not None
+                        else "unknown_conversation"
+                    )
+
+                # Extract user_name from payload if available, else default
+                user_name = payload_dict.get("user_name", "TaskWorkerUser")
+
+                exec_context = ToolExecutionContext(
+                    # Pass new identifiers
+                    interface_type=final_interface_type,
+                    conversation_id=final_conversation_id,
+                    user_name=user_name,  # Use user_name from payload or default
+                    turn_id=str(
+                        uuid.uuid4()
+                    ),  # Generate a new turn_id for this task execution
+                    db_context=db_context,
+                    # Infrastructure fields (required - no defaults)
+                    processing_service=self.processing_service,
+                    clock=self.clock,
+                    home_assistant_client=self.processing_service.home_assistant_client
+                    if self.processing_service
+                    else None,
+                    event_sources=self.event_sources,
+                    attachment_registry=self.processing_service.attachment_registry
+                    if self.processing_service
+                    else None,
+                    camera_backend=None,
+                    # Optional fields (with defaults)
+                    chat_interface=(
+                        self.chat_interfaces.get(
+                            final_interface_type, self.chat_interface
+                        )
+                        if self.chat_interfaces
+                        else self.chat_interface
+                    ),
+                    chat_interfaces=self.chat_interfaces,
+                    timezone=self.timezone,
+                    processing_profile_id=(
+                        self.processing_service.service_config.id
+                        if self.processing_service
+                        else None
+                    ),
+                    update_activity_callback=self._update_last_activity,  # Pass activity callback
+                    embedding_generator=self.embedding_generator,
+                    indexing_source=self.indexing_source,  # Pass the indexing source
+                    visibility_grants=(
+                        set(self.processing_service.service_config.visibility_grants)
+                        if self.processing_service
+                        and self.processing_service.service_config.visibility_grants
+                        else None
+                    ),
+                    default_note_visibility_labels=(
+                        self.processing_service.service_config.default_note_visibility_labels
+                        if self.processing_service
+                        else None
+                    ),
                 )
+                # --- Execute Handler with Context ---
                 logger.debug(
-                    f"HANDLER SUCCESS: Worker {self.worker_id} completed handler for task {task['task_id']}"
+                    f"HANDLER START: Worker {self.worker_id} executing handler for task {task['task_id']} with context."
                 )
-            except TimeoutError:
-                logger.error(
-                    f"HANDLER TIMEOUT: Task {task['task_id']} (type: {task['task_type']}) timed out after {self.handler_timeout} seconds"
+                # Pass the context and the original payload with timeout
+                try:
+                    await asyncio.wait_for(
+                        handler(exec_context, task["payload"]),
+                        timeout=self.handler_timeout,
+                    )
+                    logger.debug(
+                        f"HANDLER SUCCESS: Worker {self.worker_id} completed handler for task {task['task_id']}"
+                    )
+                except TimeoutError:
+                    logger.error(
+                        f"HANDLER TIMEOUT: Task {task['task_id']} (type: {task['task_type']}) timed out after {self.handler_timeout} seconds"
+                    )
+                    # Re-raise to trigger retry logic in _handle_task_failure
+                    raise
+
+                # Task details for logging
+                task_id = task["task_id"]
+                original_task_id = task.get(
+                    "original_task_id", task_id
+                )  # Use task_id if original is missing (first run)
+
+                # Mark task as done
+                await db_context.tasks.update_status(
+                    task_id=task_id,
+                    status="done",
                 )
-                # Re-raise to trigger retry logic in _handle_task_failure
-                raise
+                span.set_attribute("task.status", "success")
+                logger.info(
+                    f"PROCESS SUCCESS: Worker {self.worker_id} completed task {task_id} (Original: {original_task_id})"
+                )
 
-            # Task details for logging
-            task_id = task["task_id"]
-            original_task_id = task.get(
-                "original_task_id", task_id
-            )  # Use task_id if original is missing (first run)
+                # --- Handle Recurrence ---
+                await self._handle_recurrence(db_context, task)
 
-            # Mark task as done
-            await db_context.tasks.update_status(
-                task_id=task_id,
-                status="done",
-            )
-            logger.info(
-                f"PROCESS SUCCESS: Worker {self.worker_id} completed task {task_id} (Original: {original_task_id})"
-            )
-
-            # --- Handle Recurrence ---
-            await self._handle_recurrence(db_context, task)
-
-        except Exception as handler_exc:
-            await self._handle_task_failure(db_context, task, handler_exc)
+            except Exception as handler_exc:
+                span.set_status(StatusCode.ERROR, str(handler_exc))
+                span.record_exception(handler_exc)
+                span.set_attribute("task.status", "error")
+                await self._handle_task_failure(db_context, task, handler_exc)
 
     async def _handle_task_failure(
         self,

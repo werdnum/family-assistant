@@ -12,6 +12,8 @@ import logging
 from collections.abc import AsyncIterator, Sequence
 from typing import TYPE_CHECKING, Any, TypeVar
 
+from opentelemetry import trace
+from opentelemetry.trace import StatusCode
 from pydantic import BaseModel
 
 if TYPE_CHECKING:
@@ -30,6 +32,7 @@ from .messages import UserMessage
 T = TypeVar("T", bound=BaseModel)
 
 logger = logging.getLogger(__name__)
+tracer = trace.get_tracer(__name__)
 
 
 class RetryingLLMClient:
@@ -74,119 +77,193 @@ class RetryingLLMClient:
         tool_choice: str | None = "auto",
     ) -> "LLMOutput":
         """Generate response with retry and fallback logic."""
-        # Define retriable errors - matching LiteLLM's logic
-        retriable_errors = (
-            ProviderConnectionError,
-            ProviderTimeoutError,
-            RateLimitError,
-            ServiceUnavailableError,
-        )
+        with tracer.start_as_current_span(
+            "llm.generate",
+            attributes={
+                "gen_ai.request.model": self.primary_model,
+                "llm.has_fallback": bool(self.fallback_client),
+            },
+        ) as span:
+            # Define retriable errors - matching LiteLLM's logic
+            retriable_errors = (
+                ProviderConnectionError,
+                ProviderTimeoutError,
+                RateLimitError,
+                ServiceUnavailableError,
+            )
 
-        last_exception: Exception | None = None
+            last_exception: Exception | None = None
 
-        # Attempt 1: Primary model
-        try:
-            logger.info(f"Attempt 1: Primary model ({self.primary_model})")
-            return await self.primary_client.generate_response(
-                messages=messages,
-                tools=tools,
-                tool_choice=tool_choice,
+            # Attempt 1: Primary model
+            span.add_event(
+                "llm.attempt",
+                attributes={
+                    "attempt_number": 1,
+                    "model": self.primary_model,
+                    "is_fallback": False,
+                },
             )
-        except retriable_errors as e:
-            logger.warning(
-                f"Attempt 1 (Primary model {self.primary_model}) failed with retriable error: {e}. "
-                f"Retrying primary model."
-            )
-            last_exception = e
-        except LLMProviderError as e:  # Non-retriable provider error
-            logger.warning(
-                f"Attempt 1 (Primary model {self.primary_model}) failed with provider error: {e}. "
-                f"Proceeding to fallback."
-            )
-            last_exception = e
-        except Exception as e:
-            logger.error(
-                f"Attempt 1 (Primary model {self.primary_model}) failed with unexpected error: {e}",
-                exc_info=True,
-            )
-            last_exception = e
-
-        # Attempt 2: Retry Primary model (if Attempt 1 was a retriable error)
-        if isinstance(last_exception, retriable_errors):
             try:
-                logger.info(f"Attempt 2: Retrying primary model ({self.primary_model})")
-                return await self.primary_client.generate_response(
+                logger.info(f"Attempt 1: Primary model ({self.primary_model})")
+                result = await self.primary_client.generate_response(
                     messages=messages,
                     tools=tools,
                     tool_choice=tool_choice,
                 )
+                span.set_attribute("gen_ai.response.model", self.primary_model)
+                if result.reasoning_info:
+                    if "prompt_tokens" in result.reasoning_info:
+                        span.set_attribute(
+                            "gen_ai.usage.input_tokens",
+                            result.reasoning_info["prompt_tokens"],
+                        )
+                    if "completion_tokens" in result.reasoning_info:
+                        span.set_attribute(
+                            "gen_ai.usage.output_tokens",
+                            result.reasoning_info["completion_tokens"],
+                        )
+                return result
             except retriable_errors as e:
                 logger.warning(
-                    f"Attempt 2 (Retry Primary model {self.primary_model}) failed with retriable error: {e}. "
-                    f"Proceeding to fallback."
+                    f"Attempt 1 (Primary model {self.primary_model}) failed with retriable error: {e}. "
+                    f"Retrying primary model."
                 )
                 last_exception = e
-            except LLMProviderError as e:  # Non-retriable provider error on retry
+            except LLMProviderError as e:  # Non-retriable provider error
                 logger.warning(
-                    f"Attempt 2 (Retry Primary model {self.primary_model}) failed with provider error: {e}. "
+                    f"Attempt 1 (Primary model {self.primary_model}) failed with provider error: {e}. "
                     f"Proceeding to fallback."
                 )
                 last_exception = e
             except Exception as e:
                 logger.error(
-                    f"Attempt 2 (Retry Primary model {self.primary_model}) failed with unexpected error: {e}",
+                    f"Attempt 1 (Primary model {self.primary_model}) failed with unexpected error: {e}",
                     exc_info=True,
                 )
                 last_exception = e
 
-        # Attempt 3: Fallback model (if configured and primary attempts failed)
-        if self.fallback_client and last_exception:
-            # Check if fallback model is same as primary
-            if self.fallback_model == self.primary_model:
-                logger.warning(
-                    f"Fallback model '{self.fallback_model}' is the same as the primary model '{self.primary_model}'. "
-                    f"Skipping fallback."
+            # Attempt 2: Retry Primary model (if Attempt 1 was a retriable error)
+            if isinstance(last_exception, retriable_errors):
+                span.add_event(
+                    "llm.attempt",
+                    attributes={
+                        "attempt_number": 2,
+                        "model": self.primary_model,
+                        "is_fallback": False,
+                    },
                 )
-                if last_exception:
-                    raise last_exception
-                # This case should ideally not happen
+                try:
+                    logger.info(
+                        f"Attempt 2: Retrying primary model ({self.primary_model})"
+                    )
+                    result = await self.primary_client.generate_response(
+                        messages=messages,
+                        tools=tools,
+                        tool_choice=tool_choice,
+                    )
+                    span.set_attribute("gen_ai.response.model", self.primary_model)
+                    if result.reasoning_info:
+                        if "prompt_tokens" in result.reasoning_info:
+                            span.set_attribute(
+                                "gen_ai.usage.input_tokens",
+                                result.reasoning_info["prompt_tokens"],
+                            )
+                        if "completion_tokens" in result.reasoning_info:
+                            span.set_attribute(
+                                "gen_ai.usage.output_tokens",
+                                result.reasoning_info["completion_tokens"],
+                            )
+                    return result
+                except retriable_errors as e:
+                    logger.warning(
+                        f"Attempt 2 (Retry Primary model {self.primary_model}) failed with retriable error: {e}. "
+                        f"Proceeding to fallback."
+                    )
+                    last_exception = e
+                except LLMProviderError as e:  # Non-retriable provider error on retry
+                    logger.warning(
+                        f"Attempt 2 (Retry Primary model {self.primary_model}) failed with provider error: {e}. "
+                        f"Proceeding to fallback."
+                    )
+                    last_exception = e
+                except Exception as e:
+                    logger.error(
+                        f"Attempt 2 (Retry Primary model {self.primary_model}) failed with unexpected error: {e}",
+                        exc_info=True,
+                    )
+                    last_exception = e
+
+            # Attempt 3: Fallback model (if configured and primary attempts failed)
+            if self.fallback_client and last_exception:
+                # Check if fallback model is same as primary
+                if self.fallback_model == self.primary_model:
+                    logger.warning(
+                        f"Fallback model '{self.fallback_model}' is the same as the primary model '{self.primary_model}'. "
+                        f"Skipping fallback."
+                    )
+                    if last_exception:
+                        raise last_exception
+                    # This case should ideally not happen
+                    raise LLMProviderError(
+                        message="All attempts failed without a specific error to raise.",
+                        provider="unknown",
+                        model=self.primary_model,
+                    )
+
+                span.add_event(
+                    "llm.attempt",
+                    attributes={
+                        "attempt_number": 3,
+                        "model": self.fallback_model or "",
+                        "is_fallback": True,
+                    },
+                )
+                logger.info(f"Attempt 3: Fallback model ({self.fallback_model})")
+                try:
+                    result = await self.fallback_client.generate_response(
+                        messages=messages,
+                        tools=tools,
+                        tool_choice=tool_choice,
+                    )
+                    span.set_attribute(
+                        "gen_ai.response.model", self.fallback_model or ""
+                    )
+                    if result.reasoning_info:
+                        if "prompt_tokens" in result.reasoning_info:
+                            span.set_attribute(
+                                "gen_ai.usage.input_tokens",
+                                result.reasoning_info["prompt_tokens"],
+                            )
+                        if "completion_tokens" in result.reasoning_info:
+                            span.set_attribute(
+                                "gen_ai.usage.output_tokens",
+                                result.reasoning_info["completion_tokens"],
+                            )
+                    return result
+                except Exception as e:
+                    logger.error(
+                        f"Attempt 3 (Fallback model {self.fallback_model}) also failed: {e}",
+                        exc_info=True,
+                    )
+                    # Re-raise the last exception from primary attempts as it's likely more informative
+                    raise last_exception from e
+
+            # If all attempts failed, raise the last exception
+            if last_exception:
+                logger.error(
+                    f"All LLM attempts failed. Raising last recorded exception: {last_exception}"
+                )
+                raise last_exception
+            else:
+                # Should not be reached if logic is correct, but as a safeguard:
+                logger.error(
+                    "All LLM attempts failed without a specific exception captured."
+                )
                 raise LLMProviderError(
-                    message="All attempts failed without a specific error to raise.",
+                    message="All LLM attempts failed without a specific exception.",
                     provider="unknown",
                     model=self.primary_model,
                 )
-
-            logger.info(f"Attempt 3: Fallback model ({self.fallback_model})")
-            try:
-                return await self.fallback_client.generate_response(
-                    messages=messages,
-                    tools=tools,
-                    tool_choice=tool_choice,
-                )
-            except Exception as e:
-                logger.error(
-                    f"Attempt 3 (Fallback model {self.fallback_model}) also failed: {e}",
-                    exc_info=True,
-                )
-                # Re-raise the last exception from primary attempts as it's likely more informative
-                raise last_exception from e
-
-        # If all attempts failed, raise the last exception
-        if last_exception:
-            logger.error(
-                f"All LLM attempts failed. Raising last recorded exception: {last_exception}"
-            )
-            raise last_exception
-        else:
-            # Should not be reached if logic is correct, but as a safeguard:
-            logger.error(
-                "All LLM attempts failed without a specific exception captured."
-            )
-            raise LLMProviderError(
-                message="All LLM attempts failed without a specific exception.",
-                provider="unknown",
-                model=self.primary_model,
-            )
 
     async def generate_response_stream(
         self,
@@ -195,87 +272,146 @@ class RetryingLLMClient:
         tool_choice: str | None = "auto",
     ) -> AsyncIterator[LLMStreamEvent]:
         """Generate streaming response with retry and fallback logic."""
-        logger.info(f"Streaming from primary model ({self.primary_model})")
-
-        events_yielded = False
+        span = tracer.start_span(
+            "llm.generate_stream",
+            attributes={
+                "gen_ai.request.model": self.primary_model,
+                "llm.has_fallback": bool(self.fallback_client),
+            },
+        )
         try:
-            async for event in self.primary_client.generate_response_stream(
-                messages=messages,
-                tools=tools,
-                tool_choice=tool_choice,
-            ):
-                yield event
-                events_yielded = True
-        except Exception as e:
-            logger.error(
-                f"Streaming from primary model {self.primary_model} failed: {e}",
-                exc_info=True,
-            )
+            with trace.use_span(span, end_on_exit=False):
+                span.add_event(
+                    "llm.attempt",
+                    attributes={
+                        "attempt_number": 1,
+                        "model": self.primary_model,
+                        "is_fallback": False,
+                    },
+                )
+                logger.info(f"Streaming from primary model ({self.primary_model})")
 
-            # Only retry/fallback if no content has been sent to the client
-            if not events_yielded:
-                # For rate limits with a short retry_after, wait and retry on primary
-                if (
-                    isinstance(e, RateLimitError)
-                    and e.retry_after is not None
-                    and e.retry_after <= 60
-                ):
-                    logger.info(
-                        f"Rate limited. Waiting {e.retry_after:.0f}s before retrying primary model."
-                    )
-                    # ast-grep-ignore: no-asyncio-sleep-in-tests - Production retry delay, not test code
-                    await asyncio.sleep(e.retry_after)
-                    try:
-                        async for event in self.primary_client.generate_response_stream(
-                            messages=messages,
-                            tools=tools,
-                            tool_choice=tool_choice,
-                        ):
-                            events_yielded = True
+                events_yielded = False
+                try:
+                    async for event in self.primary_client.generate_response_stream(
+                        messages=messages,
+                        tools=tools,
+                        tool_choice=tool_choice,
+                    ):
+                        with trace.use_span(span, end_on_exit=False):
                             yield event
-                        return
-                    except Exception as retry_err:
-                        logger.warning(
-                            f"Retry after rate limit delay also failed: {retry_err}"
-                        )
-                        if events_yielded:
-                            raise retry_err
-                        # Fall through to fallback logic below
+                        events_yielded = True
+                except Exception as e:
+                    logger.error(
+                        f"Streaming from primary model {self.primary_model} failed: {e}",
+                        exc_info=True,
+                    )
 
-                if self.fallback_client:
-                    # Check if fallback model is same as primary
-                    if self.fallback_model == self.primary_model:
+                    # Only retry/fallback if no content has been sent to the client
+                    if not events_yielded:
+                        # For rate limits with a short retry_after, wait and retry on primary
+                        if (
+                            isinstance(e, RateLimitError)
+                            and e.retry_after is not None
+                            and e.retry_after <= 60
+                        ):
+                            span.add_event(
+                                "llm.rate_limit_retry",
+                                attributes={
+                                    "retry_after_seconds": e.retry_after,
+                                    "model": self.primary_model,
+                                },
+                            )
+                            logger.info(
+                                f"Rate limited. Waiting {e.retry_after:.0f}s before retrying primary model."
+                            )
+                            # ast-grep-ignore: no-asyncio-sleep-in-tests - Production retry delay, not test code
+                            await asyncio.sleep(e.retry_after)
+                            try:
+                                async for (
+                                    event
+                                ) in self.primary_client.generate_response_stream(
+                                    messages=messages,
+                                    tools=tools,
+                                    tool_choice=tool_choice,
+                                ):
+                                    events_yielded = True
+                                    with trace.use_span(span, end_on_exit=False):
+                                        yield event
+                                return
+                            except Exception as retry_err:
+                                logger.warning(
+                                    f"Retry after rate limit delay also failed: {retry_err}"
+                                )
+                                if events_yielded:
+                                    span.set_status(StatusCode.ERROR, str(retry_err))
+                                    span.record_exception(retry_err)
+                                    raise retry_err
+                                span.add_event(
+                                    "llm.rate_limit_retry_failed",
+                                    attributes={
+                                        "error": str(retry_err),
+                                        "model": self.primary_model,
+                                    },
+                                )
+                                # Fall through to fallback logic below
+
+                        if self.fallback_client:
+                            # Check if fallback model is same as primary
+                            if self.fallback_model == self.primary_model:
+                                logger.warning(
+                                    f"Fallback model '{self.fallback_model}' is the same as the primary model '{self.primary_model}'. "
+                                    f"Skipping fallback."
+                                )
+                                span.set_status(StatusCode.ERROR, str(e))
+                                span.record_exception(e)
+                                raise
+
+                            span.add_event(
+                                "llm.fallback",
+                                attributes={
+                                    "fallback_model": self.fallback_model or "",
+                                    "original_error": str(e),
+                                },
+                            )
+                            logger.info(
+                                f"Falling back to {self.fallback_model} (no content emitted yet)"
+                            )
+                            try:
+                                async for (
+                                    event
+                                ) in self.fallback_client.generate_response_stream(
+                                    messages=messages,
+                                    tools=tools,
+                                    tool_choice=tool_choice,
+                                ):
+                                    with trace.use_span(span, end_on_exit=False):
+                                        yield event
+                            except Exception as fallback_error:
+                                logger.error(
+                                    f"Fallback streaming model {self.fallback_model} also failed: {fallback_error}",
+                                    exc_info=True,
+                                )
+                                # Raise the original error as it's likely more relevant
+                                span.set_status(StatusCode.ERROR, str(e))
+                                span.record_exception(e)
+                                raise e from fallback_error
+                        else:
+                            logger.warning(
+                                "Cannot fallback: No fallback client configured."
+                            )
+                            span.set_status(StatusCode.ERROR, str(e))
+                            span.record_exception(e)
+                            raise
+                    else:
                         logger.warning(
-                            f"Fallback model '{self.fallback_model}' is the same as the primary model '{self.primary_model}'. "
-                            f"Skipping fallback."
+                            "Cannot fallback: Content already emitted to stream."
                         )
+                        span.set_status(StatusCode.ERROR, str(e))
+                        span.record_exception(e)
                         raise
-
-                    logger.info(
-                        f"Falling back to {self.fallback_model} (no content emitted yet)"
-                    )
-                    try:
-                        async for (
-                            event
-                        ) in self.fallback_client.generate_response_stream(
-                            messages=messages,
-                            tools=tools,
-                            tool_choice=tool_choice,
-                        ):
-                            yield event
-                    except Exception as fallback_error:
-                        logger.error(
-                            f"Fallback streaming model {self.fallback_model} also failed: {fallback_error}",
-                            exc_info=True,
-                        )
-                        # Raise the original error as it's likely more relevant
-                        raise e from fallback_error
-                else:
-                    logger.warning("Cannot fallback: No fallback client configured.")
-                    raise
-            else:
-                logger.warning("Cannot fallback: Content already emitted to stream.")
-                raise
+        finally:
+            span.end()
 
     async def format_user_message_with_file(
         self,
@@ -307,117 +443,156 @@ class RetryingLLMClient:
         Note: The underlying client handles validation retries. This method only
         handles provider-level retries (connection errors, rate limits, etc.).
         """
-        retriable_errors = (
-            ProviderConnectionError,
-            ProviderTimeoutError,
-            RateLimitError,
-            ServiceUnavailableError,
-        )
+        with tracer.start_as_current_span(
+            "llm.generate_structured",
+            attributes={
+                "gen_ai.request.model": self.primary_model,
+                "llm.has_fallback": bool(self.fallback_client),
+            },
+        ) as span:
+            retriable_errors = (
+                ProviderConnectionError,
+                ProviderTimeoutError,
+                RateLimitError,
+                ServiceUnavailableError,
+            )
 
-        last_exception: Exception | None = None
+            last_exception: Exception | None = None
 
-        # Attempt 1: Primary model
-        try:
-            logger.info(
-                f"Structured output attempt 1: Primary model ({self.primary_model})"
+            # Attempt 1: Primary model
+            span.add_event(
+                "llm.attempt",
+                attributes={
+                    "attempt_number": 1,
+                    "model": self.primary_model,
+                    "is_fallback": False,
+                },
             )
-            return await self.primary_client.generate_structured(
-                messages=messages,
-                response_model=response_model,
-            )
-        except retriable_errors as e:
-            logger.warning(
-                f"Structured output attempt 1 (Primary model {self.primary_model}) "
-                f"failed with retriable error: {e}. Retrying primary model."
-            )
-            last_exception = e
-        except StructuredOutputError as e:
-            # Structured output errors are not retriable at this level
-            # The underlying client already retried validation errors
-            logger.warning(
-                f"Structured output attempt 1 (Primary model {self.primary_model}) "
-                f"failed with structured output error: {e}. Proceeding to fallback."
-            )
-            last_exception = e
-        except LLMProviderError as e:
-            logger.warning(
-                f"Structured output attempt 1 (Primary model {self.primary_model}) "
-                f"failed with provider error: {e}. Proceeding to fallback."
-            )
-            last_exception = e
-        except Exception as e:
-            logger.error(
-                f"Structured output attempt 1 (Primary model {self.primary_model}) "
-                f"failed with unexpected error: {e}",
-                exc_info=True,
-            )
-            last_exception = e
-
-        # Attempt 2: Retry Primary model (if Attempt 1 was a retriable error)
-        if isinstance(last_exception, retriable_errors):
             try:
                 logger.info(
-                    f"Structured output attempt 2: Retrying primary model ({self.primary_model})"
+                    f"Structured output attempt 1: Primary model ({self.primary_model})"
                 )
-                return await self.primary_client.generate_structured(
+                result = await self.primary_client.generate_structured(
                     messages=messages,
                     response_model=response_model,
                 )
+                span.set_attribute("gen_ai.response.model", self.primary_model)
+                return result
             except retriable_errors as e:
                 logger.warning(
-                    f"Structured output attempt 2 (Retry Primary model {self.primary_model}) "
-                    f"failed with retriable error: {e}. Proceeding to fallback."
+                    f"Structured output attempt 1 (Primary model {self.primary_model}) "
+                    f"failed with retriable error: {e}. Retrying primary model."
+                )
+                last_exception = e
+            except StructuredOutputError as e:
+                # Structured output errors are not retriable at this level
+                # The underlying client already retried validation errors
+                logger.warning(
+                    f"Structured output attempt 1 (Primary model {self.primary_model}) "
+                    f"failed with structured output error: {e}. Proceeding to fallback."
                 )
                 last_exception = e
             except LLMProviderError as e:
                 logger.warning(
-                    f"Structured output attempt 2 (Retry Primary model {self.primary_model}) "
+                    f"Structured output attempt 1 (Primary model {self.primary_model}) "
                     f"failed with provider error: {e}. Proceeding to fallback."
                 )
                 last_exception = e
             except Exception as e:
                 logger.error(
-                    f"Structured output attempt 2 (Retry Primary model {self.primary_model}) "
+                    f"Structured output attempt 1 (Primary model {self.primary_model}) "
                     f"failed with unexpected error: {e}",
                     exc_info=True,
                 )
                 last_exception = e
 
-        # Attempt 3: Fallback model (if configured and primary attempts failed)
-        if self.fallback_client and last_exception:
-            if self.fallback_model == self.primary_model:
-                logger.warning(
-                    f"Fallback model '{self.fallback_model}' is the same as the primary model "
-                    f"'{self.primary_model}'. Skipping fallback."
+            # Attempt 2: Retry Primary model (if Attempt 1 was a retriable error)
+            if isinstance(last_exception, retriable_errors):
+                span.add_event(
+                    "llm.attempt",
+                    attributes={
+                        "attempt_number": 2,
+                        "model": self.primary_model,
+                        "is_fallback": False,
+                    },
+                )
+                try:
+                    logger.info(
+                        f"Structured output attempt 2: Retrying primary model ({self.primary_model})"
+                    )
+                    result = await self.primary_client.generate_structured(
+                        messages=messages,
+                        response_model=response_model,
+                    )
+                    span.set_attribute("gen_ai.response.model", self.primary_model)
+                    return result
+                except retriable_errors as e:
+                    logger.warning(
+                        f"Structured output attempt 2 (Retry Primary model {self.primary_model}) "
+                        f"failed with retriable error: {e}. Proceeding to fallback."
+                    )
+                    last_exception = e
+                except LLMProviderError as e:
+                    logger.warning(
+                        f"Structured output attempt 2 (Retry Primary model {self.primary_model}) "
+                        f"failed with provider error: {e}. Proceeding to fallback."
+                    )
+                    last_exception = e
+                except Exception as e:
+                    logger.error(
+                        f"Structured output attempt 2 (Retry Primary model {self.primary_model}) "
+                        f"failed with unexpected error: {e}",
+                        exc_info=True,
+                    )
+                    last_exception = e
+
+            # Attempt 3: Fallback model (if configured and primary attempts failed)
+            if self.fallback_client and last_exception:
+                if self.fallback_model == self.primary_model:
+                    logger.warning(
+                        f"Fallback model '{self.fallback_model}' is the same as the primary model "
+                        f"'{self.primary_model}'. Skipping fallback."
+                    )
+                    raise last_exception
+
+                span.add_event(
+                    "llm.attempt",
+                    attributes={
+                        "attempt_number": 3,
+                        "model": self.fallback_model or "",
+                        "is_fallback": True,
+                    },
+                )
+                logger.info(
+                    f"Structured output attempt 3: Fallback model ({self.fallback_model})"
+                )
+                try:
+                    result = await self.fallback_client.generate_structured(
+                        messages=messages,
+                        response_model=response_model,
+                    )
+                    span.set_attribute(
+                        "gen_ai.response.model", self.fallback_model or ""
+                    )
+                    return result
+                except Exception as e:
+                    logger.error(
+                        f"Structured output attempt 3 (Fallback model {self.fallback_model}) "
+                        f"also failed: {e}",
+                        exc_info=True,
+                    )
+                    raise last_exception from e
+
+            # If all attempts failed, raise the last exception
+            if last_exception:
+                logger.error(
+                    f"All structured output attempts failed. "
+                    f"Raising last recorded exception: {last_exception}"
                 )
                 raise last_exception
-
-            logger.info(
-                f"Structured output attempt 3: Fallback model ({self.fallback_model})"
-            )
-            try:
-                return await self.fallback_client.generate_structured(
-                    messages=messages,
-                    response_model=response_model,
+            else:
+                raise LLMProviderError(
+                    message="All structured output attempts failed without a specific exception.",
+                    provider="unknown",
+                    model=self.primary_model,
                 )
-            except Exception as e:
-                logger.error(
-                    f"Structured output attempt 3 (Fallback model {self.fallback_model}) "
-                    f"also failed: {e}",
-                    exc_info=True,
-                )
-                raise last_exception from e
-
-        # If all attempts failed, raise the last exception
-        if last_exception:
-            logger.error(
-                f"All structured output attempts failed. "
-                f"Raising last recorded exception: {last_exception}"
-            )
-            raise last_exception
-        else:
-            raise LLMProviderError(
-                message="All structured output attempts failed without a specific exception.",
-                provider="unknown",
-                model=self.primary_model,
-            )

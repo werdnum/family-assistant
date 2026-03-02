@@ -23,6 +23,8 @@ if TYPE_CHECKING:
     from family_assistant.home_assistant_wrapper import HomeAssistantClientWrapper
 
 import aiofiles
+from opentelemetry import trace
+from opentelemetry.trace import StatusCode
 from pydantic import TypeAdapter
 
 from family_assistant.config_models import AppConfig
@@ -73,6 +75,7 @@ from .tools.types import ToolAttachment, ToolDefinition, ToolResult
 from .utils.clock import Clock, SystemClock
 
 logger = logging.getLogger(__name__)
+tracer = trace.get_tracer(__name__)
 
 
 @dataclass
@@ -435,37 +438,44 @@ class ProcessingService:
 
     async def _aggregate_context_from_providers(self) -> str:
         """Gathers context fragments from all registered providers."""
-        all_fragments: list[str] = []
-        for provider in self.context_providers:
-            try:
-                fragments_output = await provider.get_context_fragments()
+        with tracer.start_as_current_span(
+            "context.aggregate",
+            attributes={
+                "context.provider_count": len(self.context_providers),
+            },
+        ) as span:
+            all_fragments: list[str] = []
+            for provider in self.context_providers:
+                try:
+                    fragments_output = await provider.get_context_fragments()
 
-                if isinstance(fragments_output, list):
-                    # If it's a list, extend. This handles empty lists correctly (no-op).
-                    all_fragments.extend(fragments_output)
-                    if not fragments_output:  # Log if the list was empty
-                        logger.debug(
-                            f"Context provider '{provider.name}' returned an empty list of fragments."
+                    if isinstance(fragments_output, list):
+                        # If it's a list, extend. This handles empty lists correctly (no-op).
+                        all_fragments.extend(fragments_output)
+                        if not fragments_output:  # Log if the list was empty
+                            logger.debug(
+                                f"Context provider '{provider.name}' returned an empty list of fragments."
+                            )
+                    elif fragments_output is None:
+                        # Log a warning if a provider violates protocol by returning None
+                        logger.warning(
+                            f"Context provider '{provider.name}' returned None instead of a list. Skipping."
                         )
-                elif fragments_output is None:
-                    # Log a warning if a provider violates protocol by returning None
-                    logger.warning(
-                        f"Context provider '{provider.name}' returned None instead of a list. Skipping."
-                    )
-                else:
-                    # Log an error if a provider returns something other than a list or None
+                    else:
+                        # Log an error if a provider returns something other than a list or None
+                        logger.error(
+                            f"Context provider '{provider.name}' returned an unexpected type: {type(fragments_output)}. Expected list[str]. Skipping."
+                        )
+                except Exception as e:
+                    # This catches errors from await provider.get_context_fragments() itself
                     logger.error(
-                        f"Context provider '{provider.name}' returned an unexpected type: {type(fragments_output)}. Expected list[str]. Skipping."
+                        f"Error calling get_context_fragments() for provider '{provider.name}': {e}",
+                        exc_info=True,
                     )
-            except Exception as e:
-                # This catches errors from await provider.get_context_fragments() itself
-                logger.error(
-                    f"Error calling get_context_fragments() for provider '{provider.name}': {e}",
-                    exc_info=True,
-                )
-        # Join all non-empty fragments (i.e., filter out empty strings from individual providers' lists)
-        # separated by double newlines for clarity.
-        return "\n\n".join(filter(None, all_fragments)).strip()
+            span.set_attribute("context.fragments_count", len(all_fragments))
+            # Join all non-empty fragments (i.e., filter out empty strings from individual providers' lists)
+            # separated by double newlines for clarity.
+            return "\n\n".join(filter(None, all_fragments)).strip()
 
     async def process_message(
         self,
@@ -1062,382 +1072,401 @@ class ProcessingService:
         function_name = tool_call_item_obj.function.name
         function_args = tool_call_item_obj.function.arguments
 
-        # Validate tool call
-        if not call_id or not function_name:
-            logger.error(f"Invalid tool call: id='{call_id}', name='{function_name}'")
-            error_content = "Error: Invalid tool call structure."
-            error_traceback = "Invalid tool call structure received from LLM."
-            func_name = function_name or "unknown_function"
-
-            llm_message = ToolMessage(
-                role="tool",
-                tool_call_id=call_id or f"missing_id_{uuid.uuid4()}",
-                content=error_content,
-                error_traceback=error_traceback,
-                name=func_name,
-            )
-
-            # Create history message from ToolMessage
-            history_message = message_to_json_dict(llm_message)
-            history_message["tool_name"] = func_name
-
-            return ToolExecutionResult(
-                stream_event=LLMStreamEvent(
-                    type="tool_result",
-                    tool_call_id=call_id,
-                    tool_result=error_content,
-                    error=error_traceback,
-                ),
-                llm_message=llm_message,
-                history_message=history_message,
-                auto_attachment_ids=None,  # No attachments for error cases
-            )
-
-        # Parse arguments
-        try:
-            if isinstance(function_args, str):
-                arguments = json.loads(function_args)
-            else:
-                arguments = function_args
-        except json.JSONDecodeError:
-            logger.error(
-                f"Failed to parse arguments for {function_name}: {function_args}"
-            )
-            error_content = f"Error: Invalid arguments format for {function_name}."
-            error_traceback = f"JSONDecodeError: {function_args}"
-
-            llm_message = ToolMessage(
-                role="tool",
-                tool_call_id=call_id,
-                content=error_content,
-                error_traceback=error_traceback,
-                name=function_name,
-            )
-
-            # Create history message from ToolMessage
-            history_message = message_to_json_dict(llm_message)
-            history_message["tool_name"] = function_name
-
-            return ToolExecutionResult(
-                stream_event=LLMStreamEvent(
-                    type="tool_result",
-                    tool_call_id=call_id,
-                    tool_result=error_content,
-                    error=error_traceback,
-                ),
-                llm_message=llm_message,
-                history_message=history_message,
-                auto_attachment_ids=None,  # No attachments for error cases
-            )
-
-        # Execute tool
-        logger.info(f"Executing tool '{function_name}' with args: {arguments}")
-
-        # Build chat_interfaces dict for cross-interface messaging
-        # Use the provided chat_interfaces (containing all registered interfaces) if available,
-        # otherwise fall back to just the current interface for backward compatibility
-        chat_interfaces_dict = chat_interfaces
-        if chat_interfaces_dict is None and chat_interface:
-            # Fallback: if no registry provided, create dict with just current interface
-            chat_interfaces_dict = {interface_type: chat_interface}
-
-        tool_execution_context = ToolExecutionContext(
-            interface_type=interface_type,
-            conversation_id=conversation_id,
-            user_name=user_name,
-            user_id=user_id,
-            turn_id=turn_id,
-            db_context=db_context,
-            chat_interface=chat_interface,
-            chat_interfaces=chat_interfaces_dict,
-            timezone=self.timezone,
-            processing_profile_id=self.service_config.id,
-            subconversation_id=subconversation_id,
-            request_confirmation_callback=request_confirmation_callback,
-            processing_service=self,
-            clock=self.clock,
-            home_assistant_client=self.home_assistant_client,
-            event_sources=self.event_sources,
-            indexing_source=(
-                self.event_sources.get("indexing") if self.event_sources else None
-            ),
-            attachment_registry=self.attachment_registry,
-            camera_backend=self.camera_backend,
-            visibility_grants=self.service_config.visibility_grants,
-            default_note_visibility_labels=self.service_config.default_note_visibility_labels,
-            note_registry=self.service_config.note_registry,
-        )
-
-        try:
-            # Execute the tool
-            result = await self.tools_provider.execute_tool(
-                function_name, arguments, tool_execution_context, call_id
-            )
-            logger.info(f"Tool '{function_name}' executed successfully.")
-
-            # Handle both string and ToolResult
-            if isinstance(result, ToolResult):
-                content_for_stream = result.get_text()
-                auto_attachment_ids: list[
-                    str
-                ] = []  # Track attachment IDs for auto-queuing
-
-                # Auto-convert large text result to attachment
-                new_content, auto_att_id = await self._handle_large_tool_result(
-                    db_context,
-                    content_for_stream,
-                    function_name,
-                    conversation_id,
-                    call_id,
+        with tracer.start_as_current_span(
+            f"tool.execute.{function_name}",
+            attributes={
+                "tool.name": function_name,
+                "tool.call_id": call_id or "",
+            },
+        ) as span:
+            # Validate tool call
+            if not call_id or not function_name:
+                logger.error(
+                    f"Invalid tool call: id='{call_id}', name='{function_name}'"
                 )
-                if auto_att_id:
-                    content_for_stream = new_content
-                    auto_attachment_ids.append(auto_att_id)
-                    # Update ToolResult so get_text() returns the hint.
-                    # We also clear data to free memory, as it is now stored as an attachment.
-                    result.text = new_content
-                    result.data = None
+                error_content = "Error: Invalid tool call structure."
+                error_traceback = "Invalid tool call structure received from LLM."
+                func_name = function_name or "unknown_function"
 
-                # Extract attachment metadata for streaming
-                stream_metadata = None
-                attachments_data = []
-                if result.attachments:
-                    for attachment in result.attachments:
-                        attachment_data = {
-                            "type": "tool_result",
-                            "mime_type": attachment.mime_type,
-                            "description": attachment.description,
-                        }
-
-                        # Determine if this is a new attachment (has content) or a reference (has ID but no content)
-                        if attachment.content and self.attachment_registry:
-                            # New attachment with content - store it
-                            try:
-                                # Store the attachment content with proper file extension
-                                file_extension = (
-                                    self._get_file_extension_from_mime_type(
-                                        attachment.mime_type
-                                    )
-                                )
-                                # Store and register the attachment using AttachmentRegistry
-                                registered_metadata = await self.attachment_registry.store_and_register_tool_attachment(
-                                    file_content=attachment.content,
-                                    filename=f"tool_result_{uuid.uuid4()}{file_extension}",
-                                    content_type=attachment.mime_type,
-                                    tool_name=function_name,
-                                    description=attachment.description
-                                    or f"Output from {function_name}",
-                                    conversation_id=conversation_id,
-                                    metadata={
-                                        "tool_call_id": call_id,
-                                        "auto_display": True,
-                                    },
-                                )
-
-                                attachment_data["content_url"] = (
-                                    registered_metadata.content_url or ""
-                                )
-                                attachment_data["attachment_id"] = (
-                                    registered_metadata.attachment_id
-                                )
-                                # Queue this newly stored attachment
-                                auto_attachment_ids.append(
-                                    registered_metadata.attachment_id
-                                )
-
-                                # Populate the attachment_id in the ToolAttachment object
-                                attachment.attachment_id = (
-                                    registered_metadata.attachment_id
-                                )
-
-                                logger.info(
-                                    f"Stored and registered tool attachment: {registered_metadata.attachment_id}"
-                                )
-                            except Exception as e:
-                                logger.error(
-                                    f"Failed to store tool result attachment: {e}"
-                                )
-                                # Continue without URL if storage fails
-                        elif attachment.attachment_id:
-                            # Reference to existing attachment - just queue it
-                            attachment_data["attachment_id"] = attachment.attachment_id
-                            # Note: content_url might not be available for references, that's OK
-                            auto_attachment_ids.append(attachment.attachment_id)
-                            logger.info(
-                                f"Queuing existing attachment reference: {attachment.attachment_id}"
-                            )
-
-                        attachments_data.append(attachment_data)
-
-                    stream_metadata = {"attachments": attachments_data}
-
-                # Create LLM message AFTER storing attachments (if any) so attachment_ids are populated
-                llm_message = tool_result_to_llm_message(
-                    result,
-                    call_id,
-                    function_name,
-                    provider_metadata=tool_call_item_obj.provider_metadata,
+                llm_message = ToolMessage(
+                    role="tool",
+                    tool_call_id=call_id or f"missing_id_{uuid.uuid4()}",
+                    content=error_content,
+                    error_traceback=error_traceback,
+                    name=func_name,
                 )
 
-                # Inject attachment IDs into LLM message content so LLM can reference them in subsequent calls
-                if auto_attachment_ids:
-                    attachment_id_list = ", ".join(auto_attachment_ids)
-                    modified_content = (
-                        llm_message.content
-                        + f"\n[Attachment ID(s): {attachment_id_list}]"
-                    )
-                    # Create new ToolMessage with modified content using model_copy
-                    llm_message = llm_message.model_copy(
-                        update={"content": modified_content}
-                    )
-
-                # Create history_message from the modified llm_message to preserve attachment IDs
+                # Create history message from ToolMessage
                 history_message = message_to_json_dict(llm_message)
-                history_message["tool_name"] = (
-                    function_name  # Store tool name for database
-                )
-                if attachments_data:
-                    history_message["attachments"] = attachments_data
-            else:
-                # Backward compatible string handling
-                content_for_stream = str(result)
-                auto_attachment_ids = []  # String results don't generate attachments
+                history_message["tool_name"] = func_name
 
-                # Auto-convert large text result to attachment
-                new_content, auto_att_id = await self._handle_large_tool_result(
-                    db_context,
-                    content_for_stream,
-                    function_name,
-                    conversation_id,
-                    call_id,
+                return ToolExecutionResult(
+                    stream_event=LLMStreamEvent(
+                        type="tool_result",
+                        tool_call_id=call_id,
+                        tool_result=error_content,
+                        error=error_traceback,
+                    ),
+                    llm_message=llm_message,
+                    history_message=history_message,
+                    auto_attachment_ids=None,  # No attachments for error cases
                 )
-                if auto_att_id:
-                    content_for_stream = new_content
-                    auto_attachment_ids.append(auto_att_id)
+
+            # Parse arguments
+            try:
+                if isinstance(function_args, str):
+                    arguments = json.loads(function_args)
+                else:
+                    arguments = function_args
+            except json.JSONDecodeError:
+                logger.error(
+                    f"Failed to parse arguments for {function_name}: {function_args}"
+                )
+                error_content = f"Error: Invalid arguments format for {function_name}."
+                error_traceback = f"JSONDecodeError: {function_args}"
 
                 llm_message = ToolMessage(
                     role="tool",
                     tool_call_id=call_id,
-                    content=content_for_stream,
+                    content=error_content,
+                    error_traceback=error_traceback,
                     name=function_name,
                 )
-                # Create history message for string results
+
+                # Create history message from ToolMessage
                 history_message = message_to_json_dict(llm_message)
                 history_message["tool_name"] = function_name
-                stream_metadata = None
 
-                # Special handling for attach_to_response tool: enrich with attachment metadata
-                if function_name == "attach_to_response":
-                    try:
-                        result_data = json.loads(content_for_stream)
-                        if (
-                            result_data.get("status") == "attachments_queued"
-                            and "attachment_ids" in result_data
-                        ):
-                            # Only enrich metadata if attachment registry is available
-                            if self.attachment_registry:
-                                attachment_registry = self.attachment_registry
+                return ToolExecutionResult(
+                    stream_event=LLMStreamEvent(
+                        type="tool_result",
+                        tool_call_id=call_id,
+                        tool_result=error_content,
+                        error=error_traceback,
+                    ),
+                    llm_message=llm_message,
+                    history_message=history_message,
+                    auto_attachment_ids=None,  # No attachments for error cases
+                )
 
-                                attachment_metadata_list = []
-                                for attachment_id in result_data["attachment_ids"]:
-                                    try:
-                                        attachment_info = (
-                                            await attachment_registry.get_attachment(
+            # Execute tool
+            logger.info(f"Executing tool '{function_name}' with args: {arguments}")
+
+            # Build chat_interfaces dict for cross-interface messaging
+            # Use the provided chat_interfaces (containing all registered interfaces) if available,
+            # otherwise fall back to just the current interface for backward compatibility
+            chat_interfaces_dict = chat_interfaces
+            if chat_interfaces_dict is None and chat_interface:
+                # Fallback: if no registry provided, create dict with just current interface
+                chat_interfaces_dict = {interface_type: chat_interface}
+
+            tool_execution_context = ToolExecutionContext(
+                interface_type=interface_type,
+                conversation_id=conversation_id,
+                user_name=user_name,
+                user_id=user_id,
+                turn_id=turn_id,
+                db_context=db_context,
+                chat_interface=chat_interface,
+                chat_interfaces=chat_interfaces_dict,
+                timezone=self.timezone,
+                processing_profile_id=self.service_config.id,
+                subconversation_id=subconversation_id,
+                request_confirmation_callback=request_confirmation_callback,
+                processing_service=self,
+                clock=self.clock,
+                home_assistant_client=self.home_assistant_client,
+                event_sources=self.event_sources,
+                indexing_source=(
+                    self.event_sources.get("indexing") if self.event_sources else None
+                ),
+                attachment_registry=self.attachment_registry,
+                camera_backend=self.camera_backend,
+                visibility_grants=self.service_config.visibility_grants,
+                default_note_visibility_labels=self.service_config.default_note_visibility_labels,
+                note_registry=self.service_config.note_registry,
+            )
+
+            try:
+                # Execute the tool
+                result = await self.tools_provider.execute_tool(
+                    function_name, arguments, tool_execution_context, call_id
+                )
+                logger.info(f"Tool '{function_name}' executed successfully.")
+
+                # Handle both string and ToolResult
+                if isinstance(result, ToolResult):
+                    content_for_stream = result.get_text()
+                    auto_attachment_ids: list[
+                        str
+                    ] = []  # Track attachment IDs for auto-queuing
+
+                    # Auto-convert large text result to attachment
+                    new_content, auto_att_id = await self._handle_large_tool_result(
+                        db_context,
+                        content_for_stream,
+                        function_name,
+                        conversation_id,
+                        call_id,
+                    )
+                    if auto_att_id:
+                        content_for_stream = new_content
+                        auto_attachment_ids.append(auto_att_id)
+                        # Update ToolResult so get_text() returns the hint.
+                        # We also clear data to free memory, as it is now stored as an attachment.
+                        result.text = new_content
+                        result.data = None
+
+                    # Extract attachment metadata for streaming
+                    stream_metadata = None
+                    attachments_data = []
+                    if result.attachments:
+                        for attachment in result.attachments:
+                            attachment_data = {
+                                "type": "tool_result",
+                                "mime_type": attachment.mime_type,
+                                "description": attachment.description,
+                            }
+
+                            # Determine if this is a new attachment (has content) or a reference (has ID but no content)
+                            if attachment.content and self.attachment_registry:
+                                # New attachment with content - store it
+                                try:
+                                    # Store the attachment content with proper file extension
+                                    file_extension = (
+                                        self._get_file_extension_from_mime_type(
+                                            attachment.mime_type
+                                        )
+                                    )
+                                    # Store and register the attachment using AttachmentRegistry
+                                    registered_metadata = await self.attachment_registry.store_and_register_tool_attachment(
+                                        file_content=attachment.content,
+                                        filename=f"tool_result_{uuid.uuid4()}{file_extension}",
+                                        content_type=attachment.mime_type,
+                                        tool_name=function_name,
+                                        description=attachment.description
+                                        or f"Output from {function_name}",
+                                        conversation_id=conversation_id,
+                                        metadata={
+                                            "tool_call_id": call_id,
+                                            "auto_display": True,
+                                        },
+                                    )
+
+                                    attachment_data["content_url"] = (
+                                        registered_metadata.content_url or ""
+                                    )
+                                    attachment_data["attachment_id"] = (
+                                        registered_metadata.attachment_id
+                                    )
+                                    # Queue this newly stored attachment
+                                    auto_attachment_ids.append(
+                                        registered_metadata.attachment_id
+                                    )
+
+                                    # Populate the attachment_id in the ToolAttachment object
+                                    attachment.attachment_id = (
+                                        registered_metadata.attachment_id
+                                    )
+
+                                    logger.info(
+                                        f"Stored and registered tool attachment: {registered_metadata.attachment_id}"
+                                    )
+                                except Exception as e:
+                                    logger.error(
+                                        f"Failed to store tool result attachment: {e}"
+                                    )
+                                    # Continue without URL if storage fails
+                            elif attachment.attachment_id:
+                                # Reference to existing attachment - just queue it
+                                attachment_data["attachment_id"] = (
+                                    attachment.attachment_id
+                                )
+                                # Note: content_url might not be available for references, that's OK
+                                auto_attachment_ids.append(attachment.attachment_id)
+                                logger.info(
+                                    f"Queuing existing attachment reference: {attachment.attachment_id}"
+                                )
+
+                            attachments_data.append(attachment_data)
+
+                        stream_metadata = {"attachments": attachments_data}
+
+                    # Create LLM message AFTER storing attachments (if any) so attachment_ids are populated
+                    llm_message = tool_result_to_llm_message(
+                        result,
+                        call_id,
+                        function_name,
+                        provider_metadata=tool_call_item_obj.provider_metadata,
+                    )
+
+                    # Inject attachment IDs into LLM message content so LLM can reference them in subsequent calls
+                    if auto_attachment_ids:
+                        attachment_id_list = ", ".join(auto_attachment_ids)
+                        modified_content = (
+                            llm_message.content
+                            + f"\n[Attachment ID(s): {attachment_id_list}]"
+                        )
+                        # Create new ToolMessage with modified content using model_copy
+                        llm_message = llm_message.model_copy(
+                            update={"content": modified_content}
+                        )
+
+                    # Create history_message from the modified llm_message to preserve attachment IDs
+                    history_message = message_to_json_dict(llm_message)
+                    history_message["tool_name"] = (
+                        function_name  # Store tool name for database
+                    )
+                    if attachments_data:
+                        history_message["attachments"] = attachments_data
+                else:
+                    # Backward compatible string handling
+                    content_for_stream = str(result)
+                    auto_attachment_ids = []  # String results don't generate attachments
+
+                    # Auto-convert large text result to attachment
+                    new_content, auto_att_id = await self._handle_large_tool_result(
+                        db_context,
+                        content_for_stream,
+                        function_name,
+                        conversation_id,
+                        call_id,
+                    )
+                    if auto_att_id:
+                        content_for_stream = new_content
+                        auto_attachment_ids.append(auto_att_id)
+
+                    llm_message = ToolMessage(
+                        role="tool",
+                        tool_call_id=call_id,
+                        content=content_for_stream,
+                        name=function_name,
+                    )
+                    # Create history message for string results
+                    history_message = message_to_json_dict(llm_message)
+                    history_message["tool_name"] = function_name
+                    stream_metadata = None
+
+                    # Special handling for attach_to_response tool: enrich with attachment metadata
+                    if function_name == "attach_to_response":
+                        try:
+                            result_data = json.loads(content_for_stream)
+                            if (
+                                result_data.get("status") == "attachments_queued"
+                                and "attachment_ids" in result_data
+                            ):
+                                # Only enrich metadata if attachment registry is available
+                                if self.attachment_registry:
+                                    attachment_registry = self.attachment_registry
+
+                                    attachment_metadata_list = []
+                                    for attachment_id in result_data["attachment_ids"]:
+                                        try:
+                                            attachment_info = await attachment_registry.get_attachment(
                                                 db_context, attachment_id
                                             )
-                                        )
-                                        if attachment_info:
-                                            attachment_metadata_list.append({
-                                                "attachment_id": attachment_id,
-                                                "type": "tool_result",
-                                                "description": attachment_info.description
-                                                or "Attachment",
-                                                "url": attachment_info.content_url,
-                                                "content_url": attachment_info.content_url,
-                                                "mime_type": attachment_info.mime_type,
-                                                "size": attachment_info.size,
-                                            })
-                                    except Exception as e:
-                                        logger.warning(
-                                            f"Failed to get metadata for attachment {attachment_id}: {e}"
-                                        )
+                                            if attachment_info:
+                                                attachment_metadata_list.append({
+                                                    "attachment_id": attachment_id,
+                                                    "type": "tool_result",
+                                                    "description": attachment_info.description
+                                                    or "Attachment",
+                                                    "url": attachment_info.content_url,
+                                                    "content_url": attachment_info.content_url,
+                                                    "mime_type": attachment_info.mime_type,
+                                                    "size": attachment_info.size,
+                                                })
+                                        except Exception as e:
+                                            logger.warning(
+                                                f"Failed to get metadata for attachment {attachment_id}: {e}"
+                                            )
 
-                                if attachment_metadata_list:
-                                    stream_metadata = {
-                                        "attachments": attachment_metadata_list
-                                    }
-                                    logger.info(
-                                        f"Enriched attach_to_response result with {len(attachment_metadata_list)} attachment metadata entries"
+                                    if attachment_metadata_list:
+                                        stream_metadata = {
+                                            "attachments": attachment_metadata_list
+                                        }
+                                        logger.info(
+                                            f"Enriched attach_to_response result with {len(attachment_metadata_list)} attachment metadata entries"
+                                        )
+                                else:
+                                    logger.warning(
+                                        "AttachmentRegistry not available, skipping metadata enrichment for attach_to_response"
                                     )
-                            else:
-                                logger.warning(
-                                    "AttachmentRegistry not available, skipping metadata enrichment for attach_to_response"
-                                )
-                    except (json.JSONDecodeError, KeyError) as e:
-                        logger.warning(
-                            f"Failed to parse attach_to_response result for metadata enrichment: {e}"
-                        )
-                        # Continue with normal processing if parsing fails
+                        except (json.JSONDecodeError, KeyError) as e:
+                            logger.warning(
+                                f"Failed to parse attach_to_response result for metadata enrichment: {e}"
+                            )
+                            # Continue with normal processing if parsing fails
 
-            return ToolExecutionResult(
-                stream_event=LLMStreamEvent(
-                    type="tool_result",
+                span.set_attribute("tool.status", "success")
+                span.set_attribute("tool.result_size", len(content_for_stream))
+
+                return ToolExecutionResult(
+                    stream_event=LLMStreamEvent(
+                        type="tool_result",
+                        tool_call_id=call_id,
+                        tool_result=content_for_stream,
+                        metadata=stream_metadata,
+                    ),
+                    llm_message=llm_message,
+                    history_message=history_message,
+                    auto_attachment_ids=auto_attachment_ids
+                    if auto_attachment_ids
+                    else None,
+                )
+
+            except ToolNotFoundError:
+                logger.error(f"Tool '{function_name}' not found.")
+                error_content = f"Error: Tool '{function_name}' not found."
+                error_traceback = traceback.format_exc()
+                span.set_status(StatusCode.ERROR, f"Tool '{function_name}' not found.")
+                span.set_attribute("tool.status", "error")
+
+                llm_message = ToolMessage(
+                    role="tool",
                     tool_call_id=call_id,
-                    tool_result=content_for_stream,
-                    metadata=stream_metadata,
-                ),
-                llm_message=llm_message,
-                history_message=history_message,
-                auto_attachment_ids=auto_attachment_ids
-                if auto_attachment_ids
-                else None,
-            )
+                    content=error_content,
+                    error_traceback=error_traceback,
+                    name=function_name,
+                )
 
-        except ToolNotFoundError:
-            logger.error(f"Tool '{function_name}' not found.")
-            error_content = f"Error: Tool '{function_name}' not found."
-            error_traceback = traceback.format_exc()
+                # Create history message from ToolMessage
+                history_message = message_to_json_dict(llm_message)
+                history_message["tool_name"] = function_name
 
-            llm_message = ToolMessage(
-                role="tool",
-                tool_call_id=call_id,
-                content=error_content,
-                error_traceback=error_traceback,
-                name=function_name,
-            )
+                return ToolExecutionResult(
+                    stream_event=LLMStreamEvent(
+                        type="tool_result",
+                        tool_call_id=call_id,
+                        tool_result=error_content,
+                        error=error_traceback,
+                    ),
+                    llm_message=llm_message,
+                    history_message=history_message,
+                    auto_attachment_ids=None,  # No attachments for error cases
+                )
 
-            # Create history message from ToolMessage
-            history_message = message_to_json_dict(llm_message)
-            history_message["tool_name"] = function_name
+            except Exception as e:
+                logger.error(
+                    f"Error executing tool '{function_name}': {e}", exc_info=True
+                )
+                error_content = f"Error executing {function_name}: {str(e)}"
+                error_traceback = traceback.format_exc()
+                span.set_status(StatusCode.ERROR, str(e))
+                span.record_exception(e)
+                span.set_attribute("tool.status", "error")
 
-            return ToolExecutionResult(
-                stream_event=LLMStreamEvent(
-                    type="tool_result",
+                llm_message = ToolMessage(
+                    role="tool",
                     tool_call_id=call_id,
-                    tool_result=error_content,
-                    error=error_traceback,
-                ),
-                llm_message=llm_message,
-                history_message=history_message,
-                auto_attachment_ids=None,  # No attachments for error cases
-            )
+                    content=error_content,
+                    error_traceback=error_traceback,
+                    name=function_name,
+                )
 
-        except Exception as e:
-            logger.error(f"Error executing tool '{function_name}': {e}", exc_info=True)
-            error_content = f"Error executing {function_name}: {str(e)}"
-            error_traceback = traceback.format_exc()
-
-            llm_message = ToolMessage(
-                role="tool",
-                tool_call_id=call_id,
-                content=error_content,
-                error_traceback=error_traceback,
-                name=function_name,
-            )
-
-            # Create history message from ToolMessage
-            history_message = message_to_json_dict(llm_message)
-            history_message["tool_name"] = function_name
+                # Create history message from ToolMessage
+                history_message = message_to_json_dict(llm_message)
+                history_message["tool_name"] = function_name
 
             return ToolExecutionResult(
                 stream_event=LLMStreamEvent(
@@ -2465,6 +2494,16 @@ Call attach_to_response with your selected attachment IDs."""
             LLMStreamEvent objects representing different stages of processing
         """
         turn_id = str(uuid.uuid4())
+        span = tracer.start_span(
+            "conversation.process",
+            attributes={
+                "conversation.interface": interface_type,
+                "conversation.id": conversation_id,
+                "conversation.user": user_name,
+            },
+        )
+        if subconversation_id:
+            span.set_attribute("conversation.subconversation_id", subconversation_id)
         logger.info(
             f"Starting streaming chat interaction. Turn ID: {turn_id}, "
             f"Interface: {interface_type}, Conversation: {conversation_id}, "
@@ -2478,278 +2517,309 @@ Call attach_to_response with your selected attachment IDs."""
             )
 
         try:
-            # --- 1. Determine Thread Root ID & Save User Trigger Message ---
-            thread_root_id_for_turn: int | None = None
-            user_message_timestamp = self.clock.now()
-
-            if replied_to_interface_id:
-                # Note: Repository now returns typed LLMMessage objects without database metadata fields
-                # like thread_root_id and internal_id. Cannot determine thread root from replied-to message.
-                # Thread root will be set to the current saved message's internal_id if not already set.
-                logger.info(
-                    f"Received reply to interface message {replied_to_interface_id}. "
-                    "Thread root ID will be determined from saved message."
-                )
-
-            # Prepare user message content for history - store only text
-            # Attachments are stored separately in the attachments column and
-            # reconstructed into multimodal content when loading from history
-            user_content_for_history = ""
-            if trigger_content_parts:
-                first_text_part = next(
-                    (
-                        part.get("text")
-                        for part in trigger_content_parts
-                        if part.get("type") == "text"
-                    ),
-                    None,
-                )
-                if first_text_part:
-                    user_content_for_history = str(first_text_part)
-                elif trigger_content_parts[0].get("type") == "image_url":
-                    # image_url type is used for images, video, audio, and PDFs via data URIs
-                    user_content_for_history = "[Media Attached]"
-
-            # Generate a temporary interface_message_id if not provided
-            # This ensures the just-saved message can be filtered out of history
-            actual_interface_message_id = trigger_interface_message_id
-            if actual_interface_message_id is None:
-                actual_interface_message_id = f"temp_{turn_id}"
-
-            # Save user message
-            # On PostgreSQL, use a separate transaction so the message is committed and visible immediately
-            # to other requests (like UI polling) while the LLM continues processing.
-            # On SQLite, we avoid nested transactions due to connection sharing in StaticPool.
-            if db_context.engine.dialect.name == "postgresql":
-                async with get_db_context(
-                    engine=db_context.engine,
-                    message_notifier=db_context.message_notifier,
-                ) as user_msg_db:
-                    saved_user_msg_record = await user_msg_db.message_history.add(
-                        interface_type=interface_type,
-                        conversation_id=conversation_id,
-                        interface_message_id=actual_interface_message_id,
-                        turn_id=turn_id,
-                        thread_root_id=thread_root_id_for_turn,
-                        timestamp=user_message_timestamp,
-                        role="user",
-                        content=user_content_for_history,
-                        tool_calls=None,
-                        reasoning_info=None,
-                        error_traceback=None,
-                        tool_call_id=None,
-                        processing_profile_id=self.service_config.id,
-                        attachments=trigger_attachments,
-                        subconversation_id=subconversation_id,
-                        user_id=user_id,
-                    )
-            else:
-                saved_user_msg_record = await db_context.message_history.add(
-                    interface_type=interface_type,
-                    conversation_id=conversation_id,
-                    interface_message_id=actual_interface_message_id,
-                    turn_id=turn_id,
-                    thread_root_id=thread_root_id_for_turn,
-                    timestamp=user_message_timestamp,
-                    role="user",
-                    content=user_content_for_history,
-                    tool_calls=None,
-                    reasoning_info=None,
-                    error_traceback=None,
-                    tool_call_id=None,
-                    processing_profile_id=self.service_config.id,
-                    attachments=trigger_attachments,
-                    subconversation_id=subconversation_id,
-                    user_id=user_id,
-                )
-
-            if saved_user_msg_record and not thread_root_id_for_turn:
-                thread_root_id_for_turn = saved_user_msg_record.get("internal_id")
-
-            # --- 2. Prepare LLM Context ---
-            # Use interface-specific history limits
-            history_limit, history_max_age = self._get_history_limits_for_interface(
-                interface_type
-            )
-
-            try:
-                # Fetch history including the just-saved trigger message
-                # The repository reconstructs multimodal content from stored attachments
-                # Pass current time from clock for consistent timestamp filtering in tests
-                raw_history_messages = await db_context.message_history.get_recent(
-                    interface_type=interface_type,
-                    conversation_id=conversation_id,
-                    limit=history_limit,
-                    max_age=history_max_age,
-                    processing_profile_id=self.service_config.id,
-                    subconversation_id=subconversation_id,
-                    current_time=self.clock.now(),
-                )
-            except Exception as hist_err:
-                logger.error(
-                    f"Failed to get message history: {hist_err}", exc_info=True
-                )
-                raw_history_messages = []
-
-            initial_messages_for_llm = await self._format_history_for_llm(
-                raw_history_messages
-            )
-
-            # Handle reply thread context
-            if replied_to_interface_id and thread_root_id_for_turn:
+            with trace.use_span(span, end_on_exit=False):
                 try:
-                    full_thread_messages_db = (
-                        await db_context.message_history.get_by_thread_id(
-                            thread_root_id=thread_root_id_for_turn,
-                            subconversation_id=subconversation_id,
+                    # --- 1. Determine Thread Root ID & Save User Trigger Message ---
+                    thread_root_id_for_turn: int | None = None
+                    user_message_timestamp = self.clock.now()
+
+                    if replied_to_interface_id:
+                        # Note: Repository now returns typed LLMMessage objects without database metadata fields
+                        # like thread_root_id and internal_id. Cannot determine thread root from replied-to message.
+                        # Thread root will be set to the current saved message's internal_id if not already set.
+                        logger.info(
+                            f"Received reply to interface message {replied_to_interface_id}. "
+                            "Thread root ID will be determined from saved message."
                         )
-                    )
-                    # Note: Repository now returns typed LLMMessage objects without database metadata fields
-                    # Cannot filter by interface_message_id anymore. Using all thread messages as-is.
-                    initial_messages_for_llm = await self._format_history_for_llm(
-                        full_thread_messages_db
-                    )
-                except Exception as thread_fetch_err:
-                    logger.error(f"Error fetching thread history: {thread_fetch_err}")
 
-            messages_for_llm = initial_messages_for_llm
+                    # Prepare user message content for history - store only text
+                    # Attachments are stored separately in the attachments column and
+                    # reconstructed into multimodal content when loading from history
+                    user_content_for_history = ""
+                    if trigger_content_parts:
+                        first_text_part = next(
+                            (
+                                part.get("text")
+                                for part in trigger_content_parts
+                                if part.get("type") == "text"
+                            ),
+                            None,
+                        )
+                        if first_text_part:
+                            user_content_for_history = str(first_text_part)
+                        elif trigger_content_parts[0].get("type") == "image_url":
+                            # image_url type is used for images, video, audio, and PDFs via data URIs
+                            user_content_for_history = "[Media Attached]"
 
-            # Prune leading invalid messages
-            while messages_for_llm:
-                first_msg = messages_for_llm[0]
-                # Check if this is a ToolMessage or AssistantMessage with tool calls
-                is_tool_msg = isinstance(first_msg, ToolMessage)
-                is_assistant_with_tools = (
-                    isinstance(first_msg, AssistantMessage) and first_msg.tool_calls
-                )
-                if is_tool_msg or is_assistant_with_tools:
-                    messages_for_llm.pop(0)
-                else:
-                    break
+                    # Generate a temporary interface_message_id if not provided
+                    # This ensures the just-saved message can be filtered out of history
+                    actual_interface_message_id = trigger_interface_message_id
+                    if actual_interface_message_id is None:
+                        actual_interface_message_id = f"temp_{turn_id}"
 
-            # Prepare System Prompt
-            system_prompt_template = self.prompts.get(
-                "system_prompt",
-                "You are a helpful assistant. Current time is {current_time}.",
-            )
-
-            current_time_str = (
-                self.clock
-                .now()
-                .astimezone(self.timezone)
-                .strftime("%Y-%m-%d %H:%M:%S %Z")
-            )
-
-            aggregated_other_context_str = (
-                await self._aggregate_context_from_providers()
-            )
-
-            format_args = {
-                "user_name": user_name,
-                "current_time": current_time_str,
-                "aggregated_other_context": aggregated_other_context_str,
-                "server_url": self.server_url,
-                "profile_id": self.service_config.id,
-            }
-
-            # Safe format system prompt (simplified version)
-            try:
-                final_system_prompt = system_prompt_template.format(
-                    **format_args
-                ).strip()
-            except Exception:
-                final_system_prompt = system_prompt_template.strip()
-
-            final_system_prompt = self._prepend_profile_preamble(final_system_prompt)
-
-            if final_system_prompt:
-                messages_for_llm.insert(0, SystemMessage(content=final_system_prompt))
-
-            # Process attachment content parts from delegation
-            (
-                processed_trigger_parts,
-                attachment_injection_messages,
-            ) = await self._process_attachment_content_parts(
-                db_context, conversation_id, trigger_content_parts
-            )
-
-            # Attachment injection messages are already typed LLMMessage objects from the LLM client
-            # Just append them directly to messages_for_llm
-            messages_for_llm.extend(attachment_injection_messages)
-
-            # Add inline attachment metadata to the last UserMessage if there are trigger attachments
-            # The trigger message is already in messages_for_llm from history reconstruction
-            if trigger_attachments and len(trigger_attachments) > 0:
-                attachment_metadata_lines = self._generate_attachment_metadata_lines(
-                    trigger_attachments
-                )
-                if attachment_metadata_lines:
-                    metadata_text = "\n".join(attachment_metadata_lines)
-                    # Find the last UserMessage (which is the trigger) and inject metadata
-                    for i in range(len(messages_for_llm) - 1, -1, -1):
-                        msg = messages_for_llm[i]
-                        if isinstance(msg, UserMessage):
-                            self._inject_metadata_into_user_message(msg, metadata_text)
-                            break
-
-            # Convert attachment URLs to data URIs in messages from history
-            # The trigger message is already in history with reconstructed multimodal content
-            typed_messages_for_llm = await self._convert_message_urls_to_data_uris(
-                messages_for_llm
-            )
-
-            # --- 3. Stream LLM Processing ---
-            async for event, message_dict in self.process_message_stream(
-                db_context=db_context,
-                messages=typed_messages_for_llm,
-                interface_type=interface_type,
-                conversation_id=conversation_id,
-                user_name=user_name,
-                turn_id=turn_id,
-                chat_interface=chat_interface,
-                chat_interfaces=chat_interfaces,
-                request_confirmation_callback=request_confirmation_callback,
-            ):
-                # Yield the event to the caller
-                yield event
-
-                # Save messages as they're generated
-                if message_dict and message_dict.get("role"):
-                    msg_to_save = message_dict.copy()
-                    msg_to_save["interface_type"] = interface_type
-                    msg_to_save["conversation_id"] = conversation_id
-                    msg_to_save["turn_id"] = turn_id
-                    msg_to_save["thread_root_id"] = thread_root_id_for_turn
-                    msg_to_save["timestamp"] = msg_to_save.get(
-                        "timestamp", self.clock.now()
-                    )
-                    msg_to_save.setdefault("interface_message_id", None)
-                    msg_to_save["processing_profile_id"] = self.service_config.id
-                    msg_to_save["subconversation_id"] = subconversation_id
-                    msg_to_save["user_id"] = user_id
-
-                    # Remove fields that shouldn't be saved to database
-                    msg_to_save.pop("_attachment", None)  # Remove raw attachment data
-
-                    # Save each message
+                    # Save user message
+                    # On PostgreSQL, use a separate transaction so the message is committed and visible immediately
+                    # to other requests (like UI polling) while the LLM continues processing.
+                    # On SQLite, we avoid nested transactions due to connection sharing in StaticPool.
                     if db_context.engine.dialect.name == "postgresql":
-                        # Use separate transaction for intermediate messages on Postgres
                         async with get_db_context(
                             engine=db_context.engine,
                             message_notifier=db_context.message_notifier,
-                        ) as msg_db:
-                            await msg_db.message_history.add(**msg_to_save)
+                        ) as user_msg_db:
+                            saved_user_msg_record = (
+                                await user_msg_db.message_history.add(
+                                    interface_type=interface_type,
+                                    conversation_id=conversation_id,
+                                    interface_message_id=actual_interface_message_id,
+                                    turn_id=turn_id,
+                                    thread_root_id=thread_root_id_for_turn,
+                                    timestamp=user_message_timestamp,
+                                    role="user",
+                                    content=user_content_for_history,
+                                    tool_calls=None,
+                                    reasoning_info=None,
+                                    error_traceback=None,
+                                    tool_call_id=None,
+                                    processing_profile_id=self.service_config.id,
+                                    attachments=trigger_attachments,
+                                    subconversation_id=subconversation_id,
+                                    user_id=user_id,
+                                )
+                            )
                     else:
-                        await db_context.message_history.add(**msg_to_save)
+                        saved_user_msg_record = await db_context.message_history.add(
+                            interface_type=interface_type,
+                            conversation_id=conversation_id,
+                            interface_message_id=actual_interface_message_id,
+                            turn_id=turn_id,
+                            thread_root_id=thread_root_id_for_turn,
+                            timestamp=user_message_timestamp,
+                            role="user",
+                            content=user_content_for_history,
+                            tool_calls=None,
+                            reasoning_info=None,
+                            error_traceback=None,
+                            tool_call_id=None,
+                            processing_profile_id=self.service_config.id,
+                            attachments=trigger_attachments,
+                            subconversation_id=subconversation_id,
+                            user_id=user_id,
+                        )
 
-        except Exception as e:
-            logger.error(f"Error in streaming chat interaction: {e}", exc_info=True)
-            error_message = _user_friendly_error_message(e)
-            yield LLMStreamEvent(
-                type="error",
-                error=error_message,
-                metadata={"error_id": str(uuid.uuid4())},
-            )
+                    if saved_user_msg_record and not thread_root_id_for_turn:
+                        thread_root_id_for_turn = saved_user_msg_record.get(
+                            "internal_id"
+                        )
+
+                    # --- 2. Prepare LLM Context ---
+                    # Use interface-specific history limits
+                    history_limit, history_max_age = (
+                        self._get_history_limits_for_interface(interface_type)
+                    )
+
+                    try:
+                        # Fetch history including the just-saved trigger message
+                        # The repository reconstructs multimodal content from stored attachments
+                        # Pass current time from clock for consistent timestamp filtering in tests
+                        raw_history_messages = (
+                            await db_context.message_history.get_recent(
+                                interface_type=interface_type,
+                                conversation_id=conversation_id,
+                                limit=history_limit,
+                                max_age=history_max_age,
+                                processing_profile_id=self.service_config.id,
+                                subconversation_id=subconversation_id,
+                                current_time=self.clock.now(),
+                            )
+                        )
+                    except Exception as hist_err:
+                        logger.error(
+                            f"Failed to get message history: {hist_err}", exc_info=True
+                        )
+                        raw_history_messages = []
+
+                    initial_messages_for_llm = await self._format_history_for_llm(
+                        raw_history_messages
+                    )
+
+                    # Handle reply thread context
+                    if replied_to_interface_id and thread_root_id_for_turn:
+                        try:
+                            full_thread_messages_db = (
+                                await db_context.message_history.get_by_thread_id(
+                                    thread_root_id=thread_root_id_for_turn,
+                                    subconversation_id=subconversation_id,
+                                )
+                            )
+                            # Note: Repository now returns typed LLMMessage objects without database metadata fields
+                            # Cannot filter by interface_message_id anymore. Using all thread messages as-is.
+                            initial_messages_for_llm = (
+                                await self._format_history_for_llm(
+                                    full_thread_messages_db
+                                )
+                            )
+                        except Exception as thread_fetch_err:
+                            logger.error(
+                                f"Error fetching thread history: {thread_fetch_err}"
+                            )
+
+                    messages_for_llm = initial_messages_for_llm
+
+                    # Prune leading invalid messages
+                    while messages_for_llm:
+                        first_msg = messages_for_llm[0]
+                        # Check if this is a ToolMessage or AssistantMessage with tool calls
+                        is_tool_msg = isinstance(first_msg, ToolMessage)
+                        is_assistant_with_tools = (
+                            isinstance(first_msg, AssistantMessage)
+                            and first_msg.tool_calls
+                        )
+                        if is_tool_msg or is_assistant_with_tools:
+                            messages_for_llm.pop(0)
+                        else:
+                            break
+
+                    # Prepare System Prompt
+                    system_prompt_template = self.prompts.get(
+                        "system_prompt",
+                        "You are a helpful assistant. Current time is {current_time}.",
+                    )
+
+                    current_time_str = (
+                        self.clock
+                        .now()
+                        .astimezone(self.timezone)
+                        .strftime("%Y-%m-%d %H:%M:%S %Z")
+                    )
+
+                    aggregated_other_context_str = (
+                        await self._aggregate_context_from_providers()
+                    )
+
+                    format_args = {
+                        "user_name": user_name,
+                        "current_time": current_time_str,
+                        "aggregated_other_context": aggregated_other_context_str,
+                        "server_url": self.server_url,
+                        "profile_id": self.service_config.id,
+                    }
+
+                    # Safe format system prompt (simplified version)
+                    try:
+                        final_system_prompt = system_prompt_template.format(
+                            **format_args
+                        ).strip()
+                    except Exception:
+                        final_system_prompt = system_prompt_template.strip()
+
+                    final_system_prompt = self._prepend_profile_preamble(
+                        final_system_prompt
+                    )
+
+                    if final_system_prompt:
+                        messages_for_llm.insert(
+                            0, SystemMessage(content=final_system_prompt)
+                        )
+
+                    # Process attachment content parts from delegation
+                    (
+                        processed_trigger_parts,
+                        attachment_injection_messages,
+                    ) = await self._process_attachment_content_parts(
+                        db_context, conversation_id, trigger_content_parts
+                    )
+
+                    # Attachment injection messages are already typed LLMMessage objects from the LLM client
+                    # Just append them directly to messages_for_llm
+                    messages_for_llm.extend(attachment_injection_messages)
+
+                    # Add inline attachment metadata to the last UserMessage if there are trigger attachments
+                    # The trigger message is already in messages_for_llm from history reconstruction
+                    if trigger_attachments and len(trigger_attachments) > 0:
+                        attachment_metadata_lines = (
+                            self._generate_attachment_metadata_lines(
+                                trigger_attachments
+                            )
+                        )
+                        if attachment_metadata_lines:
+                            metadata_text = "\n".join(attachment_metadata_lines)
+                            # Find the last UserMessage (which is the trigger) and inject metadata
+                            for i in range(len(messages_for_llm) - 1, -1, -1):
+                                msg = messages_for_llm[i]
+                                if isinstance(msg, UserMessage):
+                                    self._inject_metadata_into_user_message(
+                                        msg, metadata_text
+                                    )
+                                    break
+
+                    # Convert attachment URLs to data URIs in messages from history
+                    # The trigger message is already in history with reconstructed multimodal content
+                    typed_messages_for_llm = (
+                        await self._convert_message_urls_to_data_uris(messages_for_llm)
+                    )
+
+                    # --- 3. Stream LLM Processing ---
+                    async for event, message_dict in self.process_message_stream(
+                        db_context=db_context,
+                        messages=typed_messages_for_llm,
+                        interface_type=interface_type,
+                        conversation_id=conversation_id,
+                        user_name=user_name,
+                        turn_id=turn_id,
+                        chat_interface=chat_interface,
+                        chat_interfaces=chat_interfaces,
+                        request_confirmation_callback=request_confirmation_callback,
+                    ):
+                        # Yield the event to the caller
+                        yield event
+
+                        # Save messages as they're generated
+                        if message_dict and message_dict.get("role"):
+                            msg_to_save = message_dict.copy()
+                            msg_to_save["interface_type"] = interface_type
+                            msg_to_save["conversation_id"] = conversation_id
+                            msg_to_save["turn_id"] = turn_id
+                            msg_to_save["thread_root_id"] = thread_root_id_for_turn
+                            msg_to_save["timestamp"] = msg_to_save.get(
+                                "timestamp", self.clock.now()
+                            )
+                            msg_to_save.setdefault("interface_message_id", None)
+                            msg_to_save["processing_profile_id"] = (
+                                self.service_config.id
+                            )
+                            msg_to_save["subconversation_id"] = subconversation_id
+                            msg_to_save["user_id"] = user_id
+
+                            # Remove fields that shouldn't be saved to database
+                            msg_to_save.pop(
+                                "_attachment", None
+                            )  # Remove raw attachment data
+
+                            # Save each message
+                            if db_context.engine.dialect.name == "postgresql":
+                                # Use separate transaction for intermediate messages on Postgres
+                                async with get_db_context(
+                                    engine=db_context.engine,
+                                    message_notifier=db_context.message_notifier,
+                                ) as msg_db:
+                                    await msg_db.message_history.add(**msg_to_save)
+                            else:
+                                await db_context.message_history.add(**msg_to_save)
+
+                except Exception as e:
+                    span.set_status(StatusCode.ERROR, str(e))
+                    span.record_exception(e)
+                    logger.error(
+                        f"Error in streaming chat interaction: {e}", exc_info=True
+                    )
+                    error_message = _user_friendly_error_message(e)
+                    yield LLMStreamEvent(
+                        type="error",
+                        error=error_message,
+                        metadata={"error_id": str(uuid.uuid4())},
+                    )
+        finally:
+            span.end()
 
     def _generate_attachment_metadata_lines(
         # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
