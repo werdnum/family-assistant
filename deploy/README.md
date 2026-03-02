@@ -2,8 +2,9 @@
 
 ## Docker Compose
 
-The `docker-compose.yaml` in this directory runs the application with PostgreSQL. Copy
-`.env.example` to `.env` and fill in the required values, then:
+The `docker-compose.yaml` in this directory runs the application with PostgreSQL. It expects a
+`../.env` file (relative to this directory) containing the environment variables used by the defined
+services. Create that file and set the required values, then:
 
 ```bash
 docker compose up -d
@@ -26,18 +27,18 @@ python -m family_assistant
 
 ### Environment Variables
 
-| Variable                              | Default                 | Description                                    |
-| ------------------------------------- | ----------------------- | ---------------------------------------------- |
-| `OTEL_ENABLED`                        | `false`                 | Master switch — must be `true` to enable OTel  |
-| `OTEL_SERVICE_NAME`                   | `family-assistant`      | Service name in traces                         |
-| `OTEL_TRACES_EXPORTER`                | `otlp-grpc`             | `otlp-grpc`, `otlp-http`, `console`, or `none` |
-| `OTEL_METRICS_EXPORTER`               | `otlp-grpc`             | `otlp-grpc`, `otlp-http`, `console`, or `none` |
-| `OTEL_EXPORTER_OTLP_ENDPOINT`         | `http://localhost:4317` | Shared OTLP endpoint for traces and metrics    |
-| `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT`  | _(uses shared)_         | Override endpoint for traces only              |
-| `OTEL_EXPORTER_OTLP_METRICS_ENDPOINT` | _(uses shared)_         | Override endpoint for metrics only             |
-| `OTEL_LOG_CORRELATION`                | `true`                  | Inject trace/span IDs into Python log records  |
-| `OTEL_TRACES_SAMPLE_RATE`             | `1.0`                   | Sampling rate (0.0–1.0)                        |
-| `OTEL_DEBUG_CONSOLE_EXPORTER`         | `false`                 | Also print spans to console (for debugging)    |
+| Variable                              | Default                 | Description                                                   |
+| ------------------------------------- | ----------------------- | ------------------------------------------------------------- |
+| `OTEL_ENABLED`                        | `false`                 | Master switch — must be `true` to enable OTel                 |
+| `OTEL_SERVICE_NAME`                   | `family-assistant`      | Service name in traces                                        |
+| `OTEL_TRACES_EXPORTER`                | `otlp-grpc`             | `otlp-grpc`, `otlp-http`, `console`, or `none`                |
+| `OTEL_METRICS_EXPORTER`               | `otlp-grpc`             | `otlp-grpc`, `otlp-http`, `console`, or `none`                |
+| `OTEL_EXPORTER_OTLP_ENDPOINT`         | `http://localhost:4317` | Shared OTLP endpoint (gRPC port; use `:4318` for `otlp-http`) |
+| `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT`  | _(uses shared)_         | Override endpoint for traces only                             |
+| `OTEL_EXPORTER_OTLP_METRICS_ENDPOINT` | _(uses shared)_         | Override endpoint for metrics only                            |
+| `OTEL_LOG_CORRELATION`                | `true`                  | Inject trace/span IDs into Python log records                 |
+| `OTEL_TRACES_SAMPLE_RATE`             | `1.0`                   | Sampling rate (0.0–1.0)                                       |
+| `OTEL_DEBUG_CONSOLE_EXPORTER`         | `false`                 | Also print spans to console (for debugging)                   |
 
 ### When disabled
 
@@ -64,7 +65,7 @@ Add a Jaeger service to your `docker-compose.yaml`:
 ```yaml
 services:
   jaeger:
-    image: jaegertracing/all-in-one:latest
+    image: jaegertracing/all-in-one:1.76.0
     ports:
       - "4317:4317"   # OTLP gRPC
       - "16686:16686" # Jaeger UI
