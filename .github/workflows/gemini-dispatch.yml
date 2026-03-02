@@ -25,7 +25,7 @@ defaults:
 jobs:
   debugger:
     if: |-
-      ${{ fromJSON(vars.DEBUG || vars.ACTIONS_STEP_DEBUG || false) }}
+      ${{ fromJSON(vars.GEMINI_DEBUG || vars.ACTIONS_STEP_DEBUG || false) }}
     runs-on: 'ubuntu-latest'
     permissions:
       contents: 'read'
@@ -43,23 +43,23 @@ jobs:
           env | grep '^DEBUG_'
 
   dispatch:
-    # For PRs: only if not from a fork
+    # For PRs: only if not from a fork and not from dependabot
+    # For issues: only on open/reopen and not from dependabot
     # For comments: only if user types @gemini-cli and is OWNER/MEMBER/COLLABORATOR
-    # For issues: only on open/reopen
     if: |-
       (
         github.event_name == 'pull_request' &&
         github.event.pull_request.head.repo.fork == false &&
         github.event.pull_request.user.login != 'dependabot[bot]'
       ) || (
+        github.event_name == 'issues' &&
+        contains(fromJSON('["opened", "reopened"]'), github.event.action) &&
+        github.event.issue.user.login != 'dependabot[bot]'
+      ) || (
         github.event.sender.type == 'User' &&
         github.event.sender.login != 'dependabot[bot]' &&
         startsWith(github.event.comment.body || github.event.review.body || github.event.issue.body, '@gemini-cli') &&
         contains(fromJSON('["OWNER", "MEMBER", "COLLABORATOR"]'), github.event.comment.author_association || github.event.review.author_association || github.event.issue.author_association)
-      ) || (
-        github.event_name == 'issues' &&
-        contains(fromJSON('["opened", "reopened"]'), github.event.action) &&
-        github.event.issue.user.login != 'dependabot[bot]'
       )
     runs-on: 'ubuntu-latest'
     permissions:
@@ -86,30 +86,32 @@ jobs:
 
       - name: 'Extract command'
         id: 'extract_command'
-        uses: 'actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd' # ratchet:actions/github-script@v7
+        uses: 'actions/github-script@60a0d83039c74a4aee543508d2ffcb1c3799cdea' # ratchet:actions/github-script@v7
         env:
           EVENT_TYPE: '${{ github.event_name }}.${{ github.event.action }}'
           REQUEST: '${{ github.event.comment.body || github.event.review.body || github.event.issue.body }}'
         with:
           script: |
+            const eventType = process.env.EVENT_TYPE;
             const request = process.env.REQUEST;
-            const eventType = process.env.EVENT_TYPE
             core.setOutput('request', request);
 
-            if (request.startsWith("@gemini-cli /review")) {
+            if (eventType === 'pull_request.opened') {
+              core.setOutput('command', 'review');
+            } else if (['issues.opened', 'issues.reopened'].includes(eventType)) {
+              core.setOutput('command', 'triage');
+            } else if (request.startsWith("@gemini-cli /review")) {
               core.setOutput('command', 'review');
               const additionalContext = request.replace(/^@gemini-cli \/review/, '').trim();
               core.setOutput('additional_context', additionalContext);
             } else if (request.startsWith("@gemini-cli /triage")) {
               core.setOutput('command', 'triage');
+            } else if (request.startsWith("@gemini-cli /approve")) {
+              core.setOutput('command', 'approve');
             } else if (request.startsWith("@gemini-cli")) {
-              core.setOutput('command', 'invoke');
               const additionalContext = request.replace(/^@gemini-cli/, '').trim();
+              core.setOutput('command', 'invoke');
               core.setOutput('additional_context', additionalContext);
-            } else if (eventType === 'pull_request.opened') {
-              core.setOutput('command', 'review');
-            } else if (['issues.opened', 'issues.reopened'].includes(eventType)) {
-              core.setOutput('command', 'triage');
             } else {
               core.setOutput('command', 'fallthrough');
             }
@@ -168,12 +170,27 @@ jobs:
       additional_context: '${{ needs.dispatch.outputs.additional_context }}'
     secrets: 'inherit'
 
+  plan-execute:
+    needs: 'dispatch'
+    if: |-
+      ${{ needs.dispatch.outputs.command == 'approve' }}
+    uses: './.github/workflows/gemini-plan-execute.yml'
+    permissions:
+      contents: 'write'
+      id-token: 'write'
+      issues: 'write'
+      pull-requests: 'write'
+    with:
+      additional_context: '${{ needs.dispatch.outputs.additional_context }}'
+    secrets: 'inherit'
+
   fallthrough:
     needs:
       - 'dispatch'
       - 'review'
       - 'triage'
       - 'invoke'
+      - 'plan-execute'
     if: |-
       ${{ always() && !cancelled() && (failure() || needs.dispatch.outputs.command == 'fallthrough') }}
     runs-on: 'ubuntu-latest'
@@ -205,4 +222,3 @@ jobs:
           gh issue comment "${ISSUE_NUMBER}" \
             --body "${MESSAGE}" \
             --repo "${REPOSITORY}"
-

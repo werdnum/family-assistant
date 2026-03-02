@@ -1,4 +1,4 @@
-name: '🔎 Gemini Review'
+name: '🧙 Gemini Plan Execution'
 
 on:
   workflow_call:
@@ -9,7 +9,7 @@ on:
         required: false
 
 concurrency:
-  group: '${{ github.workflow }}-review-${{ github.event_name }}-${{ github.event.pull_request.number || github.event.issue.number }}'
+  group: '${{ github.workflow }}-plan-execute-${{ github.event_name }}-${{ github.event.pull_request.number || github.event.issue.number }}'
   cancel-in-progress: true
 
 defaults:
@@ -17,14 +17,15 @@ defaults:
     shell: 'bash'
 
 jobs:
-  review:
-    runs-on: 'ubuntu-latest'
+  plan-execute:
     timeout-minutes: 30
+    runs-on: 'ubuntu-latest'
     permissions:
-      contents: 'read'
+      contents: 'write'
       id-token: 'write'
       issues: 'write'
       pull-requests: 'write'
+
     steps:
       - name: 'Mint identity token'
         id: 'mint_identity_token'
@@ -34,38 +35,25 @@ jobs:
         with:
           app-id: '${{ vars.APP_ID }}'
           private-key: '${{ secrets.APP_PRIVATE_KEY }}'
-          permission-contents: 'read'
+          permission-contents: 'write'
           permission-issues: 'write'
           permission-pull-requests: 'write'
 
-      - name: 'Checkout repository'
-        uses: 'actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8' # ratchet:actions/checkout@v6
+      - name: 'Checkout Code'
+        uses: 'actions/checkout@v4' # ratchet:exclude
 
-      - name: 'Read Review Guidelines'
-        id: 'read_review_guidelines'
-        run: |-
-          {
-            echo "REVIEW_GUIDELINES<<GEMINI_REVIEW_GUIDELINES_EOF"
-            if [ -f REVIEW_GUIDELINES.md ]; then
-              cat REVIEW_GUIDELINES.md
-              echo ""
-            else
-              echo "No project-specific review guidelines found."
-            fi
-            echo "GEMINI_REVIEW_GUIDELINES_EOF"
-          } >> "${GITHUB_ENV}"
-
-      - name: 'Run Gemini pull request review'
+      - name: 'Run Gemini CLI'
+        id: 'run_gemini'
         uses: 'google-github-actions/run-gemini-cli@v0' # ratchet:exclude
-        id: 'gemini_pr_review'
         env:
+          TITLE: '${{ github.event.pull_request.title || github.event.issue.title }}'
+          DESCRIPTION: '${{ github.event.pull_request.body || github.event.issue.body }}'
+          EVENT_NAME: '${{ github.event_name }}'
           GITHUB_TOKEN: '${{ steps.mint_identity_token.outputs.token || secrets.GITHUB_TOKEN || github.token }}'
-          ISSUE_TITLE: '${{ github.event.pull_request.title || github.event.issue.title }}'
-          ISSUE_BODY: '${{ github.event.pull_request.body || github.event.issue.body }}'
-          PULL_REQUEST_NUMBER: '${{ github.event.pull_request.number || github.event.issue.number }}'
+          IS_PULL_REQUEST: '${{ !!github.event.pull_request }}'
+          ISSUE_NUMBER: '${{ github.event.pull_request.number || github.event.issue.number }}'
           REPOSITORY: '${{ github.repository }}'
           ADDITIONAL_CONTEXT: '${{ inputs.additional_context }}'
-          REVIEW_GUIDELINES: '${{ env.REVIEW_GUIDELINES }}'
         with:
           gcp_location: '${{ vars.GOOGLE_CLOUD_LOCATION }}'
           gcp_project_id: '${{ vars.GOOGLE_CLOUD_PROJECT }}'
@@ -79,7 +67,7 @@ jobs:
           use_gemini_code_assist: '${{ vars.GOOGLE_GENAI_USE_GCA }}'
           use_vertex_ai: '${{ vars.GOOGLE_GENAI_USE_VERTEXAI }}'
           upload_artifacts: '${{ vars.UPLOAD_ARTIFACTS }}'
-          workflow_name: 'gemini-review'
+          workflow_name: 'gemini-invoke'
           settings: |-
             {
               "general": {
@@ -87,7 +75,7 @@ jobs:
                 "maxAttempts": 10
               },
               "model": {
-                "maxSessionTurns": 100
+                "maxSessionTurns": 25
               },
               "telemetry": {
                 "enabled": true,
@@ -106,9 +94,23 @@ jobs:
                     "ghcr.io/github/github-mcp-server:v0.27.0"
                   ],
                   "includeTools": [
-                    "add_comment_to_pending_review",
+                    "add_issue_comment",
+                    "issue_read",
+                    "list_issues",
+                    "search_issues",
+                    "create_pull_request",
                     "pull_request_read",
-                    "pull_request_review_write"
+                    "list_pull_requests",
+                    "search_pull_requests",
+                    "create_branch",
+                    "create_or_update_file",
+                    "delete_file",
+                    "fork_repository",
+                    "get_commit",
+                    "get_file_contents",
+                    "list_commits",
+                    "push_files",
+                    "search_code"
                   ],
                   "env": {
                     "GITHUB_PERSONAL_ACCESS_TOKEN": "${GITHUB_TOKEN}"
@@ -125,5 +127,5 @@ jobs:
                 ]
               }
             }
-          prompt: '/gemini-review'
+          prompt: '/gemini-plan-execute'
 

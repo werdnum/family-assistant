@@ -37,7 +37,8 @@ CLAUDE.local.md
 test_results.log
 test-results
 
-.gemini/
+.gemini/*
+!.gemini/commands/
 gha-creds-*.json
 .review_cache
 frontend/dev-dist
