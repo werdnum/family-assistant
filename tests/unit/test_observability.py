@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 
 import pytest
-from opentelemetry import trace
+from opentelemetry import metrics, trace
 from opentelemetry.sdk.resources import Resource
 from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.sdk.trace.export import SimpleSpanProcessor
@@ -68,96 +68,91 @@ class TestOTelConfig:
 class TestSetupObservabilityDisabled:
     """Tests for setup_observability when disabled."""
 
+    def teardown_method(self) -> None:
+        """Reset OTel global state to avoid polluting other tests."""
+        trace.set_tracer_provider(trace.NoOpTracerProvider())
+        metrics.set_meter_provider(metrics.NoOpMeterProvider())
+
     def test_returns_none_when_disabled(self, caplog: pytest.LogCaptureFixture) -> None:
         with caplog.at_level(logging.INFO):
             result = setup_observability(OTelConfig(enabled=False))
         assert result is None
         assert "disabled" in caplog.text.lower()
 
+    def test_noop_tracer_produces_nonrecording_spans(self) -> None:
+        setup_observability(OTelConfig(enabled=False))
+        tracer = trace.get_tracer("test")
+        with tracer.start_as_current_span("test-span") as span:
+            assert not span.is_recording()
+
 
 class TestSetupObservabilityEnabled:
     """Tests for setup_observability when enabled."""
 
-    def _reset_otel(self) -> None:
+    def teardown_method(self) -> None:
         """Reset OTel global state to avoid polluting other tests."""
         trace.set_tracer_provider(trace.NoOpTracerProvider())
+        metrics.set_meter_provider(metrics.NoOpMeterProvider())
 
     def test_returns_handle_with_console_exporter(self) -> None:
-        try:
-            handle = setup_observability(
-                OTelConfig(
-                    enabled=True,
-                    traces_exporter="console",
-                    metrics_exporter="none",
-                    log_correlation=False,
-                )
+        handle = setup_observability(
+            OTelConfig(
+                enabled=True,
+                traces_exporter="console",
+                metrics_exporter="none",
+                log_correlation=False,
             )
-            assert handle is not None
-            assert isinstance(handle.tracer_provider, TracerProvider)
-        finally:
-            self._reset_otel()
+        )
+        assert handle is not None
+        assert isinstance(handle.tracer_provider, TracerProvider)
 
     def test_returns_handle_with_none_exporter(self) -> None:
-        try:
-            handle = setup_observability(
-                OTelConfig(
-                    enabled=True,
-                    traces_exporter="none",
-                    metrics_exporter="none",
-                    log_correlation=False,
-                )
+        handle = setup_observability(
+            OTelConfig(
+                enabled=True,
+                traces_exporter="none",
+                metrics_exporter="none",
+                log_correlation=False,
             )
-            assert handle is not None
-        finally:
-            self._reset_otel()
+        )
+        assert handle is not None
 
     def test_debug_console_exporter_adds_processor(self) -> None:
-        try:
-            handle = setup_observability(
+        handle = setup_observability(
+            OTelConfig(
+                enabled=True,
+                traces_exporter="none",
+                metrics_exporter="none",
+                debug_console_exporter=True,
+                log_correlation=False,
+            )
+        )
+        assert handle is not None
+        # The tracer provider should have at least one span processor
+        # (the debug console one)
+        assert len(handle.tracer_provider._active_span_processor._span_processors) > 0  # type: ignore[attr-defined]
+
+    def test_unknown_traces_exporter_raises(self) -> None:
+        with pytest.raises(ValueError, match="Unknown traces exporter"):
+            setup_observability(
                 OTelConfig(
                     enabled=True,
-                    traces_exporter="none",
+                    traces_exporter="invalid",
                     metrics_exporter="none",
-                    debug_console_exporter=True,
                     log_correlation=False,
                 )
             )
-            assert handle is not None
-            # The tracer provider should have at least one span processor
-            # (the debug console one)
-            assert (
-                len(handle.tracer_provider._active_span_processor._span_processors) > 0
-            )  # type: ignore[attr-defined]
-        finally:
-            self._reset_otel()
-
-    def test_unknown_traces_exporter_raises(self) -> None:
-        try:
-            with pytest.raises(ValueError, match="Unknown traces exporter"):
-                setup_observability(
-                    OTelConfig(
-                        enabled=True,
-                        traces_exporter="invalid",
-                        metrics_exporter="none",
-                        log_correlation=False,
-                    )
-                )
-        finally:
-            self._reset_otel()
 
     def test_unknown_metrics_exporter_raises(self) -> None:
-        try:
-            with pytest.raises(ValueError, match="Unknown metrics exporter"):
-                setup_observability(
-                    OTelConfig(
-                        enabled=True,
-                        traces_exporter="none",
-                        metrics_exporter="invalid",
-                        log_correlation=False,
-                    )
+        with pytest.raises(ValueError, match="Unknown metrics exporter"):
+            setup_observability(
+                OTelConfig(
+                    enabled=True,
+                    traces_exporter="none",
+                    metrics_exporter="invalid",
+                    log_correlation=False,
                 )
-        finally:
-            self._reset_otel()
+            )
 
 
 class TestObservabilityHandle:
@@ -174,37 +169,34 @@ class TestObservabilityHandle:
 class TestAutoInstrumentationSpans:
     """Tests that verify manual tracer produces real spans when OTel is enabled."""
 
-    def _reset_otel(self) -> None:
+    def teardown_method(self) -> None:
+        """Reset OTel global state to avoid polluting other tests."""
         trace.set_tracer_provider(trace.NoOpTracerProvider())
+        metrics.set_meter_provider(metrics.NoOpMeterProvider())
 
     def test_manual_span_recorded(self) -> None:
         """Verify that enabling OTel makes the tracer produce real spans."""
         memory_exporter = InMemorySpanExporter()
-        try:
-            handle = setup_observability(
-                OTelConfig(
-                    enabled=True,
-                    traces_exporter="none",
-                    metrics_exporter="none",
-                    log_correlation=False,
-                )
+        handle = setup_observability(
+            OTelConfig(
+                enabled=True,
+                traces_exporter="none",
+                metrics_exporter="none",
+                log_correlation=False,
             )
-            assert handle is not None
+        )
+        assert handle is not None
 
-            handle.tracer_provider.add_span_processor(
-                SimpleSpanProcessor(memory_exporter)
-            )
+        handle.tracer_provider.add_span_processor(SimpleSpanProcessor(memory_exporter))
 
-            # Use the handle's tracer provider directly (not the global one)
-            # to avoid races with parallel test execution resetting global state
-            tracer = handle.tracer_provider.get_tracer("test-tracer")
-            with tracer.start_as_current_span("test-span") as span:
-                span.set_attribute("test.key", "test-value")
+        # Use the handle's tracer provider directly (not the global one)
+        # to avoid races with parallel test execution resetting global state
+        tracer = handle.tracer_provider.get_tracer("test-tracer")
+        with tracer.start_as_current_span("test-span") as span:
+            span.set_attribute("test.key", "test-value")
 
-            spans = memory_exporter.get_finished_spans()
-            assert len(spans) == 1
-            assert spans[0].name == "test-span"
-            assert spans[0].attributes is not None
-            assert spans[0].attributes.get("test.key") == "test-value"
-        finally:
-            self._reset_otel()
+        spans = memory_exporter.get_finished_spans()
+        assert len(spans) == 1
+        assert spans[0].name == "test-span"
+        assert spans[0].attributes is not None
+        assert spans[0].attributes.get("test.key") == "test-value"
