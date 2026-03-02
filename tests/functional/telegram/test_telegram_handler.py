@@ -16,6 +16,7 @@ import pytest
 import telegramify_markdown  # type: ignore[import-untyped]  # Third-party library has no type stubs
 from assertpy import assert_that, soft_assertions
 from telegram import Chat, Message, PhotoSize, Update, User
+from telegram.error import BadRequest
 from telegram.ext import Application, ContextTypes
 
 from family_assistant.llm import ToolCallFunction, ToolCallItem
@@ -52,6 +53,26 @@ def create_context(
 
 # Alias for backwards compatibility
 create_mock_context = create_context
+
+
+def _make_parse_error_side_effect(
+    original_send_message: typing.Callable[
+        ..., typing.Coroutine[typing.Any, typing.Any, Message]
+    ],
+) -> typing.Callable[..., typing.Coroutine[typing.Any, typing.Any, Message]]:
+    """Create a side_effect function that rejects messages with parse_mode set.
+
+    Returns an async function suitable for use as AsyncMock(side_effect=...).
+    """
+
+    async def side_effect(**kwargs: object) -> Message:
+        if kwargs.get("parse_mode") is not None:
+            raise BadRequest(
+                "Can't parse entities: can't find end of spoiler entity at byte offset 42"
+            )
+        return await original_send_message(**kwargs)
+
+    return side_effect
 
 
 def create_mock_update(
@@ -569,8 +590,62 @@ async def test_telegram_photo_persistence_and_llm_context(
             "Second response should reference the historical image"
         ).matches(r".*(access|image|earlier).*")
 
-        # === VERIFICATION: Check that image was persisted properly ===
-        # The test implicitly verifies:
-        # 1. AttachmentService was used (not base64) - if it failed, the handler would crash
-        # 2. Attachment metadata was stored - verified by the LLM receiving image_url in turn 2
-        # 3. Historical attachments included in LLM context - verified by the second rule matching
+
+@pytest.mark.asyncio
+async def test_bad_request_parse_error_falls_back_to_plain_text(
+    telegram_handler_fixture: TelegramHandlerTestFixture,
+) -> None:
+    """
+    When Telegram rejects a MarkdownV2 message with a parse error,
+    the handler should fall back to plain text and the user should still receive a response.
+
+    This tests the fix where _send_message_chunks no longer swallows exceptions,
+    allowing callers' BadRequest handlers to retry with plain text.
+    """
+    fix = telegram_handler_fixture
+    user_chat_id = 123
+    user_id = 12345
+    user_message_id = 201
+    user_text = "Tell me something"
+    # LLM response that contains characters (||) which could cause Telegram parse errors
+    llm_response_text = (
+        "Here is some text with ||spoiler-like|| content that breaks parsing."
+    )
+
+    def matcher(kwargs: MatcherArgs) -> bool:
+        messages = kwargs.get("messages", [])
+        return get_last_message_text(messages) == user_text
+
+    typing.cast("RuleBasedMockLLMClient", fix.mock_llm).rules = [
+        (matcher, LLMOutput(content=llm_response_text, tool_calls=None)),
+    ]
+
+    update = create_mock_update(
+        user_text, chat_id=user_chat_id, user_id=user_id, message_id=user_message_id
+    )
+    context = create_context(
+        fix.application,
+        bot_data={"processing_service": fix.processing_service},
+    )
+
+    # Wrap send_message to raise BadRequest when parse_mode is set (MarkdownV2),
+    # simulating Telegram rejecting malformed entities.
+    original_send_message = fix.bot.send_message
+
+    mock_send = AsyncMock(
+        side_effect=_make_parse_error_side_effect(original_send_message)
+    )
+
+    with patch.object(type(fix.bot), "send_message", mock_send):
+        await fix.handler.message_handler(update, context)
+
+    # The user should still receive a response (the plain text fallback)
+    bot_responses = await wait_for_bot_response(fix.telegram_client, timeout=5.0)
+    assert_that(bot_responses).described_as(
+        "Bot responses after fallback"
+    ).is_not_empty()
+
+    bot_message_text = bot_responses[-1].get("message", {}).get("text", "")
+    assert_that(bot_message_text).described_as(
+        "Fallback plain text should contain the LLM response"
+    ).contains("spoiler-like")
