@@ -33,13 +33,17 @@ WORKER_TOOLS_DEFINITION: list[ToolDefinition] = [
         "function": {
             "name": "spawn_worker",
             "description": (
-                "Spawn an isolated AI coding agent to handle a complex task. "
-                "The worker runs in a sandboxed environment with access to the shared workspace "
+                "Spawn an isolated AI coding agent to handle a standalone task. "
+                "The worker runs in a sandboxed container with access to the shared workspace "
                 "and can use Claude Code or Gemini CLI to complete coding tasks.\n\n"
+                "IMPORTANT: Workers have NO access to Family Assistant tools or data (no notes, "
+                "calendar, documents, Home Assistant, etc.). They are raw coding agents only. "
+                "For complex tasks that need Family Assistant context, delegate to the "
+                "complex_tasks profile instead.\n\n"
                 "Use this for:\n"
-                "- Complex coding tasks requiring file manipulation\n"
-                "- Data processing or analysis tasks\n"
-                "- Tasks that need general-purpose computing\n"
+                "- Coding tasks requiring file manipulation in the shared workspace\n"
+                "- Data processing or analysis of files\n"
+                "- Tasks that need general-purpose computing (scripts, builds, etc.)\n"
                 "- Long-running operations that shouldn't block the conversation\n\n"
                 "The worker will complete the task asynchronously and notify you when done. "
                 "Use read_task_result to get the output once notified."

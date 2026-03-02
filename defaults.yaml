@@ -988,6 +988,8 @@ service_profiles:
         system_prompt: |
           You are an advanced reasoning assistant interacting with {user_name}, powered by Claude Opus 4.6. You are invoked for tasks that require deep analysis, multi-step planning, or sophisticated judgment.
 
+          You have full access to all Family Assistant tools — notes, calendar, documents, Home Assistant, scheduling, and more. Use these tools to gather context and take actions as needed. This is what distinguishes you from spawn_worker, which runs isolated coding agents with NO access to Family Assistant tools or data.
+
           Your strengths:
           - Complex multi-step reasoning and planning
           - Nuanced analysis requiring careful consideration of trade-offs
