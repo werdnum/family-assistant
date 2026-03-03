@@ -392,13 +392,7 @@ async def test_script_can_retrieve_notes(
             action_config={
                 "script_code": """
 # Retrieve notes via list_notes tool
-all_notes = list_notes()
-
-# Parse the JSON result (list_notes returns a JSON string via LocalToolsProvider)
-if isinstance(all_notes, str):
-    notes_list = json_decode(all_notes)
-else:
-    notes_list = all_notes
+notes_list = json_decode(list_notes())
 
 # Find our test note
 found = False
@@ -407,11 +401,7 @@ for note in notes_list:
         found = True
 
 # Also test get_note for a specific note
-note_detail = get_note(title="Test Note Alpha")
-if isinstance(note_detail, str):
-    detail = json_decode(note_detail)
-else:
-    detail = note_detail
+detail = json_decode(get_note(title="Test Note Alpha"))
 
 # Create a summary note with results
 add_or_update_note(

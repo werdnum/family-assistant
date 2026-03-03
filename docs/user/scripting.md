@@ -357,8 +357,7 @@ chart  # Final chart is sent to assistant
 ```python
 # Query notes and generate CSV report
 def create_task_report():
-    result_str = search_notes(query="TODO")
-    notes = json_decode(result_str) if result_str else []
+    notes = search_notes(query="TODO")
 
     if len(notes) == 0:
         return "No tasks found"
@@ -389,8 +388,7 @@ create_task_report()
 # Fetch data, transform it, and create a chart
 def visualize_temperature_trend(days=7):
     # Get calendar events (example data source)
-    events_str = get_calendar_events(days_ahead=days)
-    events = json_decode(events_str) if events_str else []
+    events = get_calendar_events(days_ahead=days)
 
     # Transform to JSON array for chart
     data = []
@@ -685,8 +683,7 @@ if "user_email" in globals():
 
 ```python
 def summarize_project_notes(project_name):
-    result_str = search_notes(query=project_name)
-    notes = json_decode(result_str) if result_str else []
+    notes = search_notes(query=project_name)
 
     if len(notes) == 0:
         return "No notes found for " + project_name
@@ -712,8 +709,7 @@ summarize_project_notes("Project Alpha")
 ```python
 def collect_todos():
     # Search for TODO items
-    result_str = search_notes(query="TODO")
-    notes = json_decode(result_str) if result_str else []
+    notes = search_notes(query="TODO")
 
     todos = []
     for note in notes:
@@ -763,8 +759,7 @@ create_meeting_prep_notes()
 ```python
 def create_email_digest(search_term):
     # Search recent emails
-    result_str = search_emails(query=search_term)
-    emails = json_decode(result_str) if result_str else []
+    emails = search_emails(query=search_term)
 
     if len(emails) == 0:
         return "No emails found"
@@ -791,8 +786,7 @@ create_email_digest("project update")
 ```python
 def smart_reminder(title, check_calendar=True):
     # Check if reminder already exists
-    existing = search_notes(query=title)
-    notes = json_decode(existing) if existing else []
+    notes = search_notes(query=title)
 
     if len(notes) > 0:
         print("Reminder already exists")
@@ -1080,19 +1074,19 @@ if event.get("source_id") == "indexing":
 
 ### Working with Tool Results
 
-- Most tools return JSON strings - use `json_decode()` to parse them
-- Some tools return simple strings or numbers directly
-- Check for empty results before parsing
+- Tools return structured data (dicts, lists) directly - use results immediately
+- `json_decode()` is safe to call on any value - it passes through dicts, lists, numbers, and
+  booleans unchanged
+- Check for empty results before processing
 
 ### Error Handling
 
 ```python
 # Check inputs carefully to handle missing data
-result_str = search_notes(query="test")
-if result_str and result_str != "[]":
-    notes = json_decode(result_str)
-else:
-    notes = []
+notes = search_notes(query="test")
+if len(notes) > 0:
+    # Process notes...
+    pass
 
 # Check for None values
 if event.get("new_state") and event.get("new_state", {}).get("state"):
@@ -1135,9 +1129,8 @@ Use scripts when users request:
 
 ```python
 # Search, process, and create summary
-results = search_notes(query="TODO")
-if results and results != "[]":
-    notes = json_decode(results)
+notes = search_notes(query="TODO")
+if len(notes) > 0:
     # Process and summarize...
 ```
 

@@ -40,6 +40,20 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+def _safe_json_decode(value: Any) -> Any:  # noqa: ANN401 - JSON decode returns arbitrary types
+    """JSON decode that passes through already-decoded Python objects.
+
+    Tool results may return structured data (dicts, lists) directly
+    rather than JSON strings. This wrapper makes json_decode safe to
+    call on any tool result.
+    """
+    if isinstance(value, (dict, list, int, float, bool)):
+        return value
+    if value is None:
+        return None
+    return json.loads(value)
+
+
 class MontyEngine:
     """
     Monty scripting engine for executing user-defined scripts.
@@ -569,7 +583,7 @@ class MontyEngine:
                 return result.to_string()
 
         elif isinstance(result, dict | list):
-            return json.dumps(result)
+            return result
         else:
             return str(result)
 
@@ -605,7 +619,7 @@ class MontyEngine:
         """Add JSON encode/decode functions."""
         for name, fn in [
             ("json_encode", json.dumps),
-            ("json_decode", json.loads),
+            ("json_decode", _safe_json_decode),
         ]:
             names.append(name)
             impls[name] = fn
