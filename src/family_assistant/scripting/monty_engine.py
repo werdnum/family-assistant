@@ -47,11 +47,9 @@ def _safe_json_decode(value: Any) -> Any:  # noqa: ANN401 - JSON decode returns 
     rather than JSON strings. This wrapper makes json_decode safe to
     call on any tool result.
     """
-    if isinstance(value, (dict, list, int, float, bool)):
-        return value
-    if value is None:
-        return None
-    return json.loads(value)
+    if isinstance(value, (str, bytes, bytearray)):
+        return json.loads(value)
+    return value
 
 
 class MontyEngine:
