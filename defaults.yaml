@@ -977,6 +977,91 @@ service_profiles:
     slash_commands:
       - "/camera"
       - "/investigate"
+  - id: "complex_tasks"
+    description: "Advanced reasoning profile using Claude Opus 4.6 for complex, multi-step tasks that require deep analysis, planning, or sophisticated judgment. Delegates here when the default model struggles with nuanced reasoning."
+    processing_config:
+      provider: "anthropic"
+      llm_model: "claude-opus-4-6"
+      max_iterations: 25
+      delegation_security_level: "unrestricted"
+      prompts:
+        system_prompt: |
+          You are an advanced reasoning assistant interacting with {user_name}, powered by Claude Opus 4.6. You are invoked for tasks that require deep analysis, multi-step planning, or sophisticated judgment.
+
+          You have full access to all Family Assistant tools — notes, calendar, documents, Home Assistant, scheduling, and more. Use these tools to gather context and take actions as needed. This is what distinguishes you from spawn_worker, which runs isolated coding agents with NO access to Family Assistant tools or data.
+
+          Your strengths:
+          - Complex multi-step reasoning and planning
+          - Nuanced analysis requiring careful consideration of trade-offs
+          - Tasks that benefit from extended thinking and deliberation
+          - Synthesizing information from multiple sources
+          - Making well-reasoned recommendations with clear justification
+
+          Approach:
+          1. Break complex problems into manageable steps
+          2. Gather all relevant information before drawing conclusions
+          3. Consider multiple perspectives and trade-offs
+          4. Provide clear reasoning for your recommendations
+          5. Be thorough but concise in your responses
+
+          Current time: {current_time}
+
+          {aggregated_other_context}
+    tools_config:
+      enable_local_tools:
+        - "add_or_update_note"
+        - "get_note"
+        - "list_notes"
+        - "delete_note"
+        - "schedule_future_callback"
+        - "schedule_recurring_task"
+        - "schedule_reminder"
+        - "schedule_action"
+        - "schedule_recurring_action"
+        - "list_pending_callbacks"
+        - "modify_pending_callback"
+        - "cancel_pending_callback"
+        - "search_documents"
+        - "get_full_document_content"
+        - "get_attachment_info"
+        - "get_message_history"
+        - "get_user_documentation_content"
+        - "ingest_document_from_url"
+        - "execute_script"
+        - "send_message_to_user"
+        - "attach_to_response"
+        - "add_calendar_event"
+        - "search_calendar_events"
+        - "modify_calendar_event"
+        - "delete_calendar_event"
+        - "delegate_to_service"
+        - "query_recent_events"
+        - "render_home_assistant_template"
+        - "get_camera_snapshot"
+        - "download_state_history"
+        - "list_home_assistant_entities"
+        - "list_automations"
+        - "get_automation"
+        - "get_automation_stats"
+        - "generate_image"
+        - "transform_image"
+        - "generate_video"
+        - "download_media"
+        - "highlight_image"
+        - "spawn_worker"
+        - "read_task_result"
+        - "list_worker_tasks"
+        - "cancel_worker_task"
+      enable_mcp_server_ids:
+        - "time"
+        - "brave"
+        - "homeassistant"
+        - "google-maps"
+      confirm_tools:
+        - delete_calendar_event
+        - modify_calendar_event
+    slash_commands:
+      - "/complex"
   - id: "engineer"
     description: "Engineering diagnostic profile with read-only access to source code, database, and error logs. Use for investigating application issues, debugging problems, and filing bug reports. Cannot modify data or execute code."
     processing_config:

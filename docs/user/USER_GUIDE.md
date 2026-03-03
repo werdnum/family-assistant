@@ -513,9 +513,10 @@ various tasks with dark mode support and mobile optimization.
 
 - **Use Slash Commands:** For specialized tasks like complex web browsing (e.g.,
   `/browse find travel options to Paris for next June`), in-depth research (e.g.,
-  `/research Tell me about the history of Python`), or engineering diagnostics (e.g.,
-  `/engineer Why isn't my daily brief automation triggering?`), using the appropriate slash command
-  can provide more focused and effective responses.
+  `/research Tell me about the history of Python`), complex multi-step reasoning or planning (e.g.,
+  `/complex Plan a detailed family vacation considering everyone's schedules and preferences`), or
+  engineering diagnostics (e.g., `/engineer Why isn't my daily brief automation triggering?`), using
+  the appropriate slash command can provide more focused and effective responses.
 
 - **Mobile Experience:** The web interface is fully optimized for mobile devices. All features are
   accessible on phones and tablets with responsive design that adapts to your screen size.
