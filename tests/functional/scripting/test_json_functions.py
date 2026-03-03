@@ -74,6 +74,50 @@ json_decode("not valid json")
         assert "json" in error_msg or "expecting value" in error_msg
 
     @pytest.mark.asyncio
+    async def test_json_decode_already_decoded_dict(self, engine_class: type) -> None:
+        """Test that json_decode passes through dicts unchanged."""
+        engine = engine_class()
+
+        script = """
+data = {"name": "Alice", "age": 30}
+result = json_decode(data)
+result["name"] + " is " + str(result["age"])
+"""
+        result = await engine.evaluate_async(script)
+        assert result == "Alice is 30"
+
+    @pytest.mark.asyncio
+    async def test_json_decode_already_decoded_list(self, engine_class: type) -> None:
+        """Test that json_decode passes through lists unchanged."""
+        engine = engine_class()
+
+        script = """
+data = [1, 2, 3]
+result = json_decode(data)
+result
+"""
+        result = await engine.evaluate_async(script)
+        assert result == [1, 2, 3]
+
+    @pytest.mark.asyncio
+    async def test_json_decode_primitives(self, engine_class: type) -> None:
+        """Test that json_decode passes through int, float, bool, None."""
+        engine = engine_class()
+
+        script = """
+results = [
+    json_decode(42),
+    json_decode(3.14),
+    json_decode(True),
+    json_decode(False),
+    json_decode(None),
+]
+results
+"""
+        result = await engine.evaluate_async(script)
+        assert result == [42, 3.14, True, False, None]
+
+    @pytest.mark.asyncio
     async def test_json_with_tools_mock(self, engine_class: type) -> None:
         """Test using JSON functions with mock tool results."""
         engine = engine_class()
