@@ -47,8 +47,6 @@ The Monty scripting engine is a sandboxed Python subset. Some Python features ar
   `dict1.update(dict2)` or manual merging)
 - **No str.format() method**: Use f-strings instead (`f"Hello {name}"` not
   `"Hello {}".format(name)`)
-- **No map/filter builtins**: Use list comprehensions instead (`[x*2 for x in items]` not
-  `map(lambda x: x*2, items)`)
 
 #### Buggy or Limited Features
 
@@ -67,6 +65,8 @@ environments):
 - **Set types**: `set()` and `frozenset()` are available
 - **For loops and comprehensions**: All iteration constructs work normally
 - **Function definitions**: You can define and call functions normally
+- **Star unpacking**: `a, *b = [1, 2, 3, 4]` works correctly
+- **map() builtin**: `list(map(lambda x: x*2, items))` is supported
 
 ### Working Around Limitations
 
@@ -118,20 +118,6 @@ for k, v in dict2.items():
 
 # Use:
 f"Hello {name}"
-```
-
-**Instead of map/filter, use comprehensions:**
-
-```python
-# Instead of: list(map(lambda x: x*2, items))
-
-# Use:
-[x * 2 for x in items]
-
-# Instead of: list(filter(lambda x: x > 10, items))
-
-# Use:
-[x for x in items if x > 10]
 ```
 
 **Instead of context managers, use try/finally:**

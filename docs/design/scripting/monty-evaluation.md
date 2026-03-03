@@ -9,8 +9,10 @@ whether Monty could replace `starlark-pyo3` as the scripting engine in Family As
 
 **Bottom line**: Monty is architecturally superior for our use case and would eliminate the most
 painful aspects of the current Starlark integration (the sync/async bridge, Python syntax
-differences). However, it's at version 0.0.3 / alpha status (as of Feb 2026), so adoption carries
-maturity risk. The migration path is clean and incremental.
+differences). It was at version 0.0.3 / alpha status when first evaluated (Feb 2026). As of v0.0.7
+(Feb 19, 2026), it has improved significantly with better memory safety, depth guards, `map()`
+builtin, star unpacking, a `run_monty_async()` convenience helper, and suspendable REPL support. The
+migration has been completed successfully.
 
 ## Current Pain Points with Starlark
 
@@ -262,8 +264,8 @@ invocations and returns them alongside the script result.
 
 ### 1. Maturity (High Risk)
 
-Monty is at **version 0.0.3**, classified as **alpha**. The API is explicitly unstable and breaking
-changes should be expected. For a hobby project this is probably acceptable, but it means:
+Monty was at **version 0.0.3** when first evaluated, now at **0.0.7**. The API is still pre-1.0 and
+breaking changes may occur. For a hobby project this is acceptable, and it means:
 
 - Updating Monty could require code changes
 - Edge cases and bugs are more likely
