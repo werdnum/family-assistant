@@ -1,6 +1,7 @@
 import { AssistantRuntimeProvider, useExternalStoreRuntime } from '@assistant-ui/react';
 import { Menu } from 'lucide-react';
-import React, { useCallback, useEffect, useRef, useState } from 'react';
+import React, { Component, useCallback, useEffect, useRef, useState } from 'react';
+import type { ErrorInfo, ReactNode } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
 import { Sheet, SheetContent } from '@/components/ui/sheet';
@@ -29,6 +30,43 @@ import {
 import { useLiveMessageUpdates } from './useLiveMessageUpdates';
 import { useNotifications } from './useNotifications';
 import { useStreamingResponse } from './useStreamingResponse';
+
+// Error boundary to catch transient @assistant-ui/store tapClientLookup race
+// condition errors during rendering (assistant-ui/assistant-ui#3395).
+// Without this boundary, the error propagates up and destroys the entire
+// React tree. The boundary catches the error, briefly renders null, then
+// re-mounts children with a fresh key so the tap system can reinitialize.
+interface ThreadErrorBoundaryState {
+  hasError: boolean;
+  retryKey: number;
+}
+
+class ThreadErrorBoundary extends Component<{ children: ReactNode }, ThreadErrorBoundaryState> {
+  state: ThreadErrorBoundaryState = { hasError: false, retryKey: 0 };
+
+  static getDerivedStateFromError(): Partial<ThreadErrorBoundaryState> {
+    return { hasError: true };
+  }
+
+  componentDidCatch(error: Error, _info: ErrorInfo): void {
+    if (!error.message?.includes('tapClientLookup')) {
+      throw error;
+    }
+    // Schedule re-mount with a new key so children get a fresh fiber tree
+    if (this.state.retryKey < 3) {
+      queueMicrotask(() => {
+        this.setState((s) => ({ hasError: false, retryKey: s.retryKey + 1 }));
+      });
+    }
+  }
+
+  render(): ReactNode {
+    if (this.state.hasError) {
+      return null;
+    }
+    return <React.Fragment key={this.state.retryKey}>{this.props.children}</React.Fragment>;
+  }
+}
 
 const ChatApp: React.FC<ChatAppProps> = ({ profileId = 'default_assistant' }) => {
   const [messages, setMessages] = useState<Message[]>([]);
@@ -818,13 +856,40 @@ const ChatApp: React.FC<ChatAppProps> = ({ profileId = 'default_assistant' }) =>
         file?: File;
       }>;
     }) => {
-      // Process attachments - they might come from the runtime with different properties
-      const processedAttachments = message.attachments?.map((att) => ({
-        id: att.id || `att_${Date.now()}_${Math.random()}`,
-        type: (att.type || 'image') as 'image',
-        name: att.name,
-        content: att.content || '', // Content might be base64 or empty if still processing
-      }));
+      // Process attachments - they might come from the runtime with different properties.
+      // In @assistant-ui/react 0.12.15+, CompleteAttachment.content is ThreadUserMessagePart[]
+      // (an array of content parts) rather than a plain string URL. We extract the URL from
+      // the parts so our internal Message type and backend API still use plain string URLs.
+      const processedAttachments = message.attachments?.map((att) => {
+        // Extract URL from content parts array (new format from attachmentAdapter.send())
+        let contentUrl = '';
+        const rawContent = att.content as unknown;
+        if (Array.isArray(rawContent)) {
+          for (const part of rawContent as Array<{
+            type: string;
+            image?: string;
+            data?: unknown;
+            name?: string;
+          }>) {
+            if (part.type === 'image' && typeof part.image === 'string') {
+              contentUrl = part.image;
+              break;
+            }
+            if (part.type === 'data' && part.name === 'url' && typeof part.data === 'string') {
+              contentUrl = part.data;
+              break;
+            }
+          }
+        } else if (typeof rawContent === 'string') {
+          contentUrl = rawContent;
+        }
+        return {
+          id: att.id || `att_${Date.now()}_${Math.random()}`,
+          type: (att.type || 'image') as 'image',
+          name: att.name,
+          content: contentUrl,
+        };
+      });
 
       const userMessage: Message = {
         id: `msg_${Date.now()}`,
@@ -861,27 +926,40 @@ const ChatApp: React.FC<ChatAppProps> = ({ profileId = 'default_assistant' }) =>
 
   const convertMessage = useCallback((message: Message) => {
     // Ensure content is always an array for assistant-ui compatibility
-    const converted = {
-      ...message,
-      content: Array.isArray(message.content)
-        ? message.content
-        : message.content
-          ? [message.content]
-          : [{ type: 'text', text: '' }],
-      // Pass through attachments if they exist
-      attachments: message.attachments,
-    };
+    let content = Array.isArray(message.content)
+      ? message.content
+      : message.content
+        ? [message.content]
+        : [{ type: 'text', text: '' }];
 
-    // Ensure each content item has the right structure
-    if (Array.isArray(converted.content)) {
-      // @ts-expect-error - assistant-ui type mismatch with content item filtering
-      converted.content = converted.content.filter((item) => item && typeof item === 'object');
-      if (converted.content.length === 0) {
-        converted.content = [{ type: 'text', text: '' }];
-      }
+    // TypeScript narrows the type after the ternary above, but the filter
+    // result is still MessageContent[] so the assignment is valid.
+    content = (content as MessageContent[]).filter((item) => item && typeof item === 'object');
+    if (content.length === 0) {
+      content = [{ type: 'text', text: '' }];
     }
 
-    return converted;
+    // @assistant-ui/react 0.12.15+ requires CompleteAttachment.content to be
+    // ThreadUserMessagePart[] (an array of content parts). Our internal Message
+    // type stores content as a plain string URL. Convert here for the library.
+    const convertedAttachments = message.attachments?.map((att) => {
+      if (typeof att.content === 'string' && att.content) {
+        const url = att.content;
+        const contentParts =
+          att.type === 'image'
+            ? [{ type: 'image' as const, image: url }]
+            : [{ type: 'data' as const, name: 'url', data: url }];
+        return { ...att, content: contentParts };
+      }
+      // Already in array format or empty - pass through
+      return att;
+    });
+
+    return {
+      ...message,
+      content,
+      attachments: convertedAttachments,
+    };
   }, []);
 
   const runtime = useExternalStoreRuntime({
@@ -1048,9 +1126,11 @@ const ChatApp: React.FC<ChatAppProps> = ({ profileId = 'default_assistant' }) =>
           <div className="flex min-w-0 flex-1 flex-col">
             <main className="flex flex-1 flex-col min-h-0">
               <AssistantRuntimeProvider runtime={runtime}>
-                <ToolConfirmationProvider value={{ pendingConfirmations, handleConfirmation }}>
-                  <Thread />
-                </ToolConfirmationProvider>
+                <ThreadErrorBoundary>
+                  <ToolConfirmationProvider value={{ pendingConfirmations, handleConfirmation }}>
+                    <Thread />
+                  </ToolConfirmationProvider>
+                </ThreadErrorBoundary>
               </AssistantRuntimeProvider>
             </main>
           </div>
