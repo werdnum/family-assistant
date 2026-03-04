@@ -447,10 +447,10 @@ service_profiles:
       - "/visualize"
       - "/chart"
   - id: "event_handler"
-    description: "Restricted assistant profile for automated script-event integration. Uses Claude Sonnet 4.6 with read-only and non-destructive tools only."
+    description: "Restricted assistant profile for automated script-event integration. Uses Gemini 3 Flash with read-only and non-destructive tools only."
     processing_config:
-      provider: "anthropic"
-      llm_model: "claude-sonnet-4-6"
+      provider: "google"
+      llm_model: "gemini-3-flash-preview"
       # Auto-load system documentation into this profile's system prompt
       # include_system_docs:
       #   - "USER_GUIDE.md"
