@@ -1095,6 +1095,15 @@ else:
     value = 0
 ```
 
+### Failure Notifications
+
+When an automation script fails after exhausting all retry attempts, the assistant is automatically
+notified with details about the error, including the script code and triggering event data. The
+assistant will then summarize the failure and suggest fixes.
+
+To disable failure notifications for a specific automation, set `notify_on_failure: false` in the
+automation's `action_config`.
+
 ### Performance Tips
 
 - Scripts timeout after 10 minutes (but try to keep them efficient)
