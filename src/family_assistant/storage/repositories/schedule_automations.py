@@ -185,7 +185,8 @@ class ScheduleAutomationsRepository(BaseRepository):
             )
             task_id = f"sched_auto_{automation_id}_{uuid.uuid4().hex[:8]}"
 
-            payload = {
+            # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
+            payload: dict[str, Any] = {
                 "conversation_id": conversation_id,
                 "interface_type": interface_type,
                 "automation_id": str(automation_id),
@@ -198,6 +199,7 @@ class ScheduleAutomationsRepository(BaseRepository):
             else:  # script
                 payload["script_code"] = action_config.get("script_code", "")
                 payload["task_name"] = action_config.get("task_name", name)
+                payload["config"] = action_config
 
             # Note: We do NOT pass recurrence_rule here because recurrence
             # is managed manually via after_task_execution callback, not
@@ -417,7 +419,8 @@ class ScheduleAutomationsRepository(BaseRepository):
             )
             task_id = f"sched_auto_{automation_id}_{uuid.uuid4().hex[:8]}"
 
-            payload = {
+            # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
+            payload: dict[str, Any] = {
                 "conversation_id": conversation_id,
                 "interface_type": automation["interface_type"],
                 "automation_id": str(automation_id),
@@ -431,6 +434,7 @@ class ScheduleAutomationsRepository(BaseRepository):
                 payload["task_name"] = action_config.get(
                     "task_name", automation["name"]
                 )
+                payload["config"] = action_config
 
             await enqueue_task(
                 db_context=self._db,
@@ -768,7 +772,8 @@ class ScheduleAutomationsRepository(BaseRepository):
         task_type = "llm_callback" if action_type == "wake_llm" else "script_execution"
         task_id = f"sched_auto_{automation_id}_{uuid.uuid4().hex[:8]}"
 
-        payload = {
+        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
+        payload: dict[str, Any] = {
             "conversation_id": automation["conversation_id"],
             "interface_type": automation["interface_type"],
             "automation_id": str(automation_id),
@@ -780,6 +785,7 @@ class ScheduleAutomationsRepository(BaseRepository):
         else:  # script
             payload["script_code"] = final_action_config.get("script_code", "")
             payload["task_name"] = final_action_config.get("task_name", final_name)
+            payload["config"] = final_action_config
 
         await enqueue_task(
             db_context=self._db,
@@ -865,7 +871,8 @@ class ScheduleAutomationsRepository(BaseRepository):
             )
             task_id = f"sched_auto_{automation_id}_{uuid.uuid4().hex[:8]}"
 
-            payload = {
+            # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
+            payload: dict[str, Any] = {
                 "conversation_id": automation["conversation_id"],
                 "interface_type": automation["interface_type"],
                 "automation_id": str(automation_id),
@@ -881,6 +888,7 @@ class ScheduleAutomationsRepository(BaseRepository):
                 payload["task_name"] = action_config.get(
                     "task_name", automation["name"]
                 )
+                payload["config"] = action_config
 
             # Note: We do NOT pass recurrence_rule here because recurrence
             # is managed manually via after_task_execution callback, not
