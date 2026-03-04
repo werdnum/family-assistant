@@ -32,7 +32,13 @@ from family_assistant.tools.types import ToolResult
 from .apis import time as time_api
 from .apis.attachments import create_attachment_api
 from .config import ScriptConfig
-from .errors import ScriptExecutionError, ScriptSyntaxError, ScriptTimeoutError
+from .errors import (
+    ScriptExecutionError,
+    ScriptSyntaxError,
+    ScriptTimeoutError,
+    ScriptTypingError,
+)
+from .type_stubs import generate_prefix_code
 
 if TYPE_CHECKING:
     from family_assistant.tools import ToolsProvider
@@ -196,6 +202,49 @@ class MontyEngine:
             )
             logger.error(error_msg)
             raise ScriptTimeoutError(error_msg, self.config.max_execution_time) from e
+
+    async def type_check(
+        self,
+        script: str,
+        execution_context: "ToolExecutionContext | None" = None,
+    ) -> None:
+        """Statically type-check a script without executing it.
+
+        Generates type stubs for all external functions (tools, APIs, etc.)
+        and runs Monty's built-in ty type checker against the script.
+
+        Args:
+            script: The script source code to check.
+            execution_context: Optional context to resolve available tools.
+
+        Raises:
+            ScriptSyntaxError: If the script has invalid syntax.
+            ScriptTypingError: If the script has type errors.
+        """
+        tool_definitions = None
+        if self.tools_provider and execution_context:
+            tool_definitions = await self.tools_provider.get_tool_definitions()
+
+        prefix_code = generate_prefix_code(
+            tool_definitions=tool_definitions,
+            include_apis=not self.config.disable_apis,
+            include_tools_api=self.tools_provider is not None,
+        )
+
+        try:
+            m = pydantic_monty.Monty(script)
+            m.type_check(prefix_code=prefix_code)
+
+        except pydantic_monty.MontySyntaxError as e:
+            error_str = str(e)
+            line = None
+            match = re.search(r"line (\d+)", error_str)
+            if match:
+                line = int(match.group(1))
+            raise ScriptSyntaxError(error_str, line=line) from e
+
+        except pydantic_monty.MontyTypingError as e:
+            raise ScriptTypingError(str(e)) from e
 
     async def _evaluate_async_impl(
         self,

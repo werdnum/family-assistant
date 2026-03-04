@@ -32,3 +32,10 @@ class ScriptTimeoutError(ScriptError):
     def __init__(self, message: str, timeout_seconds: float) -> None:
         super().__init__(message)
         self.timeout_seconds = timeout_seconds
+
+
+class ScriptTypingError(ScriptError):
+    """Raised when a script fails static type checking."""
+
+    def __init__(self, message: str) -> None:
+        super().__init__(message)

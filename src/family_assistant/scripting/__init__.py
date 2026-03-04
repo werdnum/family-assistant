@@ -11,6 +11,7 @@ from .errors import (
     ScriptExecutionError,
     ScriptSyntaxError,
     ScriptTimeoutError,
+    ScriptTypingError,
 )
 from .monty_engine import MontyEngine
 
@@ -21,4 +22,5 @@ __all__ = [
     "ScriptExecutionError",
     "ScriptSyntaxError",
     "ScriptTimeoutError",
+    "ScriptTypingError",
 ]
