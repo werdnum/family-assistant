@@ -7,6 +7,7 @@ Monty's pause/resume model for clean async external function handling.
 """
 
 import asyncio
+import inspect
 import json
 import logging
 import mimetypes
@@ -50,6 +51,91 @@ def _safe_json_decode(value: Any) -> Any:  # noqa: ANN401 - JSON decode returns 
     if isinstance(value, (str, bytes, bytearray)):
         return json.loads(value)
     return value
+
+
+async def _run_monty_async(
+    monty_runner: pydantic_monty.Monty,
+    *,
+    # ast-grep-ignore: no-dict-any - Monty script inputs are genuinely arbitrary values
+    inputs: dict[str, Any] | None = None,
+    external_functions: dict[str, Callable[..., Any]] | None = None,
+    limits: pydantic_monty.ResourceLimits | None = None,
+    print_callback: Callable[..., None] | None = None,
+) -> Any:  # noqa: ANN401 - Monty scripts return arbitrary types
+    """Run a Monty script, transparently awaiting async external functions.
+
+    Like pydantic_monty.run_monty_async but awaits async functions immediately
+    so scripts don't need explicit ``await`` for sequential calls. Scripts that
+    use ``await``/``asyncio.gather`` still get parallel execution via futures.
+    """
+    loop = asyncio.get_running_loop()
+    ext_fns = external_functions or {}
+    tasks: dict[int, asyncio.Task[tuple[int, Any]]] = {}
+
+    progress = await loop.run_in_executor(
+        None,
+        partial(
+            monty_runner.start,
+            inputs=inputs,
+            limits=limits,
+            print_callback=print_callback,
+        ),
+    )
+
+    try:
+        while True:
+            if isinstance(progress, pydantic_monty.MontyComplete):
+                return progress.output
+
+            if isinstance(progress, pydantic_monty.MontyFutureSnapshot):
+                current_tasks = [
+                    tasks[cid] for cid in progress.pending_call_ids if cid in tasks
+                ]
+                done, _ = await asyncio.wait(
+                    current_tasks, return_when=asyncio.FIRST_COMPLETED
+                )
+                results: dict[int, Any] = {}
+                for task in done:
+                    call_id, result = task.result()
+                    results[call_id] = result
+                    tasks.pop(call_id)
+                progress = await loop.run_in_executor(
+                    None, partial(progress.resume, results)
+                )
+                continue
+
+            assert isinstance(progress, pydantic_monty.MontySnapshot)
+
+            fn_name = progress.function_name
+            fn = ext_fns.get(fn_name)
+
+            if fn is None:
+                progress = await loop.run_in_executor(
+                    None,
+                    partial(
+                        progress.resume,
+                        exception=NameError(f"name '{fn_name}' is not defined"),
+                    ),
+                )
+                continue
+
+            try:
+                result = fn(*progress.args, **progress.kwargs)
+                if inspect.iscoroutine(result):
+                    result = await result
+                progress = await loop.run_in_executor(
+                    None,
+                    partial(progress.resume, return_value=result),
+                )
+            except Exception as e:
+                progress = await loop.run_in_executor(
+                    None, partial(progress.resume, exception=e)
+                )
+    finally:
+        for task in tasks.values():
+            task.cancel()
+        if tasks:
+            await asyncio.gather(*tasks.values(), return_exceptions=True)
 
 
 class MontyEngine:
@@ -118,7 +204,14 @@ class MontyEngine:
         globals_dict: dict[str, Any] | None = None,
         execution_context: "ToolExecutionContext | None" = None,
     ) -> Any:  # noqa: ANN401
-        """Internal async implementation using manual start/resume loop."""
+        """Internal async implementation using Monty's start/resume loop.
+
+        Handles MontySnapshot (single external function call) and
+        MontyFutureSnapshot (parallel async via asyncio.gather in scripts).
+        Async external functions are awaited transparently so scripts don't
+        need explicit ``await`` for simple sequential calls. Scripts that use
+        ``await``/``asyncio.gather`` get true parallel execution via futures.
+        """
         try:
             self._wake_llm_contexts.clear()
             self._script_globals = globals_dict or {}
@@ -137,59 +230,16 @@ class MontyEngine:
                 external_functions=ext_fn_names,
             )
 
-            limits = self._build_resource_limits()
-            print_cb = self._create_print_callback()
-            loop = asyncio.get_running_loop()
-
-            # Start execution in thread pool (Monty execution is CPU-bound)
-            progress = await loop.run_in_executor(
-                None,
-                partial(
-                    m.start,
-                    inputs=inputs or None,
-                    limits=limits,
-                    print_callback=print_cb,
-                ),
+            output = await _run_monty_async(
+                m,
+                inputs=inputs or None,
+                external_functions=ext_fn_impls,
+                limits=self._build_resource_limits(),
+                print_callback=self._create_print_callback(),
             )
 
-            # Resume loop: handle external function calls
-            while not isinstance(progress, pydantic_monty.MontyComplete):
-                if not isinstance(progress, pydantic_monty.MontySnapshot):
-                    raise ScriptExecutionError(
-                        f"Unexpected Monty progress type: {type(progress)}"
-                    )
-
-                fn_name = progress.function_name
-                fn = ext_fn_impls.get(fn_name)
-
-                if fn is None:
-                    progress = await loop.run_in_executor(
-                        None,
-                        partial(
-                            progress.resume,
-                            exception=NameError(f"name '{fn_name}' is not defined"),
-                        ),
-                    )
-                    continue
-
-                try:
-                    if asyncio.iscoroutinefunction(fn):
-                        result = await fn(*progress.args, **progress.kwargs)
-                    else:
-                        result = fn(*progress.args, **progress.kwargs)
-
-                    progress = await loop.run_in_executor(
-                        None,
-                        partial(progress.resume, return_value=result),
-                    )
-                except Exception as e:
-                    progress = await loop.run_in_executor(
-                        None,
-                        partial(progress.resume, exception=e),
-                    )
-
             self._pending_wake_contexts = self._wake_llm_contexts.copy()
-            return progress.output
+            return output
 
         except pydantic_monty.MontySyntaxError as e:
             error_str = str(e)
