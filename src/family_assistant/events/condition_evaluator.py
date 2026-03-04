@@ -118,8 +118,11 @@ _evaluate()
         """
         try:
             # Phase 1: Static type checking (fast, catches type errors early)
+            # Prepend event variable declaration since condition scripts
+            # receive it at runtime via globals_dict
+            type_check_script = f"event: dict[str, object] = {{}}\n{script}"
             try:
-                await self.engine.type_check(script)
+                await self.engine.type_check(type_check_script)
             except ScriptTypingError as e:
                 return False, f"Type error: {str(e)}"
 
