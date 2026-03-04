@@ -1,4 +1,5 @@
 import '@testing-library/jest-dom';
+import { afterEach, afterAll, beforeAll } from 'vitest';
 import { setupServer } from 'msw/node';
 import { handlers } from './mocks/handlers';
 
@@ -12,7 +13,7 @@ beforeAll(() => {
   });
 });
 
-// Reset handlers after each test
+// Reset handlers after each test (RTL auto-cleanup handles component unmount)
 afterEach(() => {
   server.resetHandlers();
 });
@@ -84,10 +85,21 @@ console.error = (...args) => {
     errorMessage.includes('MessageRepository') ||
     errorMessage.includes('This is likely an internal bug') ||
     errorMessage.includes('Warning: An update to') ||
-    errorMessage.includes('not wrapped in act(')
+    errorMessage.includes('not wrapped in act(') ||
+    errorMessage.includes('tapClientLookup')
   ) {
     return; // Don't log these expected errors
   }
 
   originalError.apply(console, args);
 };
+
+// Suppress known @assistant-ui/store tapClientLookup race condition errors.
+// These occur during test cleanup when React's useSyncExternalStore tries to
+// read message state while the tap reactive system has already cleared its
+// resources during unmount. This is a known library issue (assistant-ui#3395).
+window.addEventListener('error', (event) => {
+  if (event.error?.message?.includes('tapClientLookup')) {
+    event.preventDefault();
+  }
+});

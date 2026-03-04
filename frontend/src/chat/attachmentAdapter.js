@@ -121,19 +121,32 @@ export class FileAttachmentAdapter {
   /**
    * Process attachment for sending (upload to service)
    * @param {Object} attachment - The attachment to process
-   * @returns {Promise<Object>} Processed attachment with content URL
+   * @returns {Promise<Object>} Processed attachment with content parts array
    */
   async send(attachment) {
     try {
       // Upload file to attachment service
       const uploadResponse = await uploadFileToService(attachment.file);
 
-      // Return completed attachment with served URL
+      const url = uploadResponse.url;
+
+      // Build content as an array of ThreadUserMessagePart objects.
+      // @assistant-ui/react 0.12.15+ requires CompleteAttachment.content to be
+      // ThreadUserMessagePart[] rather than a plain string URL.
+      let contentParts;
+      if (attachment.type === 'image') {
+        contentParts = [{ type: 'image', image: url }];
+      } else {
+        // For documents and other file types, use a data part with the URL so
+        // the runtime can pass it through to our handleNew callback.
+        contentParts = [{ type: 'data', name: 'url', data: url }];
+      }
+
       return {
         id: attachment.id,
         type: attachment.type, // Use the type determined during add()
         name: attachment.name,
-        content: uploadResponse.url, // URL to serve the file from backend
+        content: contentParts,
         uploadedId: uploadResponse.attachment_id, // Store server-side ID for potential cleanup
         status: { type: 'complete' },
       };
@@ -145,6 +158,7 @@ export class FileAttachmentAdapter {
         id: attachment.id,
         type: attachment.type || 'file',
         name: attachment.name,
+        content: [],
         status: {
           type: 'error',
           error: `Failed to upload file: ${error.message}`,

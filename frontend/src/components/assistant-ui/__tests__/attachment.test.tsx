@@ -1,9 +1,15 @@
-import { screen, waitFor } from '@testing-library/react';
+import { fireEvent, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { resetLocalStorageMock } from '../../../test/mocks/localStorageMock';
 import { renderChatApp } from '../../../test/utils/renderChatApp';
 
 describe('ComposerAddAttachment', () => {
+  beforeEach(() => {
+    resetLocalStorageMock();
+    vi.clearAllMocks();
+  });
+
   it('has type="button" to prevent form submission', async () => {
     await renderChatApp({ waitForReady: true });
 
@@ -14,31 +20,33 @@ describe('ComposerAddAttachment', () => {
   });
 
   it('opens file picker when clicked', async () => {
-    const user = userEvent.setup();
     await renderChatApp({ waitForReady: true });
 
     const attachButton = screen.getByTestId('add-attachment-button');
-    const fileInput = screen.getByTestId('file-input') as HTMLInputElement;
 
-    // Spy on the file input's click method
-    const originalClick = fileInput.click;
-    let clickCalled = false;
-    fileInput.click = () => {
-      clickCalled = true;
-      originalClick.call(fileInput);
-    };
+    // Spy on HTMLInputElement.prototype.click to detect file input clicks
+    // regardless of DOM element recreation from async re-renders
+    const clickSpy = vi.spyOn(HTMLInputElement.prototype, 'click');
 
-    // Click the attach button
-    await user.click(attachButton);
+    // Use fireEvent for synchronous click to avoid race conditions with
+    // async re-renders from @assistant-ui's tap reactive system
+    fireEvent.click(attachButton);
 
     // Should trigger the file input click
     await waitFor(() => {
-      expect(clickCalled).toBe(true);
+      expect(clickSpy).toHaveBeenCalled();
     });
+
+    clickSpy.mockRestore();
   });
 });
 
 describe('AttachmentUI Loading States', () => {
+  beforeEach(() => {
+    resetLocalStorageMock();
+    vi.clearAllMocks();
+  });
+
   it('can upload a file and see attachment preview', async () => {
     const user = userEvent.setup();
     await renderChatApp({ waitForReady: true });

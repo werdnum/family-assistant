@@ -152,7 +152,10 @@ describe('FileAttachmentAdapter', () => {
       expect(result.id).toBe('test-id');
       expect(result.type).toBe('image');
       expect(result.name).toBe('test.png');
-      expect(result.content).toBe('/api/attachments/server-uuid-456');
+      // content is now ThreadUserMessagePart[] as required by @assistant-ui/react 0.12.15+
+      expect(result.content).toEqual([
+        { type: 'image', image: '/api/attachments/server-uuid-456' },
+      ]);
       expect(result.uploadedId).toBe('server-uuid-456');
       expect(result.status.type).toBe('complete');
 

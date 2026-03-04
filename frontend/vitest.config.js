@@ -23,6 +23,12 @@ export default defineConfig({
   resolve: {
     alias: {
       '@': path.resolve(__dirname, './src'),
+      // Patch tapClientLookup to be error-tolerant in tests.
+      // Works around assistant-ui/assistant-ui#3395 race condition.
+      '@assistant-ui/store/dist/tapClientLookup.js': path.resolve(
+        __dirname,
+        './src/test/patches/tapClientLookup.js'
+      ),
     },
   },
 });
