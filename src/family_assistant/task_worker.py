@@ -918,7 +918,7 @@ class TaskWorker:
         payload_dict = task.get("payload") or {}
         config = payload_dict.get("config") or {}
 
-        if not config.get("notify_on_failure", True):
+        if config.get("notify_on_failure") is False:
             logger.info(
                 f"Skipping error notification for task {task['task_id']} "
                 "(notify_on_failure=False)"
@@ -929,12 +929,13 @@ class TaskWorker:
         interface_type = payload_dict.get("interface_type", "telegram")
 
         # Build informative error context for the LLM
-        script_code = payload_dict.get("script_code", "")
+        script_code = payload_dict.get("script_code") or ""
         script_lines = script_code.strip().splitlines()
         if len(script_lines) > 100:
             script_code = "\n".join(script_lines[:100]) + "\n... (truncated)"
 
-        event_data_str = str(payload_dict.get("event_data", ""))
+        event_data = payload_dict.get("event_data")
+        event_data_str = str(event_data) if event_data else ""
         if len(event_data_str) > 2000:
             event_data_str = event_data_str[:2000] + "... (truncated)"
 
