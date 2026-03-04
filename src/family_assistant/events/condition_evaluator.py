@@ -6,7 +6,11 @@ import logging
 import textwrap
 from typing import Any
 
-from family_assistant.scripting import ScriptExecutionError, ScriptSyntaxError
+from family_assistant.scripting import (
+    ScriptExecutionError,
+    ScriptSyntaxError,
+    ScriptTypingError,
+)
 from family_assistant.scripting.config import ScriptConfig
 from family_assistant.scripting.monty_engine import MontyEngine
 
@@ -103,6 +107,9 @@ _evaluate()
         """
         Validate a condition script without executing it.
 
+        First runs static type checking (fast, no execution needed),
+        then validates by executing with sample data.
+
         Args:
             script: The script to validate
 
@@ -110,7 +117,13 @@ _evaluate()
             Tuple of (is_valid, error_message)
         """
         try:
-            # Test with sample event data
+            # Phase 1: Static type checking (fast, catches type errors early)
+            try:
+                await self.engine.type_check(script)
+            except ScriptTypingError as e:
+                return False, f"Type error: {str(e)}"
+
+            # Phase 2: Execution validation with sample data
             sample_event = {
                 "entity_id": "test.entity",
                 "event_type": "state_changed",
@@ -119,7 +132,6 @@ _evaluate()
             }
             await self.evaluate_condition(script, sample_event)
 
-            # Script executed successfully and returned boolean (already checked in evaluate_condition)
             return True, None
 
         except ScriptSyntaxError as e:

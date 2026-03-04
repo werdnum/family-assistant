@@ -8,6 +8,8 @@ from fastapi import APIRouter, Body, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
 
 from family_assistant.processing import ProcessingService
+from family_assistant.scripting.errors import ScriptSyntaxError, ScriptTypingError
+from family_assistant.scripting.monty_engine import MontyEngine
 from family_assistant.storage.context import DatabaseContext
 from family_assistant.storage.models import Automation
 from family_assistant.web.dependencies import get_db, get_processing_service
@@ -123,6 +125,23 @@ class UpdateScheduleAutomationRequest(BaseModel):
     action_config: dict[str, Any] | None | object = _UNSET
     description: str | None | object = _UNSET
     enabled: bool | None | object = _UNSET
+
+
+async def _validate_script_code(script_code: str) -> None:
+    """Type-check a script and raise HTTPException on errors."""
+    engine = MontyEngine()
+    try:
+        await engine.type_check(script_code)
+    except ScriptSyntaxError as e:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Script syntax error: {e}",
+        ) from e
+    except ScriptTypingError as e:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Script type error: {e}",
+        ) from e
 
 
 def _format_automation_response(automation: Automation) -> AutomationResponse:
@@ -251,11 +270,14 @@ async def create_event_automation(
         )
 
     # Validate script requirements
-    if request.action_type == "script" and not request.action_config.get("script_code"):
-        raise HTTPException(
-            status_code=400,
-            detail="script_code is required in action_config when action_type is 'script'",
-        )
+    if request.action_type == "script":
+        script_code = request.action_config.get("script_code")
+        if not script_code:
+            raise HTTPException(
+                status_code=400,
+                detail="script_code is required in action_config when action_type is 'script'",
+            )
+        await _validate_script_code(script_code)
 
     # Check name uniqueness
     is_available, error_msg = await db.automations.check_name_available(
@@ -321,11 +343,14 @@ async def create_schedule_automation(
         )
 
     # Validate script requirements
-    if request.action_type == "script" and not request.action_config.get("script_code"):
-        raise HTTPException(
-            status_code=400,
-            detail="script_code is required in action_config when action_type is 'script'",
-        )
+    if request.action_type == "script":
+        script_code = request.action_config.get("script_code")
+        if not script_code:
+            raise HTTPException(
+                status_code=400,
+                detail="script_code is required in action_config when action_type is 'script'",
+            )
+        await _validate_script_code(script_code)
 
     # Check name uniqueness
     is_available, error_msg = await db.automations.check_name_available(
