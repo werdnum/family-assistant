@@ -447,11 +447,10 @@ service_profiles:
       - "/visualize"
       - "/chart"
   - id: "event_handler"
-    description: "Restricted assistant profile for automated script-event integration. Uses Gemini 2.5 Pro with read-only and non-destructive tools only."
+    description: "Restricted assistant profile for automated script-event integration. Uses Claude Sonnet 4.6 with read-only and non-destructive tools only."
     processing_config:
-      # Using direct Google provider for consistency
-      provider: "google"
-      llm_model: "gemini-2.5-pro"
+      provider: "anthropic"
+      llm_model: "claude-sonnet-4-6"
       # Auto-load system documentation into this profile's system prompt
       # include_system_docs:
       #   - "USER_GUIDE.md"
@@ -482,8 +481,8 @@ service_profiles:
   - id: "automation_creation"
     description: "Specialized profile for creating and validating event-based and schedule-based automations. Includes comprehensive scripting documentation and validation tools."
     processing_config:
-      provider: "google"
-      llm_model: "gemini-2.5-pro"
+      provider: "anthropic"
+      llm_model: "claude-sonnet-4-6"
       max_iterations: 25 # Allow more iterations for complex validation workflows
       delegation_security_level: "unrestricted" # Can delegate to other profiles if needed
       include_system_docs:
@@ -1065,6 +1064,8 @@ service_profiles:
   - id: "engineer"
     description: "Engineering diagnostic profile with read-only access to source code, database, and error logs. Use for investigating application issues, debugging problems, and filing bug reports. Cannot modify data or execute code."
     processing_config:
+      provider: "anthropic"
+      llm_model: "claude-sonnet-4-6"
       max_iterations: 30
       delegation_security_level: "blocked"
       prompts:
