@@ -717,8 +717,9 @@ class ProcessingService:
                 "none" if is_final_iteration or not tools_to_offer else "auto"
             )
 
-            # Stream from LLM (with one context-length retry)
+            # Stream from LLM (with one context-length retry and one empty-response retry)
             context_retry_attempted = False
+            empty_response_retry_attempted = False
             while True:
                 accumulated_content = []
                 tool_calls_from_stream = []
@@ -754,6 +755,32 @@ class ProcessingService:
                         elif event.type == "error":
                             logger.error(f"Stream error: {event.error}")
                             raise _map_stream_error_to_exception(event)
+
+                    # Check for empty response (no content and no tool calls)
+                    if not accumulated_content and not tool_calls_from_stream:
+                        if not empty_response_retry_attempted:
+                            logger.warning(
+                                "LLM returned empty response (no content, no tool calls). "
+                                "iteration=%d/%d, tools_offered=%d, tool_choice=%s, "
+                                "num_messages=%d. Re-prompting.",
+                                current_iteration,
+                                max_iterations,
+                                len(tools_to_offer) if tools_to_offer else 0,
+                                tool_choice_mode,
+                                len(messages),
+                            )
+                            empty_response_retry_attempted = True
+                            continue
+                        logger.warning(
+                            "LLM returned empty response on retry. "
+                            "iteration=%d/%d, tools_offered=%d, tool_choice=%s, "
+                            "num_messages=%d. Proceeding with empty response.",
+                            current_iteration,
+                            max_iterations,
+                            len(tools_to_offer) if tools_to_offer else 0,
+                            tool_choice_mode,
+                            len(messages),
+                        )
 
                     break  # Success, exit while loop
 
