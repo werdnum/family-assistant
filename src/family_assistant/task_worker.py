@@ -1244,6 +1244,42 @@ async def handle_worker_task_cleanup(
         raise
 
 
+async def handle_completed_automation_cleanup(
+    exec_context: ToolExecutionContext,
+    # ast-grep-ignore: no-dict-any - Task payload is dynamic
+    payload: dict[str, Any],
+) -> None:
+    """Task handler for cleaning up completed one-time automations.
+
+    Deletes one-time event listeners that have been disabled (after firing)
+    and are older than the retention period.
+
+    Payload can include:
+        retention_hours: Override the default 24-hour retention period
+    """
+    retention_hours = int(payload.get("retention_hours", 24))
+
+    logger.info(
+        f"Starting completed automation cleanup (retention: {retention_hours} hours)"
+    )
+
+    try:
+        deleted_count = (
+            await exec_context.db_context.events.cleanup_completed_one_time_listeners(
+                retention_hours
+            )
+        )
+
+        logger.info(
+            f"Completed automation cleanup finished. "
+            f"Deleted {deleted_count} completed one-time listeners "
+            f"older than {retention_hours} hours."
+        )
+    except Exception as e:
+        logger.error(f"Error during completed automation cleanup: {e}", exc_info=True)
+        raise
+
+
 async def _process_script_wake_llm(
     exec_context: ToolExecutionContext,
     # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
