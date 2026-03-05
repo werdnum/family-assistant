@@ -68,7 +68,10 @@ const CreateEventAutomation = ({ onSuccess, onCancel }) => {
 
     if (formData.match_conditions.trim()) {
       try {
-        JSON.parse(formData.match_conditions);
+        const parsed = JSON.parse(formData.match_conditions);
+        if (typeof parsed !== 'object' || Array.isArray(parsed) || parsed === null) {
+          errors.match_conditions = 'Must be a JSON object (e.g. {"key": "value"})';
+        }
       } catch (_e) {
         errors.match_conditions = 'Invalid JSON format';
       }
@@ -233,7 +236,7 @@ const CreateEventAutomation = ({ onSuccess, onCancel }) => {
                   value={formData.match_conditions}
                   onChange={handleInputChange}
                   rows={6}
-                  placeholder='{\n  "entity_id": "sensor.example",\n  "new_state.state": "on"\n}'
+                  placeholder={`{\n  "entity_id": "sensor.example",\n  "new_state.state": "on"\n}`}
                   className="font-mono"
                 />
                 {validationErrors.match_conditions && (
@@ -251,7 +254,7 @@ const CreateEventAutomation = ({ onSuccess, onCancel }) => {
                   value={formData.condition_script}
                   onChange={handleInputChange}
                   rows={6}
-                  placeholder="# Return True to trigger the automation\nreturn event.get('entity_id') == 'sensor.example'"
+                  placeholder={`# Return True to trigger the automation\nreturn event.get('entity_id') == 'sensor.example'`}
                   className="font-mono"
                 />
                 <p className="text-sm text-muted-foreground">
