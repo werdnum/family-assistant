@@ -140,7 +140,7 @@ const AttachmentUI: FC = () => {
       case 'file':
         return 'File';
       default:
-        return type.charAt(0).toUpperCase() + type.slice(1);
+        return (type as string).charAt(0).toUpperCase() + (type as string).slice(1);
     }
   });
 

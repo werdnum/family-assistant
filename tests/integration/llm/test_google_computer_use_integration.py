@@ -2,6 +2,7 @@
 
 import logging
 import os
+import socket
 from collections.abc import AsyncGenerator
 from typing import Any
 from unittest.mock import MagicMock, patch
@@ -25,6 +26,21 @@ from family_assistant.tools.computer_use import (
 from family_assistant.tools.types import ToolDefinition, ToolExecutionContext
 
 logger = logging.getLogger(__name__)
+
+
+def _has_internet() -> bool:
+    """Check if external network access is available."""
+    try:
+        socket.create_connection(("93.184.215.14", 80), timeout=3).close()
+        return True
+    except OSError:
+        return False
+
+
+_skip_no_internet = pytest.mark.skipif(
+    not _has_internet(),
+    reason="No external network access (required for browser navigation tests)",
+)
 
 
 @pytest.fixture
@@ -270,6 +286,7 @@ class TestComputerUseTools:
         # Cleanup the new session
         await close_browser_session(mock_exec_context)
 
+    @_skip_no_internet
     @pytest.mark.asyncio
     async def test_navigate_tool(
         self, mock_exec_context: ToolExecutionContext, browser_session: BrowserSession
@@ -297,6 +314,7 @@ class TestComputerUseTools:
         page = await browser_session.ensure_page()
         assert "example.com" in page.url
 
+    @_skip_no_internet
     @pytest.mark.asyncio
     async def test_navigate_adds_protocol(
         self, mock_exec_context: ToolExecutionContext, browser_session: BrowserSession
@@ -314,6 +332,7 @@ class TestComputerUseTools:
         page = await browser_session.ensure_page()
         assert page.url.startswith("https://")
 
+    @_skip_no_internet
     @pytest.mark.asyncio
     async def test_click_at_tool(
         self, mock_exec_context: ToolExecutionContext, browser_session: BrowserSession
