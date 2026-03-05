@@ -58,6 +58,7 @@ from family_assistant.storage.context import (
 )
 from family_assistant.task_worker import (
     TaskWorker,
+    handle_completed_automation_cleanup,
     handle_llm_callback,
     handle_reindex_document,
     handle_script_execution,
@@ -1170,6 +1171,9 @@ class Assistant:
             "worker_task_cleanup", handle_worker_task_cleanup
         )
         self.task_worker_instance.register_task_handler(
+            "completed_automation_cleanup", handle_completed_automation_cleanup
+        )
+        self.task_worker_instance.register_task_handler(
             "reindex_document", self.handle_reindex_document
         )
         logger.info(
@@ -1325,6 +1329,22 @@ class Assistant:
                     )
                 except Exception as e:
                     logger.info(f"Worker task cleanup task setup: {e}")
+
+                # Upsert the completed automation cleanup task
+                try:
+                    await db_ctx.tasks.enqueue(
+                        task_id="system_completed_automation_cleanup_daily",
+                        task_type="completed_automation_cleanup",
+                        payload={"retention_hours": 24},
+                        scheduled_at=next_3am_utc,
+                        recurrence_rule="FREQ=DAILY;BYHOUR=3;BYMINUTE=0",
+                        max_retries_override=5,
+                    )
+                    logger.info(
+                        f"Completed automation cleanup task scheduled for {next_3am_local} ({local_tz})"
+                    )
+                except Exception as e:
+                    logger.info(f"Completed automation cleanup task setup: {e}")
         except RuntimeError as e:
             if "different loop" in str(e):
                 logger.warning(

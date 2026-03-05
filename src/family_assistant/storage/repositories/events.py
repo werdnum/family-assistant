@@ -636,6 +636,49 @@ class EventsRepository(BaseRepository):
             )
             raise
 
+    async def cleanup_completed_one_time_listeners(
+        self,
+        retention_hours: int = 24,
+    ) -> int:
+        """
+        Delete completed one-time event listeners older than the retention period.
+
+        A "completed" one-time listener is one that has ``one_time=True`` and
+        ``enabled=False`` (disabled after firing) with a ``last_execution_at``
+        older than the retention period.
+
+        Args:
+            retention_hours: Hours to retain completed one-time listeners (default: 24)
+
+        Returns:
+            Number of deleted listeners
+        """
+        try:
+            cutoff_time = datetime.now(UTC) - timedelta(hours=retention_hours)
+
+            stmt = delete(event_listeners_table).where(
+                (event_listeners_table.c.one_time.is_(True))
+                & (event_listeners_table.c.enabled.is_(False))
+                & (event_listeners_table.c.last_execution_at < cutoff_time)
+            )
+
+            result = await self._db.execute_with_retry(stmt)
+            deleted_count = result.rowcount  # type: ignore[attr-defined]
+
+            if deleted_count > 0:
+                self._logger.info(
+                    f"Cleaned up {deleted_count} completed one-time listeners "
+                    f"older than {retention_hours} hours"
+                )
+            return deleted_count
+
+        except SQLAlchemyError as e:
+            self._logger.error(
+                f"Database error in cleanup_completed_one_time_listeners: {e}",
+                exc_info=True,
+            )
+            raise
+
     # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
     # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
     def _process_listener_row(self, row: dict[str, Any]) -> dict[str, Any]:
