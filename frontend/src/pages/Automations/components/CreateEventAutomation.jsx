@@ -4,7 +4,6 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
 import {
   Select,
   SelectContent,
@@ -24,7 +23,6 @@ const CreateEventAutomation = ({ onSuccess, onCancel }) => {
     event_source: 'home_assistant',
     action_type: 'wake_llm',
     description: '',
-    condition_type: 'json',
     match_conditions: '{}',
     condition_script: '',
     script_code: '',
@@ -68,7 +66,7 @@ const CreateEventAutomation = ({ onSuccess, onCancel }) => {
       errors.name = 'Name is required';
     }
 
-    if (formData.condition_type === 'json') {
+    if (formData.match_conditions.trim()) {
       try {
         JSON.parse(formData.match_conditions);
       } catch (_e) {
@@ -98,8 +96,9 @@ const CreateEventAutomation = ({ onSuccess, onCancel }) => {
       const requestData = {
         name: formData.name,
         source_id: formData.event_source,
-        match_conditions:
-          formData.condition_type === 'json' ? JSON.parse(formData.match_conditions) : {},
+        match_conditions: formData.match_conditions.trim()
+          ? JSON.parse(formData.match_conditions)
+          : {},
         action_type: formData.action_type,
         action_config: {},
         description: formData.description || null,
@@ -108,7 +107,7 @@ const CreateEventAutomation = ({ onSuccess, onCancel }) => {
         conversation_id: 'web',
       };
 
-      if (formData.condition_type === 'script' && formData.condition_script) {
+      if (formData.condition_script.trim()) {
         requestData.condition_script = formData.condition_script;
       }
 
@@ -222,59 +221,43 @@ const CreateEventAutomation = ({ onSuccess, onCancel }) => {
 
             <div className="space-y-4">
               <Label>Trigger Conditions</Label>
-              <RadioGroup
-                value={formData.condition_type}
-                onValueChange={(value) => handleSelectChange('condition_type', value)}
-                className="space-y-3"
-              >
-                <div className="flex items-center space-x-2">
-                  <RadioGroupItem value="json" id="conditions-json" />
-                  <Label htmlFor="conditions-json" className="font-normal">
-                    JSON Match Conditions
-                  </Label>
-                </div>
-                <div className="flex items-center space-x-2">
-                  <RadioGroupItem value="script" id="conditions-script" />
-                  <Label htmlFor="conditions-script" className="font-normal">
-                    Condition Script (Python)
-                  </Label>
-                </div>
-              </RadioGroup>
+              <p className="text-sm text-muted-foreground">
+                If both are provided, both must match (AND logic).
+              </p>
 
-              {formData.condition_type === 'json' ? (
-                <div className="space-y-2">
-                  <Textarea
-                    name="match_conditions"
-                    value={formData.match_conditions}
-                    onChange={handleInputChange}
-                    rows={6}
-                    placeholder='{\n  "entity_id": "sensor.example",\n  "new_state.state": "on"\n}'
-                    className="font-mono"
-                  />
-                  {validationErrors.match_conditions && (
-                    <Alert variant="destructive">
-                      <AlertDescription>{validationErrors.match_conditions}</AlertDescription>
-                    </Alert>
-                  )}
-                  <p className="text-sm text-muted-foreground">
-                    Define when this automation should trigger
-                  </p>
-                </div>
-              ) : (
-                <div className="space-y-2">
-                  <Textarea
-                    name="condition_script"
-                    value={formData.condition_script}
-                    onChange={handleInputChange}
-                    rows={6}
-                    placeholder="# Return True to trigger the automation\nreturn event.get('entity_id') == 'sensor.example'"
-                    className="font-mono"
-                  />
-                  <p className="text-sm text-muted-foreground">
-                    Python script that returns True/False
-                  </p>
-                </div>
-              )}
+              <div className="space-y-2">
+                <Label htmlFor="match_conditions">JSON Match Conditions</Label>
+                <Textarea
+                  id="match_conditions"
+                  name="match_conditions"
+                  value={formData.match_conditions}
+                  onChange={handleInputChange}
+                  rows={6}
+                  placeholder='{\n  "entity_id": "sensor.example",\n  "new_state.state": "on"\n}'
+                  className="font-mono"
+                />
+                {validationErrors.match_conditions && (
+                  <Alert variant="destructive">
+                    <AlertDescription>{validationErrors.match_conditions}</AlertDescription>
+                  </Alert>
+                )}
+              </div>
+
+              <div className="space-y-2">
+                <Label htmlFor="condition_script">Condition Script (Python)</Label>
+                <Textarea
+                  id="condition_script"
+                  name="condition_script"
+                  value={formData.condition_script}
+                  onChange={handleInputChange}
+                  rows={6}
+                  placeholder="# Return True to trigger the automation\nreturn event.get('entity_id') == 'sensor.example'"
+                  className="font-mono"
+                />
+                <p className="text-sm text-muted-foreground">
+                  Python script that returns True/False
+                </p>
+              </div>
             </div>
 
             {formData.action_type === 'script' && (

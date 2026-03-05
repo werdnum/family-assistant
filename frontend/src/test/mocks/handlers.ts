@@ -393,6 +393,8 @@ export const handlers = [
         name: 'Test Automation Web',
         conversation_id: 'web',
         enabled: true,
+        match_conditions: { entity_id: 'sensor.temperature' },
+        condition_script: "return event.get('new_state', {}).get('state') == 'on'",
       },
       {
         id: '456',
@@ -400,6 +402,8 @@ export const handlers = [
         name: 'Test Automation Telegram',
         conversation_id: 'telegram',
         enabled: false,
+        match_conditions: {},
+        condition_script: null,
       },
     ];
 
@@ -423,6 +427,8 @@ export const handlers = [
         name: 'Test Automation Web',
         conversation_id: 'web',
         enabled: true,
+        match_conditions: { entity_id: 'sensor.temperature' },
+        condition_script: "return event.get('new_state', {}).get('state') == 'on'",
       },
       {
         id: '456',
@@ -430,6 +436,8 @@ export const handlers = [
         name: 'Test Automation Telegram',
         conversation_id: 'telegram',
         enabled: false,
+        match_conditions: {},
+        condition_script: null,
       },
     ];
 
@@ -454,6 +462,8 @@ export const handlers = [
         name: 'Test Automation Web',
         conversation_id: 'web',
         enabled: true,
+        match_conditions: { entity_id: 'sensor.temperature' },
+        condition_script: "return event.get('new_state', {}).get('state') == 'on'",
       },
       {
         id: '456',
@@ -461,6 +471,8 @@ export const handlers = [
         name: 'Test Automation Telegram',
         conversation_id: 'telegram',
         enabled: false,
+        match_conditions: {},
+        condition_script: null,
       },
     ];
 
@@ -485,6 +497,8 @@ export const handlers = [
         name: 'Test Automation Web',
         conversation_id: 'web',
         enabled: true,
+        match_conditions: { entity_id: 'sensor.temperature' },
+        condition_script: "return event.get('new_state', {}).get('state') == 'on'",
       },
       {
         id: '456',
@@ -492,6 +506,8 @@ export const handlers = [
         name: 'Test Automation Telegram',
         conversation_id: 'telegram',
         enabled: false,
+        match_conditions: {},
+        condition_script: null,
       },
     ];
 
