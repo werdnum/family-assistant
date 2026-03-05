@@ -8,6 +8,7 @@ import pytest
 from sqlalchemy.ext.asyncio import AsyncEngine
 
 from family_assistant.assistant import Assistant
+from family_assistant.llm.messages import AssistantMessage, UserMessage
 from family_assistant.storage.context import get_db_context
 from tests.helpers import wait_for_condition
 from tests.mocks.mock_llm import LLMOutput, RuleBasedMockLLMClient
@@ -165,51 +166,47 @@ async def test_get_conversations_interface_filter(
     async with get_db_context(db_engine) as db_context:
         # Add web conversation
         result1 = await db_context.message_history.add_message(
+            UserMessage(content="Web user message"),
             interface_type="web",
             conversation_id="web_conv_filter_test",
             interface_message_id="web_msg_1",
             turn_id="turn_1",
             thread_root_id=None,
             timestamp=base_time,
-            role="user",
-            content="Web user message",
         )
         assert result1 is not None, "Failed to add web user message"
 
         result2 = await db_context.message_history.add_message(
+            AssistantMessage(content="Web assistant response"),
             interface_type="web",
             conversation_id="web_conv_filter_test",
             interface_message_id="web_msg_2",
             turn_id="turn_1",
             thread_root_id=None,
             timestamp=base_time + timedelta(seconds=1),
-            role="assistant",
-            content="Web assistant response",
         )
         assert result2 is not None, "Failed to add web assistant message"
 
         # Add telegram conversation
         result3 = await db_context.message_history.add_message(
+            UserMessage(content="Telegram user message"),
             interface_type="telegram",
             conversation_id="tg_conv_filter_test",
             interface_message_id="tg_msg_1",
             turn_id="turn_2",
             thread_root_id=None,
             timestamp=base_time + timedelta(seconds=2),
-            role="user",
-            content="Telegram user message",
         )
         assert result3 is not None, "Failed to add telegram user message"
 
         result4 = await db_context.message_history.add_message(
+            AssistantMessage(content="Telegram assistant response"),
             interface_type="telegram",
             conversation_id="tg_conv_filter_test",
             interface_message_id="tg_msg_2",
             turn_id="turn_2",
             thread_root_id=None,
             timestamp=base_time + timedelta(seconds=3),
-            role="assistant",
-            content="Telegram assistant response",
         )
         assert result4 is not None, "Failed to add telegram assistant message"
 
@@ -275,14 +272,13 @@ async def test_get_conversations_conversation_id_filter(
         for i in range(3):
             conv_id = f"conv_id_filter_test_{i}"
             result = await db_context.message_history.add_message(
+                UserMessage(content=f"Test message {i}"),
                 interface_type="web",
                 conversation_id=conv_id,
                 interface_message_id=f"msg_{i}",
                 turn_id=f"turn_{i}",
                 thread_root_id=None,
                 timestamp=base_time + timedelta(minutes=i),
-                role="user",
-                content=f"Test message {i}",
             )
             assert result is not None, f"Failed to add message for conv {i}"
 
@@ -331,40 +327,37 @@ async def test_get_conversations_date_filters(
     async with get_db_context(db_engine) as db_context:
         # Old conversation (3 days ago)
         result1 = await db_context.message_history.add_message(
+            UserMessage(content="Old message"),
             interface_type="web",
             conversation_id="old_conv",
             interface_message_id="old_msg",
             turn_id="turn_old",
             thread_root_id=None,
             timestamp=base_time - timedelta(days=3),
-            role="user",
-            content="Old message",
         )
         assert result1 is not None, "Failed to add old_conv message"
 
         # Recent conversation (1 day ago)
         result2 = await db_context.message_history.add_message(
+            UserMessage(content="Recent message"),
             interface_type="web",
             conversation_id="recent_conv",
             interface_message_id="recent_msg",
             turn_id="turn_recent",
             thread_root_id=None,
             timestamp=base_time - timedelta(days=1),
-            role="user",
-            content="Recent message",
         )
         assert result2 is not None, "Failed to add recent_conv message"
 
         # Today's conversation
         result3 = await db_context.message_history.add_message(
+            UserMessage(content="Today's message"),
             interface_type="web",
             conversation_id="today_conv",
             interface_message_id="today_msg",
             turn_id="turn_today",
             thread_root_id=None,
             timestamp=base_time,
-            role="user",
-            content="Today's message",
         )
         assert result3 is not None, "Failed to add today_conv message"
 
@@ -453,40 +446,37 @@ async def test_get_conversations_combined_filters(
     async with get_db_context(db_engine) as db_context:
         # Web conversation from yesterday matching all filters
         result1 = await db_context.message_history.add_message(
+            UserMessage(content="Matching message"),
             interface_type="web",
             conversation_id="matching_conv",
             interface_message_id="match_msg",
             turn_id="turn_match",
             thread_root_id=None,
             timestamp=base_time - timedelta(days=1),
-            role="user",
-            content="Matching message",
         )
         assert result1 is not None, "Failed to add matching_conv message"
 
         # Telegram conversation from yesterday (wrong interface)
         result2 = await db_context.message_history.add_message(
+            UserMessage(content="Wrong interface message"),
             interface_type="telegram",
             conversation_id="wrong_interface_conv",
             interface_message_id="wrong_msg",
             turn_id="turn_wrong",
             thread_root_id=None,
             timestamp=base_time - timedelta(days=1) + timedelta(minutes=1),
-            role="user",
-            content="Wrong interface message",
         )
         assert result2 is not None, "Failed to add wrong_interface_conv message"
 
         # Web conversation from 3 days ago (wrong date)
         result3 = await db_context.message_history.add_message(
+            UserMessage(content="Wrong date message"),
             interface_type="web",
             conversation_id="wrong_date_conv",
             interface_message_id="date_msg",
             turn_id="turn_date",
             thread_root_id=None,
             timestamp=base_time - timedelta(days=3),
-            role="user",
-            content="Wrong date message",
         )
         assert result3 is not None, "Failed to add wrong_date_conv message"
 

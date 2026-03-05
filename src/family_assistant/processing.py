@@ -2444,14 +2444,13 @@ Call attach_to_response with your selected attachment IDs."""
             # Save error message to conversation history
             try:
                 error_message_record = await db_context.message_history.add_message(
+                    AssistantMessage(content=error_message),
                     interface_type=interface_type,
                     conversation_id=conversation_id,
                     interface_message_id=None,  # Will be set when sent
                     turn_id=turn_id,
                     thread_root_id=thread_root_id_for_turn,
                     timestamp=datetime.now(UTC),
-                    role="assistant",
-                    content=error_message,
                     subconversation_id=subconversation_id,
                 )
                 error_message_internal_id = (
