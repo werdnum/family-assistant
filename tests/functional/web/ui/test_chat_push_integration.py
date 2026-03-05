@@ -7,6 +7,7 @@ from typing import Any, NoReturn
 import pytest
 from sqlalchemy.ext.asyncio import AsyncEngine
 
+from family_assistant.llm.messages import UserMessage
 from family_assistant.services.push_notification import PushNotificationService
 from family_assistant.storage.context import DatabaseContext
 from family_assistant.utils.clock import SystemClock
@@ -194,21 +195,11 @@ async def test_web_chat_sends_push_notification_with_user_message(
 
     # First, save a user message to establish user_id in conversation
     async with DatabaseContext(engine=db_engine) as db_context:
-        await db_context.message_history.add(
+        await db_context.message_history.add_message(
+            message=UserMessage(content="Hello, assistant"),
             interface_type="web",
             conversation_id=conversation_id,
-            interface_message_id=None,
-            turn_id=None,
-            thread_root_id=None,
             timestamp=clock.now(),
-            role="user",
-            content="Hello, assistant",
-            tool_calls=None,
-            reasoning_info=None,
-            error_traceback=None,
-            tool_call_id=None,
-            processing_profile_id=None,
-            attachments=None,
             user_id=user_id,
         )
 

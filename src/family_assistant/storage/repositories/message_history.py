@@ -4,7 +4,7 @@ import json
 import logging
 from dataclasses import asdict
 from datetime import UTC, datetime, timedelta
-from typing import Any
+from typing import Any, cast
 
 from sqlalchemy import insert, or_, select, update
 from sqlalchemy.exc import SQLAlchemyError
@@ -17,6 +17,8 @@ from family_assistant.llm.messages import (
     ErrorMessage,
     ImageUrlContentPart,
     LLMMessage,
+    MessageAttachmentMetadata,
+    MessageReasoningInfo,
     MessageWithMetadata,
     SystemMessage,
     TextContentPart,
@@ -53,9 +55,9 @@ class MessageHistoryRepository(BaseRepository):
         processing_profile_id: str | None = None,
         subconversation_id: str | None = None,
         user_id: str | None = None,
-        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
-        reasoning_info: dict[str, Any] | None = None,
-        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
+        reasoning_info: MessageReasoningInfo | None = None,
+        attachments: list[MessageAttachmentMetadata] | None = None,
+        # ast-grep-ignore: no-dict-any - return type matches _insert_message; fixing is a separate concern
     ) -> dict[str, Any] | None:
         """
         Stores a typed LLMMessage in the history table.
@@ -91,8 +93,6 @@ class MessageHistoryRepository(BaseRepository):
         tool_name: str | None = None
         error_traceback: str | None = None
         provider_metadata: Any = None
-        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
-        attachments: list[dict[str, Any]] | None = None
 
         if isinstance(message, UserMessage):
             content = (
@@ -110,7 +110,8 @@ class MessageHistoryRepository(BaseRepository):
             tool_name = message.name
             error_traceback = message.error_traceback
             provider_metadata = message.provider_metadata
-            attachments = message.attachments  # type: ignore[assignment]
+            if attachments is None:
+                attachments = message.attachments  # type: ignore[assignment]  # ToolAttachmentMetadata (TypedDict) is a dict at runtime
         elif isinstance(message, SystemMessage):
             content = message.content
         elif isinstance(message, ErrorMessage):
@@ -202,13 +203,13 @@ class MessageHistoryRepository(BaseRepository):
             role=role,
             content=content,
             tool_calls=tool_calls,
-            reasoning_info=reasoning_info,
+            reasoning_info=cast("MessageReasoningInfo | None", reasoning_info),
             error_traceback=error_traceback,
             tool_call_id=tool_call_id,
             processing_profile_id=processing_profile_id,
             subconversation_id=subconversation_id,
             user_id=user_id,
-            attachments=attachments,
+            attachments=cast("list[MessageAttachmentMetadata] | None", attachments),
             tool_name=tool_name,
             provider_metadata=provider_metadata,
         )
@@ -224,19 +225,17 @@ class MessageHistoryRepository(BaseRepository):
         role: str,
         content: str | None,
         tool_calls: list[ToolCallItem] | None = None,
-        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
-        reasoning_info: dict[str, Any] | None = None,
+        reasoning_info: MessageReasoningInfo | None = None,
         error_traceback: str | None = None,
         tool_call_id: str | None = None,
         processing_profile_id: str | None = None,
         subconversation_id: str | None = None,
         user_id: str | None = None,
-        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
-        attachments: list[dict[str, Any]] | None = None,
+        attachments: list[MessageAttachmentMetadata] | None = None,
         tool_name: str | None = None,
         # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
         provider_metadata: dict[str, Any] | GeminiProviderMetadata | None = None,
-        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
+        # ast-grep-ignore: no-dict-any - return type matches DB row dict; fixing is a separate concern
     ) -> dict[str, Any] | None:
         """
         Internal method that serializes and inserts a message into the database.

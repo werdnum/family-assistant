@@ -18,7 +18,11 @@ from sqlalchemy.ext.asyncio import AsyncEngine
 
 from family_assistant.config_models import AppConfig
 from family_assistant.llm import LLMStreamEvent
-from family_assistant.llm.messages import LLMMessage, UserMessage
+from family_assistant.llm.messages import (
+    LLMMessage,
+    MessageAttachmentMetadata,
+    UserMessage,
+)
 from family_assistant.processing import ProcessingService, ProcessingServiceConfig
 from family_assistant.services.attachment_registry import AttachmentRegistry
 from family_assistant.storage.context import DatabaseContext
@@ -133,14 +137,14 @@ async def test_image_handling_with_real_db(
 
         # Build trigger_attachments that would be passed by real handlers
         # This is needed for history reconstruction to include multimodal content
-        trigger_attachments = [
-            {
-                "attachment_id": metadata.attachment_id,
-                "type": "image",
-                "filename": filename,
-                "mime_type": "image/jpeg",
-                "content_url": internal_url,
-            }
+        trigger_attachments: list[MessageAttachmentMetadata] = [
+            MessageAttachmentMetadata(
+                attachment_id=metadata.attachment_id,
+                type="image",
+                filename=filename,
+                mime_type="image/jpeg",
+                content_url=internal_url,
+            )
         ]
 
         # Use a database context for the interaction

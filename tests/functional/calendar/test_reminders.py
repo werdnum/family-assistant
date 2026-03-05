@@ -21,7 +21,7 @@ from family_assistant.config_models import AppConfig
 # Import necessary components from the application
 from family_assistant.interfaces import ChatInterface  # Import ChatInterface
 from family_assistant.llm import ToolCallFunction, ToolCallItem  # Added imports
-from family_assistant.llm.messages import ContentPartDict, text_content
+from family_assistant.llm.messages import ContentPartDict, UserMessage, text_content
 from family_assistant.processing import ProcessingService, ProcessingServiceConfig
 from family_assistant.storage.context import DatabaseContext
 
@@ -1262,15 +1262,13 @@ async def test_schedule_reminder_with_follow_up(
     logger.info("--- Part 4: User responds to reminder ---")
     response_timestamp = mock_clock.now() + timedelta(seconds=5)
     async with DatabaseContext(engine=db_engine) as db_context:
-        await db_context.message_history.add(
+        await db_context.message_history.add_message(
+            message=UserMessage(content="OK, I took my medication!"),
             interface_type="test",
             conversation_id=str(test_chat_id),
             interface_message_id=str(user_message_id_response),
             turn_id=str(uuid.uuid4()),
-            thread_root_id=None,
             timestamp=response_timestamp,
-            role="user",
-            content="OK, I took my medication!",
         )
     logger.info("User response recorded")
 

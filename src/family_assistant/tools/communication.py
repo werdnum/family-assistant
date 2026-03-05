@@ -11,6 +11,7 @@ import logging
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING
 
+from family_assistant.llm.messages import AssistantMessage, MessageReasoningInfo
 from family_assistant.scripting.apis.attachments import ScriptAttachment
 
 if TYPE_CHECKING:
@@ -354,22 +355,17 @@ async def send_message_to_user_tool(
         # but TelegramChatInterface does not, so we only save for non-web interfaces
         if target_interface_type != "web":
             try:
-                await db_context.message_history.add(
+                await db_context.message_history.add_message(
+                    AssistantMessage(content=message_content),
                     interface_type=target_interface_type,  # Use detected interface type
                     conversation_id=target_chat_id,  # History is for the target user's conversation
                     interface_message_id=sent_message_id_str,
                     turn_id=requesting_turn_id,  # Link to the turn that initiated this action
-                    thread_root_id=None,  # This message likely starts a new interaction or is standalone in the target chat
                     timestamp=datetime.now(UTC),
-                    role="assistant",  # The bot is the one sending this message to the target user
-                    content=message_content,
-                    tool_calls=None,
-                    tool_call_id=None,
-                    reasoning_info={
-                        "source_turn_id": requesting_turn_id,
-                        "tool_name": "send_message_to_user",
-                    },  # Optional: add reasoning
-                    error_traceback=None,
+                    reasoning_info=MessageReasoningInfo(
+                        source_turn_id=requesting_turn_id,
+                        tool_name="send_message_to_user",
+                    ),
                     processing_profile_id=getattr(
                         exec_context, "processing_profile_id", None
                     ),

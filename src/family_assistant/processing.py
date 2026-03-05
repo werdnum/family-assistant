@@ -58,6 +58,7 @@ from .llm.messages import (
     ErrorMessage,
     ImageUrlContentPart,
     LLMMessage,
+    MessageAttachmentMetadata,
     SystemMessage,
     TextContentPart,
     ToolMessage,
@@ -2050,8 +2051,7 @@ Call attach_to_response with your selected attachment IDs."""
             ]
             | None
         ) = None,
-        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
-        trigger_attachments: list[dict[str, Any]] | None = None,
+        trigger_attachments: list[MessageAttachmentMetadata] | None = None,
         subconversation_id: str | None = None,
     ) -> ChatInteractionResult:
         """
@@ -2142,23 +2142,18 @@ Call attach_to_response with your selected attachment IDs."""
             if actual_interface_message_id is None:
                 actual_interface_message_id = f"temp_{turn_id}"
 
-            saved_user_msg_record = await db_context.message_history.add(
+            saved_user_msg_record = await db_context.message_history.add_message(
+                UserMessage(content=user_content_for_history),
                 interface_type=interface_type,
                 conversation_id=conversation_id,
                 interface_message_id=actual_interface_message_id,
-                turn_id=turn_id,  # User message is part of the turn
-                thread_root_id=thread_root_id_for_turn,  # Use determined root ID
+                turn_id=turn_id,
+                thread_root_id=thread_root_id_for_turn,
                 timestamp=user_message_timestamp,
-                role="user",
-                content=user_content_for_history,  # Store the textual part or placeholder
-                tool_calls=None,
-                reasoning_info=None,
-                error_traceback=None,
                 attachments=trigger_attachments,
-                tool_call_id=None,
-                processing_profile_id=self.service_config.id,  # Record profile ID
-                subconversation_id=subconversation_id,  # Pass subconversation ID
-                user_id=user_id,  # Pass user_id
+                processing_profile_id=self.service_config.id,
+                subconversation_id=subconversation_id,
+                user_id=user_id,
             )
 
             if saved_user_msg_record and not thread_root_id_for_turn:
@@ -2503,8 +2498,7 @@ Call attach_to_response with your selected attachment IDs."""
             ]
             | None
         ) = None,
-        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
-        trigger_attachments: list[dict[str, Any]] | None = None,
+        trigger_attachments: list[MessageAttachmentMetadata] | None = None,
         subconversation_id: str | None = None,
     ) -> AsyncIterator[LLMStreamEvent]:
         """
@@ -2587,49 +2581,42 @@ Call attach_to_response with your selected attachment IDs."""
                     # On PostgreSQL, use a separate transaction so the message is committed and visible immediately
                     # to other requests (like UI polling) while the LLM continues processing.
                     # On SQLite, we avoid nested transactions due to connection sharing in StaticPool.
+                    user_msg = UserMessage(content=user_content_for_history)
                     if db_context.engine.dialect.name == "postgresql":
                         async with get_db_context(
                             engine=db_context.engine,
                             message_notifier=db_context.message_notifier,
                         ) as user_msg_db:
                             saved_user_msg_record = (
-                                await user_msg_db.message_history.add(
+                                await user_msg_db.message_history.add_message(
+                                    user_msg,
                                     interface_type=interface_type,
                                     conversation_id=conversation_id,
                                     interface_message_id=actual_interface_message_id,
                                     turn_id=turn_id,
                                     thread_root_id=thread_root_id_for_turn,
                                     timestamp=user_message_timestamp,
-                                    role="user",
-                                    content=user_content_for_history,
-                                    tool_calls=None,
-                                    reasoning_info=None,
-                                    error_traceback=None,
-                                    tool_call_id=None,
-                                    processing_profile_id=self.service_config.id,
                                     attachments=trigger_attachments,
+                                    processing_profile_id=self.service_config.id,
                                     subconversation_id=subconversation_id,
                                     user_id=user_id,
                                 )
                             )
                     else:
-                        saved_user_msg_record = await db_context.message_history.add(
-                            interface_type=interface_type,
-                            conversation_id=conversation_id,
-                            interface_message_id=actual_interface_message_id,
-                            turn_id=turn_id,
-                            thread_root_id=thread_root_id_for_turn,
-                            timestamp=user_message_timestamp,
-                            role="user",
-                            content=user_content_for_history,
-                            tool_calls=None,
-                            reasoning_info=None,
-                            error_traceback=None,
-                            tool_call_id=None,
-                            processing_profile_id=self.service_config.id,
-                            attachments=trigger_attachments,
-                            subconversation_id=subconversation_id,
-                            user_id=user_id,
+                        saved_user_msg_record = (
+                            await db_context.message_history.add_message(
+                                user_msg,
+                                interface_type=interface_type,
+                                conversation_id=conversation_id,
+                                interface_message_id=actual_interface_message_id,
+                                turn_id=turn_id,
+                                thread_root_id=thread_root_id_for_turn,
+                                timestamp=user_message_timestamp,
+                                attachments=trigger_attachments,
+                                processing_profile_id=self.service_config.id,
+                                subconversation_id=subconversation_id,
+                                user_id=user_id,
+                            )
                         )
 
                     if saved_user_msg_record and not thread_root_id_for_turn:
@@ -2848,10 +2835,8 @@ Call attach_to_response with your selected attachment IDs."""
             span.end()
 
     def _generate_attachment_metadata_lines(
-        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
         self,
-        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
-        attachments: list[dict[str, Any]],
+        attachments: list[MessageAttachmentMetadata],
     ) -> list[str]:
         """
         Generate attachment metadata lines for a list of attachments.

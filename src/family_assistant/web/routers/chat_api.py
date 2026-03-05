@@ -18,6 +18,7 @@ from family_assistant.llm import ToolCallItem
 from family_assistant.llm.messages import (
     AssistantMessage,
     ContentPartDict,
+    MessageAttachmentMetadata,
     image_url_content,
     text_content,
 )
@@ -76,8 +77,7 @@ async def _process_user_attachments(
     attachment_registry: "AttachmentRegistry",
     db_context: DatabaseContext,
     user_id: str,
-    # ast-grep-ignore: no-dict-any - Attachment metadata has dynamic structure from various sources
-) -> tuple[list[ContentPartDict], list[dict[str, Any]] | None]:
+) -> tuple[list[ContentPartDict], list[MessageAttachmentMetadata] | None]:
     """
     Process user attachments from the request payload.
 
@@ -91,8 +91,7 @@ async def _process_user_attachments(
         Tuple of (trigger_content_parts, trigger_attachments)
     """
     trigger_content_parts: list[ContentPartDict] = [text_content(payload.prompt)]
-    # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
-    trigger_attachments: list[dict[str, Any]] | None = None
+    trigger_attachments: list[MessageAttachmentMetadata] | None = None
 
     if payload.attachments:
         trigger_attachments = []
@@ -428,8 +427,7 @@ async def api_chat_send_message(
     trigger_content_parts: list[ContentPartDict] = [
         {"type": "text", "text": payload.prompt}  # type: ignore[typeddict-item]  # Runtime dict matches TypedDict structure
     ]
-    # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
-    trigger_attachments: list[dict[str, Any]] | None = None
+    trigger_attachments: list[MessageAttachmentMetadata] | None = None
 
     if payload.attachments:
         # Only get attachment registry when we actually have attachments
@@ -870,8 +868,7 @@ async def api_chat_send_message_stream(
     trigger_content_parts: list[ContentPartDict] = [
         {"type": "text", "text": payload.prompt}  # type: ignore[typeddict-item]  # Runtime dict matches TypedDict structure
     ]
-    # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
-    attachment_metadata: list[dict[str, Any]] | None = None
+    attachment_metadata: list[MessageAttachmentMetadata] | None = None
 
     if payload.attachments:
         # Only get attachment registry when we actually have attachments
@@ -1011,12 +1008,12 @@ async def api_chat_send_message_stream(
             for attachment in attachment_metadata:
                 attachment_event_data = {
                     "type": "attachment",
-                    "attachment_id": attachment["attachment_id"],
-                    "url": attachment["content_url"],
-                    "content_url": attachment["content_url"],
-                    "mime_type": attachment["mime_type"],
-                    "description": attachment["description"],
-                    "size": attachment["size"],
+                    "attachment_id": attachment.get("attachment_id"),
+                    "url": attachment.get("content_url"),
+                    "content_url": attachment.get("content_url"),
+                    "mime_type": attachment.get("mime_type"),
+                    "description": attachment.get("description"),
+                    "size": attachment.get("size"),
                 }
                 yield f"event: attachment\ndata: {json.dumps(attachment_event_data)}\n\n"
 

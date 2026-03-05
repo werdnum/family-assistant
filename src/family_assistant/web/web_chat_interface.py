@@ -7,6 +7,7 @@ from datetime import timedelta
 from typing import TYPE_CHECKING
 
 from family_assistant.interfaces import ChatInterface
+from family_assistant.llm.messages import AssistantMessage, MessageAttachmentMetadata
 from family_assistant.storage.context import get_db_context
 from family_assistant.utils.clock import SystemClock
 
@@ -75,30 +76,21 @@ class WebChatInterface(ChatInterface):
             # Save message to database - SSE notification happens automatically
             async with get_db_context(engine=self.database_engine) as db_context:
                 # Prepare attachment metadata if provided
-                attachments = None
+                attachments: list[MessageAttachmentMetadata] | None = None
                 if attachment_ids:
                     attachments = [
-                        {
-                            "type": "attachment_reference",
-                            "attachment_id": attachment_id,
-                        }
+                        MessageAttachmentMetadata(
+                            type="attachment_reference",
+                            attachment_id=attachment_id,
+                        )
                         for attachment_id in attachment_ids
                     ]
 
-                saved_message = await db_context.message_history.add(
+                saved_message = await db_context.message_history.add_message(
+                    AssistantMessage(content=text),
                     interface_type="web",
                     conversation_id=conversation_id,
-                    interface_message_id=None,  # Web messages don't have external IDs
-                    turn_id=None,  # Not part of a processing turn
-                    thread_root_id=None,  # Standalone message
                     timestamp=clock.now(),
-                    role="assistant",
-                    content=text,
-                    tool_calls=None,
-                    reasoning_info=None,
-                    error_traceback=None,
-                    tool_call_id=None,
-                    processing_profile_id=None,
                     attachments=attachments,
                 )
 
