@@ -245,7 +245,20 @@ const AutomationDetail = () => {
               Events must match these conditions to trigger this automation.
             </p>
 
-            {automation.condition_script ? (
+            {formattedConditions.length > 0 && (
+              <>
+                <h4>JSON Match Conditions</h4>
+                <ul>
+                  {formattedConditions.map((condition, index) => (
+                    <li key={index}>
+                      <code>{condition}</code>
+                    </li>
+                  ))}
+                </ul>
+              </>
+            )}
+
+            {automation.condition_script && (
               <>
                 <h4>Condition Script (Python)</h4>
                 <div
@@ -265,18 +278,15 @@ const AutomationDetail = () => {
                   if the automation triggers.
                 </p>
               </>
-            ) : formattedConditions.length > 0 ? (
-              <>
-                <h4>JSON Match Conditions</h4>
-                <ul>
-                  {formattedConditions.map((condition, index) => (
-                    <li key={index}>
-                      <code>{condition}</code>
-                    </li>
-                  ))}
-                </ul>
-              </>
-            ) : (
+            )}
+
+            {formattedConditions.length > 0 && automation.condition_script && (
+              <p style={{ color: 'var(--text-light)', fontSize: '0.9em', fontStyle: 'italic' }}>
+                Both conditions must match for this automation to trigger.
+              </p>
+            )}
+
+            {formattedConditions.length === 0 && !automation.condition_script && (
               <p>
                 <em>No conditions defined (matches all events from source).</em>
               </p>

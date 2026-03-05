@@ -163,8 +163,17 @@ class EventProcessor:
         match_conditions: dict | None,
         condition_script: str | None,
     ) -> bool:
-        """Check if event matches the listener's conditions."""
-        # Script takes precedence if present
+        """Check if event matches the listener's conditions.
+
+        Both match_conditions and condition_script are evaluated with AND semantics:
+        dict conditions are checked first (cheap), then script if present.
+        """
+        if match_conditions:
+            for key, expected_value in match_conditions.items():
+                actual_value = self._get_nested_value(event_data, key)
+                if actual_value != expected_value:
+                    return False
+
         if condition_script:
             try:
                 return await self.condition_evaluator.evaluate_condition(
@@ -172,19 +181,11 @@ class EventProcessor:
                 )
             except ScriptExecutionError as e:
                 logger.error(f"Script condition error: {e}")
-                return False  # Failed scripts don't match
+                return False
             except Exception as e:
                 logger.error(f"Unexpected error evaluating script condition: {e}")
                 return False
 
-        # Fall back to dict matching
-        if not match_conditions:
-            return True  # No conditions means match all events
-
-        for key, expected_value in match_conditions.items():
-            actual_value = self._get_nested_value(event_data, key)
-            if actual_value != expected_value:
-                return False
         return True
 
     def _get_nested_value(

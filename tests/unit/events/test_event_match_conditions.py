@@ -2,6 +2,11 @@
 Unit tests for event matching logic.
 """
 
+from unittest.mock import AsyncMock
+
+import pytest
+
+from family_assistant.events.processor import EventProcessor
 from family_assistant.tools import events as events_module
 
 
@@ -156,3 +161,142 @@ def test_get_event_structure() -> None:
     structure = events_module._get_event_structure(deep_data, max_depth=3)
     assert isinstance(structure, dict)
     assert structure["level1"]["level2"]["level3"] == "..."  # type: ignore[index]
+
+
+# --- Async tests for EventProcessor._check_match_conditions AND semantics ---
+
+
+@pytest.fixture()
+def event_processor() -> EventProcessor:
+    """Create an EventProcessor with a mocked condition evaluator."""
+    processor = EventProcessor(sources={})
+    processor.condition_evaluator = AsyncMock()
+    return processor
+
+
+EVENT_DATA = {
+    "entity_id": "sensor.temperature",
+    "new_state": {"state": "on"},
+}
+
+
+@pytest.mark.asyncio
+async def test_both_dict_and_script_pass(event_processor: EventProcessor) -> None:
+    """When both match_conditions and condition_script pass, result is True."""
+    event_processor.condition_evaluator.evaluate_condition = AsyncMock(
+        return_value=True
+    )
+    result = await event_processor._check_match_conditions(
+        EVENT_DATA,
+        {"entity_id": "sensor.temperature"},
+        "return True",
+    )
+    assert result is True
+    event_processor.condition_evaluator.evaluate_condition.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_dict_fails_script_not_evaluated(
+    event_processor: EventProcessor,
+) -> None:
+    """When dict conditions fail, script is not evaluated (short-circuit)."""
+    event_processor.condition_evaluator.evaluate_condition = AsyncMock(
+        return_value=True
+    )
+    result = await event_processor._check_match_conditions(
+        EVENT_DATA,
+        {"entity_id": "wrong_entity"},
+        "return True",
+    )
+    assert result is False
+    event_processor.condition_evaluator.evaluate_condition.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_dict_passes_script_fails(event_processor: EventProcessor) -> None:
+    """When dict conditions pass but script returns False, result is False."""
+    event_processor.condition_evaluator.evaluate_condition = AsyncMock(
+        return_value=False
+    )
+    result = await event_processor._check_match_conditions(
+        EVENT_DATA,
+        {"entity_id": "sensor.temperature"},
+        "return False",
+    )
+    assert result is False
+
+
+@pytest.mark.asyncio
+async def test_dict_only_no_script(event_processor: EventProcessor) -> None:
+    """Backwards compatible: dict conditions only, no script."""
+    result = await event_processor._check_match_conditions(
+        EVENT_DATA,
+        {"entity_id": "sensor.temperature"},
+        None,
+    )
+    assert result is True
+
+
+@pytest.mark.asyncio
+async def test_dict_only_no_script_fails(event_processor: EventProcessor) -> None:
+    """Dict conditions only, no script, dict fails."""
+    result = await event_processor._check_match_conditions(
+        EVENT_DATA,
+        {"entity_id": "wrong_entity"},
+        None,
+    )
+    assert result is False
+
+
+@pytest.mark.asyncio
+async def test_script_only_empty_dict(event_processor: EventProcessor) -> None:
+    """Backwards compatible: script only, empty dict conditions."""
+    event_processor.condition_evaluator.evaluate_condition = AsyncMock(
+        return_value=True
+    )
+    result = await event_processor._check_match_conditions(
+        EVENT_DATA,
+        {},
+        "return True",
+    )
+    assert result is True
+    event_processor.condition_evaluator.evaluate_condition.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_script_only_none_dict(event_processor: EventProcessor) -> None:
+    """Backwards compatible: script only, None dict conditions."""
+    event_processor.condition_evaluator.evaluate_condition = AsyncMock(
+        return_value=True
+    )
+    result = await event_processor._check_match_conditions(
+        EVENT_DATA,
+        None,
+        "return True",
+    )
+    assert result is True
+
+
+@pytest.mark.asyncio
+async def test_no_conditions_matches_all(event_processor: EventProcessor) -> None:
+    """No conditions at all matches everything."""
+    result = await event_processor._check_match_conditions(
+        EVENT_DATA,
+        None,
+        None,
+    )
+    assert result is True
+
+
+@pytest.mark.asyncio
+async def test_script_error_returns_false(event_processor: EventProcessor) -> None:
+    """Script errors return False."""
+    event_processor.condition_evaluator.evaluate_condition = AsyncMock(
+        side_effect=Exception("script error")
+    )
+    result = await event_processor._check_match_conditions(
+        EVENT_DATA,
+        {"entity_id": "sensor.temperature"},
+        "invalid script",
+    )
+    assert result is False
