@@ -1257,7 +1257,7 @@ async def handle_completed_automation_cleanup(
     Payload can include:
         retention_hours: Override the default 24-hour retention period
     """
-    retention_hours = payload.get("retention_hours", 24)
+    retention_hours = int(payload.get("retention_hours", 24))
 
     logger.info(
         f"Starting completed automation cleanup (retention: {retention_hours} hours)"

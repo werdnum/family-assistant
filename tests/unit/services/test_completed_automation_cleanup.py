@@ -152,6 +152,53 @@ class TestCompletedAutomationCleanup:
         assert listener is not None
 
     @pytest.mark.asyncio
-    async def test_uses_default_retention(self, exec_context: MinimalContext) -> None:
+    async def test_uses_default_retention(
+        self, exec_context: MinimalContext, db_context: DatabaseContext
+    ) -> None:
         """Test that cleanup uses default 24h retention when not specified."""
+        # Create a listener completed 25 hours ago (older than 24h default)
+        old_listener_id = await db_context.events.create_event_listener(
+            name="old-default-retention",
+            source_id="home_assistant",
+            match_conditions={"type": "test"},
+            conversation_id="test-conv-123",
+            one_time=True,
+            enabled=True,
+        )
+        old_time = datetime.now(UTC) - timedelta(hours=25)
+        stmt = (
+            update(event_listeners_table)
+            .where(event_listeners_table.c.id == old_listener_id)
+            .values(enabled=False, last_execution_at=old_time)
+        )
+        await db_context.execute_with_retry(stmt)
+
+        # Create a listener completed 23 hours ago (within 24h default)
+        recent_listener_id = await db_context.events.create_event_listener(
+            name="recent-default-retention",
+            source_id="home_assistant",
+            match_conditions={"type": "test"},
+            conversation_id="test-conv-123",
+            one_time=True,
+            enabled=True,
+        )
+        recent_time = datetime.now(UTC) - timedelta(hours=23)
+        stmt = (
+            update(event_listeners_table)
+            .where(event_listeners_table.c.id == recent_listener_id)
+            .values(enabled=False, last_execution_at=recent_time)
+        )
+        await db_context.execute_with_retry(stmt)
+
+        # Run cleanup with no retention_hours specified (should use 24h default)
         await handle_completed_automation_cleanup(exec_context, {})  # type: ignore[arg-type]
+
+        # Old listener (25h) should be deleted by the 24h default
+        old_listener = await db_context.events.get_event_listener_by_id(old_listener_id)
+        assert old_listener is None
+
+        # Recent listener (23h) should be preserved by the 24h default
+        recent_listener = await db_context.events.get_event_listener_by_id(
+            recent_listener_id
+        )
+        assert recent_listener is not None

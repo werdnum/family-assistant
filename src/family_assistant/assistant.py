@@ -1344,7 +1344,7 @@ class Assistant:
                         f"Completed automation cleanup task scheduled for {next_3am_local} ({local_tz})"
                     )
                 except Exception as e:
-                    logger.info(f"Completed automation cleanup task setup: {e}")
+                    logger.warning(f"Completed automation cleanup task setup: {e}")
         except RuntimeError as e:
             if "different loop" in str(e):
                 logger.warning(
