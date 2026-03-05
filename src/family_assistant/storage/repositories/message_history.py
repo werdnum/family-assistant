@@ -94,28 +94,24 @@ class MessageHistoryRepository(BaseRepository):
         error_traceback: str | None = None
         provider_metadata: Any = None
 
-        if isinstance(message, UserMessage):
-            content = (
-                message.content
-                if isinstance(message.content, str)
-                else str(message.content)
-            )
-        elif isinstance(message, AssistantMessage):
-            content = message.content
+        raw_content = getattr(message, "content", None)
+        content = (
+            raw_content
+            if raw_content is None or isinstance(raw_content, str)
+            else json.dumps(raw_content)
+        )
+
+        if isinstance(message, AssistantMessage):
             tool_calls = message.tool_calls
             provider_metadata = message.provider_metadata
         elif isinstance(message, ToolMessage):
-            content = message.content
             tool_call_id = message.tool_call_id
             tool_name = message.name
             error_traceback = message.error_traceback
             provider_metadata = message.provider_metadata
             if attachments is None:
                 attachments = message.attachments  # type: ignore[assignment]  # ToolAttachmentMetadata (TypedDict) is a dict at runtime
-        elif isinstance(message, SystemMessage):
-            content = message.content
         elif isinstance(message, ErrorMessage):
-            content = message.content
             error_traceback = message.error_traceback
 
         return await self._insert_message(

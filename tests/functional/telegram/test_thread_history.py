@@ -85,6 +85,13 @@ async def test_thread_history_includes_root_message(db_engine: AsyncEngine) -> N
             thread_root_id=root_internal_id,
             processing_profile_id="default_assistant",
             timestamp=datetime.now(UTC),
+            attachments=[
+                {
+                    "type": "tool_result",
+                    "attachment_id": "abc-123-def",
+                    "mime_type": "image/jpeg",
+                }
+            ],
         )
 
         assert tool_msg is not None, "Failed to create tool message"
