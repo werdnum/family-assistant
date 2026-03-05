@@ -109,15 +109,10 @@ async def test_add_message_stores_optional_fields(db_context: DatabaseContext) -
         error_traceback=error_trace,  # Can store traceback even for non-error roles if needed
     )
 
-    assert (
-        assistant_msg_result is not None
-        and assistant_msg_result.get("internal_id") is not None
-    )
-    assistant_msg_internal_id = assistant_msg_result["internal_id"]
-    assert (
-        tool_msg_result is not None and tool_msg_result.get("internal_id") is not None
-    )
-    tool_msg_internal_id = tool_msg_result["internal_id"]
+    assert assistant_msg_result is not None
+    assistant_msg_internal_id = assistant_msg_result
+    assert tool_msg_result is not None
+    tool_msg_internal_id = tool_msg_result
 
     # Assert Assistant Message
     # Use the yielded db_context directly
@@ -232,21 +227,16 @@ async def test_get_recent_history_retrieves_correct_messages(
 
     # Assert
     assert len(recent_messages) == 2  # Limit respected
-    assert msg1_id_result is not None and msg1_id_result.get("internal_id") is not None
-    msg1_id_result["internal_id"]
-    assert msg2_id_result is not None and msg2_id_result.get("internal_id") is not None
-    msg2_id_result["internal_id"]
-    assert msg3_id_result is not None and msg3_id_result.get("internal_id") is not None
-    msg3_id_result["internal_id"]
+    assert msg1_id_result is not None
+    assert msg2_id_result is not None
+    assert msg3_id_result is not None
     # Check chronological order (oldest first in the returned list)
-    assert recent_messages[0]["internal_id"] == msg2_id_result["internal_id"]
-    assert recent_messages[1]["internal_id"] == msg3_id_result["internal_id"]
+    assert recent_messages[0]["internal_id"] == msg2_id_result
+    assert recent_messages[1]["internal_id"] == msg3_id_result
     assert recent_messages[0]["content"] == "Recent 1"
     assert recent_messages[1]["content"] == "Recent 2"
     # Verify msg1 (too old) and msg_other (different convo) are not included
-    assert all(
-        msg["internal_id"] != msg1_id_result["internal_id"] for msg in recent_messages
-    )
+    assert all(msg["internal_id"] != msg1_id_result for msg in recent_messages)
 
 
 @pytest.mark.asyncio
@@ -272,11 +262,7 @@ async def test_get_message_by_interface_id_retrieval(
         role="user",
         content=content,
     )
-    assert (
-        internal_id_result is not None
-        and internal_id_result.get("internal_id") is not None
-    )
-    internal_id_result["internal_id"]
+    assert internal_id_result is not None
 
     # Act: Retrieve the message
     retrieved_message = await get_message_by_interface_id(
@@ -284,7 +270,7 @@ async def test_get_message_by_interface_id_retrieval(
     )
 
     assert retrieved_message is not None
-    assert retrieved_message["internal_id"] == internal_id_result["internal_id"]
+    assert retrieved_message["internal_id"] == internal_id_result
     assert retrieved_message["interface_type"] == interface
     assert retrieved_message["conversation_id"] == conv_id
     assert retrieved_message["interface_message_id"] == msg_id
@@ -370,12 +356,9 @@ async def test_get_messages_by_turn_id_retrieves_correct_sequence(
         content="Initial prompt",
     )
     # Assert that results contain IDs
-    assert t1_msg1_result is not None and t1_msg1_result.get("internal_id") is not None
-    t1_msg1_result["internal_id"]
-    assert t1_msg2_result is not None and t1_msg2_result.get("internal_id") is not None
-    t1_msg2_result["internal_id"]
-    assert t1_msg3_result is not None and t1_msg3_result.get("internal_id") is not None
-    t1_msg3_result["internal_id"]
+    assert t1_msg1_result is not None
+    assert t1_msg2_result is not None
+    assert t1_msg3_result is not None
 
     # Act
     turn_1_messages = await get_messages_by_turn_id(db_context, turn_1)
@@ -383,9 +366,9 @@ async def test_get_messages_by_turn_id_retrieves_correct_sequence(
     # Assert
     assert len(turn_1_messages) == 3
     assert [m["internal_id"] for m in turn_1_messages] == [
-        t1_msg1_result["internal_id"],
-        t1_msg2_result["internal_id"],
-        t1_msg3_result["internal_id"],
+        t1_msg1_result,
+        t1_msg2_result,
+        t1_msg3_result,
     ]  # Check order
     assert all(m["turn_id"] == turn_1 for m in turn_1_messages)
 
@@ -416,8 +399,8 @@ async def test_update_message_interface_id_sets_id(db_context: DatabaseContext) 
         "assistant",
         "Initial content",
     )
-    assert initial_result is not None and initial_result.get("internal_id") is not None
-    internal_id = initial_result["internal_id"]
+    assert initial_result is not None
+    internal_id = initial_result
 
     # Act
     update_successful = await update_message_interface_id(
@@ -465,10 +448,8 @@ async def test_get_messages_by_thread_id_retrieves_correct_sequence(
         role="user",
         content="Thread 1 Start",
     )
-    assert msg1_result is not None and msg1_result.get("internal_id") is not None
-    thread_1_root = msg1_result[
-        "internal_id"
-    ]  # Use the internal_id of the first message as the root
+    assert msg1_result is not None
+    thread_1_root = msg1_result  # Use the internal_id of the first message as the root
     msg1_id = thread_1_root  # Keep for assertion later
 
     msg2_result = await add_message_to_history(
@@ -482,8 +463,8 @@ async def test_get_messages_by_thread_id_retrieves_correct_sequence(
         role="assistant",
         content="Thread 1 Reply 1",
     )
-    assert msg2_result is not None and msg2_result.get("internal_id") is not None
-    msg2_id = msg2_result["internal_id"]
+    assert msg2_result is not None
+    msg2_id = msg2_result
 
     msg3_result = await add_message_to_history(
         db_context,
@@ -496,8 +477,8 @@ async def test_get_messages_by_thread_id_retrieves_correct_sequence(
         role="user",
         content="Thread 1 Reply 2",
     )
-    assert msg3_result is not None and msg3_result.get("internal_id") is not None
-    msg3_id = msg3_result["internal_id"]
+    assert msg3_result is not None
+    msg3_id = msg3_result
 
     # Thread 2 message (Different conversation, different thread)
     msg4_result = await add_message_to_history(
@@ -511,8 +492,7 @@ async def test_get_messages_by_thread_id_retrieves_correct_sequence(
         role="user",
         content="Thread 2 Start",
     )
-    assert msg4_result is not None and msg4_result.get("internal_id") is not None
-    msg4_result["internal_id"]
+    assert msg4_result is not None
 
     # Act
     thread_1_messages = await get_messages_by_thread_id(db_context, thread_1_root)

@@ -45,7 +45,7 @@ async def test_thread_history_includes_root_message(db_engine: AsyncEngine) -> N
         )
 
         assert root_msg is not None, "Failed to create root message"
-        root_internal_id = root_msg["internal_id"]
+        root_internal_id = root_msg
 
         # Create child messages in the same thread
         assistant_msg = await db.message_history.add_message(
@@ -138,7 +138,7 @@ async def test_thread_history_with_profile_filter(db_engine: AsyncEngine) -> Non
         )
 
         assert root_msg is not None, "Failed to create root message"
-        root_internal_id = root_msg["internal_id"]
+        root_internal_id = root_msg
 
         # Create child message with profile A
         await db.message_history.add_message(
@@ -248,7 +248,7 @@ async def test_attachment_context_extraction(db_engine: AsyncEngine) -> None:
         )
 
         assert root_msg is not None, "Failed to create root message"
-        root_internal_id = root_msg["internal_id"]
+        root_internal_id = root_msg
 
         # Tool message with attachment ID
         await db.message_history.add_message(

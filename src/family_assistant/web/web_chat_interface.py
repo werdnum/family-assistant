@@ -96,13 +96,13 @@ class WebChatInterface(ChatInterface):
 
                 # Send push notification if enabled
                 if (
-                    saved_message
+                    saved_message is not None
                     and self.push_notification_service
                     and self.push_notification_service.enabled
                 ):
                     try:
-                        # Get user_id from saved message or find from recent user messages
-                        user_id = saved_message.get("user_id")
+                        # Find user_id from recent user messages
+                        user_id: str | None = None
                         if not user_id:
                             # Fallback: query recent messages to find a user message
                             # (assistant messages don't have user_id, so we look for user messages)
@@ -132,13 +132,12 @@ class WebChatInterface(ChatInterface):
                             f"Failed to send push notification: {e}", exc_info=True
                         )
 
-            if saved_message:
-                internal_id = saved_message.get("internal_id")
+            if saved_message is not None:
                 logger.info(
                     f"WebChatInterface: Saved message to conversation {conversation_id}, "
-                    f"internal_id={internal_id}. SSE notification will be sent automatically."
+                    f"internal_id={saved_message}. SSE notification will be sent automatically."
                 )
-                return str(internal_id) if internal_id else None
+                return str(saved_message)
 
             logger.error(
                 f"WebChatInterface: Failed to save message to conversation {conversation_id}"

@@ -4,7 +4,7 @@ import json
 import logging
 from dataclasses import asdict
 from datetime import UTC, datetime, timedelta
-from typing import Any, cast
+from typing import Any
 
 from sqlalchemy import insert, or_, select, update
 from sqlalchemy.exc import SQLAlchemyError
@@ -37,11 +37,6 @@ logger = logging.getLogger(__name__)
 class MessageHistoryRepository(BaseRepository):
     """Repository for managing message history in the database."""
 
-    # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
-    async def add(self, **kwargs: Any) -> dict[str, Any] | None:  # noqa: ANN401 # Forwards arbitrary message args
-        """Compatibility shim: accepts loose kwargs, delegates to _add_from_kwargs."""
-        return await self._add_from_kwargs(**kwargs)
-
     async def add_message(
         self,
         message: LLMMessage,
@@ -57,8 +52,7 @@ class MessageHistoryRepository(BaseRepository):
         user_id: str | None = None,
         reasoning_info: MessageReasoningInfo | None = None,
         attachments: list[MessageAttachmentMetadata] | None = None,
-        # ast-grep-ignore: no-dict-any - return type matches _insert_message; fixing is a separate concern
-    ) -> dict[str, Any] | None:
+    ) -> int | None:
         """
         Stores a typed LLMMessage in the history table.
 
@@ -135,81 +129,6 @@ class MessageHistoryRepository(BaseRepository):
             provider_metadata=provider_metadata,
         )
 
-    async def _add_from_kwargs(
-        self,
-        interface_type: str,
-        conversation_id: str,
-        interface_message_id: str | None,
-        turn_id: str | None,
-        thread_root_id: int | None,
-        timestamp: datetime,
-        role: str,
-        content: str | None,
-        tool_calls: list[ToolCallItem] | None = None,
-        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
-        reasoning_info: dict[str, Any] | None = None,
-        error_traceback: str | None = None,
-        tool_call_id: str | None = None,
-        processing_profile_id: str | None = None,
-        subconversation_id: str | None = None,
-        user_id: str | None = None,
-        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
-        attachments: list[dict[str, Any]] | None = None,
-        tool_name: str | None = None,
-        name: str | None = None,
-        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
-        provider_metadata: dict[str, Any] | None = None,
-        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
-    ) -> dict[str, Any] | None:
-        """
-        Legacy kwargs-based add_message. Validates via Pydantic, then delegates to _insert_message.
-
-        This method exists for backward compatibility with callers that pass loose kwargs
-        or unpack message dicts. New code should use add_message(message=LLMMessage, ...) instead.
-        """
-        if timestamp.tzinfo is None:
-            raise ValueError("Timestamp must be timezone-aware")
-
-        # Validate message by constructing the Pydantic model.
-        self._validate_message(
-            role=role,
-            content=content,
-            tool_calls=tool_calls,
-            tool_call_id=tool_call_id,
-            tool_name=tool_name or name,
-            error_traceback=error_traceback,
-            provider_metadata=provider_metadata,
-        )
-
-        # Handle mapping from 'name' to 'tool_name' for OpenAI API compatibility
-        if name is not None and tool_name is None:
-            tool_name = name
-        elif name is not None and tool_name is not None and name != tool_name:
-            logger.warning(
-                f"Both 'name' and 'tool_name' provided with different values: name='{name}', tool_name='{tool_name}'. Using tool_name."
-            )
-
-        return await self._insert_message(
-            interface_type=interface_type,
-            conversation_id=conversation_id,
-            interface_message_id=interface_message_id,
-            turn_id=turn_id,
-            thread_root_id=thread_root_id,
-            timestamp=timestamp,
-            role=role,
-            content=content,
-            tool_calls=tool_calls,
-            reasoning_info=cast("MessageReasoningInfo | None", reasoning_info),
-            error_traceback=error_traceback,
-            tool_call_id=tool_call_id,
-            processing_profile_id=processing_profile_id,
-            subconversation_id=subconversation_id,
-            user_id=user_id,
-            attachments=cast("list[MessageAttachmentMetadata] | None", attachments),
-            tool_name=tool_name,
-            provider_metadata=provider_metadata,
-        )
-
     async def _insert_message(
         self,
         interface_type: str,
@@ -231,12 +150,11 @@ class MessageHistoryRepository(BaseRepository):
         tool_name: str | None = None,
         # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
         provider_metadata: dict[str, Any] | GeminiProviderMetadata | None = None,
-        # ast-grep-ignore: no-dict-any - return type matches DB row dict; fixing is a separate concern
-    ) -> dict[str, Any] | None:
+    ) -> int | None:
         """
         Internal method that serializes and inserts a message into the database.
 
-        Both add_message() and _add_from_kwargs() delegate here after validation/extraction.
+        Returns the generated internal_id, or None on error.
         """
         # Serialize tool_calls for JSON storage
         serialized_tool_calls = None
@@ -334,7 +252,7 @@ class MessageHistoryRepository(BaseRepository):
 
                     self._db.on_commit(notify_listeners)
 
-            return {**values, "internal_id": internal_id}
+            return internal_id
 
         except SQLAlchemyError as e:
             self._logger.error(f"Failed to add message to history: {e}", exc_info=True)

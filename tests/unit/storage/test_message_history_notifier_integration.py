@@ -111,7 +111,6 @@ async def test_add_message_without_notifier_works(db_engine: AsyncEngine) -> Non
         )
 
         assert msg is not None
-        assert msg["content"] == "Test message"
 
 
 @pytest.mark.asyncio

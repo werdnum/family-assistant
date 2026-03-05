@@ -409,7 +409,7 @@ class TestConversationProcessSpan:
         mock_db_context.message_notifier = None
         mock_db_context.message_history = AsyncMock()
         mock_db_context.message_history.get_recent = AsyncMock(return_value=[])
-        mock_db_context.message_history.add = AsyncMock(return_value={"internal_id": 1})
+        mock_db_context.message_history.add_message = AsyncMock(return_value=1)
 
         events = []
         async for event in service.handle_chat_interaction_stream(
@@ -449,7 +449,7 @@ class TestConversationProcessSpan:
         mock_db_context.message_notifier = None
         mock_db_context.message_history = AsyncMock()
         mock_db_context.message_history.get_recent = AsyncMock(return_value=[])
-        mock_db_context.message_history.add = AsyncMock(return_value={"internal_id": 1})
+        mock_db_context.message_history.add_message = AsyncMock(return_value=1)
 
         async for _event in service.handle_chat_interaction_stream(
             db_context=mock_db_context,
