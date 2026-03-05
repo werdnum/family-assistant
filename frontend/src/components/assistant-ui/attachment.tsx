@@ -139,8 +139,6 @@ const AttachmentUI: FC = () => {
         return 'Document';
       case 'file':
         return 'File';
-      default:
-        return (type as string).charAt(0).toUpperCase() + (type as string).slice(1);
     }
   });
 
