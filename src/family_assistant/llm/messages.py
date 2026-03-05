@@ -167,7 +167,8 @@ class AssistantMessage(BaseModel):
     ) -> list[ToolCallItem] | None:
         """Ensure assistant message has either content or tool_calls."""
         content = info.data.get("content")
-        if content is None and tool_calls is None:
+        has_content = isinstance(content, str) and content.strip()
+        if not has_content and tool_calls is None:
             raise ValueError("Assistant message must have content or tool_calls")
         return tool_calls
 
