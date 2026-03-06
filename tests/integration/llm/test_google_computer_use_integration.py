@@ -31,7 +31,7 @@ logger = logging.getLogger(__name__)
 def _has_internet() -> bool:
     """Check if external network access is available."""
     try:
-        socket.create_connection(("93.184.215.14", 80), timeout=3).close()
+        socket.create_connection(("example.com", 80), timeout=3).close()
         return True
     except OSError:
         return False
