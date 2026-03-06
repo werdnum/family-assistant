@@ -3,6 +3,7 @@ Unit tests for the history formatting logic in ProcessingService.
 """
 
 import json
+from datetime import timedelta
 from io import BytesIO
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -294,14 +295,13 @@ async def test_format_history_converts_attachment_urls(
 
 def test_web_specific_history_configuration() -> None:
     """Test that web interface gets different history limits than other interfaces."""
-    # Create a service config with web-specific settings
     mock_service_config = ProcessingServiceConfig(
         prompts={},
         timezone=ZoneInfo("UTC"),
-        max_history_messages=5,  # Default for telegram
-        history_max_age_hours=24,  # Default for telegram
-        web_max_history_messages=100,  # Web-specific
-        web_history_max_age_hours=720,  # Web-specific (30 days)
+        max_history_messages=5,
+        history_max_age_hours=24,
+        web_max_history_messages=100,
+        web_history_max_age_hours=720,
         tools_config={},
         delegation_security_level="confirm",
         id="test_web_history_profile",
@@ -316,35 +316,32 @@ def test_web_specific_history_configuration() -> None:
         app_config=AppConfig(),
     )
 
-    # Test regular (non-web) history limits
-    assert processing_service.max_history_messages == 5
-    assert processing_service.history_max_age_hours == 24
+    # Test regular (non-web) history limits via context_preparer
+    non_web_limit, non_web_age = processing_service.context_preparer.get_history_limits(
+        "telegram"
+    )
+    assert non_web_limit == 5
+    assert non_web_age == timedelta(hours=24)
 
-    # Test web-specific history limits
-    assert processing_service.web_max_history_messages == 100
-    assert processing_service.web_history_max_age_hours == 720
+    # Test web-specific history limits via context_preparer
+    web_limit, web_age = processing_service.context_preparer.get_history_limits("web")
+    assert web_limit == 100
+    assert web_age == timedelta(hours=720)
 
     # Test that they're different
-    assert (
-        processing_service.max_history_messages
-        != processing_service.web_max_history_messages
-    )
-    assert (
-        processing_service.history_max_age_hours
-        != processing_service.web_history_max_age_hours
-    )
+    assert non_web_limit != web_limit
+    assert non_web_age != web_age
 
 
 def test_web_history_configuration_fallback() -> None:
     """Test that web history configuration falls back to default when not specified."""
-    # Create a service config WITHOUT web-specific settings
     mock_service_config = ProcessingServiceConfig(
         prompts={},
         timezone=ZoneInfo("UTC"),
         max_history_messages=10,
         history_max_age_hours=48,
-        web_max_history_messages=None,  # Not specified
-        web_history_max_age_hours=None,  # Not specified
+        web_max_history_messages=None,
+        web_history_max_age_hours=None,
         tools_config={},
         delegation_security_level="confirm",
         id="test_fallback_profile",
@@ -359,25 +356,25 @@ def test_web_history_configuration_fallback() -> None:
         app_config=AppConfig(),
     )
 
-    # Test that web-specific properties fall back to default values
-    assert (
-        processing_service.web_max_history_messages == 10
-    )  # Falls back to max_history_messages
-    assert (
-        processing_service.web_history_max_age_hours == 48
-    )  # Falls back to history_max_age_hours
+    # Test that web limits fall back to default values via context_preparer
+    web_limit, web_age = processing_service.context_preparer.get_history_limits("web")
+    assert web_limit == 10
+    assert web_age == timedelta(hours=48)
+
+    # Confirm the raw config values are None (no web-specific override)
+    assert processing_service.service_config.web_max_history_messages is None
+    assert processing_service.service_config.web_history_max_age_hours is None
 
 
 def test_web_history_configuration_with_zero_values() -> None:
     """Test that web history configuration correctly handles zero values."""
-    # Create a service config with web-specific settings set to 0
     mock_service_config = ProcessingServiceConfig(
         prompts={},
         timezone=ZoneInfo("UTC"),
         max_history_messages=10,
         history_max_age_hours=48,
-        web_max_history_messages=0,  # Explicitly set to 0
-        web_history_max_age_hours=0,  # Explicitly set to 0
+        web_max_history_messages=0,
+        web_history_max_age_hours=0,
         tools_config={},
         delegation_security_level="confirm",
         id="test_zero_values_profile",
@@ -392,6 +389,7 @@ def test_web_history_configuration_with_zero_values() -> None:
         app_config=AppConfig(),
     )
 
-    # Test that zero values are respected, not treated as falsy and replaced with defaults
-    assert processing_service.web_max_history_messages == 0  # Should be 0, not 10
-    assert processing_service.web_history_max_age_hours == 0  # Should be 0, not 48
+    # Test that zero values are respected (not treated as falsy) via context_preparer
+    web_limit, web_age = processing_service.context_preparer.get_history_limits("web")
+    assert web_limit == 0
+    assert web_age == timedelta(hours=0)

@@ -95,7 +95,7 @@ async def test_send_message_to_user_tool(
     # --- Configure KnownUsersContextProvider for this test ---
     chat_id_map = {bob_chat_id: bob_name}
     # Ensure prompts are available in the processing_service config
-    if not fix.processing_service.prompts:
+    if not fix.processing_service.service_config.prompts:
         fix.processing_service.service_config.prompts = {
             "known_users_header": "Known users:",
             "known_user_item_format": "- {name} (ID: {chat_id})",
@@ -104,7 +104,7 @@ async def test_send_message_to_user_tool(
 
     known_users_provider = KnownUsersContextProvider(
         chat_id_to_name_map=chat_id_map,
-        prompts=fix.processing_service.prompts,
+        prompts=fix.processing_service.service_config.prompts,
     )
 
     # Add the provider to the processing service instance for this test

@@ -37,7 +37,6 @@ from .utils import (
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator, Awaitable, Callable
-    from zoneinfo import ZoneInfo
 
     from family_assistant.camera.protocol import CameraBackend
     from family_assistant.config_models import AppConfig
@@ -134,39 +133,6 @@ class ProcessingService:
     ) -> None:
         """Sets the registry of all processing services."""
         self.processing_services_registry = registry
-
-    # --- Expose relevant parts of service_config as properties for convenience ---
-    @property
-    def prompts(self) -> dict[str, str]:
-        return self.service_config.prompts
-
-    @property
-    def timezone(self) -> ZoneInfo:
-        return self.service_config.timezone
-
-    @property
-    def max_history_messages(self) -> int:
-        return self.service_config.max_history_messages
-
-    @property
-    def history_max_age_hours(self) -> float:
-        return self.service_config.history_max_age_hours
-
-    @property
-    def web_max_history_messages(self) -> int:
-        if self.service_config.web_max_history_messages is not None:
-            return self.service_config.web_max_history_messages
-        return self.service_config.max_history_messages
-
-    @property
-    def web_history_max_age_hours(self) -> float:
-        if self.service_config.web_history_max_age_hours is not None:
-            return self.service_config.web_history_max_age_hours
-        return self.service_config.history_max_age_hours
-
-    @property
-    def max_iterations(self) -> int:
-        return self.service_config.max_iterations
 
     async def process_message(
         self,
@@ -482,8 +448,8 @@ class ProcessingService:
                         await self.attachment_processor.extract_conversation_context(
                             db_context,
                             conversation_id,
-                            self.history_max_age_hours,
-                            self.prompts,
+                            self.service_config.history_max_age_hours,
+                            self.service_config.prompts,
                         )
                     )
                     if thread_attachments_context:
@@ -517,14 +483,14 @@ class ProcessingService:
                 )
 
             # Prepare System Prompt
-            system_prompt_template = self.prompts.get(
+            system_prompt_template = self.service_config.prompts.get(
                 "system_prompt",
                 "You are a helpful assistant. Current time is {current_time}.",
             )
             current_time_str = (
                 self.clock
                 .now()
-                .astimezone(self.timezone)
+                .astimezone(self.service_config.timezone)
                 .strftime("%Y-%m-%d %H:%M:%S %Z")
             )
 
@@ -918,7 +884,7 @@ class ProcessingService:
                             break
 
                     # Prepare System Prompt
-                    system_prompt_template = self.prompts.get(
+                    system_prompt_template = self.service_config.prompts.get(
                         "system_prompt",
                         "You are a helpful assistant. Current time is {current_time}.",
                     )
@@ -926,7 +892,7 @@ class ProcessingService:
                     current_time_str = (
                         self.clock
                         .now()
-                        .astimezone(self.timezone)
+                        .astimezone(self.service_config.timezone)
                         .strftime("%Y-%m-%d %H:%M:%S %Z")
                     )
 

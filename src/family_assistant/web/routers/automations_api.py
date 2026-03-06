@@ -345,7 +345,7 @@ async def create_schedule_automation(
             action_config=request.action_config,
             description=request.description,
             enabled=request.enabled,
-            timezone=processing_service.timezone,
+            timezone=processing_service.service_config.timezone,
         )
 
         # Fetch the created automation
@@ -495,7 +495,7 @@ async def update_automation(
                 recurrence_rule=request.recurrence_rule,
                 action_config=request.action_config,
                 enabled=request.enabled,
-                timezone=processing_service.timezone,
+                timezone=processing_service.service_config.timezone,
             )
 
         if not success:
@@ -546,7 +546,7 @@ async def update_automation_enabled(
         automation_type=automation_type,  # type: ignore[arg-type]
         conversation_id=conversation_id,
         enabled=enabled,
-        timezone=processing_service.timezone,
+        timezone=processing_service.service_config.timezone,
     )
 
     if not success:

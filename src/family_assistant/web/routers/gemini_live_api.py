@@ -177,7 +177,7 @@ async def _get_formatted_system_prompt(
 
         # Format the system prompt
         now = datetime.datetime.now(datetime.UTC)
-        local_now = now.astimezone(processing_service.timezone)
+        local_now = now.astimezone(processing_service.service_config.timezone)
         format_args = {
             "user_name": user_name,
             "current_time": local_now.strftime("%Y-%m-%d %H:%M:%S %Z"),

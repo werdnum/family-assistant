@@ -103,23 +103,7 @@ class ContextPreparer:
                 try:
                     fragments_output = await provider.get_context_fragments()
 
-                    if isinstance(fragments_output, list):
-                        # If it's a list, extend. This handles empty lists correctly (no-op).
-                        all_fragments.extend(fragments_output)
-                        if not fragments_output:  # Log if the list was empty
-                            logger.debug(
-                                f"Context provider '{provider.name}' returned an empty list of fragments."
-                            )
-                    elif fragments_output is None:
-                        # Log a warning if a provider violates protocol by returning None
-                        logger.warning(
-                            f"Context provider '{provider.name}' returned None instead of a list. Skipping."
-                        )
-                    else:
-                        # Log an error if a provider returns something other than a list or None
-                        logger.error(
-                            f"Context provider '{provider.name}' returned an unexpected type: {type(fragments_output)}. Expected list[str]. Skipping."
-                        )
+                    all_fragments.extend(fragments_output)
                 except Exception as e:
                     # This catches errors from await provider.get_context_fragments() itself
                     logger.error(

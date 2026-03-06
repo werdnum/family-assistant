@@ -185,12 +185,8 @@ class ToolExecutor:
             # Execute tool
             logger.info(f"Executing tool '{function_name}' with args: {arguments}")
 
-            # Build chat_interfaces dict for cross-interface messaging
-            # Use the provided chat_interfaces (containing all registered interfaces) if available,
-            # otherwise fall back to just the current interface for backward compatibility
             chat_interfaces_dict = chat_interfaces
             if chat_interfaces_dict is None and chat_interface:
-                # Fallback: if no registry provided, create dict with just current interface
                 chat_interfaces_dict = {interface_type: chat_interface}
 
             tool_execution_context = ToolExecutionContext(
@@ -351,7 +347,7 @@ class ToolExecutor:
                             update={"attachments": attachments_data}
                         )
                 else:
-                    # Backward compatible string handling
+                    # Plain string result (many tools return str directly)
                     content_for_stream = str(result)
                     auto_attachment_ids = []  # String results don't generate attachments
 
