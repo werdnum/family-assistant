@@ -8,7 +8,7 @@ from zoneinfo import ZoneInfo
 
 import pytest
 
-from family_assistant.config_models import AppConfig
+from family_assistant.config_models import AppConfig, ToolsConfig
 from family_assistant.llm import LLMStreamEvent
 from family_assistant.processing import ProcessingService, ProcessingServiceConfig
 from family_assistant.services.attachment_registry import AttachmentMetadata
@@ -48,7 +48,7 @@ class TestProcessingServiceMultimodal:
             timezone=ZoneInfo("UTC"),
             max_history_messages=10,
             history_max_age_hours=24,
-            tools_config={},
+            tools_config=ToolsConfig(),
             delegation_security_level="unrestricted",
         )
 

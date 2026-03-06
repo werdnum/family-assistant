@@ -24,7 +24,7 @@ from httpx import ASGITransport, AsyncClient
 from PIL import Image
 from sqlalchemy.ext.asyncio import AsyncEngine
 
-from family_assistant.config_models import AppConfig
+from family_assistant.config_models import AppConfig, ToolsConfig
 from family_assistant.context_providers import (
     CalendarContextProvider,
     KnownUsersContextProvider,
@@ -200,11 +200,11 @@ def mock_processing_service_config() -> ProcessingServiceConfig:
         timezone=ZoneInfo("UTC"),
         max_history_messages=5,
         history_max_age_hours=24,
-        tools_config={
-            "enable_local_tools": ["add_or_update_note"],
-            "enable_mcp_server_ids": [],
-            "confirm_tools": [],
-        },
+        tools_config=ToolsConfig(
+            enable_local_tools=["add_or_update_note"],
+            enable_mcp_server_ids=[],
+            confirm_tools=[],
+        ),
         delegation_security_level="confirm",
         id="multimodal_api_test_profile",
     )
@@ -242,7 +242,7 @@ async def test_tools_provider(
     confirming_provider = ConfirmingToolsProvider(
         wrapped_provider=composite_provider,
         tools_requiring_confirmation=set(
-            mock_processing_service_config.tools_config.get("confirm_tools", [])
+            mock_processing_service_config.tools_config.confirm_tools
         ),
     )
     await confirming_provider.get_tool_definitions()

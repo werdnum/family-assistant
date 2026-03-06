@@ -12,7 +12,7 @@ from zoneinfo import ZoneInfo
 import pytest
 from sqlalchemy.ext.asyncio import AsyncEngine
 
-from family_assistant.config_models import AppConfig
+from family_assistant.config_models import AppConfig, ToolsConfig
 from family_assistant.events.processor import EventProcessor
 from family_assistant.interfaces import ChatInterface
 from family_assistant.processing import ProcessingService, ProcessingServiceConfig
@@ -97,7 +97,7 @@ add_or_update_note(
             timezone=ZoneInfo("UTC"),
             max_history_messages=1,
             history_max_age_hours=1,
-            tools_config={},
+            tools_config=ToolsConfig(),
             delegation_security_level="blocked",
         ),
         app_config=AppConfig(),
@@ -195,7 +195,7 @@ async def test_script_with_syntax_error_creates_no_note(
             timezone=ZoneInfo("UTC"),
             max_history_messages=1,
             history_max_age_hours=1,
-            tools_config={},
+            tools_config=ToolsConfig(),
             delegation_security_level="blocked",
         ),
         app_config=AppConfig(),
@@ -307,7 +307,7 @@ add_or_update_note(
             timezone=ZoneInfo("UTC"),
             max_history_messages=1,
             history_max_age_hours=1,
-            tools_config={},
+            tools_config=ToolsConfig(),
             delegation_security_level="blocked",
         ),
         app_config=AppConfig(),
@@ -444,7 +444,7 @@ add_or_update_note(
             timezone=ZoneInfo("UTC"),
             max_history_messages=1,
             history_max_age_hours=1,
-            tools_config={},
+            tools_config=ToolsConfig(),
             delegation_security_level="blocked",
         ),
         app_config=AppConfig(),

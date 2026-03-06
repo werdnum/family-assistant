@@ -16,7 +16,7 @@ import aiofiles
 import pytest
 from sqlalchemy.ext.asyncio import AsyncEngine
 
-from family_assistant.config_models import AppConfig
+from family_assistant.config_models import AppConfig, ToolsConfig
 from family_assistant.events.processor import EventProcessor
 from family_assistant.interfaces import ChatInterface
 from family_assistant.processing import ProcessingService, ProcessingServiceConfig
@@ -156,7 +156,7 @@ if motion_detected:
                 timezone=ZoneInfo("UTC"),
                 max_history_messages=1,
                 history_max_age_hours=1,
-                tools_config={},
+                tools_config=ToolsConfig(),
                 delegation_security_level="unrestricted",
             ),
             llm_client=mock_llm_client,
@@ -404,7 +404,7 @@ wake_llm({
                 timezone=ZoneInfo("UTC"),
                 max_history_messages=1,
                 history_max_age_hours=1,
-                tools_config={},
+                tools_config=ToolsConfig(),
                 delegation_security_level="unrestricted",
             ),
             llm_client=mock_llm_client,

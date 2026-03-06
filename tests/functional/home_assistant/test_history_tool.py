@@ -15,7 +15,7 @@ import pytest
 from homeassistant_api.models.history import History
 from homeassistant_api.models.states import State
 
-from family_assistant.config_models import AppConfig
+from family_assistant.config_models import AppConfig, ToolsConfig
 from family_assistant.llm import ToolCallFunction, ToolCallItem
 from family_assistant.processing import (
     ProcessingService,
@@ -91,7 +91,7 @@ async def create_processing_service_for_history_tests(
         timezone=ZoneInfo(TEST_TIMEZONE_STR),
         max_history_messages=5,
         history_max_age_hours=24,
-        tools_config={"confirmation_required": []},
+        tools_config=ToolsConfig(),
         delegation_security_level="unrestricted",
     )
 

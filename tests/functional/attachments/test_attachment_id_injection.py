@@ -18,7 +18,7 @@ import pytest
 from PIL import Image
 from sqlalchemy.ext.asyncio import AsyncEngine
 
-from family_assistant.config_models import AppConfig
+from family_assistant.config_models import AppConfig, ToolsConfig
 from family_assistant.llm import ToolCallFunction, ToolCallItem
 from family_assistant.processing import ProcessingService, ProcessingServiceConfig
 from family_assistant.services.attachment_registry import AttachmentRegistry
@@ -92,7 +92,7 @@ async def create_processing_service_with_image_tools(
         timezone=ZoneInfo(TEST_TIMEZONE_STR),
         max_history_messages=5,
         history_max_age_hours=24,
-        tools_config={"confirmation_required": []},
+        tools_config=ToolsConfig(),
         delegation_security_level="unrestricted",
     )
 

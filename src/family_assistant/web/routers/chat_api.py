@@ -1504,7 +1504,7 @@ async def get_available_profiles(
 
         # Get enabled MCP servers
         # First check explicit configuration in the profile
-        mcp_server_ids = service_config.tools_config.get("enable_mcp_server_ids")
+        mcp_server_ids = service_config.tools_config.enable_mcp_server_ids
         if mcp_server_ids is not None:
             enabled_mcp_servers = list(mcp_server_ids)
         # If None, all configured servers are enabled for this profile

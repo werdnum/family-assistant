@@ -12,7 +12,7 @@ if TYPE_CHECKING:
 
 from pydantic import BaseModel
 
-from family_assistant.config_models import AppConfig
+from family_assistant.config_models import AppConfig, ToolsConfig
 from family_assistant.llm import (
     LLMMessage,
     LLMOutput,
@@ -260,7 +260,7 @@ async def test_thought_signatures_persist_and_roundtrip(
         timezone=ZoneInfo("UTC"),
         max_history_messages=10,
         history_max_age_hours=24,
-        tools_config={"enable_local_tools": [], "enable_mcp_server_ids": []},
+        tools_config=ToolsConfig(enable_local_tools=[], enable_mcp_server_ids=[]),
         delegation_security_level="confirm",
         id="test_profile",
     )
@@ -339,7 +339,7 @@ async def test_thought_signatures_without_tool_calls(
         timezone=ZoneInfo("UTC"),
         max_history_messages=10,
         history_max_age_hours=24,
-        tools_config={"enable_local_tools": [], "enable_mcp_server_ids": []},
+        tools_config=ToolsConfig(enable_local_tools=[], enable_mcp_server_ids=[]),
         delegation_security_level="confirm",
         id="test_profile",
     )

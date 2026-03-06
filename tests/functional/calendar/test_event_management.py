@@ -17,7 +17,7 @@ from family_assistant.calendar_integration import (
     fetch_upcoming_events,
     format_datetime_or_date,  # Added import
 )
-from family_assistant.config_models import AppConfig
+from family_assistant.config_models import AppConfig, ToolsConfig
 from family_assistant.context_providers import CalendarContextProvider
 from family_assistant.llm import LLMInterface, ToolCallFunction, ToolCallItem
 from family_assistant.processing import (
@@ -265,7 +265,7 @@ async def test_modify_event(
         timezone=ZoneInfo(TEST_TIMEZONE_STR),
         max_history_messages=5,
         history_max_age_hours=24,
-        tools_config={"confirmation_required": []},
+        tools_config=ToolsConfig(),
         delegation_security_level="unrestricted",
     )
     processing_service_for_add = ProcessingService(
@@ -494,7 +494,7 @@ async def test_modify_event(
         timezone=ZoneInfo(TEST_TIMEZONE_STR),
         max_history_messages=5,
         history_max_age_hours=24,
-        tools_config={"confirmation_required": []},
+        tools_config=ToolsConfig(),
         delegation_security_level="unrestricted",
     )
     processing_service = ProcessingService(
@@ -681,7 +681,7 @@ async def test_delete_event(
         timezone=ZoneInfo(TEST_TIMEZONE_STR),
         max_history_messages=5,
         history_max_age_hours=24,
-        tools_config={"confirmation_required": []},
+        tools_config=ToolsConfig(),
         delegation_security_level="unrestricted",
     )
     processing_service = ProcessingService(
@@ -912,7 +912,7 @@ async def test_search_events(
         timezone=ZoneInfo(TEST_TIMEZONE_STR),
         max_history_messages=5,
         history_max_age_hours=24,
-        tools_config={"confirmation_required": []},
+        tools_config=ToolsConfig(),
         delegation_security_level="unrestricted",
     )
     processing_service = ProcessingService(
@@ -1371,7 +1371,7 @@ async def test_similarity_based_search_finds_similar_events(
         timezone=ZoneInfo(TEST_TIMEZONE_STR),
         max_history_messages=5,
         history_max_age_hours=24,
-        tools_config={"confirmation_required": []},
+        tools_config=ToolsConfig(),
         delegation_security_level="unrestricted",
     )
     processing_service = ProcessingService(

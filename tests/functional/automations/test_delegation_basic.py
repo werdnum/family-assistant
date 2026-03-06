@@ -12,7 +12,7 @@ import telegramify_markdown
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncEngine
 
-from family_assistant.config_models import AppConfig
+from family_assistant.config_models import AppConfig, ToolsConfig
 from family_assistant.context_providers import KnownUsersContextProvider
 from family_assistant.interfaces import ChatInterface
 from family_assistant.llm import (
@@ -74,10 +74,10 @@ def primary_service_config(dummy_prompts: dict[str, str]) -> ProcessingServiceCo
         timezone=ZoneInfo("UTC"),
         max_history_messages=5,
         history_max_age_hours=24,
-        tools_config={
-            "enable_local_tools": ["delegate_to_service"],  # Crucial for this test
-            "confirm_tools": [],
-        },
+        tools_config=ToolsConfig(
+            enable_local_tools=["delegate_to_service"],
+            confirm_tools=[],
+        ),
         delegation_security_level="unrestricted",  # Primary can delegate freely
         id=PRIMARY_PROFILE_ID,
     )
@@ -93,10 +93,10 @@ def specialized_service_config_factory(
             timezone=ZoneInfo("UTC"),
             max_history_messages=5,
             history_max_age_hours=24,
-            tools_config={  # Target profile might have its own tools or none
-                "enable_local_tools": [],
-                "confirm_tools": [],
-            },
+            tools_config=ToolsConfig(
+                enable_local_tools=[],
+                confirm_tools=[],
+            ),
             delegation_security_level=delegation_security_level,
             id=SPECIALIZED_PROFILE_ID,  # Add id for specialized profile
         )
@@ -294,16 +294,14 @@ async def mock_confirmation_callback() -> AsyncMock:
     return AsyncMock(spec=Callable[..., Awaitable[bool]])
 
 
-# ast-grep-ignore: no-dict-any - Legacy code - needs structured types
-def create_tools_provider(profile_tools_config: dict[str, Any]) -> ToolsProvider:
+def create_tools_provider(profile_tools_config: ToolsConfig) -> ToolsProvider:
     """Helper to create a ToolsProvider stack for a profile."""
-    enabled_local_tool_names = set(profile_tools_config.get("enable_local_tools", []))
+    enabled_local_tool_names = set(profile_tools_config.enable_local_tools or [])
 
     # If empty, enable all known local tools for simplicity in test setup,
     # or be specific if the test requires it. For delegation, primary needs delegate_to_service.
-    if (
-        not enabled_local_tool_names
-        and "delegate_to_service" in profile_tools_config.get("enable_local_tools", [])
+    if not enabled_local_tool_names and "delegate_to_service" in (
+        profile_tools_config.enable_local_tools or []
     ):
         enabled_local_tool_names = {"delegate_to_service"}  # Ensure primary has it
     elif (
@@ -343,7 +341,7 @@ def create_tools_provider(profile_tools_config: dict[str, Any]) -> ToolsProvider
         providers=[local_provider, mcp_provider]
     )
 
-    confirm_tools_set = set(profile_tools_config.get("confirm_tools", []))
+    confirm_tools_set = set(profile_tools_config.confirm_tools)
     confirming_provider = ConfirmingToolsProvider(
         wrapped_provider=composite_provider,
         tools_requiring_confirmation=confirm_tools_set,

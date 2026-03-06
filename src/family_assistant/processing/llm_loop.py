@@ -194,9 +194,7 @@ class LLMStreamingLoop:
         logger.debug(f"Total available tools: {len(all_tool_definitions)}")
 
         if request_confirmation_callback is None:
-            confirmable_tool_names = self.service_config.tools_config.get(
-                "confirm_tools", []
-            )
+            confirmable_tool_names = self.service_config.tools_config.confirm_tools
             if confirmable_tool_names:
                 logger.info(
                     f"No confirmation callback available. Filtering out tools requiring confirmation: {confirmable_tool_names}"

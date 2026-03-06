@@ -22,7 +22,7 @@ if TYPE_CHECKING:
     from family_assistant.tools import MCPServerConfig
 
 # Import necessary components from the application
-from family_assistant.config_models import AppConfig
+from family_assistant.config_models import AppConfig, ToolsConfig
 from family_assistant.llm import ToolCallFunction, ToolCallItem
 from family_assistant.llm.messages import ContentPartDict, text_content
 from family_assistant.processing import ProcessingService, ProcessingServiceConfig
@@ -280,7 +280,7 @@ async def test_mcp_time_conversion_stdio(db_engine: AsyncEngine) -> None:
         timezone=ZoneInfo(dummy_timezone_str),
         max_history_messages=dummy_max_history,
         history_max_age_hours=dummy_history_age,
-        tools_config={},  # Added missing tools_config
+        tools_config=ToolsConfig(),
         delegation_security_level="confirm",  # Added
         id="mcp_stdio_profile",  # Added
     )
@@ -477,7 +477,7 @@ async def test_mcp_time_conversion_sse(
         timezone=ZoneInfo(dummy_timezone_str),
         max_history_messages=dummy_max_history,
         history_max_age_hours=dummy_history_age,
-        tools_config={},  # Added missing tools_config
+        tools_config=ToolsConfig(),
         delegation_security_level="confirm",  # Added
         id="mcp_sse_profile",  # Added
     )

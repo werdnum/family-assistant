@@ -11,7 +11,7 @@ from zoneinfo import ZoneInfo
 import pytest
 from sqlalchemy.ext.asyncio import AsyncEngine
 
-from family_assistant.config_models import AppConfig
+from family_assistant.config_models import AppConfig, ToolsConfig
 from family_assistant.interfaces import ChatInterface
 from family_assistant.llm import LLMInterface, ToolCallFunction, ToolCallItem
 from family_assistant.processing import ProcessingService, ProcessingServiceConfig
@@ -135,7 +135,7 @@ print("Script executed - note created: " + str(result))
             timezone=ZoneInfo("UTC"),
             max_history_messages=5,
             history_max_age_hours=24,
-            tools_config={},
+            tools_config=ToolsConfig(),
             delegation_security_level="confirm",
             id="test_profile",
         ),
@@ -304,7 +304,7 @@ print("Recurring script executed - note created")
             timezone=ZoneInfo("UTC"),
             max_history_messages=5,
             history_max_age_hours=24,
-            tools_config={},
+            tools_config=ToolsConfig(),
             delegation_security_level="confirm",
             id="test_profile",
         ),
@@ -472,7 +472,7 @@ if True  # Missing colon
             timezone=ZoneInfo("UTC"),
             max_history_messages=5,
             history_max_age_hours=24,
-            tools_config={},
+            tools_config=ToolsConfig(),
             delegation_security_level="confirm",
             id="test_profile",
         ),

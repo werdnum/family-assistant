@@ -11,7 +11,7 @@ from zoneinfo import ZoneInfo
 import pytest
 from sqlalchemy.ext.asyncio import AsyncEngine
 
-from family_assistant.config_models import AppConfig
+from family_assistant.config_models import AppConfig, ToolsConfig
 from family_assistant.llm.content_parts import text_content
 from family_assistant.llm.messages import SystemMessage
 from family_assistant.processing import ProcessingService, ProcessingServiceConfig
@@ -34,7 +34,7 @@ def _make_service(
         timezone=ZoneInfo("UTC"),
         max_history_messages=5,
         history_max_age_hours=24,
-        tools_config={"enable_local_tools": [], "confirm_tools": []},
+        tools_config=ToolsConfig(enable_local_tools=[], confirm_tools=[]),
         delegation_security_level="blocked",
         id=profile_id,
         description=description,

@@ -15,7 +15,7 @@ from sqlalchemy.ext.asyncio import AsyncEngine
 from family_assistant.calendar_integration import (
     format_datetime_or_date,
 )
-from family_assistant.config_models import AppConfig
+from family_assistant.config_models import AppConfig, ToolsConfig
 from family_assistant.context_providers import CalendarContextProvider
 from family_assistant.llm import LLMInterface, ToolCallFunction, ToolCallItem
 from family_assistant.processing import (
@@ -273,7 +273,7 @@ async def test_add_event_and_verify_in_system_prompt(
         timezone=ZoneInfo(TEST_TIMEZONE_STR),
         max_history_messages=5,
         history_max_age_hours=24,
-        tools_config={"confirmation_required": []},
+        tools_config=ToolsConfig(),
         delegation_security_level="unrestricted",
     )
     processing_service = ProcessingService(

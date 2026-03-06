@@ -21,7 +21,7 @@ if TYPE_CHECKING:
 # Import necessary classes for instantiation
 # _generate_llm_response_for_chat was moved to ProcessingService
 # Import DatabaseContext and getter
-from family_assistant.config_models import AppConfig
+from family_assistant.config_models import AppConfig, ToolsConfig
 from family_assistant.llm import ToolCallFunction, ToolCallItem
 
 # Import the rule-based mock
@@ -181,7 +181,7 @@ async def test_add_and_retrieve_note_rule_mock(
         timezone=ZoneInfo(dummy_timezone_str),
         max_history_messages=dummy_max_history,
         history_max_age_hours=dummy_history_age,
-        tools_config={},  # Added missing tools_config
+        tools_config=ToolsConfig(),
         delegation_security_level="confirm",  # Added
         id="test_smoke_notes_profile",  # Added
     )

@@ -6,6 +6,7 @@ from typing import TYPE_CHECKING, Any
 if TYPE_CHECKING:
     from zoneinfo import ZoneInfo
 
+    from family_assistant.config_models import ToolsConfig
     from family_assistant.llm import LLMStreamEvent
     from family_assistant.llm.messages import MessageReasoningInfo, ToolMessage
     from family_assistant.skills.registry import NoteRegistry
@@ -44,10 +45,7 @@ class ProcessingServiceConfig:
     timezone: ZoneInfo
     max_history_messages: int
     history_max_age_hours: float  # Can be fractional (e.g., 0.5 hours)
-    # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
-    tools_config: dict[
-        str, Any
-    ]  # Added to hold tool configurations like 'confirm_tools'
+    tools_config: ToolsConfig
     delegation_security_level: str  # "blocked", "confirm", "unrestricted"
     id: str  # Unique identifier for this service profile
     description: str = ""  # Human-readable description of this profile
