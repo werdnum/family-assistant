@@ -163,7 +163,7 @@ async def _get_formatted_system_prompt(
     try:
         # Get aggregated context from providers
         aggregated_context = (
-            await processing_service._aggregate_context_from_providers()
+            await processing_service.context_preparer.aggregate_context()
         )
 
         # Get system prompt template
@@ -177,7 +177,7 @@ async def _get_formatted_system_prompt(
 
         # Format the system prompt
         now = datetime.datetime.now(datetime.UTC)
-        local_now = now.astimezone(processing_service.timezone)
+        local_now = now.astimezone(processing_service.service_config.timezone)
         format_args = {
             "user_name": user_name,
             "current_time": local_now.strftime("%Y-%m-%d %H:%M:%S %Z"),

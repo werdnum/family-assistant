@@ -1272,7 +1272,7 @@ class AsteriskLiveHandler:
                         db_context=db_context,
                         chat_interface=None,
                         chat_interfaces=self.chat_interfaces,
-                        timezone=self.processing_service.timezone,
+                        timezone=self.processing_service.service_config.timezone,
                         processing_profile_id=self.processing_service.service_config.id,
                         subconversation_id=None,
                         request_confirmation_callback=None,

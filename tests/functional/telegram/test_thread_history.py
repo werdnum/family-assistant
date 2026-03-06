@@ -310,8 +310,10 @@ async def test_attachment_context_extraction(db_engine: AsyncEngine) -> None:
         )
 
         # Extract attachment context from conversation
-        context = await processing_service._extract_conversation_attachments_context(
-            db, conversation_id="test_chat_789", max_age_hours=2
+        context = (
+            await processing_service.attachment_processor.extract_conversation_context(
+                db, conversation_id="test_chat_789", max_age_hours=2, prompts={}
+            )
         )
 
         # Verify context is formatted correctly

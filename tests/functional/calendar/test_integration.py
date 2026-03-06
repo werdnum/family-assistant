@@ -315,7 +315,7 @@ async def test_add_event_and_verify_in_system_prompt(
     await asyncio.sleep(0.5)
 
     aggregated_context_str = (
-        await processing_service._aggregate_context_from_providers()
+        await processing_service.context_preparer.aggregate_context()
     )
 
     logger.info(

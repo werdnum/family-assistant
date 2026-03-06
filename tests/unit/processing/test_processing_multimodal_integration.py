@@ -79,7 +79,7 @@ class TestProcessingServiceMultimodal:
         # Mock tools provider to return string
         mock_tools_provider.execute_tool.return_value = "Simple string result"
 
-        result = await processing_service._execute_single_tool(
+        result = await processing_service.tool_executor.execute(
             tool_call_item_obj=tool_call,
             interface_type="test",
             conversation_id="conv_123",
@@ -133,7 +133,7 @@ class TestProcessingServiceMultimodal:
         # Mock tools provider to return ToolResult
         mock_tools_provider.execute_tool.return_value = tool_result
 
-        result = await processing_service._execute_single_tool(
+        result = await processing_service.tool_executor.execute(
             tool_call_item_obj=tool_call,
             interface_type="test",
             conversation_id="conv_456",
@@ -187,7 +187,7 @@ class TestProcessingServiceMultimodal:
 
         mock_tools_provider.execute_tool.return_value = tool_result
 
-        result = await processing_service._execute_single_tool(
+        result = await processing_service.tool_executor.execute(
             tool_call_item_obj=tool_call,
             interface_type="test",
             conversation_id="conv_789",
@@ -220,7 +220,7 @@ class TestProcessingServiceMultimodal:
         tool_call.function.name = "test_tool"
         tool_call.function.arguments = "{invalid json"  # Malformed JSON
 
-        result = await processing_service._execute_single_tool(
+        result = await processing_service.tool_executor.execute(
             tool_call_item_obj=tool_call,
             interface_type="test",
             conversation_id="conv_error",
@@ -259,7 +259,7 @@ class TestProcessingServiceMultimodal:
             "Tool execution failed"
         )
 
-        result = await processing_service._execute_single_tool(
+        result = await processing_service.tool_executor.execute(
             tool_call_item_obj=tool_call,
             interface_type="test",
             conversation_id="conv_exception",
@@ -333,15 +333,15 @@ class TestProcessingServiceMultimodal:
             )
         )
 
-        processing_service.attachment_registry = mock_attachment_registry
+        processing_service.tool_executor.attachment_registry = mock_attachment_registry
 
         # Mock tools provider to return ToolResult with attachment (async)
         mock_tools_provider = AsyncMock()
         mock_tools_provider.execute_tool.return_value = tool_result
-        processing_service.tools_provider = mock_tools_provider
+        processing_service.tool_executor.tools_provider = mock_tools_provider
 
         # Execute single tool
-        result = await processing_service._execute_single_tool(
+        result = await processing_service.tool_executor.execute(
             tool_call,
             interface_type="test",
             conversation_id="test_conv",
@@ -390,10 +390,10 @@ class TestProcessingServiceMultimodal:
         # Mock tools provider to return simple string (async)
         mock_tools_provider = AsyncMock()
         mock_tools_provider.execute_tool.return_value = "Simple text result"
-        processing_service.tools_provider = mock_tools_provider
+        processing_service.tool_executor.tools_provider = mock_tools_provider
 
         # Execute single tool
-        result = await processing_service._execute_single_tool(
+        result = await processing_service.tool_executor.execute(
             tool_call,
             interface_type="test",
             conversation_id="test_conv",
@@ -426,15 +426,15 @@ class TestProcessingServiceMultimodal:
         tool_result = ToolResult(text="Generated image", attachments=[attachment])
 
         # No attachment registry configured
-        processing_service.attachment_registry = None
+        processing_service.tool_executor.attachment_registry = None
 
         # Mock tools provider (async)
         mock_tools_provider = AsyncMock()
         mock_tools_provider.execute_tool.return_value = tool_result
-        processing_service.tools_provider = mock_tools_provider
+        processing_service.tool_executor.tools_provider = mock_tools_provider
 
         # Execute single tool
-        result = await processing_service._execute_single_tool(
+        result = await processing_service.tool_executor.execute(
             tool_call,
             interface_type="test",
             conversation_id="test_conv",
@@ -459,7 +459,7 @@ class TestProcessingServiceMultimodal:
         # Mock attachment registry and service
         mock_attachment_registry = Mock()
         mock_attachment_registry = Mock()
-        processing_service.attachment_registry = mock_attachment_registry
+        processing_service.tool_executor.attachment_registry = mock_attachment_registry
 
         # Simulate two tool calls in sequence
         # First: image generation tool that auto-queues attachment
@@ -511,10 +511,10 @@ class TestProcessingServiceMultimodal:
             return "Unknown tool"
 
         mock_tools_provider.execute_tool.side_effect = mock_execute_tool
-        processing_service.tools_provider = mock_tools_provider
+        processing_service.tool_executor.tools_provider = mock_tools_provider
 
         # Execute first tool (image generation) - should auto-queue
-        first_result = await processing_service._execute_single_tool(
+        first_result = await processing_service.tool_executor.execute(
             image_tool_call,
             interface_type="test",
             conversation_id="test_conv",
@@ -536,7 +536,7 @@ class TestProcessingServiceMultimodal:
             '{"attachment_ids": ["explicit_attachment_456"]}'
         )
 
-        second_result = await processing_service._execute_single_tool(
+        second_result = await processing_service.tool_executor.execute(
             attach_tool_call,
             interface_type="test",
             conversation_id="test_conv",
@@ -588,7 +588,7 @@ class TestProcessingServiceMultimodal:
                 return '{"status": "attachments_queued", "attachment_ids": ["second_attachment_a", "second_attachment_b"], "count": 2, "message": "Second attach call"}'
 
         mock_tools_provider.execute_tool.side_effect = mock_attach_response
-        processing_service.tools_provider = mock_tools_provider
+        processing_service.tool_executor.tools_provider = mock_tools_provider
 
         # First attach_to_response call
         first_call = Mock()
@@ -596,7 +596,7 @@ class TestProcessingServiceMultimodal:
         first_call.function.name = "attach_to_response"
         first_call.function.arguments = '{"attachment_ids": ["first_attachment"]}'
 
-        first_result = await processing_service._execute_single_tool(
+        first_result = await processing_service.tool_executor.execute(
             first_call,
             interface_type="test",
             conversation_id="test_conv",
@@ -615,7 +615,7 @@ class TestProcessingServiceMultimodal:
             '{"attachment_ids": ["second_attachment_a", "second_attachment_b"]}'
         )
 
-        second_result = await processing_service._execute_single_tool(
+        second_result = await processing_service.tool_executor.execute(
             second_call,
             interface_type="test",
             conversation_id="test_conv",
@@ -675,7 +675,7 @@ class TestProcessingServiceMultimodal:
             return_value=None
         )  # Return None for explicit_attachment lookup
 
-        processing_service.attachment_registry = mock_attachment_registry
+        processing_service.tool_executor.attachment_registry = mock_attachment_registry
 
         mock_tools_provider = AsyncMock()
 
@@ -702,7 +702,7 @@ class TestProcessingServiceMultimodal:
             return "Unknown tool"
 
         mock_tools_provider.execute_tool.side_effect = mock_execute_tool
-        processing_service.tools_provider = mock_tools_provider
+        processing_service.tool_executor.tools_provider = mock_tools_provider
 
         # First: LLM calls attach_to_response (establishes explicit control)
         attach_call = Mock()
@@ -710,7 +710,7 @@ class TestProcessingServiceMultimodal:
         attach_call.function.name = "attach_to_response"
         attach_call.function.arguments = '{"attachment_ids": ["explicit_attachment"]}'
 
-        attach_result = await processing_service._execute_single_tool(
+        attach_result = await processing_service.tool_executor.execute(
             attach_call,
             interface_type="test",
             conversation_id="test_conv",
@@ -727,7 +727,7 @@ class TestProcessingServiceMultimodal:
         new_tool_call.function.name = "generate_new_image"
         new_tool_call.function.arguments = "{}"
 
-        new_tool_result = await processing_service._execute_single_tool(
+        new_tool_result = await processing_service.tool_executor.execute(
             new_tool_call,
             interface_type="test",
             conversation_id="test_conv",

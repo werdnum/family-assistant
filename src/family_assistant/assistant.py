@@ -1260,7 +1260,7 @@ class Assistant:
                     )
                     return
 
-                local_tz = self.default_processing_service.timezone
+                local_tz = self.default_processing_service.service_config.timezone
 
                 # Get current time in local timezone and calculate next 3 AM local time
                 now_local = datetime.now(local_tz)
