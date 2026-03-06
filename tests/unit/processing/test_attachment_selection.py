@@ -82,7 +82,7 @@ class TestAttachmentSelectionThreshold:
         pending_attachment_ids = ["att1", "att2", "att3"]
 
         # Should return all attachments without calling selection
-        result = await processing_service._select_attachments_for_response(
+        result = await processing_service.attachment_processor.select_for_response(
             pending_attachment_ids=pending_attachment_ids,
             original_query="Test query",
         )
@@ -103,7 +103,9 @@ class TestAttachmentSelectionThreshold:
         # Test with 4 attachments (> threshold of 3)
         pending_attachment_ids = ["att1", "att2", "att3", "att4"]
 
-        processing_service.attachment_registry = mock_attachment_registry
+        processing_service.attachment_processor.attachment_registry = (
+            mock_attachment_registry
+        )
 
         # Create mock attachment metadata
         mock_attachment_registry.get_attachment_with_context = AsyncMock(
@@ -135,7 +137,7 @@ class TestAttachmentSelectionThreshold:
             )
         )
 
-        result = await processing_service._select_attachments_for_response(
+        result = await processing_service.attachment_processor.select_for_response(
             pending_attachment_ids=pending_attachment_ids,
             original_query="Test query",
         )
@@ -216,7 +218,9 @@ class TestSelectAttachmentsForResponse:
         mock_attachment_registry: AsyncMock,
     ) -> None:
         """Test that _select_attachments_for_response extracts attachment IDs from LLM tool call."""
-        processing_service.attachment_registry = mock_attachment_registry
+        processing_service.attachment_processor.attachment_registry = (
+            mock_attachment_registry
+        )
 
         pending_ids = ["att1", "att2", "att3", "att4", "att5"]
 
@@ -242,7 +246,7 @@ class TestSelectAttachmentsForResponse:
             )
         )
 
-        result = await processing_service._select_attachments_for_response(
+        result = await processing_service.attachment_processor.select_for_response(
             pending_attachment_ids=pending_ids,
             original_query="Show me the most relevant images",
         )
@@ -258,7 +262,9 @@ class TestSelectAttachmentsForResponse:
         mock_attachment_registry: AsyncMock,
     ) -> None:
         """Test that _select_attachments_for_response handles JSON string arguments from LLM."""
-        processing_service.attachment_registry = mock_attachment_registry
+        processing_service.attachment_processor.attachment_registry = (
+            mock_attachment_registry
+        )
 
         pending_ids = ["att1", "att2", "att3"]
 
@@ -284,7 +290,7 @@ class TestSelectAttachmentsForResponse:
             )
         )
 
-        result = await processing_service._select_attachments_for_response(
+        result = await processing_service.attachment_processor.select_for_response(
             pending_attachment_ids=pending_ids,
             original_query="Select images",
         )
@@ -299,7 +305,9 @@ class TestSelectAttachmentsForResponse:
         mock_attachment_registry: AsyncMock,
     ) -> None:
         """Test that fallback occurs when LLM doesn't return a tool call."""
-        processing_service.attachment_registry = mock_attachment_registry
+        processing_service.attachment_processor.attachment_registry = (
+            mock_attachment_registry
+        )
 
         pending_ids = ["att1", "att2", "att3", "att4"]
 
@@ -316,7 +324,7 @@ class TestSelectAttachmentsForResponse:
             )
         )
 
-        result = await processing_service._select_attachments_for_response(
+        result = await processing_service.attachment_processor.select_for_response(
             pending_attachment_ids=pending_ids,
             original_query="Select images",
         )
@@ -333,7 +341,9 @@ class TestSelectAttachmentsForResponse:
         mock_attachment_registry: AsyncMock,
     ) -> None:
         """Test that fallback occurs when LLM calls wrong tool name."""
-        processing_service.attachment_registry = mock_attachment_registry
+        processing_service.attachment_processor.attachment_registry = (
+            mock_attachment_registry
+        )
 
         pending_ids = ["att1", "att2", "att3", "att4"]
 
@@ -359,7 +369,7 @@ class TestSelectAttachmentsForResponse:
             )
         )
 
-        result = await processing_service._select_attachments_for_response(
+        result = await processing_service.attachment_processor.select_for_response(
             pending_attachment_ids=pending_ids,
             original_query="Select images",
         )
@@ -376,7 +386,9 @@ class TestSelectAttachmentsForResponse:
         mock_attachment_registry: AsyncMock,
     ) -> None:
         """Test that selected attachments are truncated to max_response_attachments."""
-        processing_service.attachment_registry = mock_attachment_registry
+        processing_service.attachment_processor.attachment_registry = (
+            mock_attachment_registry
+        )
 
         # max_response_attachments is 6, so we provide more than that
         pending_ids = [f"att{i}" for i in range(1, 11)]  # att1 through att10
@@ -405,7 +417,7 @@ class TestSelectAttachmentsForResponse:
             )
         )
 
-        result = await processing_service._select_attachments_for_response(
+        result = await processing_service.attachment_processor.select_for_response(
             pending_attachment_ids=pending_ids,
             original_query="Select images",
         )
@@ -422,7 +434,9 @@ class TestSelectAttachmentsForResponse:
         mock_attachment_registry: AsyncMock,
     ) -> None:
         """Test that fallback also respects max_response_attachments limit."""
-        processing_service.attachment_registry = mock_attachment_registry
+        processing_service.attachment_processor.attachment_registry = (
+            mock_attachment_registry
+        )
 
         # Provide more than max
         pending_ids = [f"att{i}" for i in range(1, 11)]  # att1 through att10
@@ -440,7 +454,7 @@ class TestSelectAttachmentsForResponse:
             )
         )
 
-        result = await processing_service._select_attachments_for_response(
+        result = await processing_service.attachment_processor.select_for_response(
             pending_attachment_ids=pending_ids,
             original_query="Select images",
         )
@@ -457,7 +471,9 @@ class TestSelectAttachmentsForResponse:
         mock_attachment_registry: AsyncMock,
     ) -> None:
         """Test that errors during selection gracefully fall back to original list."""
-        processing_service.attachment_registry = mock_attachment_registry
+        processing_service.attachment_processor.attachment_registry = (
+            mock_attachment_registry
+        )
 
         pending_ids = ["att1", "att2", "att3"]
 
@@ -469,7 +485,7 @@ class TestSelectAttachmentsForResponse:
         # LLM doesn't matter since registry fails first
         mock_llm_client.generate_response = AsyncMock()
 
-        result = await processing_service._select_attachments_for_response(
+        result = await processing_service.attachment_processor.select_for_response(
             pending_attachment_ids=pending_ids,
             original_query="Select images",
         )
@@ -486,7 +502,9 @@ class TestSelectAttachmentsForResponse:
         mock_attachment_registry: AsyncMock,
     ) -> None:
         """Test that errors from LLM are handled gracefully."""
-        processing_service.attachment_registry = mock_attachment_registry
+        processing_service.attachment_processor.attachment_registry = (
+            mock_attachment_registry
+        )
 
         pending_ids = ["att1", "att2", "att3", "att4", "att5"]
 
@@ -500,7 +518,7 @@ class TestSelectAttachmentsForResponse:
             side_effect=RuntimeError("LLM error")
         )
 
-        result = await processing_service._select_attachments_for_response(
+        result = await processing_service.attachment_processor.select_for_response(
             pending_attachment_ids=pending_ids,
             original_query="Select images",
         )
@@ -516,9 +534,11 @@ class TestSelectAttachmentsForResponse:
         mock_attachment_registry: AsyncMock,
     ) -> None:
         """Test that empty input list is handled gracefully."""
-        processing_service.attachment_registry = mock_attachment_registry
+        processing_service.attachment_processor.attachment_registry = (
+            mock_attachment_registry
+        )
 
-        result = await processing_service._select_attachments_for_response(
+        result = await processing_service.attachment_processor.select_for_response(
             pending_attachment_ids=[],
             original_query="Select images",
         )
@@ -533,12 +553,11 @@ class TestSelectAttachmentsForResponse:
         mock_llm_client: MagicMock,
     ) -> None:
         """Test that method handles missing attachment registry gracefully."""
-        # Don't set attachment_registry
-        processing_service.attachment_registry = None
+        processing_service.attachment_processor.attachment_registry = None
 
         pending_ids = ["att1", "att2", "att3"]
 
-        result = await processing_service._select_attachments_for_response(
+        result = await processing_service.attachment_processor.select_for_response(
             pending_attachment_ids=pending_ids,
             original_query="Select images",
         )
@@ -556,7 +575,9 @@ class TestSelectAttachmentsForResponse:
         mock_attachment_registry: AsyncMock,
     ) -> None:
         """Test handling of malformed tool arguments from LLM."""
-        processing_service.attachment_registry = mock_attachment_registry
+        processing_service.attachment_processor.attachment_registry = (
+            mock_attachment_registry
+        )
 
         pending_ids = ["att1", "att2", "att3", "att4"]
 
@@ -582,7 +603,7 @@ class TestSelectAttachmentsForResponse:
             )
         )
 
-        result = await processing_service._select_attachments_for_response(
+        result = await processing_service.attachment_processor.select_for_response(
             pending_attachment_ids=pending_ids,
             original_query="Select images",
         )

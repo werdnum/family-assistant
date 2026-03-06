@@ -15,7 +15,9 @@ from opentelemetry.sdk.trace.export import SimpleSpanProcessor
 from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
 from opentelemetry.trace import StatusCode
 
-import family_assistant.processing as proc_module
+import family_assistant.processing.context as proc_context_module
+import family_assistant.processing.service as proc_service_module
+import family_assistant.processing.tool_execution as proc_tool_module
 import family_assistant.task_worker as tw_module
 import family_assistant.telegram.handler as tg_module
 from family_assistant.llm import LLMStreamEvent
@@ -44,12 +46,20 @@ def processing_span_exporter() -> Iterator[InMemorySpanExporter]:
     provider = TracerProvider()
     provider.add_span_processor(SimpleSpanProcessor(exporter))
 
-    original_tracer = proc_module.tracer
-    proc_module.tracer = provider.get_tracer("test")
+    test_tracer = provider.get_tracer("test")
+
+    original_context_tracer = proc_context_module.tracer
+    original_tool_tracer = proc_tool_module.tracer
+    original_service_tracer = proc_service_module.tracer
+    proc_context_module.tracer = test_tracer
+    proc_tool_module.tracer = test_tracer
+    proc_service_module.tracer = test_tracer
 
     yield exporter
 
-    proc_module.tracer = original_tracer
+    proc_context_module.tracer = original_context_tracer
+    proc_tool_module.tracer = original_tool_tracer
+    proc_service_module.tracer = original_service_tracer
     provider.shutdown()
 
 
@@ -175,7 +185,7 @@ class TestContextAggregateSpan:
             ]
         )
 
-        result = await service._aggregate_context_from_providers()
+        result = await service.context_preparer.aggregate_context()
 
         assert "fragment1" in result
         spans = processing_span_exporter.get_finished_spans()
@@ -192,7 +202,7 @@ class TestContextAggregateSpan:
     ) -> None:
         service = _make_processing_service(context_providers=[])
 
-        result = await service._aggregate_context_from_providers()
+        result = await service.context_preparer.aggregate_context()
 
         assert not result
         spans = processing_span_exporter.get_finished_spans()
@@ -214,7 +224,7 @@ class TestContextAggregateSpan:
         ]
         service = _make_processing_service(context_providers=providers)
 
-        result = await service._aggregate_context_from_providers()
+        result = await service.context_preparer.aggregate_context()
 
         assert "a" in result
         assert "d" in result
@@ -237,12 +247,12 @@ class TestContextAggregateSpan:
                 raise RuntimeError("provider broke")
 
         service = _make_processing_service()
-        service.context_providers = [
+        service.context_preparer.context_providers = [
             FailingProvider(),  # type: ignore[list-item]
             MockContextProvider(fragments=["ok"]),
         ]
 
-        result = await service._aggregate_context_from_providers()
+        result = await service.context_preparer.aggregate_context()
 
         assert "ok" in result
         spans = processing_span_exporter.get_finished_spans()
@@ -265,8 +275,10 @@ class TestToolExecuteSpan:
         self, processing_span_exporter: InMemorySpanExporter
     ) -> None:
         service = _make_processing_service()
-        service.tools_provider = MagicMock()
-        service.tools_provider.execute_tool = AsyncMock(return_value="tool result text")
+        service.tool_executor.tools_provider = MagicMock()
+        service.tool_executor.tools_provider.execute_tool = AsyncMock(
+            return_value="tool result text"
+        )
 
         tool_call = ToolCallItem(
             id="call_abc",
@@ -275,8 +287,14 @@ class TestToolExecuteSpan:
         )
         db_context = AsyncMock()
 
-        result = await service._execute_single_tool(
-            tool_call, "telegram", "conv1", "user1", "turn1", db_context, None
+        result = await service.tool_executor.execute(
+            tool_call,
+            interface_type="telegram",
+            conversation_id="conv1",
+            user_name="user1",
+            turn_id="turn1",
+            db_context=db_context,
+            chat_interface=None,
         )
 
         assert result.stream_event.tool_result is not None
@@ -295,8 +313,8 @@ class TestToolExecuteSpan:
         self, processing_span_exporter: InMemorySpanExporter
     ) -> None:
         service = _make_processing_service()
-        service.tools_provider = MagicMock()
-        service.tools_provider.execute_tool = AsyncMock(
+        service.tool_executor.tools_provider = MagicMock()
+        service.tool_executor.tools_provider.execute_tool = AsyncMock(
             side_effect=ToolNotFoundError("no_such_tool")
         )
 
@@ -307,8 +325,14 @@ class TestToolExecuteSpan:
         )
         db_context = AsyncMock()
 
-        result = await service._execute_single_tool(
-            tool_call, "telegram", "conv1", "user1", "turn1", db_context, None
+        result = await service.tool_executor.execute(
+            tool_call,
+            interface_type="telegram",
+            conversation_id="conv1",
+            user_name="user1",
+            turn_id="turn1",
+            db_context=db_context,
+            chat_interface=None,
         )
 
         assert "Error" in (result.stream_event.tool_result or "")
@@ -325,8 +349,8 @@ class TestToolExecuteSpan:
         self, processing_span_exporter: InMemorySpanExporter
     ) -> None:
         service = _make_processing_service()
-        service.tools_provider = MagicMock()
-        service.tools_provider.execute_tool = AsyncMock(
+        service.tool_executor.tools_provider = MagicMock()
+        service.tool_executor.tools_provider.execute_tool = AsyncMock(
             side_effect=RuntimeError("boom")
         )
 
@@ -337,8 +361,14 @@ class TestToolExecuteSpan:
         )
         db_context = AsyncMock()
 
-        result = await service._execute_single_tool(
-            tool_call, "telegram", "conv1", "user1", "turn1", db_context, None
+        result = await service.tool_executor.execute(
+            tool_call,
+            interface_type="telegram",
+            conversation_id="conv1",
+            user_name="user1",
+            turn_id="turn1",
+            db_context=db_context,
+            chat_interface=None,
         )
 
         assert "Error" in (result.stream_event.tool_result or "")
@@ -357,8 +387,10 @@ class TestToolExecuteSpan:
         self, processing_span_exporter: InMemorySpanExporter
     ) -> None:
         service = _make_processing_service()
-        service.tools_provider = MagicMock()
-        service.tools_provider.execute_tool = AsyncMock(return_value="short answer")
+        service.tool_executor.tools_provider = MagicMock()
+        service.tool_executor.tools_provider.execute_tool = AsyncMock(
+            return_value="short answer"
+        )
 
         tool_call = ToolCallItem(
             id="call_jkl",
@@ -367,8 +399,14 @@ class TestToolExecuteSpan:
         )
         db_context = AsyncMock()
 
-        await service._execute_single_tool(
-            tool_call, "telegram", "conv1", "user1", "turn1", db_context, None
+        await service.tool_executor.execute(
+            tool_call,
+            interface_type="telegram",
+            conversation_id="conv1",
+            user_name="user1",
+            turn_id="turn1",
+            db_context=db_context,
+            chat_interface=None,
         )
 
         spans = processing_span_exporter.get_finished_spans()

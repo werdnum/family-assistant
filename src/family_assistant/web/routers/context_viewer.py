@@ -33,7 +33,7 @@ async def view_context_page(
     try:
         # Get aggregated context from the default processing service
         aggregated_context = (
-            await processing_service._aggregate_context_from_providers()
+            await processing_service.context_preparer.aggregate_context()
         )
 
         # Get individual context fragments for detailed display
@@ -115,7 +115,7 @@ async def _get_context_data(
             logger.info("Using default processing service")
 
         # Get aggregated context
-        aggregated_context = await target_service._aggregate_context_from_providers()
+        aggregated_context = await target_service.context_preparer.aggregate_context()
 
         # Get individual context fragments
         context_data = []

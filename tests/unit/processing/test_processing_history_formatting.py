@@ -97,7 +97,9 @@ async def test_format_simple_history(processing_service: ProcessingService) -> N
         UserMessage(content="Hello"),
         AssistantMessage(content="Hi there!"),
     ]
-    actual_output = await processing_service._format_history_for_llm(history_messages)
+    actual_output = await processing_service.context_preparer.format_history(
+        history_messages
+    )
     assert actual_output == expected_output
 
 
@@ -138,7 +140,9 @@ async def test_format_history_with_tool_call(
         ),
     ]
 
-    actual_output = await processing_service._format_history_for_llm(history_messages)
+    actual_output = await processing_service.context_preparer.format_history(
+        history_messages
+    )
     assert actual_output == expected_output
 
 
@@ -184,7 +188,9 @@ async def test_format_history_preserves_leading_tool_and_assistant_tool_calls(
         UserMessage(content="Follow-up user message"),
     ]
 
-    actual_output = await processing_service._format_history_for_llm(history_messages)
+    actual_output = await processing_service.context_preparer.format_history(
+        history_messages
+    )
     assert actual_output == expected_output
 
 
@@ -207,7 +213,9 @@ async def test_format_history_includes_errors_as_assistant(
         ),
         AssistantMessage(content="Okay"),
     ]
-    actual_output = await processing_service._format_history_for_llm(history_messages)
+    actual_output = await processing_service.context_preparer.format_history(
+        history_messages
+    )
     assert actual_output == expected_output
 
 
@@ -226,7 +234,9 @@ async def test_format_history_handles_empty_tool_calls(
         UserMessage(content="User message"),
         AssistantMessage(content="Assistant message", tool_calls=[]),
     ]
-    actual_output = await processing_service._format_history_for_llm(history_messages)
+    actual_output = await processing_service.context_preparer.format_history(
+        history_messages
+    )
     assert actual_output == expected_output
 
 
@@ -272,7 +282,9 @@ async def test_format_history_converts_attachment_urls(
     ]
 
     # Format the history
-    actual_output = await processing_service._format_history_for_llm(history_messages)
+    actual_output = await processing_service.context_preparer.format_history(
+        history_messages
+    )
 
     # Verify the message is preserved correctly as a typed message
     assert len(actual_output) == 1

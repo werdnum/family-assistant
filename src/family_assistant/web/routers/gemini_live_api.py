@@ -163,7 +163,7 @@ async def _get_formatted_system_prompt(
     try:
         # Get aggregated context from providers
         aggregated_context = (
-            await processing_service._aggregate_context_from_providers()
+            await processing_service.context_preparer.aggregate_context()
         )
 
         # Get system prompt template

@@ -80,7 +80,7 @@ async def test_large_tool_result_auto_attachment(
             function=ToolCallFunction(name="large_tool", arguments={}),
         )
 
-        result = await service._execute_single_tool(
+        result = await service.tool_executor.execute(
             tool_call,
             interface_type="test",
             conversation_id="conv_1",
@@ -113,7 +113,7 @@ async def test_large_tool_result_auto_attachment(
             function=ToolCallFunction(name="json_tool", arguments={}),
         )
 
-        result = await service._execute_single_tool(
+        result = await service.tool_executor.execute(
             tool_call,
             interface_type="test",
             conversation_id="conv_1",
@@ -145,7 +145,7 @@ async def test_large_tool_result_auto_attachment(
             ),
         )
 
-        result = await service._execute_single_tool(
+        result = await service.tool_executor.execute(
             tool_call,
             interface_type="test",
             conversation_id="conv_1",
@@ -405,7 +405,7 @@ async def test_large_tool_result_data_field_triggers_auto_attachment(
             function=ToolCallFunction(name="data_tool", arguments={}),
         )
 
-        result = await service._execute_single_tool(
+        result = await service.tool_executor.execute(
             tool_call,
             interface_type="test",
             conversation_id="conv_data_1",
