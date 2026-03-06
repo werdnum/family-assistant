@@ -42,6 +42,7 @@ from .messages import (
     AssistantMessage,
     ErrorMessage,
     LLMMessage,
+    MessageReasoningInfo,
     SystemMessage,
     TextContentPart,
     ToolMessage,
@@ -82,7 +83,22 @@ class ParsedSSEChunk(TypedDict, total=False):
     choices: list[ParsedChoice]
 
 
-StreamingMetadata = dict[str, object]
+class StreamEventMetadata(TypedDict, total=False):
+    """Metadata attached to LLMStreamEvent, shape varies by event type."""
+
+    reasoning_info: MessageReasoningInfo
+    provider_metadata: object
+    attachment_ids: list[str]
+    attachments: list[dict[str, str | int | None]]
+    message: AssistantMessage
+    error_id: str
+    last_event_id: str
+    error_type: str
+    provider: str
+    model: str
+
+
+StreamingMetadata = StreamEventMetadata
 
 
 class BaseLLMClient:
@@ -695,10 +711,7 @@ class LLMOutput:
 
     content: str | None = None
     tool_calls: list[ToolCallItem] | None = field(default=None)
-    # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
-    reasoning_info: dict[str, Any] | None = field(
-        default=None
-    )  # Store reasoning/usage data
+    reasoning_info: MessageReasoningInfo | None = field(default=None)
     # ast-grep-ignore: no-dict-any - Accepts both dicts (for serialization) and provider metadata objects (e.g., GeminiProviderMetadata)
     provider_metadata: Any | None = field(
         default=None
@@ -715,8 +728,7 @@ class LLMStreamEvent:
     tool_call_id: str | None = None  # For correlating tool results
     tool_result: str | None = None  # For tool execution results
     error: str | None = None  # For error messages
-    # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
-    metadata: dict[str, Any] | None = None  # Additional event metadata
+    metadata: StreamEventMetadata | None = None
 
 
 # ast-grep-ignore: no-dict-any - Return type intentionally untyped; deep-copies and strips fields for litellm
@@ -2622,7 +2634,12 @@ class PlaybackLLMClient:
                     type="tool_call", tool_call=tool_call, tool_call_id=tool_call.id
                 )
 
-        yield LLMStreamEvent(type="done", metadata=response.reasoning_info)
+        yield LLMStreamEvent(
+            type="done",
+            metadata={"reasoning_info": response.reasoning_info}
+            if response.reasoning_info
+            else None,
+        )
 
     # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
     async def _log_no_match_error(self, current_input_args: dict[str, Any]) -> None:
@@ -2708,4 +2725,6 @@ __all__ = [
     "ToolMessage",
     "UserMessage",
     "StructuredOutputError",
+    "StreamEventMetadata",
+    "MessageReasoningInfo",
 ]

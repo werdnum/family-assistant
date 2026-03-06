@@ -5,7 +5,7 @@ import re
 import traceback
 import uuid
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING, Any
 
 from opentelemetry import trace
 from opentelemetry.trace import StatusCode
@@ -164,8 +164,7 @@ class ProcessingService:
             | None
         ) = None,
         subconversation_id: str | None = None,
-        # ast-grep-ignore: no-dict-any - reasoning_info is an unstructured metadata dict from LLM providers
-    ) -> tuple[list[LLMMessage], dict[str, Any] | None, list[str] | None]:
+    ) -> tuple[list[LLMMessage], MessageReasoningInfo | None, list[str] | None]:
         """
         Non-streaming version of process_message that uses the streaming generator internally.
 
@@ -599,7 +598,7 @@ class ProcessingService:
             if generated_turn_messages:
                 for turn_msg in generated_turn_messages:
                     reasoning_info_for_msg = (
-                        cast("MessageReasoningInfo | None", final_reasoning_info)
+                        final_reasoning_info
                         if isinstance(turn_msg, AssistantMessage)
                         else None
                     )
@@ -975,10 +974,7 @@ class ProcessingService:
                         # Save messages as they're generated
                         if stream_msg is not None:
                             reasoning_info_for_stream = (
-                                cast(
-                                    "MessageReasoningInfo | None",
-                                    event.metadata.get("reasoning_info"),
-                                )
+                                event.metadata.get("reasoning_info")
                                 if isinstance(stream_msg, AssistantMessage)
                                 and event.metadata
                                 else None

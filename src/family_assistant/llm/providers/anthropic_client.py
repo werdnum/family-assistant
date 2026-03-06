@@ -37,6 +37,7 @@ from family_assistant.llm import (
     BaseLLMClient,
     LLMOutput,
     LLMStreamEvent,
+    StreamEventMetadata,
     ToolCallFunction,
     ToolCallItem,
 )
@@ -45,6 +46,7 @@ from family_assistant.llm.messages import (
     ContentPart,
     ImageUrlContentPart,
     LLMMessage,
+    MessageReasoningInfo,
     SystemMessage,
     TextContentPart,
     ToolMessage,
@@ -66,7 +68,6 @@ from ..base import (
     ServiceUnavailableError,
 )
 
-StreamingMetadata = dict[str, object]
 ImageMediaType = Literal["image/jpeg", "image/png", "image/gif", "image/webp"]
 _VALID_IMAGE_MEDIA_TYPES: set[str] = {
     "image/jpeg",
@@ -530,14 +531,14 @@ class AnthropicClient(BaseLLMClient):
                         )
 
                 # Extract usage information
-                reasoning_info = None
+                reasoning_info: MessageReasoningInfo | None = None
                 if response.usage:
-                    reasoning_info = {
-                        "prompt_tokens": response.usage.input_tokens,
-                        "completion_tokens": response.usage.output_tokens,
-                        "total_tokens": response.usage.input_tokens
+                    reasoning_info = MessageReasoningInfo(
+                        prompt_tokens=response.usage.input_tokens,
+                        completion_tokens=response.usage.output_tokens,
+                        total_tokens=response.usage.input_tokens
                         + response.usage.output_tokens,
-                    }
+                    )
                     span.set_attribute(
                         "gen_ai.usage.input_tokens", response.usage.input_tokens
                     )
@@ -838,14 +839,14 @@ class AnthropicClient(BaseLLMClient):
                         # Get final message for usage info
                         final_message = await stream.get_final_message()
 
-                metadata: StreamingMetadata = {}
+                metadata: StreamEventMetadata = {}
                 if final_message and final_message.usage:
-                    metadata["reasoning_info"] = {
-                        "prompt_tokens": final_message.usage.input_tokens,
-                        "completion_tokens": final_message.usage.output_tokens,
-                        "total_tokens": final_message.usage.input_tokens
+                    metadata["reasoning_info"] = MessageReasoningInfo(
+                        prompt_tokens=final_message.usage.input_tokens,
+                        completion_tokens=final_message.usage.output_tokens,
+                        total_tokens=final_message.usage.input_tokens
                         + final_message.usage.output_tokens,
-                    }
+                    )
                     span.set_attribute(
                         "gen_ai.usage.input_tokens", final_message.usage.input_tokens
                     )
@@ -980,14 +981,13 @@ class AnthropicClient(BaseLLMClient):
                     )
                 )
 
-        metadata: StreamingMetadata = {}
+        metadata: StreamEventMetadata = {}
         if response.usage:
-            metadata["reasoning_info"] = {
-                "prompt_tokens": response.usage.input_tokens,
-                "completion_tokens": response.usage.output_tokens,
-                "total_tokens": response.usage.input_tokens
-                + response.usage.output_tokens,
-            }
+            metadata["reasoning_info"] = MessageReasoningInfo(
+                prompt_tokens=response.usage.input_tokens,
+                completion_tokens=response.usage.output_tokens,
+                total_tokens=response.usage.input_tokens + response.usage.output_tokens,
+            )
 
         events.append(LLMStreamEvent(type="done", metadata=metadata))
         return events

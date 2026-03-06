@@ -17,6 +17,7 @@ from family_assistant.llm import (
     LLMMessage,
     LLMOutput,
     LLMStreamEvent,
+    StreamEventMetadata,
     StructuredOutputError,
     ToolCallFunction,
     ToolCallItem,
@@ -134,8 +135,7 @@ class MockLLMWithThoughtSignatures:
             for tool_call in response.tool_calls:
                 yield LLMStreamEvent(type="tool_call", tool_call=tool_call)
 
-        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
-        metadata: dict[str, Any] = {}
+        metadata: StreamEventMetadata = {}
         if response.provider_metadata:
             metadata["provider_metadata"] = response.provider_metadata
         yield LLMStreamEvent(type="done", metadata=metadata)
@@ -212,8 +212,7 @@ class MockLLMWithThoughtSignaturesNoToolCalls:
         if response.content:
             yield LLMStreamEvent(type="content", content=response.content)
 
-        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
-        metadata: dict[str, Any] = {}
+        metadata: StreamEventMetadata = {}
         if response.provider_metadata:
             metadata["provider_metadata"] = response.provider_metadata
         yield LLMStreamEvent(type="done", metadata=metadata)

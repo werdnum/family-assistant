@@ -20,6 +20,7 @@ from family_assistant.llm import (
     LLMMessage,
     LLMOutput,
     LLMStreamEvent,
+    StreamEventMetadata,
     StructuredOutputError,
 )
 from family_assistant.llm.messages import UserMessage, message_to_json_dict
@@ -242,7 +243,10 @@ class RuleBasedMockLLMClient(BaseLLMClient, LLMInterface):
                     yield LLMStreamEvent(type="tool_call", tool_call=tool_call)
 
             # Yield done event with metadata
-            yield LLMStreamEvent(type="done", metadata=response.reasoning_info)
+            done_metadata: StreamEventMetadata = {}
+            if response.reasoning_info:
+                done_metadata["reasoning_info"] = response.reasoning_info
+            yield LLMStreamEvent(type="done", metadata=done_metadata)
 
         return _stream()
 

@@ -17,8 +17,9 @@ import pytest
 from sqlalchemy.ext.asyncio import AsyncEngine
 
 from family_assistant.config_models import AppConfig
-from family_assistant.llm import LLMStreamEvent
+from family_assistant.llm import LLMStreamEvent, StreamEventMetadata
 from family_assistant.llm.messages import (
+    AssistantMessage,
     LLMMessage,
     MessageAttachmentMetadata,
     UserMessage,
@@ -46,10 +47,10 @@ class MockLLMClient:
         # Yield a simple content event
         yield LLMStreamEvent(type="content", content="I see the image.")
         # Yield done event with metadata
-        yield LLMStreamEvent(
-            type="done",
-            metadata={"message": {"role": "assistant", "content": "I see the image."}},
-        )
+        done_metadata: StreamEventMetadata = {
+            "message": AssistantMessage(content="I see the image.")
+        }
+        yield LLMStreamEvent(type="done", metadata=done_metadata)
 
     def create_attachment_injection(self, attachment: ToolAttachment) -> UserMessage:
         # Return a simple UserMessage for the injection part

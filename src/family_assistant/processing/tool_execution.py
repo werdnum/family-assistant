@@ -9,7 +9,7 @@ from typing import TYPE_CHECKING, Any
 from opentelemetry import trace
 from opentelemetry.trace import StatusCode
 
-from family_assistant.llm import LLMStreamEvent
+from family_assistant.llm import LLMStreamEvent, StreamEventMetadata
 from family_assistant.llm.messages import ToolMessage, tool_result_to_llm_message
 from family_assistant.tools import (
     ToolExecutionContext,
@@ -372,7 +372,7 @@ class ToolExecutor:
                         content=content_for_stream,
                         name=function_name,
                     )
-                    stream_metadata = None
+                    stream_metadata: StreamEventMetadata | None = None
 
                     # Special handling for attach_to_response tool: enrich with attachment metadata
                     if function_name == "attach_to_response":

@@ -30,6 +30,7 @@ from family_assistant.llm import (
     BaseLLMClient,
     LLMOutput,
     LLMStreamEvent,
+    StreamEventMetadata,
     ToolCallFunction,
     ToolCallItem,
     _format_messages_for_debug,
@@ -42,6 +43,7 @@ from family_assistant.llm.messages import (
     AssistantMessage,
     ImageUrlContentPart,
     LLMMessage,
+    MessageReasoningInfo,
     TextContentPart,
     ToolMessage,
     UserMessage,
@@ -1032,21 +1034,19 @@ class GoogleGenAIClient(BaseLLMClient):
                                 )
 
                 # Extract usage information if available
-                reasoning_info = None
+                reasoning_info: MessageReasoningInfo | None = None
                 if hasattr(response, "usage_metadata") and response.usage_metadata:
                     usage = response.usage_metadata
-                    reasoning_info = {
-                        "prompt_tokens": getattr(usage, "prompt_token_count", 0),
-                        "completion_tokens": getattr(
-                            usage, "candidates_token_count", 0
-                        ),
-                        "total_tokens": getattr(usage, "total_token_count", 0),
-                    }
+                    reasoning_info = MessageReasoningInfo(
+                        prompt_tokens=getattr(usage, "prompt_token_count", 0),
+                        completion_tokens=getattr(usage, "candidates_token_count", 0),
+                        total_tokens=getattr(usage, "total_token_count", 0),
+                    )
 
                 # Add thought summaries to reasoning_info for debugging/introspection
                 if thought_summaries:
                     if reasoning_info is None:
-                        reasoning_info = {}
+                        reasoning_info = MessageReasoningInfo()
                     reasoning_info["thought_summaries"] = thought_summaries
 
                 llm_output = LLMOutput(
@@ -1420,7 +1420,7 @@ class GoogleGenAIClient(BaseLLMClient):
                     raise typed_exc
 
             # 4. Finalize
-            done_metadata = {}
+            done_metadata: StreamEventMetadata = {}
             if interaction_id:
                 done_metadata["provider_metadata"] = GeminiProviderMetadata(
                     interaction_id=interaction_id
@@ -1429,9 +1429,9 @@ class GoogleGenAIClient(BaseLLMClient):
                 done_metadata["last_event_id"] = last_event_id
 
             if thought_summaries:
-                done_metadata["reasoning_info"] = {
-                    "thought_summaries": [{"summary": t} for t in thought_summaries]
-                }
+                done_metadata["reasoning_info"] = MessageReasoningInfo(
+                    thought_summaries=[{"summary": t} for t in thought_summaries]
+                )
 
             # Record successful request to diagnostics buffer
             duration_ms = (time.monotonic() - start_time) * 1000
@@ -1504,7 +1504,7 @@ class GoogleGenAIClient(BaseLLMClient):
             )
 
             # Yield done event to preserve interaction_id for session resumption
-            error_done_metadata = {}
+            error_done_metadata: StreamEventMetadata = {}
             if interaction_id:
                 error_done_metadata["provider_metadata"] = GeminiProviderMetadata(
                     interaction_id=interaction_id
@@ -1628,7 +1628,7 @@ class GoogleGenAIClient(BaseLLMClient):
 
             # Track tool calls and thought summaries being accumulated
             accumulated_tool_calls = []
-            thought_summaries = []
+            thought_summaries: list[dict[str, str | int]] = []
             part_index = 0
 
             # Process stream chunks
@@ -1755,13 +1755,13 @@ class GoogleGenAIClient(BaseLLMClient):
 
             # Signal completion
             # Note: Usage metadata might not be available in streaming mode
-            done_metadata = {}
+            done_metadata: StreamEventMetadata = {}
 
             # Add thought summaries to reasoning_info for debugging/introspection
             if thought_summaries:
-                if "reasoning_info" not in done_metadata:
-                    done_metadata["reasoning_info"] = {}
-                done_metadata["reasoning_info"]["thought_summaries"] = thought_summaries
+                done_metadata["reasoning_info"] = MessageReasoningInfo(
+                    thought_summaries=thought_summaries
+                )
 
             # Record successful streaming request to diagnostics buffer
             duration_ms = (time.monotonic() - start_time) * 1000

@@ -19,6 +19,7 @@ from family_assistant.llm.messages import (
     AssistantMessage,
     ContentPartDict,
     MessageAttachmentMetadata,
+    MessageReasoningInfo,
     image_url_content,
     text_content,
 )
@@ -1020,9 +1021,7 @@ async def api_chat_send_message_stream(
         # Start the stream processing task
         stream_task = asyncio.create_task(process_stream())
 
-        # Track the last reasoning_info across done events for the final end SSE
-        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
-        last_reasoning_info: dict[str, Any] | None = None
+        last_reasoning_info: MessageReasoningInfo | None = None
 
         try:
             # Process events from queue and yield SSE events

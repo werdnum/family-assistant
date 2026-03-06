@@ -7,7 +7,7 @@ if TYPE_CHECKING:
     from zoneinfo import ZoneInfo
 
     from family_assistant.llm import LLMStreamEvent
-    from family_assistant.llm.messages import ToolMessage
+    from family_assistant.llm.messages import MessageReasoningInfo, ToolMessage
     from family_assistant.skills.registry import NoteRegistry
 
 
@@ -17,8 +17,7 @@ class ChatInteractionResult:
 
     text_reply: str | None = None
     assistant_message_internal_id: int | None = None
-    # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
-    reasoning_info: dict[str, Any] | None = None
+    reasoning_info: MessageReasoningInfo | None = None
     error_traceback: str | None = None
     attachment_ids: list[str] | None = None
 

@@ -23,6 +23,7 @@ from family_assistant.llm import (
     ToolCallFunction,
     ToolCallItem,
 )
+from family_assistant.llm.messages import MessageReasoningInfo
 from family_assistant.processing import ProcessingService, ProcessingServiceConfig
 from family_assistant.storage import init_db
 from family_assistant.storage.context import DatabaseContext, get_db_context
@@ -268,7 +269,9 @@ async def test_api_chat_send_message_stream_minimal(
         LLMOutput(
             content=llm_response,
             tool_calls=None,
-            reasoning_info={"model": "test-model", "usage": {"total_tokens": 100}},
+            reasoning_info=MessageReasoningInfo(
+                prompt_tokens=50, completion_tokens=50, total_tokens=100
+            ),
         ),
     ))
 
@@ -370,7 +373,9 @@ async def test_api_chat_send_message_stream_with_tools(
                     ),
                 )
             ],
-            reasoning_info={"model": "test-model", "usage": {"total_tokens": 50}},
+            reasoning_info=MessageReasoningInfo(
+                prompt_tokens=25, completion_tokens=25, total_tokens=50
+            ),
         ),
     ))
 
@@ -386,7 +391,9 @@ async def test_api_chat_send_message_stream_with_tools(
         LLMOutput(
             content=llm_final_reply,
             tool_calls=None,
-            reasoning_info={"model": "test-model", "usage": {"total_tokens": 75}},
+            reasoning_info=MessageReasoningInfo(
+                prompt_tokens=35, completion_tokens=40, total_tokens=75
+            ),
         ),
     ))
 
@@ -484,7 +491,7 @@ async def test_streaming_continues_after_tool_error(
                     ),
                 )
             ],
-            reasoning_info={"model": "test-model"},
+            reasoning_info=MessageReasoningInfo(total_tokens=0),
         ),
     ))
 
@@ -500,7 +507,7 @@ async def test_streaming_continues_after_tool_error(
         LLMOutput(
             content=llm_final_reply,
             tool_calls=None,
-            reasoning_info={"model": "test-model"},
+            reasoning_info=MessageReasoningInfo(total_tokens=0),
         ),
     ))
 
@@ -591,7 +598,7 @@ async def test_streaming_continues_after_tool_execution_exception(
                     ),
                 )
             ],
-            reasoning_info={"model": "test-model"},
+            reasoning_info=MessageReasoningInfo(total_tokens=0),
         ),
     ))
 
@@ -607,7 +614,7 @@ async def test_streaming_continues_after_tool_execution_exception(
         LLMOutput(
             content=llm_final_reply,
             tool_calls=None,
-            reasoning_info={"model": "test-model"},
+            reasoning_info=MessageReasoningInfo(total_tokens=0),
         ),
     ))
 
@@ -695,7 +702,9 @@ async def test_streaming_no_database_connection_errors(
         LLMOutput(
             content=llm_response,
             tool_calls=None,
-            reasoning_info={"model": "test-model", "usage": {"total_tokens": 50}},
+            reasoning_info=MessageReasoningInfo(
+                prompt_tokens=25, completion_tokens=25, total_tokens=50
+            ),
         ),
     ))
 
