@@ -815,9 +815,22 @@ class ProcessingService:
                     if isinstance(pm, GeminiProviderMetadata):
                         serialized_reasoning_info["provider_metadata"] = pm.to_dict()
 
+            effective_tool_calls = tool_calls_from_stream or None
+
+            # If the LLM returned nothing (e.g. after exhausted empty-response
+            # retries), skip creating an AssistantMessage and yield done with
+            # no message so callers see an empty turn.
+            has_content = isinstance(final_content, str) and final_content.strip()
+            if not has_content and not effective_tool_calls:
+                yield (
+                    LLMStreamEvent(type="done", metadata={}),
+                    None,
+                )
+                return
+
             assistant_message_for_turn = AssistantMessage(
                 content=final_content,
-                tool_calls=tool_calls_from_stream or None,
+                tool_calls=effective_tool_calls,
                 provider_metadata=serialized_provider_metadata,
             )
 
@@ -900,7 +913,7 @@ class ProcessingService:
             llm_context_assistant_message = AssistantMessage(
                 role="assistant",
                 content=final_content,
-                tool_calls=tool_calls_from_stream,
+                tool_calls=effective_tool_calls,
             )
             messages.append(llm_context_assistant_message)
 
