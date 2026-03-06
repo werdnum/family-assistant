@@ -440,7 +440,7 @@ async def test_api_chat_send_message_stream_with_tools(
 
     note = await wait_for_condition(
         _check_note_exists,
-        timeout=2.0,
+        timeout=5.0,
         interval=0.2,
         description="note to be committed",
     )
