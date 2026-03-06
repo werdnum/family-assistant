@@ -116,9 +116,9 @@ async def add_message_to_history(
     # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
     attachments: list[dict[str, Any]] | None = None,  # Attachment metadata
     # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
-) -> dict[str, Any] | None:  # Changed to return Optional[Dict]
+) -> int | None:
     """Adds a message to the history table, including optional fields."""
-    # Note: The return type was previously Optional[int], changed to Optional[Dict] to return ID in a dict
+    # Returns the internal_id of the inserted message, or None on error
 
     # Sanitize text fields for PostgreSQL (removes null bytes, etc.)
     content = sanitize_text_for_postgres(content)
@@ -171,9 +171,7 @@ async def add_message_to_history(
         # Use execute_with_retry as commit is handled by context manager
         result: Result = await db_context.execute_with_retry(stmt)
         internal_id = result.scalar_one_or_none()
-        # Log after successful insertion before returning
-        # Ideally return the full row, but returning just the ID for now
-        return {"internal_id": internal_id} if internal_id else None
+        return internal_id
     except SQLAlchemyError as e:
         logger.error(
             f"Database error in add_message_to_history for conv {interface_type}:{conversation_id}: {e}",

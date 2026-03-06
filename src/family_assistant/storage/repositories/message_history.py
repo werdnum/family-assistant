@@ -17,6 +17,8 @@ from family_assistant.llm.messages import (
     ErrorMessage,
     ImageUrlContentPart,
     LLMMessage,
+    MessageAttachmentMetadata,
+    MessageReasoningInfo,
     MessageWithMetadata,
     SystemMessage,
     TextContentPart,
@@ -35,91 +37,130 @@ logger = logging.getLogger(__name__)
 class MessageHistoryRepository(BaseRepository):
     """Repository for managing message history in the database."""
 
-    # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
-    async def add(self, **kwargs: Any) -> dict[str, Any] | None:  # noqa: ANN401 # Forwards arbitrary message args
-        """Alias for add_message for backward compatibility."""
-        return await self.add_message(**kwargs)
-
     async def add_message(
         self,
-        # --- New/Renamed Parameters ---
+        message: LLMMessage,
+        *,
         interface_type: str,
         conversation_id: str,
-        interface_message_id: str | None,  # Can be None for agent-generated messages
-        turn_id: str | None,
-        thread_root_id: int | None,  # Added thread_root_id
         timestamp: datetime,
-        role: str,  # 'user', 'assistant', 'system', 'tool', 'error'
-        content: str | None,  # Content can be optional now
-        # --- Renamed/Added Fields ---
-        tool_calls: list[ToolCallItem]
-        | None = None,  # Renamed from tool_calls_info - ONLY accepts typed objects
-        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
-        reasoning_info: dict[str, Any] | None = None,  # Added
-        # Note: `tool_call_id` is now a separate parameter below for 'tool' role messages
-        error_traceback: str | None = None,  # Added
-        tool_call_id: (
-            str | None
-        ) = None,  # Added: ID linking tool response to assistant request
-        processing_profile_id: str | None = None,  # Added: Profile ID
-        subconversation_id: str
-        | None = None,  # Added: Subconversation ID for delegation
-        user_id: str | None = None,  # Added: User identifier
-        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
-        attachments: list[dict[str, Any]] | None = None,  # Attachment metadata
-        tool_name: str | None = None,  # Added: Function/tool name for tool messages
-        name: str | None = None,  # OpenAI API compatibility (mapped to tool_name)
-        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
-        provider_metadata: dict[str, Any]
-        | None = None,  # Added: Provider-specific metadata for round-trip
-        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
-    ) -> dict[str, Any] | None:  # Changed to return Optional[Dict]
+        interface_message_id: str | None = None,
+        turn_id: str | None = None,
+        thread_root_id: int | None = None,
+        processing_profile_id: str | None = None,
+        subconversation_id: str | None = None,
+        user_id: str | None = None,
+        reasoning_info: MessageReasoningInfo | None = None,
+        attachments: list[MessageAttachmentMetadata] | None = None,
+    ) -> int | None:
         """
-        Stores a message in the history table.
+        Stores a typed LLMMessage in the history table.
 
-        Repository is responsible for serialization to JSON. Callers MUST pass typed
-        ToolCallItem objects, not dicts. The repository will serialize them using
-        dataclass.asdict() with special handling for GeminiProviderMetadata.
+        The message content fields (role, content, tool_calls, etc.) are extracted from the
+        LLMMessage object. Metadata fields (interface_type, conversation_id, etc.) are passed
+        as keyword arguments.
 
         Args:
+            message: The typed LLMMessage to store.
             interface_type: Type of interface (e.g., 'telegram', 'web')
             conversation_id: Unique conversation identifier
+            timestamp: Message timestamp (must be timezone-aware)
             interface_message_id: Interface-specific message ID
             turn_id: UUID linking messages within a turn
             thread_root_id: ID of the first message in the thread
-            timestamp: Message timestamp
-            role: Message role
-            content: Message content
-            tool_calls: Typed ToolCallItem objects (NOT dicts - will be serialized by repository)
-            reasoning_info: LLM reasoning/usage info
-            error_traceback: Error traceback if applicable
-            tool_call_id: ID linking tool response to request
             processing_profile_id: Processing profile used
-            attachments: Attachment metadata list
-            tool_name: Function/tool name for tool messages (required for OpenAI API compatibility)
-            name: Function/tool name (alias for tool_name, for OpenAI API compatibility).
-                  If both 'name' and 'tool_name' are provided, 'tool_name' takes precedence.
-                  If only 'name' is provided, it will be mapped to 'tool_name' for storage.
-            provider_metadata: Provider-specific metadata for round-trip (e.g., thought signatures)
+            subconversation_id: Subconversation ID for delegation
+            user_id: User identifier
+            reasoning_info: LLM reasoning/usage info
 
         Returns:
             The stored message data including generated internal_id, or None on error
         """
-        # Ensure timestamp is timezone-aware
         if timestamp.tzinfo is None:
             raise ValueError("Timestamp must be timezone-aware")
 
-        # Handle mapping from 'name' to 'tool_name' for OpenAI API compatibility
-        if name is not None and tool_name is None:
-            tool_name = name
-        elif name is not None and tool_name is not None and name != tool_name:
-            # Log warning if both provided but different
-            logger.warning(
-                f"Both 'name' and 'tool_name' provided with different values: name='{name}', tool_name='{tool_name}'. Using tool_name."
-            )
+        # Extract message content fields from the typed LLMMessage
+        role = message.role
+        content: str | None = None
+        tool_calls: list[ToolCallItem] | None = None
+        tool_call_id: str | None = None
+        tool_name: str | None = None
+        error_traceback: str | None = None
+        provider_metadata: Any = None
 
+        raw_content = getattr(message, "content", None)
+        if raw_content is None or isinstance(raw_content, str):
+            content = raw_content
+        elif isinstance(raw_content, list):
+            content = json.dumps([
+                part.model_dump(mode="json") if hasattr(part, "model_dump") else part
+                for part in raw_content
+            ])
+        else:
+            content = json.dumps(raw_content)
+
+        if isinstance(message, AssistantMessage):
+            tool_calls = message.tool_calls
+            provider_metadata = message.provider_metadata
+        elif isinstance(message, ToolMessage):
+            tool_call_id = message.tool_call_id
+            tool_name = message.name
+            error_traceback = message.error_traceback
+            provider_metadata = message.provider_metadata
+            if attachments is None:
+                attachments = message.attachments  # type: ignore[assignment]  # ToolAttachmentMetadata (TypedDict) is a dict at runtime
+        elif isinstance(message, ErrorMessage):
+            error_traceback = message.error_traceback
+
+        return await self._insert_message(
+            interface_type=interface_type,
+            conversation_id=conversation_id,
+            interface_message_id=interface_message_id,
+            turn_id=turn_id,
+            thread_root_id=thread_root_id,
+            timestamp=timestamp,
+            role=role,
+            content=content,
+            tool_calls=tool_calls,
+            reasoning_info=reasoning_info,
+            error_traceback=error_traceback,
+            tool_call_id=tool_call_id,
+            processing_profile_id=processing_profile_id,
+            subconversation_id=subconversation_id,
+            user_id=user_id,
+            attachments=attachments,
+            tool_name=tool_name,
+            provider_metadata=provider_metadata,
+        )
+
+    async def _insert_message(
+        self,
+        interface_type: str,
+        conversation_id: str,
+        interface_message_id: str | None,
+        turn_id: str | None,
+        thread_root_id: int | None,
+        timestamp: datetime,
+        role: str,
+        content: str | None,
+        tool_calls: list[ToolCallItem] | None = None,
+        reasoning_info: MessageReasoningInfo | None = None,
+        error_traceback: str | None = None,
+        tool_call_id: str | None = None,
+        processing_profile_id: str | None = None,
+        subconversation_id: str | None = None,
+        user_id: str | None = None,
+        attachments: list[MessageAttachmentMetadata] | None = None,
+        tool_name: str | None = None,
+        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
+        provider_metadata: dict[str, Any] | GeminiProviderMetadata | None = None,
+    ) -> int | None:
+        """
+        Internal method that serializes and inserts a message into the database.
+
+        Returns the generated internal_id, or None on error.
+        """
         # Serialize tool_calls for JSON storage
-        # Repository is responsible for serialization - callers MUST pass typed ToolCallItem objects
         serialized_tool_calls = None
         if tool_calls:
             serialized_tool_calls = []
@@ -128,16 +169,11 @@ class MessageHistoryRepository(BaseRepository):
                     raise TypeError(
                         f"tool_calls must contain ToolCallItem objects; got {type(tc)}"
                     )
-                # tc is a ToolCallItem object (enforced by type signature)
-                # Check for GeminiProviderMetadata which needs special serialization for thought signatures
                 if isinstance(tc.provider_metadata, GeminiProviderMetadata):
-                    # Serialize the ToolCallItem dataclass to dict
                     tc_dict = asdict(tc)
-                    # Override provider_metadata with proper serialization (bytes -> base64)
                     tc_dict["provider_metadata"] = tc.provider_metadata.to_dict()
                     serialized_tool_calls.append(tc_dict)
                 else:
-                    # No special metadata, use standard dataclass serialization
                     tc_dict = asdict(tc)
                     serialized_tool_calls.append(tc_dict)
 
@@ -146,7 +182,6 @@ class MessageHistoryRepository(BaseRepository):
             if isinstance(provider_metadata, GeminiProviderMetadata):
                 serialized_provider_metadata = provider_metadata.to_dict()
             else:
-                # For backwards compatibility or other providers
                 serialized_provider_metadata = provider_metadata
 
         values = {
@@ -195,9 +230,6 @@ class MessageHistoryRepository(BaseRepository):
         }
 
         try:
-            # Use RETURNING to get the generated internal_id
-            # Note: Both PostgreSQL and SQLite 3.35+ support RETURNING clause
-            # Using RETURNING instead of lastrowid is more reliable with async connections
             stmt = (
                 insert(message_history_table)
                 .values(**values)
@@ -224,8 +256,7 @@ class MessageHistoryRepository(BaseRepository):
 
                     self._db.on_commit(notify_listeners)
 
-            # Return the complete message data
-            return {**values, "internal_id": internal_id}
+            return internal_id
 
         except SQLAlchemyError as e:
             self._logger.error(f"Failed to add message to history: {e}", exc_info=True)

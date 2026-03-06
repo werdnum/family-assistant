@@ -13,7 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncEngine
 
 from family_assistant.assistant import Assistant
 from family_assistant.config_models import AppConfig
-from family_assistant.llm.messages import UserMessage
+from family_assistant.llm.messages import AssistantMessage, UserMessage
 from family_assistant.llm.providers.google_genai_client import GoogleGenAIClient
 from family_assistant.storage.context import get_db_context
 from family_assistant.tools.computer_use import (
@@ -484,8 +484,8 @@ async def test_computer_use_browser_navigation_e2e(db_engine: AsyncEngine) -> No
             # Find the final assistant response
             final_response = None
             for msg in reversed(turn_messages):
-                if msg.get("role") == "assistant" and msg.get("content"):
-                    final_response = msg["content"]
+                if isinstance(msg, AssistantMessage) and msg.content:
+                    final_response = msg.content
                     break
 
             logger.info(f"Final response: {final_response}")
@@ -627,8 +627,8 @@ async def test_grab_screenshot_of_website(db_engine: AsyncEngine) -> None:
             # Find the final assistant response
             final_response = None
             for msg in reversed(turn_messages):
-                if msg.get("role") == "assistant" and msg.get("content"):
-                    final_response = msg["content"]
+                if isinstance(msg, AssistantMessage) and msg.content:
+                    final_response = msg.content
                     break
 
             logger.info(f"Final response: {final_response}")

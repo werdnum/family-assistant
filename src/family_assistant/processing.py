@@ -15,6 +15,7 @@ from datetime import (  # Added timezone
 from typing import (
     TYPE_CHECKING,
     Any,
+    cast,
 )
 from zoneinfo import ZoneInfo
 
@@ -58,11 +59,12 @@ from .llm.messages import (
     ErrorMessage,
     ImageUrlContentPart,
     LLMMessage,
+    MessageAttachmentMetadata,
+    MessageReasoningInfo,
     SystemMessage,
     TextContentPart,
     ToolMessage,
     UserMessage,
-    message_to_json_dict,
     tool_result_to_llm_message,
 )
 
@@ -101,8 +103,6 @@ class ToolExecutionResult:
 
     stream_event: "LLMStreamEvent"
     llm_message: "ToolMessage"
-    # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
-    history_message: dict[str, Any]
     auto_attachment_ids: list[str] | None = None  # list of attachment IDs
 
 
@@ -509,40 +509,23 @@ class ProcessingService:
             | None
         ) = None,
         subconversation_id: str | None = None,
-        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
-        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
-    ) -> tuple[list[dict[str, Any]], dict[str, Any] | None, list[str] | None]:
+        # ast-grep-ignore: no-dict-any - reasoning_info is an unstructured metadata dict from LLM providers
+    ) -> tuple[list[LLMMessage], dict[str, Any] | None, list[str] | None]:
         """
         Non-streaming version of process_message that uses the streaming generator internally.
 
-        This method maintains backward compatibility by collecting all streaming events
-        and returning the complete list of messages, final reasoning info, and attachment IDs.
-
-        Args:
-            db_context: The database context.
-            messages: A list of message dictionaries for the LLM.
-            interface_type: Identifier for the interaction interface (e.g., 'telegram').
-            conversation_id: Identifier for the conversation (e.g., chat ID string).
-            user_name: The name of the user for context.
-            turn_id: The ID for the current processing turn.
-            chat_interface: The interface for sending messages back to the chat.
-            request_confirmation_callback: Function to request user confirmation for tools.
-
         Returns:
             A tuple containing:
-            - A list of all message dictionaries generated during this turn
-              (assistant requests, tool responses, final answer).
+            - A list of all typed LLMMessage objects generated during this turn.
             - A dictionary containing reasoning/usage info from the final LLM call (or None).
             - A list of attachment IDs to send with the response (or None).
         """
-        # Use the streaming generator and collect all messages
-        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
-        turn_messages: list[dict[str, Any]] = []
+        turn_messages: list[LLMMessage] = []
         # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
         final_reasoning_info: dict[str, Any] | None = None
         final_attachment_ids: list[str] | None = None
 
-        async for event, message_dict in self.process_message_stream(
+        async for event, message in self.process_message_stream(
             db_context=db_context,
             messages=messages,
             interface_type=interface_type,
@@ -555,17 +538,13 @@ class ProcessingService:
             request_confirmation_callback=request_confirmation_callback,
             subconversation_id=subconversation_id,
         ):
-            # Collect messages that should be saved
-            if message_dict and message_dict.get("role"):
-                turn_messages.append(message_dict)
+            if message is not None:
+                turn_messages.append(message)
 
             # Extract reasoning info and attachment IDs from done events
-            if event.type == "done" and event.metadata and "message" in event.metadata:
-                assistant_msg = event.metadata["message"]
-                if assistant_msg.get("reasoning_info"):
-                    final_reasoning_info = assistant_msg["reasoning_info"]
-
-                # Extract attachment IDs if present
+            if event.type == "done" and event.metadata:
+                if "reasoning_info" in event.metadata:
+                    final_reasoning_info = event.metadata["reasoning_info"]
                 if "attachment_ids" in event.metadata:
                     final_attachment_ids = event.metadata["attachment_ids"]
 
@@ -601,14 +580,13 @@ class ProcessingService:
             | None
         ) = None,
         subconversation_id: str | None = None,
-        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
-    ) -> AsyncIterator[tuple[LLMStreamEvent, dict[str, Any]]]:
+    ) -> AsyncIterator[tuple[LLMStreamEvent, LLMMessage | None]]:
         """
         Streaming version of process_message that yields LLMStreamEvent objects as they are generated.
 
-        Yields tuples of (event, message_dict) where:
+        Yields tuples of (event, message) where:
         - event: The LLMStreamEvent object
-        - message_dict: The message dictionary to be saved to history (for assistant/tool messages)
+        - message: The typed LLMMessage to be saved to history (for assistant/tool messages)
 
         This generator handles the same logic as process_message but yields events incrementally.
         """
@@ -734,12 +712,12 @@ class ProcessingService:
                         # Yield content events as they come
                         if event.type == "content" and event.content:
                             accumulated_content.append(event.content)
-                            yield (event, {})  # No message to save yet
+                            yield (event, None)  # No message to save yet
 
                         # Collect tool calls
                         elif event.type == "tool_call" and event.tool_call:
                             tool_calls_from_stream.append(event.tool_call)
-                            yield (event, {})  # No message to save yet
+                            yield (event, None)  # No message to save yet
 
                         # Handle done event
                         elif event.type == "done":
@@ -837,17 +815,24 @@ class ProcessingService:
                     if isinstance(pm, GeminiProviderMetadata):
                         serialized_reasoning_info["provider_metadata"] = pm.to_dict()
 
-            # Create assistant message with serialized provider_metadata
-            # tool_calls remain as typed ToolCallItem objects - repository handles those
-            assistant_message_for_turn = {
-                "role": "assistant",
-                "content": final_content,
-                "tool_calls": tool_calls_from_stream,  # Pass typed ToolCallItem objects directly
-                "reasoning_info": serialized_reasoning_info,
-                "provider_metadata": serialized_provider_metadata,
-                "tool_call_id": None,
-                "error_traceback": None,
-            }
+            effective_tool_calls = tool_calls_from_stream or None
+
+            # If the LLM returned nothing (e.g. after exhausted empty-response
+            # retries), skip creating an AssistantMessage and yield done with
+            # no message so callers see an empty turn.
+            has_content = isinstance(final_content, str) and final_content.strip()
+            if not has_content and not effective_tool_calls:
+                yield (
+                    LLMStreamEvent(type="done", metadata={}),
+                    None,
+                )
+                return
+
+            assistant_message_for_turn = AssistantMessage(
+                content=final_content,
+                tool_calls=effective_tool_calls,
+                provider_metadata=serialized_provider_metadata,
+            )
 
             # Yield a synthetic "done" event with the complete assistant message
             # Include attachment IDs if any were captured from attach_to_response calls
@@ -886,6 +871,8 @@ class ProcessingService:
 
             # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
             done_metadata: dict[str, Any] = {"message": assistant_message_for_turn}
+            if serialized_reasoning_info:
+                done_metadata["reasoning_info"] = serialized_reasoning_info
             if pending_attachment_ids:
                 # Fetch full metadata for each attachment for web UI display
                 attachment_details = []
@@ -926,7 +913,7 @@ class ProcessingService:
             llm_context_assistant_message = AssistantMessage(
                 role="assistant",
                 content=final_content,
-                tool_calls=tool_calls_from_stream,
+                tool_calls=effective_tool_calls,
             )
             messages.append(llm_context_assistant_message)
 
@@ -975,7 +962,6 @@ class ProcessingService:
                     result = await completed_task
                     event = result.stream_event
                     llm_message = result.llm_message
-                    history_message = result.history_message
                     auto_attachment_ids = result.auto_attachment_ids or []
 
                     # Auto-queue tool result attachments
@@ -987,8 +973,7 @@ class ProcessingService:
                             )
 
                     # Check if this is an attach_to_response tool call
-                    tool_name = history_message.get("tool_name")
-                    if tool_name == "attach_to_response" and event.tool_result:
+                    if llm_message.name == "attach_to_response" and event.tool_result:
                         try:
                             result_data = json.loads(event.tool_result)
                             if (
@@ -1008,8 +993,8 @@ class ProcessingService:
                                 f"Failed to parse attach_to_response result: {e}"
                             )
 
-                    # Yield tool result event (history_message for database storage)
-                    yield (event, history_message)
+                    # Yield tool result event (llm_message for database storage)
+                    yield (event, llm_message)
 
                     # Add to messages for LLM (llm_message with _attachment)
                     tool_response_messages_for_llm.append(llm_message)
@@ -1027,19 +1012,14 @@ class ProcessingService:
                         tool_result=f"Unexpected error: {str(e)}",
                         error=traceback.format_exc(),
                     )
-                    error_message = {
-                        "role": "tool",
-                        "tool_call_id": f"error_{uuid.uuid4()}",
-                        "content": f"Unexpected error: {str(e)}",
-                        "error_traceback": traceback.format_exc(),
-                    }
-                    yield (error_event, error_message)
-                    tool_response_messages_for_llm.append({
-                        "tool_call_id": f"error_{uuid.uuid4()}",
-                        "role": "tool",
-                        "name": "unknown",
-                        "content": f"Unexpected error: {str(e)}",
-                    })
+                    error_tool_message = ToolMessage(
+                        tool_call_id=f"error_{uuid.uuid4()}",
+                        content=f"Unexpected error: {str(e)}",
+                        error_traceback=traceback.format_exc(),
+                        name="unknown",
+                    )
+                    yield (error_event, error_tool_message)
+                    tool_response_messages_for_llm.append(error_tool_message)
 
             # Add tool responses to messages for next iteration
             messages.extend(tool_response_messages_for_llm)
@@ -1123,10 +1103,6 @@ class ProcessingService:
                     name=func_name,
                 )
 
-                # Create history message from ToolMessage
-                history_message = message_to_json_dict(llm_message)
-                history_message["tool_name"] = func_name
-
                 return ToolExecutionResult(
                     stream_event=LLMStreamEvent(
                         type="tool_result",
@@ -1135,8 +1111,7 @@ class ProcessingService:
                         error=error_traceback,
                     ),
                     llm_message=llm_message,
-                    history_message=history_message,
-                    auto_attachment_ids=None,  # No attachments for error cases
+                    auto_attachment_ids=None,
                 )
 
             # Parse arguments
@@ -1160,10 +1135,6 @@ class ProcessingService:
                     name=function_name,
                 )
 
-                # Create history message from ToolMessage
-                history_message = message_to_json_dict(llm_message)
-                history_message["tool_name"] = function_name
-
                 return ToolExecutionResult(
                     stream_event=LLMStreamEvent(
                         type="tool_result",
@@ -1172,8 +1143,7 @@ class ProcessingService:
                         error=error_traceback,
                     ),
                     llm_message=llm_message,
-                    history_message=history_message,
-                    auto_attachment_ids=None,  # No attachments for error cases
+                    auto_attachment_ids=None,
                 )
 
             # Execute tool
@@ -1339,13 +1309,10 @@ class ProcessingService:
                             update={"content": modified_content}
                         )
 
-                    # Create history_message from the modified llm_message to preserve attachment IDs
-                    history_message = message_to_json_dict(llm_message)
-                    history_message["tool_name"] = (
-                        function_name  # Store tool name for database
-                    )
                     if attachments_data:
-                        history_message["attachments"] = attachments_data
+                        llm_message = llm_message.model_copy(
+                            update={"attachments": attachments_data}
+                        )
                 else:
                     # Backward compatible string handling
                     content_for_stream = str(result)
@@ -1369,9 +1336,6 @@ class ProcessingService:
                         content=content_for_stream,
                         name=function_name,
                     )
-                    # Create history message for string results
-                    history_message = message_to_json_dict(llm_message)
-                    history_message["tool_name"] = function_name
                     stream_metadata = None
 
                     # Special handling for attach_to_response tool: enrich with attachment metadata
@@ -1436,7 +1400,6 @@ class ProcessingService:
                         metadata=stream_metadata,
                     ),
                     llm_message=llm_message,
-                    history_message=history_message,
                     auto_attachment_ids=auto_attachment_ids
                     if auto_attachment_ids
                     else None,
@@ -1457,10 +1420,6 @@ class ProcessingService:
                     name=function_name,
                 )
 
-                # Create history message from ToolMessage
-                history_message = message_to_json_dict(llm_message)
-                history_message["tool_name"] = function_name
-
                 return ToolExecutionResult(
                     stream_event=LLMStreamEvent(
                         type="tool_result",
@@ -1469,8 +1428,7 @@ class ProcessingService:
                         error=error_traceback,
                     ),
                     llm_message=llm_message,
-                    history_message=history_message,
-                    auto_attachment_ids=None,  # No attachments for error cases
+                    auto_attachment_ids=None,
                 )
 
             except Exception as e:
@@ -1491,10 +1449,6 @@ class ProcessingService:
                     name=function_name,
                 )
 
-                # Create history message from ToolMessage
-                history_message = message_to_json_dict(llm_message)
-                history_message["tool_name"] = function_name
-
             return ToolExecutionResult(
                 stream_event=LLMStreamEvent(
                     type="tool_result",
@@ -1503,8 +1457,7 @@ class ProcessingService:
                     error=error_traceback,
                 ),
                 llm_message=llm_message,
-                history_message=history_message,
-                auto_attachment_ids=None,  # No attachments for error cases
+                auto_attachment_ids=None,
             )
 
     async def _process_attachment_content_parts(
@@ -2050,8 +2003,7 @@ Call attach_to_response with your selected attachment IDs."""
             ]
             | None
         ) = None,
-        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
-        trigger_attachments: list[dict[str, Any]] | None = None,
+        trigger_attachments: list[MessageAttachmentMetadata] | None = None,
         subconversation_id: str | None = None,
     ) -> ChatInteractionResult:
         """
@@ -2142,28 +2094,23 @@ Call attach_to_response with your selected attachment IDs."""
             if actual_interface_message_id is None:
                 actual_interface_message_id = f"temp_{turn_id}"
 
-            saved_user_msg_record = await db_context.message_history.add(
+            saved_user_msg_record = await db_context.message_history.add_message(
+                UserMessage(content=user_content_for_history),
                 interface_type=interface_type,
                 conversation_id=conversation_id,
                 interface_message_id=actual_interface_message_id,
-                turn_id=turn_id,  # User message is part of the turn
-                thread_root_id=thread_root_id_for_turn,  # Use determined root ID
+                turn_id=turn_id,
+                thread_root_id=thread_root_id_for_turn,
                 timestamp=user_message_timestamp,
-                role="user",
-                content=user_content_for_history,  # Store the textual part or placeholder
-                tool_calls=None,
-                reasoning_info=None,
-                error_traceback=None,
                 attachments=trigger_attachments,
-                tool_call_id=None,
-                processing_profile_id=self.service_config.id,  # Record profile ID
-                subconversation_id=subconversation_id,  # Pass subconversation ID
-                user_id=user_id,  # Pass user_id
+                processing_profile_id=self.service_config.id,
+                subconversation_id=subconversation_id,
+                user_id=user_id,
             )
 
-            if saved_user_msg_record and not thread_root_id_for_turn:
+            if saved_user_msg_record is not None and not thread_root_id_for_turn:
                 # If it was the first message in a thread, its own ID is the root.
-                thread_root_id_for_turn = saved_user_msg_record.get("internal_id")
+                thread_root_id_for_turn = saved_user_msg_record
                 if thread_root_id_for_turn:
                     logger.info(
                         f"Established new thread_root_id: {thread_root_id_for_turn}"
@@ -2388,35 +2335,31 @@ Call attach_to_response with your selected attachment IDs."""
             final_assistant_message_internal_id = None
 
             if generated_turn_messages:
-                for msg_dict in generated_turn_messages:
-                    msg_to_save = msg_dict.copy()
-                    msg_to_save["interface_type"] = interface_type
-                    msg_to_save["conversation_id"] = conversation_id
-                    msg_to_save["turn_id"] = turn_id
-                    msg_to_save["thread_root_id"] = thread_root_id_for_turn
-                    msg_to_save["timestamp"] = msg_to_save.get(
-                        "timestamp",
-                        self.clock.now(),  # Use ProcessingService's clock
+                for turn_msg in generated_turn_messages:
+                    reasoning_info_for_msg = (
+                        cast("MessageReasoningInfo | None", final_reasoning_info)
+                        if isinstance(turn_msg, AssistantMessage)
+                        else None
                     )
-                    msg_to_save.setdefault("interface_message_id", None)
-                    # Add processing_profile_id for turn messages
-                    msg_to_save["processing_profile_id"] = self.service_config.id
-                    msg_to_save["subconversation_id"] = subconversation_id
-                    msg_to_save["user_id"] = user_id
-
-                    # Remove fields that shouldn't be saved to database
-                    msg_to_save.pop("_attachment", None)  # Remove raw attachment data
-
-                    saved_turn_msg_record = await db_context.message_history.add(
-                        **msg_to_save
+                    saved_turn_msg_record = (
+                        await db_context.message_history.add_message(
+                            message=turn_msg,
+                            interface_type=interface_type,
+                            conversation_id=conversation_id,
+                            turn_id=turn_id,
+                            thread_root_id=thread_root_id_for_turn,
+                            timestamp=self.clock.now(),
+                            processing_profile_id=self.service_config.id,
+                            subconversation_id=subconversation_id,
+                            user_id=user_id,
+                            reasoning_info=reasoning_info_for_msg,
+                        )
                     )
 
-                    if msg_dict.get("role") == "assistant" and msg_dict.get("content"):
-                        final_text_reply = str(msg_dict["content"])
-                        if saved_turn_msg_record:
-                            final_assistant_message_internal_id = (
-                                saved_turn_msg_record.get("internal_id")
-                            )
+                    if isinstance(turn_msg, AssistantMessage) and turn_msg.content:
+                        final_text_reply = turn_msg.content
+                        if saved_turn_msg_record is not None:
+                            final_assistant_message_internal_id = saved_turn_msg_record
             else:
                 logger.warning(
                     f"No messages generated by self.process_message for turn {turn_id}."
@@ -2444,20 +2387,17 @@ Call attach_to_response with your selected attachment IDs."""
             # Save error message to conversation history
             try:
                 error_message_record = await db_context.message_history.add_message(
+                    AssistantMessage(content=error_message),
                     interface_type=interface_type,
                     conversation_id=conversation_id,
                     interface_message_id=None,  # Will be set when sent
                     turn_id=turn_id,
                     thread_root_id=thread_root_id_for_turn,
                     timestamp=datetime.now(UTC),
-                    role="assistant",
-                    content=error_message,
                     subconversation_id=subconversation_id,
                 )
                 error_message_internal_id = (
-                    error_message_record.get("internal_id")
-                    if error_message_record
-                    else None
+                    error_message_record if error_message_record is not None else None
                 )
             except Exception as error_save_err:
                 logger.error(
@@ -2504,8 +2444,7 @@ Call attach_to_response with your selected attachment IDs."""
             ]
             | None
         ) = None,
-        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
-        trigger_attachments: list[dict[str, Any]] | None = None,
+        trigger_attachments: list[MessageAttachmentMetadata] | None = None,
         subconversation_id: str | None = None,
     ) -> AsyncIterator[LLMStreamEvent]:
         """
@@ -2588,55 +2527,49 @@ Call attach_to_response with your selected attachment IDs."""
                     # On PostgreSQL, use a separate transaction so the message is committed and visible immediately
                     # to other requests (like UI polling) while the LLM continues processing.
                     # On SQLite, we avoid nested transactions due to connection sharing in StaticPool.
+                    user_msg = UserMessage(content=user_content_for_history)
                     if db_context.engine.dialect.name == "postgresql":
                         async with get_db_context(
                             engine=db_context.engine,
                             message_notifier=db_context.message_notifier,
                         ) as user_msg_db:
                             saved_user_msg_record = (
-                                await user_msg_db.message_history.add(
+                                await user_msg_db.message_history.add_message(
+                                    user_msg,
                                     interface_type=interface_type,
                                     conversation_id=conversation_id,
                                     interface_message_id=actual_interface_message_id,
                                     turn_id=turn_id,
                                     thread_root_id=thread_root_id_for_turn,
                                     timestamp=user_message_timestamp,
-                                    role="user",
-                                    content=user_content_for_history,
-                                    tool_calls=None,
-                                    reasoning_info=None,
-                                    error_traceback=None,
-                                    tool_call_id=None,
-                                    processing_profile_id=self.service_config.id,
                                     attachments=trigger_attachments,
+                                    processing_profile_id=self.service_config.id,
                                     subconversation_id=subconversation_id,
                                     user_id=user_id,
                                 )
                             )
                     else:
-                        saved_user_msg_record = await db_context.message_history.add(
-                            interface_type=interface_type,
-                            conversation_id=conversation_id,
-                            interface_message_id=actual_interface_message_id,
-                            turn_id=turn_id,
-                            thread_root_id=thread_root_id_for_turn,
-                            timestamp=user_message_timestamp,
-                            role="user",
-                            content=user_content_for_history,
-                            tool_calls=None,
-                            reasoning_info=None,
-                            error_traceback=None,
-                            tool_call_id=None,
-                            processing_profile_id=self.service_config.id,
-                            attachments=trigger_attachments,
-                            subconversation_id=subconversation_id,
-                            user_id=user_id,
+                        saved_user_msg_record = (
+                            await db_context.message_history.add_message(
+                                user_msg,
+                                interface_type=interface_type,
+                                conversation_id=conversation_id,
+                                interface_message_id=actual_interface_message_id,
+                                turn_id=turn_id,
+                                thread_root_id=thread_root_id_for_turn,
+                                timestamp=user_message_timestamp,
+                                attachments=trigger_attachments,
+                                processing_profile_id=self.service_config.id,
+                                subconversation_id=subconversation_id,
+                                user_id=user_id,
+                            )
                         )
 
-                    if saved_user_msg_record and not thread_root_id_for_turn:
-                        thread_root_id_for_turn = saved_user_msg_record.get(
-                            "internal_id"
-                        )
+                    if (
+                        saved_user_msg_record is not None
+                        and not thread_root_id_for_turn
+                    ):
+                        thread_root_id_for_turn = saved_user_msg_record
 
                     # --- 2. Prepare LLM Context ---
                     # Use interface-specific history limits
@@ -2786,7 +2719,7 @@ Call attach_to_response with your selected attachment IDs."""
                     )
 
                     # --- 3. Stream LLM Processing ---
-                    async for event, message_dict in self.process_message_stream(
+                    async for event, stream_msg in self.process_message_stream(
                         db_context=db_context,
                         messages=typed_messages_for_llm,
                         interface_type=interface_type,
@@ -2801,27 +2734,16 @@ Call attach_to_response with your selected attachment IDs."""
                         yield event
 
                         # Save messages as they're generated
-                        if message_dict and message_dict.get("role"):
-                            msg_to_save = message_dict.copy()
-                            msg_to_save["interface_type"] = interface_type
-                            msg_to_save["conversation_id"] = conversation_id
-                            msg_to_save["turn_id"] = turn_id
-                            msg_to_save["thread_root_id"] = thread_root_id_for_turn
-                            msg_to_save["timestamp"] = msg_to_save.get(
-                                "timestamp", self.clock.now()
+                        if stream_msg is not None:
+                            reasoning_info_for_stream = (
+                                cast(
+                                    "MessageReasoningInfo | None",
+                                    event.metadata.get("reasoning_info"),
+                                )
+                                if isinstance(stream_msg, AssistantMessage)
+                                and event.metadata
+                                else None
                             )
-                            msg_to_save.setdefault("interface_message_id", None)
-                            msg_to_save["processing_profile_id"] = (
-                                self.service_config.id
-                            )
-                            msg_to_save["subconversation_id"] = subconversation_id
-                            msg_to_save["user_id"] = user_id
-
-                            # Remove fields that shouldn't be saved to database
-                            msg_to_save.pop(
-                                "_attachment", None
-                            )  # Remove raw attachment data
-
                             # Save each message
                             if db_context.engine.dialect.name == "postgresql":
                                 # Use separate transaction for intermediate messages on Postgres
@@ -2829,9 +2751,31 @@ Call attach_to_response with your selected attachment IDs."""
                                     engine=db_context.engine,
                                     message_notifier=db_context.message_notifier,
                                 ) as msg_db:
-                                    await msg_db.message_history.add(**msg_to_save)
+                                    await msg_db.message_history.add_message(
+                                        message=stream_msg,
+                                        interface_type=interface_type,
+                                        conversation_id=conversation_id,
+                                        turn_id=turn_id,
+                                        thread_root_id=thread_root_id_for_turn,
+                                        timestamp=self.clock.now(),
+                                        processing_profile_id=self.service_config.id,
+                                        subconversation_id=subconversation_id,
+                                        user_id=user_id,
+                                        reasoning_info=reasoning_info_for_stream,
+                                    )
                             else:
-                                await db_context.message_history.add(**msg_to_save)
+                                await db_context.message_history.add_message(
+                                    message=stream_msg,
+                                    interface_type=interface_type,
+                                    conversation_id=conversation_id,
+                                    turn_id=turn_id,
+                                    thread_root_id=thread_root_id_for_turn,
+                                    timestamp=self.clock.now(),
+                                    processing_profile_id=self.service_config.id,
+                                    subconversation_id=subconversation_id,
+                                    user_id=user_id,
+                                    reasoning_info=reasoning_info_for_stream,
+                                )
 
                 except Exception as e:
                     span.set_status(StatusCode.ERROR, str(e))
@@ -2849,10 +2793,8 @@ Call attach_to_response with your selected attachment IDs."""
             span.end()
 
     def _generate_attachment_metadata_lines(
-        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
         self,
-        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
-        attachments: list[dict[str, Any]],
+        attachments: list[MessageAttachmentMetadata],
     ) -> list[str]:
         """
         Generate attachment metadata lines for a list of attachments.

@@ -59,6 +59,38 @@ class ToolAttachmentMetadata(TypedDict, total=False):
     size: NotRequired[int | None]
 
 
+class MessageAttachmentMetadata(TypedDict, total=False):
+    """Attachment metadata stored alongside messages in the history table.
+
+    Covers tool result attachments, user upload references, and attachment references.
+    All fields except `type` are optional to support different attachment sources.
+    """
+
+    type: Required[str]
+    attachment_id: str | None
+    mime_type: str | None
+    description: str | None
+    url: str | None
+    content_url: str | None
+    size: int | None
+    filename: str | None
+
+
+class MessageReasoningInfo(TypedDict, total=False):
+    """Reasoning/usage metadata stored alongside messages.
+
+    May contain token usage stats from LLM providers, or provenance
+    info when a message was sent on behalf of another turn.
+    """
+
+    prompt_tokens: int
+    completion_tokens: int
+    total_tokens: int
+    reasoning_tokens: int
+    source_turn_id: str | None
+    tool_name: str
+
+
 # Re-export content part types and helpers for backward compatibility
 __all__ = [
     "ContentPartDict",
@@ -167,7 +199,8 @@ class AssistantMessage(BaseModel):
     ) -> list[ToolCallItem] | None:
         """Ensure assistant message has either content or tool_calls."""
         content = info.data.get("content")
-        if content is None and tool_calls is None:
+        has_content = isinstance(content, str) and content.strip()
+        if not has_content and tool_calls is None:
             raise ValueError("Assistant message must have content or tool_calls")
         return tool_calls
 

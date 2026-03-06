@@ -35,6 +35,7 @@ from telegram.ext import (
 from family_assistant.indexing.processors.text_processors import TextChunker
 from family_assistant.llm.messages import (
     ContentPartDict,
+    UserMessage,
     image_url_content,
     text_content,
 )
@@ -524,19 +525,13 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
 
                     if user_message_id:
                         trigger_interface_message_id = str(user_message_id)
-                        await db_context.message_history.add(
+                        await db_context.message_history.add_message(
+                            UserMessage(content=history_user_content),
                             interface_type=interface_type,
                             conversation_id=conversation_id,
                             interface_message_id=str(user_message_id),
-                            turn_id=None,
                             thread_root_id=thread_root_id_for_turn,
                             timestamp=user_message_timestamp,
-                            role="user",
-                            content=history_user_content,
-                            tool_calls=None,
-                            reasoning_info=None,
-                            error_traceback=None,
-                            tool_call_id=None,
                         )
                     else:
                         logger.warning(

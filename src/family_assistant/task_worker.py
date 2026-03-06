@@ -26,6 +26,7 @@ from sqlalchemy.ext.asyncio import AsyncEngine
 # Removed storage import - using repository pattern
 from family_assistant.embeddings import EmbeddingGenerator
 from family_assistant.interfaces import ChatInterface  # Import ChatInterface
+from family_assistant.llm.messages import MessageAttachmentMetadata, SystemMessage
 from family_assistant.scripting import (
     MontyEngine,
     ScriptError,
@@ -337,15 +338,12 @@ async def handle_llm_callback(
 
         # Save the initial system trigger message for the callback to history
         callback_trigger_timestamp = clock.now()
-        await db_context.message_history.add(
-            interface_type=interface_type,  # Should be "system_callback" or similar
+        await db_context.message_history.add_message(
+            SystemMessage(content=trigger_text),
+            interface_type=interface_type,
             conversation_id=conversation_id,
-            interface_message_id=None,  # System-generated, no direct interface ID
-            turn_id=callback_turn_id,  # Assign the generated turn_id
-            thread_root_id=None,  # Callbacks currently don't maintain prior thread root
+            turn_id=callback_turn_id,
             timestamp=callback_trigger_timestamp,
-            role="system",  # Role for the trigger message
-            content=trigger_text,
         )
         logger.info(
             f"Saved system trigger message for callback {callback_turn_id} to history."
@@ -1308,8 +1306,7 @@ async def _process_script_wake_llm(
             all_attachment_ids.extend(attachments)
 
     # Fetch attachment metadata if any attachments are referenced
-    # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
-    trigger_attachments: list[dict[str, Any]] | None = None
+    trigger_attachments: list[MessageAttachmentMetadata] | None = None
     if all_attachment_ids:
         # Get attachment registry from execution context
         attachment_registry = getattr(exec_context, "attachment_registry", None)
@@ -1350,18 +1347,20 @@ async def _process_script_wake_llm(
                             attachment_type = "document"
 
                         # Add to trigger_attachments list in expected format
-                        trigger_attachments.append({
-                            "type": attachment_type,
-                            "attachment_id": attachment_metadata.attachment_id,
-                            "url": attachment_metadata.content_url,
-                            "content_url": attachment_metadata.content_url,
-                            "mime_type": attachment_metadata.mime_type,
-                            "description": attachment_metadata.description,
-                            "filename": attachment_metadata.metadata.get(
-                                "original_filename", "attachment"
-                            ),
-                            "size": attachment_metadata.size,
-                        })
+                        trigger_attachments.append(
+                            MessageAttachmentMetadata(
+                                type=attachment_type,
+                                attachment_id=attachment_metadata.attachment_id,
+                                url=attachment_metadata.content_url,
+                                content_url=attachment_metadata.content_url,
+                                mime_type=attachment_metadata.mime_type,
+                                description=attachment_metadata.description,
+                                filename=attachment_metadata.metadata.get(
+                                    "original_filename", "attachment"
+                                ),
+                                size=attachment_metadata.size,
+                            )
+                        )
                         logger.debug(
                             f"Added attachment {attachment_id} to wake_llm context"
                         )

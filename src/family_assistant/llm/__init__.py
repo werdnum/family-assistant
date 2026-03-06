@@ -399,9 +399,7 @@ class BaseLLMClient:
                             f"Please try again. Respond ONLY with valid JSON matching the schema."
                         )
                     )
-                    messages_with_schema.append(
-                        AssistantMessage(content=raw_response or "")
-                    )
+                    messages_with_schema.append(AssistantMessage(content=raw_response))
                     messages_with_schema.append(error_feedback)
 
             except json.JSONDecodeError as e:
@@ -419,9 +417,7 @@ class BaseLLMClient:
                             f"Please try again. Respond ONLY with valid JSON, no markdown or extra text."
                         )
                     )
-                    messages_with_schema.append(
-                        AssistantMessage(content=raw_response or "")
-                    )
+                    messages_with_schema.append(AssistantMessage(content=raw_response))
                     messages_with_schema.append(error_feedback)
 
             except Exception as e:

@@ -93,8 +93,6 @@ class TestProcessingServiceMultimodal:
         # Should return ToolExecutionResult dataclass
         event = result.stream_event
         tool_message = result.llm_message
-        history_message = result.history_message
-
         # Check event
         assert isinstance(event, LLMStreamEvent)
         assert event.type == "tool_result"
@@ -107,11 +105,6 @@ class TestProcessingServiceMultimodal:
         assert tool_message.content == "Simple string result"
         assert tool_message.error_traceback is None
         assert tool_message.transient_attachments is None
-
-        # Check history message
-        assert history_message["role"] == "tool"  # type: ignore[reportIndexIssue]
-        assert history_message["tool_call_id"] == "test_call_123"  # type: ignore[reportIndexIssue]
-        assert history_message["content"] == "Simple string result"  # type: ignore[reportIndexIssue]
 
     @pytest.mark.asyncio
     async def test_execute_single_tool_result_with_attachment(
@@ -153,7 +146,6 @@ class TestProcessingServiceMultimodal:
 
         event = result.stream_event
         tool_message = result.llm_message
-        history_message = result.history_message
 
         # Check event
         assert isinstance(event, LLMStreamEvent)
@@ -176,14 +168,6 @@ class TestProcessingServiceMultimodal:
         assert attachment_meta["type"] == "tool_result"
         assert attachment_meta["mime_type"] == "image/png"
         assert attachment_meta["description"] == "Generated sunset image"
-
-        # Check history message (should NOT have transient_attachments but should have metadata)
-        assert history_message["role"] == "tool"  # type: ignore[reportIndexIssue]
-        assert history_message["tool_call_id"] == "test_call_456"  # type: ignore[reportIndexIssue]
-        assert history_message["content"] == "Successfully generated sunset image"  # type: ignore[reportIndexIssue]
-        # transient_attachments is excluded from serialization, so it shouldn't be in the dict
-        assert "transient_attachments" not in history_message
-        assert history_message["attachments"] is not None  # type: ignore[reportIndexIssue]
 
     @pytest.mark.asyncio
     async def test_execute_single_tool_result_without_attachment(
@@ -216,14 +200,12 @@ class TestProcessingServiceMultimodal:
 
         event = result.stream_event
         tool_message = result.llm_message
-        history_message = result.history_message
 
         # Should behave similar to string result when no attachment
         assert event.tool_result == "Text processed successfully"
         assert tool_message.content == "Text processed successfully"
         assert tool_message.transient_attachments is None
         assert tool_message.attachments is None
-        assert history_message["content"] == "Text processed successfully"  # type: ignore[reportIndexIssue]
 
     @pytest.mark.asyncio
     async def test_execute_single_tool_invalid_json_args(

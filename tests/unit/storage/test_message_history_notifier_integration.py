@@ -8,6 +8,7 @@ import pytest
 import pytest_asyncio
 from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
 
+from family_assistant.llm.messages import UserMessage
 from family_assistant.storage.base import metadata
 from family_assistant.storage.context import DatabaseContext, get_db_context
 from family_assistant.web.message_notifier import MessageNotifier
@@ -72,14 +73,13 @@ async def test_add_message_notifies_listeners(
         engine=db_engine, base_delay=0.01, message_notifier=message_notifier
     ) as db_context:
         msg = await db_context.message_history.add_message(
+            UserMessage(content="Test message"),
             interface_type=interface_type,
             conversation_id=conversation_id,
             interface_message_id="msg1",
             turn_id=None,
             thread_root_id=None,
             timestamp=now,
-            role="user",
-            content="Test message",
         )
 
         assert msg is not None
@@ -101,18 +101,16 @@ async def test_add_message_without_notifier_works(db_engine: AsyncEngine) -> Non
 
         # Add a message - should work fine without notifier
         msg = await db_context.message_history.add_message(
+            UserMessage(content="Test message"),
             interface_type=interface_type,
             conversation_id=conversation_id,
             interface_message_id="msg1",
             turn_id=None,
             thread_root_id=None,
             timestamp=now,
-            role="user",
-            content="Test message",
         )
 
         assert msg is not None
-        assert msg["content"] == "Test message"
 
 
 @pytest.mark.asyncio
@@ -134,14 +132,13 @@ async def test_multiple_listeners_receive_notifications(
         engine=db_engine, base_delay=0.01, message_notifier=message_notifier
     ) as db_context:
         await db_context.message_history.add_message(
+            UserMessage(content="Test message"),
             interface_type=interface_type,
             conversation_id=conversation_id,
             interface_message_id="msg1",
             turn_id=None,
             thread_root_id=None,
             timestamp=now,
-            role="user",
-            content="Test message",
         )
 
     # All three queues should have received a tickle
@@ -173,14 +170,13 @@ async def test_only_matching_conversation_notified(
         engine=db_engine, base_delay=0.01, message_notifier=message_notifier
     ) as db_context:
         await db_context.message_history.add_message(
+            UserMessage(content="Test message"),
             interface_type=interface_type,
             conversation_id=conv1,
             interface_message_id="msg1",
             turn_id=None,
             thread_root_id=None,
             timestamp=now,
-            role="user",
-            content="Test message",
         )
 
     # Only queue1 should have received notification
@@ -207,14 +203,13 @@ async def test_interface_type_isolation(
         engine=db_engine, base_delay=0.01, message_notifier=message_notifier
     ) as db_context:
         await db_context.message_history.add_message(
+            UserMessage(content="Web message"),
             interface_type="web",
             conversation_id=conversation_id,
             interface_message_id="msg1",
             turn_id=None,
             thread_root_id=None,
             timestamp=now,
-            role="user",
-            content="Web message",
         )
 
     # Only web_queue should have received notification

@@ -8,6 +8,7 @@ import pytest
 import pytest_asyncio
 from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
 
+from family_assistant.llm.messages import AssistantMessage, UserMessage
 from family_assistant.storage.base import metadata
 from family_assistant.storage.context import DatabaseContext, get_db_context
 
@@ -44,47 +45,43 @@ async def test_get_messages_after_basic_query(db_context: DatabaseContext) -> No
 
     # Add messages at different timestamps
     msg1 = await db_context.message_history.add_message(
+        UserMessage(content="Old message 1"),
         interface_type=interface_type,
         conversation_id=conversation_id,
         interface_message_id="msg1",
         turn_id=None,
         thread_root_id=None,
         timestamp=now - timedelta(minutes=10),
-        role="user",
-        content="Old message 1",
     )
 
     msg2 = await db_context.message_history.add_message(
+        AssistantMessage(content="Old message 2"),
         interface_type=interface_type,
         conversation_id=conversation_id,
         interface_message_id="msg2",
         turn_id=None,
         thread_root_id=None,
         timestamp=now - timedelta(minutes=5),
-        role="assistant",
-        content="Old message 2",
     )
 
     msg3 = await db_context.message_history.add_message(
+        UserMessage(content="Recent message 1"),
         interface_type=interface_type,
         conversation_id=conversation_id,
         interface_message_id="msg3",
         turn_id=None,
         thread_root_id=None,
         timestamp=now - timedelta(minutes=2),
-        role="user",
-        content="Recent message 1",
     )
 
     msg4 = await db_context.message_history.add_message(
+        AssistantMessage(content="Recent message 2"),
         interface_type=interface_type,
         conversation_id=conversation_id,
         interface_message_id="msg4",
         turn_id=None,
         thread_root_id=None,
         timestamp=now - timedelta(minutes=1),
-        role="assistant",
-        content="Recent message 2",
     )
 
     assert msg1 is not None
@@ -114,36 +111,33 @@ async def test_get_messages_after_filter_by_interface_type(
 
     # Add messages with different interface types
     msg1 = await db_context.message_history.add_message(
+        UserMessage(content="Web message"),
         interface_type="web",
         conversation_id=conversation_id,
         interface_message_id="msg1",
         turn_id=None,
         thread_root_id=None,
         timestamp=now - timedelta(minutes=5),
-        role="user",
-        content="Web message",
     )
 
     msg2 = await db_context.message_history.add_message(
+        UserMessage(content="Telegram message"),
         interface_type="telegram",
         conversation_id=conversation_id,
         interface_message_id="msg2",
         turn_id=None,
         thread_root_id=None,
         timestamp=now - timedelta(minutes=4),
-        role="user",
-        content="Telegram message",
     )
 
     msg3 = await db_context.message_history.add_message(
+        AssistantMessage(content="Web response"),
         interface_type="web",
         conversation_id=conversation_id,
         interface_message_id="msg3",
         turn_id=None,
         thread_root_id=None,
         timestamp=now - timedelta(minutes=3),
-        role="assistant",
-        content="Web response",
     )
 
     assert msg1 is not None
@@ -174,36 +168,33 @@ async def test_get_messages_after_ordering_by_timestamp(
 
     # Add messages in non-chronological order
     msg1 = await db_context.message_history.add_message(
+        UserMessage(content="Second message"),
         interface_type=interface_type,
         conversation_id=conversation_id,
         interface_message_id="msg1",
         turn_id=None,
         thread_root_id=None,
         timestamp=now - timedelta(minutes=1),
-        role="user",
-        content="Second message",
     )
 
     msg2 = await db_context.message_history.add_message(
+        UserMessage(content="First message"),
         interface_type=interface_type,
         conversation_id=conversation_id,
         interface_message_id="msg2",
         turn_id=None,
         thread_root_id=None,
         timestamp=now - timedelta(minutes=5),
-        role="user",
-        content="First message",
     )
 
     msg3 = await db_context.message_history.add_message(
+        UserMessage(content="Third message"),
         interface_type=interface_type,
         conversation_id=conversation_id,
         interface_message_id="msg3",
         turn_id=None,
         thread_root_id=None,
         timestamp=now,
-        role="user",
-        content="Third message",
     )
 
     assert msg1 is not None
@@ -233,14 +224,13 @@ async def test_get_messages_after_limit_parameter(db_context: DatabaseContext) -
     # Add 5 messages
     for i in range(5):
         await db_context.message_history.add_message(
+            UserMessage(content=f"Message {i}"),
             interface_type=interface_type,
             conversation_id=conversation_id,
             interface_message_id=f"msg{i}",
             turn_id=None,
             thread_root_id=None,
             timestamp=now - timedelta(minutes=5 - i),
-            role="user",
-            content=f"Message {i}",
         )
 
     # Query with limit of 3
@@ -265,14 +255,13 @@ async def test_get_messages_after_empty_results(db_context: DatabaseContext) -> 
 
     # Add a message in the past
     await db_context.message_history.add_message(
+        UserMessage(content="Old message"),
         interface_type=interface_type,
         conversation_id=conversation_id,
         interface_message_id="msg1",
         turn_id=None,
         thread_root_id=None,
         timestamp=now - timedelta(minutes=10),
-        role="user",
-        content="Old message",
     )
 
     # Query for messages after "now" - should be empty
@@ -296,26 +285,24 @@ async def test_get_messages_after_different_conversations(
 
     # Add messages to conversation 1
     msg1 = await db_context.message_history.add_message(
+        UserMessage(content="Conv 1 message"),
         interface_type=interface_type,
         conversation_id=conv1,
         interface_message_id="msg1",
         turn_id=None,
         thread_root_id=None,
         timestamp=now - timedelta(minutes=5),
-        role="user",
-        content="Conv 1 message",
     )
 
     # Add messages to conversation 2
     await db_context.message_history.add_message(
+        UserMessage(content="Conv 2 message"),
         interface_type=interface_type,
         conversation_id=conv2,
         interface_message_id="msg2",
         turn_id=None,
         thread_root_id=None,
         timestamp=now - timedelta(minutes=4),
-        role="user",
-        content="Conv 2 message",
     )
 
     assert msg1 is not None
