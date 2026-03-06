@@ -262,44 +262,6 @@ class MessageHistoryRepository(BaseRepository):
             self._logger.error(f"Failed to add message to history: {e}", exc_info=True)
             return None
 
-    @staticmethod
-    def _validate_message(
-        role: str,
-        content: str | None,
-        tool_calls: list[ToolCallItem] | None = None,
-        tool_call_id: str | None = None,
-        tool_name: str | None = None,
-        error_traceback: str | None = None,
-        provider_metadata: Any | None = None,  # noqa: ANN401
-    ) -> None:
-        """Construct the Pydantic model for the given role to validate message fields.
-
-        Raises:
-            ValueError: If the message fields are invalid for the given role.
-        """
-        if role == "user":
-            UserMessage(content=content or "")
-        elif role == "assistant":
-            AssistantMessage(
-                content=content,
-                tool_calls=tool_calls,
-                provider_metadata=provider_metadata,
-            )
-        elif role == "tool":
-            ToolMessage(
-                tool_call_id=tool_call_id or "",
-                content=content or "",
-                name=tool_name or "",
-                error_traceback=error_traceback,
-                provider_metadata=provider_metadata,
-            )
-        elif role == "system":
-            SystemMessage(content=content or "")
-        elif role == "error":
-            ErrorMessage(content=content or "", error_traceback=error_traceback)
-        else:
-            raise ValueError(f"Unknown message role: {role}")
-
     async def get_recent(
         self,
         interface_type: str,
