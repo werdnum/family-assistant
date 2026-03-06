@@ -26,6 +26,7 @@ from family_assistant.llm import (
 from family_assistant.processing import ProcessingService, ProcessingServiceConfig
 from family_assistant.storage import init_db
 from family_assistant.storage.context import DatabaseContext, get_db_context
+from family_assistant.storage.repositories.notes import NoteModel
 from family_assistant.tools import (
     AVAILABLE_FUNCTIONS as local_tool_implementations,
 )
@@ -41,6 +42,7 @@ from family_assistant.tools import (
 )
 from family_assistant.web.app_creator import app as actual_app
 from family_assistant.web.web_chat_interface import WebChatInterface
+from tests.helpers import wait_for_condition
 from tests.mocks.mock_llm import MatcherArgs, RuleBasedMockLLMClient
 
 if TYPE_CHECKING:
@@ -429,8 +431,19 @@ async def test_api_chat_send_message_stream_with_tools(
     # Check database - note should be created
     # Use a fresh DatabaseContext to avoid PostgreSQL snapshot isolation issues
     # where a pre-existing transaction may not see data committed by the API handler.
-    async with get_db_context(engine=db_engine) as fresh_ctx:
-        note = await fresh_ctx.notes.get_by_title(note_title, visibility_grants=None)
+    # Retry briefly since PostgreSQL commits may not be immediately visible.
+    async def _check_note_exists() -> NoteModel | None:
+        async with get_db_context(engine=db_engine) as fresh_ctx:
+            return await fresh_ctx.notes.get_by_title(
+                note_title, visibility_grants=None
+            )
+
+    note = await wait_for_condition(
+        _check_note_exists,
+        timeout=5.0,
+        interval=0.2,
+        description="note to be committed",
+    )
     assert note is not None
     assert note.content == note_content
 
