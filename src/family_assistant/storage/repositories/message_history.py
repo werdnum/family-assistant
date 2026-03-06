@@ -89,11 +89,15 @@ class MessageHistoryRepository(BaseRepository):
         provider_metadata: Any = None
 
         raw_content = getattr(message, "content", None)
-        content = (
-            raw_content
-            if raw_content is None or isinstance(raw_content, str)
-            else json.dumps(raw_content)
-        )
+        if raw_content is None or isinstance(raw_content, str):
+            content = raw_content
+        elif isinstance(raw_content, list):
+            content = json.dumps([
+                part.model_dump(mode="json") if hasattr(part, "model_dump") else part
+                for part in raw_content
+            ])
+        else:
+            content = json.dumps(raw_content)
 
         if isinstance(message, AssistantMessage):
             tool_calls = message.tool_calls
