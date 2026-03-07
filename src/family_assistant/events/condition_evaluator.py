@@ -9,6 +9,7 @@ from typing import Any
 from family_assistant.scripting import ScriptExecutionError, ScriptSyntaxError
 from family_assistant.scripting.config import ScriptConfig
 from family_assistant.scripting.monty_engine import MontyEngine
+from family_assistant.storage.types import EventConditionEvaluatorConfig
 
 logger = logging.getLogger(__name__)
 
@@ -16,8 +17,7 @@ logger = logging.getLogger(__name__)
 class EventConditionEvaluator:
     """Evaluates condition scripts for event matching."""
 
-    # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
-    def __init__(self, config: dict[str, Any] | None = None) -> None:
+    def __init__(self, config: EventConditionEvaluatorConfig | None = None) -> None:
         """
         Initialize the event condition evaluator.
 
@@ -39,7 +39,7 @@ class EventConditionEvaluator:
         )
         self.engine = MontyEngine(tools_provider=None, config=self.config)
 
-    # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
+    # ast-grep-ignore: no-dict-any - event_data is arbitrary JSON from external sources (Home Assistant, webhooks) with no fixed schema
     async def evaluate_condition(self, script: str, event_data: dict[str, Any]) -> bool:
         """
         Evaluate a condition script against event data.
@@ -136,8 +136,7 @@ class EventConditionValidator:
     def __init__(
         self,
         evaluator: EventConditionEvaluator | None = None,
-        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
-        config: dict[str, Any] | None = None,
+        config: EventConditionEvaluatorConfig | None = None,
     ) -> None:
         """
         Initialize the validator.

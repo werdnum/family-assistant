@@ -3,7 +3,7 @@ Task handlers related to the document indexing pipeline.
 """
 
 import logging
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, TypedDict
 
 import sqlalchemy as sa
 from sqlalchemy import and_, func, select
@@ -21,6 +21,24 @@ if TYPE_CHECKING:
     from family_assistant.tools.types import ToolExecutionContext
 
 logger = logging.getLogger(__name__)
+
+
+class EmbeddingMetadata(TypedDict):
+    """Metadata for a single embedding item in a batch."""
+
+    embedding_type: str
+    chunk_index: int
+    # ast-grep-ignore: no-dict-any - Content processor metadata with arbitrary structure per document type
+    original_content_metadata: dict[str, Any]
+    content_hash: str | None
+
+
+class EmbedAndStoreBatchPayload(TypedDict):
+    """Payload for embed_and_store_batch tasks."""
+
+    document_id: int
+    texts_to_embed: list[str]
+    embedding_metadata_list: list[EmbeddingMetadata]
 
 
 async def check_document_completion(
@@ -64,9 +82,8 @@ async def check_document_completion(
 
 
 async def handle_embed_and_store_batch(
-    exec_context: "ToolExecutionContext",  # Changed parameter name to match hypothesized caller
-    # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
-    payload: dict[str, Any],
+    exec_context: "ToolExecutionContext",
+    payload: EmbedAndStoreBatchPayload,
 ) -> None:
     """
     Task handler for embedding a batch of texts and storing them in the vector database.
@@ -114,8 +131,7 @@ async def handle_embed_and_store_batch(
     try:
         document_id: int = payload["document_id"]
         texts_to_embed: list[str] = payload["texts_to_embed"]
-        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
-        embedding_metadata_list: list[dict[str, Any]] = payload[
+        embedding_metadata_list: list[EmbeddingMetadata] = payload[
             "embedding_metadata_list"
         ]
     except KeyError as e:

@@ -8,12 +8,13 @@ import logging
 import uuid
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from typing import Any
+from typing import Any, cast
 from unittest.mock import AsyncMock, MagicMock
 from zoneinfo import ZoneInfo
 
 import pytest
-from sqlalchemy import and_, cast, select
+from sqlalchemy import and_, select
+from sqlalchemy import cast as sa_cast
 from sqlalchemy.ext.asyncio import AsyncEngine
 from sqlalchemy.types import Integer
 
@@ -22,6 +23,7 @@ from family_assistant.embeddings import MockEmbeddingGenerator
 from family_assistant.events.indexing_source import IndexingEventType, IndexingSource
 from family_assistant.events.processor import EventProcessor
 from family_assistant.indexing.tasks import (
+    EmbedAndStoreBatchPayload,
     check_document_completion,
     handle_embed_and_store_batch,
 )
@@ -68,7 +70,7 @@ async def poll_for_document_ready_event(
                     recent_events_table.c.event_data["event_type"].as_string()
                     == IndexingEventType.DOCUMENT_READY.value,
                     # Cast to integer for proper comparison
-                    cast(
+                    sa_cast(
                         recent_events_table.c.event_data["document_id"].as_string(),
                         Integer,
                     )
@@ -246,7 +248,9 @@ async def test_document_ready_event_emitted(db_engine: AsyncEngine) -> None:
                 )
 
                 assert task["payload"] is not None
-                await handle_embed_and_store_batch(task_context, task["payload"])
+                await handle_embed_and_store_batch(
+                    task_context, cast("EmbedAndStoreBatchPayload", task["payload"])
+                )
                 await db_ctx.tasks.update_status(task["task_id"], "done")
                 tasks_processed += 1
 
@@ -371,7 +375,9 @@ async def test_document_ready_not_emitted_with_pending_tasks(
         )
 
         assert first_task["payload"] is not None
-        await handle_embed_and_store_batch(exec_context, first_task["payload"])
+        await handle_embed_and_store_batch(
+            exec_context, cast("EmbedAndStoreBatchPayload", first_task["payload"])
+        )
         await db_ctx.tasks.update_status(first_task["task_id"], "done")
 
         # Event should NOT have been emitted since second task is pending
@@ -496,7 +502,9 @@ async def test_indexing_event_listener_integration(db_engine: AsyncEngine) -> No
 
             # Process embedding task - should emit event
             assert task["payload"] is not None
-            await handle_embed_and_store_batch(exec_context, task["payload"])
+            await handle_embed_and_store_batch(
+                exec_context, cast("EmbedAndStoreBatchPayload", task["payload"])
+            )
 
             # Wait for all events to be processed before polling
             await indexing_source.wait_for_pending_events()
@@ -606,7 +614,9 @@ async def test_document_ready_event_includes_rich_metadata(
 
             # Process task - should emit event with rich metadata
             assert task["payload"] is not None
-            await handle_embed_and_store_batch(exec_context, task["payload"])
+            await handle_embed_and_store_batch(
+                exec_context, cast("EmbedAndStoreBatchPayload", task["payload"])
+            )
             await db_ctx.tasks.update_status(task["task_id"], "done")
 
         # Wait for all events to be processed before polling
@@ -728,7 +738,9 @@ async def test_document_ready_event_handles_none_metadata(
 
             # Process task - should emit event even with None metadata
             assert task["payload"] is not None
-            await handle_embed_and_store_batch(exec_context, task["payload"])
+            await handle_embed_and_store_batch(
+                exec_context, cast("EmbedAndStoreBatchPayload", task["payload"])
+            )
             await db_ctx.tasks.update_status(task["task_id"], "done")
 
         # Wait for all events to be processed before polling

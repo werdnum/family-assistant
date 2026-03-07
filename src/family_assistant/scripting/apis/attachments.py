@@ -22,6 +22,7 @@ if TYPE_CHECKING:
 
     from family_assistant.services.attachment_registry import (
         AttachmentMetadata,
+        AttachmentMetadataDict,
         AttachmentRegistry,
     )
     from family_assistant.tools.types import ToolExecutionContext
@@ -181,8 +182,7 @@ class ScriptAttachment:
         """
         return io.BytesIO(self.get_content())
 
-    # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
-    def to_dict(self) -> dict[str, Any]:
+    def to_dict(self) -> AttachmentMetadataDict:
         """
         Get the attachment metadata as a dictionary.
 

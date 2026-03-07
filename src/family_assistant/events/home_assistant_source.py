@@ -9,7 +9,7 @@ import re
 import time
 from collections import Counter
 from datetime import UTC, datetime, timedelta
-from typing import TYPE_CHECKING, Any, Protocol, cast
+from typing import TYPE_CHECKING, Any, Protocol, TypedDict, cast
 
 import homeassistant_api as ha_api
 import janus
@@ -18,6 +18,7 @@ from homeassistant_api import WebsocketClient
 from family_assistant.events.sources import BaseEventSource, EventSource
 from family_assistant.events.validation import ValidationError, ValidationResult
 from family_assistant.storage.events import EventSourceType
+from family_assistant.storage.types import MatchConditions
 
 if TYPE_CHECKING:
     from family_assistant.events.processor import EventProcessor
@@ -28,6 +29,15 @@ logger = logging.getLogger(__name__)
 # Very permissive - actual validation via API is more important
 # Allows letters, numbers, underscore in both parts
 ENTITY_ID_PATTERN = re.compile(r"^[a-zA-Z0-9_]+\.[a-zA-Z0-9_]+$")
+
+
+class HAStateInfoDict(TypedDict):
+    """Extracted state info from a Home Assistant state object."""
+
+    state: str | None
+    # ast-grep-ignore: no-dict-any - HA state attributes are arbitrary key-value pairs with no fixed schema
+    attributes: dict[str, Any]
+    last_changed: str | None
 
 
 class HasDataAttr(Protocol):
@@ -74,7 +84,7 @@ class HomeAssistantSource(BaseEventSource, EventSource):
         self._connection_healthy = False
 
         # Janus queue for thread-to-asyncio communication
-        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
+        # ast-grep-ignore: no-dict-any - queue carries arbitrary HA event JSON with no fixed schema
         self._event_queue: janus.Queue[dict[str, Any]] | None = None
         self._processor_task: asyncio.Task | None = None
 
@@ -210,10 +220,9 @@ class HomeAssistantSource(BaseEventSource, EventSource):
             raise
 
     def _handle_event_sync(
-        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
         self,
         event_type: str,
-        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
+        # ast-grep-ignore: no-dict-any - HA websocket events are untyped objects or arbitrary dicts from the HA API
         event: dict[str, Any] | HasDataAttr,
     ) -> None:
         """Handle an event synchronously from the thread."""
@@ -241,12 +250,10 @@ class HomeAssistantSource(BaseEventSource, EventSource):
                             pass
                 event_data = event_dict
 
-            # Process based on event type
-            # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
+            # ast-grep-ignore: no-dict-any - processed_event is built dynamically from arbitrary HA event data with no fixed schema
             processed_event: dict[str, Any] = {"event_type": event_type}
 
             if event_type == "state_changed":
-                # Handle state_changed events specially
                 entity_id = event_data.get("entity_id")
                 if not entity_id:
                     return
@@ -254,28 +261,25 @@ class HomeAssistantSource(BaseEventSource, EventSource):
                 old_state = event_data.get("old_state", {})
                 new_state = event_data.get("new_state", {})
 
-                # Helper function to extract state info from dict or object
                 def extract_state_info(
-                    # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
+                    # ast-grep-ignore: no-dict-any - HA state objects are untyped dicts or API model objects
                     state_obj: dict[str, Any] | object | None,
-                    # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
-                ) -> dict[str, Any] | None:
+                ) -> HAStateInfoDict | None:
                     if not state_obj:
                         return None
 
                     if isinstance(state_obj, dict):
-                        return {
-                            "state": state_obj.get("state"),
-                            "attributes": state_obj.get("attributes", {}),
-                            "last_changed": state_obj.get("last_changed"),
-                        }
+                        return HAStateInfoDict(
+                            state=state_obj.get("state"),
+                            attributes=state_obj.get("attributes", {}),
+                            last_changed=state_obj.get("last_changed"),
+                        )
                     else:
-                        # Handle as object with attributes
-                        return {
-                            "state": getattr(state_obj, "state", None),
-                            "attributes": getattr(state_obj, "attributes", {}),
-                            "last_changed": getattr(state_obj, "last_changed", None),
-                        }
+                        return HAStateInfoDict(
+                            state=getattr(state_obj, "state", None),
+                            attributes=getattr(state_obj, "attributes", {}),
+                            last_changed=getattr(state_obj, "last_changed", None),
+                        )
 
                 processed_event["entity_id"] = entity_id
                 processed_event["old_state"] = extract_state_info(old_state)
@@ -396,10 +400,8 @@ class HomeAssistantSource(BaseEventSource, EventSource):
             return False
 
     async def validate_match_conditions(
-        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
         self,
-        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
-        match_conditions: dict[str, Any],
+        match_conditions: MatchConditions,
     ) -> ValidationResult:
         """
         Validate match conditions for Home Assistant events.
@@ -490,7 +492,9 @@ class HomeAssistantSource(BaseEventSource, EventSource):
 
         # Validate state values if entity_id is valid and present
         if "entity_id" in match_conditions and len(errors) == 0:
-            entity_id = match_conditions["entity_id"]
+            entity_id_val = match_conditions["entity_id"]
+            assert isinstance(entity_id_val, str)
+            entity_id = entity_id_val
             state_fields_to_check = []
 
             # Check for state conditions
@@ -514,7 +518,7 @@ class HomeAssistantSource(BaseEventSource, EventSource):
                     # Get entity histories
                     histories_raw = await asyncio.to_thread(
                         self.client.get_entity_histories,
-                        entities=(entity_id,),
+                        entities=(entity_id,),  # type: ignore[arg-type]  # HA API accepts str at runtime
                         start_timestamp=start_time,
                         end_timestamp=end_time,
                     )

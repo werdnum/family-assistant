@@ -12,7 +12,7 @@ import uuid
 from collections.abc import Awaitable, Callable  # Import Union
 from datetime import UTC, datetime, timedelta  # Added Union
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, TypedDict
 from zoneinfo import ZoneInfo
 
 import aiofiles.os
@@ -37,6 +37,7 @@ from family_assistant.tools.types import CalendarConfig
 
 if TYPE_CHECKING:
     from family_assistant.events.indexing_source import IndexingSource
+    from family_assistant.events.sources import EventSource
 
 # handle_index_email is now a method of EmailIndexer and registered in __main__.py
 from family_assistant.processing import ProcessingService
@@ -51,10 +52,80 @@ logger = logging.getLogger(__name__)
 tracer = trace.get_tracer(__name__)
 
 
+class ReminderConfig(TypedDict, total=False):
+    """Configuration for reminder follow-up behavior."""
+
+    is_reminder: bool
+    follow_up: bool
+    follow_up_interval: str
+    max_follow_ups: int
+    current_attempt: int
+
+
+class LlmCallbackPayload(TypedDict, total=False):
+    """Payload for llm_callback tasks."""
+
+    interface_type: str
+    conversation_id: str
+    user_name: str
+    callback_context: str
+    scheduling_timestamp: str
+    trigger_attachments: list[MessageAttachmentMetadata]
+    reminder_config: ReminderConfig
+    # ast-grep-ignore: no-dict-any - Arbitrary context metadata from script wake_llm calls
+    metadata: dict[str, Any]
+    automation_id: str | int
+    automation_type: str
+
+
+class ScriptExecutionPayload(TypedDict, total=False):
+    """Payload for script_execution tasks."""
+
+    script_code: str
+    # ast-grep-ignore: no-dict-any - Event data from external sources (Home Assistant, webhooks) with arbitrary structure
+    event_data: dict[str, Any]
+    # ast-grep-ignore: no-dict-any - User-defined script configuration with arbitrary keys (timeout, allowed_tools, etc.)
+    config: dict[str, Any]
+    listener_id: str
+    conversation_id: str
+    automation_id: str | int
+    automation_type: str
+
+
+class SystemEventCleanupPayload(TypedDict, total=False):
+    """Payload for system_event_cleanup tasks."""
+
+    retention_hours: int
+
+
+class SystemErrorLogCleanupPayload(TypedDict, total=False):
+    """Payload for system_error_log_cleanup tasks."""
+
+    retention_days: int
+
+
+class WorkerTaskCleanupPayload(TypedDict, total=False):
+    """Payload for worker_task_cleanup tasks."""
+
+    retention_hours: int
+    workspace_path: str
+
+
+class CompletedAutomationCleanupPayload(TypedDict, total=False):
+    """Payload for completed_automation_cleanup tasks."""
+
+    retention_hours: int
+
+
+class ReindexDocumentPayload(TypedDict, total=False):
+    """Payload for reindex_document tasks."""
+
+    document_id: int
+
+
 async def _handle_schedule_automation_recurrence(
     exec_context: ToolExecutionContext,
-    # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
-    payload: dict[str, Any],
+    payload: LlmCallbackPayload | ScriptExecutionPayload,
 ) -> None:
     """
     Handle schedule automation recurrence after successful task execution.
@@ -173,9 +244,8 @@ new_task_event = asyncio.Event()  # Event to notify worker of immediate tasks
 
 # Example Task Handler (no external dependencies)
 async def handle_log_message(
-    # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
     db_context: DatabaseContext,
-    # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
+    # ast-grep-ignore: no-dict-any - Debug handler that accepts arbitrary payloads for logging
     payload: dict[str, Any],
 ) -> None:
     """Simple task handler that logs the received payload."""
@@ -192,9 +262,8 @@ async def handle_log_message(
 
 
 async def handle_llm_callback(
-    exec_context: ToolExecutionContext,  # Accept execution context
-    # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
-    payload: dict[str, Any],  # Payload from the task queue
+    exec_context: ToolExecutionContext,
+    payload: LlmCallbackPayload,
 ) -> None:
     """
     Task handler for LLM scheduled callbacks and reminders.
@@ -502,8 +571,7 @@ class TaskWorker:
         indexing_source: "IndexingSource | None" = None,
         engine: AsyncEngine
         | None = None,  # Add engine parameter for dependency injection
-        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
-        event_sources: dict[str, Any] | None = None,  # Add event sources
+        event_sources: "dict[str, EventSource] | None" = None,
         handler_timeout: float = TASK_HANDLER_TIMEOUT,  # Configurable timeout per instance
         chat_interfaces: dict[str, ChatInterface] | None = None,
     ) -> None:
@@ -1110,8 +1178,7 @@ class TaskWorker:
 
 async def handle_system_event_cleanup(
     exec_context: ToolExecutionContext,
-    # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
-    payload: dict[str, Any],
+    payload: SystemEventCleanupPayload,
 ) -> None:
     """
     Task handler for cleaning up old events from the database.
@@ -1138,8 +1205,7 @@ async def handle_system_event_cleanup(
 
 async def handle_system_error_log_cleanup(
     exec_context: ToolExecutionContext,
-    # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
-    payload: dict[str, Any],
+    payload: SystemErrorLogCleanupPayload,
 ) -> None:
     """
     Task handler for cleaning up old error logs from the database.
@@ -1166,8 +1232,7 @@ async def handle_system_error_log_cleanup(
 
 async def handle_worker_task_cleanup(
     exec_context: ToolExecutionContext,
-    # ast-grep-ignore: no-dict-any - Task payload is dynamic
-    payload: dict[str, Any],
+    payload: WorkerTaskCleanupPayload,
 ) -> None:
     """Task handler for cleaning up old worker task records and directories.
 
@@ -1244,8 +1309,7 @@ async def handle_worker_task_cleanup(
 
 async def handle_completed_automation_cleanup(
     exec_context: ToolExecutionContext,
-    # ast-grep-ignore: no-dict-any - Task payload is dynamic
-    payload: dict[str, Any],
+    payload: CompletedAutomationCleanupPayload,
 ) -> None:
     """Task handler for cleaning up completed one-time automations.
 
@@ -1280,9 +1344,9 @@ async def handle_completed_automation_cleanup(
 
 async def _process_script_wake_llm(
     exec_context: ToolExecutionContext,
-    # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
+    # ast-grep-ignore: no-dict-any - Wake contexts from user scripts have arbitrary structure
     wake_contexts: list[dict[str, Any]],
-    # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
+    # ast-grep-ignore: no-dict-any - Event data from external sources (Home Assistant, webhooks) with arbitrary structure
     event_data: dict[str, Any],
     listener_id: str | None,
 ) -> None:
@@ -1449,8 +1513,7 @@ async def _process_script_wake_llm(
 
 async def handle_script_execution(
     exec_context: ToolExecutionContext,
-    # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
-    payload: dict[str, Any],
+    payload: ScriptExecutionPayload,
 ) -> None:
     """
     Task handler for executing scripts triggered by events.
@@ -1601,8 +1664,7 @@ async def handle_script_execution(
 
 async def handle_reindex_document(
     exec_context: ToolExecutionContext,
-    # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
-    payload: dict[str, Any],
+    payload: ReindexDocumentPayload,
 ) -> None:
     """
     Task handler for re-indexing a document.

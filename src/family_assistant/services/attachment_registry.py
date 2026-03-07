@@ -15,7 +15,7 @@ import os
 import uuid
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, TypedDict, cast
 
 import aiofiles
 from fastapi import HTTPException, UploadFile
@@ -26,6 +26,55 @@ from family_assistant.storage.context import DatabaseContext
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncEngine
+
+
+class AttachmentRegistryConfig(TypedDict, total=False):
+    """Configuration dictionary for AttachmentRegistry (from AttachmentConfig.model_dump())."""
+
+    max_file_size: int
+    max_multimodal_size: int
+    storage_path: str
+    large_tool_result_threshold_kb: int
+    allowed_mime_types: list[str]
+
+
+class AttachmentRowDict(TypedDict):
+    """Row dictionary from the attachment_metadata database table."""
+
+    attachment_id: str
+    source_type: str
+    source_id: str
+    mime_type: str
+    description: str
+    size: int
+    content_url: str | None
+    storage_path: str | None
+    conversation_id: str | None
+    message_id: int | None
+    created_at: datetime
+    accessed_at: datetime | None
+    # ast-grep-ignore: no-dict-any - Free-form JSON metadata column stored in DB
+    metadata: dict[str, Any] | None
+
+
+class AttachmentMetadataDict(TypedDict):
+    """Dictionary representation of AttachmentMetadata (from to_dict())."""
+
+    attachment_id: str
+    source_type: str
+    source_id: str
+    mime_type: str
+    description: str
+    size: int
+    content_url: str | None
+    storage_path: str | None
+    conversation_id: str | None
+    message_id: int | None
+    created_at: str | None
+    accessed_at: str | None
+    # ast-grep-ignore: no-dict-any - Free-form JSON metadata with arbitrary keys from various callers
+    metadata: dict[str, Any]
+
 
 logger = logging.getLogger(__name__)
 
@@ -70,7 +119,7 @@ class AttachmentMetadata:
         message_id: int | None = None,
         created_at: datetime | None = None,
         accessed_at: datetime | None = None,
-        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
+        # ast-grep-ignore: no-dict-any - Free-form JSON metadata with arbitrary keys from various callers
         metadata: dict[str, Any] | None = None,
     ) -> None:
         self.attachment_id = attachment_id
@@ -87,8 +136,7 @@ class AttachmentMetadata:
         self.accessed_at = accessed_at
         self.metadata = metadata or {}
 
-    # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
-    def to_dict(self) -> dict[str, Any]:
+    def to_dict(self) -> AttachmentMetadataDict:
         """Convert to dictionary representation."""
         return {
             "attachment_id": self.attachment_id,
@@ -107,8 +155,7 @@ class AttachmentMetadata:
         }
 
     @classmethod
-    # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
-    def from_row(cls, row: dict[str, Any]) -> AttachmentMetadata:
+    def from_row(cls, row: AttachmentRowDict) -> AttachmentMetadata:
         """Create from database row."""
         return cls(
             attachment_id=row["attachment_id"],
@@ -134,8 +181,7 @@ class AttachmentRegistry:
         self,
         storage_path: str,
         db_engine: AsyncEngine,
-        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
-        config: dict[str, Any] | None = None,
+        config: AttachmentRegistryConfig | None = None,
     ) -> None:
         """
         Initialize the attachment registry.
@@ -183,7 +229,7 @@ class AttachmentRegistry:
         storage_path: str | None = None,
         conversation_id: str | None = None,
         message_id: int | None = None,
-        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
+        # ast-grep-ignore: no-dict-any - Free-form JSON metadata with arbitrary keys from various callers
         metadata: dict[str, Any] | None = None,
     ) -> AttachmentMetadata:
         """
@@ -269,7 +315,7 @@ class AttachmentRegistry:
         if not row:
             return None
 
-        return AttachmentMetadata.from_row(row)
+        return AttachmentMetadata.from_row(cast("AttachmentRowDict", row))
 
     async def list_attachments(
         self,
@@ -306,7 +352,9 @@ class AttachmentRegistry:
         )
 
         rows = await db_context.fetch_all(query)
-        return [AttachmentMetadata.from_row(row) for row in rows]
+        return [
+            AttachmentMetadata.from_row(cast("AttachmentRowDict", row)) for row in rows
+        ]
 
     async def get_recent_attachments_for_conversation(
         self,
@@ -333,7 +381,9 @@ class AttachmentRegistry:
         )
 
         rows = await db_context.fetch_all(query)
-        return [AttachmentMetadata.from_row(row) for row in rows]
+        return [
+            AttachmentMetadata.from_row(cast("AttachmentRowDict", row)) for row in rows
+        ]
 
     async def register_user_attachment(
         self,
@@ -393,7 +443,7 @@ class AttachmentRegistry:
         storage_path: str | None = None,
         conversation_id: str | None = None,
         message_id: int | None = None,
-        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
+        # ast-grep-ignore: no-dict-any - Free-form JSON metadata with arbitrary keys from various callers
         metadata: dict[str, Any] | None = None,
     ) -> AttachmentMetadata:
         """
@@ -652,7 +702,7 @@ class AttachmentRegistry:
                 f"Successfully claimed attachment {attachment_id} for conversation {conversation_id}"
             )
             # Note: accessed_at is updated by the claim UPDATE statement above
-            return AttachmentMetadata.from_row(row)
+            return AttachmentMetadata.from_row(cast("AttachmentRowDict", row))
 
         return None
 
@@ -669,7 +719,7 @@ class AttachmentRegistry:
         storage_path: str | None = None,
         conversation_id: str | None = None,
         message_id: int | None = None,
-        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
+        # ast-grep-ignore: no-dict-any - Free-form JSON metadata with arbitrary keys from various callers
         metadata: dict[str, Any] | None = None,
     ) -> AttachmentMetadata:
         """
@@ -713,7 +763,7 @@ class AttachmentRegistry:
         description: str | None = None,
         conversation_id: str | None = None,
         message_id: int | None = None,
-        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
+        # ast-grep-ignore: no-dict-any - Free-form JSON metadata with arbitrary keys from various callers
         metadata: dict[str, Any] | None = None,
         db_context: DatabaseContext | None = None,
     ) -> AttachmentMetadata:

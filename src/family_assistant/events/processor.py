@@ -7,7 +7,7 @@ import json
 import logging
 import time
 from collections.abc import Callable
-from typing import Any
+from typing import Any, TypedDict, cast
 
 from sqlalchemy import select, text
 
@@ -21,8 +21,42 @@ from family_assistant.storage.events import (
     check_and_update_rate_limit,
     event_listeners_table,
 )
+from family_assistant.storage.types import (
+    EventConditionEvaluatorConfig,
+    EventListenerDict,
+    MatchConditions,
+)
 
 logger = logging.getLogger(__name__)
+
+
+class SourceHealthInfoDict(TypedDict, total=False):
+    """Health info for an individual event source.
+
+    For sources with _connection_healthy: healthy, reconnect_attempts, last_event_time.
+    For other sources: status.
+    """
+
+    healthy: bool | None
+    reconnect_attempts: int
+    last_event_time: float
+    status: str
+
+
+class ListenerCacheInfoDict(TypedDict):
+    """Info about the listener cache state."""
+
+    last_refresh: float
+    listener_count: int
+    by_source: dict[str, int]
+
+
+class EventProcessorHealthStatus(TypedDict):
+    """Return type for EventProcessor.get_health_status()."""
+
+    processor_running: bool
+    sources: dict[str, SourceHealthInfoDict]
+    listener_cache: ListenerCacheInfoDict
 
 
 class EventProcessor:
@@ -33,8 +67,7 @@ class EventProcessor:
         sources: dict[str, EventSource],
         db_context: DatabaseContext | None = None,
         sample_interval_hours: float = 1.0,
-        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
-        config: dict[str, Any] | None = None,
+        config: EventConditionEvaluatorConfig | None = None,
         get_db_context_func: Callable[[], DatabaseContext] | None = None,
     ) -> None:
         """
@@ -53,8 +86,7 @@ class EventProcessor:
         )
         self._db_context = db_context  # Store for tests
         self.get_db_context_func = get_db_context_func
-        # Cache listeners by source_id for efficient lookup
-        self._listener_cache: dict[str, list[dict]] = {}
+        self._listener_cache: dict[str, list[EventListenerDict]] = {}
         self._cache_refresh_interval = 60  # Refresh from DB every minute
         self._last_cache_refresh = 0
         self._running = False
@@ -95,7 +127,7 @@ class EventProcessor:
                     f"Failed to stop event source {source_id}: {e}", exc_info=True
                 )
 
-    # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
+    # ast-grep-ignore: no-dict-any - event_data is arbitrary JSON from external sources (Home Assistant, webhooks) with no fixed schema
     async def process_event(self, source_id: str, event_data: dict[str, Any]) -> None:
         """Process an event from a source."""
         if not self._running:
@@ -159,8 +191,9 @@ class EventProcessor:
 
     async def _check_match_conditions(
         self,
-        event_data: dict,
-        match_conditions: dict | None,
+        # ast-grep-ignore: no-dict-any - event_data is arbitrary JSON from external sources with no fixed schema
+        event_data: dict[str, Any],
+        match_conditions: MatchConditions | None,
         condition_script: str | None,
     ) -> bool:
         """Check if event matches the listener's conditions.
@@ -190,9 +223,10 @@ class EventProcessor:
 
     def _get_nested_value(
         self,
-        data: dict,
+        # ast-grep-ignore: no-dict-any - navigates arbitrary nested JSON from external event sources
+        data: dict[str, Any],
         key_path: str,
-        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
+        # ast-grep-ignore: no-dict-any - return type includes nested dicts from arbitrary external JSON
     ) -> str | int | float | bool | dict[str, Any] | list[Any] | None:
         """Get value from nested dict using dot notation (e.g., 'new_state.state')."""
         keys = key_path.split(".")
@@ -221,9 +255,9 @@ class EventProcessor:
                 "EventProcessor requires get_db_context_func to be provided"
             )
 
-        new_cache = {}
+        new_cache: dict[str, list[EventListenerDict]] = {}
         for row in result:
-            listener_dict = dict(row)
+            listener_dict = cast("EventListenerDict", dict(row))
             # Parse JSON fields if they're strings
             match_conditions = listener_dict.get("match_conditions") or {}
             if isinstance(match_conditions, str):
@@ -250,12 +284,9 @@ class EventProcessor:
         )
 
     async def _execute_action(
-        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
-        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
         self,
-        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
-        listener: dict[str, Any],
-        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
+        listener: EventListenerDict,
+        # ast-grep-ignore: no-dict-any - event_data is arbitrary JSON from external sources with no fixed schema
         event_data: dict[str, Any],
     ) -> None:
         """Execute the action defined in the listener (opens new DB context)."""
@@ -270,17 +301,16 @@ class EventProcessor:
     async def _execute_action_in_context(
         self,
         db_ctx: DatabaseContext,
-        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
-        listener: dict[str, Any],
-        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
+        listener: EventListenerDict,
+        # ast-grep-ignore: no-dict-any - event_data is arbitrary JSON from external sources with no fixed schema
         event_data: dict[str, Any],
     ) -> None:
         """Execute the action defined in the listener within existing DB context."""
         action_type = ActionType(listener["action_type"])
-        action_config = listener.get("action_config", {})
+        action_config = listener["action_config"] or {}
 
-        # Build context for action
-        context = {
+        # ast-grep-ignore: no-dict-any - context dict contains mixed types including arbitrary event_data for action execution
+        context: dict[str, Any] = {
             "trigger": f"Event listener '{listener['name']}' matched",
             "listener_id": listener["id"],
             "source": listener["source_id"],
@@ -296,7 +326,7 @@ class EventProcessor:
         await execute_action(
             db_ctx=db_ctx,
             action_type=action_type,
-            action_config=action_config,
+            action_config=cast("dict[str, Any]", action_config),
             conversation_id=listener["conversation_id"],
             interface_type=listener.get("interface_type", "telegram"),
             context=context,
@@ -326,28 +356,26 @@ class EventProcessor:
         )
         logger.info(f"Disabled one-time listener {listener_id}")
 
-    # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
-    async def get_health_status(self) -> dict[str, Any]:
+    async def get_health_status(self) -> EventProcessorHealthStatus:
         """Get health status of all event sources."""
-        status = {
-            "processor_running": self._running,
-            "sources": {},
-            "listener_cache": {
-                "last_refresh": self._last_cache_refresh,
-                "listener_count": sum(len(v) for v in self._listener_cache.values()),
-                "by_source": {k: len(v) for k, v in self._listener_cache.items()},
-            },
-        }
+        sources: dict[str, SourceHealthInfoDict] = {}
 
         for source_id, source in self.sources.items():
-            # Get source-specific health info if available
             if hasattr(source, "_connection_healthy"):
-                status["sources"][source_id] = {
-                    "healthy": getattr(source, "_connection_healthy", None),
-                    "reconnect_attempts": getattr(source, "_reconnect_attempts", 0),
-                    "last_event_time": getattr(source, "_last_event_time", 0),
-                }
+                sources[source_id] = SourceHealthInfoDict(
+                    healthy=getattr(source, "_connection_healthy", None),
+                    reconnect_attempts=getattr(source, "_reconnect_attempts", 0),
+                    last_event_time=getattr(source, "_last_event_time", 0),
+                )
             else:
-                status["sources"][source_id] = {"status": "unknown"}
+                sources[source_id] = SourceHealthInfoDict(status="unknown")
 
-        return status
+        return EventProcessorHealthStatus(
+            processor_running=self._running,
+            sources=sources,
+            listener_cache=ListenerCacheInfoDict(
+                last_refresh=self._last_cache_refresh,
+                listener_count=sum(len(v) for v in self._listener_cache.values()),
+                by_source={k: len(v) for k, v in self._listener_cache.items()},
+            ),
+        )

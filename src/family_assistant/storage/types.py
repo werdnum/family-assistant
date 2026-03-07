@@ -3,6 +3,30 @@
 from datetime import datetime
 from typing import Any, TypedDict
 
+MatchConditions = dict[str, str | int | float | bool]
+
+
+class ActionConfig(TypedDict, total=False):
+    """Action config for wake_llm or script action types.
+
+    Fields are all optional since different action types use different subsets.
+    """
+
+    # wake_llm fields
+    context: str
+    include_event_data: bool
+    # script fields
+    script_code: str
+    timeout: int
+    task_name: str
+
+
+class EventConditionEvaluatorConfig(TypedDict, total=False):
+    """Config dict passed to EventConditionEvaluator and EventConditionValidator."""
+
+    script_execution_timeout_ms: int
+    script_size_limit_bytes: int
+
 
 class EventListenerDict(TypedDict):
     """Type definition for event listener records returned from repository."""
@@ -11,11 +35,9 @@ class EventListenerDict(TypedDict):
     name: str
     description: str | None
     source_id: str  # EventSourceType value
-    # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
-    match_conditions: dict[str, Any]
+    match_conditions: MatchConditions
     action_type: str  # EventActionType value
-    # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
-    action_config: dict[str, Any] | None
+    action_config: ActionConfig | None
     condition_script: str | None
     conversation_id: str
     interface_type: str  # InterfaceType value
@@ -38,8 +60,7 @@ class ScheduleAutomationDict(TypedDict):
     recurrence_rule: str
     next_scheduled_at: datetime | None
     action_type: str  # EventActionType value
-    # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
-    action_config: dict[str, Any]
+    action_config: ActionConfig
     enabled: bool
     created_at: datetime
     last_execution_at: datetime | None
@@ -52,7 +73,7 @@ class RecentEventDict(TypedDict):
     id: int
     event_id: str
     source_id: str  # EventSourceType value
-    # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
+    # ast-grep-ignore: no-dict-any - event_data contains arbitrary JSON from external sources (Home Assistant, webhooks) with no fixed schema
     event_data: dict[str, Any]
     triggered_listener_ids: list[int] | None
     timestamp: datetime
@@ -65,7 +86,7 @@ class TaskDict(TypedDict):
     id: int
     task_id: str
     task_type: str
-    # ast-grep-ignore: no-dict-any - Payload is unstructured JSON
+    # ast-grep-ignore: no-dict-any - payload is unstructured JSON from multiple task types
     payload: dict[str, Any] | None
     scheduled_at: datetime | None
     created_at: datetime
