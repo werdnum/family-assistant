@@ -88,7 +88,7 @@ class MockToolsProvider:
     async def execute_tool(
         self,
         name: str,
-        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
+        # ast-grep-ignore: no-dict-any - tool arguments from external LLM tool call
         arguments: dict[str, Any],
         context: ToolExecutionContext,
         call_id: str | None = None,
@@ -110,7 +110,7 @@ class MockToolsProvider:
         else:
             raise ValueError(f"Unknown tool: {name}")
 
-    # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
+    # ast-grep-ignore: no-dict-any - tool definitions match external OpenAI JSON schema
     def get_raw_tool_definitions(self) -> list[dict[str, Any]]:
         """Return raw tool definitions (same as translated for mock)."""
         # For the mock, raw and translated definitions are the same
@@ -358,7 +358,7 @@ async def test_direct_callable_validates_parameters(db_engine: AsyncEngine) -> N
         async def execute_tool(
             self,
             name: str,
-            # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
+            # ast-grep-ignore: no-dict-any - tool arguments from external LLM tool call
             arguments: dict[str, Any],
             context: ToolExecutionContext,
             call_id: str | None = None,

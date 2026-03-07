@@ -3,12 +3,13 @@ Task handlers related to the document indexing pipeline.
 """
 
 import logging
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 import sqlalchemy as sa
 from sqlalchemy import and_, func, select
 
 from family_assistant.events.indexing_source import IndexingEventType
+from family_assistant.indexing.types import EmbedAndStoreBatchPayload, EmbeddingMetadata
 from family_assistant.storage.tasks import tasks_table
 from family_assistant.storage.vector import (
     DocumentEmbeddingRecord,
@@ -64,9 +65,8 @@ async def check_document_completion(
 
 
 async def handle_embed_and_store_batch(
-    exec_context: "ToolExecutionContext",  # Changed parameter name to match hypothesized caller
-    # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
-    payload: dict[str, Any],
+    exec_context: "ToolExecutionContext",
+    payload: EmbedAndStoreBatchPayload,
 ) -> None:
     """
     Task handler for embedding a batch of texts and storing them in the vector database.
@@ -114,8 +114,7 @@ async def handle_embed_and_store_batch(
     try:
         document_id: int = payload["document_id"]
         texts_to_embed: list[str] = payload["texts_to_embed"]
-        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
-        embedding_metadata_list: list[dict[str, Any]] = payload[
+        embedding_metadata_list: list[EmbeddingMetadata] = payload[
             "embedding_metadata_list"
         ]
     except KeyError as e:
@@ -201,7 +200,7 @@ async def handle_embed_and_store_batch(
             embedding=embedding_vector,  # May be None
             embedding_model=embedding_model_used,
             content=text_content,
-            content_hash=meta.get("content_hash"),
+            content_hash=meta["content_hash"],
             embedding_doc_metadata=meta["original_content_metadata"],
         )
 

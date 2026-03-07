@@ -16,7 +16,7 @@ if TYPE_CHECKING:
 # Import select for direct DB queries
 from sqlalchemy.sql import select
 
-from family_assistant.config_models import AppConfig
+from family_assistant.config_models import AppConfig, ToolsConfig
 
 # Import necessary components from the application
 from family_assistant.interfaces import ChatInterface  # Import ChatInterface
@@ -197,7 +197,7 @@ async def test_schedule_and_execute_callback(
         timezone=ZoneInfo(dummy_timezone_str),
         max_history_messages=dummy_max_history,
         history_max_age_hours=dummy_history_age,
-        tools_config={},  # Added missing tools_config
+        tools_config=ToolsConfig(),
         delegation_security_level="confirm",  # Added
         id="smoke_callback_profile",  # Added
     )
@@ -480,7 +480,7 @@ async def test_modify_pending_callback(
         timezone=ZoneInfo("UTC"),
         max_history_messages=5,
         history_max_age_hours=24,
-        tools_config={},
+        tools_config=ToolsConfig(),
         delegation_security_level="confirm",
         id="smoke_modify_profile",
     )
@@ -807,7 +807,7 @@ async def test_cancel_pending_callback(
         timezone=ZoneInfo("UTC"),
         max_history_messages=5,
         history_max_age_hours=24,
-        tools_config={},
+        tools_config=ToolsConfig(),
         delegation_security_level="confirm",
         id="smoke_cancel_profile",
     )
@@ -1108,7 +1108,7 @@ async def test_schedule_reminder_with_follow_up(
         timezone=ZoneInfo("UTC"),
         max_history_messages=10,
         history_max_age_hours=24,
-        tools_config={},
+        tools_config=ToolsConfig(),
         delegation_security_level="confirm",
         id="reminder_test_profile",
     )
@@ -1456,7 +1456,7 @@ async def test_schedule_recurring_callback(
         timezone=ZoneInfo("UTC"),
         max_history_messages=10,
         history_max_age_hours=24,
-        tools_config={},
+        tools_config=ToolsConfig(),
         delegation_security_level="confirm",
         id="recurring_test_profile",
     )
@@ -1682,7 +1682,7 @@ async def test_list_pending_callbacks(db_engine: AsyncEngine) -> None:
         timezone=ZoneInfo("UTC"),
         max_history_messages=5,
         history_max_age_hours=24,
-        tools_config={},
+        tools_config=ToolsConfig(),
         delegation_security_level="confirm",
         id="list_test_profile",
     )

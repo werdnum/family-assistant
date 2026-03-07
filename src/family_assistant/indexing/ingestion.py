@@ -11,6 +11,8 @@ from typing import TYPE_CHECKING, Any
 
 import filetype  # type: ignore[import-untyped]
 
+from family_assistant.indexing.types import IngestionResult
+
 # storage functions now accessed via DatabaseContext
 if TYPE_CHECKING:
     from family_assistant.storage.context import DatabaseContext
@@ -27,7 +29,7 @@ class IngestedDocument:
     source_uri: str | None
     title: str | None
     created_at: datetime | None
-    # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
+    # ast-grep-ignore: no-dict-any - User-provided document metadata with arbitrary key/value pairs
     metadata: dict[str, Any] | None
     file_path: str | None = None
     id: int | None = None  # pylint: disable=invalid-name
@@ -47,10 +49,9 @@ async def process_document_ingestion_request(
     uploaded_file_content_type: str | None = None,  # Client-provided content type
     url_to_scrape: str | None = None,
     created_at_dt: datetime | None = None,
-    # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
+    # ast-grep-ignore: no-dict-any - User-provided document metadata with arbitrary key/value pairs
     doc_metadata: dict[str, Any] | None = None,
-    # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
-) -> dict[str, Any]:
+) -> IngestionResult:
     """
     Processes a document ingestion request, saves files, stores metadata, and enqueues for indexing.
 

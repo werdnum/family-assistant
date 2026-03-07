@@ -42,6 +42,7 @@ from .messages import (
     AssistantMessage,
     ErrorMessage,
     LLMMessage,
+    MessageReasoningInfo,
     SystemMessage,
     TextContentPart,
     ToolMessage,
@@ -82,7 +83,33 @@ class ParsedSSEChunk(TypedDict, total=False):
     choices: list[ParsedChoice]
 
 
-StreamingMetadata = dict[str, object]
+class StreamEventMetadata(TypedDict, total=False):
+    """Metadata attached to LLMStreamEvent, shape varies by event type."""
+
+    reasoning_info: MessageReasoningInfo
+    provider_metadata: object
+    attachment_ids: list[str]
+    attachments: list[dict[str, str | int | None]]
+    message: AssistantMessage
+    error_id: str
+    last_event_id: str
+    error_type: str
+    provider: str
+    model: str
+
+
+StreamingMetadata = StreamEventMetadata
+
+# ast-grep-ignore: no-dict-any - Content parts are provider-specific formats (OpenAI image_url, Anthropic ImageBlockParam, etc.)
+UserMessageContentPart = dict[str, Any]
+
+
+class UserMessageDict(TypedDict):
+    """Return type for format_user_message_with_file across all LLM providers."""
+
+    role: Literal["user"]
+    # ast-grep-ignore: no-dict-any - Content parts are provider-specific formats (OpenAI image_url, Anthropic ImageBlockParam, etc.)
+    content: str | list[UserMessageContentPart]
 
 
 class BaseLLMClient:
@@ -695,14 +722,8 @@ class LLMOutput:
 
     content: str | None = None
     tool_calls: list[ToolCallItem] | None = field(default=None)
-    # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
-    reasoning_info: dict[str, Any] | None = field(
-        default=None
-    )  # Store reasoning/usage data
-    # ast-grep-ignore: no-dict-any - Accepts both dicts (for serialization) and provider metadata objects (e.g., GeminiProviderMetadata)
-    provider_metadata: Any | None = field(
-        default=None
-    )  # Provider-specific metadata (e.g., thought signatures)
+    reasoning_info: MessageReasoningInfo | None = field(default=None)
+    provider_metadata: Any | None = field(default=None)  # noqa: ANN401 - GeminiProviderMetadata at runtime, dict after asdict() serialization
 
 
 @dataclass
@@ -715,11 +736,10 @@ class LLMStreamEvent:
     tool_call_id: str | None = None  # For correlating tool results
     tool_result: str | None = None  # For tool execution results
     error: str | None = None  # For error messages
-    # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
-    metadata: dict[str, Any] | None = None  # Additional event metadata
+    metadata: StreamEventMetadata | None = None
 
 
-# ast-grep-ignore: no-dict-any - Return type intentionally untyped; deep-copies and strips fields for litellm
+# ast-grep-ignore: no-dict-any - deep copy loses ToolDefinition TypedDict type; returns untyped dicts after field stripping
 def _sanitize_tools_for_litellm(tools: list[ToolDefinition]) -> list[dict[str, Any]]:
     """
     Removes unsupported 'format' fields from string parameters in tool definitions
@@ -811,8 +831,7 @@ class LLMInterface(Protocol):
         file_path: str | None,
         mime_type: str | None,
         max_text_length: int | None,
-        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
-    ) -> dict[str, Any]:
+    ) -> UserMessageDict:
         """
         Formats a user message, potentially including file content.
         The client decides how to represent the file (e.g., Gemini Files API ref, base64 data URI).
@@ -877,20 +896,27 @@ class LLMInterface(Protocol):
         ...
 
 
+class _LiteLLMStreamingToolFunction(TypedDict):
+    name: str
+    arguments: str
+
+
+class _LiteLLMStreamingToolAccumulator(TypedDict):
+    id: str | None
+    type: str | None
+    function: _LiteLLMStreamingToolFunction
+
+
 class LiteLLMClient(BaseLLMClient):
     """LLM client implementation using the LiteLLM library."""
 
     def __init__(
         self,
         model: str,
-        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
-        model_parameters: dict[str, dict[str, Any]] | None = None,  # Corrected type
+        model_parameters: dict[str, dict[str, object]] | None = None,
         fallback_model_id: str | None = None,
-        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
-        fallback_model_parameters: dict[str, dict[str, Any]]
-        | None = None,  # Corrected type
-        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
-        **kwargs: dict[str, Any],
+        fallback_model_parameters: dict[str, dict[str, object]] | None = None,
+        **kwargs: Any,  # noqa: ANN401 - accepts arbitrary litellm.acompletion parameters
     ) -> None:
         """
         Initializes the LiteLLM client.
@@ -906,15 +932,11 @@ class LiteLLMClient(BaseLLMClient):
             raise ValueError("LLM model identifier cannot be empty.")
         self.model = model
         self.default_kwargs = kwargs
-        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
-        self.model_parameters: dict[str, dict[str, Any]] = (
-            model_parameters or {}
-        )  # Ensure correct type for self
+        self.model_parameters: dict[str, dict[str, object]] = model_parameters or {}
         self.fallback_model_id = fallback_model_id
-        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
-        self.fallback_model_parameters: dict[str, dict[str, Any]] = (
+        self.fallback_model_parameters: dict[str, dict[str, object]] = (
             fallback_model_parameters or {}
-        )  # Ensure correct type for self
+        )
         logger.info(
             f"LiteLLMClient initialized for primary model: {self.model} "
             f"with default kwargs: {self.default_kwargs}, "
@@ -944,7 +966,7 @@ class LiteLLMClient(BaseLLMClient):
             ):
                 attachments = original_msg.transient_attachments
                 # Convert to Claude's format
-                # ast-grep-ignore: no-dict-any - LiteLLM SDK requires dict format for message content
+                # ast-grep-ignore: no-dict-any - LiteLLM SDK requires raw dicts for multimodal content blocks (text, image, document)
                 content: list[dict[str, Any]] = [
                     {"type": "text", "text": original_msg.content},
                 ]
@@ -1012,8 +1034,7 @@ class LiteLLMClient(BaseLLMClient):
         messages: list[LLMMessage],
         tools: list[ToolDefinition] | None,
         tool_choice: str | None,
-        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
-        specific_model_params: dict[str, dict[str, Any]],  # Corrected type
+        specific_model_params: dict[str, dict[str, object]],
     ) -> LLMOutput:
         """Internal method to make a single attempt at LLM completion.
 
@@ -1388,10 +1409,8 @@ class LiteLLMClient(BaseLLMClient):
         file_path: str | None,
         mime_type: str | None,
         max_text_length: int | None,
-        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
-    ) -> dict[str, Any]:
-        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
-        user_content_parts: list[dict[str, Any]] = []
+    ) -> UserMessageDict:
+        user_content_parts: list[UserMessageContentPart] = []
         actual_prompt_text = prompt_text or "Process the provided file."
 
         if file_path and mime_type:
@@ -1542,9 +1561,7 @@ class LiteLLMClient(BaseLLMClient):
             )
             raise ValueError("Cannot format user message with no input (file or text).")
 
-        # Determine final content structure for the user message
-        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
-        final_user_content: str | list[dict[str, Any]]
+        final_user_content: str | list[UserMessageContentPart]
         if len(user_content_parts) == 1 and user_content_parts[0]["type"] == "text":
             final_user_content = user_content_parts[0]["text"]
         else:
@@ -1569,8 +1586,7 @@ class LiteLLMClient(BaseLLMClient):
         messages: Sequence[LLMMessage],
         tools: list[ToolDefinition] | None,
         tool_choice: str | None,
-        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
-        specific_model_params: dict[str, dict[str, Any]],
+        specific_model_params: dict[str, dict[str, object]],
     ) -> AsyncIterator[LLMStreamEvent]:
         """Internal async generator for streaming responses (single attempt)."""
         span = _otel_tracer.start_span(
@@ -1676,8 +1692,7 @@ class LiteLLMClient(BaseLLMClient):
                 stream = await acompletion(**stream_params)
 
                 # Track current tool calls being built
-                # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
-                current_tool_calls: dict[int, dict[str, Any]] = {}
+                current_tool_calls: dict[int, _LiteLLMStreamingToolAccumulator] = {}
                 chunk: Any | None = None
                 last_chunk_with_usage: Any | None = None
                 content_emitted = False
@@ -1754,8 +1769,12 @@ class LiteLLMClient(BaseLLMClient):
                                 "This may cause issues with multiple tool calls."
                             )
                             idx = 0
-                        tc_id = _safe_get_attr(tc_delta, "id")
-                        tc_type = _safe_get_attr(tc_delta, "type") or "function"
+                        raw_tc_id = _safe_get_attr(tc_delta, "id")
+                        tc_id = raw_tc_id if isinstance(raw_tc_id, str) else None
+                        raw_tc_type = _safe_get_attr(tc_delta, "type")
+                        tc_type = (
+                            raw_tc_type if isinstance(raw_tc_type, str) else "function"
+                        )
                         func_name = ""
                         func_args = ""
                         function_delta = _safe_get_attr(tc_delta, "function")
@@ -1775,11 +1794,13 @@ class LiteLLMClient(BaseLLMClient):
                                     func_args = str(func_args_attr)
 
                         if idx not in current_tool_calls:
-                            current_tool_calls[idx] = {
-                                "id": tc_id,
-                                "type": tc_type,
-                                "function": {"name": "", "arguments": ""},
-                            }
+                            current_tool_calls[idx] = _LiteLLMStreamingToolAccumulator(
+                                id=tc_id,
+                                type=tc_type,
+                                function=_LiteLLMStreamingToolFunction(
+                                    name="", arguments=""
+                                ),
+                            )
 
                         tc_data = current_tool_calls[idx]
                         if tc_id:
@@ -1793,10 +1814,11 @@ class LiteLLMClient(BaseLLMClient):
 
                 # Emit any remaining tool calls
                 for tc_data in current_tool_calls.values():
-                    if tc_data["id"] and tc_data["function"]["name"]:
+                    tc_id = tc_data["id"]
+                    if tc_id and tc_data["function"]["name"]:
                         tool_call = ToolCallItem(
-                            id=tc_data["id"],
-                            type=tc_data["type"],
+                            id=tc_id,
+                            type=tc_data["type"] or "function",
                             function=ToolCallFunction(
                                 name=tc_data["function"]["name"],
                                 arguments=tc_data["function"]["arguments"] or "{}",
@@ -1805,7 +1827,7 @@ class LiteLLMClient(BaseLLMClient):
                         yield LLMStreamEvent(
                             type="tool_call",
                             tool_call=tool_call,
-                            tool_call_id=tc_data["id"],
+                            tool_call_id=tc_id,
                         )
 
                 # If we never emitted content (e.g., provider returned only a terminal chunk),
@@ -2217,6 +2239,18 @@ class LiteLLMClient(BaseLLMClient):
             )
 
 
+class InteractionRecord(TypedDict):
+    """A single recorded LLM interaction in JSONL format.
+
+    Each record contains the serialized input arguments and the serialized output
+    from a single LLM method call (generate_response, format_user_message_with_file,
+    or generate_structured).
+    """
+
+    input: dict[str, object]
+    output: dict[str, object]
+
+
 class RecordingLLMClient:
     """
     An LLM client wrapper that records interactions (inputs and outputs)
@@ -2252,9 +2286,8 @@ class RecordingLLMClient:
         tool_choice: str | None = "auto",
     ) -> LLMOutput:
         """Calls the wrapped client's standard generate_response, records, and returns."""
-        # Convert messages to dict for recording
         messages_dict = [message_to_json_dict(msg) for msg in messages]
-        input_data = {
+        input_data: dict[str, object] = {
             "method": "generate_response",
             "messages": messages_dict,
             "tools": tools,
@@ -2270,8 +2303,6 @@ class RecordingLLMClient:
             logger.error(
                 f"Error in RecordingLLMClient.generate_response: {e}", exc_info=True
             )
-            # Optionally record the error state as well, or just re-raise
-            # For now, just re-raise to ensure error propagation.
             raise
 
     async def format_user_message_with_file(
@@ -2280,10 +2311,9 @@ class RecordingLLMClient:
         file_path: str | None,
         mime_type: str | None,
         max_text_length: int | None,
-        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
-    ) -> dict[str, Any]:
+    ) -> UserMessageDict:
         """Calls the wrapped client's format_user_message_with_file, records, and returns."""
-        input_data = {
+        input_data: dict[str, object] = {
             "method": "format_user_message_with_file",
             "prompt_text": prompt_text,
             "file_path": file_path,
@@ -2291,17 +2321,16 @@ class RecordingLLMClient:
             "max_text_length": max_text_length,
         }
         try:
-            # Note: output_data for this method is a dict, not LLMOutput
             output_dict = await self.wrapped_client.format_user_message_with_file(
                 prompt_text=prompt_text,
                 file_path=file_path,
                 mime_type=mime_type,
                 max_text_length=max_text_length,
             )
-            # For recording, we'll adapt the _record_interaction or create a new one
-            # For simplicity, let's assume _record_interaction can handle a dict as "output"
-            # or we make a small adjustment. Let's record it as a simple dict.
-            record = {"input": input_data, "output": output_dict}
+            record: InteractionRecord = {
+                "input": input_data,
+                "output": dict(output_dict),
+            }
             await self._write_record_to_file(record)
             return output_dict
         except Exception as e:
@@ -2329,18 +2358,15 @@ class RecordingLLMClient:
 
     async def _record_interaction(
         self,
-        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
-        input_data: dict[str, Any],
-        output_data: LLMOutput,  # This is for generate_response
+        input_data: dict[str, object],
+        output_data: LLMOutput,
     ) -> None:
-        # Ensure output_data is serializable (LLMOutput should be)
-        # Convert ToolCallItem objects to dicts for JSON serialization
         output_dict = asdict(output_data)
-        record = {"input": input_data, "output": output_dict}
+        record: InteractionRecord = {"input": input_data, "output": output_dict}
         await self._write_record_to_file(record)
 
-    # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
-    async def _write_record_to_file(self, record: dict[str, Any]) -> None:
+    # ast-grep-ignore: no-dict-any - JSON-serializable recording payload with heterogeneous values
+    async def _write_record_to_file(self, record: InteractionRecord) -> None:
         """Helper method to write a generic record to the recording file."""
         try:
             async with aiofiles.open(
@@ -2348,7 +2374,7 @@ class RecordingLLMClient:
             ) as f:
                 await f.write(
                     json.dumps(record, ensure_ascii=False, default=str) + "\n"
-                )  # Added default=str
+                )
             logger.debug(f"Recorded interaction to {self.recording_path}")
         except Exception as file_err:
             logger.error(
@@ -2362,9 +2388,8 @@ class RecordingLLMClient:
         response_model: type[T],
     ) -> T:
         """Calls the wrapped client's generate_structured, records, and returns."""
-        # Convert messages to dict for recording
         messages_dict = [message_to_json_dict(msg) for msg in messages]
-        input_data = {
+        input_data: dict[str, object] = {
             "method": "generate_structured",
             "messages": messages_dict,
             "response_model_name": response_model.__name__,
@@ -2374,8 +2399,7 @@ class RecordingLLMClient:
             output_data = await self.wrapped_client.generate_structured(
                 messages=messages, response_model=response_model
             )
-            # Serialize the Pydantic model to JSON for recording
-            record = {
+            record: InteractionRecord = {
                 "input": input_data,
                 "output": {
                     "model_name": response_model.__name__,
@@ -2409,14 +2433,11 @@ class PlaybackLLMClient:
             ValueError: If the recording file is empty or contains invalid JSON.
         """
         self.recording_path = recording_path
-        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
-        self.recorded_interactions: list[dict[str, Any]] = []
+        self.recorded_interactions: list[InteractionRecord] = []
         logger.info(
             f"PlaybackLLMClient initializing. Reading from: {self.recording_path}"
         )
         try:
-            # Load all interactions into memory synchronously during init
-            # For async loading, this would need to be an async factory or method
             with open(self.recording_path, encoding="utf-8") as f:
                 line_num = 0
                 for raw_line in f:
@@ -2445,8 +2466,6 @@ class PlaybackLLMClient:
                 logger.warning(
                     f"Recording file {self.recording_path} is empty or contains no valid records."
                 )
-                # Decide whether to raise an error or allow initialization with empty list
-                # Raising error is safer to prevent unexpected behavior later.
                 raise ValueError(
                     f"No valid interactions loaded from {self.recording_path}"
                 )
@@ -2457,13 +2476,12 @@ class PlaybackLLMClient:
 
         except FileNotFoundError:
             logger.error(f"Recording file not found: {self.recording_path}")
-            raise  # Re-raise FileNotFoundError
+            raise
         except Exception as e:
             logger.error(
                 f"Failed to read or parse recording file {self.recording_path}: {e}",
                 exc_info=True,
             )
-            # Wrap other errors in a ValueError for consistent init failure reporting
             raise ValueError(
                 f"Failed to load recording file {self.recording_path}: {e}"
             ) from e
@@ -2475,9 +2493,8 @@ class PlaybackLLMClient:
         tool_choice: str | None = "auto",
     ) -> LLMOutput:
         """Plays back for the standard generate_response method."""
-        # Convert messages to dict for playback matching
         messages_dict = [message_to_json_dict(msg) for msg in messages]
-        current_input_args = {
+        current_input_args: dict[str, object] = {
             "method": "generate_response",
             "messages": messages_dict,
             "tools": tools,
@@ -2491,24 +2508,22 @@ class PlaybackLLMClient:
         file_path: str | None,
         mime_type: str | None,
         max_text_length: int | None,
-        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
-    ) -> dict[str, Any]:
+    ) -> UserMessageDict:
         """Plays back for the format_user_message_with_file method."""
-        current_input_args = {
+        current_input_args: dict[str, object] = {
             "method": "format_user_message_with_file",
             "prompt_text": prompt_text,
             "file_path": file_path,
             "mime_type": mime_type,
             "max_text_length": max_text_length,
         }
-        # This method returns a dict, not LLMOutput
-        return await self._find_and_playback_dict(current_input_args)
+        return cast(
+            "UserMessageDict", await self._find_and_playback_dict(current_input_args)
+        )
 
     async def _find_and_playback_llm_output(
-        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
         self,
-        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
-        current_input_args: dict[str, Any],
+        current_input_args: dict[str, object],
     ) -> LLMOutput:
         """Helper to find and playback interactions that return LLMOutput."""
         logger.debug(
@@ -2524,7 +2539,6 @@ class PlaybackLLMClient:
                     )
                     raise LookupError("Matched recorded output is not a dictionary.")
 
-                # Reconstruct ToolCallItem objects from dicts
                 tool_calls_data = output_data.get("tool_calls")
                 reconstructed_tool_calls: list[ToolCallItem] | None = None
                 if isinstance(tool_calls_data, list):
@@ -2558,9 +2572,12 @@ class PlaybackLLMClient:
                     )
 
                 matched_output = LLMOutput(
-                    content=output_data.get("content"),
+                    content=cast("str | None", output_data.get("content")),
                     tool_calls=reconstructed_tool_calls,
-                    reasoning_info=output_data.get("reasoning_info"),
+                    reasoning_info=cast(
+                        "MessageReasoningInfo | None",
+                        output_data.get("reasoning_info"),
+                    ),
                 )
                 logger.debug(
                     f"Playing back matched LLMOutput. Content: {bool(matched_output.content)}. Tool Calls: {len(matched_output.tool_calls) if matched_output.tool_calls else 0}"
@@ -2573,12 +2590,9 @@ class PlaybackLLMClient:
         )
 
     async def _find_and_playback_dict(
-        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
         self,
-        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
-        current_input_args: dict[str, Any],
-        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
-    ) -> dict[str, Any]:
+        current_input_args: dict[str, object],
+    ) -> dict[str, object]:
         """Helper to find and playback interactions that return a simple dict."""
         logger.debug(
             f"PlaybackLLMClient attempting to find dict match for input args: {json.dumps(current_input_args, indent=2, default=str)[:500]}..."
@@ -2622,10 +2636,15 @@ class PlaybackLLMClient:
                     type="tool_call", tool_call=tool_call, tool_call_id=tool_call.id
                 )
 
-        yield LLMStreamEvent(type="done", metadata=response.reasoning_info)
+        yield LLMStreamEvent(
+            type="done",
+            metadata={"reasoning_info": response.reasoning_info}
+            if response.reasoning_info
+            else None,
+        )
 
-    # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
-    async def _log_no_match_error(self, current_input_args: dict[str, Any]) -> None:
+    # ast-grep-ignore: no-dict-any - input args dict has heterogeneous values (str, list, None) from VCR recording match keys
+    async def _log_no_match_error(self, current_input_args: dict[str, object]) -> None:
         """Logs an error when no matching interaction is found."""
         logger.error(
             f"PlaybackLLMClient: No matching interaction found in {self.recording_path} for the provided input args."
@@ -2642,9 +2661,8 @@ class PlaybackLLMClient:
         response_model: type[T],
     ) -> T:
         """Plays back for the generate_structured method."""
-        # Convert messages to dict for playback matching
         messages_dict = [message_to_json_dict(msg) for msg in messages]
-        current_input_args = {
+        current_input_args: dict[str, object] = {
             "method": "generate_structured",
             "messages": messages_dict,
             "response_model_name": response_model.__name__,
@@ -2668,7 +2686,6 @@ class PlaybackLLMClient:
                     )
                     raise LookupError("Matched recorded output is not a dictionary.")
 
-                # Reconstruct the Pydantic model from the recorded data
                 model_data = output_data.get("model_data")
                 if model_data is None:
                     raise LookupError(
@@ -2708,4 +2725,8 @@ __all__ = [
     "ToolMessage",
     "UserMessage",
     "StructuredOutputError",
+    "StreamEventMetadata",
+    "MessageReasoningInfo",
+    "UserMessageContentPart",
+    "UserMessageDict",
 ]

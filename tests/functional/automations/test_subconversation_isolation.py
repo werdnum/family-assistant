@@ -3,7 +3,6 @@
 import json
 import logging
 import uuid
-from typing import Any
 from unittest.mock import MagicMock
 from zoneinfo import ZoneInfo
 
@@ -12,7 +11,7 @@ import pytest_asyncio
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncEngine
 
-from family_assistant.config_models import AppConfig
+from family_assistant.config_models import AppConfig, ToolsConfig
 from family_assistant.interfaces import ChatInterface
 from family_assistant.llm import (
     ToolCallFunction,
@@ -68,10 +67,10 @@ def primary_service_config(dummy_prompts: dict[str, str]) -> ProcessingServiceCo
         timezone=ZoneInfo("UTC"),
         max_history_messages=10,
         history_max_age_hours=24,
-        tools_config={
-            "enable_local_tools": ["delegate_to_service"],
-            "confirm_tools": [],
-        },
+        tools_config=ToolsConfig(
+            enable_local_tools=["delegate_to_service"],
+            confirm_tools=[],
+        ),
         delegation_security_level="unrestricted",
         id=PRIMARY_PROFILE_ID,
     )
@@ -84,19 +83,18 @@ def delegated_service_config(dummy_prompts: dict[str, str]) -> ProcessingService
         timezone=ZoneInfo("UTC"),
         max_history_messages=10,
         history_max_age_hours=24,
-        tools_config={
-            "enable_local_tools": [],
-            "confirm_tools": [],
-        },
+        tools_config=ToolsConfig(
+            enable_local_tools=[],
+            confirm_tools=[],
+        ),
         delegation_security_level="unrestricted",
         id=DELEGATED_PROFILE_ID,
     )
 
 
-# ast-grep-ignore: no-dict-any - Legacy code - needs structured types
-def create_tools_provider(profile_tools_config: dict[str, Any]) -> ToolsProvider:
+def create_tools_provider(profile_tools_config: ToolsConfig) -> ToolsProvider:
     """Helper to create a ToolsProvider for a profile."""
-    enabled_local_tool_names = set(profile_tools_config.get("enable_local_tools", []))
+    enabled_local_tool_names = set(profile_tools_config.enable_local_tools or [])
 
     profile_local_definitions = [
         td
@@ -119,7 +117,7 @@ def create_tools_provider(profile_tools_config: dict[str, Any]) -> ToolsProvider
         providers=[local_provider, mcp_provider]
     )
 
-    confirm_tools_set = set(profile_tools_config.get("confirm_tools", []))
+    confirm_tools_set = set(profile_tools_config.confirm_tools)
     confirming_provider = ConfirmingToolsProvider(
         wrapped_provider=composite_provider,
         tools_requiring_confirmation=confirm_tools_set,

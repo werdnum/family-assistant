@@ -14,7 +14,7 @@ import re
 import uuid
 from collections.abc import Callable
 from functools import partial
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, TypedDict
 
 import pydantic_monty
 
@@ -26,16 +26,49 @@ from family_assistant.tools.infrastructure import (
     CompositeToolsProvider,
     LocalToolsProvider,
 )
-from family_assistant.tools.types import ToolResult
+from family_assistant.tools.types import ToolParametersSchema, ToolResult
 
 from .apis import time as time_api
-from .apis.attachments import create_attachment_api
+from .apis.attachments import AttachmentInfoDict, create_attachment_api
 from .config import ScriptConfig
 from .errors import ScriptExecutionError, ScriptSyntaxError, ScriptTimeoutError
 
 if TYPE_CHECKING:
     from family_assistant.tools import ToolsProvider
     from family_assistant.tools.types import ToolDefinition, ToolExecutionContext
+
+
+class ToolInfo(TypedDict):
+    """Metadata about a tool exposed to scripts via tools_list/tools_get."""
+
+    name: str
+    description: str
+    parameters: ToolParametersSchema
+
+
+class WakeRequest(TypedDict):
+    """A request from a script to wake the LLM with context."""
+
+    context: dict[str, str | list[str]]
+    include_event: bool
+
+
+class AttachmentResultInfo(TypedDict):
+    """Attachment metadata returned to scripts from tool results."""
+
+    id: str
+    mime_type: str
+    description: str
+    size: int
+    filename: str | None
+
+
+class AttachmentResultWithText(TypedDict):
+    """Tool result containing text and multiple attachment references."""
+
+    text: str | None
+    attachments: list[AttachmentResultInfo]
+
 
 logger = logging.getLogger(__name__)
 
@@ -70,11 +103,9 @@ class MontyEngine:
     ) -> None:
         self.tools_provider = tools_provider
         self.config = config or ScriptConfig()
-        # ast-grep-ignore: no-dict-any - Wake contexts and script globals are arbitrary dicts
-        self._wake_llm_contexts: list[dict[str, Any]] = []
-        # ast-grep-ignore: no-dict-any - Wake contexts and script globals are arbitrary dicts
-        self._pending_wake_contexts: list[dict[str, Any]] = []
-        # ast-grep-ignore: no-dict-any - Script globals can be arbitrary values
+        self._wake_llm_contexts: list[WakeRequest] = []
+        self._pending_wake_contexts: list[WakeRequest] = []
+        # ast-grep-ignore: no-dict-any - Script globals are user-provided Python values keyed by name
         self._script_globals: dict[str, Any] = {}
 
         logger.info(
@@ -85,7 +116,7 @@ class MontyEngine:
     async def evaluate_async(
         self,
         script: str,
-        # ast-grep-ignore: no-dict-any - Script globals/wake contexts are genuinely arbitrary
+        # ast-grep-ignore: no-dict-any - Script globals are user-provided Python values keyed by name
         globals_dict: dict[str, Any] | None = None,
         execution_context: "ToolExecutionContext | None" = None,
     ) -> Any:  # noqa: ANN401 # Scripts can return any type
@@ -114,7 +145,7 @@ class MontyEngine:
     async def _evaluate_async_impl(
         self,
         script: str,
-        # ast-grep-ignore: no-dict-any - Script globals/wake contexts are genuinely arbitrary
+        # ast-grep-ignore: no-dict-any - Script globals are user-provided Python values keyed by name
         globals_dict: dict[str, Any] | None = None,
         execution_context: "ToolExecutionContext | None" = None,
     ) -> Any:  # noqa: ANN401
@@ -215,10 +246,10 @@ class MontyEngine:
 
     async def _build_execution_context_async(
         self,
-        # ast-grep-ignore: no-dict-any - Script globals can be arbitrary values
+        # ast-grep-ignore: no-dict-any - Script globals are user-provided Python values keyed by name
         globals_dict: dict[str, Any] | None,
         execution_context: "ToolExecutionContext | None",
-        # ast-grep-ignore: no-dict-any - Returns (fn_names, fn_impls, inputs) where inputs are arbitrary
+        # ast-grep-ignore: no-dict-any - Inputs dict carries user-provided Python values keyed by name
     ) -> tuple[list[str], dict[str, Callable[..., Any]], dict[str, Any]]:
         """
         Build external function names, implementations, and inputs for async evaluation.
@@ -234,7 +265,7 @@ class MontyEngine:
         """
         ext_fn_names: list[str] = []
         ext_fn_impls: dict[str, Callable[..., Any]] = {}
-        # ast-grep-ignore: no-dict-any - Inputs to scripts are arbitrary values
+        # ast-grep-ignore: no-dict-any - Inputs carry user-provided Python values keyed by name
         inputs: dict[str, Any] = {}
 
         if globals_dict:
@@ -300,28 +331,25 @@ class MontyEngine:
 
         tool_definitions = await self.tools_provider.get_tool_definitions()
 
-        # ast-grep-ignore: no-dict-any - Tool info dicts have mixed value types
-        tool_info_map: dict[str, dict[str, Any]] = {}
+        tool_info_map: dict[str, ToolInfo] = {}
         for tool_def in tool_definitions:
             function = tool_def.get("function", {})
             name = function.get("name", "unknown")
             if not is_tool_allowed(name):
                 continue
-            tool_info_map[name] = {
-                "name": name,
-                "description": function.get("description", "No description available"),
-                "parameters": function.get("parameters", {}),
-            }
+            tool_info_map[name] = ToolInfo(
+                name=name,
+                description=function.get("description", "No description available"),
+                parameters=function.get("parameters", {}),
+            )
 
-        # ast-grep-ignore: no-dict-any - Tool info dicts have mixed value types
-        def tools_list() -> list[dict[str, Any]]:
+        def tools_list() -> list[ToolInfo]:
             return list(tool_info_map.values())
 
         names.append("tools_list")
         impls["tools_list"] = tools_list
 
-        # ast-grep-ignore: no-dict-any - Tool info dicts have mixed value types
-        def tools_get(tool_name: str) -> dict[str, Any] | None:
+        def tools_get(tool_name: str) -> ToolInfo | None:
             return tool_info_map.get(tool_name)
 
         names.append("tools_get")
@@ -441,8 +469,7 @@ class MontyEngine:
 
         async def attachment_get(
             attachment_id: str,
-            # ast-grep-ignore: no-dict-any - Attachment metadata is a generic dict
-        ) -> dict[str, Any] | None:
+        ) -> AttachmentInfoDict | None:
             return await api._get_async(attachment_id)
 
         async def attachment_read(attachment_id: str) -> str | None:
@@ -453,18 +480,19 @@ class MontyEngine:
             filename: str,
             description: str = "",
             mime_type: str = "application/octet-stream",
-            # ast-grep-ignore: no-dict-any - Attachment metadata is a generic dict
-        ) -> dict[str, Any]:
+        ) -> AttachmentResultInfo:
             metadata = await api._create_async(
                 content, filename, description, mime_type
             )
-            return {
-                "id": metadata.attachment_id,
-                "filename": metadata.metadata.get("original_filename", "unknown"),
-                "mime_type": metadata.mime_type,
-                "size": metadata.size,
-                "description": metadata.description,
-            }
+            return AttachmentResultInfo(
+                id=metadata.attachment_id,
+                filename=metadata.metadata.get("original_filename", "unknown")
+                if metadata.metadata
+                else "unknown",
+                mime_type=metadata.mime_type,
+                size=metadata.size,
+                description=metadata.description,
+            )
 
         for name, fn in [
             ("attachment_get", attachment_get),
@@ -479,8 +507,17 @@ class MontyEngine:
         result: Any,  # noqa: ANN401
         tool_name: str,
         execution_context: "ToolExecutionContext",
-        # ast-grep-ignore: no-dict-any - Tool results can be various types
-    ) -> str | dict[str, Any] | list[Any] | int | float | bool:
+    ) -> (
+        str
+        | AttachmentResultInfo
+        | AttachmentResultWithText
+        # ast-grep-ignore: no-dict-any - ToolResult.data can be an arbitrary dict from tool implementations
+        | dict[str, Any]
+        | list[Any]
+        | int
+        | float
+        | bool
+    ):
         """
         Format a tool execution result for script consumption.
 
@@ -550,27 +587,27 @@ class MontyEngine:
                     result.text and result.text.strip()
                 ):
                     att = script_attachments[0]
-                    return {
-                        "id": att.get_id(),
-                        "mime_type": att.get_mime_type(),
-                        "description": att.get_description(),
-                        "size": att.get_size(),
-                        "filename": att.get_filename(),
-                    }
+                    return AttachmentResultInfo(
+                        id=att.get_id(),
+                        mime_type=att.get_mime_type(),
+                        description=att.get_description(),
+                        size=att.get_size(),
+                        filename=att.get_filename(),
+                    )
                 elif script_attachments:
-                    return {
-                        "text": result.text,
-                        "attachments": [
-                            {
-                                "id": att.get_id(),
-                                "mime_type": att.get_mime_type(),
-                                "description": att.get_description(),
-                                "size": att.get_size(),
-                                "filename": att.get_filename(),
-                            }
+                    return AttachmentResultWithText(
+                        text=result.text,
+                        attachments=[
+                            AttachmentResultInfo(
+                                id=att.get_id(),
+                                mime_type=att.get_mime_type(),
+                                description=att.get_description(),
+                                size=att.get_size(),
+                                filename=att.get_filename(),
+                            )
                             for att in script_attachments
                         ],
-                    }
+                    )
                 else:
                     if result.data is not None:
                         return result.data
@@ -626,7 +663,7 @@ class MontyEngine:
         self,
         names: list[str],
         impls: dict[str, Callable[..., Any]],
-        # ast-grep-ignore: no-dict-any - Time constants are simple numeric values
+        # ast-grep-ignore: no-dict-any - Inputs carry user-provided Python values keyed by name
         inputs: dict[str, Any],
     ) -> None:
         """Add time API functions and constants."""
@@ -723,10 +760,10 @@ class MontyEngine:
     def _create_wake_llm_function(self) -> Callable[..., None]:
         """Create a wake_llm function for scripts."""
 
-        # ast-grep-ignore: no-dict-any - Script globals/wake contexts are genuinely arbitrary
+        # ast-grep-ignore: no-dict-any - Script wake context values are user-provided and vary by key
         def wake_llm(context: dict[str, Any] | str, include_event: bool = True) -> None:
             if isinstance(context, str):
-                context_dict = {"message": context}
+                context_dict: dict[str, str | list[str]] = {"message": context}
             elif isinstance(context, dict):
                 context_dict = dict(context)
             else:
@@ -747,16 +784,15 @@ class MontyEngine:
                             f"Invalid attachment ID format: {attachment_id}"
                         ) from e
 
-            wake_request = {
-                "context": context_dict,
-                "include_event": include_event,
-            }
+            wake_request = WakeRequest(
+                context=context_dict,
+                include_event=include_event,
+            )
             self._wake_llm_contexts.append(wake_request)
             logger.debug(f"Script requested LLM wake with context: {context_dict}")
 
         return wake_llm
 
-    # ast-grep-ignore: no-dict-any - Script globals/wake contexts are genuinely arbitrary
-    def get_pending_wake_contexts(self) -> list[dict[str, Any]]:
+    def get_pending_wake_contexts(self) -> list[WakeRequest]:
         """Get any pending wake_llm contexts from the last script execution."""
         return self._pending_wake_contexts

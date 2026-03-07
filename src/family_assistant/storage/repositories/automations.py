@@ -16,6 +16,10 @@ from family_assistant.storage.repositories.schedule_automations import (
     ScheduleAutomationsRepository,
 )
 from family_assistant.storage.schedule_automations import schedule_automations_table
+from family_assistant.storage.types import (
+    ListenerExecutionStatsDict,
+    ScheduleExecutionStatsDict,
+)
 
 AutomationType = Literal["event", "schedule"]
 
@@ -158,7 +162,7 @@ class AutomationsRepository(BaseRepository):
         rows = await self._db.fetch_all(combined_query)
         automations = []
         for row in rows:
-            # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
+            # ast-grep-ignore: no-dict-any - intermediate dict for constructing Automation from db row
             auto: dict[str, Any] = dict(row)
             # Normalize datetime fields
             auto["created_at"] = normalize_datetime(
@@ -200,7 +204,7 @@ class AutomationsRepository(BaseRepository):
                 conversation_id=conversation_id,
             )
             if automation:
-                # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
+                # ast-grep-ignore: no-dict-any - intermediate dict for constructing Automation from db row
                 event_dict: dict[str, Any] = dict(automation)
                 event_dict["type"] = "event"
                 # Normalize datetime fields
@@ -220,7 +224,7 @@ class AutomationsRepository(BaseRepository):
                 conversation_id=conversation_id,
             )
             if automation:
-                # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
+                # ast-grep-ignore: no-dict-any - intermediate dict for constructing Automation from db row
                 schedule_dict: dict[str, Any] = dict(automation)
                 schedule_dict["type"] = "schedule"
                 # Normalize datetime fields
@@ -259,7 +263,7 @@ class AutomationsRepository(BaseRepository):
         )
         row = await self._events_repo._db.fetch_one(stmt)
         if row:
-            # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
+            # ast-grep-ignore: no-dict-any - intermediate dict for constructing Automation from db row
             event_listener: dict[str, Any] = dict(row)
             # Normalize datetime fields
             event_listener["created_at"] = normalize_datetime(
@@ -280,7 +284,7 @@ class AutomationsRepository(BaseRepository):
             conversation_id=conversation_id,
         )
         if schedule_automation:
-            # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
+            # ast-grep-ignore: no-dict-any - intermediate dict for constructing Automation from db row
             schedule_dict: dict[str, Any] = dict(schedule_automation)
             schedule_dict["type"] = "schedule"
             # Normalize datetime fields
@@ -407,8 +411,7 @@ class AutomationsRepository(BaseRepository):
         self,
         automation_id: int,
         automation_type: AutomationType,
-        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
-    ) -> dict[str, Any]:
+    ) -> ListenerExecutionStatsDict | ScheduleExecutionStatsDict | None:
         """
         Get execution statistics for an automation.
 

@@ -25,8 +25,8 @@ class LLMIntelligenceProcessor(ContentProcessor):
         self,
         llm_client: LLMInterface,
         system_prompt_template: str,
-        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
-        output_schema: dict[str, Any],  # JSON schema for the function call
+        # ast-grep-ignore: no-dict-any - JSON Schema object with arbitrary nested properties/types per OpenAPI spec
+        output_schema: dict[str, Any],
         target_embedding_type: str,  # The embedding_type for the output IndexableContent
         input_content_types: list[
             str
@@ -264,7 +264,7 @@ class LLMSummaryGeneratorProcessor(LLMIntelligenceProcessor):
         max_content_length: int | None = None,
         # Allow overriding defaults for advanced use cases, but provide strong defaults
         system_prompt_template: str = DEFAULT_SUMMARY_SYSTEM_PROMPT_TEMPLATE,
-        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
+        # ast-grep-ignore: no-dict-any - JSON Schema object with arbitrary nested properties/types per OpenAPI spec
         output_schema: dict[str, Any] = DEFAULT_SUMMARY_OUTPUT_SCHEMA,
         tool_name: str = "extract_summary",
     ) -> None:
@@ -350,7 +350,7 @@ class LLMPrimaryLinkExtractorProcessor(LLMIntelligenceProcessor):
         target_embedding_type: str = "raw_url",  # Output type for WebFetcherProcessor
         max_content_length: int | None = None,
         system_prompt_template: str = DEFAULT_PRIMARY_LINK_SYSTEM_PROMPT_TEMPLATE,
-        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
+        # ast-grep-ignore: no-dict-any - JSON Schema object with arbitrary nested properties/types per OpenAPI spec
         output_schema: dict[str, Any] = DEFAULT_PRIMARY_LINK_OUTPUT_SCHEMA,
         tool_name: str = DEFAULT_PRIMARY_LINK_TOOL_NAME,
     ) -> None:

@@ -20,7 +20,10 @@ from family_assistant.llm import (
     LLMMessage,
     LLMOutput,
     LLMStreamEvent,
+    StreamEventMetadata,
     StructuredOutputError,
+    UserMessageContentPart,
+    UserMessageDict,
 )
 from family_assistant.llm.messages import UserMessage, message_to_json_dict
 from family_assistant.tools.types import ToolDefinition
@@ -33,7 +36,7 @@ logger = logging.getLogger(__name__)
 
 # Define type aliases for clarity
 # MatcherArgs represents the keyword arguments passed to the LLM method
-# ast-grep-ignore: no-dict-any - Legacy code - needs structured types
+# ast-grep-ignore: no-dict-any - type alias for dynamic LLM matcher kwargs
 MatcherArgs = dict[str, Any]
 # MatcherFunction now takes a single dictionary of arguments,
 # which are the keyword arguments for the `generate_response` method.
@@ -44,7 +47,7 @@ Rule = tuple[MatcherFunction, ResponseGenerator]
 
 # Type aliases for structured output rules
 # StructuredMatcherArgs includes the response_model type
-# ast-grep-ignore: no-dict-any - Legacy code - needs structured types
+# ast-grep-ignore: no-dict-any - type alias for dynamic structured LLM matcher kwargs
 StructuredMatcherArgs = dict[str, Any]
 # StructuredResponseGenerator can return any BaseModel subclass
 StructuredResponseGenerator = BaseModel | Callable[[StructuredMatcherArgs], BaseModel]
@@ -95,13 +98,13 @@ class RuleBasedMockLLMClient(BaseLLMClient, LLMInterface):
             self.default_response = default_response
             logger.debug("RuleBasedMockLLMClient using provided default response.")
 
-        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
+        # ast-grep-ignore: no-dict-any - records calls with mixed-type kwargs
         self._calls: list[dict[str, Any]] = []
         logger.info(
             f"RuleBasedMockLLMClient initialized with {len(rules)} rules for model '{self.model}'."
         )
 
-    # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
+    # ast-grep-ignore: no-dict-any - LLM kwargs contain mixed provider-specific fields
     def _record_call(self, method_name: str, actual_kwargs: dict[str, Any]) -> None:
         """Helper to store call data."""
         call_data = {
@@ -113,7 +116,7 @@ class RuleBasedMockLLMClient(BaseLLMClient, LLMInterface):
             f"Recorded call to '{method_name}'. Total calls: {len(self._calls)}. Args: {actual_kwargs}"
         )
 
-    # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
+    # ast-grep-ignore: no-dict-any - returns recorded calls with mixed-type kwargs
     def get_calls(self) -> list[dict[str, Any]]:
         """Returns a list of recorded calls."""
         return self._calls
@@ -242,7 +245,10 @@ class RuleBasedMockLLMClient(BaseLLMClient, LLMInterface):
                     yield LLMStreamEvent(type="tool_call", tool_call=tool_call)
 
             # Yield done event with metadata
-            yield LLMStreamEvent(type="done", metadata=response.reasoning_info)
+            done_metadata: StreamEventMetadata = {}
+            if response.reasoning_info:
+                done_metadata["reasoning_info"] = response.reasoning_info
+            yield LLMStreamEvent(type="done", metadata=done_metadata)
 
         return _stream()
 
@@ -273,8 +279,7 @@ class RuleBasedMockLLMClient(BaseLLMClient, LLMInterface):
         file_path: str | None,
         mime_type: str | None,
         max_text_length: int | None,
-        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
-    ) -> dict[str, Any]:
+    ) -> UserMessageDict:
         """
         Mock implementation for formatting a user message with file.
         This mock provides a direct, non-rule-based implementation.
@@ -285,12 +290,10 @@ class RuleBasedMockLLMClient(BaseLLMClient, LLMInterface):
             "file_path": file_path,
             "mime_type": mime_type,
             "max_text_length": max_text_length,
-            # No "_method_name_for_matcher" here as this method isn't using the rule system
         }
         self._record_call("format_user_message_with_file", actual_kwargs)
 
-        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
-        content_parts: list[dict[str, Any]] = []
+        content_parts: list[UserMessageContentPart] = []
         final_prompt_text = prompt_text or "Process the provided file."
 
         if (
@@ -322,8 +325,7 @@ class RuleBasedMockLLMClient(BaseLLMClient, LLMInterface):
                     },
                 })
 
-        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
-        user_message_content: str | list[dict[str, Any]]
+        user_message_content: str | list[UserMessageContentPart]
         if len(content_parts) == 1 and content_parts[0]["type"] == "text":
             user_message_content = content_parts[0]["text"]
         else:

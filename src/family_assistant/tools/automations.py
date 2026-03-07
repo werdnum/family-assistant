@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import logging
 from datetime import UTC
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 from zoneinfo import ZoneInfo
 
 from family_assistant.tools.types import ToolDefinition, ToolResult
@@ -15,6 +15,7 @@ if TYPE_CHECKING:
     from family_assistant.storage.context import DatabaseContext
     from family_assistant.storage.models import Automation
     from family_assistant.storage.repositories.automations import AutomationType
+    from family_assistant.storage.types import ActionConfig
     from family_assistant.tools.types import ToolExecutionContext
 
 logger = logging.getLogger(__name__)
@@ -359,10 +360,10 @@ async def create_automation_tool(
     exec_context: ToolExecutionContext,
     name: str,
     automation_type: str,
-    # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
+    # ast-grep-ignore: no-dict-any - trigger config has varying keys per automation type
     trigger_config: dict[str, Any],
     action_type: str,
-    # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
+    # ast-grep-ignore: no-dict-any - action config has varying keys per action type
     action_config: dict[str, Any],
     description: str | None = None,
 ) -> ToolResult:
@@ -412,7 +413,7 @@ async def create_automation_tool(
                 source_id=source_id,
                 match_conditions=match_conditions,
                 action_type=action_type,
-                action_config=action_config,
+                action_config=cast("ActionConfig", action_config),
                 conversation_id=exec_context.conversation_id,
                 interface_type=exec_context.interface_type,
                 description=description,
@@ -440,7 +441,7 @@ async def create_automation_tool(
                 name=name,
                 recurrence_rule=recurrence_rule,
                 action_type=action_type,
-                action_config=action_config,
+                action_config=cast("ActionConfig", action_config),
                 conversation_id=exec_context.conversation_id,
                 interface_type=exec_context.interface_type,
                 description=description,
@@ -671,9 +672,9 @@ async def update_automation_tool(
     exec_context: ToolExecutionContext,
     automation_id: int,
     automation_type: str,
-    # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
+    # ast-grep-ignore: no-dict-any - trigger config has varying keys per automation type
     trigger_config: dict[str, Any] | None = None,
-    # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
+    # ast-grep-ignore: no-dict-any - action config has varying keys per action type
     action_config: dict[str, Any] | None = None,
     description: str | None = None,
 ) -> ToolResult:
@@ -728,9 +729,12 @@ async def update_automation_tool(
                 if description is not None
                 else existing.description,
                 match_conditions=match_conditions,
-                action_config=action_config
-                if action_config is not None
-                else existing.action_config,
+                action_config=cast(
+                    "ActionConfig",
+                    action_config
+                    if action_config is not None
+                    else existing.action_config,
+                ),
                 one_time=existing.one_time or False,
                 enabled=existing.enabled,
             )
@@ -742,7 +746,7 @@ async def update_automation_tool(
             )
 
             # Only pass parameters that were actually provided (not None)
-            # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
+            # ast-grep-ignore: no-dict-any - forwarded kwargs with varying keys per schedule update call
             update_kwargs: dict[str, Any] = {
                 "automation_id": automation_id,
                 "conversation_id": existing.conversation_id,
@@ -962,7 +966,8 @@ async def get_automation_stats_tool(
         ]
 
         # Build structured stats data
-        stats_data = {
+        # ast-grep-ignore: no-dict-any - Dynamic response dict with mixed value types (int, str, list)
+        stats_data: dict[str, Any] = {
             "automation_id": automation_id,
             "total_executions": stats.get("total_executions", 0),
         }

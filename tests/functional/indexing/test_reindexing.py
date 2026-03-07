@@ -126,9 +126,9 @@ async def http_client(
 
 
 async def _helper_handle_embed_and_store_batch(
-    # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
+    # ast-grep-ignore: no-dict-any - task handler context has dynamic external dependency fields
     exec_context: "ToolExecutionContext",
-    # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
+    # ast-grep-ignore: no-dict-any - task payload has dynamic mixed-type fields
     payload: dict[str, Any],
 ) -> None:
     """Helper task handler for embedding and storing batches."""
@@ -136,7 +136,7 @@ async def _helper_handle_embed_and_store_batch(
     embedding_generator = exec_context.embedding_generator
     document_id = payload["document_id"]
     texts_to_embed: list[str] = payload["texts_to_embed"]
-    # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
+    # ast-grep-ignore: no-dict-any - embedding metadata has dynamic mixed-type fields per chunk
     embedding_metadata_list: list[dict[str, Any]] = payload["embedding_metadata_list"]
 
     if not texts_to_embed or not embedding_generator:

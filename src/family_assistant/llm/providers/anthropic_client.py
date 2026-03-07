@@ -37,14 +37,17 @@ from family_assistant.llm import (
     BaseLLMClient,
     LLMOutput,
     LLMStreamEvent,
+    StreamEventMetadata,
     ToolCallFunction,
     ToolCallItem,
+    UserMessageDict,
 )
 from family_assistant.llm.messages import (
     AssistantMessage,
     ContentPart,
     ImageUrlContentPart,
     LLMMessage,
+    MessageReasoningInfo,
     SystemMessage,
     TextContentPart,
     ToolMessage,
@@ -66,7 +69,6 @@ from ..base import (
     ServiceUnavailableError,
 )
 
-StreamingMetadata = dict[str, object]
 ImageMediaType = Literal["image/jpeg", "image/png", "image/gif", "image/webp"]
 _VALID_IMAGE_MEDIA_TYPES: set[str] = {
     "image/jpeg",
@@ -301,7 +303,7 @@ class AnthropicClient(BaseLLMClient):
     def _convert_messages_to_anthropic_format(
         self,
         messages: Sequence[LLMMessage],
-        # ast-grep-ignore: no-dict-any - Anthropic message format
+        # ast-grep-ignore: no-dict-any - MessageParam TypedDict incompatible with dynamic content merging in _merge_consecutive_roles
     ) -> tuple[str | None, list[dict[str, Any]]]:
         """Convert typed messages to Anthropic API format.
 
@@ -315,7 +317,7 @@ class AnthropicClient(BaseLLMClient):
         - Images use source.type: "base64" format
         """
         system_parts: list[str] = []
-        # ast-grep-ignore: no-dict-any - Anthropic message format
+        # ast-grep-ignore: no-dict-any - MessageParam TypedDict incompatible with dynamic content merging in _merge_consecutive_roles
         api_messages: list[dict[str, Any]] = []
 
         for msg in messages:
@@ -422,9 +424,9 @@ class AnthropicClient(BaseLLMClient):
 
     @staticmethod
     def _merge_consecutive_roles(
-        # ast-grep-ignore: no-dict-any - Anthropic API message dicts have heterogeneous value types
+        # ast-grep-ignore: no-dict-any - MessageParam TypedDict incompatible with dynamic content normalization (str->list, list concatenation)
         messages: list[dict[str, Any]],
-        # ast-grep-ignore: no-dict-any - Anthropic API message dicts have heterogeneous value types
+        # ast-grep-ignore: no-dict-any - MessageParam TypedDict incompatible with dynamic content normalization (str->list, list concatenation)
     ) -> list[dict[str, Any]]:
         """Merge consecutive messages with the same role.
 
@@ -435,7 +437,7 @@ class AnthropicClient(BaseLLMClient):
         if not messages:
             return messages
 
-        # ast-grep-ignore: no-dict-any - Anthropic message format
+        # ast-grep-ignore: no-dict-any - MessageParam TypedDict incompatible with dynamic content normalization (str->list, list concatenation)
         merged: list[dict[str, Any]] = []
         for msg in messages:
             if merged and merged[-1]["role"] == msg["role"]:
@@ -488,7 +490,7 @@ class AnthropicClient(BaseLLMClient):
                     self._convert_messages_to_anthropic_format(processed_messages)
                 )
 
-                # ast-grep-ignore: no-dict-any - Anthropic API params dict has heterogeneous value types
+                # ast-grep-ignore: no-dict-any - kwargs dict for client.messages.create(**params) requires heterogeneous values
                 params: dict[str, Any] = {
                     "model": self.model,
                     "messages": api_messages,
@@ -530,14 +532,14 @@ class AnthropicClient(BaseLLMClient):
                         )
 
                 # Extract usage information
-                reasoning_info = None
+                reasoning_info: MessageReasoningInfo | None = None
                 if response.usage:
-                    reasoning_info = {
-                        "prompt_tokens": response.usage.input_tokens,
-                        "completion_tokens": response.usage.output_tokens,
-                        "total_tokens": response.usage.input_tokens
+                    reasoning_info = MessageReasoningInfo(
+                        prompt_tokens=response.usage.input_tokens,
+                        completion_tokens=response.usage.output_tokens,
+                        total_tokens=response.usage.input_tokens
                         + response.usage.output_tokens,
-                    }
+                    )
                     span.set_attribute(
                         "gen_ai.usage.input_tokens", response.usage.input_tokens
                     )
@@ -644,7 +646,7 @@ class AnthropicClient(BaseLLMClient):
         file_path: str | None,
         mime_type: str | None,
         max_text_length: int | None,
-    ) -> dict[str, object]:
+    ) -> UserMessageDict:
         """Format user message with optional file content.
 
         Anthropic supports images via base64, PDFs via document blocks,
@@ -673,7 +675,7 @@ class AnthropicClient(BaseLLMClient):
                 )
             )
 
-            return {"role": "user", "content": content}
+            return cast("UserMessageDict", {"role": "user", "content": content})
 
         elif mime_type and mime_type == "application/pdf":
             # Anthropic supports PDFs natively via document blocks
@@ -696,7 +698,7 @@ class AnthropicClient(BaseLLMClient):
                 )
             )
 
-            return {"role": "user", "content": pdf_content}
+            return cast("UserMessageDict", {"role": "user", "content": pdf_content})
 
         else:
             # Try reading as text, fall back to binary description on decode error
@@ -764,7 +766,7 @@ class AnthropicClient(BaseLLMClient):
                     self._convert_messages_to_anthropic_format(processed_messages)
                 )
 
-                # ast-grep-ignore: no-dict-any - Anthropic API params dict has heterogeneous value types
+                # ast-grep-ignore: no-dict-any - kwargs dict for client.messages.stream(**params) requires heterogeneous values
                 params: dict[str, Any] = {
                     "model": self.model,
                     "messages": api_messages,
@@ -838,14 +840,14 @@ class AnthropicClient(BaseLLMClient):
                         # Get final message for usage info
                         final_message = await stream.get_final_message()
 
-                metadata: StreamingMetadata = {}
+                metadata: StreamEventMetadata = {}
                 if final_message and final_message.usage:
-                    metadata["reasoning_info"] = {
-                        "prompt_tokens": final_message.usage.input_tokens,
-                        "completion_tokens": final_message.usage.output_tokens,
-                        "total_tokens": final_message.usage.input_tokens
+                    metadata["reasoning_info"] = MessageReasoningInfo(
+                        prompt_tokens=final_message.usage.input_tokens,
+                        completion_tokens=final_message.usage.output_tokens,
+                        total_tokens=final_message.usage.input_tokens
                         + final_message.usage.output_tokens,
-                    }
+                    )
                     span.set_attribute(
                         "gen_ai.usage.input_tokens", final_message.usage.input_tokens
                     )
@@ -936,7 +938,7 @@ class AnthropicClient(BaseLLMClient):
 
     async def _maybe_parse_vcr_stream(
         self,
-        # ast-grep-ignore: no-dict-any - Anthropic API params
+        # ast-grep-ignore: no-dict-any - kwargs dict for client.messages.create(**params) requires heterogeneous values
         params: dict[str, Any],
     ) -> list[LLMStreamEvent] | None:
         """Parse VCR-recorded streaming responses for Anthropic.
@@ -980,14 +982,13 @@ class AnthropicClient(BaseLLMClient):
                     )
                 )
 
-        metadata: StreamingMetadata = {}
+        metadata: StreamEventMetadata = {}
         if response.usage:
-            metadata["reasoning_info"] = {
-                "prompt_tokens": response.usage.input_tokens,
-                "completion_tokens": response.usage.output_tokens,
-                "total_tokens": response.usage.input_tokens
-                + response.usage.output_tokens,
-            }
+            metadata["reasoning_info"] = MessageReasoningInfo(
+                prompt_tokens=response.usage.input_tokens,
+                completion_tokens=response.usage.output_tokens,
+                total_tokens=response.usage.input_tokens + response.usage.output_tokens,
+            )
 
         events.append(LLMStreamEvent(type="done", metadata=metadata))
         return events

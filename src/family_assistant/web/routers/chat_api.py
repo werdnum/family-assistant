@@ -19,6 +19,7 @@ from family_assistant.llm.messages import (
     AssistantMessage,
     ContentPartDict,
     MessageAttachmentMetadata,
+    MessageReasoningInfo,
     image_url_content,
     text_content,
 )
@@ -113,8 +114,6 @@ async def _process_user_attachments(
                     )
                 # Handle attachment content - either URL reference or base64 data
                 try:
-                    content_data = attachment["content"]
-
                     # New flow: Handle URL references to uploaded attachments
                     if content_data.startswith("/api/attachments/"):
                         # Content is a URL reference to an already uploaded attachment
@@ -304,13 +303,13 @@ class ConversationMessage(BaseModel):
     tool_calls: list[dict] | None = Field(None, description="Tool calls if any")
     tool_call_id: str | None = Field(None, description="Tool call ID for tool messages")
     error_traceback: str | None = Field(None, description="Error traceback if any")
-    attachments: list[dict] | None = Field(
+    attachments: list[MessageAttachmentMetadata] | None = Field(
         None, description="Attachment metadata if any"
     )
     processing_profile_id: str | None = Field(
         None, description="ID of the processing profile that generated this message"
     )
-    reasoning_info: dict | None = Field(
+    reasoning_info: MessageReasoningInfo | None = Field(
         None, description="LLM reasoning/usage information (token counts, model, etc.)"
     )
     metadata: dict | None = Field(None, description="Additional message metadata")
@@ -714,51 +713,12 @@ async def get_conversation_messages(
         if not all(key in msg for key in ["internal_id", "role", "timestamp"]):
             continue
 
-        # Process metadata to include attachment details if present
-        msg_metadata = None
-        if msg.get("metadata"):
-            try:
-                metadata_dict = (
-                    json.loads(msg["metadata"])
-                    if isinstance(msg["metadata"], str)
-                    else msg["metadata"]
-                )
-                if metadata_dict and "attachment_ids" in metadata_dict:
-                    # Fetch full attachment metadata for each attachment
-                    attachments = []
-                    for att_id in metadata_dict["attachment_ids"]:
-                        try:
-                            att_metadata = (
-                                await attachment_registry.get_attachment_with_context(
-                                    att_id
-                                )
-                            )
-                            if att_metadata:
-                                attachments.append({
-                                    "id": att_id,
-                                    "type": "image",
-                                    "name": att_metadata.description or "Attachment",
-                                    "content": f"/api/attachments/{att_id}",
-                                    "mime_type": att_metadata.mime_type,
-                                    "size": att_metadata.size,
-                                })
-                        except Exception as e:
-                            logger.warning(
-                                f"Failed to fetch attachment metadata for {att_id}: {e}"
-                            )
-
-                    msg_metadata = {
-                        "attachment_ids": metadata_dict["attachment_ids"],
-                        "attachments": attachments,
-                    }
-            except Exception as e:
-                logger.warning(f"Failed to parse message metadata: {e}")
-
         # Convert tool_calls from ToolCallItem objects to dicts for Pydantic
         tool_calls_dicts = None
-        if msg.get("tool_calls"):
+        msg_tool_calls = msg.get("tool_calls")
+        if msg_tool_calls:
             tool_calls_dicts = []
-            for tc in msg["tool_calls"]:
+            for tc in msg_tool_calls:
                 if isinstance(tc, ToolCallItem):
                     # Convert ToolCallItem to dict
                     # Ensure arguments is always a JSON string
@@ -791,7 +751,7 @@ async def get_conversation_messages(
                 attachments=msg.get("attachments"),
                 processing_profile_id=msg.get("processing_profile_id"),
                 reasoning_info=msg.get("reasoning_info"),
-                metadata=msg_metadata,
+                metadata=None,
             )
         )
 
@@ -887,8 +847,7 @@ async def api_chat_send_message_stream(
     async def event_generator() -> AsyncGenerator[str]:
         """Generate SSE formatted events from the processing stream."""
 
-        # Queue for confirmation events
-        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
+        # ast-grep-ignore: no-dict-any - SSE event queue carries heterogeneous event types (stream, confirmation, error)
         confirmation_queue: asyncio.Queue[dict[str, Any]] = asyncio.Queue()
 
         # Create confirmation callback that queues events
@@ -898,7 +857,7 @@ async def api_chat_send_message_stream(
             interface_message_id_cb: str | None,
             tool_name: str,
             tool_call_id: str,
-            # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
+            # ast-grep-ignore: no-dict-any - Tool arguments vary per tool and cannot be statically typed
             tool_args: dict[str, Any],
             timeout_seconds: float,
             context: ToolExecutionContext,
@@ -1020,9 +979,7 @@ async def api_chat_send_message_stream(
         # Start the stream processing task
         stream_task = asyncio.create_task(process_stream())
 
-        # Track the last reasoning_info across done events for the final end SSE
-        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
-        last_reasoning_info: dict[str, Any] | None = None
+        last_reasoning_info: MessageReasoningInfo | None = None
 
         try:
             # Process events from queue and yield SSE events
@@ -1152,7 +1109,7 @@ async def api_chat_send_message_stream(
 
                 elif queue_event["type"] == "stream_end":
                     # Send the end event once at the true end of the stream
-                    # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
+                    # ast-grep-ignore: no-dict-any - SSE end event payload optionally includes provider-specific reasoning_info
                     done_data: dict[str, Any] = {}
                     if last_reasoning_info:
                         done_data["reasoning_info"] = last_reasoning_info
@@ -1505,7 +1462,7 @@ async def get_available_profiles(
 
         # Get enabled MCP servers
         # First check explicit configuration in the profile
-        mcp_server_ids = service_config.tools_config.get("enable_mcp_server_ids")
+        mcp_server_ids = service_config.tools_config.enable_mcp_server_ids
         if mcp_server_ids is not None:
             enabled_mcp_servers = list(mcp_server_ids)
         # If None, all configured servers are enabled for this profile

@@ -546,7 +546,7 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
                             turn_id: str | None,
                             prompt_text: str,
                             tool_name: str,
-                            # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
+                            # ast-grep-ignore: no-dict-any - tool args have varying keys per tool
                             tool_args: dict[str, Any],
                             timeout_seconds: float,
                             exec_context: ToolExecutionContext,
@@ -775,7 +775,7 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
     def _serialize_update_for_error_log(
         self,
         update_obj: object,
-        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
+        # ast-grep-ignore: no-dict-any - Telegram Update serialized to dict with dynamic fields
     ) -> str | dict[str, Any]:
         """
         Serializes the update object for error logging.
@@ -989,7 +989,7 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
                     turn_id_cb: str | None,
                     tool_name_cb: str,
                     call_id_cb: str,
-                    # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
+                    # ast-grep-ignore: no-dict-any - tool args have varying keys per tool
                     tool_args_cb: dict[str, Any],
                     timeout_cb: float,
                     exec_context_cb: ToolExecutionContext,

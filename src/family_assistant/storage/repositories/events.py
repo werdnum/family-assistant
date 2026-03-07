@@ -2,6 +2,7 @@
 
 import json
 import time
+from collections.abc import Mapping
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
@@ -18,14 +19,19 @@ from family_assistant.storage.events import (
     recent_events_table,
 )
 from family_assistant.storage.repositories.base import BaseRepository
-from family_assistant.storage.types import EventListenerDict, RecentEventDict
+from family_assistant.storage.types import (
+    ActionConfig,
+    EventListenerDict,
+    ListenerExecutionStatsDict,
+    MatchConditions,
+    RecentEventDict,
+)
 
 
 class EventsRepository(BaseRepository):
     """Repository for managing events and rate limiting in the database."""
 
-    # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
-    def _normalize_event_listener(self, row: dict[str, Any]) -> EventListenerDict:
+    def _normalize_event_listener(self, row: Mapping[str, Any]) -> EventListenerDict:
         """
         Normalize event listener row from database.
 
@@ -46,8 +52,7 @@ class EventsRepository(BaseRepository):
 
         return listener  # type: ignore[return-value]
 
-    # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
-    def _normalize_event(self, row: dict[str, Any]) -> RecentEventDict:
+    def _normalize_event(self, row: Mapping[str, Any]) -> RecentEventDict:
         """
         Normalize recent event row from database.
 
@@ -144,12 +149,12 @@ class EventsRepository(BaseRepository):
         self,
         name: str,
         source_id: str,
-        match_conditions: dict,
+        match_conditions: MatchConditions,
         conversation_id: str,
         interface_type: str = "telegram",
         description: str | None = None,
         action_type: str | EventActionType = EventActionType.wake_llm,
-        action_config: dict | None = None,
+        action_config: ActionConfig | None = None,
         condition_script: str | None = None,
         one_time: bool = False,
         enabled: bool = True,
@@ -377,8 +382,8 @@ class EventsRepository(BaseRepository):
         conversation_id: str,
         name: str,
         description: str | None,
-        match_conditions: dict,
-        action_config: dict | None,
+        match_conditions: MatchConditions,
+        action_config: ActionConfig | None,
         one_time: bool,
         enabled: bool,
         condition_script: str | None = None,
@@ -454,7 +459,7 @@ class EventsRepository(BaseRepository):
     async def record_event(
         self,
         source_type: EventSourceType,
-        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
+        # ast-grep-ignore: no-dict-any - event metadata is unstructured JSON from external sources
         metadata: dict[str, Any],
     ) -> int:
         """
@@ -489,7 +494,7 @@ class EventsRepository(BaseRepository):
         source_type: EventSourceType | None = None,
         hours: int = 24,
         limit: int = 100,
-        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
+        # ast-grep-ignore: no-dict-any - returns processed rows with parsed JSON metadata field
     ) -> list[dict[str, Any]]:
         """
         Get recent events.
@@ -519,7 +524,7 @@ class EventsRepository(BaseRepository):
     async def store_event(
         self,
         source_id: str,
-        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
+        # ast-grep-ignore: no-dict-any - event_data is unstructured JSON from external sources
         event_data: dict[str, Any],
         triggered_listener_ids: list[int] | None = None,
         timestamp: datetime | None = None,
@@ -560,8 +565,7 @@ class EventsRepository(BaseRepository):
         source_id: str | None = None,
         hours: int = 24,
         limit: int = 100,
-        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
-    ) -> list[dict[str, Any]]:
+    ) -> list[RecentEventDict]:
         """
         Query recent events with optional filters.
 
@@ -588,11 +592,9 @@ class EventsRepository(BaseRepository):
 
             rows = await self._db.fetch_all(stmt)
 
-            # Convert rows to dicts
-            events = []
+            events: list[RecentEventDict] = []
             for row in rows:
-                event = dict(row)
-                events.append(event)
+                events.append(self._normalize_event(row))
 
             return events
 
@@ -679,9 +681,7 @@ class EventsRepository(BaseRepository):
             )
             raise
 
-    # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
-    # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
-    def _process_listener_row(self, row: dict[str, Any]) -> dict[str, Any]:
+    def _process_listener_row(self, row: Mapping[str, Any]) -> EventListenerDict:
         """Process a listener row from the database."""
         listener = dict(row)
 
@@ -704,11 +704,10 @@ class EventsRepository(BaseRepository):
                 )
                 listener["action_config"] = {}
 
-        return listener
+        return listener  # type: ignore[return-value]
 
-    # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
-    # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
-    def _process_event_row(self, row: dict[str, Any]) -> dict[str, Any]:
+    # ast-grep-ignore: no-dict-any - processes old-format event rows with dynamic metadata field
+    def _process_event_row(self, row: Mapping[str, Any]) -> dict[str, Any]:
         """Process an event row from the database."""
         event = dict(row)
 
@@ -791,14 +790,14 @@ class EventsRepository(BaseRepository):
     async def get_listener_execution_stats(
         self,
         listener_id: int,
-    ) -> dict:
+    ) -> ListenerExecutionStatsDict | None:
         """Get execution statistics for a listener."""
 
         try:
             # Get the listener first
             listener = await self.get_event_listener_by_id(listener_id)
             if not listener:
-                return {}
+                return None
 
             # Check if we're using SQLite or PostgreSQL
             is_sqlite = self._db.engine.dialect.name == "sqlite"
@@ -852,15 +851,15 @@ class EventsRepository(BaseRepository):
 
             recent_events = await self._db.fetch_all(recent_stmt)
 
-            return {
-                "total_executions": total_executions,
-                "daily_executions": listener.get("daily_executions", 0),
-                "daily_limit": 5,  # Hardcoded in check_and_update_rate_limit
-                "last_execution_at": listener.get("last_execution_at"),
-                "recent_events": [
+            return ListenerExecutionStatsDict(
+                total_executions=total_executions,
+                daily_executions=listener.get("daily_executions", 0),
+                daily_limit=5,
+                last_execution_at=listener.get("last_execution_at"),
+                recent_events=[
                     self._normalize_event(dict(row)) for row in recent_events
                 ],
-            }
+            )
 
         except SQLAlchemyError as e:
             self._logger.error(
@@ -868,8 +867,7 @@ class EventsRepository(BaseRepository):
             )
             raise
 
-    # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
-    async def get_event_by_id(self, event_id: str) -> dict[str, Any] | None:
+    async def get_event_by_id(self, event_id: str) -> RecentEventDict | None:
         """Get a specific event by ID."""
         try:
             stmt = select(recent_events_table).where(
@@ -877,7 +875,7 @@ class EventsRepository(BaseRepository):
             )
             row = await self._db.fetch_one(stmt)
             if row:
-                return dict(row)
+                return self._normalize_event(row)
             return None
 
         except SQLAlchemyError as e:

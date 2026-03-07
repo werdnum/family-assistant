@@ -89,6 +89,7 @@ class MessageReasoningInfo(TypedDict, total=False):
     reasoning_tokens: int
     source_turn_id: str | None
     tool_name: str
+    thought_summaries: list[dict[str, str | int]]
 
 
 # Re-export content part types and helpers for backward compatibility

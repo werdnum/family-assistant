@@ -249,9 +249,9 @@ async def http_client(
 async def _ingest_and_index_email(
     http_client: httpx.AsyncClient,  # Changed to http_client
     engine: AsyncEngine,  # Still needed for DB checks
-    # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
+    # ast-grep-ignore: no-dict-any - form data matches external HTTP multipart API format
     form_data_dict: dict[str, Any],  # Raw form data for the API
-    # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
+    # ast-grep-ignore: no-dict-any - file upload dict matches external httpx multipart format
     files_to_upload: dict[str, Any] | None = None,  # For attachments
     task_timeout: float = 15.0,
     notify_event: asyncio.Event | None = None,
@@ -636,7 +636,7 @@ async def test_email_indexing_with_llm_summary_e2e(
     logger.info("\n--- Running Email Indexing with LLM Summary E2E Test ---")
 
     # --- Arrange: Mock LLM Client for Summarization ---
-    # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
+    # ast-grep-ignore: no-dict-any - mock LLM matcher receives external provider kwargs
     def email_summary_matcher(actual_kwargs: dict[str, Any]) -> bool:
         # method_name argument removed as it's no longer passed or needed
         if not (
@@ -904,7 +904,7 @@ async def test_email_indexing_with_primary_link_extraction_e2e(
     )
 
     # --- Arrange: Mock LLM Client for Link Extraction ---
-    # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
+    # ast-grep-ignore: no-dict-any - mock LLM matcher receives external provider kwargs
     def primary_link_matcher_positive(actual_kwargs: dict[str, Any]) -> bool:
         if not (
             actual_kwargs.get("tools")
@@ -915,7 +915,7 @@ async def test_email_indexing_with_primary_link_extraction_e2e(
         user_message_content = get_last_message_text(actual_kwargs["messages"])
         return TEST_EMAIL_BODY_PRIMARY_LINK in user_message_content
 
-    # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
+    # ast-grep-ignore: no-dict-any - mock LLM matcher receives external provider kwargs
     def primary_link_matcher_negative(actual_kwargs: dict[str, Any]) -> bool:
         if not (
             actual_kwargs.get("tools")

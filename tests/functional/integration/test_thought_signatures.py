@@ -12,14 +12,16 @@ if TYPE_CHECKING:
 
 from pydantic import BaseModel
 
-from family_assistant.config_models import AppConfig
+from family_assistant.config_models import AppConfig, ToolsConfig
 from family_assistant.llm import (
     LLMMessage,
     LLMOutput,
     LLMStreamEvent,
+    StreamEventMetadata,
     StructuredOutputError,
     ToolCallFunction,
     ToolCallItem,
+    UserMessageDict,
 )
 from family_assistant.llm.google_types import (
     GeminiProviderMetadata,
@@ -134,8 +136,7 @@ class MockLLMWithThoughtSignatures:
             for tool_call in response.tool_calls:
                 yield LLMStreamEvent(type="tool_call", tool_call=tool_call)
 
-        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
-        metadata: dict[str, Any] = {}
+        metadata: StreamEventMetadata = {}
         if response.provider_metadata:
             metadata["provider_metadata"] = response.provider_metadata
         yield LLMStreamEvent(type="done", metadata=metadata)
@@ -146,10 +147,9 @@ class MockLLMWithThoughtSignatures:
         file_path: str | None,
         mime_type: str | None,
         max_text_length: int | None,
-        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
-    ) -> dict[str, Any]:
+    ) -> UserMessageDict:
         """Mock implementation - not needed for these tests."""
-        return {"role": "user", "content": prompt_text or ""}
+        return UserMessageDict(role="user", content=prompt_text or "")
 
     def create_attachment_injection(
         self,
@@ -212,8 +212,7 @@ class MockLLMWithThoughtSignaturesNoToolCalls:
         if response.content:
             yield LLMStreamEvent(type="content", content=response.content)
 
-        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
-        metadata: dict[str, Any] = {}
+        metadata: StreamEventMetadata = {}
         if response.provider_metadata:
             metadata["provider_metadata"] = response.provider_metadata
         yield LLMStreamEvent(type="done", metadata=metadata)
@@ -224,10 +223,9 @@ class MockLLMWithThoughtSignaturesNoToolCalls:
         file_path: str | None,
         mime_type: str | None,
         max_text_length: int | None,
-        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
-    ) -> dict[str, Any]:
+    ) -> UserMessageDict:
         """Mock implementation - not needed for these tests."""
-        return {"role": "user", "content": prompt_text or ""}
+        return UserMessageDict(role="user", content=prompt_text or "")
 
     def create_attachment_injection(
         self,
@@ -261,7 +259,7 @@ async def test_thought_signatures_persist_and_roundtrip(
         timezone=ZoneInfo("UTC"),
         max_history_messages=10,
         history_max_age_hours=24,
-        tools_config={"enable_local_tools": [], "enable_mcp_server_ids": []},
+        tools_config=ToolsConfig(enable_local_tools=[], enable_mcp_server_ids=[]),
         delegation_security_level="confirm",
         id="test_profile",
     )
@@ -340,7 +338,7 @@ async def test_thought_signatures_without_tool_calls(
         timezone=ZoneInfo("UTC"),
         max_history_messages=10,
         history_max_age_hours=24,
-        tools_config={"enable_local_tools": [], "enable_mcp_server_ids": []},
+        tools_config=ToolsConfig(enable_local_tools=[], enable_mcp_server_ids=[]),
         delegation_security_level="confirm",
         id="test_profile",
     )

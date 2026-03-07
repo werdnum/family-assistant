@@ -9,7 +9,7 @@ from typing import TYPE_CHECKING, Any
 from opentelemetry import trace
 from opentelemetry.trace import StatusCode
 
-from family_assistant.llm import LLMStreamEvent
+from family_assistant.llm import LLMStreamEvent, StreamEventMetadata
 from family_assistant.llm.messages import ToolMessage, tool_result_to_llm_message
 from family_assistant.tools import (
     ToolExecutionContext,
@@ -69,14 +69,14 @@ class ToolExecutor:
         chat_interfaces: dict[str, ChatInterface] | None = None,
         request_confirmation_callback: (
             Callable[
-                # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
+                # ast-grep-ignore: no-dict-any - tool args have varying keys per tool
                 [
                     str,
                     str,
                     str | None,
                     str,
                     str,
-                    # ast-grep-ignore: no-dict-any - Legacy callback signature from original code
+                    # ast-grep-ignore: no-dict-any - tool args have varying keys per tool
                     dict[str, Any],
                     float,
                     ToolExecutionContext,
@@ -89,7 +89,7 @@ class ToolExecutor:
         processing_service: Any = None,  # noqa: ANN401 - Circular import with ProcessingService
         home_assistant_client: HomeAssistantClientWrapper | None = None,
         camera_backend: CameraBackend | None = None,
-        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
+        # ast-grep-ignore: no-dict-any - maps source IDs to heterogeneous event source objects
         event_sources: dict[str, Any] | None = None,
     ) -> ToolExecutionResult:
         """Execute a single tool call and return the result.
@@ -372,7 +372,7 @@ class ToolExecutor:
                         content=content_for_stream,
                         name=function_name,
                     )
-                    stream_metadata = None
+                    stream_metadata: StreamEventMetadata | None = None
 
                     # Special handling for attach_to_response tool: enrich with attachment metadata
                     if function_name == "attach_to_response":

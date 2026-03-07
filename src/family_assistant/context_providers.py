@@ -400,7 +400,7 @@ class WeatherContextProvider(ContextProvider):
         self._prompts = prompts
         self._display_tz = timezone
         self._httpx_client = httpx_client
-        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
+        # ast-grep-ignore: no-dict-any - WillyWeather API response has deeply nested dynamic structure
         self._weather_data_cache: dict[str, Any] | None = None
         self._cache_expiry_time: datetime | None = None
 
@@ -412,7 +412,7 @@ class WeatherContextProvider(ContextProvider):
         """Gets today's date in the display timezone."""
         return datetime.now(self._display_tz).date()
 
-    # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
+    # ast-grep-ignore: no-dict-any - WillyWeather API response has deeply nested dynamic structure
     async def _fetch_and_cache_weather_data(self) -> dict[str, Any] | None:
         """Fetches weather data from WillyWeather API and caches it."""
         now_utc = datetime.now(ZoneInfo("UTC"))
@@ -496,7 +496,7 @@ class WeatherContextProvider(ContextProvider):
             return "N/A"
         return dt_obj.astimezone(self._display_tz).strftime("%H:%M")
 
-    # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
+    # ast-grep-ignore: no-dict-any - WillyWeather API UV data has nested alert/entries structure
     def _format_uv_alert(self, uv_day_data: dict[str, Any], api_tz_str: str) -> str:
         """Formats UV information for a day."""
         alert = uv_day_data.get("alert")
@@ -520,7 +520,7 @@ class WeatherContextProvider(ContextProvider):
             ).format(index=first_entry.get("index"), scale=first_entry.get("scale"))
         return self._prompts.get("weather_no_uv_alert", "Low")
 
-    # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
+    # ast-grep-ignore: no-dict-any - external weather API JSON with no fixed schema
     def _format_rainfall_summary(self, rainfall_day_entry: dict[str, Any]) -> str:
         """Formats rainfall summary for a day."""
         prob = rainfall_day_entry.get("probability", 0)
@@ -549,12 +549,12 @@ class WeatherContextProvider(ContextProvider):
 
     def _format_daily_weather_summary(
         self,
-        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
+        # ast-grep-ignore: no-dict-any - WillyWeather API weather entry with precis/min/max fields
         day_weather_entry: dict[str, Any],
-        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
+        # ast-grep-ignore: no-dict-any - WillyWeather API rainfall entry with probability/range fields
         day_rainfall_entry: dict[str, Any],
-        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
-        day_sun_uv_data: dict[str, Any],  # Contains 'sunrisesunset' and 'uv' day data
+        # ast-grep-ignore: no-dict-any - WillyWeather API sun/UV data with nested sunrisesunset and uv entries
+        day_sun_uv_data: dict[str, Any],
         day_date_obj: date,
         api_tz_str: str,
     ) -> str:
@@ -594,7 +594,7 @@ class WeatherContextProvider(ContextProvider):
 
     def _format_todays_detailed_forecast(
         self,
-        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
+        # ast-grep-ignore: no-dict-any - WillyWeather API response with deeply nested forecast/graph/observational data
         weather_data: dict[str, Any],
         today_date_obj: date,
         api_tz_str: str,
@@ -749,7 +749,7 @@ class WeatherContextProvider(ContextProvider):
 
     def _format_weekly_outlook(
         self,
-        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
+        # ast-grep-ignore: no-dict-any - WillyWeather API response with deeply nested forecast data
         weather_data: dict[str, Any],
         today_date_obj: date,
         api_tz_str: str,

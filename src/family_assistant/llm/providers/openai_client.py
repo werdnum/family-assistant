@@ -11,7 +11,7 @@ import uuid
 from collections.abc import AsyncIterator, Sequence
 from dataclasses import asdict
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, TypedDict
 
 if TYPE_CHECKING:
     from family_assistant.tools.types import ToolAttachment, ToolDefinition
@@ -23,13 +23,16 @@ from family_assistant.llm import (
     BaseLLMClient,
     LLMOutput,
     LLMStreamEvent,
+    StreamEventMetadata,
     ToolCallFunction,
     ToolCallItem,
+    UserMessageDict,
 )
 from family_assistant.llm.messages import (
     ContentPart,
     ImageUrlContentPart,
     LLMMessage,
+    MessageReasoningInfo,
     TextContentPart,
     UserMessage,
     message_to_json_dict,
@@ -47,10 +50,18 @@ from ..base import (
     RateLimitError,
 )
 
-StreamingMetadata = dict[str, object]
-
-
 logger = logging.getLogger(__name__)
+
+
+class _StreamingToolFunction(TypedDict):
+    name: str
+    arguments: str
+
+
+class _StreamingToolAccumulator(TypedDict):
+    id: str | None
+    type: str | None
+    function: _StreamingToolFunction
 
 
 class OpenAIClient(BaseLLMClient):
@@ -60,7 +71,6 @@ class OpenAIClient(BaseLLMClient):
         self,
         api_key: str,
         model: str,
-        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
         model_parameters: dict[str, dict[str, object]] | None = None,
         **kwargs: Any,  # noqa: ANN401 # Accepts arbitrary OpenAI API parameters
     ) -> None:
@@ -156,7 +166,6 @@ class OpenAIClient(BaseLLMClient):
 
         return UserMessage(content=content_parts)
 
-    # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
     def _get_model_specific_params(self, model: str) -> dict[str, object]:
         """Get parameters for a specific model based on pattern matching."""
         params = {}
@@ -231,13 +240,13 @@ class OpenAIClient(BaseLLMClient):
                 ]
 
             # Extract usage information
-            reasoning_info = None
+            reasoning_info: MessageReasoningInfo | None = None
             if response.usage:
-                reasoning_info = {
-                    "prompt_tokens": response.usage.prompt_tokens,
-                    "completion_tokens": response.usage.completion_tokens,
-                    "total_tokens": response.usage.total_tokens,
-                }
+                reasoning_info = MessageReasoningInfo(
+                    prompt_tokens=response.usage.prompt_tokens,
+                    completion_tokens=response.usage.completion_tokens,
+                    total_tokens=response.usage.total_tokens,
+                )
 
                 # Add reasoning tokens if available (for o1 models)
                 if hasattr(response.usage, "completion_tokens_details"):
@@ -340,8 +349,7 @@ class OpenAIClient(BaseLLMClient):
         file_path: str | None,
         mime_type: str | None,
         max_text_length: int | None,
-        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
-    ) -> dict[str, object]:
+    ) -> UserMessageDict:
         """
         Format user message with optional file content.
 
@@ -452,8 +460,7 @@ class OpenAIClient(BaseLLMClient):
                 return
 
             # Track current tool call being built
-            # ast-grep-ignore: no-dict-any - Streaming accumulator structure
-            current_tool_calls: dict[int, dict[str, Any]] = {}
+            current_tool_calls: dict[int, _StreamingToolAccumulator] = {}
             chunk: Any | None = None
             last_chunk_with_usage: Any | None = None
 
@@ -504,10 +511,11 @@ class OpenAIClient(BaseLLMClient):
 
             # Emit any remaining tool calls
             for tc_data in current_tool_calls.values():
-                if tc_data["function"]["name"] and tc_data["id"]:
+                tc_id = tc_data["id"]
+                if tc_data["function"]["name"] and tc_id:
                     tool_call = ToolCallItem(
-                        id=tc_data["id"],
-                        type=tc_data["type"],
+                        id=tc_id,
+                        type=tc_data["type"] or "function",
                         function=ToolCallFunction(
                             name=tc_data["function"]["name"],
                             arguments=tc_data["function"]["arguments"] or "{}",
@@ -516,21 +524,21 @@ class OpenAIClient(BaseLLMClient):
                     yield LLMStreamEvent(
                         type="tool_call",
                         tool_call=tool_call,
-                        tool_call_id=tc_data["id"],
+                        tool_call_id=tc_id,
                     )
 
             # Extract usage information if available
-            metadata: StreamingMetadata = {}
+            metadata: StreamEventMetadata = {}
             if (
                 last_chunk_with_usage
                 and hasattr(last_chunk_with_usage, "usage")
                 and last_chunk_with_usage.usage
             ):
-                metadata["reasoning_info"] = {
-                    "prompt_tokens": last_chunk_with_usage.usage.prompt_tokens,
-                    "completion_tokens": last_chunk_with_usage.usage.completion_tokens,
-                    "total_tokens": last_chunk_with_usage.usage.total_tokens,
-                }
+                metadata["reasoning_info"] = MessageReasoningInfo(
+                    prompt_tokens=last_chunk_with_usage.usage.prompt_tokens,
+                    completion_tokens=last_chunk_with_usage.usage.completion_tokens,
+                    total_tokens=last_chunk_with_usage.usage.total_tokens,
+                )
 
             # Record successful streaming request to diagnostics buffer
             duration_ms = (time.monotonic() - start_time) * 1000
@@ -618,8 +626,8 @@ class OpenAIClient(BaseLLMClient):
 
     async def _maybe_parse_vcr_stream(
         self,
-        stream: Any,  # noqa: ANN401  # OpenAI AsyncStream has dynamic types
-        # ast-grep-ignore: no-dict-any - VCR chunk payload mirrors provider schema
+        stream: Any,  # noqa: ANN401 - OpenAI AsyncStream[ChatCompletionChunk] erased by VCR replay
+        # ast-grep-ignore: no-dict-any - VCR replay parses raw JSON SSE frames into unstructured dicts
     ) -> list[dict[str, Any]] | None:
         """
         Detect and parse VCR-recorded streaming responses.
@@ -653,7 +661,7 @@ class OpenAIClient(BaseLLMClient):
         # Replace the marker with real newlines to reconstruct SSE frames
         normalized = text_body.replace(f"{magic_token} ", "\n")
 
-        # ast-grep-ignore: no-dict-any - VCR chunk payload mirrors provider schema
+        # ast-grep-ignore: no-dict-any - VCR replay parses raw JSON SSE frames into unstructured dicts
         chunks: list[dict[str, Any]] = []
         for raw_block in normalized.split("\n\n"):
             block = raw_block.strip()
@@ -673,15 +681,13 @@ class OpenAIClient(BaseLLMClient):
 
         return chunks
 
-    # ast-grep-ignore: no-dict-any - Streaming chunk payload mirrors provider schema
     async def _emit_events_from_chunk_dicts(
         self,
         chunk_dicts: list[dict[str, object]],
     ) -> AsyncIterator[LLMStreamEvent]:
         """Emit stream events from pre-parsed chunk dictionaries."""
-        # ast-grep-ignore: no-dict-any - Streaming chunk payload mirrors provider schema
-        current_tool_calls: dict[int, dict[str, Any]] = {}
-        # ast-grep-ignore: no-dict-any - Streaming chunk payload mirrors provider schema
+        current_tool_calls: dict[int, _StreamingToolAccumulator] = {}
+        # ast-grep-ignore: no-dict-any - VCR replay chunk is parsed JSON, not a typed SDK object
         last_chunk_with_usage: dict[str, Any] | None = None
 
         for chunk in chunk_dicts:
@@ -729,10 +735,11 @@ class OpenAIClient(BaseLLMClient):
                 last_chunk_with_usage = chunk
 
         for tc_data in current_tool_calls.values():
-            if tc_data["function"]["name"] and tc_data["id"]:
+            tc_id = tc_data["id"]
+            if tc_data["function"]["name"] and tc_id:
                 tool_call = ToolCallItem(
-                    id=tc_data["id"],
-                    type=tc_data["type"],
+                    id=tc_id,
+                    type=tc_data["type"] or "function",
                     function=ToolCallFunction(
                         name=tc_data["function"]["name"],
                         arguments=tc_data["function"]["arguments"] or "{}",
@@ -741,16 +748,16 @@ class OpenAIClient(BaseLLMClient):
                 yield LLMStreamEvent(
                     type="tool_call",
                     tool_call=tool_call,
-                    tool_call_id=tc_data["id"],
+                    tool_call_id=tc_id,
                 )
 
-        metadata: StreamingMetadata = {}
+        metadata: StreamEventMetadata = {}
         if last_chunk_with_usage:
             usage = last_chunk_with_usage.get("usage") or {}
-            metadata["reasoning_info"] = {
-                "prompt_tokens": usage.get("prompt_tokens"),
-                "completion_tokens": usage.get("completion_tokens"),
-                "total_tokens": usage.get("total_tokens"),
-            }
+            metadata["reasoning_info"] = MessageReasoningInfo(
+                prompt_tokens=usage.get("prompt_tokens", 0),
+                completion_tokens=usage.get("completion_tokens", 0),
+                total_tokens=usage.get("total_tokens", 0),
+            )
 
         yield LLMStreamEvent(type="done", metadata=metadata)

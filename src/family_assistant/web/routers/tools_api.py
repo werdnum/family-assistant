@@ -27,7 +27,7 @@ tools_api_router = APIRouter()
 
 # --- Pydantic model for Tool Execution API ---
 class ToolExecutionRequest(BaseModel):
-    # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
+    # ast-grep-ignore: no-dict-any - Tool arguments vary per tool and cannot be statically typed
     arguments: dict[str, Any]
 
 

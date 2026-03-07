@@ -13,7 +13,7 @@ from zoneinfo import ZoneInfo
 
 import pytest
 
-from family_assistant.config_models import AppConfig
+from family_assistant.config_models import AppConfig, ToolsConfig
 from family_assistant.processing import ProcessingService, ProcessingServiceConfig
 from family_assistant.services.attachment_registry import AttachmentRegistry
 from family_assistant.storage.context import DatabaseContext
@@ -43,8 +43,7 @@ def _create_processing_service() -> ProcessingService:
         timezone=ZoneInfo("UTC"),
         max_history_messages=10,
         history_max_age_hours=24,
-        # ast-grep-ignore: no-dict-any - Test code
-        tools_config={},  # type: ignore[arg-type]
+        tools_config=ToolsConfig(),
         delegation_security_level="confirm",
         id="test_data_manipulation",
     )

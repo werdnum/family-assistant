@@ -10,7 +10,7 @@ This implementation mimics LiteLLM's simple retry strategy:
 import asyncio
 import logging
 from collections.abc import AsyncIterator, Sequence
-from typing import TYPE_CHECKING, Any, TypeVar
+from typing import TYPE_CHECKING, TypeVar
 
 from opentelemetry import trace
 from opentelemetry.trace import StatusCode
@@ -19,7 +19,14 @@ from pydantic import BaseModel
 if TYPE_CHECKING:
     from family_assistant.tools.types import ToolAttachment, ToolDefinition
 
-from . import LLMInterface, LLMMessage, LLMOutput, LLMStreamEvent, StructuredOutputError
+from . import (
+    LLMInterface,
+    LLMMessage,
+    LLMOutput,
+    LLMStreamEvent,
+    StructuredOutputError,
+    UserMessageDict,
+)
 from .base import (
     LLMProviderError,
     ProviderConnectionError,
@@ -419,8 +426,7 @@ class RetryingLLMClient:
         file_path: str | None,
         mime_type: str | None,
         max_text_length: int | None,
-        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
-    ) -> dict[str, Any]:
+    ) -> UserMessageDict:
         """Format user message with file - delegates to primary client."""
         return await self.primary_client.format_user_message_with_file(
             prompt_text, file_path, mime_type, max_text_length

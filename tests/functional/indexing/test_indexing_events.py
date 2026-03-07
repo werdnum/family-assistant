@@ -8,12 +8,13 @@ import logging
 import uuid
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from typing import Any
+from typing import TYPE_CHECKING, Any, cast
 from unittest.mock import AsyncMock, MagicMock
 from zoneinfo import ZoneInfo
 
 import pytest
-from sqlalchemy import and_, cast, select
+from sqlalchemy import and_, select
+from sqlalchemy import cast as sa_cast
 from sqlalchemy.ext.asyncio import AsyncEngine
 from sqlalchemy.types import Integer
 
@@ -22,6 +23,7 @@ from family_assistant.embeddings import MockEmbeddingGenerator
 from family_assistant.events.indexing_source import IndexingEventType, IndexingSource
 from family_assistant.events.processor import EventProcessor
 from family_assistant.indexing.tasks import (
+    EmbedAndStoreBatchPayload,
     check_document_completion,
     handle_embed_and_store_batch,
 )
@@ -30,6 +32,9 @@ from family_assistant.storage.events import recent_events_table
 from family_assistant.storage.tasks import tasks_table
 from family_assistant.storage.vector import add_document
 from family_assistant.tools.types import ToolExecutionContext
+
+if TYPE_CHECKING:
+    from family_assistant.storage.types import ActionConfig, MatchConditions
 
 logger = logging.getLogger(__name__)
 
@@ -68,7 +73,7 @@ async def poll_for_document_ready_event(
                     recent_events_table.c.event_data["event_type"].as_string()
                     == IndexingEventType.DOCUMENT_READY.value,
                     # Cast to integer for proper comparison
-                    cast(
+                    sa_cast(
                         recent_events_table.c.event_data["document_id"].as_string(),
                         Integer,
                     )
@@ -142,7 +147,9 @@ async def test_document_ready_event_emitted(db_engine: AsyncEngine) -> None:
             interface_type="web",
             source_id="indexing",
             match_conditions={"event_type": IndexingEventType.DOCUMENT_READY.value},
-            action_config={"prompt": "Document ready: {{ event.document_title }}"},
+            action_config=cast(
+                "ActionConfig", {"prompt": "Document ready: {{ event.document_title }}"}
+            ),
             enabled=True,
         )
 
@@ -187,6 +194,7 @@ async def test_document_ready_event_emitted(db_engine: AsyncEngine) -> None:
                             "embedding_type": "title",
                             "chunk_index": 0,
                             "original_content_metadata": {},
+                            "content_hash": None,
                         }
                     ],
                 },
@@ -205,6 +213,7 @@ async def test_document_ready_event_emitted(db_engine: AsyncEngine) -> None:
                                 "embedding_type": "content_chunk",
                                 "chunk_index": i,
                                 "original_content_metadata": {"chunk_index": i},
+                                "content_hash": None,
                             }
                         ],
                     },
@@ -246,7 +255,9 @@ async def test_document_ready_event_emitted(db_engine: AsyncEngine) -> None:
                 )
 
                 assert task["payload"] is not None
-                await handle_embed_and_store_batch(task_context, task["payload"])
+                await handle_embed_and_store_batch(
+                    task_context, cast("EmbedAndStoreBatchPayload", task["payload"])
+                )
                 await db_ctx.tasks.update_status(task["task_id"], "done")
                 tasks_processed += 1
 
@@ -305,6 +316,7 @@ async def test_document_ready_not_emitted_with_pending_tasks(
                         "embedding_type": "content_chunk",
                         "chunk_index": 0,
                         "original_content_metadata": {},
+                        "content_hash": None,
                     }
                 ],
             },
@@ -321,6 +333,7 @@ async def test_document_ready_not_emitted_with_pending_tasks(
                         "embedding_type": "content_chunk",
                         "chunk_index": 1,
                         "original_content_metadata": {},
+                        "content_hash": None,
                     }
                 ],
             },
@@ -371,7 +384,9 @@ async def test_document_ready_not_emitted_with_pending_tasks(
         )
 
         assert first_task["payload"] is not None
-        await handle_embed_and_store_batch(exec_context, first_task["payload"])
+        await handle_embed_and_store_batch(
+            exec_context, cast("EmbedAndStoreBatchPayload", first_task["payload"])
+        )
         await db_ctx.tasks.update_status(first_task["task_id"], "done")
 
         # Event should NOT have been emitted since second task is pending
@@ -400,15 +415,23 @@ async def test_indexing_event_listener_integration(db_engine: AsyncEngine) -> No
             conversation_id="test-conv",
             interface_type="web",
             source_id="indexing",
-            match_conditions={
-                "event_type": IndexingEventType.DOCUMENT_READY.value,
-                "document_title": {"$contains": "Newsletter"},  # Only match newsletters
-            },
-            action_config={
-                "prompt": "The newsletter '{{ event.document_title }}' has been indexed with {{ event.metadata.total_embeddings }} embeddings. Please summarize it.",
-                "interface_type": "test",
-                "conversation_id": "test-conv",
-            },
+            match_conditions=cast(
+                "MatchConditions",
+                {
+                    "event_type": IndexingEventType.DOCUMENT_READY.value,
+                    "document_title": {
+                        "$contains": "Newsletter"
+                    },  # Only match newsletters
+                },
+            ),
+            action_config=cast(
+                "ActionConfig",
+                {
+                    "prompt": "The newsletter '{{ event.document_title }}' has been indexed with {{ event.metadata.total_embeddings }} embeddings. Please summarize it.",
+                    "interface_type": "test",
+                    "conversation_id": "test-conv",
+                },
+            ),
             enabled=True,
         )
 
@@ -440,6 +463,7 @@ async def test_indexing_event_listener_integration(db_engine: AsyncEngine) -> No
                         "embedding_type": "content",
                         "chunk_index": 0,
                         "original_content_metadata": {},
+                        "content_hash": None,
                     }
                 ],
             },
@@ -496,7 +520,9 @@ async def test_indexing_event_listener_integration(db_engine: AsyncEngine) -> No
 
             # Process embedding task - should emit event
             assert task["payload"] is not None
-            await handle_embed_and_store_batch(exec_context, task["payload"])
+            await handle_embed_and_store_batch(
+                exec_context, cast("EmbedAndStoreBatchPayload", task["payload"])
+            )
 
             # Wait for all events to be processed before polling
             await indexing_source.wait_for_pending_events()
@@ -564,6 +590,7 @@ async def test_document_ready_event_includes_rich_metadata(
                         "embedding_type": "content",
                         "chunk_index": 0,
                         "original_content_metadata": {"page": 1},
+                        "content_hash": None,
                     }
                 ],
             },
@@ -606,7 +633,9 @@ async def test_document_ready_event_includes_rich_metadata(
 
             # Process task - should emit event with rich metadata
             assert task["payload"] is not None
-            await handle_embed_and_store_batch(exec_context, task["payload"])
+            await handle_embed_and_store_batch(
+                exec_context, cast("EmbedAndStoreBatchPayload", task["payload"])
+            )
             await db_ctx.tasks.update_status(task["task_id"], "done")
 
         # Wait for all events to be processed before polling
@@ -686,6 +715,7 @@ async def test_document_ready_event_handles_none_metadata(
                         "embedding_type": "content",
                         "chunk_index": 0,
                         "original_content_metadata": {},
+                        "content_hash": None,
                     }
                 ],
             },
@@ -728,7 +758,9 @@ async def test_document_ready_event_handles_none_metadata(
 
             # Process task - should emit event even with None metadata
             assert task["payload"] is not None
-            await handle_embed_and_store_batch(exec_context, task["payload"])
+            await handle_embed_and_store_batch(
+                exec_context, cast("EmbedAndStoreBatchPayload", task["payload"])
+            )
             await db_ctx.tasks.update_status(task["task_id"], "done")
 
         # Wait for all events to be processed before polling

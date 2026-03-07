@@ -10,7 +10,7 @@ import asyncio
 import io
 import logging
 from functools import cached_property
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, TypedDict
 
 from family_assistant.storage.context import DatabaseContext
 
@@ -22,9 +22,36 @@ if TYPE_CHECKING:
 
     from family_assistant.services.attachment_registry import (
         AttachmentMetadata,
+        AttachmentMetadataDict,
         AttachmentRegistry,
     )
     from family_assistant.tools.types import ToolExecutionContext
+
+
+class AttachmentInfoDict(TypedDict):
+    """Attachment metadata returned by the attachment API to scripts."""
+
+    attachment_id: str
+    source_type: str
+    source_id: str
+    mime_type: str
+    description: str
+    size: int
+    content_url: str | None
+    created_at: str
+    conversation_id: str | None
+    message_id: int | None
+
+
+class ScriptAttachmentDict(TypedDict):
+    """Dict representation of a ScriptAttachment for dict-like access."""
+
+    id: str
+    mime_type: str
+    description: str
+    size: int
+    filename: str | None
+
 
 logger = logging.getLogger(__name__)
 
@@ -181,8 +208,7 @@ class ScriptAttachment:
         """
         return io.BytesIO(self.get_content())
 
-    # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
-    def to_dict(self) -> dict[str, Any]:
+    def to_dict(self) -> AttachmentMetadataDict:
         """
         Get the attachment metadata as a dictionary.
 
@@ -200,16 +226,15 @@ class ScriptAttachment:
         return self.__str__()
 
     @cached_property
-    # ast-grep-ignore: no-dict-any - Mixed types for dict-like access
-    def _dict_repr(self) -> dict[str, Any]:
+    def _dict_repr(self) -> ScriptAttachmentDict:
         """Cached dictionary representation for efficient dict-like access."""
-        return {
-            "id": self.get_id(),
-            "mime_type": self.get_mime_type(),
-            "description": self.get_description(),
-            "size": self.get_size(),
-            "filename": self.get_filename(),
-        }
+        return ScriptAttachmentDict(
+            id=self.get_id(),
+            mime_type=self.get_mime_type(),
+            description=self.get_description(),
+            size=self.get_size(),
+            filename=self.get_filename(),
+        )
 
     def __getitem__(self, key: str) -> Any:  # noqa: ANN401
         """Allow dict-like access for script compatibility."""
@@ -273,12 +298,10 @@ class AttachmentAPI:
         async with DatabaseContext(engine=self.db_engine) as db_context:
             return await _do_read(db_context)
 
-    # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
-    async def _get_async(self, attachment_id: str) -> dict[str, Any] | None:
+    async def _get_async(self, attachment_id: str) -> AttachmentInfoDict | None:
         """Get attachment metadata by ID."""
 
-        # ast-grep-ignore: no-dict-any - Inner helper shares return type with parent _get_async
-        async def _do_get(db_ctx: DatabaseContext) -> dict[str, Any] | None:
+        async def _do_get(db_ctx: DatabaseContext) -> AttachmentInfoDict | None:
             attachment = await self.attachment_registry.get_attachment(
                 db_ctx, attachment_id
             )
@@ -286,18 +309,18 @@ class AttachmentAPI:
             if not attachment:
                 return None
 
-            return {
-                "attachment_id": attachment.attachment_id,
-                "source_type": attachment.source_type,
-                "source_id": attachment.source_id,
-                "mime_type": attachment.mime_type,
-                "description": attachment.description,
-                "size": attachment.size,
-                "content_url": attachment.content_url,
-                "created_at": attachment.created_at.isoformat(),
-                "conversation_id": attachment.conversation_id,
-                "message_id": attachment.message_id,
-            }
+            return AttachmentInfoDict(
+                attachment_id=attachment.attachment_id,
+                source_type=attachment.source_type,
+                source_id=attachment.source_id,
+                mime_type=attachment.mime_type,
+                description=attachment.description,
+                size=attachment.size,
+                content_url=attachment.content_url,
+                created_at=attachment.created_at.isoformat(),
+                conversation_id=attachment.conversation_id,
+                message_id=attachment.message_id,
+            )
 
         # Use existing db_context if available (allows reading uncommitted attachments)
         if self.db_context:
@@ -311,12 +334,12 @@ class AttachmentAPI:
         self,
         source_type: str | None = None,
         limit: int = 20,
-        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
-    ) -> builtins.list[dict[str, Any]]:
+    ) -> builtins.list[AttachmentInfoDict]:
         """List attachments in the current conversation."""
 
-        # ast-grep-ignore: no-dict-any - Inner helper shares return type with parent
-        async def _do_list(db_ctx: DatabaseContext) -> builtins.list[dict[str, Any]]:
+        async def _do_list(
+            db_ctx: DatabaseContext,
+        ) -> builtins.list[AttachmentInfoDict]:
             attachments = await self.attachment_registry.list_attachments(
                 db_ctx,
                 conversation_id=self.conversation_id,
@@ -325,18 +348,18 @@ class AttachmentAPI:
             )
 
             return [
-                {
-                    "attachment_id": att.attachment_id,
-                    "source_type": att.source_type,
-                    "source_id": att.source_id,
-                    "mime_type": att.mime_type,
-                    "description": att.description,
-                    "size": att.size,
-                    "content_url": att.content_url,
-                    "created_at": att.created_at.isoformat(),
-                    "conversation_id": att.conversation_id,
-                    "message_id": att.message_id,
-                }
+                AttachmentInfoDict(
+                    attachment_id=att.attachment_id,
+                    source_type=att.source_type,
+                    source_id=att.source_id,
+                    mime_type=att.mime_type,
+                    description=att.description,
+                    size=att.size,
+                    content_url=att.content_url,
+                    created_at=att.created_at.isoformat(),
+                    conversation_id=att.conversation_id,
+                    message_id=att.message_id,
+                )
                 for att in attachments
             ]
 

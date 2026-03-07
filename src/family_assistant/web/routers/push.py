@@ -1,13 +1,14 @@
 """Router for push notification subscriptions."""
 
 import logging
-from typing import Annotated, Any
+from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from sqlalchemy import exc as sqlalchemy_exc
 
 from family_assistant.storage.context import DatabaseContext
+from family_assistant.web.auth import User
 from family_assistant.web.dependencies import get_current_user, get_db
 
 router = APIRouter()
@@ -44,8 +45,7 @@ class UnsubscribeRequest(BaseModel):
 @router.post("/api/push/subscribe")
 async def subscribe(
     request: PushSubscriptionRequest,
-    # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
-    user: Annotated[dict[str, Any], Depends(get_current_user)],
+    user: Annotated[User, Depends(get_current_user)],
     db: Annotated[DatabaseContext, Depends(get_db)],
 ) -> dict[str, str]:
     """Subscribe to push notifications.
@@ -82,8 +82,7 @@ async def subscribe(
 @router.post("/api/push/unsubscribe")
 async def unsubscribe(
     request: UnsubscribeRequest,
-    # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
-    user: Annotated[dict[str, Any], Depends(get_current_user)],
+    user: Annotated[User, Depends(get_current_user)],
     db: Annotated[DatabaseContext, Depends(get_db)],
 ) -> dict[str, str]:
     """Unsubscribe from push notifications.

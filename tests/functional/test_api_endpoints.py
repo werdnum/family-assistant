@@ -23,7 +23,7 @@ class TestDocument:
         source_uri: str | None = None,
         title: str | None = None,
         created_at: datetime | None = None,
-        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
+        # ast-grep-ignore: no-dict-any - mock document metadata has dynamic third-party fields
         metadata: dict[str, Any] | None = None,
         file_path: str | None = None,
     ) -> None:
@@ -61,7 +61,7 @@ class TestDocument:
         return self._created_at
 
     @property
-    # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
+    # ast-grep-ignore: no-dict-any - mock document metadata has dynamic third-party fields
     def metadata(self) -> dict[str, Any] | None:
         return self._metadata
 

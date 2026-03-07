@@ -23,7 +23,7 @@ from playwright.async_api import Page, async_playwright
 from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
 
 from family_assistant.assistant import Assistant
-from family_assistant.config_models import AppConfig
+from family_assistant.config_models import AppConfig, ToolsConfig
 from family_assistant.context_providers import (
     CalendarContextProvider,
     KnownUsersContextProvider,
@@ -303,7 +303,7 @@ async def _create_web_assistant(
     test_id = uuid.uuid4().hex[:8]
     scope_prefix = f"_{scope_label.lower()}" if scope_label else ""
     storage_suffix = f"{scope_prefix}_{test_id}"
-    # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
+    # ast-grep-ignore: no-dict-any - test config has mixed-type fields, no external schema exists
     test_config: dict[str, Any] = {
         "telegram_enabled": False,
         "telegram_token": None,
@@ -805,9 +805,9 @@ class TestDataFactory:
         self,
         content: str | None = None,
         tags: list[str] | None = None,
-        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
+        # ast-grep-ignore: no-dict-any - mock note metadata has dynamic user-defined fields
         metadata: dict[str, Any] | None = None,
-        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
+        # ast-grep-ignore: no-dict-any - note return value has mixed-type fields
     ) -> dict[str, Any]:
         """Create a test note."""
         self._note_counter += 1
@@ -828,7 +828,7 @@ class TestDataFactory:
         title: str | None = None,
         content: str | None = None,
         file_type: str = "text/plain",
-        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
+        # ast-grep-ignore: no-dict-any - document return value has mixed-type fields
     ) -> dict[str, Any]:
         """Create a test document."""
         self._document_counter += 1
@@ -1065,13 +1065,11 @@ def api_mock_processing_service_config() -> ProcessingServiceConfig:
         timezone=ZoneInfo("UTC"),
         max_history_messages=5,
         history_max_age_hours=24,
-        tools_config={
-            "enable_local_tools": [
-                "add_or_update_note"
-            ],  # Ensure our target tool is enabled
-            "enable_mcp_server_ids": [],
-            "confirm_tools": [],  # Ensure add_or_update_note is NOT here for API test
-        },
+        tools_config=ToolsConfig(
+            enable_local_tools=["add_or_update_note"],
+            enable_mcp_server_ids=[],
+            confirm_tools=[],
+        ),
         delegation_security_level="confirm",
         id="chat_api_test_profile",
     )
@@ -1111,7 +1109,7 @@ async def api_test_tools_provider(
     confirming_provider = ConfirmingToolsProvider(
         wrapped_provider=composite_provider,
         tools_requiring_confirmation=set(
-            api_mock_processing_service_config.tools_config.get("confirm_tools", [])
+            api_mock_processing_service_config.tools_config.confirm_tools
         ),
     )
     await confirming_provider.get_tool_definitions()  # Initialize

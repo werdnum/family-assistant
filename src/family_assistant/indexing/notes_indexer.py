@@ -3,7 +3,7 @@ Handles the indexing process for notes stored in the database.
 """
 
 import logging
-from typing import Any, cast
+from typing import TypedDict, cast
 
 from family_assistant.indexing.pipeline import IndexableContent, IndexingPipeline
 from family_assistant.storage.notes import NoteDocument
@@ -15,6 +15,12 @@ from family_assistant.storage.vector import (
 from family_assistant.tools import ToolExecutionContext
 
 logger = logging.getLogger(__name__)
+
+
+class NoteIndexPayload(TypedDict):
+    """Payload for note indexing tasks."""
+
+    note_id: int
 
 
 class NotesIndexer:
@@ -33,11 +39,9 @@ class NotesIndexer:
         logger.info("NotesIndexer initialized with an IndexingPipeline instance.")
 
     async def handle_index_note(
-        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
         self,
         exec_context: ToolExecutionContext,
-        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
-        payload: dict[str, Any],
+        payload: NoteIndexPayload,
     ) -> None:
         """
         Task handler to index a specific note from the notes table.

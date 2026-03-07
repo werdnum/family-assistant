@@ -83,7 +83,7 @@ async def enqueue_task(
     db_context: DatabaseContext,  # Added context
     task_id: str,
     task_type: str,
-    # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
+    # ast-grep-ignore: no-dict-any - task payload has varying keys per task type
     payload: dict[str, Any] | None = None,
     scheduled_at: datetime | None = None,
     max_retries_override: int | None = None,

@@ -18,7 +18,7 @@ logger = logging.getLogger(__name__)
 class PushSubscriptionRepository(BaseRepository):
     """Repository for managing push subscriptions."""
 
-    # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
+    # ast-grep-ignore: no-dict-any - Web Push subscription JSON with browser-defined schema
     async def add(self, user_identifier: str, subscription_json: dict[str, Any]) -> int:
         """Add a new push subscription.
 

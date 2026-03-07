@@ -57,6 +57,7 @@ from family_assistant.storage.context import (
     get_db_context,
 )
 from family_assistant.task_worker import (
+    ReindexDocumentPayload,
     TaskWorker,
     handle_completed_automation_cleanup,
     handle_llm_callback,
@@ -100,6 +101,7 @@ if TYPE_CHECKING:
 
     from family_assistant.llm import LLMInterface
     from family_assistant.services.attachment_registry import AttachmentRegistry
+    from family_assistant.storage.types import EventConditionEvaluatorConfig
     from family_assistant.tools.types import CalendarConfig as CalendarConfigDict
     from family_assistant.tools.types import ToolExecutionContext
 
@@ -151,9 +153,9 @@ class NullChatInterface:
 
 
 async def task_wrapper_handle_log_message(
-    # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
+    # ast-grep-ignore: no-dict-any - ToolExecutionContext type alias requires this signature
     exec_context: ToolExecutionContext,
-    # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
+    # ast-grep-ignore: no-dict-any - task payload has varying keys per task type
     payload: dict[str, Any],
 ) -> None:
     """
@@ -213,7 +215,7 @@ class Assistant:
 
         # Event system
         self.event_processor: EventProcessor | None = None
-        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
+        # ast-grep-ignore: no-dict-any - maps profile IDs to heterogeneous HA client objects
         self.home_assistant_clients: dict[str, Any] = {}  # profile_id -> HA client
 
         # Logging handler
@@ -433,12 +435,13 @@ class Assistant:
         # Import locally to avoid circular imports
         from family_assistant.services.attachment_registry import (  # noqa: PLC0415
             AttachmentRegistry,
+            AttachmentRegistryConfig,
         )
 
         self.attachment_registry = AttachmentRegistry(
             storage_path=attachment_storage_path,
             db_engine=self.database_engine,
-            config=attachment_config.model_dump(),
+            config=cast("AttachmentRegistryConfig", attachment_config.model_dump()),
         )
 
         # Store in FastAPI app state for web access
@@ -860,7 +863,7 @@ class Assistant:
                 web_max_history_messages=profile_proc_conf.web_max_history_messages,
                 web_history_max_age_hours=profile_proc_conf.web_history_max_age_hours,
                 max_iterations=profile_proc_conf.max_iterations,
-                tools_config=profile_tools_conf.model_dump(),
+                tools_config=profile_tools_conf,
                 delegation_security_level=profile_proc_conf.delegation_security_level,
                 id=profile_id,
                 description=profile_conf.description
@@ -1063,9 +1066,11 @@ class Assistant:
                 self.event_processor = EventProcessor(
                     sources=event_sources,
                     sample_interval_hours=sample_interval_hours,
-                    config=event_config.model_dump(),  # Convert to dict for backward compatibility
+                    config=cast(
+                        "EventConditionEvaluatorConfig",
+                        event_config.model_dump(),
+                    ),
                     get_db_context_func=self._get_db_context_for_events,
-                    # db_context will be created internally if not provided
                 )
                 logger.info(
                     f"Event processor initialized with {len(event_sources)} sources"
@@ -1513,10 +1518,11 @@ class Assistant:
         return self._is_shutdown_complete
 
     async def handle_reindex_document(
-        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
         self,
         exec_context: ToolExecutionContext,
-        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
+        # ast-grep-ignore: no-dict-any - Payload from generic task dispatch system (JSON deserialized)
         payload: dict[str, Any],
     ) -> None:
-        await handle_reindex_document(exec_context, payload)
+        await handle_reindex_document(
+            exec_context, cast("ReindexDocumentPayload", payload)
+        )

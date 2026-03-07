@@ -545,7 +545,7 @@ async def ingest_document_from_url_tool(
         title_to_use = f"URL Ingest: {url_to_ingest}"
         logger.info(f"No title provided, using placeholder: '{title_to_use}'")
 
-    # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
+    # ast-grep-ignore: no-dict-any - user-provided JSON metadata with arbitrary keys
     doc_metadata: dict[str, Any] | None = None
     if metadata_json:
         try:
@@ -589,9 +589,9 @@ async def ingest_document_from_url_tool(
 
         if ingestion_result.get("error_detail"):
             logger.error(
-                f"Ingestion service failed for URL '{url_to_ingest}': {ingestion_result['message']} - {ingestion_result['error_detail']}"
+                f"Ingestion service failed for URL '{url_to_ingest}': {ingestion_result.get('message')} - {ingestion_result.get('error_detail')}"
             )
-            return f"Error submitting URL for ingestion: {ingestion_result['message']}. Details: {ingestion_result['error_detail']}"
+            return f"Error submitting URL for ingestion: {ingestion_result.get('message')}. Details: {ingestion_result.get('error_detail')}"
 
         doc_id = ingestion_result.get("document_id")
         task_enqueued = ingestion_result.get("task_enqueued")

@@ -14,7 +14,7 @@ import pytest_asyncio
 from httpx import ASGITransport, AsyncClient
 from sqlalchemy.ext.asyncio import AsyncEngine
 
-from family_assistant.config_models import AppConfig
+from family_assistant.config_models import AppConfig, ToolsConfig
 from family_assistant.context_providers import (
     CalendarContextProvider,
     KnownUsersContextProvider,
@@ -72,7 +72,7 @@ async def llm_integration_processing_service(
         max_history_messages=20,
         history_max_age_hours=72,
         delegation_security_level="high",
-        tools_config={},
+        tools_config=ToolsConfig(),
         id="test",
     )
 

@@ -1,5 +1,5 @@
 from datetime import datetime
-from typing import Annotated
+from typing import Annotated, Any, cast
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
@@ -54,4 +54,4 @@ async def get_event(
     event = await db_context.events.get_event_by_id(event_id)
     if not event:
         raise HTTPException(status_code=404, detail="Event not found")
-    return EventModel(**event)
+    return EventModel(**cast("dict[str, Any]", event))

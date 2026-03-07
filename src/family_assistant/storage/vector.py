@@ -88,7 +88,7 @@ class Document(Protocol):
         ...
 
     @property
-    # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
+    # ast-grep-ignore: no-dict-any - document metadata has source-specific varying fields
     def metadata(self) -> dict[str, Any] | None:
         """Base metadata extracted directly from the source (can be enriched later)."""
         ...
@@ -126,7 +126,7 @@ class DocumentRecord(Base):
         sa.DateTime(timezone=True),
         server_default=functions.now(),  # Use explicit import
     )  # Use sa.sql.func.now() for server default
-    # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
+    # ast-grep-ignore: no-dict-any - document metadata JSON column with source-specific fields
     doc_metadata: Mapped[dict[str, Any] | None] = mapped_column(
         JSON().with_variant(JSONB, "postgresql")
     )  # Use variant
@@ -170,7 +170,7 @@ class DocumentEmbeddingRecord(Base):
     added_at: Mapped[datetime] = mapped_column(
         sa.DateTime(timezone=True), server_default=functions.now()
     )
-    # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
+    # ast-grep-ignore: no-dict-any - embedding metadata JSON column with varying fields per type
     embedding_metadata: Mapped[dict[str, Any] | None] = mapped_column(
         JSON().with_variant(JSONB, "postgresql")
     )  # Renamed from metadata  # New metadata column
@@ -232,7 +232,7 @@ async def init_vector_db(db_context: DatabaseContext) -> None:
 async def add_document(
     db_context: DatabaseContext,  # Added context
     doc: Document,
-    # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
+    # ast-grep-ignore: no-dict-any - enriched metadata has source-specific varying fields
     enriched_doc_metadata: dict[str, Any] | None = None,
 ) -> int:
     """
@@ -462,7 +462,7 @@ async def add_embedding(
     embedding_model: str,
     content: str | None = None,
     content_hash: str | None = None,
-    # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
+    # ast-grep-ignore: no-dict-any - embedding metadata has varying fields per document type
     embedding_doc_metadata: dict[str, Any] | None = None,
 ) -> None:
     """
@@ -600,11 +600,11 @@ async def query_vectors(
     query_embedding: list[float],
     embedding_model: str,
     keywords: str | None = None,
-    # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
+    # ast-grep-ignore: no-dict-any - document column filters with dynamic field names
     filters: dict[str, Any] | None = None,
     embedding_type_filter: list[str] | None = None,
     limit: int = 10,
-    # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
+    # ast-grep-ignore: no-dict-any - search results contain dynamic fields from joined tables
 ) -> list[dict[str, Any]]:
     """
     Performs a hybrid search combining vector similarity and keyword search

@@ -221,7 +221,7 @@ async def test_event_processor_health_status() -> None:
     # Create processor
     processor = EventProcessor(sources)  # type: ignore[arg-type]
     processor._running = True
-    processor._listener_cache = {"home_assistant": [{"id": 1}, {"id": 2}]}
+    processor._listener_cache = {"home_assistant": [{}, {}]}  # type: ignore[dict-item]  # minimal stubs; test only checks count
 
     # Get health status
     status = await processor.get_health_status()
@@ -230,6 +230,7 @@ async def test_event_processor_health_status() -> None:
     assert status["processor_running"] is True
     assert "sources" in status
     assert "home_assistant" in status["sources"]
-    assert status["sources"]["home_assistant"]["healthy"] is True
-    assert status["sources"]["home_assistant"]["reconnect_attempts"] == 0
+    ha_status = status["sources"]["home_assistant"]
+    assert ha_status.get("healthy") is True
+    assert ha_status.get("reconnect_attempts") == 0
     assert status["listener_cache"]["listener_count"] == 2

@@ -9,7 +9,7 @@ from zoneinfo import ZoneInfo
 import pytest
 from sqlalchemy.ext.asyncio import AsyncEngine
 
-from family_assistant.config_models import AppConfig
+from family_assistant.config_models import AppConfig, ToolsConfig
 from family_assistant.llm import LLMInterface, ToolCallFunction, ToolCallItem
 from family_assistant.processing import ProcessingService, ProcessingServiceConfig
 from family_assistant.storage.context import DatabaseContext
@@ -169,7 +169,7 @@ async def test_list_home_assistant_entities_with_filter(
         timezone=ZoneInfo(TEST_TIMEZONE_STR),
         max_history_messages=5,
         history_max_age_hours=24,
-        tools_config={"confirmation_required": []},
+        tools_config=ToolsConfig(),
         delegation_security_level="unrestricted",
     )
 
@@ -329,7 +329,7 @@ async def test_list_home_assistant_entities_with_area_filter(
         timezone=ZoneInfo(TEST_TIMEZONE_STR),
         max_history_messages=5,
         history_max_age_hours=24,
-        tools_config={"confirmation_required": []},
+        tools_config=ToolsConfig(),
         delegation_security_level="unrestricted",
     )
 
@@ -452,7 +452,7 @@ async def test_list_home_assistant_entities_no_client(
         timezone=ZoneInfo(TEST_TIMEZONE_STR),
         max_history_messages=5,
         history_max_age_hours=24,
-        tools_config={"confirmation_required": []},
+        tools_config=ToolsConfig(),
         delegation_security_level="unrestricted",
     )
 

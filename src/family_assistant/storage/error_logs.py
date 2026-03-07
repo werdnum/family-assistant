@@ -54,7 +54,7 @@ async def get_error_logs(
     since: datetime | None = None,
     limit: int = 50,
     offset: int = 0,
-    # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
+    # ast-grep-ignore: no-dict-any - database rows have dynamic columns from query
 ) -> list[dict[str, Any]]:
     """Get error logs with filtering and pagination."""
     query = select(error_logs_table)
@@ -76,7 +76,7 @@ async def get_error_logs(
 async def get_error_log_by_id(
     db_context: DatabaseContext,
     error_id: int,
-    # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
+    # ast-grep-ignore: no-dict-any - database row has dynamic columns from query
 ) -> dict[str, Any] | None:
     """Get a specific error log by ID."""
     query = select(error_logs_table).where(error_logs_table.c.id == error_id)

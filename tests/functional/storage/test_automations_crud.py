@@ -58,7 +58,7 @@ class TestScheduleAutomationsRepository:
         assert automation["name"] == "Daily Summary"
         assert automation["recurrence_rule"] == "FREQ=DAILY;BYHOUR=9;BYMINUTE=0"
         assert automation["action_type"] == "wake_llm"
-        assert automation["action_config"]["context"] == "Please send daily summary"
+        assert automation["action_config"].get("context") == "Please send daily summary"
         assert automation["conversation_id"] == conversation_id
         assert automation["description"] == "Daily morning summary"
         assert automation["enabled"] is True
@@ -91,7 +91,9 @@ class TestScheduleAutomationsRepository:
         automation = await db_context.schedule_automations.get_by_id(automation_id)
         assert automation is not None
         assert automation["action_type"] == "script"
-        assert automation["action_config"]["script_code"] == "print('Weekly report')"
+        assert (
+            automation["action_config"].get("script_code") == "print('Weekly report')"
+        )
 
     @pytest.mark.asyncio
     async def test_create_with_invalid_rrule(self, db_context: DatabaseContext) -> None:
@@ -505,7 +507,7 @@ class TestScheduleAutomationsRepository:
 
         automation = await db_context.schedule_automations.get_by_id(automation_id)
         assert automation is not None
-        assert automation["action_config"]["context"] == "new context"
+        assert automation["action_config"].get("context") == "new context"
 
     @pytest.mark.asyncio
     async def test_update_recurrence_rule(self, db_context: DatabaseContext) -> None:

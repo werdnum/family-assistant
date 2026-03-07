@@ -1,5 +1,5 @@
 from datetime import datetime
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, TypedDict
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -9,6 +9,30 @@ if TYPE_CHECKING:
     from starlette.datastructures import State
 
     from family_assistant.config_models import AppConfig
+
+
+class ChatAttachmentRequest(TypedDict, total=False):
+    """Attachment data sent from the frontend in chat requests."""
+
+    type: str
+    content: str
+    mime_type: str
+    filename: str
+
+
+class ToolCallFunctionResponse(TypedDict, total=False):
+    """Function details within a tool call response (OpenAI format)."""
+
+    name: str
+    arguments: str
+
+
+class ToolCallResponseItem(TypedDict, total=False):
+    """Tool call data included in chat API responses (OpenAI format)."""
+
+    id: str
+    type: str
+    function: ToolCallFunctionResponse
 
 
 # --- Gemini Live Voice API Configuration Models ---
@@ -188,7 +212,7 @@ class SearchResultItem(BaseModel):
     embedding_type: str
     embedding_source_content: str | None
     chunk_index: int | None = None
-    # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
+    # ast-grep-ignore: no-dict-any - Document metadata has dynamic structure varying by source type
     doc_metadata: dict[str, Any] | None = None
     distance: float | None = None
     fts_score: float | None = None
@@ -230,8 +254,7 @@ class ChatPromptRequest(BaseModel):
     conversation_id: str | None = None
     profile_id: str | None = None  # Added to specify processing profile
     interface_type: str | None = None  # Interface type (e.g., 'web', 'api', 'mobile')
-    # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
-    attachments: list[dict[str, Any]] | None = None  # File attachments (base64 encoded)
+    attachments: list[ChatAttachmentRequest] | None = None
 
 
 class ChatMessageResponse(BaseModel):
@@ -239,8 +262,7 @@ class ChatMessageResponse(BaseModel):
     conversation_id: str
     turn_id: str
     attachments: list[MessageAttachmentMetadata] | None = None  # Add attachments field
-    # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
-    tool_calls: list[dict[str, Any]] | None = None  # Tool calls made by the assistant
+    tool_calls: list[ToolCallResponseItem] | None = None
 
 
 class WebhookEventPayload(BaseModel):

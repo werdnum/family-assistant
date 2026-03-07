@@ -40,7 +40,7 @@ class EventStorage:
     async def store_event(
         self,
         source_id: EventSourceType | str,
-        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
+        # ast-grep-ignore: no-dict-any - event_data is arbitrary JSON from external sources (Home Assistant, webhooks) with no fixed schema
         event_data: dict[str, Any],
         triggered_listener_ids: list[int] | None = None,
     ) -> None:
@@ -59,7 +59,7 @@ class EventStorage:
         self,
         db_ctx: DatabaseContext,
         source_id: EventSourceType | str,
-        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
+        # ast-grep-ignore: no-dict-any - event_data is arbitrary JSON from external sources (Home Assistant, webhooks) with no fixed schema
         event_data: dict[str, Any],
         triggered_listener_ids: list[int] | None = None,
     ) -> None:
@@ -99,7 +99,7 @@ class EventStorage:
     async def _write_event(
         self,
         source_id: str,
-        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
+        # ast-grep-ignore: no-dict-any - event_data is arbitrary JSON from external sources with no fixed schema
         event_data: dict[str, Any],
         triggered_listener_ids: list[int] | None,
     ) -> None:
@@ -118,7 +118,7 @@ class EventStorage:
         self,
         db_ctx: DatabaseContext,
         source_id: str,
-        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
+        # ast-grep-ignore: no-dict-any - event_data is arbitrary JSON from external sources with no fixed schema
         event_data: dict[str, Any],
         triggered_listener_ids: list[int] | None,
     ) -> None:

@@ -7,7 +7,7 @@ from zoneinfo import ZoneInfo
 import pytest
 from sqlalchemy.ext.asyncio import AsyncEngine
 
-from family_assistant.config_models import AppConfig
+from family_assistant.config_models import AppConfig, ToolsConfig
 from family_assistant.processing import ProcessingService, ProcessingServiceConfig
 from family_assistant.services.attachment_registry import AttachmentRegistry
 from family_assistant.storage.context import DatabaseContext
@@ -515,7 +515,7 @@ async def test_tool_chaining_json_query_workflow(
         timezone=ZoneInfo("UTC"),
         max_history_messages=10,
         history_max_age_hours=24,
-        tools_config={},  # type: ignore[arg-type]
+        tools_config=ToolsConfig(),
         delegation_security_level="confirm",
         id="test_workflow",
     )

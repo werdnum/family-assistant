@@ -187,7 +187,7 @@ async def handle_mail_webhook(
         # For Mailgun, most fields are single value. message-headers is special (already handled).
         # We need to be careful if any other fields could be multi-valued.
         # For simplicity, assuming other relevant fields are single string values.
-        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
+        # ast-grep-ignore: no-dict-any - Mailgun form data has dynamic fields that vary by email
         form_data_dict: dict[str, Any] = {
             key: form_data.get(key)
             for key in form_data  # type: ignore

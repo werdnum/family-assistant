@@ -25,7 +25,7 @@ class ValidationResult:
     errors: list[ValidationError] = field(default_factory=list)
     warnings: list[str] = field(default_factory=list)
 
-    # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
+    # ast-grep-ignore: no-dict-any - serialization result contains mixed field types
     def to_dict(self) -> dict[str, Any]:
         """Convert validation result to dictionary for JSON serialization."""
         return {

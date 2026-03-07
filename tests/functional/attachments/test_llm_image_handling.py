@@ -16,9 +16,10 @@ from zoneinfo import ZoneInfo
 import pytest
 from sqlalchemy.ext.asyncio import AsyncEngine
 
-from family_assistant.config_models import AppConfig
-from family_assistant.llm import LLMStreamEvent
+from family_assistant.config_models import AppConfig, ToolsConfig
+from family_assistant.llm import LLMStreamEvent, StreamEventMetadata
 from family_assistant.llm.messages import (
+    AssistantMessage,
     LLMMessage,
     MessageAttachmentMetadata,
     UserMessage,
@@ -38,7 +39,7 @@ class MockLLMClient:
     async def generate_response_stream(
         self,
         messages: list[LLMMessage],
-        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
+        # ast-grep-ignore: no-dict-any - tool definitions match external LLM API format
         tools: list[dict[str, Any]] | None = None,
         tool_choice: str = "auto",
     ) -> AsyncIterator[LLMStreamEvent]:
@@ -46,10 +47,10 @@ class MockLLMClient:
         # Yield a simple content event
         yield LLMStreamEvent(type="content", content="I see the image.")
         # Yield done event with metadata
-        yield LLMStreamEvent(
-            type="done",
-            metadata={"message": {"role": "assistant", "content": "I see the image."}},
-        )
+        done_metadata: StreamEventMetadata = {
+            "message": AssistantMessage(content="I see the image.")
+        }
+        yield LLMStreamEvent(type="done", metadata=done_metadata)
 
     def create_attachment_injection(self, attachment: ToolAttachment) -> UserMessage:
         # Return a simple UserMessage for the injection part
@@ -116,7 +117,7 @@ async def test_image_handling_with_real_db(
             timezone=ZoneInfo("UTC"),
             max_history_messages=10,
             history_max_age_hours=24,
-            tools_config={},
+            tools_config=ToolsConfig(),
             delegation_security_level="unrestricted",
         )
 
@@ -153,7 +154,7 @@ async def test_image_handling_with_real_db(
                 db_context=db_context,
                 interface_type="telegram",
                 conversation_id=conversation_id,
-                # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
+                # ast-grep-ignore: no-dict-any - trigger content parts have mixed external message types
                 trigger_content_parts=trigger_content,  # type: ignore
                 trigger_interface_message_id="msg_123",
                 user_name="TestUser",

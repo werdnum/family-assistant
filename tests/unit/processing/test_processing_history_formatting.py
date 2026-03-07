@@ -16,7 +16,7 @@ from PIL import Image
 if TYPE_CHECKING:
     from family_assistant.tools.types import ToolDefinition
 
-from family_assistant.config_models import AppConfig
+from family_assistant.config_models import AppConfig, ToolsConfig
 from family_assistant.llm.messages import (
     AssistantMessage,
     LLMMessage,
@@ -47,7 +47,7 @@ class MockToolsProvider:
     async def execute_tool(
         self,
         name: str,
-        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
+        # ast-grep-ignore: no-dict-any - tool arguments from external LLM tool call
         arguments: dict[str, Any],
         context: ToolExecutionContext,
         call_id: str | None = None,
@@ -71,7 +71,7 @@ def processing_service() -> ProcessingService:
         timezone=ZoneInfo("UTC"),  # Not used
         max_history_messages=10,  # Not used
         history_max_age_hours=1,  # Not used
-        tools_config={},  # Added missing tools_config
+        tools_config=ToolsConfig(),
         delegation_security_level="confirm",  # Added
         id="history_formatting_test_profile",  # Added
     )
@@ -302,7 +302,7 @@ def test_web_specific_history_configuration() -> None:
         history_max_age_hours=24,
         web_max_history_messages=100,
         web_history_max_age_hours=720,
-        tools_config={},
+        tools_config=ToolsConfig(),
         delegation_security_level="confirm",
         id="test_web_history_profile",
     )
@@ -342,7 +342,7 @@ def test_web_history_configuration_fallback() -> None:
         history_max_age_hours=48,
         web_max_history_messages=None,
         web_history_max_age_hours=None,
-        tools_config={},
+        tools_config=ToolsConfig(),
         delegation_security_level="confirm",
         id="test_fallback_profile",
     )
@@ -375,7 +375,7 @@ def test_web_history_configuration_with_zero_values() -> None:
         history_max_age_hours=48,
         web_max_history_messages=0,
         web_history_max_age_hours=0,
-        tools_config={},
+        tools_config=ToolsConfig(),
         delegation_security_level="confirm",
         id="test_zero_values_profile",
     )

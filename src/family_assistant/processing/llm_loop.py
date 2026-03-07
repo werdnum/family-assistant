@@ -7,12 +7,13 @@ import traceback
 import uuid
 from typing import TYPE_CHECKING, Any
 
-from family_assistant.llm import LLMInterface, LLMStreamEvent
+from family_assistant.llm import LLMInterface, LLMStreamEvent, StreamEventMetadata
 from family_assistant.llm.base import ContextLengthError
 from family_assistant.llm.google_types import GeminiProviderMetadata
 from family_assistant.llm.messages import (
     AssistantMessage,
     LLMMessage,
+    MessageReasoningInfo,
     SystemMessage,
     ToolMessage,
     UserMessage,
@@ -65,14 +66,14 @@ class LLMStreamingLoop:
         chat_interfaces: dict[str, ChatInterface] | None = None,
         request_confirmation_callback: (
             Callable[
-                # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
+                # ast-grep-ignore: no-dict-any - tool args have varying keys per tool
                 [
                     str,
                     str,
                     str | None,
                     str,
                     str,
-                    # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
+                    # ast-grep-ignore: no-dict-any - tool args have varying keys per tool
                     dict[str, Any],
                     float,
                     ToolExecutionContext,
@@ -86,10 +87,9 @@ class LLMStreamingLoop:
         processing_service: Any = None,  # noqa: ANN401 - Circular import with ProcessingService
         home_assistant_client: Any = None,  # noqa: ANN401 - Optional runtime dependency
         camera_backend: Any = None,  # noqa: ANN401 - Optional runtime dependency
-        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
+        # ast-grep-ignore: no-dict-any - maps source IDs to heterogeneous event source objects
         event_sources: dict[str, Any] | None = None,
-        # ast-grep-ignore: no-dict-any - Legacy reasoning_info structure
-    ) -> tuple[list[LLMMessage], dict[str, Any] | None, list[str] | None]:
+    ) -> tuple[list[LLMMessage], MessageReasoningInfo | None, list[str] | None]:
         """
         Non-streaming version of process_message that uses the streaming generator internally.
 
@@ -100,8 +100,7 @@ class LLMStreamingLoop:
             - A list of attachment IDs to send with the response (or None).
         """
         turn_messages: list[LLMMessage] = []
-        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
-        final_reasoning_info: dict[str, Any] | None = None
+        final_reasoning_info: MessageReasoningInfo | None = None
         final_attachment_ids: list[str] | None = None
 
         async for event, message in self.run_stream(
@@ -145,14 +144,14 @@ class LLMStreamingLoop:
         chat_interfaces: dict[str, ChatInterface] | None = None,
         request_confirmation_callback: (
             Callable[
-                # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
+                # ast-grep-ignore: no-dict-any - tool args have varying keys per tool
                 [
                     str,
                     str,
                     str | None,
                     str,
                     str,
-                    # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
+                    # ast-grep-ignore: no-dict-any - tool args have varying keys per tool
                     dict[str, Any],
                     float,
                     ToolExecutionContext,
@@ -166,7 +165,7 @@ class LLMStreamingLoop:
         processing_service: Any = None,  # noqa: ANN401 - Circular import with ProcessingService
         home_assistant_client: Any = None,  # noqa: ANN401 - Optional runtime dependency
         camera_backend: Any = None,  # noqa: ANN401 - Optional runtime dependency
-        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
+        # ast-grep-ignore: no-dict-any - maps source IDs to heterogeneous event source objects
         event_sources: dict[str, Any] | None = None,
     ) -> AsyncIterator[tuple[LLMStreamEvent, LLMMessage | None]]:
         """
@@ -179,8 +178,7 @@ class LLMStreamingLoop:
         This generator handles the same logic as process_message but yields events incrementally.
         """
         final_content: str | None = None
-        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
-        final_reasoning_info: dict[str, Any] | None = None
+        final_reasoning_info: MessageReasoningInfo | None = None
         max_iterations = self.service_config.max_iterations
         current_iteration = 1
         pending_attachment_ids: list[
@@ -196,9 +194,7 @@ class LLMStreamingLoop:
         logger.debug(f"Total available tools: {len(all_tool_definitions)}")
 
         if request_confirmation_callback is None:
-            confirmable_tool_names = self.service_config.tools_config.get(
-                "confirm_tools", []
-            )
+            confirmable_tool_names = self.service_config.tools_config.confirm_tools
             if confirmable_tool_names:
                 logger.info(
                     f"No confirmation callback available. Filtering out tools requiring confirmation: {confirmable_tool_names}"
@@ -311,7 +307,8 @@ class LLMStreamingLoop:
 
                         # Handle done event
                         elif event.type == "done":
-                            final_reasoning_info = event.metadata
+                            if event.metadata and "reasoning_info" in event.metadata:
+                                final_reasoning_info = event.metadata["reasoning_info"]
                             # Extract provider_metadata from done event if present
                             done_provider_metadata = (
                                 event.metadata.get("provider_metadata")
@@ -395,15 +392,7 @@ class LLMStreamingLoop:
                     # Already a dict or other serializable type
                     serialized_provider_metadata = provider_metadata
 
-            # Also serialize provider_metadata inside final_reasoning_info if present
-            # final_reasoning_info comes from event.metadata which may contain unserialized objects
-            serialized_reasoning_info = None
-            if final_reasoning_info:
-                serialized_reasoning_info = final_reasoning_info.copy()
-                if "provider_metadata" in serialized_reasoning_info:
-                    pm = serialized_reasoning_info["provider_metadata"]
-                    if isinstance(pm, GeminiProviderMetadata):
-                        serialized_reasoning_info["provider_metadata"] = pm.to_dict()
+            serialized_reasoning_info = final_reasoning_info
 
             effective_tool_calls = tool_calls_from_stream or None
 
@@ -459,8 +448,7 @@ class LLMStreamingLoop:
                         f"Attachment selection reduced from auto-queued to {len(pending_attachment_ids)} based on query relevance"
                     )
 
-            # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
-            done_metadata: dict[str, Any] = {"message": assistant_message_for_turn}
+            done_metadata: StreamEventMetadata = {"message": assistant_message_for_turn}
             if serialized_reasoning_info:
                 done_metadata["reasoning_info"] = serialized_reasoning_info
             if pending_attachment_ids:

@@ -5,7 +5,7 @@ import re
 import traceback
 import uuid
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING, Any
 
 from opentelemetry import trace
 from opentelemetry.trace import StatusCode
@@ -66,7 +66,7 @@ class ProcessingService:
         app_config: AppConfig,
         clock: Clock | None = None,
         attachment_registry: AttachmentRegistry | None = None,
-        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
+        # ast-grep-ignore: no-dict-any - maps source IDs to heterogeneous event source objects
         event_sources: dict[str, Any] | None = None,
     ) -> None:
         self._llm_client = llm_client
@@ -147,14 +147,14 @@ class ProcessingService:
         chat_interfaces: dict[str, ChatInterface] | None = None,
         request_confirmation_callback: (
             Callable[
-                # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
+                # ast-grep-ignore: no-dict-any - tool args have varying keys per tool
                 [
                     str,
                     str,
                     str | None,
                     str,
                     str,
-                    # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
+                    # ast-grep-ignore: no-dict-any - tool args have varying keys per tool
                     dict[str, Any],
                     float,
                     ToolExecutionContext,
@@ -164,8 +164,7 @@ class ProcessingService:
             | None
         ) = None,
         subconversation_id: str | None = None,
-        # ast-grep-ignore: no-dict-any - reasoning_info is an unstructured metadata dict from LLM providers
-    ) -> tuple[list[LLMMessage], dict[str, Any] | None, list[str] | None]:
+    ) -> tuple[list[LLMMessage], MessageReasoningInfo | None, list[str] | None]:
         """
         Non-streaming version of process_message that uses the streaming generator internally.
 
@@ -206,14 +205,14 @@ class ProcessingService:
         chat_interfaces: dict[str, ChatInterface] | None = None,
         request_confirmation_callback: (
             Callable[
-                # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
+                # ast-grep-ignore: no-dict-any - tool args have varying keys per tool
                 [
                     str,
                     str,
                     str | None,
                     str,
                     str,
-                    # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
+                    # ast-grep-ignore: no-dict-any - tool args have varying keys per tool
                     dict[str, Any],
                     float,
                     ToolExecutionContext,
@@ -266,14 +265,14 @@ class ProcessingService:
         chat_interfaces: dict[str, ChatInterface] | None = None,
         request_confirmation_callback: (
             Callable[
-                # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
+                # ast-grep-ignore: no-dict-any - tool args have varying keys per tool
                 [
                     str,
                     str,
                     str | None,
                     str,
                     str,
-                    # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
+                    # ast-grep-ignore: no-dict-any - tool args have varying keys per tool
                     dict[str, Any],
                     float,
                     ToolExecutionContext,
@@ -599,7 +598,7 @@ class ProcessingService:
             if generated_turn_messages:
                 for turn_msg in generated_turn_messages:
                     reasoning_info_for_msg = (
-                        cast("MessageReasoningInfo | None", final_reasoning_info)
+                        final_reasoning_info
                         if isinstance(turn_msg, AssistantMessage)
                         else None
                     )
@@ -687,14 +686,14 @@ class ProcessingService:
         chat_interfaces: dict[str, ChatInterface] | None = None,
         request_confirmation_callback: (
             Callable[
-                # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
+                # ast-grep-ignore: no-dict-any - tool args have varying keys per tool
                 [
                     str,
                     str,
                     str | None,
                     str,
                     str,
-                    # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
+                    # ast-grep-ignore: no-dict-any - tool args have varying keys per tool
                     dict[str, Any],
                     float,
                     ToolExecutionContext,
@@ -975,10 +974,7 @@ class ProcessingService:
                         # Save messages as they're generated
                         if stream_msg is not None:
                             reasoning_info_for_stream = (
-                                cast(
-                                    "MessageReasoningInfo | None",
-                                    event.metadata.get("reasoning_info"),
-                                )
+                                event.metadata.get("reasoning_info")
                                 if isinstance(stream_msg, AssistantMessage)
                                 and event.metadata
                                 else None

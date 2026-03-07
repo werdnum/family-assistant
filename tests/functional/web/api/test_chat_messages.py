@@ -13,7 +13,7 @@ from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
 from sqlalchemy.ext.asyncio import AsyncEngine
 
-from family_assistant.config_models import AppConfig
+from family_assistant.config_models import AppConfig, ToolsConfig
 from family_assistant.context_providers import (
     CalendarContextProvider,
     KnownUsersContextProvider,
@@ -83,13 +83,11 @@ def mock_processing_service_config() -> ProcessingServiceConfig:
         timezone=ZoneInfo("UTC"),
         max_history_messages=5,
         history_max_age_hours=24,
-        tools_config={
-            "enable_local_tools": [
-                "add_or_update_note"
-            ],  # Ensure our target tool is enabled
-            "enable_mcp_server_ids": [],
-            "confirm_tools": [],  # Ensure add_or_update_note is NOT here for API test
-        },
+        tools_config=ToolsConfig(
+            enable_local_tools=["add_or_update_note"],
+            enable_mcp_server_ids=[],
+            confirm_tools=[],
+        ),
         delegation_security_level="confirm",  # Added
         id="chat_api_test_profile",  # Added
     )
@@ -131,7 +129,7 @@ async def test_tools_provider(
     confirming_provider = ConfirmingToolsProvider(
         wrapped_provider=composite_provider,
         tools_requiring_confirmation=set(
-            mock_processing_service_config.tools_config.get("confirm_tools", [])
+            mock_processing_service_config.tools_config.confirm_tools
         ),
     )
     await confirming_provider.get_tool_definitions()  # Initialize
@@ -251,11 +249,11 @@ def mock_processing_service_config_no_tools() -> ProcessingServiceConfig:
         timezone=ZoneInfo("UTC"),
         max_history_messages=5,
         history_max_age_hours=24,
-        tools_config={
-            "enable_local_tools": [],
-            "enable_mcp_server_ids": [],
-            "confirm_tools": [],
-        },
+        tools_config=ToolsConfig(
+            enable_local_tools=[],
+            enable_mcp_server_ids=[],
+            confirm_tools=[],
+        ),
         delegation_security_level="blocked",
         id="chat_api_test_profile_no_tools",
     )

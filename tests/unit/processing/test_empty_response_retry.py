@@ -8,7 +8,7 @@ from zoneinfo import ZoneInfo
 import pytest
 from sqlalchemy.ext.asyncio import AsyncEngine
 
-from family_assistant.config_models import AppConfig
+from family_assistant.config_models import AppConfig, ToolsConfig
 from family_assistant.llm import LLMOutput
 from family_assistant.processing import ProcessingService, ProcessingServiceConfig
 from family_assistant.storage.context import get_db_context
@@ -40,7 +40,7 @@ def _make_service(llm_client: RuleBasedMockLLMClient) -> ProcessingService:
         timezone=ZoneInfo("UTC"),
         max_history_messages=10,
         history_max_age_hours=24,
-        tools_config={"enable_local_tools": [], "enable_mcp_server_ids": []},
+        tools_config=ToolsConfig(enable_local_tools=[], enable_mcp_server_ids=[]),
         delegation_security_level="confirm",
         id="test_empty_response",
     )

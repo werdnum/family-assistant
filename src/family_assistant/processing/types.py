@@ -6,8 +6,9 @@ from typing import TYPE_CHECKING, Any
 if TYPE_CHECKING:
     from zoneinfo import ZoneInfo
 
+    from family_assistant.config_models import ToolsConfig
     from family_assistant.llm import LLMStreamEvent
-    from family_assistant.llm.messages import ToolMessage
+    from family_assistant.llm.messages import MessageReasoningInfo, ToolMessage
     from family_assistant.skills.registry import NoteRegistry
 
 
@@ -17,8 +18,7 @@ class ChatInteractionResult:
 
     text_reply: str | None = None
     assistant_message_internal_id: int | None = None
-    # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
-    reasoning_info: dict[str, Any] | None = None
+    reasoning_info: MessageReasoningInfo | None = None
     error_traceback: str | None = None
     attachment_ids: list[str] | None = None
 
@@ -45,18 +45,15 @@ class ProcessingServiceConfig:
     timezone: ZoneInfo
     max_history_messages: int
     history_max_age_hours: float  # Can be fractional (e.g., 0.5 hours)
-    # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
-    tools_config: dict[
-        str, Any
-    ]  # Added to hold tool configurations like 'confirm_tools'
+    tools_config: ToolsConfig
     delegation_security_level: str  # "blocked", "confirm", "unrestricted"
     id: str  # Unique identifier for this service profile
     description: str = ""  # Human-readable description of this profile
     # Type hint for model_parameters should reflect pattern -> params_dict structure
-    # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
+    # ast-grep-ignore: no-dict-any - maps regex patterns to provider-specific parameter dicts
     model_parameters: dict[str, dict[str, Any]] | None = None  # Corrected type
     fallback_model_id: str | None = None  # Added for LLM fallback
-    # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
+    # ast-grep-ignore: no-dict-any - maps regex patterns to provider-specific parameter dicts
     fallback_model_parameters: dict[str, dict[str, Any]] | None = None  # Corrected type
     # Web-specific history settings
     web_max_history_messages: int | None = None  # If None, uses max_history_messages
