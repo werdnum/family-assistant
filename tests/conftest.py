@@ -1051,7 +1051,7 @@ def llm_record_mode() -> str:
 
 
 @pytest.fixture(scope="module")
-# ast-grep-ignore: no-dict-any - Legacy code - needs structured types
+# ast-grep-ignore: no-dict-any - VCR config uses external library format with dynamic fields
 def vcr_config(llm_record_mode: str) -> dict[str, Any]:
     """
     Configure VCR for recording and replaying HTTP interactions.

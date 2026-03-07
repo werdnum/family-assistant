@@ -153,9 +153,9 @@ class NullChatInterface:
 
 
 async def task_wrapper_handle_log_message(
-    # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
+    # ast-grep-ignore: no-dict-any - ToolExecutionContext type alias requires this signature
     exec_context: ToolExecutionContext,
-    # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
+    # ast-grep-ignore: no-dict-any - task payload has varying keys per task type
     payload: dict[str, Any],
 ) -> None:
     """
@@ -215,7 +215,7 @@ class Assistant:
 
         # Event system
         self.event_processor: EventProcessor | None = None
-        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
+        # ast-grep-ignore: no-dict-any - maps profile IDs to heterogeneous HA client objects
         self.home_assistant_clients: dict[str, Any] = {}  # profile_id -> HA client
 
         # Logging handler

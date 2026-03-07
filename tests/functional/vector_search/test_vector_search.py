@@ -30,7 +30,7 @@ class TestDocument:
         source_uri: str | None = None,
         title: str | None = None,
         created_at: datetime | None = None,
-        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
+        # ast-grep-ignore: no-dict-any - mock document metadata has dynamic third-party fields
         metadata: dict[str, Any] | None = None,
         file_path: str | None = None,
     ) -> None:
@@ -68,7 +68,7 @@ class TestDocument:
         return self._created_at
 
     @property
-    # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
+    # ast-grep-ignore: no-dict-any - mock document metadata has dynamic third-party fields
     def metadata(self) -> dict[str, Any] | None:
         return self._metadata
 
@@ -401,7 +401,7 @@ async def test_vector_search_concurrent_requests(
 ) -> None:
     """Test concurrent search requests."""
 
-    # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
+    # ast-grep-ignore: no-dict-any - external API response has dynamic fields
     async def single_search(query: str) -> list[dict[str, Any]]:
         resp = await comprehensive_vector_client.post(
             "/api/vector-search/", json={"query_text": query, "limit": 5}

@@ -181,7 +181,7 @@ class TelegramService:
         turn_id: str | None,
         prompt_text: str,
         tool_name: str,
-        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
+        # ast-grep-ignore: no-dict-any - tool args have varying keys per tool
         tool_args: dict[str, Any],
         timeout: float,
     ) -> bool:

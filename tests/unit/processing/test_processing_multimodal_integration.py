@@ -494,12 +494,12 @@ class TestProcessingServiceMultimodal:
         mock_tools_provider = AsyncMock()
 
         def mock_execute_tool(
-            # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
-            # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
+            # ast-grep-ignore: no-dict-any - tool arguments from external LLM tool call
+            # ast-grep-ignore: no-dict-any - tool arguments from external LLM tool call
             name: str,
-            # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
+            # ast-grep-ignore: no-dict-any - tool arguments from external LLM tool call
             args: dict[str, Any],
-            # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
+            # ast-grep-ignore: no-dict-any - tool context has dynamic mixed fields
             context: dict[str, Any],
             call_id: str,
         ) -> ToolReturnType:
@@ -569,12 +569,12 @@ class TestProcessingServiceMultimodal:
         call_count = 0
 
         def mock_attach_response(
-            # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
-            # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
+            # ast-grep-ignore: no-dict-any - tool arguments from external LLM tool call
+            # ast-grep-ignore: no-dict-any - tool arguments from external LLM tool call
             name: str,
-            # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
+            # ast-grep-ignore: no-dict-any - tool arguments from external LLM tool call
             args: dict[str, Any],
-            # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
+            # ast-grep-ignore: no-dict-any - tool context has dynamic mixed fields
             context: dict[str, Any],
             call_id: str,
         ) -> str:
@@ -680,12 +680,12 @@ class TestProcessingServiceMultimodal:
         mock_tools_provider = AsyncMock()
 
         def mock_execute_tool(
-            # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
-            # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
+            # ast-grep-ignore: no-dict-any - tool arguments from external LLM tool call
+            # ast-grep-ignore: no-dict-any - tool arguments from external LLM tool call
             name: str,
-            # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
+            # ast-grep-ignore: no-dict-any - tool arguments from external LLM tool call
             args: dict[str, Any],
-            # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
+            # ast-grep-ignore: no-dict-any - tool context has dynamic mixed fields
             context: dict[str, Any],
             call_id: str,
         ) -> ToolReturnType:

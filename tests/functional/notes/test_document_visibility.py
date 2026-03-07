@@ -33,7 +33,7 @@ class MockDoc:
         source_id: str,
         title: str,
         visibility_labels: list[str] | None = None,
-        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
+        # ast-grep-ignore: no-dict-any - mock document metadata has dynamic third-party fields
         metadata: dict[str, Any] | None = None,
     ) -> None:
         self._source_type = source_type
@@ -67,7 +67,7 @@ class MockDoc:
         return datetime.now(UTC)
 
     @property
-    # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
+    # ast-grep-ignore: no-dict-any - mock document metadata has dynamic third-party fields
     def metadata(self) -> dict[str, Any] | None:
         return self._metadata
 

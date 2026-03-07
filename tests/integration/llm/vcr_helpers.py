@@ -8,8 +8,8 @@ from typing import Any
 logger = logging.getLogger(__name__)
 
 
-# ast-grep-ignore: no-dict-any - Legacy code - needs structured types
-# ast-grep-ignore: no-dict-any - Legacy code - needs structured types
+# ast-grep-ignore: no-dict-any - VCR cassette body matches external LLM API JSON format
+# ast-grep-ignore: no-dict-any - VCR cassette body matches external LLM API JSON format
 def normalize_llm_request_body(body: dict[str, Any]) -> dict[str, Any]:
     """
     Normalize LLM request body for consistent matching.
@@ -128,8 +128,8 @@ def llm_request_matcher(r1: Any, r2: Any) -> bool:  # noqa: ANN401 # VCR request
     return True
 
 
-# ast-grep-ignore: no-dict-any - Legacy code - needs structured types
-# ast-grep-ignore: no-dict-any - Legacy code - needs structured types
+# ast-grep-ignore: no-dict-any - VCR response matches external HTTP response format
+# ast-grep-ignore: no-dict-any - VCR response matches external HTTP response format
 def sanitize_response(response: dict[str, Any]) -> dict[str, Any] | None:
     """
     Remove sensitive data from responses before recording.
@@ -221,9 +221,9 @@ def generate_cassette_name(test_name: str, provider: str, model: str) -> str:
 
 
 def hash_request_for_cache(
-    # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
+    # ast-grep-ignore: no-dict-any - LLM messages match external API format
     messages: list[dict[str, Any]],
-    # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
+    # ast-grep-ignore: no-dict-any - tool definitions match external LLM API format
     tools: list[dict[str, Any]] | None = None,
     **kwargs: Any,  # noqa: ANN401 # Generic LLM parameters are dynamically typed
 ) -> str:

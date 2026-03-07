@@ -180,9 +180,9 @@ async def http_client(
 
 # --- Helper Task Handler for the test ---
 async def _helper_handle_embed_and_store_batch(
-    # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
+    # ast-grep-ignore: no-dict-any - task handler context has dynamic external dependency fields
     exec_context: ToolExecutionContext,
-    # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
+    # ast-grep-ignore: no-dict-any - task payload has dynamic mixed-type fields
     payload: dict[str, Any],
 ) -> None:
     logger.info(
@@ -197,7 +197,7 @@ async def _helper_handle_embed_and_store_batch(
 
     document_id = payload["document_id"]
     texts_to_embed: list[str] = payload["texts_to_embed"]
-    # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
+    # ast-grep-ignore: no-dict-any - embedding metadata has dynamic mixed-type fields per chunk
     embedding_metadata_list: list[dict[str, Any]] = payload["embedding_metadata_list"]
 
     if not texts_to_embed:
@@ -239,7 +239,7 @@ async def test_document_indexing_with_llm_summary_e2e(
     logger.info("\n--- Running Document Indexing with LLM Summary E2E Test ---")
 
     # --- Arrange: Mock LLM Client for Summarization ---
-    # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
+    # ast-grep-ignore: no-dict-any - mock LLM matcher receives external provider kwargs
     def summary_matcher(actual_kwargs: dict[str, Any]) -> bool:
         # method_name argument removed as it's no longer passed or needed
         # Check if the LLM is being asked to extract a summary

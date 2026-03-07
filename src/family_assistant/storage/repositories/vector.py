@@ -45,7 +45,7 @@ class VectorRepository(BaseRepository):
     async def add_document(
         self,
         doc: "Document",
-        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
+        # ast-grep-ignore: no-dict-any - enriched metadata has source-specific varying fields
         enriched_doc_metadata: dict[str, Any] | None = None,
     ) -> int:
         """
@@ -166,7 +166,7 @@ class VectorRepository(BaseRepository):
         embedding_model: str,
         content: str | None = None,
         content_hash: str | None = None,
-        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
+        # ast-grep-ignore: no-dict-any - embedding metadata has varying fields per document type
         embedding_doc_metadata: dict[str, Any] | None = None,
     ) -> None:
         """
@@ -206,11 +206,11 @@ class VectorRepository(BaseRepository):
         query_embedding: list[float],
         embedding_model: str,
         keywords: str | None = None,
-        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
+        # ast-grep-ignore: no-dict-any - document column filters with dynamic field names
         filters: dict[str, Any] | None = None,
         embedding_type_filter: list[str] | None = None,
         limit: int = 10,
-        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
+        # ast-grep-ignore: no-dict-any - search results contain dynamic fields from joined tables
     ) -> list[dict[str, Any]]:
         """
         Query vectors by similarity.

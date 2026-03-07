@@ -679,7 +679,7 @@ class MCPToolsProvider:
     async def execute_tool(
         self,
         name: str,
-        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
+        # ast-grep-ignore: no-dict-any - MCP tool arguments are untyped per the MCP protocol
         arguments: dict[str, Any],
         context: ToolExecutionContext,
         call_id: str | None = None,

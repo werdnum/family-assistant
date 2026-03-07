@@ -219,9 +219,9 @@ async def http_client(
 async def _ingest_and_index_email(
     http_client: httpx.AsyncClient,  # Changed to http_client
     engine: AsyncEngine,  # Still needed for DB checks
-    # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
+    # ast-grep-ignore: no-dict-any - form data matches external HTTP multipart API format
     form_data_dict: dict[str, Any],  # Raw form data for the API
-    # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
+    # ast-grep-ignore: no-dict-any - file upload dict matches external httpx multipart format
     files_to_upload: dict[str, Any] | None = None,  # For attachments
     task_timeout: float = 15.0,
     notify_event: asyncio.Event | None = None,

@@ -344,7 +344,7 @@ async def get_note_tool(
 async def list_notes_tool(
     exec_context: ToolExecutionContext,
     include_in_prompt: bool | None = None,
-    # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
+    # ast-grep-ignore: no-dict-any - note summary dict has mixed value types
 ) -> list[dict[str, Any]]:
     """Tool wrapper for get_all_notes with optional filtering."""
     all_notes = await exec_context.db_context.notes.get_all(
@@ -376,7 +376,7 @@ async def list_notes_tool(
 async def delete_note_tool(
     title: str,
     exec_context: ToolExecutionContext,
-    # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
+    # ast-grep-ignore: no-dict-any - tool result dict has mixed value types
 ) -> dict[str, Any]:
     """Tool wrapper for delete_note."""
     # Enforce visibility: only allow deleting notes the user can see

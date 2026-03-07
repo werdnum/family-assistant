@@ -17,7 +17,7 @@ class PushSubscription(BaseModel):
     """Pydantic model for a push subscription."""
 
     id: int
-    # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
+    # ast-grep-ignore: no-dict-any - Web Push subscription JSON with browser-defined schema
     subscription_json: dict[str, Any]
     user_identifier: str
     created_at: datetime

@@ -241,7 +241,7 @@ def primary_llm_mock_factory() -> Callable[[bool | None], RuleBasedMockLLMClient
             logger.info(
                 "delegate_request_response_callable: Matched! Returning delegate tool call."
             )
-            # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
+            # ast-grep-ignore: no-dict-any - tool call arguments match external LLM API format
             current_tool_call_args: dict[str, Any] = {
                 "target_service_id": SPECIALIZED_PROFILE_ID,
                 "user_request": DELEGATED_TASK_DESCRIPTION,

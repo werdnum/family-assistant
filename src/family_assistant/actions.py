@@ -24,12 +24,12 @@ class ActionType(StrEnum):
 async def execute_action(
     db_ctx: DatabaseContext,
     action_type: ActionType,
-    # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
+    # ast-grep-ignore: no-dict-any - action config has varying keys per action type
     action_config: dict[str, Any],
     conversation_id: str,
     interface_type: str = "telegram",
     user_name: str | None = None,  # Added user_name
-    # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
+    # ast-grep-ignore: no-dict-any - arbitrary context data passed through to action handlers
     context: dict[str, Any] | None = None,
     scheduled_at: datetime | None = None,
     recurrence_rule: str | None = None,

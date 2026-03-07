@@ -72,7 +72,7 @@ class ConfirmationRenderer(Protocol):
 
     async def __call__(
         self,
-        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
+        # ast-grep-ignore: no-dict-any - tool args have varying keys per tool
         args: dict[str, Any],
         context: ToolExecutionContext,
     ) -> str:
@@ -117,7 +117,7 @@ def _format_event_details_for_confirmation(
 
 
 async def render_delete_calendar_event_confirmation(
-    # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
+    # ast-grep-ignore: no-dict-any - tool args have varying keys per tool
     args: dict[str, Any],
     context: ToolExecutionContext,
 ) -> str:
@@ -162,7 +162,7 @@ async def render_delete_calendar_event_confirmation(
 
 
 async def render_modify_calendar_event_confirmation(
-    # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
+    # ast-grep-ignore: no-dict-any - tool args have varying keys per tool
     args: dict[str, Any],
     context: ToolExecutionContext,
 ) -> str:

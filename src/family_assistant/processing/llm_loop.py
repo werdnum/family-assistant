@@ -66,14 +66,14 @@ class LLMStreamingLoop:
         chat_interfaces: dict[str, ChatInterface] | None = None,
         request_confirmation_callback: (
             Callable[
-                # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
+                # ast-grep-ignore: no-dict-any - tool args have varying keys per tool
                 [
                     str,
                     str,
                     str | None,
                     str,
                     str,
-                    # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
+                    # ast-grep-ignore: no-dict-any - tool args have varying keys per tool
                     dict[str, Any],
                     float,
                     ToolExecutionContext,
@@ -87,7 +87,7 @@ class LLMStreamingLoop:
         processing_service: Any = None,  # noqa: ANN401 - Circular import with ProcessingService
         home_assistant_client: Any = None,  # noqa: ANN401 - Optional runtime dependency
         camera_backend: Any = None,  # noqa: ANN401 - Optional runtime dependency
-        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
+        # ast-grep-ignore: no-dict-any - maps source IDs to heterogeneous event source objects
         event_sources: dict[str, Any] | None = None,
     ) -> tuple[list[LLMMessage], MessageReasoningInfo | None, list[str] | None]:
         """
@@ -144,14 +144,14 @@ class LLMStreamingLoop:
         chat_interfaces: dict[str, ChatInterface] | None = None,
         request_confirmation_callback: (
             Callable[
-                # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
+                # ast-grep-ignore: no-dict-any - tool args have varying keys per tool
                 [
                     str,
                     str,
                     str | None,
                     str,
                     str,
-                    # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
+                    # ast-grep-ignore: no-dict-any - tool args have varying keys per tool
                     dict[str, Any],
                     float,
                     ToolExecutionContext,
@@ -165,7 +165,7 @@ class LLMStreamingLoop:
         processing_service: Any = None,  # noqa: ANN401 - Circular import with ProcessingService
         home_assistant_client: Any = None,  # noqa: ANN401 - Optional runtime dependency
         camera_backend: Any = None,  # noqa: ANN401 - Optional runtime dependency
-        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
+        # ast-grep-ignore: no-dict-any - maps source IDs to heterogeneous event source objects
         event_sources: dict[str, Any] | None = None,
     ) -> AsyncIterator[tuple[LLMStreamEvent, LLMMessage | None]]:
         """

@@ -119,7 +119,7 @@ COLOR_MAP = {
 async def highlight_image_tool(
     exec_context: ToolExecutionContext,
     image_attachment_id: ScriptAttachment,
-    # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
+    # ast-grep-ignore: no-dict-any - image region dicts have varying shape and style keys
     regions: list[dict[str, Any]],
 ) -> ToolResult:
     """
@@ -169,7 +169,8 @@ async def highlight_image_tool(
 
             def _process_image_with_pil(
                 img_content: bytes,
-                region_list: list[dict[str, Any]],  # ast-grep-ignore: no-dict-any
+                # ast-grep-ignore: no-dict-any - image region dicts have varying shape and style keys
+                region_list: list[dict[str, Any]],
             ) -> tuple[bytes, list[str]] | tuple[None, str]:
                 """Process image with PIL - runs in thread pool to avoid blocking."""
                 try:

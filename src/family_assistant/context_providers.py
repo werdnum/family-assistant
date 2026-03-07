@@ -520,7 +520,7 @@ class WeatherContextProvider(ContextProvider):
             ).format(index=first_entry.get("index"), scale=first_entry.get("scale"))
         return self._prompts.get("weather_no_uv_alert", "Low")
 
-    # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
+    # ast-grep-ignore: no-dict-any - external weather API JSON with no fixed schema
     def _format_rainfall_summary(self, rainfall_day_entry: dict[str, Any]) -> str:
         """Formats rainfall summary for a day."""
         prob = rainfall_day_entry.get("probability", 0)

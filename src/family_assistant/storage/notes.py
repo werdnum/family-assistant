@@ -118,7 +118,7 @@ class NoteDocument(Document):
         return None  # Notes are text-only and don't have associated files
 
     @property
-    # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
+    # ast-grep-ignore: no-dict-any - note metadata has mixed value types for indexing
     def metadata(self) -> dict[str, Any] | None:
         return {
             "title": self._title,
@@ -131,7 +131,7 @@ class NoteDocument(Document):
         return self._visibility_labels
 
 
-# ast-grep-ignore: no-dict-any - Legacy code - needs structured types
+# ast-grep-ignore: no-dict-any - database rows have dynamic columns from query
 async def get_all_notes(db_context: DatabaseContext) -> list[dict[str, Any]]:
     """Retrieves all notes."""
     try:
@@ -170,7 +170,7 @@ async def get_prompt_notes(db_context: DatabaseContext) -> list[dict[str, str]]:
 async def get_note_by_title(
     db_context: DatabaseContext,
     title: str,
-    # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
+    # ast-grep-ignore: no-dict-any - database row has dynamic columns from query
 ) -> dict[str, Any] | None:
     """Retrieves a specific note by its title."""
     try:
@@ -189,7 +189,7 @@ async def get_note_by_title(
 async def get_note_by_id(
     db_context: DatabaseContext,
     note_id: int,
-    # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
+    # ast-grep-ignore: no-dict-any - database row has dynamic columns from query
 ) -> dict[str, Any] | None:
     """Retrieves a specific note by its ID."""
     try:

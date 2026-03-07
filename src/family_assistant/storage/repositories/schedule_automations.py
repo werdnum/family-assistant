@@ -772,7 +772,7 @@ class ScheduleAutomationsRepository(BaseRepository):
         task_type = "llm_callback" if action_type == "wake_llm" else "script_execution"
         task_id = f"sched_auto_{automation_id}_{uuid.uuid4().hex[:8]}"
 
-        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
+        # ast-grep-ignore: no-dict-any - task payload has varying keys per action type
         payload: dict[str, Any] = {
             "conversation_id": automation["conversation_id"],
             "interface_type": automation["interface_type"],

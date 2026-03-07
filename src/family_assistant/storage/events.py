@@ -240,7 +240,7 @@ async def delete_event_listener(
 async def store_event(
     db_context: DatabaseContext,
     source_id: str,
-    # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
+    # ast-grep-ignore: no-dict-any - event data has varying keys per event source type
     event_data: dict[str, Any],
     triggered_listener_ids: list[int] | None = None,
     timestamp: datetime | None = None,

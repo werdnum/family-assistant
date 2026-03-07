@@ -81,7 +81,7 @@ async def telegram_handler_fixture(
     unique_bot_id = str(uuid.uuid4().int)[-9:]
     telegram_token = f"{unique_bot_id}:ABC-DEF1234ghIkl-zyx57W2v1u123ew11"
 
-    # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
+    # ast-grep-ignore: no-dict-any - test config has mixed-type fields matching external schema
     test_config: dict[str, Any] = {  # noqa: ANN401
         "telegram_token": telegram_token,
         "telegram_api_base_url": telegram_test_server_session.get_bot_api_url(),

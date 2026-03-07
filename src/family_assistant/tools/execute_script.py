@@ -117,7 +117,7 @@ def _extract_attachment_ids_from_result(result: Any) -> list[str]:  # noqa: ANN4
 async def execute_script_tool(
     exec_context: ToolExecutionContext,
     script: str,
-    # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
+    # ast-grep-ignore: no-dict-any - arbitrary globals injected into script execution namespace
     globals: dict[str, Any] | None = None,
 ) -> ToolResult:
     """

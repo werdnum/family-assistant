@@ -360,10 +360,10 @@ async def create_automation_tool(
     exec_context: ToolExecutionContext,
     name: str,
     automation_type: str,
-    # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
+    # ast-grep-ignore: no-dict-any - trigger config has varying keys per automation type
     trigger_config: dict[str, Any],
     action_type: str,
-    # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
+    # ast-grep-ignore: no-dict-any - action config has varying keys per action type
     action_config: dict[str, Any],
     description: str | None = None,
 ) -> ToolResult:
@@ -672,9 +672,9 @@ async def update_automation_tool(
     exec_context: ToolExecutionContext,
     automation_id: int,
     automation_type: str,
-    # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
+    # ast-grep-ignore: no-dict-any - trigger config has varying keys per automation type
     trigger_config: dict[str, Any] | None = None,
-    # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
+    # ast-grep-ignore: no-dict-any - action config has varying keys per action type
     action_config: dict[str, Any] | None = None,
     description: str | None = None,
 ) -> ToolResult:
@@ -746,7 +746,7 @@ async def update_automation_tool(
             )
 
             # Only pass parameters that were actually provided (not None)
-            # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
+            # ast-grep-ignore: no-dict-any - forwarded kwargs with varying keys per schedule update call
             update_kwargs: dict[str, Any] = {
                 "automation_id": automation_id,
                 "conversation_id": existing.conversation_id,

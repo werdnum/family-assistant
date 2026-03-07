@@ -36,7 +36,7 @@ logger = logging.getLogger(__name__)
 
 # Define type aliases for clarity
 # MatcherArgs represents the keyword arguments passed to the LLM method
-# ast-grep-ignore: no-dict-any - Legacy code - needs structured types
+# ast-grep-ignore: no-dict-any - type alias for dynamic LLM matcher kwargs
 MatcherArgs = dict[str, Any]
 # MatcherFunction now takes a single dictionary of arguments,
 # which are the keyword arguments for the `generate_response` method.
@@ -47,7 +47,7 @@ Rule = tuple[MatcherFunction, ResponseGenerator]
 
 # Type aliases for structured output rules
 # StructuredMatcherArgs includes the response_model type
-# ast-grep-ignore: no-dict-any - Legacy code - needs structured types
+# ast-grep-ignore: no-dict-any - type alias for dynamic structured LLM matcher kwargs
 StructuredMatcherArgs = dict[str, Any]
 # StructuredResponseGenerator can return any BaseModel subclass
 StructuredResponseGenerator = BaseModel | Callable[[StructuredMatcherArgs], BaseModel]
@@ -98,13 +98,13 @@ class RuleBasedMockLLMClient(BaseLLMClient, LLMInterface):
             self.default_response = default_response
             logger.debug("RuleBasedMockLLMClient using provided default response.")
 
-        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
+        # ast-grep-ignore: no-dict-any - records calls with mixed-type kwargs
         self._calls: list[dict[str, Any]] = []
         logger.info(
             f"RuleBasedMockLLMClient initialized with {len(rules)} rules for model '{self.model}'."
         )
 
-    # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
+    # ast-grep-ignore: no-dict-any - LLM kwargs contain mixed provider-specific fields
     def _record_call(self, method_name: str, actual_kwargs: dict[str, Any]) -> None:
         """Helper to store call data."""
         call_data = {
@@ -116,7 +116,7 @@ class RuleBasedMockLLMClient(BaseLLMClient, LLMInterface):
             f"Recorded call to '{method_name}'. Total calls: {len(self._calls)}. Args: {actual_kwargs}"
         )
 
-    # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
+    # ast-grep-ignore: no-dict-any - returns recorded calls with mixed-type kwargs
     def get_calls(self) -> list[dict[str, Any]]:
         """Returns a list of recorded calls."""
         return self._calls

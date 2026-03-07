@@ -146,7 +146,7 @@ class TestEngineIntegration:
             == "Hello World"
         )
 
-        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
+        # ast-grep-ignore: no-dict-any - function returns dynamic data for scripting engine test
         def get_data() -> dict[str, Any]:
             return {"status": "ok", "count": 3}
 

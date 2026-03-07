@@ -28,7 +28,7 @@ logger = logging.getLogger(__name__)
 
 
 @pytest.fixture(scope="session")
-# ast-grep-ignore: no-dict-any - Legacy code - needs structured types
+# ast-grep-ignore: no-dict-any - VCR config uses external library format with dynamic fields
 def vcr_config() -> dict[str, Any]:
     """
     Override VCR config for Home Assistant tests with custom request/response filters.

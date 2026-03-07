@@ -886,7 +886,7 @@ async def test_search_events(
             },
         },
     )
-    # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
+    # ast-grep-ignore: no-dict-any - prompt template dict has dynamic string fields by convention
     dummy_prompts: dict[str, Any] = {
         "system_prompt": "System Time: {current_time}\nAggregated Context:\n{aggregated_other_context}"
     }
@@ -1344,7 +1344,7 @@ async def test_similarity_based_search_finds_similar_events(
         },
     )
 
-    # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
+    # ast-grep-ignore: no-dict-any - prompt template dict has dynamic string fields by convention
     dummy_prompts: dict[str, Any] = {
         "system_prompt": "System Time: {current_time}\nAggregated Context:\n{aggregated_other_context}"
     }

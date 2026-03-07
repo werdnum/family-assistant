@@ -66,7 +66,7 @@ class ProcessingService:
         app_config: AppConfig,
         clock: Clock | None = None,
         attachment_registry: AttachmentRegistry | None = None,
-        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
+        # ast-grep-ignore: no-dict-any - maps source IDs to heterogeneous event source objects
         event_sources: dict[str, Any] | None = None,
     ) -> None:
         self._llm_client = llm_client
@@ -147,14 +147,14 @@ class ProcessingService:
         chat_interfaces: dict[str, ChatInterface] | None = None,
         request_confirmation_callback: (
             Callable[
-                # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
+                # ast-grep-ignore: no-dict-any - tool args have varying keys per tool
                 [
                     str,
                     str,
                     str | None,
                     str,
                     str,
-                    # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
+                    # ast-grep-ignore: no-dict-any - tool args have varying keys per tool
                     dict[str, Any],
                     float,
                     ToolExecutionContext,
@@ -205,14 +205,14 @@ class ProcessingService:
         chat_interfaces: dict[str, ChatInterface] | None = None,
         request_confirmation_callback: (
             Callable[
-                # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
+                # ast-grep-ignore: no-dict-any - tool args have varying keys per tool
                 [
                     str,
                     str,
                     str | None,
                     str,
                     str,
-                    # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
+                    # ast-grep-ignore: no-dict-any - tool args have varying keys per tool
                     dict[str, Any],
                     float,
                     ToolExecutionContext,
@@ -265,14 +265,14 @@ class ProcessingService:
         chat_interfaces: dict[str, ChatInterface] | None = None,
         request_confirmation_callback: (
             Callable[
-                # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
+                # ast-grep-ignore: no-dict-any - tool args have varying keys per tool
                 [
                     str,
                     str,
                     str | None,
                     str,
                     str,
-                    # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
+                    # ast-grep-ignore: no-dict-any - tool args have varying keys per tool
                     dict[str, Any],
                     float,
                     ToolExecutionContext,
@@ -686,14 +686,14 @@ class ProcessingService:
         chat_interfaces: dict[str, ChatInterface] | None = None,
         request_confirmation_callback: (
             Callable[
-                # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
+                # ast-grep-ignore: no-dict-any - tool args have varying keys per tool
                 [
                     str,
                     str,
                     str | None,
                     str,
                     str,
-                    # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
+                    # ast-grep-ignore: no-dict-any - tool args have varying keys per tool
                     dict[str, Any],
                     float,
                     ToolExecutionContext,

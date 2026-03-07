@@ -545,7 +545,7 @@ async def ingest_document_from_url_tool(
         title_to_use = f"URL Ingest: {url_to_ingest}"
         logger.info(f"No title provided, using placeholder: '{title_to_use}'")
 
-    # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
+    # ast-grep-ignore: no-dict-any - user-provided JSON metadata with arbitrary keys
     doc_metadata: dict[str, Any] | None = None
     if metadata_json:
         try:

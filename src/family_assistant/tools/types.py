@@ -266,7 +266,7 @@ class ToolExecutionContext:
                 str | None,  # turn_id
                 str,  # tool_name
                 str,  # call_id
-                # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
+                # ast-grep-ignore: no-dict-any - tool args have varying keys per tool
                 dict[str, Any],  # tool_args
                 float,  # timeout
                 ToolExecutionContext,  # context (self-reference)
@@ -311,7 +311,7 @@ class ToolResult:
     attachments: list[ToolAttachment] | None = (
         None  # List of attachments (can be references or new content)
     )
-    # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
+    # ast-grep-ignore: no-dict-any - tool result data supports multiple shapes from different tools
     data: dict[str, Any] | list[Any] | str | int | float | bool | None = (
         None  # Structured data for tests/scripts
     )
@@ -339,7 +339,7 @@ class ToolResult:
 
         return ""
 
-    # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
+    # ast-grep-ignore: no-dict-any - return type mirrors data field which accepts multiple shapes
     def get_data(self) -> dict[str, Any] | list[Any] | str | int | float | bool | None:
         """
         Get data, parsing from text if needed.

@@ -47,7 +47,7 @@ class MockToolsProvider:
     async def execute_tool(
         self,
         name: str,
-        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
+        # ast-grep-ignore: no-dict-any - tool arguments from external LLM tool call
         arguments: dict[str, Any],
         context: ToolExecutionContext,
         call_id: str | None = None,

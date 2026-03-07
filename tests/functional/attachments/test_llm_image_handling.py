@@ -39,7 +39,7 @@ class MockLLMClient:
     async def generate_response_stream(
         self,
         messages: list[LLMMessage],
-        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
+        # ast-grep-ignore: no-dict-any - tool definitions match external LLM API format
         tools: list[dict[str, Any]] | None = None,
         tool_choice: str = "auto",
     ) -> AsyncIterator[LLMStreamEvent]:
@@ -154,7 +154,7 @@ async def test_image_handling_with_real_db(
                 db_context=db_context,
                 interface_type="telegram",
                 conversation_id=conversation_id,
-                # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
+                # ast-grep-ignore: no-dict-any - trigger content parts have mixed external message types
                 trigger_content_parts=trigger_content,  # type: ignore
                 trigger_interface_message_id="msg_123",
                 user_name="TestUser",

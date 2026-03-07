@@ -49,9 +49,9 @@ async def test_task_handler_timeout(
 
     # Handler that will definitely timeout
     async def hanging_handler(
-        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
+        # ast-grep-ignore: no-dict-any - task handler context has dynamic external dependency fields
         exec_context: ToolExecutionContext,
-        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
+        # ast-grep-ignore: no-dict-any - task payload has dynamic mixed-type fields
         payload: dict[str, Any],
     ) -> None:
         logger.info(
@@ -139,9 +139,9 @@ async def test_successful_handler_completes(
 
     # Quick handler that completes
     async def quick_handler(
-        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
+        # ast-grep-ignore: no-dict-any - task handler context has dynamic external dependency fields
         exec_context: ToolExecutionContext,
-        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
+        # ast-grep-ignore: no-dict-any - task payload has dynamic mixed-type fields
         payload: dict[str, Any],
     ) -> None:
         logger.info("Quick handler executed")
@@ -197,9 +197,9 @@ async def test_retry_exhaustion_leads_to_failure(
 
     # Handler that always times out
     async def timeout_handler(
-        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
+        # ast-grep-ignore: no-dict-any - task handler context has dynamic external dependency fields
         exec_context: ToolExecutionContext,
-        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
+        # ast-grep-ignore: no-dict-any - task payload has dynamic mixed-type fields
         payload: dict[str, Any],
     ) -> None:
         # ast-grep-ignore: no-asyncio-sleep-in-tests - Testing task worker timing behavior
@@ -278,9 +278,9 @@ async def test_worker_activity_tracking(db_engine: AsyncEngine) -> None:
 
     # Create and run a simple task
     async def simple_handler(
-        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
+        # ast-grep-ignore: no-dict-any - task handler context has dynamic external dependency fields
         exec_context: ToolExecutionContext,
-        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
+        # ast-grep-ignore: no-dict-any - task payload has dynamic mixed-type fields
         payload: dict[str, Any],
     ) -> None:
         pass
