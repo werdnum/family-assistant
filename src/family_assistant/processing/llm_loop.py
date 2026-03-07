@@ -4,7 +4,6 @@ import asyncio
 import json
 import logging
 import traceback
-import uuid
 from typing import TYPE_CHECKING, Any
 
 from family_assistant.llm import LLMInterface, LLMStreamEvent, StreamEventMetadata
@@ -26,12 +25,13 @@ if TYPE_CHECKING:
 
     from family_assistant.config_models import AppConfig
     from family_assistant.interfaces import ChatInterface
+    from family_assistant.llm.tool_call import ToolCallItem
     from family_assistant.storage.context import DatabaseContext
     from family_assistant.tools import ToolExecutionContext
 
     from .attachments import AttachmentProcessor
     from .tool_execution import ToolExecutor
-    from .types import ProcessingServiceConfig
+    from .types import ProcessingServiceConfig, ToolExecutionResult
 
 logger = logging.getLogger(__name__)
 
@@ -550,10 +550,12 @@ class LLMStreamingLoop:
 
             # Execute tool calls in parallel
             tool_response_messages_for_llm = []
-            task_to_tool_call_id: dict[asyncio.Future[Any], str] = {}
-            for tool_call in tool_calls_from_stream:
-                task = asyncio.create_task(
-                    self.tool_executor.execute(
+
+            async def _execute_tool_call_with_id(
+                tool_call: ToolCallItem,
+            ) -> tuple[str, ToolExecutionResult | None, Exception | None]:
+                try:
+                    result = await self.tool_executor.execute(
                         tool_call,
                         interface_type=interface_type,
                         conversation_id=conversation_id,
@@ -570,13 +572,63 @@ class LLMStreamingLoop:
                         camera_backend=camera_backend,
                         event_sources=event_sources,
                     )
-                )
-                task_to_tool_call_id[task] = tool_call.id
+                    return tool_call.id, result, None
+                except Exception as exc:  # pragma: no cover - defensive safety net
+                    return tool_call.id, None, exc
+
+            tool_execution_tasks = [
+                asyncio.create_task(_execute_tool_call_with_id(tool_call))
+                for tool_call in tool_calls_from_stream
+            ]
 
             # Process results as they complete
-            for completed_task in asyncio.as_completed(task_to_tool_call_id):
+            for completed_task in asyncio.as_completed(tool_execution_tasks):
+                tool_call_id, result, execution_error = await completed_task
+                if execution_error is not None:
+                    logger.error(
+                        "Unexpected error in parallel tool execution for tool_call_id=%s: %s",
+                        tool_call_id,
+                        execution_error,
+                        exc_info=execution_error,
+                    )
+                    error_event = LLMStreamEvent(
+                        type="tool_result",
+                        tool_call_id=tool_call_id,
+                        tool_result=f"Unexpected error: {str(execution_error)}",
+                        error=traceback.format_exc(),
+                    )
+                    error_tool_message = ToolMessage(
+                        tool_call_id=tool_call_id,
+                        content=f"Unexpected error: {str(execution_error)}",
+                        error_traceback=traceback.format_exc(),
+                        name="unknown",
+                    )
+                    yield (error_event, error_tool_message)
+                    tool_response_messages_for_llm.append(error_tool_message)
+                    continue
+
+                if result is None:  # pragma: no cover - defensive safety net
+                    logger.error(
+                        "Parallel tool execution returned no result for tool_call_id=%s",
+                        tool_call_id,
+                    )
+                    error_event = LLMStreamEvent(
+                        type="tool_result",
+                        tool_call_id=tool_call_id,
+                        tool_result="Unexpected error: tool execution returned no result",
+                        error="missing_tool_result",
+                    )
+                    error_tool_message = ToolMessage(
+                        tool_call_id=tool_call_id,
+                        content="Unexpected error: tool execution returned no result",
+                        error_traceback="missing_tool_result",
+                        name="unknown",
+                    )
+                    yield (error_event, error_tool_message)
+                    tool_response_messages_for_llm.append(error_tool_message)
+                    continue
+
                 try:
-                    result = await completed_task
                     event = result.stream_event
                     llm_message = result.llm_message
                     auto_attachment_ids = result.auto_attachment_ids or []
@@ -620,20 +672,19 @@ class LLMStreamingLoop:
                     # This should not happen since we handle exceptions inside tool_executor.execute
                     # But adding as extra safety
                     logger.error(
-                        f"Unexpected error in parallel tool execution: {e}",
+                        "Unexpected error while handling parallel tool execution result for tool_call_id=%s: %s",
+                        tool_call_id,
+                        e,
                         exc_info=True,
-                    )
-                    fallback_tool_call_id = task_to_tool_call_id.get(
-                        completed_task, f"error_{uuid.uuid4()}"
                     )
                     error_event = LLMStreamEvent(
                         type="tool_result",
-                        tool_call_id=fallback_tool_call_id,
+                        tool_call_id=tool_call_id,
                         tool_result=f"Unexpected error: {str(e)}",
                         error=traceback.format_exc(),
                     )
                     error_tool_message = ToolMessage(
-                        tool_call_id=fallback_tool_call_id,
+                        tool_call_id=tool_call_id,
                         content=f"Unexpected error: {str(e)}",
                         error_traceback=traceback.format_exc(),
                         name="unknown",
