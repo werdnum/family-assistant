@@ -59,7 +59,7 @@ class ExtractionMetadata(TypedDict):
     extraction_method: str
 
 
-class EmbeddingMetadata(TypedDict, total=False):
+class EmbeddingMetadata(TypedDict):
     """Metadata for a single embedding item in a batch embedding task."""
 
     embedding_type: str
