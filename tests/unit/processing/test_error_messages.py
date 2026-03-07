@@ -76,6 +76,21 @@ class TestMapStreamErrorToException:
         exc = _map_stream_error_to_exception(event)
         assert isinstance(exc, ContextLengthError)
 
+    def test_snake_case_rate_limit_error_event(self) -> None:
+        event = LLMStreamEvent(
+            type="error",
+            error="429 Too Many Requests",
+            metadata={
+                "error_type": "rate_limit",
+                "provider": "openai",
+                "model": "gpt-4.1",
+            },
+        )
+        exc = _map_stream_error_to_exception(event)
+        assert isinstance(exc, RateLimitError)
+        assert exc.provider == "openai"
+        assert exc.model == "gpt-4.1"
+
     def test_unknown_error_type_returns_runtime_error(self) -> None:
         event = LLMStreamEvent(
             type="error",

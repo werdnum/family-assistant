@@ -238,7 +238,7 @@ class TestContextAggregateSpan:
         assert span.attributes["context.fragments_count"] == 4
 
     @pytest.mark.asyncio
-    async def test_context_aggregate_provider_error_still_records_span(
+    async def test_context_aggregate_provider_error_raises_and_records_span(
         self, processing_span_exporter: InMemorySpanExporter
     ) -> None:
         class FailingProvider:
@@ -253,16 +253,19 @@ class TestContextAggregateSpan:
             MockContextProvider(fragments=["ok"]),
         ]
 
-        result = await service.context_preparer.aggregate_context()
+        with pytest.raises(
+            RuntimeError,
+            match="Context provider 'failing' failed to provide fragments",
+        ):
+            await service.context_preparer.aggregate_context()
 
-        assert "ok" in result
         spans = processing_span_exporter.get_finished_spans()
         agg_spans = [s for s in spans if s.name == "context.aggregate"]
         assert len(agg_spans) == 1
         span = agg_spans[0]
         assert span.attributes is not None
         assert span.attributes["context.provider_count"] == 2
-        assert span.attributes["context.fragments_count"] == 1
+        assert "context.fragments_count" not in span.attributes
 
 
 # ---------------------------------------------------------------------------

@@ -242,6 +242,38 @@ class TestProcessingServiceMultimodal:
         assert tool_message.error_traceback is not None
 
     @pytest.mark.asyncio
+    async def test_execute_single_tool_non_object_json_args(
+        self,
+        processing_service: ProcessingService,
+        mock_tools_provider: AsyncMock,
+        mock_db_context: Mock,
+    ) -> None:
+        """Tool arguments must deserialize to a JSON object, not a list/scalar."""
+        tool_call = Mock()
+        tool_call.id = "test_call_non_object_args"
+        tool_call.function.name = "test_tool"
+        tool_call.function.arguments = '["not", "an", "object"]'
+
+        result = await processing_service.tool_executor.execute(
+            tool_call_item_obj=tool_call,
+            interface_type="test",
+            conversation_id="conv_non_object_args",
+            user_name="test_user",
+            turn_id="turn_non_object_args",
+            db_context=mock_db_context,
+            chat_interface=None,
+            request_confirmation_callback=None,
+        )
+
+        event = result.stream_event
+        tool_message = result.llm_message
+
+        assert event.type == "tool_result"
+        assert event.tool_result is not None
+        assert "invalid arguments" in event.tool_result.lower()
+        assert "Expected JSON object" in (tool_message.error_traceback or "")
+
+    @pytest.mark.asyncio
     async def test_execute_single_tool_execution_error(
         self,
         processing_service: ProcessingService,

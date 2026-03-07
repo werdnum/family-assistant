@@ -53,6 +53,21 @@ class LLMStreamingLoop:
         self.tool_executor = tool_executor
         self.attachment_processor = attachment_processor
 
+    @staticmethod
+    def _infer_attachment_type(mime_type: str | None) -> str:
+        """Infer a display type for streamed attachment metadata."""
+        if mime_type is None:
+            return "file"
+        if mime_type.startswith("image/"):
+            return "image"
+        if mime_type.startswith("video/"):
+            return "video"
+        if mime_type.startswith("audio/"):
+            return "audio"
+        if mime_type == "application/pdf":
+            return "document"
+        return "file"
+
     async def run(
         self,
         db_context: DatabaseContext,
@@ -463,7 +478,9 @@ class LLMStreamingLoop:
                             if metadata:
                                 attachment_details.append({
                                     "id": att_id,
-                                    "type": "image",  # Currently all are images, could use metadata.mime_type
+                                    "type": self._infer_attachment_type(
+                                        metadata.mime_type
+                                    ),
                                     "name": metadata.description or "Attachment",
                                     "content": f"/api/attachments/{att_id}",
                                     "mime_type": metadata.mime_type,
@@ -502,21 +519,40 @@ class LLMStreamingLoop:
                 )
                 break
 
-            # Force break on final iteration to ensure we get a response
-            # This prevents infinite loops if LLM somehow returns tool calls on the last iteration
+            # On final iteration, report unexecuted tool calls explicitly rather than
+            # silently dropping them.
             if is_final_iteration:
                 logger.warning(
-                    f"Final iteration ({max_iterations}) reached but LLM returned tool calls. "
-                    "Forcing break to ensure response is returned. Tool calls will be ignored."
+                    "Final iteration (%d) reached but LLM returned %d tool call(s). "
+                    "Emitting explicit non-executed tool results and ending loop.",
+                    max_iterations,
+                    len(tool_calls_from_stream),
                 )
+                for tool_call in tool_calls_from_stream:
+                    non_executed_message = (
+                        f"Error: Tool call '{tool_call.function.name}' was not executed "
+                        f"because the maximum iteration limit ({max_iterations}) was reached."
+                    )
+                    tool_result_event = LLMStreamEvent(
+                        type="tool_result",
+                        tool_call_id=tool_call.id,
+                        tool_result=non_executed_message,
+                        error="max_iterations_reached",
+                    )
+                    tool_result_message = ToolMessage(
+                        tool_call_id=tool_call.id,
+                        content=non_executed_message,
+                        name=tool_call.function.name,
+                        error_traceback="max_iterations_reached",
+                    )
+                    yield (tool_result_event, tool_result_message)
                 break
 
             # Execute tool calls in parallel
             tool_response_messages_for_llm = []
-
-            # Create tasks for all tool calls
-            tool_tasks = [
-                asyncio.create_task(
+            task_to_tool_call_id: dict[asyncio.Future[Any], str] = {}
+            for tool_call in tool_calls_from_stream:
+                task = asyncio.create_task(
                     self.tool_executor.execute(
                         tool_call,
                         interface_type=interface_type,
@@ -535,11 +571,10 @@ class LLMStreamingLoop:
                         event_sources=event_sources,
                     )
                 )
-                for tool_call in tool_calls_from_stream
-            ]
+                task_to_tool_call_id[task] = tool_call.id
 
             # Process results as they complete
-            for completed_task in asyncio.as_completed(tool_tasks):
+            for completed_task in asyncio.as_completed(task_to_tool_call_id):
                 try:
                     result = await completed_task
                     event = result.stream_event
@@ -588,14 +623,17 @@ class LLMStreamingLoop:
                         f"Unexpected error in parallel tool execution: {e}",
                         exc_info=True,
                     )
+                    fallback_tool_call_id = task_to_tool_call_id.get(
+                        completed_task, f"error_{uuid.uuid4()}"
+                    )
                     error_event = LLMStreamEvent(
                         type="tool_result",
-                        tool_call_id=f"error_{uuid.uuid4()}",
+                        tool_call_id=fallback_tool_call_id,
                         tool_result=f"Unexpected error: {str(e)}",
                         error=traceback.format_exc(),
                     )
                     error_tool_message = ToolMessage(
-                        tool_call_id=f"error_{uuid.uuid4()}",
+                        tool_call_id=fallback_tool_call_id,
                         content=f"Unexpected error: {str(e)}",
                         error_traceback=traceback.format_exc(),
                         name="unknown",
