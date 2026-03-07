@@ -200,7 +200,7 @@ async def handle_embed_and_store_batch(
             embedding=embedding_vector,  # May be None
             embedding_model=embedding_model_used,
             content=text_content,
-            content_hash=meta.get("content_hash"),
+            content_hash=meta["content_hash"],
             embedding_doc_metadata=meta["original_content_metadata"],
         )
 

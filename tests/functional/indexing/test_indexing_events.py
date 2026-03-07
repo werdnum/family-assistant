@@ -194,6 +194,7 @@ async def test_document_ready_event_emitted(db_engine: AsyncEngine) -> None:
                             "embedding_type": "title",
                             "chunk_index": 0,
                             "original_content_metadata": {},
+                            "content_hash": None,
                         }
                     ],
                 },
@@ -212,6 +213,7 @@ async def test_document_ready_event_emitted(db_engine: AsyncEngine) -> None:
                                 "embedding_type": "content_chunk",
                                 "chunk_index": i,
                                 "original_content_metadata": {"chunk_index": i},
+                                "content_hash": None,
                             }
                         ],
                     },
@@ -314,6 +316,7 @@ async def test_document_ready_not_emitted_with_pending_tasks(
                         "embedding_type": "content_chunk",
                         "chunk_index": 0,
                         "original_content_metadata": {},
+                        "content_hash": None,
                     }
                 ],
             },
@@ -330,6 +333,7 @@ async def test_document_ready_not_emitted_with_pending_tasks(
                         "embedding_type": "content_chunk",
                         "chunk_index": 1,
                         "original_content_metadata": {},
+                        "content_hash": None,
                     }
                 ],
             },
@@ -459,6 +463,7 @@ async def test_indexing_event_listener_integration(db_engine: AsyncEngine) -> No
                         "embedding_type": "content",
                         "chunk_index": 0,
                         "original_content_metadata": {},
+                        "content_hash": None,
                     }
                 ],
             },
@@ -585,6 +590,7 @@ async def test_document_ready_event_includes_rich_metadata(
                         "embedding_type": "content",
                         "chunk_index": 0,
                         "original_content_metadata": {"page": 1},
+                        "content_hash": None,
                     }
                 ],
             },
@@ -709,6 +715,7 @@ async def test_document_ready_event_handles_none_metadata(
                         "embedding_type": "content",
                         "chunk_index": 0,
                         "original_content_metadata": {},
+                        "content_hash": None,
                     }
                 ],
             },
