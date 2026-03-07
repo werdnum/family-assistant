@@ -915,7 +915,7 @@ class ScheduleAutomationsRepository(BaseRepository):
     async def get_execution_stats(
         self,
         automation_id: int,
-    ) -> ScheduleExecutionStatsDict:
+    ) -> ScheduleExecutionStatsDict | None:
         """
         Get execution statistics for an automation.
 
@@ -923,12 +923,12 @@ class ScheduleAutomationsRepository(BaseRepository):
             automation_id: Automation ID
 
         Returns:
-            Dictionary with execution statistics
+            Dictionary with execution statistics, or None if not found
         """
         try:
             automation = await self.get_by_id(automation_id)
             if not automation:
-                return {}  # type: ignore[return-value]  # empty dict for not-found case
+                return None
 
             # Query tasks table for execution history
             stmt = select(tasks_table).where(

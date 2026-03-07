@@ -790,14 +790,14 @@ class EventsRepository(BaseRepository):
     async def get_listener_execution_stats(
         self,
         listener_id: int,
-    ) -> ListenerExecutionStatsDict:
+    ) -> ListenerExecutionStatsDict | None:
         """Get execution statistics for a listener."""
 
         try:
             # Get the listener first
             listener = await self.get_event_listener_by_id(listener_id)
             if not listener:
-                return {}  # type: ignore[return-value]  # empty dict for not-found case
+                return None
 
             # Check if we're using SQLite or PostgreSQL
             is_sqlite = self._db.engine.dialect.name == "sqlite"

@@ -642,4 +642,9 @@ async def get_automation_stats(
         automation_type=automation_type,  # type: ignore[arg-type]
     )
 
+    if not stats:
+        raise HTTPException(
+            status_code=404, detail="No statistics found for automation"
+        )
+
     return stats

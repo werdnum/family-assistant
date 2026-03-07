@@ -19,25 +19,21 @@ string annotations for the specific fields. **Lesson:** TypedDicts used as Pydan
 types must have runtime-evaluable annotations, so `from __future__ import annotations` cannot be
 used as a blanket fix.
 
-## Issues found but not yet fixed (tracked for follow-up)
+### 3. Repository methods returned `{}` instead of `None` for not-found cases
 
-### 3. Repository methods return `{}` instead of `None` for not-found cases
+**Status:** Fixed in this PR **Description:** `get_listener_execution_stats` and
+`get_execution_stats` returned empty dicts `{}` when the entity was not found, violating their
+TypedDict return types. Changed to return `None` with `| None` return types, consistent with other
+repository methods.
 
-**Files:**
+### 4. `ToolCallResponseItem` TypedDict had wrong structure
 
-- `src/family_assistant/storage/repositories/events.py:800` - `get_listener_execution_stats` returns
-  `{}` when listener not found
-- `src/family_assistant/storage/repositories/schedule_automations.py:931` - `get_execution_stats`
-  returns `{}` when automation not found
+**Status:** Fixed in this PR **Description:** The TypedDict had `name` and `arguments` at the top
+level, but `chat_api.py` constructs the OpenAI-format nested structure with a `function` dict. Fixed
+to match the actual data shape.
 
-**Description:** These methods have typed return values (`ListenerExecutionStatsDict` /
-`ScheduleExecutionStatsDict`) but return empty dicts `{}` when the entity is not found. This
-violates the return type and is inconsistent with other repository methods (like
-`get_event_listener_by_id`) which return `None`. Both have `# type: ignore[return-value]` comments
-now.
+### 5. `thought_summaries` type mismatch in Google GenAI client
 
-**Impact:** Callers must check for both `None` and empty dict, or may get KeyError when accessing
-expected fields on the empty dict.
-
-**Recommended fix:** These methods should return `None` (with `| None` return type), consistent with
-other repository patterns.
+**Status:** Fixed in this PR **Description:** In the non-streaming path, `thought_summaries` was
+`list[str]` but `MessageReasoningInfo.thought_summaries` expects `list[dict[str, str | int]]`. The
+streaming path already used the correct dict format. Fixed the variable type annotation to match.

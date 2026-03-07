@@ -411,7 +411,7 @@ class AutomationsRepository(BaseRepository):
         self,
         automation_id: int,
         automation_type: AutomationType,
-    ) -> ListenerExecutionStatsDict | ScheduleExecutionStatsDict:
+    ) -> ListenerExecutionStatsDict | ScheduleExecutionStatsDict | None:
         """
         Get execution statistics for an automation.
 

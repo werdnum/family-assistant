@@ -20,13 +20,19 @@ class ChatAttachmentRequest(TypedDict, total=False):
     filename: str
 
 
+class ToolCallFunctionResponse(TypedDict, total=False):
+    """Function details within a tool call response (OpenAI format)."""
+
+    name: str
+    arguments: str
+
+
 class ToolCallResponseItem(TypedDict, total=False):
-    """Tool call data included in chat API responses."""
+    """Tool call data included in chat API responses (OpenAI format)."""
 
     id: str
     type: str
-    name: str
-    arguments: str
+    function: ToolCallFunctionResponse
 
 
 # --- Gemini Live Voice API Configuration Models ---

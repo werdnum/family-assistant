@@ -947,7 +947,7 @@ class GoogleGenAIClient(BaseLLMClient):
 
                 # Extract tool calls and thought signatures from response
                 tool_calls = None
-                thought_summaries = []  # Initialize early to avoid UnboundLocalError
+                thought_summaries: list[dict[str, str | int]] = []
 
                 if hasattr(response, "candidates") and response.candidates:
                     candidate = response.candidates[0]
