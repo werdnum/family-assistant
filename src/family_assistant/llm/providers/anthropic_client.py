@@ -40,6 +40,7 @@ from family_assistant.llm import (
     StreamEventMetadata,
     ToolCallFunction,
     ToolCallItem,
+    UserMessageDict,
 )
 from family_assistant.llm.messages import (
     AssistantMessage,
@@ -645,7 +646,7 @@ class AnthropicClient(BaseLLMClient):
         file_path: str | None,
         mime_type: str | None,
         max_text_length: int | None,
-    ) -> dict[str, object]:
+    ) -> UserMessageDict:
         """Format user message with optional file content.
 
         Anthropic supports images via base64, PDFs via document blocks,
@@ -674,7 +675,7 @@ class AnthropicClient(BaseLLMClient):
                 )
             )
 
-            return {"role": "user", "content": content}
+            return cast("UserMessageDict", {"role": "user", "content": content})
 
         elif mime_type and mime_type == "application/pdf":
             # Anthropic supports PDFs natively via document blocks
@@ -697,7 +698,7 @@ class AnthropicClient(BaseLLMClient):
                 )
             )
 
-            return {"role": "user", "content": pdf_content}
+            return cast("UserMessageDict", {"role": "user", "content": pdf_content})
 
         else:
             # Try reading as text, fall back to binary description on decode error

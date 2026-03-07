@@ -33,6 +33,7 @@ from family_assistant.llm import (
     StreamEventMetadata,
     ToolCallFunction,
     ToolCallItem,
+    UserMessageDict,
     _format_messages_for_debug,
 )
 from family_assistant.llm.google_types import (
@@ -1196,7 +1197,7 @@ class GoogleGenAIClient(BaseLLMClient):
         file_path: str | None,
         mime_type: str | None,
         max_text_length: int | None,
-    ) -> dict[str, object]:
+    ) -> UserMessageDict:
         """
         Format user message with optional file content.
 

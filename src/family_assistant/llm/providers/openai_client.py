@@ -26,6 +26,7 @@ from family_assistant.llm import (
     StreamEventMetadata,
     ToolCallFunction,
     ToolCallItem,
+    UserMessageDict,
 )
 from family_assistant.llm.messages import (
     ContentPart,
@@ -348,7 +349,7 @@ class OpenAIClient(BaseLLMClient):
         file_path: str | None,
         mime_type: str | None,
         max_text_length: int | None,
-    ) -> dict[str, object]:
+    ) -> UserMessageDict:
         """
         Format user message with optional file content.
 

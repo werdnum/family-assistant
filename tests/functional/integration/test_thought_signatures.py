@@ -21,6 +21,7 @@ from family_assistant.llm import (
     StructuredOutputError,
     ToolCallFunction,
     ToolCallItem,
+    UserMessageDict,
 )
 from family_assistant.llm.google_types import (
     GeminiProviderMetadata,
@@ -146,10 +147,9 @@ class MockLLMWithThoughtSignatures:
         file_path: str | None,
         mime_type: str | None,
         max_text_length: int | None,
-        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
-    ) -> dict[str, Any]:
+    ) -> UserMessageDict:
         """Mock implementation - not needed for these tests."""
-        return {"role": "user", "content": prompt_text or ""}
+        return UserMessageDict(role="user", content=prompt_text or "")
 
     def create_attachment_injection(
         self,
@@ -223,10 +223,9 @@ class MockLLMWithThoughtSignaturesNoToolCalls:
         file_path: str | None,
         mime_type: str | None,
         max_text_length: int | None,
-        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
-    ) -> dict[str, Any]:
+    ) -> UserMessageDict:
         """Mock implementation - not needed for these tests."""
-        return {"role": "user", "content": prompt_text or ""}
+        return UserMessageDict(role="user", content=prompt_text or "")
 
     def create_attachment_injection(
         self,

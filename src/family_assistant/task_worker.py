@@ -33,6 +33,7 @@ from family_assistant.scripting import (
     ScriptTimeoutError,
 )
 from family_assistant.scripting.config import ScriptConfig
+from family_assistant.scripting.monty_engine import WakeRequest
 from family_assistant.tools.types import CalendarConfig
 
 if TYPE_CHECKING:
@@ -1344,8 +1345,7 @@ async def handle_completed_automation_cleanup(
 
 async def _process_script_wake_llm(
     exec_context: ToolExecutionContext,
-    # ast-grep-ignore: no-dict-any - Wake contexts from user scripts have arbitrary structure
-    wake_contexts: list[dict[str, Any]],
+    wake_contexts: list[WakeRequest],
     # ast-grep-ignore: no-dict-any - Event data from external sources (Home Assistant, webhooks) with arbitrary structure
     event_data: dict[str, Any],
     listener_id: str | None,

@@ -22,6 +22,8 @@ from family_assistant.llm import (
     LLMStreamEvent,
     StreamEventMetadata,
     StructuredOutputError,
+    UserMessageContentPart,
+    UserMessageDict,
 )
 from family_assistant.llm.messages import UserMessage, message_to_json_dict
 from family_assistant.tools.types import ToolDefinition
@@ -277,8 +279,7 @@ class RuleBasedMockLLMClient(BaseLLMClient, LLMInterface):
         file_path: str | None,
         mime_type: str | None,
         max_text_length: int | None,
-        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
-    ) -> dict[str, Any]:
+    ) -> UserMessageDict:
         """
         Mock implementation for formatting a user message with file.
         This mock provides a direct, non-rule-based implementation.
@@ -289,12 +290,10 @@ class RuleBasedMockLLMClient(BaseLLMClient, LLMInterface):
             "file_path": file_path,
             "mime_type": mime_type,
             "max_text_length": max_text_length,
-            # No "_method_name_for_matcher" here as this method isn't using the rule system
         }
         self._record_call("format_user_message_with_file", actual_kwargs)
 
-        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
-        content_parts: list[dict[str, Any]] = []
+        content_parts: list[UserMessageContentPart] = []
         final_prompt_text = prompt_text or "Process the provided file."
 
         if (
@@ -326,8 +325,7 @@ class RuleBasedMockLLMClient(BaseLLMClient, LLMInterface):
                     },
                 })
 
-        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
-        user_message_content: str | list[dict[str, Any]]
+        user_message_content: str | list[UserMessageContentPart]
         if len(content_parts) == 1 and content_parts[0]["type"] == "text":
             user_message_content = content_parts[0]["text"]
         else:

@@ -100,6 +100,17 @@ class StreamEventMetadata(TypedDict, total=False):
 
 StreamingMetadata = StreamEventMetadata
 
+# ast-grep-ignore: no-dict-any - Content parts are provider-specific formats (OpenAI image_url, Anthropic ImageBlockParam, etc.)
+UserMessageContentPart = dict[str, Any]
+
+
+class UserMessageDict(TypedDict):
+    """Return type for format_user_message_with_file across all LLM providers."""
+
+    role: Literal["user"]
+    # ast-grep-ignore: no-dict-any - Content parts are provider-specific formats (OpenAI image_url, Anthropic ImageBlockParam, etc.)
+    content: str | list[UserMessageContentPart]
+
 
 class BaseLLMClient:
     """Base class providing common functionality for LLM clients"""
@@ -820,8 +831,7 @@ class LLMInterface(Protocol):
         file_path: str | None,
         mime_type: str | None,
         max_text_length: int | None,
-        # ast-grep-ignore: no-dict-any - protocol return type; content value is str | list depending on provider
-    ) -> dict[str, Any]:
+    ) -> UserMessageDict:
         """
         Formats a user message, potentially including file content.
         The client decides how to represent the file (e.g., Gemini Files API ref, base64 data URI).
@@ -1399,10 +1409,8 @@ class LiteLLMClient(BaseLLMClient):
         file_path: str | None,
         mime_type: str | None,
         max_text_length: int | None,
-        # ast-grep-ignore: no-dict-any - protocol return type; content value is str | list depending on provider
-    ) -> dict[str, Any]:
-        # ast-grep-ignore: no-dict-any - LiteLLM SDK requires raw dicts for multimodal content parts (text, image_url, file)
-        user_content_parts: list[dict[str, Any]] = []
+    ) -> UserMessageDict:
+        user_content_parts: list[UserMessageContentPart] = []
         actual_prompt_text = prompt_text or "Process the provided file."
 
         if file_path and mime_type:
@@ -1553,8 +1561,7 @@ class LiteLLMClient(BaseLLMClient):
             )
             raise ValueError("Cannot format user message with no input (file or text).")
 
-        # ast-grep-ignore: no-dict-any - LiteLLM SDK requires raw dicts for multimodal content parts
-        final_user_content: str | list[dict[str, Any]]
+        final_user_content: str | list[UserMessageContentPart]
         if len(user_content_parts) == 1 and user_content_parts[0]["type"] == "text":
             final_user_content = user_content_parts[0]["text"]
         else:
@@ -2295,8 +2302,7 @@ class RecordingLLMClient:
         file_path: str | None,
         mime_type: str | None,
         max_text_length: int | None,
-        # ast-grep-ignore: no-dict-any - protocol return type; content value is str | list depending on provider
-    ) -> dict[str, Any]:
+    ) -> UserMessageDict:
         """Calls the wrapped client's format_user_message_with_file, records, and returns."""
         input_data = {
             "method": "format_user_message_with_file",
@@ -2504,8 +2510,7 @@ class PlaybackLLMClient:
         file_path: str | None,
         mime_type: str | None,
         max_text_length: int | None,
-        # ast-grep-ignore: no-dict-any - protocol return type; content value is str | list depending on provider
-    ) -> dict[str, Any]:
+    ) -> UserMessageDict:
         """Plays back for the format_user_message_with_file method."""
         current_input_args = {
             "method": "format_user_message_with_file",
@@ -2514,8 +2519,9 @@ class PlaybackLLMClient:
             "mime_type": mime_type,
             "max_text_length": max_text_length,
         }
-        # This method returns a dict, not LLMOutput
-        return await self._find_and_playback_dict(current_input_args)
+        return cast(
+            "UserMessageDict", await self._find_and_playback_dict(current_input_args)
+        )
 
     async def _find_and_playback_llm_output(
         self,
@@ -2726,4 +2732,6 @@ __all__ = [
     "StructuredOutputError",
     "StreamEventMetadata",
     "MessageReasoningInfo",
+    "UserMessageContentPart",
+    "UserMessageDict",
 ]

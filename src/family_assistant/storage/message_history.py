@@ -26,6 +26,7 @@ from sqlalchemy.exc import SQLAlchemyError
 
 from family_assistant.storage.base import metadata
 from family_assistant.storage.context import DatabaseContext, sanitize_text_for_postgres
+from family_assistant.storage.types import MessageHistoryRow
 
 if TYPE_CHECKING:
     from sqlalchemy.engine import Result
@@ -102,10 +103,10 @@ async def add_message_to_history(
     role: str,  # 'user', 'assistant', 'system', 'tool', 'error'
     content: str | None,  # Content can be optional now
     # --- Renamed/Added Fields ---
-    # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
-    tool_calls: list[dict[str, Any]] | None = None,  # Renamed from tool_calls_info
-    # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
-    reasoning_info: dict[str, Any] | None = None,  # Added
+    # ast-grep-ignore: no-dict-any - Serialized JSON for database storage, not deserialized typed objects
+    tool_calls: list[dict[str, Any]] | None = None,
+    # ast-grep-ignore: no-dict-any - Serialized JSON for database storage, not deserialized typed objects
+    reasoning_info: dict[str, Any] | None = None,
     # Note: `tool_call_id` is now a separate parameter below for 'tool' role messages
     error_traceback: str | None = None,  # Added
     tool_call_id: (
@@ -113,9 +114,8 @@ async def add_message_to_history(
     ) = None,  # Added: ID linking tool response to assistant request
     processing_profile_id: str | None = None,  # Added: Profile ID
     subconversation_id: str | None = None,  # Added: Subconversation ID for delegation
-    # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
-    attachments: list[dict[str, Any]] | None = None,  # Attachment metadata
-    # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
+    # ast-grep-ignore: no-dict-any - Serialized JSON for database storage, not deserialized typed objects
+    attachments: list[dict[str, Any]] | None = None,
 ) -> int | None:
     """Adds a message to the history table, including optional fields."""
     # Returns the internal_id of the inserted message, or None on error
@@ -230,10 +230,9 @@ async def get_recent_history(
     conversation_id: str,
     limit: int,
     max_age: timedelta,
-    processing_profile_id: str | None = None,  # Added for filtering
-    subconversation_id: str | None = None,  # Added for filtering subconversations
-    # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
-) -> list[dict[str, Any]]:
+    processing_profile_id: str | None = None,
+    subconversation_id: str | None = None,
+) -> list[MessageHistoryRow]:
     """Retrieves recent messages for a conversation, including tool call info.
     If a message included by limit/max_age belongs to a turn, all other messages
     from that turn for the same conversation are also included, even if they
@@ -286,12 +285,8 @@ async def get_recent_history(
         candidate_rows_result = await db_context.fetch_all(
             cast("Select[Any]", stmt_candidates)
         )
-        # Store candidate messages in a dictionary by internal_id for easy merging
-        # These are newest first at this stage.
-        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
-        all_messages_dict: dict[int, dict[str, Any]] = {
-            # Use public item access for 'internal_id' instead of relying on ._mapping internal attribute
-            row_mapping["internal_id"]: dict(row_mapping)
+        all_messages_dict: dict[int, MessageHistoryRow] = {
+            row_mapping["internal_id"]: cast("MessageHistoryRow", dict(row_mapping))
             for row_mapping in candidate_rows_result
         }
 
@@ -331,7 +326,7 @@ async def get_recent_history(
             )
 
             for row_mapping in expanded_turn_rows_result:
-                msg_dict = dict(row_mapping)
+                msg_dict = cast("MessageHistoryRow", dict(row_mapping))
                 # Add or update in all_messages_dict. This handles duplicates if a message
                 # was in both candidate set and expanded set.
                 all_messages_dict[msg_dict["internal_id"]] = msg_dict
@@ -361,8 +356,7 @@ async def get_message_by_interface_id(
     interface_type: str,
     conversation_id: str,
     interface_message_id: str,
-    # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
-) -> dict[str, Any] | None:
+) -> MessageHistoryRow | None:
     """Retrieves a specific message by its chat and message ID, including all fields."""
     try:
         # Select all columns explicitly to include the new one if table object isn't updated dynamically in all contexts
@@ -377,7 +371,7 @@ async def get_message_by_interface_id(
         row = await db_context.fetch_one(
             cast("Select[Any]", stmt)
         )  # Cast for type checker
-        return dict(row) if row else None  # Return full row as dict
+        return cast("MessageHistoryRow", dict(row)) if row else None
     except SQLAlchemyError as e:
         logger.error(
             f"Database error in get_message_by_interface_id({interface_type}, {conversation_id}, {interface_message_id}): {e}",
@@ -390,8 +384,7 @@ async def get_message_by_interface_id(
 async def get_messages_by_turn_id(
     db_context: DatabaseContext,
     turn_id: str,
-    # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
-) -> list[dict[str, Any]]:
+) -> list[MessageHistoryRow]:
     """Retrieves all messages associated with a specific turn ID."""
     try:
         selected_columns = [col for col in message_history_table.c]
@@ -405,7 +398,7 @@ async def get_messages_by_turn_id(
         rows = await db_context.fetch_all(
             cast("Select[Any]", stmt)
         )  # Cast for type checker
-        return [dict(row) for row in rows]
+        return [cast("MessageHistoryRow", dict(row)) for row in rows]
     except SQLAlchemyError as e:
         logger.error(
             f"Database error in get_messages_by_turn_id(turn_id={turn_id}): {e}",
@@ -418,9 +411,8 @@ async def get_messages_by_thread_id(
     db_context: DatabaseContext,
     thread_root_id: int,
     processing_profile_id: str | None = None,  # Added for filtering
-    subconversation_id: str | None = None,  # Added for filtering subconversations
-    # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
-) -> list[dict[str, Any]]:
+    subconversation_id: str | None = None,
+) -> list[MessageHistoryRow]:
     """Retrieves all messages belonging to a specific conversation thread."""
     # A thread is defined by the `internal_id` of its first message.
     # Messages in the thread either have `thread_root_id` pointing to that first message,
@@ -452,7 +444,7 @@ async def get_messages_by_thread_id(
         rows = await db_context.fetch_all(
             cast("Select[Any]", stmt)
         )  # Cast for type checker
-        return [dict(row) for row in rows]
+        return [cast("MessageHistoryRow", dict(row)) for row in rows]
     except SQLAlchemyError as e:
         logger.error(
             f"Database error in get_messages_by_thread_id(thread_root_id={thread_root_id}): {e}",
@@ -462,9 +454,8 @@ async def get_messages_by_thread_id(
 
 
 async def get_grouped_message_history(
-    db_context: DatabaseContext,  # Added context
-    # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
-) -> dict[tuple[str, str], list[dict[str, Any]]]:
+    db_context: DatabaseContext,
+) -> dict[tuple[str, str], list[MessageHistoryRow]]:
     """Retrieves all message history, grouped by (interface_type, conversation_id) and ordered by timestamp."""
     try:
         selected_columns = [col for col in message_history_table.c]
@@ -479,11 +470,9 @@ async def get_grouped_message_history(
             cast("Select[Any]", stmt)
         )  # Cast for type checker
         # Convert RowMapping to dicts for easier handling
-        dict_rows = [dict(row) for row in rows]
-        # Initialize with the correct type annotation
-        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
-        grouped_history: dict[tuple[str, str], list[dict[str, Any]]] = {}
-        for row_dict in dict_rows:  # Iterate over dictionaries
+        dict_rows = [cast("MessageHistoryRow", dict(row)) for row in rows]
+        grouped_history: dict[tuple[str, str], list[MessageHistoryRow]] = {}
+        for row_dict in dict_rows:
             group_key = (row_dict["interface_type"], row_dict["conversation_id"])
             if group_key not in grouped_history:
                 grouped_history[group_key] = []

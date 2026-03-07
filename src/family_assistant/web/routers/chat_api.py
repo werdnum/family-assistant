@@ -305,13 +305,13 @@ class ConversationMessage(BaseModel):
     tool_calls: list[dict] | None = Field(None, description="Tool calls if any")
     tool_call_id: str | None = Field(None, description="Tool call ID for tool messages")
     error_traceback: str | None = Field(None, description="Error traceback if any")
-    attachments: list[dict] | None = Field(
+    attachments: list[MessageAttachmentMetadata] | None = Field(
         None, description="Attachment metadata if any"
     )
     processing_profile_id: str | None = Field(
         None, description="ID of the processing profile that generated this message"
     )
-    reasoning_info: dict | None = Field(
+    reasoning_info: MessageReasoningInfo | None = Field(
         None, description="LLM reasoning/usage information (token counts, model, etc.)"
     )
     metadata: dict | None = Field(None, description="Additional message metadata")
@@ -715,51 +715,12 @@ async def get_conversation_messages(
         if not all(key in msg for key in ["internal_id", "role", "timestamp"]):
             continue
 
-        # Process metadata to include attachment details if present
-        msg_metadata = None
-        if msg.get("metadata"):
-            try:
-                metadata_dict = (
-                    json.loads(msg["metadata"])
-                    if isinstance(msg["metadata"], str)
-                    else msg["metadata"]
-                )
-                if metadata_dict and "attachment_ids" in metadata_dict:
-                    # Fetch full attachment metadata for each attachment
-                    attachments = []
-                    for att_id in metadata_dict["attachment_ids"]:
-                        try:
-                            att_metadata = (
-                                await attachment_registry.get_attachment_with_context(
-                                    att_id
-                                )
-                            )
-                            if att_metadata:
-                                attachments.append({
-                                    "id": att_id,
-                                    "type": "image",
-                                    "name": att_metadata.description or "Attachment",
-                                    "content": f"/api/attachments/{att_id}",
-                                    "mime_type": att_metadata.mime_type,
-                                    "size": att_metadata.size,
-                                })
-                        except Exception as e:
-                            logger.warning(
-                                f"Failed to fetch attachment metadata for {att_id}: {e}"
-                            )
-
-                    msg_metadata = {
-                        "attachment_ids": metadata_dict["attachment_ids"],
-                        "attachments": attachments,
-                    }
-            except Exception as e:
-                logger.warning(f"Failed to parse message metadata: {e}")
-
         # Convert tool_calls from ToolCallItem objects to dicts for Pydantic
         tool_calls_dicts = None
-        if msg.get("tool_calls"):
+        msg_tool_calls = msg.get("tool_calls")
+        if msg_tool_calls:
             tool_calls_dicts = []
-            for tc in msg["tool_calls"]:
+            for tc in msg_tool_calls:
                 if isinstance(tc, ToolCallItem):
                     # Convert ToolCallItem to dict
                     # Ensure arguments is always a JSON string
@@ -792,7 +753,7 @@ async def get_conversation_messages(
                 attachments=msg.get("attachments"),
                 processing_profile_id=msg.get("processing_profile_id"),
                 reasoning_info=msg.get("reasoning_info"),
-                metadata=msg_metadata,
+                metadata=None,
             )
         )
 

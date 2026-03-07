@@ -2,9 +2,10 @@
 
 import json
 import logging
+from collections.abc import Mapping
 from dataclasses import asdict
 from datetime import UTC, datetime, timedelta
-from typing import Any
+from typing import Any, cast
 
 from sqlalchemy import insert, or_, select, update
 from sqlalchemy.exc import SQLAlchemyError
@@ -20,6 +21,7 @@ from family_assistant.llm.messages import (
     MessageAttachmentMetadata,
     MessageReasoningInfo,
     MessageWithMetadata,
+    ProviderMetadataDict,
     SystemMessage,
     TextContentPart,
     ToolMessage,
@@ -28,8 +30,7 @@ from family_assistant.llm.messages import (
 from family_assistant.llm.tool_call import ToolCallFunction, ToolCallItem
 from family_assistant.storage.message_history import message_history_table
 from family_assistant.storage.repositories.base import BaseRepository
-
-# Note: ToolCallFunction, ToolCallItem, GeminiProviderMetadata are used in _process_message_row() method
+from family_assistant.storage.types import ConversationSummaryRow, MessageHistoryRow
 
 logger = logging.getLogger(__name__)
 
@@ -86,7 +87,7 @@ class MessageHistoryRepository(BaseRepository):
         tool_call_id: str | None = None
         tool_name: str | None = None
         error_traceback: str | None = None
-        provider_metadata: Any = None
+        provider_metadata: ProviderMetadataDict | GeminiProviderMetadata | None = None
 
         raw_content = getattr(message, "content", None)
         if raw_content is None or isinstance(raw_content, str):
@@ -152,8 +153,7 @@ class MessageHistoryRepository(BaseRepository):
         user_id: str | None = None,
         attachments: list[MessageAttachmentMetadata] | None = None,
         tool_name: str | None = None,
-        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
-        provider_metadata: dict[str, Any] | GeminiProviderMetadata | None = None,
+        provider_metadata: ProviderMetadataDict | GeminiProviderMetadata | None = None,
     ) -> int | None:
         """
         Internal method that serializes and inserts a message into the database.
@@ -336,8 +336,7 @@ class MessageHistoryRepository(BaseRepository):
         conversation_id: str,
         limit: int | None = None,
         max_age: timedelta | None = None,
-        # ast-grep-ignore: no-dict-any - Returns message content + database metadata (timestamp, internal_id, etc.)
-    ) -> list[dict[str, Any]]:
+    ) -> list[MessageHistoryRow]:
         """
         Retrieves recent messages with database metadata (timestamp, internal_id, etc.).
 
@@ -352,7 +351,7 @@ class MessageHistoryRepository(BaseRepository):
             max_age: Maximum age of messages to return
 
         Returns:
-            List of dicts with message content + metadata (timestamp, internal_id, etc.)
+            List of MessageHistoryRow with message content + metadata
         """
         if max_age:
             cutoff = datetime.now(UTC) - max_age
@@ -376,7 +375,7 @@ class MessageHistoryRepository(BaseRepository):
             stmt = stmt.limit(limit)
 
         rows = await self._db.fetch_all(stmt)
-        return [dict(row) for row in rows]
+        return [cast("MessageHistoryRow", dict(row)) for row in rows]
 
     async def get_recent_with_typed_metadata(
         self,
@@ -488,8 +487,7 @@ class MessageHistoryRepository(BaseRepository):
         self,
         interface_type: str,
         interface_message_id: str,
-        # ast-grep-ignore: no-dict-any - Returns raw database row with metadata fields not in LLMMessage
-    ) -> dict[str, Any] | None:
+    ) -> MessageHistoryRow | None:
         """
         Retrieves raw database row by interface-specific ID, including metadata.
 
@@ -510,7 +508,7 @@ class MessageHistoryRepository(BaseRepository):
         )
 
         row = await self._db.fetch_one(stmt)
-        return dict(row) if row else None
+        return cast("MessageHistoryRow", dict(row)) if row else None
 
     async def get_interface_type_for_conversation(
         self, conversation_id: str
@@ -655,8 +653,7 @@ class MessageHistoryRepository(BaseRepository):
         before: datetime | None = None,
         after: datetime | None = None,
         limit: int = 50,
-        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
-    ) -> tuple[list[dict[str, Any]], bool, bool]:
+    ) -> tuple[list[MessageHistoryRow], bool, bool]:
         """
         Get messages for a conversation with timestamp-based pagination.
 
@@ -795,8 +792,7 @@ class MessageHistoryRepository(BaseRepository):
         after: datetime,
         interface_type: str | None = None,
         limit: int = 100,
-        # ast-grep-ignore: no-dict-any - Returns database rows with ALL fields (internal_id, timestamp, etc) for API endpoints. Cannot use typed LLMMessage as it strips database metadata needed by frontend.
-    ) -> list[dict[str, Any]]:
+    ) -> list[MessageHistoryRow]:
         """
         Get messages created after a specific timestamp as dicts with database fields.
 
@@ -809,7 +805,7 @@ class MessageHistoryRepository(BaseRepository):
             limit: Maximum number of messages to return (default 100)
 
         Returns:
-            List of message dicts with database fields in chronological order (oldest first)
+            List of MessageHistoryRow in chronological order (oldest first)
         """
         conditions = [
             message_history_table.c.conversation_id == conversation_id,
@@ -832,8 +828,7 @@ class MessageHistoryRepository(BaseRepository):
         rows = await self._db.fetch_all(stmt)
         return [self._process_message_row_as_dict(row) for row in rows]
 
-    # ast-grep-ignore: no-dict-any - Database row deserialization requires untyped dict
-    def _process_message_row(self, row: dict[str, Any]) -> LLMMessage:
+    def _process_message_row(self, row: Mapping[str, Any]) -> LLMMessage:
         """
         Process a message row from the database with proper type deserialization.
 
@@ -842,17 +837,18 @@ class MessageHistoryRepository(BaseRepository):
         used with database fields and converted to LLMMessage when needed.
 
         Args:
-            row: Database row
+            row: Raw database row (Mapping from SQLAlchemy fetch_all/fetch_one)
 
         Returns:
             Dictionary with properly deserialized complex types
         """
-        msg = dict(row)
+        # ast-grep-ignore: no-dict-any - intermediate dict from raw SQLAlchemy row, progressively deserialized to typed LLMMessage
+        msg: dict[str, Any] = dict(row)
 
         # Handle tool_calls deserialization: JSON columns return dicts/lists directly
         if isinstance(msg.get("tool_calls"), str):
             try:
-                msg["tool_calls"] = json.loads(msg["tool_calls"])
+                msg["tool_calls"] = json.loads(cast("str", msg["tool_calls"]))
             except json.JSONDecodeError:
                 self._logger.warning(
                     f"Failed to parse tool_calls JSON for message {msg.get('internal_id')}"
@@ -898,7 +894,7 @@ class MessageHistoryRepository(BaseRepository):
         # Handle reasoning_info deserialization
         if isinstance(msg.get("reasoning_info"), str):
             try:
-                msg["reasoning_info"] = json.loads(msg["reasoning_info"])
+                msg["reasoning_info"] = json.loads(cast("str", msg["reasoning_info"]))
             except json.JSONDecodeError:
                 self._logger.warning(
                     f"Failed to parse reasoning_info JSON for message {msg.get('internal_id')}"
@@ -908,7 +904,7 @@ class MessageHistoryRepository(BaseRepository):
         # Handle attachments deserialization
         if isinstance(msg.get("attachments"), str):
             try:
-                msg["attachments"] = json.loads(msg["attachments"])
+                msg["attachments"] = json.loads(cast("str", msg["attachments"]))
             except json.JSONDecodeError:
                 self._logger.warning(
                     f"Failed to parse attachments JSON for message {msg.get('internal_id')}"
@@ -940,8 +936,7 @@ class MessageHistoryRepository(BaseRepository):
         # Convert dict to typed LLMMessage
         return self._dict_to_typed_message(msg)
 
-    # ast-grep-ignore: no-dict-any - Returns dict with database fields for API
-    def _process_message_row_as_dict(self, row: dict[str, Any]) -> dict[str, Any]:
+    def _process_message_row_as_dict(self, row: Mapping[str, Any]) -> MessageHistoryRow:
         """
         Process a message row and return as dict with all database fields preserved.
 
@@ -950,17 +945,18 @@ class MessageHistoryRepository(BaseRepository):
         Use this for API endpoints that need complete message data.
 
         Args:
-            row: Database row
+            row: Raw database row (Mapping from SQLAlchemy fetch_all/fetch_one)
 
         Returns:
             Dictionary with deserialized complex types and all database fields
         """
-        msg = dict(row)
+        # ast-grep-ignore: no-dict-any - intermediate dict from raw SQLAlchemy row before casting to MessageHistoryRow
+        msg: dict[str, Any] = dict(row)
 
         # Handle tool_calls deserialization: JSON columns return dicts/lists directly
         if isinstance(msg.get("tool_calls"), str):
             try:
-                msg["tool_calls"] = json.loads(msg["tool_calls"])
+                msg["tool_calls"] = json.loads(cast("str", msg["tool_calls"]))
             except json.JSONDecodeError:
                 self._logger.warning(
                     f"Failed to parse tool_calls JSON for message {msg.get('internal_id')}"
@@ -1006,7 +1002,7 @@ class MessageHistoryRepository(BaseRepository):
         # Handle reasoning_info deserialization
         if isinstance(msg.get("reasoning_info"), str):
             try:
-                msg["reasoning_info"] = json.loads(msg["reasoning_info"])
+                msg["reasoning_info"] = json.loads(cast("str", msg["reasoning_info"]))
             except json.JSONDecodeError:
                 self._logger.warning(
                     f"Failed to parse reasoning_info JSON for message {msg.get('internal_id')}"
@@ -1016,7 +1012,7 @@ class MessageHistoryRepository(BaseRepository):
         # Handle attachments deserialization
         if isinstance(msg.get("attachments"), str):
             try:
-                msg["attachments"] = json.loads(msg["attachments"])
+                msg["attachments"] = json.loads(cast("str", msg["attachments"]))
             except json.JSONDecodeError:
                 self._logger.warning(
                     f"Failed to parse attachments JSON for message {msg.get('internal_id')}"
@@ -1040,9 +1036,9 @@ class MessageHistoryRepository(BaseRepository):
             # (it has a different structure than tool-call-level provider_metadata)
             msg["provider_metadata"] = provider_metadata
 
-        return msg
+        return cast("MessageHistoryRow", msg)
 
-    # ast-grep-ignore: no-dict-any - Converts untyped dict to typed LLMMessage
+    # ast-grep-ignore: no-dict-any - intermediate dict from raw SQLAlchemy row, typed fields accessed by key
     def _dict_to_typed_message(self, msg: dict[str, Any]) -> LLMMessage:
         """
         Convert a processed message dict to a proper typed LLMMessage object.
@@ -1132,8 +1128,7 @@ class MessageHistoryRepository(BaseRepository):
         conversation_id: str | None = None,
         date_from: datetime | None = None,
         date_to: datetime | None = None,
-        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
-    ) -> dict[tuple[str, str], list[dict[str, Any]]]:
+    ) -> dict[tuple[str, str], list[MessageHistoryRow]]:
         """
         Retrieves all message history, grouped by (interface_type, conversation_id) and ordered by timestamp.
 
@@ -1172,9 +1167,7 @@ class MessageHistoryRepository(BaseRepository):
 
         rows = await self._db.fetch_all(stmt)
 
-        # Group messages by (interface_type, conversation_id)
-        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
-        grouped_history: dict[tuple[str, str], list[dict[str, Any]]] = {}
+        grouped_history: dict[tuple[str, str], list[MessageHistoryRow]] = {}
 
         for row in rows:
             msg = self._process_message_row_as_dict(row)
@@ -1194,8 +1187,7 @@ class MessageHistoryRepository(BaseRepository):
         conversation_id: str | None = None,
         date_from: datetime | None = None,
         date_to: datetime | None = None,
-        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
-    ) -> tuple[list[dict[str, Any]], int]:
+    ) -> tuple[list[ConversationSummaryRow], int]:
         """
         Get conversation summaries with pagination, optimized for performance.
 
@@ -1335,14 +1327,16 @@ class MessageHistoryRepository(BaseRepository):
         total_count = count_row["count"] if count_row else 0
 
         # Process results
-        summaries = []
+        summaries: list[ConversationSummaryRow] = []
         for row in summaries_rows:
-            summaries.append({
-                "conversation_id": row["conversation_id"],
-                "last_message": row["content"][:100] if row["content"] else "",
-                "last_timestamp": row["timestamp"],
-                "message_count": row["message_count"],
-                "interface_type": row["interface_type"],  # Include interface_type
-            })
+            summaries.append(
+                ConversationSummaryRow(
+                    conversation_id=row["conversation_id"],
+                    last_message=row["content"][:100] if row["content"] else "",
+                    last_timestamp=row["timestamp"],
+                    message_count=row["message_count"],
+                    interface_type=row["interface_type"],
+                )
+            )
 
         return summaries, total_count

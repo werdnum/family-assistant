@@ -3,6 +3,14 @@
 from datetime import datetime
 from typing import Any, TypedDict
 
+from family_assistant.llm.google_types import GeminiProviderMetadata
+from family_assistant.llm.messages import (
+    MessageAttachmentMetadata,
+    MessageReasoningInfo,
+    ProviderMetadataDict,
+)
+from family_assistant.llm.tool_call import ToolCallItem
+
 MatchConditions = dict[str, str | int | float | bool]
 
 
@@ -98,3 +106,41 @@ class TaskDict(TypedDict):
     max_retries: int
     recurrence_rule: str | None
     original_task_id: str | None
+
+
+class MessageHistoryRow(TypedDict):
+    """Type definition for deserialized message history records.
+
+    Represents a message after JSON fields have been deserialized by
+    _process_message_row / _process_message_row_as_dict.
+    """
+
+    internal_id: int
+    interface_type: str
+    conversation_id: str
+    interface_message_id: str | None
+    turn_id: str | None
+    thread_root_id: int | None
+    timestamp: datetime
+    role: str
+    content: str | None
+    tool_calls: list[ToolCallItem] | None
+    reasoning_info: MessageReasoningInfo | None
+    tool_call_id: str | None
+    error_traceback: str | None
+    processing_profile_id: str | None
+    subconversation_id: str | None
+    user_id: str | None
+    attachments: list[MessageAttachmentMetadata] | None
+    tool_name: str | None
+    provider_metadata: ProviderMetadataDict | GeminiProviderMetadata | None
+
+
+class ConversationSummaryRow(TypedDict):
+    """Type definition for conversation summary records from get_conversation_summaries."""
+
+    conversation_id: str
+    last_message: str
+    last_timestamp: datetime
+    message_count: int
+    interface_type: str
