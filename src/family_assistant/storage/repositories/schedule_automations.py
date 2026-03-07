@@ -1,8 +1,9 @@
 """Repository for schedule-based automations operations."""
 
 import uuid
+from collections.abc import Mapping
 from datetime import UTC, datetime
-from typing import Any
+from typing import Any, cast
 from zoneinfo import ZoneInfo
 
 from dateutil import rrule
@@ -14,7 +15,11 @@ from family_assistant.storage.datetime_utils import normalize_datetime
 from family_assistant.storage.repositories.base import BaseRepository
 from family_assistant.storage.schedule_automations import schedule_automations_table
 from family_assistant.storage.tasks import enqueue_task, tasks_table
-from family_assistant.storage.types import ScheduleAutomationDict
+from family_assistant.storage.types import (
+    ActionConfig,
+    ScheduleAutomationDict,
+    ScheduleExecutionStatsDict,
+)
 
 # Sentinel to distinguish "not provided" from "explicitly None"
 _UNSET = object()
@@ -26,8 +31,7 @@ VALID_ACTION_TYPES = {"wake_llm", "script"}
 class ScheduleAutomationsRepository(BaseRepository):
     """Repository for managing schedule-based automations."""
 
-    # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
-    def _normalize_automation(self, row: dict[str, Any]) -> ScheduleAutomationDict:
+    def _normalize_automation(self, row: Mapping[str, Any]) -> ScheduleAutomationDict:
         """
         Normalize a database row to ScheduleAutomationDict.
 
@@ -114,8 +118,7 @@ class ScheduleAutomationsRepository(BaseRepository):
         name: str,
         recurrence_rule: str,
         action_type: str,
-        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
-        action_config: dict[str, Any],
+        action_config: ActionConfig,
         conversation_id: str,
         interface_type: str = "telegram",
         description: str | None = None,
@@ -185,7 +188,7 @@ class ScheduleAutomationsRepository(BaseRepository):
             )
             task_id = f"sched_auto_{automation_id}_{uuid.uuid4().hex[:8]}"
 
-            # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
+            # ast-grep-ignore: no-dict-any - task payload schema varies by action_type
             payload: dict[str, Any] = {
                 "conversation_id": conversation_id,
                 "interface_type": interface_type,
@@ -244,8 +247,7 @@ class ScheduleAutomationsRepository(BaseRepository):
         name: str,
         recurrence_rule: str,
         action_type: str,
-        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
-        action_config: dict[str, Any],
+        action_config: ActionConfig,
         conversation_id: str,
         interface_type: str = "telegram",
         description: str | None = None,
@@ -419,7 +421,7 @@ class ScheduleAutomationsRepository(BaseRepository):
             )
             task_id = f"sched_auto_{automation_id}_{uuid.uuid4().hex[:8]}"
 
-            # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
+            # ast-grep-ignore: no-dict-any - task payload schema varies by action_type
             payload: dict[str, Any] = {
                 "conversation_id": conversation_id,
                 "interface_type": automation["interface_type"],
@@ -490,8 +492,7 @@ class ScheduleAutomationsRepository(BaseRepository):
         conversation_id: str,
         name: str | None | object = _UNSET,
         recurrence_rule: str | None | object = _UNSET,
-        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
-        action_config: dict[str, Any] | None | object = _UNSET,
+        action_config: ActionConfig | None | object = _UNSET,
         description: str | None | object = _UNSET,
         enabled: bool | None | object = _UNSET,
         *,
@@ -523,7 +524,7 @@ class ScheduleAutomationsRepository(BaseRepository):
             )
             return False
 
-        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
+        # ast-grep-ignore: no-dict-any - SQLAlchemy update values dict has heterogeneous column types
         update_values: dict[str, Any] = {}
 
         if isinstance(name, str) or name is None:
@@ -576,7 +577,7 @@ class ScheduleAutomationsRepository(BaseRepository):
                 automation_id,
                 existing,
                 enabled=will_be_enabled,
-                action_config_override=action_config
+                action_config_override=cast("ActionConfig", action_config)
                 if isinstance(action_config, dict)
                 else None,
                 recurrence_rule_override=recurrence_rule
@@ -712,8 +713,7 @@ class ScheduleAutomationsRepository(BaseRepository):
         automation_id: int,
         automation: ScheduleAutomationDict,
         enabled: bool,
-        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
-        action_config_override: dict[str, Any] | None = None,
+        action_config_override: ActionConfig | None = None,
         recurrence_rule_override: str | None = None,
         name_override: str | None = None,
         *,
@@ -871,7 +871,7 @@ class ScheduleAutomationsRepository(BaseRepository):
             )
             task_id = f"sched_auto_{automation_id}_{uuid.uuid4().hex[:8]}"
 
-            # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
+            # ast-grep-ignore: no-dict-any - task payload schema varies by action_type
             payload: dict[str, Any] = {
                 "conversation_id": automation["conversation_id"],
                 "interface_type": automation["interface_type"],
@@ -915,8 +915,7 @@ class ScheduleAutomationsRepository(BaseRepository):
     async def get_execution_stats(
         self,
         automation_id: int,
-        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
-    ) -> dict[str, Any]:
+    ) -> ScheduleExecutionStatsDict:
         """
         Get execution statistics for an automation.
 
@@ -929,7 +928,7 @@ class ScheduleAutomationsRepository(BaseRepository):
         try:
             automation = await self.get_by_id(automation_id)
             if not automation:
-                return {}
+                return {}  # type: ignore[return-value]  # empty dict for not-found case
 
             # Query tasks table for execution history
             stmt = select(tasks_table).where(
@@ -941,12 +940,12 @@ class ScheduleAutomationsRepository(BaseRepository):
 
             recent_executions = await self._db.fetch_all(stmt)
 
-            return {
-                "total_executions": automation["execution_count"],
-                "last_execution_at": automation["last_execution_at"],
-                "next_scheduled_at": automation["next_scheduled_at"],
-                "recent_executions": [dict(row) for row in recent_executions],
-            }
+            return ScheduleExecutionStatsDict(
+                total_executions=automation["execution_count"],
+                last_execution_at=automation["last_execution_at"],
+                next_scheduled_at=automation["next_scheduled_at"],
+                recent_executions=recent_executions,
+            )
 
         except SQLAlchemyError as e:
             self._logger.error(

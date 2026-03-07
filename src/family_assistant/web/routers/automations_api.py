@@ -2,7 +2,7 @@
 
 import logging
 from datetime import datetime
-from typing import Annotated, Any, cast
+from typing import TYPE_CHECKING, Annotated, Any, cast
 
 from fastapi import APIRouter, Body, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
@@ -10,7 +10,14 @@ from pydantic import BaseModel, Field
 from family_assistant.processing import ProcessingService
 from family_assistant.storage.context import DatabaseContext
 from family_assistant.storage.models import Automation
+from family_assistant.storage.types import (
+    ListenerExecutionStatsDict,
+    ScheduleExecutionStatsDict,
+)
 from family_assistant.web.dependencies import get_db, get_processing_service
+
+if TYPE_CHECKING:
+    from family_assistant.storage.types import ActionConfig
 
 logger = logging.getLogger(__name__)
 
@@ -30,7 +37,7 @@ class AutomationResponse(BaseModel):
     conversation_id: str
     interface_type: str
     action_type: str
-    # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
+    # ast-grep-ignore: no-dict-any - Action config varies by action_type (wake_llm vs script) with different fields
     action_config: dict[str, Any]
     enabled: bool
     created_at: datetime
@@ -38,7 +45,7 @@ class AutomationResponse(BaseModel):
 
     # Event-specific fields (null for schedule automations)
     source_id: str | None = None
-    # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
+    # ast-grep-ignore: no-dict-any - User-defined event matching criteria with arbitrary field/value pairs
     match_conditions: dict[str, Any] | None = None
     condition_script: str | None = None
     one_time: bool | None = None
@@ -67,11 +74,11 @@ class CreateEventAutomationRequest(BaseModel):
         ..., description="Event source: home_assistant, indexing, or webhook"
     )
     action_type: str = Field(..., description="Action type: wake_llm or script")
-    # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
+    # ast-grep-ignore: no-dict-any - User-defined event matching criteria with arbitrary field/value pairs
     match_conditions: dict[str, Any] = Field(
         ..., description="Conditions to match events"
     )
-    # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
+    # ast-grep-ignore: no-dict-any - Action config varies by action_type (wake_llm vs script) with different fields
     action_config: dict[str, Any] = Field(
         default_factory=dict, description="Configuration for the action"
     )
@@ -91,7 +98,7 @@ class CreateScheduleAutomationRequest(BaseModel):
     name: str = Field(..., description="Unique name for the automation")
     recurrence_rule: str = Field(..., description="RRULE string defining the schedule")
     action_type: str = Field(..., description="Action type: wake_llm or script")
-    # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
+    # ast-grep-ignore: no-dict-any - Action config varies by action_type (wake_llm vs script) with different fields
     action_config: dict[str, Any] = Field(
         default_factory=dict, description="Configuration for the action"
     )
@@ -104,9 +111,9 @@ class UpdateEventAutomationRequest(BaseModel):
     """Request model for updating an event automation."""
 
     name: str | None | object = _UNSET
-    # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
+    # ast-grep-ignore: no-dict-any - User-defined event matching criteria with arbitrary field/value pairs
     match_conditions: dict[str, Any] | None | object = _UNSET
-    # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
+    # ast-grep-ignore: no-dict-any - Action config varies by action_type (wake_llm vs script) with different fields
     action_config: dict[str, Any] | None | object = _UNSET
     description: str | None | object = _UNSET
     enabled: bool | None | object = _UNSET
@@ -119,7 +126,7 @@ class UpdateScheduleAutomationRequest(BaseModel):
 
     name: str | None | object = _UNSET
     recurrence_rule: str | None | object = _UNSET
-    # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
+    # ast-grep-ignore: no-dict-any - Action config varies by action_type (wake_llm vs script) with different fields
     action_config: dict[str, Any] | None | object = _UNSET
     description: str | None | object = _UNSET
     enabled: bool | None | object = _UNSET
@@ -273,7 +280,7 @@ async def create_event_automation(
             conversation_id=request.conversation_id,
             interface_type="web",
             action_type=request.action_type,
-            action_config=request.action_config,
+            action_config=cast("ActionConfig", request.action_config),
             description=request.description,
             condition_script=request.condition_script,
             one_time=request.one_time,
@@ -342,7 +349,7 @@ async def create_schedule_automation(
             conversation_id=request.conversation_id,
             interface_type="web",
             action_type=request.action_type,
-            action_config=request.action_config,
+            action_config=cast("ActionConfig", request.action_config),
             description=request.description,
             enabled=request.enabled,
             timezone=processing_service.service_config.timezone,
@@ -377,7 +384,7 @@ async def create_schedule_automation(
 async def update_automation(
     automation_type: str,
     automation_id: int,
-    # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
+    # ast-grep-ignore: no-dict-any - PATCH body is a partial update with arbitrary subset of fields
     request_body: Annotated[dict[str, Any], Body(...)],
     db: Annotated[DatabaseContext, Depends(get_db)],
     processing_service: Annotated[ProcessingService, Depends(get_processing_service)],
@@ -455,7 +462,7 @@ async def update_automation(
                     else existing.match_conditions,
                 ),
                 action_config=cast(
-                    "dict[str, Any] | None",
+                    "ActionConfig | None",
                     request.action_config
                     if request.action_config is not _UNSET
                     else existing.action_config,
@@ -608,8 +615,7 @@ async def get_automation_stats(
         str, Query(description="Conversation ID for permission check")
     ],
     db: Annotated[DatabaseContext, Depends(get_db)],
-    # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
-) -> dict[str, Any]:
+) -> ListenerExecutionStatsDict | ScheduleExecutionStatsDict:
     """Get execution statistics for an automation."""
     # Validate automation_type
     if automation_type not in {"event", "schedule"}:

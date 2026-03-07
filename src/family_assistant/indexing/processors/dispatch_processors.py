@@ -4,12 +4,15 @@ Content processors focused on dispatching embedding tasks.
 
 import logging
 import uuid
-from typing import Any
+from typing import TYPE_CHECKING, cast
 
 from family_assistant.indexing.pipeline import ContentProcessor, IndexableContent
 from family_assistant.storage.tasks import enqueue_task
 from family_assistant.storage.vector import Document  # Document protocol
 from family_assistant.tools.types import ToolExecutionContext
+
+if TYPE_CHECKING:
+    from family_assistant.indexing.types import EmbeddingMetadata
 
 logger = logging.getLogger(__name__)
 
@@ -95,23 +98,26 @@ class EmbeddingDispatchProcessor(ContentProcessor):
             return current_items  # Pass all items through
 
         texts_to_embed_list: list[str] = []
-        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
-        embedding_metadata_list: list[dict[str, Any]] = []
+        embedding_metadata_list: list[EmbeddingMetadata] = []
 
         for item_to_dispatch in items_to_embed:
             if item_to_dispatch.content:  # Ensure content is not None
                 texts_to_embed_list.append(item_to_dispatch.content)
-                meta_for_task = {
-                    "embedding_type": item_to_dispatch.embedding_type,
-                    "chunk_index": item_to_dispatch.metadata.get(
-                        "chunk_index", 0
-                    ),  # Default to 0 if not present
-                    "original_content_metadata": item_to_dispatch.metadata,
-                    "content_hash": item_to_dispatch.metadata.get(
-                        "content_hash"
-                    ),  # Can be None
-                }
-                embedding_metadata_list.append(meta_for_task)
+                embedding_metadata_list.append(
+                    cast(
+                        "EmbeddingMetadata",
+                        {
+                            "embedding_type": item_to_dispatch.embedding_type,
+                            "chunk_index": item_to_dispatch.metadata.get(
+                                "chunk_index", 0
+                            ),
+                            "original_content_metadata": item_to_dispatch.metadata,
+                            "content_hash": item_to_dispatch.metadata.get(
+                                "content_hash"
+                            ),
+                        },
+                    )
+                )
 
         logger.info(
             f"[{self.name}/{doc_id_for_log}] Prepared {len(texts_to_embed_list)} texts for embedding. Payload details: document_id={document_id}, num_texts={len(texts_to_embed_list)}, num_metadata_items={len(embedding_metadata_list)}"

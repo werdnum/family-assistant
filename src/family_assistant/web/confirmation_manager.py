@@ -13,9 +13,20 @@ import logging
 import uuid
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Any
+from typing import Any, TypedDict
 
 logger = logging.getLogger(__name__)
+
+
+class PendingConfirmationInfo(TypedDict):
+    """Serialized pending confirmation for API responses."""
+
+    request_id: str
+    tool_name: str
+    confirmation_prompt: str
+    created_at: str
+    timeout_seconds: float
+    conversation_id: str
 
 
 @dataclass
@@ -24,7 +35,7 @@ class PendingConfirmation:
 
     request_id: str
     tool_name: str
-    # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
+    # ast-grep-ignore: no-dict-any - Tool arguments vary per tool and cannot be statically typed
     tool_args: dict[str, Any]
     confirmation_prompt: str
     future: asyncio.Future[bool]
@@ -98,7 +109,7 @@ class WebConfirmationManager:
         conversation_id: str,
         interface_type: str,
         tool_name: str,
-        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
+        # ast-grep-ignore: no-dict-any - Tool arguments vary per tool and cannot be statically typed
         tool_args: dict[str, Any],
         confirmation_prompt: str,
         timeout_seconds: float = 3600.0,
@@ -187,8 +198,7 @@ class WebConfirmationManager:
     def get_pending_confirmations(
         self,
         conversation_id: str | None = None,
-        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
-    ) -> list[dict[str, Any]]:
+    ) -> list[PendingConfirmationInfo]:
         """Get list of pending confirmations, optionally filtered by conversation.
 
         Args:

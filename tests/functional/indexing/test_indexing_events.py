@@ -8,7 +8,7 @@ import logging
 import uuid
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from typing import Any, cast
+from typing import TYPE_CHECKING, Any, cast
 from unittest.mock import AsyncMock, MagicMock
 from zoneinfo import ZoneInfo
 
@@ -32,6 +32,9 @@ from family_assistant.storage.events import recent_events_table
 from family_assistant.storage.tasks import tasks_table
 from family_assistant.storage.vector import add_document
 from family_assistant.tools.types import ToolExecutionContext
+
+if TYPE_CHECKING:
+    from family_assistant.storage.types import ActionConfig, MatchConditions
 
 logger = logging.getLogger(__name__)
 
@@ -144,7 +147,9 @@ async def test_document_ready_event_emitted(db_engine: AsyncEngine) -> None:
             interface_type="web",
             source_id="indexing",
             match_conditions={"event_type": IndexingEventType.DOCUMENT_READY.value},
-            action_config={"prompt": "Document ready: {{ event.document_title }}"},
+            action_config=cast(
+                "ActionConfig", {"prompt": "Document ready: {{ event.document_title }}"}
+            ),
             enabled=True,
         )
 
@@ -406,15 +411,23 @@ async def test_indexing_event_listener_integration(db_engine: AsyncEngine) -> No
             conversation_id="test-conv",
             interface_type="web",
             source_id="indexing",
-            match_conditions={
-                "event_type": IndexingEventType.DOCUMENT_READY.value,
-                "document_title": {"$contains": "Newsletter"},  # Only match newsletters
-            },
-            action_config={
-                "prompt": "The newsletter '{{ event.document_title }}' has been indexed with {{ event.metadata.total_embeddings }} embeddings. Please summarize it.",
-                "interface_type": "test",
-                "conversation_id": "test-conv",
-            },
+            match_conditions=cast(
+                "MatchConditions",
+                {
+                    "event_type": IndexingEventType.DOCUMENT_READY.value,
+                    "document_title": {
+                        "$contains": "Newsletter"
+                    },  # Only match newsletters
+                },
+            ),
+            action_config=cast(
+                "ActionConfig",
+                {
+                    "prompt": "The newsletter '{{ event.document_title }}' has been indexed with {{ event.metadata.total_embeddings }} embeddings. Please summarize it.",
+                    "interface_type": "test",
+                    "conversation_id": "test-conv",
+                },
+            ),
             enabled=True,
         )
 

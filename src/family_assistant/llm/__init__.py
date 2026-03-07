@@ -2239,6 +2239,18 @@ class LiteLLMClient(BaseLLMClient):
             )
 
 
+class InteractionRecord(TypedDict):
+    """A single recorded LLM interaction in JSONL format.
+
+    Each record contains the serialized input arguments and the serialized output
+    from a single LLM method call (generate_response, format_user_message_with_file,
+    or generate_structured).
+    """
+
+    input: dict[str, object]
+    output: dict[str, object]
+
+
 class RecordingLLMClient:
     """
     An LLM client wrapper that records interactions (inputs and outputs)
@@ -2274,9 +2286,8 @@ class RecordingLLMClient:
         tool_choice: str | None = "auto",
     ) -> LLMOutput:
         """Calls the wrapped client's standard generate_response, records, and returns."""
-        # Convert messages to dict for recording
         messages_dict = [message_to_json_dict(msg) for msg in messages]
-        input_data = {
+        input_data: dict[str, object] = {
             "method": "generate_response",
             "messages": messages_dict,
             "tools": tools,
@@ -2292,8 +2303,6 @@ class RecordingLLMClient:
             logger.error(
                 f"Error in RecordingLLMClient.generate_response: {e}", exc_info=True
             )
-            # Optionally record the error state as well, or just re-raise
-            # For now, just re-raise to ensure error propagation.
             raise
 
     async def format_user_message_with_file(
@@ -2304,7 +2313,7 @@ class RecordingLLMClient:
         max_text_length: int | None,
     ) -> UserMessageDict:
         """Calls the wrapped client's format_user_message_with_file, records, and returns."""
-        input_data = {
+        input_data: dict[str, object] = {
             "method": "format_user_message_with_file",
             "prompt_text": prompt_text,
             "file_path": file_path,
@@ -2312,17 +2321,16 @@ class RecordingLLMClient:
             "max_text_length": max_text_length,
         }
         try:
-            # Note: output_data for this method is a dict, not LLMOutput
             output_dict = await self.wrapped_client.format_user_message_with_file(
                 prompt_text=prompt_text,
                 file_path=file_path,
                 mime_type=mime_type,
                 max_text_length=max_text_length,
             )
-            # For recording, we'll adapt the _record_interaction or create a new one
-            # For simplicity, let's assume _record_interaction can handle a dict as "output"
-            # or we make a small adjustment. Let's record it as a simple dict.
-            record = {"input": input_data, "output": output_dict}
+            record: InteractionRecord = {
+                "input": input_data,
+                "output": dict(output_dict),
+            }
             await self._write_record_to_file(record)
             return output_dict
         except Exception as e:
@@ -2350,16 +2358,15 @@ class RecordingLLMClient:
 
     async def _record_interaction(
         self,
-        # ast-grep-ignore: no-dict-any - JSON-serializable recording payload with heterogeneous values
-        input_data: dict[str, Any],
+        input_data: dict[str, object],
         output_data: LLMOutput,
     ) -> None:
         output_dict = asdict(output_data)
-        record = {"input": input_data, "output": output_dict}
+        record: InteractionRecord = {"input": input_data, "output": output_dict}
         await self._write_record_to_file(record)
 
     # ast-grep-ignore: no-dict-any - JSON-serializable recording payload with heterogeneous values
-    async def _write_record_to_file(self, record: dict[str, Any]) -> None:
+    async def _write_record_to_file(self, record: InteractionRecord) -> None:
         """Helper method to write a generic record to the recording file."""
         try:
             async with aiofiles.open(
@@ -2367,7 +2374,7 @@ class RecordingLLMClient:
             ) as f:
                 await f.write(
                     json.dumps(record, ensure_ascii=False, default=str) + "\n"
-                )  # Added default=str
+                )
             logger.debug(f"Recorded interaction to {self.recording_path}")
         except Exception as file_err:
             logger.error(
@@ -2381,9 +2388,8 @@ class RecordingLLMClient:
         response_model: type[T],
     ) -> T:
         """Calls the wrapped client's generate_structured, records, and returns."""
-        # Convert messages to dict for recording
         messages_dict = [message_to_json_dict(msg) for msg in messages]
-        input_data = {
+        input_data: dict[str, object] = {
             "method": "generate_structured",
             "messages": messages_dict,
             "response_model_name": response_model.__name__,
@@ -2393,8 +2399,7 @@ class RecordingLLMClient:
             output_data = await self.wrapped_client.generate_structured(
                 messages=messages, response_model=response_model
             )
-            # Serialize the Pydantic model to JSON for recording
-            record = {
+            record: InteractionRecord = {
                 "input": input_data,
                 "output": {
                     "model_name": response_model.__name__,
@@ -2428,14 +2433,11 @@ class PlaybackLLMClient:
             ValueError: If the recording file is empty or contains invalid JSON.
         """
         self.recording_path = recording_path
-        # ast-grep-ignore: no-dict-any - deserialized JSON recordings have heterogeneous structure
-        self.recorded_interactions: list[dict[str, Any]] = []
+        self.recorded_interactions: list[InteractionRecord] = []
         logger.info(
             f"PlaybackLLMClient initializing. Reading from: {self.recording_path}"
         )
         try:
-            # Load all interactions into memory synchronously during init
-            # For async loading, this would need to be an async factory or method
             with open(self.recording_path, encoding="utf-8") as f:
                 line_num = 0
                 for raw_line in f:
@@ -2464,8 +2466,6 @@ class PlaybackLLMClient:
                 logger.warning(
                     f"Recording file {self.recording_path} is empty or contains no valid records."
                 )
-                # Decide whether to raise an error or allow initialization with empty list
-                # Raising error is safer to prevent unexpected behavior later.
                 raise ValueError(
                     f"No valid interactions loaded from {self.recording_path}"
                 )
@@ -2476,13 +2476,12 @@ class PlaybackLLMClient:
 
         except FileNotFoundError:
             logger.error(f"Recording file not found: {self.recording_path}")
-            raise  # Re-raise FileNotFoundError
+            raise
         except Exception as e:
             logger.error(
                 f"Failed to read or parse recording file {self.recording_path}: {e}",
                 exc_info=True,
             )
-            # Wrap other errors in a ValueError for consistent init failure reporting
             raise ValueError(
                 f"Failed to load recording file {self.recording_path}: {e}"
             ) from e
@@ -2494,9 +2493,8 @@ class PlaybackLLMClient:
         tool_choice: str | None = "auto",
     ) -> LLMOutput:
         """Plays back for the standard generate_response method."""
-        # Convert messages to dict for playback matching
         messages_dict = [message_to_json_dict(msg) for msg in messages]
-        current_input_args = {
+        current_input_args: dict[str, object] = {
             "method": "generate_response",
             "messages": messages_dict,
             "tools": tools,
@@ -2512,7 +2510,7 @@ class PlaybackLLMClient:
         max_text_length: int | None,
     ) -> UserMessageDict:
         """Plays back for the format_user_message_with_file method."""
-        current_input_args = {
+        current_input_args: dict[str, object] = {
             "method": "format_user_message_with_file",
             "prompt_text": prompt_text,
             "file_path": file_path,
@@ -2525,8 +2523,7 @@ class PlaybackLLMClient:
 
     async def _find_and_playback_llm_output(
         self,
-        # ast-grep-ignore: no-dict-any - deserialized JSON recording payload with heterogeneous values
-        current_input_args: dict[str, Any],
+        current_input_args: dict[str, object],
     ) -> LLMOutput:
         """Helper to find and playback interactions that return LLMOutput."""
         logger.debug(
@@ -2542,7 +2539,6 @@ class PlaybackLLMClient:
                     )
                     raise LookupError("Matched recorded output is not a dictionary.")
 
-                # Reconstruct ToolCallItem objects from dicts
                 tool_calls_data = output_data.get("tool_calls")
                 reconstructed_tool_calls: list[ToolCallItem] | None = None
                 if isinstance(tool_calls_data, list):
@@ -2576,9 +2572,12 @@ class PlaybackLLMClient:
                     )
 
                 matched_output = LLMOutput(
-                    content=output_data.get("content"),
+                    content=cast("str | None", output_data.get("content")),
                     tool_calls=reconstructed_tool_calls,
-                    reasoning_info=output_data.get("reasoning_info"),
+                    reasoning_info=cast(
+                        "MessageReasoningInfo | None",
+                        output_data.get("reasoning_info"),
+                    ),
                 )
                 logger.debug(
                     f"Playing back matched LLMOutput. Content: {bool(matched_output.content)}. Tool Calls: {len(matched_output.tool_calls) if matched_output.tool_calls else 0}"
@@ -2592,10 +2591,8 @@ class PlaybackLLMClient:
 
     async def _find_and_playback_dict(
         self,
-        # ast-grep-ignore: no-dict-any - deserialized JSON recording payload with heterogeneous values
-        current_input_args: dict[str, Any],
-        # ast-grep-ignore: no-dict-any - deserialized JSON recording output with heterogeneous values
-    ) -> dict[str, Any]:
+        current_input_args: dict[str, object],
+    ) -> dict[str, object]:
         """Helper to find and playback interactions that return a simple dict."""
         logger.debug(
             f"PlaybackLLMClient attempting to find dict match for input args: {json.dumps(current_input_args, indent=2, default=str)[:500]}..."
@@ -2647,7 +2644,7 @@ class PlaybackLLMClient:
         )
 
     # ast-grep-ignore: no-dict-any - input args dict has heterogeneous values (str, list, None) from VCR recording match keys
-    async def _log_no_match_error(self, current_input_args: dict[str, Any]) -> None:
+    async def _log_no_match_error(self, current_input_args: dict[str, object]) -> None:
         """Logs an error when no matching interaction is found."""
         logger.error(
             f"PlaybackLLMClient: No matching interaction found in {self.recording_path} for the provided input args."
@@ -2664,9 +2661,8 @@ class PlaybackLLMClient:
         response_model: type[T],
     ) -> T:
         """Plays back for the generate_structured method."""
-        # Convert messages to dict for playback matching
         messages_dict = [message_to_json_dict(msg) for msg in messages]
-        current_input_args = {
+        current_input_args: dict[str, object] = {
             "method": "generate_structured",
             "messages": messages_dict,
             "response_model_name": response_model.__name__,
@@ -2690,7 +2686,6 @@ class PlaybackLLMClient:
                     )
                     raise LookupError("Matched recorded output is not a dictionary.")
 
-                # Reconstruct the Pydantic model from the recorded data
                 model_data = output_data.get("model_data")
                 if model_data is None:
                     raise LookupError(

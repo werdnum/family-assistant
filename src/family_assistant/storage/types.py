@@ -1,15 +1,16 @@
 """Type definitions for storage layer return types."""
 
 from datetime import datetime
-from typing import Any, TypedDict
+from typing import TYPE_CHECKING, Any, TypedDict
 
-from family_assistant.llm.google_types import GeminiProviderMetadata
-from family_assistant.llm.messages import (
-    MessageAttachmentMetadata,
-    MessageReasoningInfo,
-    ProviderMetadataDict,
-)
-from family_assistant.llm.tool_call import ToolCallItem
+if TYPE_CHECKING:
+    from family_assistant.llm.google_types import GeminiProviderMetadata
+    from family_assistant.llm.messages import (
+        MessageAttachmentMetadata,
+        MessageReasoningInfo,
+        ProviderMetadataDict,
+    )
+    from family_assistant.llm.tool_call import ToolCallItem
 
 MatchConditions = dict[str, str | int | float | bool]
 
@@ -108,6 +109,43 @@ class TaskDict(TypedDict):
     original_task_id: str | None
 
 
+class ErrorLogRow(TypedDict):
+    """Type definition for error log records returned from repository."""
+
+    id: int
+    timestamp: datetime
+    logger_name: str
+    level: str
+    message: str
+    exception_type: str | None
+    exception_message: str | None
+    traceback: str | None
+    module: str | None
+    function_name: str | None
+    # ast-grep-ignore: no-dict-any - extra_data is freeform JSON metadata from logging context
+    extra_data: dict[str, Any] | None
+
+
+class ListenerExecutionStatsDict(TypedDict):
+    """Type definition for listener execution statistics."""
+
+    total_executions: int
+    daily_executions: int
+    daily_limit: int
+    last_execution_at: datetime | None
+    recent_events: list[RecentEventDict]
+
+
+class ScheduleExecutionStatsDict(TypedDict):
+    """Type definition for schedule automation execution statistics."""
+
+    total_executions: int
+    last_execution_at: datetime | None
+    next_scheduled_at: datetime | None
+    # ast-grep-ignore: no-dict-any - recent task execution rows have dynamic fields from worker_tasks table
+    recent_executions: list[dict[str, Any]]
+
+
 class MessageHistoryRow(TypedDict):
     """Type definition for deserialized message history records.
 
@@ -124,16 +162,16 @@ class MessageHistoryRow(TypedDict):
     timestamp: datetime
     role: str
     content: str | None
-    tool_calls: list[ToolCallItem] | None
-    reasoning_info: MessageReasoningInfo | None
+    tool_calls: "list[ToolCallItem] | None"
+    reasoning_info: "MessageReasoningInfo | None"
     tool_call_id: str | None
     error_traceback: str | None
     processing_profile_id: str | None
     subconversation_id: str | None
     user_id: str | None
-    attachments: list[MessageAttachmentMetadata] | None
+    attachments: "list[MessageAttachmentMetadata] | None"
     tool_name: str | None
-    provider_metadata: ProviderMetadataDict | GeminiProviderMetadata | None
+    provider_metadata: "ProviderMetadataDict | GeminiProviderMetadata | None"
 
 
 class ConversationSummaryRow(TypedDict):

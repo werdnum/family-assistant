@@ -6,15 +6,11 @@ import logging
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Any, cast
+from typing import Any, TypedDict, cast
 
-from sqlalchemy import select  # Import select and update
-
-# Import RowMapping for type hinting in from_row
+from sqlalchemy import select
 from sqlalchemy.exc import SQLAlchemyError
 
-# Use absolute imports
-# storage functions now accessed via DatabaseContext  # For DB operations (add_document)
 from family_assistant.indexing.pipeline import IndexableContent, IndexingPipeline
 from family_assistant.indexing.types import (
     EmailAttachmentInfo,
@@ -23,11 +19,16 @@ from family_assistant.indexing.types import (
 )
 from family_assistant.storage.email import (
     received_emails_table,
-)  # Import table definition
-
-# Import the Document protocol from the correct location
+)
 from family_assistant.storage.vector import Document, get_document_by_id
-from family_assistant.tools import ToolExecutionContext  # Import the context class
+from family_assistant.tools import ToolExecutionContext
+
+
+class EmailIndexPayload(TypedDict):
+    """Payload for email indexing tasks."""
+
+    email_db_id: int
+
 
 logger = logging.getLogger(__name__)
 
@@ -145,8 +146,7 @@ class EmailDocument(Document):
             # _source_uri could be set if a web view link exists, otherwise None
         )
 
-    # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
-    def to_dict(self) -> dict[str, Any]:
+    def to_dict(self) -> dict[str, str | EmailMetadata | None]:
         """Converts the EmailDocument instance to a dictionary."""
         return {
             "source_type": self.source_type,
@@ -176,11 +176,9 @@ class EmailIndexer:
         logger.info("EmailIndexer initialized with an IndexingPipeline instance.")
 
     async def handle_index_email(
-        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
         self,
         exec_context: ToolExecutionContext,
-        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
-        payload: dict[str, Any],
+        payload: EmailIndexPayload,
     ) -> None:
         """
         Task handler to index a specific email from the received_emails table.

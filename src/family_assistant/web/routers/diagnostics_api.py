@@ -50,11 +50,11 @@ class LLMRequestExport(BaseModel):
     request_id: str
     model_id: str
     duration_ms: float
-    # ast-grep-ignore: no-dict-any - Serialized LLM messages from external APIs
+    # ast-grep-ignore: no-dict-any - LLM messages have provider-specific structure (OpenAI/Anthropic/Google formats differ)
     messages: list[dict[str, Any]]
     tools: list[ToolDefinition] | None = None
     tool_choice: str | None = None
-    # ast-grep-ignore: no-dict-any - Serialized LLM response from external APIs
+    # ast-grep-ignore: no-dict-any - LLM response structure varies by provider (OpenAI/Anthropic/Google formats differ)
     response: dict[str, Any] | None = None
     error: str | None = None
 

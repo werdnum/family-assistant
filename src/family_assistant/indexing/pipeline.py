@@ -84,10 +84,9 @@ class IndexingPipeline:
     """
 
     def __init__(
-        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
         self,
         processors: list[ContentProcessor],
-        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
+        # ast-grep-ignore: no-dict-any - Pipeline config has processor-specific nested settings that vary per processor type
         config: dict[str, Any],
     ) -> None:
         """

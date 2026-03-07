@@ -8,6 +8,7 @@ from sqlalchemy import select
 from sqlalchemy.sql import functions as func
 
 from family_assistant.storage.error_logs import error_logs_table
+from family_assistant.storage.types import ErrorLogRow
 
 from .base import BaseRepository
 
@@ -25,8 +26,7 @@ class ErrorLogsRepository(BaseRepository):
         since: datetime | None = None,
         limit: int = 50,
         offset: int = 0,
-        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
-    ) -> list[dict[str, Any]]:
+    ) -> list[ErrorLogRow]:
         """
         Retrieve error logs with optional filtering.
 
@@ -54,10 +54,9 @@ class ErrorLogsRepository(BaseRepository):
         query = query.limit(limit).offset(offset)
 
         rows = await self._db.fetch_all(query)
-        return [dict(row) for row in rows]
+        return rows  # type: ignore[return-value]  # rows from fetch_all match ErrorLogRow schema
 
-    # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
-    async def get_by_id(self, error_id: int) -> dict[str, Any] | None:
+    async def get_by_id(self, error_id: int) -> ErrorLogRow | None:
         """
         Get a specific error log by ID.
 
@@ -69,7 +68,7 @@ class ErrorLogsRepository(BaseRepository):
         """
         query = select(error_logs_table).where(error_logs_table.c.id == error_id)
         row = await self._db.fetch_one(query)
-        return dict(row) if row else None
+        return row if row else None  # type: ignore[return-value]  # row from fetch_one matches ErrorLogRow schema
 
     async def count(
         self,
@@ -113,7 +112,7 @@ class ErrorLogsRepository(BaseRepository):
         traceback: str | None = None,
         module: str | None = None,
         function_name: str | None = None,
-        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
+        # ast-grep-ignore: no-dict-any - extra_data is freeform JSON metadata from logging context
         extra_data: dict[str, Any] | None = None,
     ) -> int:
         """

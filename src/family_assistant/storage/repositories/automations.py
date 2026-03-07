@@ -16,6 +16,10 @@ from family_assistant.storage.repositories.schedule_automations import (
     ScheduleAutomationsRepository,
 )
 from family_assistant.storage.schedule_automations import schedule_automations_table
+from family_assistant.storage.types import (
+    ListenerExecutionStatsDict,
+    ScheduleExecutionStatsDict,
+)
 
 AutomationType = Literal["event", "schedule"]
 
@@ -407,8 +411,7 @@ class AutomationsRepository(BaseRepository):
         self,
         automation_id: int,
         automation_type: AutomationType,
-        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
-    ) -> dict[str, Any]:
+    ) -> ListenerExecutionStatsDict | ScheduleExecutionStatsDict:
         """
         Get execution statistics for an automation.
 

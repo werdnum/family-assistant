@@ -4,46 +4,57 @@ Handles the indexing process for documents uploaded via the API.
 
 import asyncio
 import logging
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING, Any, TypedDict, cast
 
 from sqlalchemy.exc import SQLAlchemyError
 
-# Use absolute imports
-from family_assistant.embeddings import EmbeddingGenerator  # Added
+from family_assistant.embeddings import EmbeddingGenerator
 from family_assistant.indexing.pipeline import (
     IndexableContent,
     IndexingPipeline,
 )
-
-# Import all necessary processor types
-from family_assistant.indexing.processors.dispatch_processors import (  # Added
+from family_assistant.indexing.processors.dispatch_processors import (
     EmbeddingDispatchProcessor,
 )
 from family_assistant.indexing.processors.file_processors import (
-    PDFTextExtractor,  # Added
+    PDFTextExtractor,
 )
-from family_assistant.indexing.processors.llm_processors import (  # Added
+from family_assistant.indexing.processors.llm_processors import (
     LLMPrimaryLinkExtractorProcessor,
     LLMSummaryGeneratorProcessor,
 )
 from family_assistant.indexing.processors.metadata_processors import (
-    DocumentTitleUpdaterProcessor,  # Added
+    DocumentTitleUpdaterProcessor,
     TitleExtractor,
 )
 from family_assistant.indexing.processors.network_processors import (
-    WebFetcherProcessor,  # Added
+    WebFetcherProcessor,
 )
-from family_assistant.indexing.processors.text_processors import TextChunker  # Added
-from family_assistant.llm import LLMInterface  # Added
+from family_assistant.indexing.processors.text_processors import TextChunker
+from family_assistant.llm import LLMInterface
 from family_assistant.storage.vector import get_document_by_id
 from family_assistant.tools import ToolExecutionContext
+from family_assistant.utils.scraping import Scraper
 
 if TYPE_CHECKING:
     from family_assistant.indexing.pipeline import (
-        Document,  # Assuming Document is defined/exported here
+        Document,
     )
     from family_assistant.indexing.types import IndexableContentMetadata
-from family_assistant.utils.scraping import Scraper  # Added
+
+
+class DocumentIndexPayload(TypedDict, total=False):
+    """Payload for document indexing tasks."""
+
+    document_id: int
+    content_parts: dict[str, str] | None
+    file_ref: str | None
+    mime_type: str | None
+    original_filename: str | None
+    url_to_scrape: str | None
+    # ast-grep-ignore: no-dict-any - User-provided document metadata with arbitrary key/value pairs
+    doc_metadata: dict[str, Any] | None
+
 
 logger = logging.getLogger(__name__)
 
@@ -63,7 +74,7 @@ class DocumentIndexer:
 
     def __init__(
         self,
-        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
+        # ast-grep-ignore: no-dict-any - Pipeline config defines processor types and their settings from YAML
         pipeline_config: dict[str, Any],
         llm_client: LLMInterface,
         embedding_generator: EmbeddingGenerator,
@@ -174,11 +185,9 @@ class DocumentIndexer:
         )
 
     async def process_document(
-        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
         self,
         exec_context: ToolExecutionContext,
-        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
-        payload: dict[str, Any],
+        payload: DocumentIndexPayload,
     ) -> None:
         """
         Task handler method to process and index content parts provided for a document
@@ -278,8 +287,7 @@ class DocumentIndexer:
                     continue
 
                 embedding_type = key
-                # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
-                metadata_for_item: dict[str, Any] = {"original_key": key}
+                metadata_for_item: dict[str, object] = {"original_key": key}
 
                 if key.startswith("content_chunk_"):
                     embedding_type = "content_chunk"
@@ -315,9 +323,10 @@ class DocumentIndexer:
             logger.info(
                 f"Creating IndexableContent for URL for document ID {document_id}: url='{url_to_scrape}'"
             )
-            url_item_metadata = {"original_url": url_to_scrape}
-            if payload.get("doc_metadata"):
-                url_item_metadata.update(payload["doc_metadata"])
+            url_item_metadata: dict[str, object] = {"original_url": url_to_scrape}
+            doc_metadata = payload.get("doc_metadata")
+            if doc_metadata:
+                url_item_metadata.update(doc_metadata)
 
             url_item = IndexableContent(
                 content=url_to_scrape,

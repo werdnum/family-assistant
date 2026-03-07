@@ -114,8 +114,6 @@ async def _process_user_attachments(
                     )
                 # Handle attachment content - either URL reference or base64 data
                 try:
-                    content_data = attachment["content"]
-
                     # New flow: Handle URL references to uploaded attachments
                     if content_data.startswith("/api/attachments/"):
                         # Content is a URL reference to an already uploaded attachment
@@ -849,8 +847,7 @@ async def api_chat_send_message_stream(
     async def event_generator() -> AsyncGenerator[str]:
         """Generate SSE formatted events from the processing stream."""
 
-        # Queue for confirmation events
-        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
+        # ast-grep-ignore: no-dict-any - SSE event queue carries heterogeneous event types (stream, confirmation, error)
         confirmation_queue: asyncio.Queue[dict[str, Any]] = asyncio.Queue()
 
         # Create confirmation callback that queues events
@@ -860,7 +857,7 @@ async def api_chat_send_message_stream(
             interface_message_id_cb: str | None,
             tool_name: str,
             tool_call_id: str,
-            # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
+            # ast-grep-ignore: no-dict-any - Tool arguments vary per tool and cannot be statically typed
             tool_args: dict[str, Any],
             timeout_seconds: float,
             context: ToolExecutionContext,
@@ -1112,7 +1109,7 @@ async def api_chat_send_message_stream(
 
                 elif queue_event["type"] == "stream_end":
                     # Send the end event once at the true end of the stream
-                    # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
+                    # ast-grep-ignore: no-dict-any - SSE end event payload optionally includes provider-specific reasoning_info
                     done_data: dict[str, Any] = {}
                     if last_reasoning_info:
                         done_data["reasoning_info"] = last_reasoning_info

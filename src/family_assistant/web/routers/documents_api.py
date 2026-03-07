@@ -180,8 +180,7 @@ async def get_document(
 async def reindex_document(
     document_id: int,
     db_context: Annotated[DatabaseContext, Depends(get_db)],
-    # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
-) -> dict[str, Any]:
+) -> dict[str, str]:
     """
     API endpoint to re-index a document.
     """
@@ -296,7 +295,7 @@ async def upload_document(
 
     # --- 2. Parse and Prepare Inputs for Service Function ---
     content_parts: dict[str, str] | None = None
-    # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
+    # ast-grep-ignore: no-dict-any - User-provided document metadata with arbitrary key/value pairs
     doc_metadata: dict[str, Any] = {}
     created_at_dt: datetime | None = None
     uploaded_file_content_bytes: bytes | None = None
@@ -392,11 +391,17 @@ async def upload_document(
 
         raise HTTPException(
             status_code=status_code,
-            detail=ingestion_result["message"],  # Use message from result as detail
+            detail=ingestion_result.get("message"),
         )
 
+    document_id = ingestion_result.get("document_id")
+    if document_id is None:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Ingestion completed but no document_id was returned",
+        )
     return DocumentUploadResponse(
-        message=ingestion_result["message"],
-        document_id=ingestion_result["document_id"],
-        task_enqueued=ingestion_result["task_enqueued"],
+        message=ingestion_result.get("message", ""),
+        document_id=document_id,
+        task_enqueued=ingestion_result.get("task_enqueued", False),
     )

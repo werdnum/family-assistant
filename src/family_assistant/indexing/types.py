@@ -59,6 +59,33 @@ class ExtractionMetadata(TypedDict):
     extraction_method: str
 
 
+class EmbeddingMetadata(TypedDict, total=False):
+    """Metadata for a single embedding item in a batch embedding task."""
+
+    embedding_type: str
+    chunk_index: int
+    original_content_metadata: dict[str, object]
+    content_hash: str | None
+
+
+class EmbedAndStoreBatchPayload(TypedDict):
+    """Payload for the embed_and_store_batch task."""
+
+    document_id: int
+    texts_to_embed: list[str]
+    embedding_metadata_list: list[EmbeddingMetadata]
+
+
+class IngestionResult(TypedDict, total=False):
+    """Result of a document ingestion request."""
+
+    message: str
+    document_id: int | None
+    task_enqueued: bool
+    error_detail: str | None
+    status_code: int
+
+
 # A union of all possible metadata types for IndexableContent
 IndexableContentMetadata = (
     ChunkMetadata

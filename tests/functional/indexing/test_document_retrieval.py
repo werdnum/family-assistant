@@ -118,9 +118,9 @@ class TestDocumentRetrieval:
                 uploaded_file_content_type="application/pdf",
             )
 
-            assert result["document_id"] is not None
-            assert result["task_enqueued"] is True
-            document_id = result["document_id"]
+            document_id = result.get("document_id")
+            assert document_id is not None
+            assert result.get("task_enqueued") is True
 
             # Add a test embedding for search to work
 
@@ -206,8 +206,8 @@ class TestDocumentRetrieval:
                 uploaded_file_content_type="image/png",
             )
 
-            assert result["document_id"] is not None
-            document_id = result["document_id"]
+            document_id = result.get("document_id")
+            assert document_id is not None
 
             # Add a test embedding for the image
 
@@ -277,8 +277,8 @@ class TestDocumentRetrieval:
                 content_parts={"content": "This is a test text document."},
             )
 
-            assert result["document_id"] is not None
-            document_id = result["document_id"]
+            document_id = result.get("document_id")
+            assert document_id is not None
 
             # Add a test embedding for the text document
 
@@ -357,7 +357,8 @@ class TestDocumentRetrieval:
                 uploaded_file_content_type="application/pdf",
             )
 
-            document_id = result["document_id"]
+            document_id = result.get("document_id")
+            assert document_id is not None
 
             # Add a test embedding for the document
 
@@ -433,7 +434,8 @@ class TestDocumentRetrieval:
                 uploaded_file_content_type="text/plain",
             )
 
-            document_id = result["document_id"]
+            document_id = result.get("document_id")
+            assert document_id is not None
 
             # Add a test embedding for the large document
 
@@ -482,7 +484,8 @@ class TestDocumentRetrieval:
                 uploaded_file_content_type="application/pdf",
             )
 
-            document_id = result["document_id"]
+            document_id = result.get("document_id")
+            assert document_id is not None
 
             # Check that file_path is stored in database
             query = text("SELECT file_path FROM documents WHERE id = :doc_id")

@@ -55,8 +55,8 @@ PUBLIC_PATHS = [
 
 
 # --- User type and dependency ---
-# ast-grep-ignore: no-dict-any - Legacy code - needs structured types
-User = dict[str, Any]  # User information stored in session is a dictionary
+# ast-grep-ignore: no-dict-any - OIDC session data has provider-specific fields that vary by identity provider
+User = dict[str, Any]
 
 
 class AuthService:
