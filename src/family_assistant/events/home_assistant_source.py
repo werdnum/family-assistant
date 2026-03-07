@@ -493,8 +493,7 @@ class HomeAssistantSource(BaseEventSource, EventSource):
         # Validate state values if entity_id is valid and present
         if "entity_id" in match_conditions and len(errors) == 0:
             entity_id_val = match_conditions["entity_id"]
-            assert isinstance(entity_id_val, str)
-            entity_id = entity_id_val
+            entity_id = cast("str", entity_id_val)
             state_fields_to_check = []
 
             # Check for state conditions
