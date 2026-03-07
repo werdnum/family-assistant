@@ -712,10 +712,7 @@ class LLMOutput:
     content: str | None = None
     tool_calls: list[ToolCallItem] | None = field(default=None)
     reasoning_info: MessageReasoningInfo | None = field(default=None)
-    # ast-grep-ignore: no-dict-any - Accepts both dicts (for serialization) and provider metadata objects (e.g., GeminiProviderMetadata)
-    provider_metadata: Any | None = field(
-        default=None
-    )  # Provider-specific metadata (e.g., thought signatures)
+    provider_metadata: Any | None = field(default=None)  # noqa: ANN401 - GeminiProviderMetadata at runtime, dict after asdict() serialization
 
 
 @dataclass
@@ -731,7 +728,7 @@ class LLMStreamEvent:
     metadata: StreamEventMetadata | None = None
 
 
-# ast-grep-ignore: no-dict-any - Return type intentionally untyped; deep-copies and strips fields for litellm
+# ast-grep-ignore: no-dict-any - deep copy loses ToolDefinition TypedDict type; returns untyped dicts after field stripping
 def _sanitize_tools_for_litellm(tools: list[ToolDefinition]) -> list[dict[str, Any]]:
     """
     Removes unsupported 'format' fields from string parameters in tool definitions
@@ -823,7 +820,7 @@ class LLMInterface(Protocol):
         file_path: str | None,
         mime_type: str | None,
         max_text_length: int | None,
-        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
+        # ast-grep-ignore: no-dict-any - protocol return type; content value is str | list depending on provider
     ) -> dict[str, Any]:
         """
         Formats a user message, potentially including file content.
@@ -889,20 +886,27 @@ class LLMInterface(Protocol):
         ...
 
 
+class _LiteLLMStreamingToolFunction(TypedDict):
+    name: str
+    arguments: str
+
+
+class _LiteLLMStreamingToolAccumulator(TypedDict):
+    id: str | None
+    type: str | None
+    function: _LiteLLMStreamingToolFunction
+
+
 class LiteLLMClient(BaseLLMClient):
     """LLM client implementation using the LiteLLM library."""
 
     def __init__(
         self,
         model: str,
-        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
-        model_parameters: dict[str, dict[str, Any]] | None = None,  # Corrected type
+        model_parameters: dict[str, dict[str, object]] | None = None,
         fallback_model_id: str | None = None,
-        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
-        fallback_model_parameters: dict[str, dict[str, Any]]
-        | None = None,  # Corrected type
-        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
-        **kwargs: dict[str, Any],
+        fallback_model_parameters: dict[str, dict[str, object]] | None = None,
+        **kwargs: Any,  # noqa: ANN401 - accepts arbitrary litellm.acompletion parameters
     ) -> None:
         """
         Initializes the LiteLLM client.
@@ -918,15 +922,11 @@ class LiteLLMClient(BaseLLMClient):
             raise ValueError("LLM model identifier cannot be empty.")
         self.model = model
         self.default_kwargs = kwargs
-        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
-        self.model_parameters: dict[str, dict[str, Any]] = (
-            model_parameters or {}
-        )  # Ensure correct type for self
+        self.model_parameters: dict[str, dict[str, object]] = model_parameters or {}
         self.fallback_model_id = fallback_model_id
-        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
-        self.fallback_model_parameters: dict[str, dict[str, Any]] = (
+        self.fallback_model_parameters: dict[str, dict[str, object]] = (
             fallback_model_parameters or {}
-        )  # Ensure correct type for self
+        )
         logger.info(
             f"LiteLLMClient initialized for primary model: {self.model} "
             f"with default kwargs: {self.default_kwargs}, "
@@ -956,7 +956,7 @@ class LiteLLMClient(BaseLLMClient):
             ):
                 attachments = original_msg.transient_attachments
                 # Convert to Claude's format
-                # ast-grep-ignore: no-dict-any - LiteLLM SDK requires dict format for message content
+                # ast-grep-ignore: no-dict-any - LiteLLM SDK requires raw dicts for multimodal content blocks (text, image, document)
                 content: list[dict[str, Any]] = [
                     {"type": "text", "text": original_msg.content},
                 ]
@@ -1024,8 +1024,7 @@ class LiteLLMClient(BaseLLMClient):
         messages: list[LLMMessage],
         tools: list[ToolDefinition] | None,
         tool_choice: str | None,
-        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
-        specific_model_params: dict[str, dict[str, Any]],  # Corrected type
+        specific_model_params: dict[str, dict[str, object]],
     ) -> LLMOutput:
         """Internal method to make a single attempt at LLM completion.
 
@@ -1400,9 +1399,9 @@ class LiteLLMClient(BaseLLMClient):
         file_path: str | None,
         mime_type: str | None,
         max_text_length: int | None,
-        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
+        # ast-grep-ignore: no-dict-any - protocol return type; content value is str | list depending on provider
     ) -> dict[str, Any]:
-        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
+        # ast-grep-ignore: no-dict-any - LiteLLM SDK requires raw dicts for multimodal content parts (text, image_url, file)
         user_content_parts: list[dict[str, Any]] = []
         actual_prompt_text = prompt_text or "Process the provided file."
 
@@ -1554,8 +1553,7 @@ class LiteLLMClient(BaseLLMClient):
             )
             raise ValueError("Cannot format user message with no input (file or text).")
 
-        # Determine final content structure for the user message
-        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
+        # ast-grep-ignore: no-dict-any - LiteLLM SDK requires raw dicts for multimodal content parts
         final_user_content: str | list[dict[str, Any]]
         if len(user_content_parts) == 1 and user_content_parts[0]["type"] == "text":
             final_user_content = user_content_parts[0]["text"]
@@ -1581,8 +1579,7 @@ class LiteLLMClient(BaseLLMClient):
         messages: Sequence[LLMMessage],
         tools: list[ToolDefinition] | None,
         tool_choice: str | None,
-        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
-        specific_model_params: dict[str, dict[str, Any]],
+        specific_model_params: dict[str, dict[str, object]],
     ) -> AsyncIterator[LLMStreamEvent]:
         """Internal async generator for streaming responses (single attempt)."""
         span = _otel_tracer.start_span(
@@ -1688,8 +1685,7 @@ class LiteLLMClient(BaseLLMClient):
                 stream = await acompletion(**stream_params)
 
                 # Track current tool calls being built
-                # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
-                current_tool_calls: dict[int, dict[str, Any]] = {}
+                current_tool_calls: dict[int, _LiteLLMStreamingToolAccumulator] = {}
                 chunk: Any | None = None
                 last_chunk_with_usage: Any | None = None
                 content_emitted = False
@@ -1766,8 +1762,12 @@ class LiteLLMClient(BaseLLMClient):
                                 "This may cause issues with multiple tool calls."
                             )
                             idx = 0
-                        tc_id = _safe_get_attr(tc_delta, "id")
-                        tc_type = _safe_get_attr(tc_delta, "type") or "function"
+                        raw_tc_id = _safe_get_attr(tc_delta, "id")
+                        tc_id = raw_tc_id if isinstance(raw_tc_id, str) else None
+                        raw_tc_type = _safe_get_attr(tc_delta, "type")
+                        tc_type = (
+                            raw_tc_type if isinstance(raw_tc_type, str) else "function"
+                        )
                         func_name = ""
                         func_args = ""
                         function_delta = _safe_get_attr(tc_delta, "function")
@@ -1787,11 +1787,13 @@ class LiteLLMClient(BaseLLMClient):
                                     func_args = str(func_args_attr)
 
                         if idx not in current_tool_calls:
-                            current_tool_calls[idx] = {
-                                "id": tc_id,
-                                "type": tc_type,
-                                "function": {"name": "", "arguments": ""},
-                            }
+                            current_tool_calls[idx] = _LiteLLMStreamingToolAccumulator(
+                                id=tc_id,
+                                type=tc_type,
+                                function=_LiteLLMStreamingToolFunction(
+                                    name="", arguments=""
+                                ),
+                            )
 
                         tc_data = current_tool_calls[idx]
                         if tc_id:
@@ -1805,10 +1807,11 @@ class LiteLLMClient(BaseLLMClient):
 
                 # Emit any remaining tool calls
                 for tc_data in current_tool_calls.values():
-                    if tc_data["id"] and tc_data["function"]["name"]:
+                    tc_id = tc_data["id"]
+                    if tc_id and tc_data["function"]["name"]:
                         tool_call = ToolCallItem(
-                            id=tc_data["id"],
-                            type=tc_data["type"],
+                            id=tc_id,
+                            type=tc_data["type"] or "function",
                             function=ToolCallFunction(
                                 name=tc_data["function"]["name"],
                                 arguments=tc_data["function"]["arguments"] or "{}",
@@ -1817,7 +1820,7 @@ class LiteLLMClient(BaseLLMClient):
                         yield LLMStreamEvent(
                             type="tool_call",
                             tool_call=tool_call,
-                            tool_call_id=tc_data["id"],
+                            tool_call_id=tc_id,
                         )
 
                 # If we never emitted content (e.g., provider returned only a terminal chunk),
@@ -2292,7 +2295,7 @@ class RecordingLLMClient:
         file_path: str | None,
         mime_type: str | None,
         max_text_length: int | None,
-        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
+        # ast-grep-ignore: no-dict-any - protocol return type; content value is str | list depending on provider
     ) -> dict[str, Any]:
         """Calls the wrapped client's format_user_message_with_file, records, and returns."""
         input_data = {
@@ -2341,17 +2344,15 @@ class RecordingLLMClient:
 
     async def _record_interaction(
         self,
-        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
+        # ast-grep-ignore: no-dict-any - JSON-serializable recording payload with heterogeneous values
         input_data: dict[str, Any],
-        output_data: LLMOutput,  # This is for generate_response
+        output_data: LLMOutput,
     ) -> None:
-        # Ensure output_data is serializable (LLMOutput should be)
-        # Convert ToolCallItem objects to dicts for JSON serialization
         output_dict = asdict(output_data)
         record = {"input": input_data, "output": output_dict}
         await self._write_record_to_file(record)
 
-    # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
+    # ast-grep-ignore: no-dict-any - JSON-serializable recording payload with heterogeneous values
     async def _write_record_to_file(self, record: dict[str, Any]) -> None:
         """Helper method to write a generic record to the recording file."""
         try:
@@ -2421,7 +2422,7 @@ class PlaybackLLMClient:
             ValueError: If the recording file is empty or contains invalid JSON.
         """
         self.recording_path = recording_path
-        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
+        # ast-grep-ignore: no-dict-any - deserialized JSON recordings have heterogeneous structure
         self.recorded_interactions: list[dict[str, Any]] = []
         logger.info(
             f"PlaybackLLMClient initializing. Reading from: {self.recording_path}"
@@ -2503,7 +2504,7 @@ class PlaybackLLMClient:
         file_path: str | None,
         mime_type: str | None,
         max_text_length: int | None,
-        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
+        # ast-grep-ignore: no-dict-any - protocol return type; content value is str | list depending on provider
     ) -> dict[str, Any]:
         """Plays back for the format_user_message_with_file method."""
         current_input_args = {
@@ -2517,9 +2518,8 @@ class PlaybackLLMClient:
         return await self._find_and_playback_dict(current_input_args)
 
     async def _find_and_playback_llm_output(
-        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
         self,
-        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
+        # ast-grep-ignore: no-dict-any - deserialized JSON recording payload with heterogeneous values
         current_input_args: dict[str, Any],
     ) -> LLMOutput:
         """Helper to find and playback interactions that return LLMOutput."""
@@ -2585,11 +2585,10 @@ class PlaybackLLMClient:
         )
 
     async def _find_and_playback_dict(
-        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
         self,
-        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
+        # ast-grep-ignore: no-dict-any - deserialized JSON recording payload with heterogeneous values
         current_input_args: dict[str, Any],
-        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
+        # ast-grep-ignore: no-dict-any - deserialized JSON recording output with heterogeneous values
     ) -> dict[str, Any]:
         """Helper to find and playback interactions that return a simple dict."""
         logger.debug(
@@ -2641,7 +2640,7 @@ class PlaybackLLMClient:
             else None,
         )
 
-    # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
+    # ast-grep-ignore: no-dict-any - input args dict has heterogeneous values (str, list, None) from VCR recording match keys
     async def _log_no_match_error(self, current_input_args: dict[str, Any]) -> None:
         """Logs an error when no matching interaction is found."""
         logger.error(

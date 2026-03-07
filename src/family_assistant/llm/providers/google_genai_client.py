@@ -179,13 +179,11 @@ class GoogleGenAIClient(BaseLLMClient):
         self,
         api_key: str,
         model: str,
-        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
         model_parameters: dict[str, dict[str, object]] | None = None,
         api_base: str | None = None,
         enable_url_context: bool = False,
         enable_google_search: bool = False,
         debug_messages: bool | None = None,
-        # ast-grep-ignore: no-dict-any - Test infrastructure requires dict config
         debug_config: dict[str, str | None] | None = None,
         **kwargs: Any,  # noqa: ANN401 # Accepts arbitrary Google GenAI API parameters
     ) -> None:
@@ -268,7 +266,6 @@ class GoogleGenAIClient(BaseLLMClient):
         """Exit async context manager and close client."""
         await self.close()
 
-    # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
     def _get_model_specific_params(self, model: str) -> dict[str, object]:
         """Get parameters for a specific model based on pattern matching."""
         params = {}
@@ -311,7 +308,6 @@ class GoogleGenAIClient(BaseLLMClient):
     def create_attachment_injection(
         self,
         attachment: "ToolAttachment",
-        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
     ) -> UserMessage:
         """Create user message with attachment for Gemini"""
         # Handle JSON/text attachments using base class logic first
@@ -328,7 +324,6 @@ class GoogleGenAIClient(BaseLLMClient):
             return super().create_attachment_injection(attachment)
 
         # Handle multimodal content (images/PDFs) with provider-specific format
-        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
         parts: list[dict[str, object] | types.Part] = [
             {"text": "[System: File from previous tool response]"}
         ]
@@ -1201,7 +1196,6 @@ class GoogleGenAIClient(BaseLLMClient):
         file_path: str | None,
         mime_type: str | None,
         max_text_length: int | None,
-        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
     ) -> dict[str, object]:
         """
         Format user message with optional file content.

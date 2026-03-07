@@ -302,7 +302,7 @@ class AnthropicClient(BaseLLMClient):
     def _convert_messages_to_anthropic_format(
         self,
         messages: Sequence[LLMMessage],
-        # ast-grep-ignore: no-dict-any - Anthropic message format
+        # ast-grep-ignore: no-dict-any - MessageParam TypedDict incompatible with dynamic content merging in _merge_consecutive_roles
     ) -> tuple[str | None, list[dict[str, Any]]]:
         """Convert typed messages to Anthropic API format.
 
@@ -316,7 +316,7 @@ class AnthropicClient(BaseLLMClient):
         - Images use source.type: "base64" format
         """
         system_parts: list[str] = []
-        # ast-grep-ignore: no-dict-any - Anthropic message format
+        # ast-grep-ignore: no-dict-any - MessageParam TypedDict incompatible with dynamic content merging in _merge_consecutive_roles
         api_messages: list[dict[str, Any]] = []
 
         for msg in messages:
@@ -423,9 +423,9 @@ class AnthropicClient(BaseLLMClient):
 
     @staticmethod
     def _merge_consecutive_roles(
-        # ast-grep-ignore: no-dict-any - Anthropic API message dicts have heterogeneous value types
+        # ast-grep-ignore: no-dict-any - MessageParam TypedDict incompatible with dynamic content normalization (str->list, list concatenation)
         messages: list[dict[str, Any]],
-        # ast-grep-ignore: no-dict-any - Anthropic API message dicts have heterogeneous value types
+        # ast-grep-ignore: no-dict-any - MessageParam TypedDict incompatible with dynamic content normalization (str->list, list concatenation)
     ) -> list[dict[str, Any]]:
         """Merge consecutive messages with the same role.
 
@@ -436,7 +436,7 @@ class AnthropicClient(BaseLLMClient):
         if not messages:
             return messages
 
-        # ast-grep-ignore: no-dict-any - Anthropic message format
+        # ast-grep-ignore: no-dict-any - MessageParam TypedDict incompatible with dynamic content normalization (str->list, list concatenation)
         merged: list[dict[str, Any]] = []
         for msg in messages:
             if merged and merged[-1]["role"] == msg["role"]:
@@ -489,7 +489,7 @@ class AnthropicClient(BaseLLMClient):
                     self._convert_messages_to_anthropic_format(processed_messages)
                 )
 
-                # ast-grep-ignore: no-dict-any - Anthropic API params dict has heterogeneous value types
+                # ast-grep-ignore: no-dict-any - kwargs dict for client.messages.create(**params) requires heterogeneous values
                 params: dict[str, Any] = {
                     "model": self.model,
                     "messages": api_messages,
@@ -765,7 +765,7 @@ class AnthropicClient(BaseLLMClient):
                     self._convert_messages_to_anthropic_format(processed_messages)
                 )
 
-                # ast-grep-ignore: no-dict-any - Anthropic API params dict has heterogeneous value types
+                # ast-grep-ignore: no-dict-any - kwargs dict for client.messages.stream(**params) requires heterogeneous values
                 params: dict[str, Any] = {
                     "model": self.model,
                     "messages": api_messages,
@@ -937,7 +937,7 @@ class AnthropicClient(BaseLLMClient):
 
     async def _maybe_parse_vcr_stream(
         self,
-        # ast-grep-ignore: no-dict-any - Anthropic API params
+        # ast-grep-ignore: no-dict-any - kwargs dict for client.messages.create(**params) requires heterogeneous values
         params: dict[str, Any],
     ) -> list[LLMStreamEvent] | None:
         """Parse VCR-recorded streaming responses for Anthropic.
