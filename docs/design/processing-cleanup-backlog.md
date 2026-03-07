@@ -92,7 +92,7 @@ It now incorporates external analysis from:
 
 - Impact: Generated tool messages can fail provider/tool-call correlation semantics.
 - References: `llm_loop.py:584`
-- Sources: `[Cdx][C678]` (Added from PR #678)
+- Sources: `[C678]` (Added from PR #678)
 
 12. Context provider aggregation catches broad exceptions and continues silently.
 
@@ -104,7 +104,7 @@ It now incorporates external analysis from:
 
 - Impact: History cannot clearly distinguish failures from normal assistant replies.
 - References: `service.py:648`
-- Sources: `[Cdx][C678]` (Added from PR #678)
+- Sources: `[C678]` (Added from PR #678)
 
 ### P1
 
@@ -148,13 +148,13 @@ It now incorporates external analysis from:
 
 - Impact: Drift risk between history formatting and streaming loop behavior.
 - References: `context.py:134`, `llm_loop.py:228`
-- Sources: `[Cdx][C678]` (Added from PR #678)
+- Sources: `[C678]` (Added from PR #678)
 
 21. `attach_to_response` special handling is scattered across layers.
 
 - Impact: Tool-specific behavior leaks into multiple pipeline stages.
 - References: `llm_loop.py:558`, `tool_execution.py:378`
-- Sources: `[Cdx][C678]` (Added from PR #678)
+- Sources: `[C678]` (Added from PR #678)
 
 22. Tool execution logs full arguments.
 
@@ -178,21 +178,21 @@ It now incorporates external analysis from:
 
 - Impact: Storage concerns leak into orchestration layer.
 - References: `service.py:780`, `service.py:982`
-- Sources: `[Cdx][C678]` (Added from PR #678)
+- Sources: `[C678]` (Added from PR #678)
 
 26. Complex confirmation callback type is duplicated across multiple method signatures.
 
 - Impact: Hard to maintain; error-prone copy-paste types.
 - References: `service.py:148`, `service.py:206`, `service.py:266`, `service.py:687`,
   `llm_loop.py:67`, `tool_execution.py:70`
-- Sources: `[Cdx][C678]` (Added from PR #678)
+- Sources: `[C678]` (Added from PR #678)
 
 27. `ChatInteractionResult` success/error semantics are ambiguous (`text_reply` can be `None` on
     success).
 
 - Impact: Callers must infer state from multiple nullable fields.
 - References: `types.py:16`
-- Sources: `[Cdx][C678]` (Added from PR #678)
+- Sources: `[C678]` (Added from PR #678)
 
 ### P2
 
@@ -218,13 +218,13 @@ It now incorporates external analysis from:
 
 - Impact: Poor cohesion; difficult configuration evolution.
 - References: `processing/types.py:41`
-- Sources: `[Cdx][C678]` (Added from PR #678)
+- Sources: `[C678]` (Added from PR #678)
 
 32. `ProcessingService` setter wiring depends on `hasattr` and mutable post-construction state.
 
 - Impact: Temporal coupling and fragile initialization sequencing.
 - References: `service.py:114`, `service.py:80`
-- Sources: `[Cdx][C678]` (Added from PR #678)
+- Sources: `[C678]` (Added from PR #678)
 
 33. Internal helpers with leading underscore are exported via package `__all__`.
 
@@ -242,7 +242,7 @@ It now incorporates external analysis from:
 
 - Impact: Potentially expensive parsing used only for heuristic classification.
 - References: `attachments.py:531`
-- Sources: `[Cdx][C678]` (Added from PR #678)
+- Sources: `[C678]` (Added from PR #678)
 
 36. Minor cleanup noise (redundant `x if x is not None else None`, explicit role literals in
     constructors).
