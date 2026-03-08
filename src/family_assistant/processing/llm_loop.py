@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import traceback
 from typing import TYPE_CHECKING
 
 from family_assistant.llm import LLMInterface, LLMStreamEvent, StreamEventMetadata
@@ -78,6 +77,33 @@ class LLMStreamingLoop:
         if mime_type == "application/pdf":
             return "document"
         return "file"
+
+    @staticmethod
+    def _queue_auto_attachments(
+        pending_attachment_ids: list[str], auto_attachment_ids: list[str]
+    ) -> None:
+        """Append newly produced tool attachments while preserving order and uniqueness."""
+        for attachment_id in auto_attachment_ids:
+            if attachment_id not in pending_attachment_ids:
+                pending_attachment_ids.append(attachment_id)
+                logger.info("Auto-queued tool attachment %s for display", attachment_id)
+
+    @staticmethod
+    def _apply_explicit_attachments(
+        pending_attachment_ids: list[str], explicit_attachment_ids: list[str]
+    ) -> None:
+        """Apply attach_to_response output as authoritative attachment selection."""
+        if not explicit_attachment_ids:
+            return
+
+        old_count = len(pending_attachment_ids)
+        pending_attachment_ids.clear()
+        pending_attachment_ids.extend(explicit_attachment_ids)
+        logger.info(
+            "LLM explicitly controlling attachments: replaced %d auto-queued with %d explicit attachments",
+            old_count,
+            len(explicit_attachment_ids),
+        )
 
     async def run(
         self,
@@ -524,145 +550,61 @@ class LLMStreamingLoop:
             # Execute tool calls in parallel
             tool_response_messages_for_llm = []
 
-            async def _execute_tool_call_with_id(
+            async def _execute_tool_call(
                 tool_call: ToolCallItem,
-            ) -> tuple[str, ToolExecutionResult | None, Exception | None]:
-                try:
-                    result = await self.tool_executor.execute(
-                        tool_call,
-                        interface_type=interface_type,
-                        conversation_id=conversation_id,
-                        user_name=user_name,
-                        user_id=user_id,
-                        turn_id=turn_id,
-                        db_context=db_context,
-                        chat_interface=chat_interface,
-                        chat_interfaces=chat_interfaces,
-                        request_confirmation_callback=request_confirmation_callback,
-                        subconversation_id=subconversation_id,
-                        processing_service=processing_service,
-                        home_assistant_client=home_assistant_client,
-                        camera_backend=camera_backend,
-                        event_sources=event_sources,
-                    )
-                    return tool_call.id, result, None
-                except Exception as exc:  # pragma: no cover - defensive safety net
-                    return tool_call.id, None, exc
+            ) -> ToolExecutionResult:
+                return await self.tool_executor.execute(
+                    tool_call,
+                    interface_type=interface_type,
+                    conversation_id=conversation_id,
+                    user_name=user_name,
+                    user_id=user_id,
+                    turn_id=turn_id,
+                    db_context=db_context,
+                    chat_interface=chat_interface,
+                    chat_interfaces=chat_interfaces,
+                    request_confirmation_callback=request_confirmation_callback,
+                    subconversation_id=subconversation_id,
+                    processing_service=processing_service,
+                    home_assistant_client=home_assistant_client,
+                    camera_backend=camera_backend,
+                    event_sources=event_sources,
+                )
 
             tool_execution_tasks = [
-                asyncio.create_task(_execute_tool_call_with_id(tool_call))
+                asyncio.create_task(_execute_tool_call(tool_call))
                 for tool_call in tool_calls_from_stream
             ]
 
-            # Process results as they complete
-            for completed_task in asyncio.as_completed(tool_execution_tasks):
-                tool_call_id, result, execution_error = await completed_task
-                if execution_error is not None:
-                    logger.error(
-                        "Unexpected error in parallel tool execution for tool_call_id=%s: %s",
-                        tool_call_id,
-                        execution_error,
-                        exc_info=execution_error,
-                    )
-                    formatted_traceback = "".join(
-                        traceback.format_exception(
-                            type(execution_error),
-                            execution_error,
-                            execution_error.__traceback__,
-                        )
-                    )
-                    error_event = LLMStreamEvent(
-                        type="tool_result",
-                        tool_call_id=tool_call_id,
-                        tool_result=f"Unexpected error: {str(execution_error)}",
-                        error=formatted_traceback,
-                    )
-                    error_tool_message = ToolMessage(
-                        tool_call_id=tool_call_id,
-                        content=f"Unexpected error: {str(execution_error)}",
-                        error_traceback=formatted_traceback,
-                        name="unknown",
-                    )
-                    yield (error_event, error_tool_message)
-                    tool_response_messages_for_llm.append(error_tool_message)
-                    continue
-
-                if result is None:  # pragma: no cover - defensive safety net
-                    logger.error(
-                        "Parallel tool execution returned no result for tool_call_id=%s",
-                        tool_call_id,
-                    )
-                    error_event = LLMStreamEvent(
-                        type="tool_result",
-                        tool_call_id=tool_call_id,
-                        tool_result="Unexpected error: tool execution returned no result",
-                        error="missing_tool_result",
-                    )
-                    error_tool_message = ToolMessage(
-                        tool_call_id=tool_call_id,
-                        content="Unexpected error: tool execution returned no result",
-                        error_traceback="missing_tool_result",
-                        name="unknown",
-                    )
-                    yield (error_event, error_tool_message)
-                    tool_response_messages_for_llm.append(error_tool_message)
-                    continue
-
-                try:
+            try:
+                # Process results as they complete. Unexpected exceptions from
+                # ToolExecutor are treated as fatal and bubble to the caller.
+                for completed_task in asyncio.as_completed(tool_execution_tasks):
+                    result = await completed_task
                     event = result.stream_event
                     llm_message = result.llm_message
                     auto_attachment_ids = result.auto_attachment_ids or []
                     explicit_attachment_ids = result.explicit_attachment_ids or []
 
-                    # Auto-queue tool result attachments
-                    for auto_attachment_id in auto_attachment_ids:
-                        if auto_attachment_id not in pending_attachment_ids:
-                            pending_attachment_ids.append(auto_attachment_id)
-                            logger.info(
-                                f"Auto-queued tool attachment {auto_attachment_id} for display"
-                            )
-
-                    if explicit_attachment_ids:
-                        # LLM is taking control - replace previously auto-collected
-                        # attachments with an explicit list from attach_to_response.
-                        old_count = len(pending_attachment_ids)
-                        pending_attachment_ids.clear()
-                        pending_attachment_ids.extend(explicit_attachment_ids)
-                        logger.info(
-                            "LLM explicitly controlling attachments: replaced %d auto-queued with %d explicit attachments",
-                            old_count,
-                            len(explicit_attachment_ids),
-                        )
+                    self._queue_auto_attachments(
+                        pending_attachment_ids, auto_attachment_ids
+                    )
+                    self._apply_explicit_attachments(
+                        pending_attachment_ids, explicit_attachment_ids
+                    )
 
                     # Yield tool result event (llm_message for database storage)
                     yield (event, llm_message)
 
                     # Add to messages for LLM (llm_message with _attachment)
                     tool_response_messages_for_llm.append(llm_message)
-
-                except Exception as e:
-                    # This should not happen since we handle exceptions inside tool_executor.execute
-                    # But adding as extra safety
-                    logger.error(
-                        "Unexpected error while handling parallel tool execution result for tool_call_id=%s: %s",
-                        tool_call_id,
-                        e,
-                        exc_info=True,
-                    )
-                    error_event = LLMStreamEvent(
-                        type="tool_result",
-                        tool_call_id=tool_call_id,
-                        tool_result=f"Unexpected error: {str(e)}",
-                        error=traceback.format_exc(),
-                    )
-                    error_tool_message = ToolMessage(
-                        tool_call_id=tool_call_id,
-                        content=f"Unexpected error: {str(e)}",
-                        error_traceback=traceback.format_exc(),
-                        name="unknown",
-                    )
-                    yield (error_event, error_tool_message)
-                    tool_response_messages_for_llm.append(error_tool_message)
+            finally:
+                # Ensure unfinished tasks are cancelled if one task fails.
+                for task in tool_execution_tasks:
+                    if not task.done():
+                        task.cancel()
+                if tool_execution_tasks:
+                    await asyncio.gather(*tool_execution_tasks, return_exceptions=True)
 
             # Add tool responses to messages for next iteration
             messages.extend(tool_response_messages_for_llm)

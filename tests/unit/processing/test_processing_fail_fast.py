@@ -254,6 +254,94 @@ async def test_final_iteration_tool_calls_do_not_raise_processing_error(
     assert not result.has_error
 
 
+@pytest.mark.asyncio
+async def test_sync_fails_fast_when_tool_executor_raises_unexpected_exception(
+    db_engine: AsyncEngine,
+) -> None:
+    tool_call = ToolCallItem(
+        id="call_executor_crash_sync",
+        type="function",
+        function=ToolCallFunction(name="example_tool", arguments='{"x": 1}'),
+    )
+    llm_client = RuleBasedMockLLMClient(
+        rules=[],
+        default_response=LLMOutput(content=None, tool_calls=[tool_call]),
+    )
+    service = _make_service(llm_client=llm_client, max_iterations=3)
+    service.tool_executor.execute = AsyncMock(  # type: ignore[method-assign]
+        side_effect=RuntimeError("unexpected tool executor crash")
+    )
+
+    async with get_db_context(db_engine) as db_context:
+        result = await service.handle_chat_interaction(
+            db_context=db_context,
+            interface_type="test",
+            conversation_id="conv_executor_crash_sync",
+            trigger_content_parts=[{"type": "text", "text": "hello"}],
+            trigger_interface_message_id="msg-executor-crash-sync",
+            user_name="tester",
+        )
+
+        assert result.has_error
+        assert result.error_traceback is not None
+        assert "unexpected tool executor crash" in result.error_traceback
+
+        saved_messages = await db_context.message_history.get_recent(
+            interface_type="test",
+            conversation_id="conv_executor_crash_sync",
+            limit=10,
+            max_age=timedelta(hours=24),
+            processing_profile_id=service.service_config.id,
+            subconversation_id=None,
+            current_time=service.clock.now(),
+        )
+        assert any(isinstance(message, ErrorMessage) for message in saved_messages)
+
+
+@pytest.mark.asyncio
+async def test_stream_emits_error_when_tool_executor_raises_unexpected_exception(
+    db_engine: AsyncEngine,
+) -> None:
+    tool_call = ToolCallItem(
+        id="call_executor_crash_stream",
+        type="function",
+        function=ToolCallFunction(name="example_tool", arguments='{"x": 1}'),
+    )
+    llm_client = RuleBasedMockLLMClient(
+        rules=[],
+        default_response=LLMOutput(content=None, tool_calls=[tool_call]),
+    )
+    service = _make_service(llm_client=llm_client, max_iterations=3)
+    service.tool_executor.execute = AsyncMock(  # type: ignore[method-assign]
+        side_effect=RuntimeError("unexpected tool executor crash")
+    )
+
+    async with get_db_context(db_engine) as db_context:
+        events: list[LLMStreamEvent] = []
+        async for event in service.handle_chat_interaction_stream(
+            db_context=db_context,
+            interface_type="test",
+            conversation_id="conv_executor_crash_stream",
+            trigger_content_parts=[{"type": "text", "text": "hello"}],
+            trigger_interface_message_id="msg-executor-crash-stream",
+            user_name="tester",
+        ):
+            events.append(event)
+
+        assert any(event.type == "error" for event in events)
+
+        saved_messages = await db_context.message_history.get_recent(
+            interface_type="test",
+            conversation_id="conv_executor_crash_stream",
+            limit=10,
+            max_age=timedelta(hours=24),
+            processing_profile_id=service.service_config.id,
+            subconversation_id=None,
+            current_time=service.clock.now(),
+        )
+        assert any(isinstance(message, ErrorMessage) for message in saved_messages)
+
+
 @pytest.mark.no_db
 @pytest.mark.asyncio
 async def test_context_aggregate_context_raises_on_provider_failure() -> None:
