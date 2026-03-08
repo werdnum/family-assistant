@@ -378,7 +378,12 @@ class ProcessingService:
         """Persist a history message using either the active context or a fresh one."""
         message_timestamp = timestamp if timestamp is not None else self.clock.now()
 
-        if save_with_isolated_context:
+        # On SQLite, avoid nested contexts with StaticPool because they may share
+        # the same underlying connection/transaction as the outer context.
+        if (
+            save_with_isolated_context
+            and db_context.engine.dialect.name == "postgresql"
+        ):
             async with get_db_context(
                 engine=db_context.engine,
                 message_notifier=db_context.message_notifier,
