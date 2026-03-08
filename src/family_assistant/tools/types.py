@@ -179,6 +179,7 @@ if TYPE_CHECKING:
     from family_assistant.utils.clock import Clock
 
 
+# Maps event source IDs to their corresponding EventSource instances.
 type EventSourcesById = Mapping[str, EventSource]
 
 

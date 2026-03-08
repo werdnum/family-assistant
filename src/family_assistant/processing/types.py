@@ -150,9 +150,13 @@ class ProcessingServiceConfig:
     delegation_security_level: DelegationSecurityLevelValue
     id: str  # Unique identifier for this service profile
     description: str = ""  # Human-readable description of this profile
-    model_parameters: dict[str, dict[str, object]] | None = None
+    model_parameters: dict[str, dict[str, object]] | None = (
+        None  # regex pattern -> provider params mapping
+    )
     fallback_model_id: str | None = None  # Added for LLM fallback
-    fallback_model_parameters: dict[str, dict[str, object]] | None = None
+    fallback_model_parameters: dict[str, dict[str, object]] | None = (
+        None  # regex pattern -> provider params mapping
+    )
     # Web-specific history settings
     web_max_history_messages: int | None = None  # If None, uses max_history_messages
     web_history_max_age_hours: float | None = None  # Can be fractional
