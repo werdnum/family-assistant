@@ -591,16 +591,23 @@ class LLMStreamingLoop:
                         execution_error,
                         exc_info=execution_error,
                     )
+                    formatted_traceback = "".join(
+                        traceback.format_exception(
+                            type(execution_error),
+                            execution_error,
+                            execution_error.__traceback__,
+                        )
+                    )
                     error_event = LLMStreamEvent(
                         type="tool_result",
                         tool_call_id=tool_call_id,
                         tool_result=f"Unexpected error: {str(execution_error)}",
-                        error=traceback.format_exc(),
+                        error=formatted_traceback,
                     )
                     error_tool_message = ToolMessage(
                         tool_call_id=tool_call_id,
                         content=f"Unexpected error: {str(execution_error)}",
-                        error_traceback=traceback.format_exc(),
+                        error_traceback=formatted_traceback,
                         name="unknown",
                     )
                     yield (error_event, error_tool_message)
