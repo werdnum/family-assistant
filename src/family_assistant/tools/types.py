@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import base64
 import json
+from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Literal, NotRequired, TypedDict
 
@@ -178,6 +179,9 @@ if TYPE_CHECKING:
     from family_assistant.utils.clock import Clock
 
 
+type EventSourcesById = Mapping[str, EventSource]
+
+
 class CalendarEvent(TypedDict):
     """Represents a calendar event with structured data."""
 
@@ -240,7 +244,7 @@ class ToolExecutionContext:
     home_assistant_client: (
         HomeAssistantClientWrapper | None
     )  # NO DEFAULT - must specify explicitly
-    event_sources: dict[str, EventSource] | None  # NO DEFAULT - must specify explicitly
+    event_sources: EventSourcesById | None  # NO DEFAULT - must specify explicitly
     attachment_registry: (
         AttachmentRegistry | None
     )  # NO DEFAULT - must specify explicitly

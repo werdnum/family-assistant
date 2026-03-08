@@ -28,12 +28,12 @@ from .utils import get_file_extension_from_mime_type
 if TYPE_CHECKING:
     from family_assistant.camera.protocol import CameraBackend
     from family_assistant.events.indexing_source import IndexingSource
-    from family_assistant.events.sources import EventSource
     from family_assistant.home_assistant_wrapper import HomeAssistantClientWrapper
     from family_assistant.interfaces import ChatInterface
     from family_assistant.llm.tool_call import ToolCallItem
     from family_assistant.services.attachment_registry import AttachmentRegistry
     from family_assistant.storage.context import DatabaseContext
+    from family_assistant.tools.types import EventSourcesById
     from family_assistant.utils.clock import Clock
 
     from .attachments import AttachmentProcessor
@@ -143,7 +143,7 @@ class ToolExecutor:
         processing_service: ProcessingService | None,
         home_assistant_client: HomeAssistantClientWrapper | None,
         camera_backend: CameraBackend | None,
-        event_sources: dict[str, EventSource] | None,
+        event_sources: EventSourcesById | None,
     ) -> ToolExecutionContext:
         chat_interfaces_dict = chat_interfaces
         if chat_interfaces_dict is None and chat_interface:
@@ -222,7 +222,7 @@ class ToolExecutor:
         processing_service: ProcessingService | None = None,
         home_assistant_client: HomeAssistantClientWrapper | None = None,
         camera_backend: CameraBackend | None = None,
-        event_sources: dict[str, EventSource] | None = None,
+        event_sources: EventSourcesById | None = None,
     ) -> ToolExecutionResult:
         """Execute a single tool call and return the result.
 

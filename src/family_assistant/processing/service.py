@@ -46,11 +46,11 @@ if TYPE_CHECKING:
     from family_assistant.camera.protocol import CameraBackend
     from family_assistant.config_models import AppConfig
     from family_assistant.context_providers import ContextProvider
-    from family_assistant.events.sources import EventSource
     from family_assistant.home_assistant_wrapper import HomeAssistantClientWrapper
     from family_assistant.interfaces import ChatInterface
     from family_assistant.services.attachment_registry import AttachmentRegistry
     from family_assistant.tools import ToolsProvider
+    from family_assistant.tools.types import EventSourcesById
 
 logger = logging.getLogger(__name__)
 tracer = trace.get_tracer(__name__)
@@ -72,7 +72,7 @@ class ProcessingService:
         app_config: AppConfig,
         clock: Clock | None = None,
         attachment_registry: AttachmentRegistry | None = None,
-        event_sources: dict[str, EventSource] | None = None,
+        event_sources: EventSourcesById | None = None,
     ) -> None:
         self._llm_client = llm_client
         self.tools_provider = tools_provider

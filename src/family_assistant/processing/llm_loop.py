@@ -29,11 +29,11 @@ if TYPE_CHECKING:
 
     from family_assistant.camera.protocol import CameraBackend
     from family_assistant.config_models import AppConfig
-    from family_assistant.events.sources import EventSource
     from family_assistant.home_assistant_wrapper import HomeAssistantClientWrapper
     from family_assistant.interfaces import ChatInterface
     from family_assistant.llm.tool_call import ToolCallItem
     from family_assistant.storage.context import DatabaseContext
+    from family_assistant.tools.types import EventSourcesById
 
     from .attachments import AttachmentProcessor
     from .service import ProcessingService
@@ -96,7 +96,7 @@ class LLMStreamingLoop:
         processing_service: ProcessingService | None = None,
         home_assistant_client: HomeAssistantClientWrapper | None = None,
         camera_backend: CameraBackend | None = None,
-        event_sources: dict[str, EventSource] | None = None,
+        event_sources: EventSourcesById | None = None,
     ) -> tuple[list[LLMMessage], MessageReasoningInfo | None, list[str] | None]:
         """
         Non-streaming version of process_message that uses the streaming generator internally.
@@ -156,7 +156,7 @@ class LLMStreamingLoop:
         processing_service: ProcessingService | None = None,
         home_assistant_client: HomeAssistantClientWrapper | None = None,
         camera_backend: CameraBackend | None = None,
-        event_sources: dict[str, EventSource] | None = None,
+        event_sources: EventSourcesById | None = None,
     ) -> AsyncIterator[tuple[LLMStreamEvent, LLMMessage | None]]:
         """
         Streaming version of process_message that yields LLMStreamEvent objects as they are generated.
