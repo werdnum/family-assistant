@@ -200,6 +200,25 @@ It now incorporates external analysis from:
   - References: `types.py:16`
   - Sources: `[C678]` (Added from PR #678)
 
+- **37. Stream done-event attachment metadata lookup swallowed failures and continued with partial
+  metadata.**
+
+  - Impact: Hidden attachment-registry failures can silently degrade streamed attachment payloads.
+  - Status (2026-03-08): Phase 7a complete on branch
+    `processing-phase7-attachment-context-fail-fast` (missing attachment metadata in done-event
+    enrichment now raises fail-fast).
+  - References: `llm_loop.py:472`
+  - Sources: `[Cdx]` (Added during implementation)
+
+- **38. Thread attachment context extraction swallowed exceptions and returned empty context.**
+
+  - Impact: Attachment context can disappear silently, degrading prompt grounding.
+  - Status (2026-03-08): Phase 7a complete on branch
+    `processing-phase7-attachment-context-fail-fast` (attachment-context extraction now propagates
+    failures).
+  - References: `attachments.py:285`
+  - Sources: `[Cdx]` (Added during implementation)
+
 ### P2
 
 - **28. Processing interfaces use `Any` where stronger types/protocols are available.**

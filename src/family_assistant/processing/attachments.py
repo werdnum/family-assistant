@@ -282,62 +282,53 @@ class AttachmentProcessor:
         if not self.attachment_registry:
             return ""
 
-        try:
-            # Query recent attachments using storage layer method
-            cutoff_time = self.clock.now() - timedelta(hours=max_age_hours)
-
-            attachments = (
-                await self.attachment_registry.get_recent_attachments_for_conversation(
-                    db_context=db_context,
-                    conversation_id=conversation_id,
-                    max_age=cutoff_time,
-                )
+        # Query recent attachments using storage layer method
+        cutoff_time = self.clock.now() - timedelta(hours=max_age_hours)
+        attachments = (
+            await self.attachment_registry.get_recent_attachments_for_conversation(
+                db_context=db_context,
+                conversation_id=conversation_id,
+                max_age=cutoff_time,
             )
+        )
 
-            if not attachments:
-                return ""
-
-            # Format attachment context
-            attachment_items = []
-            now = self.clock.now()
-
-            for attachment in attachments:
-                attachment_id = attachment.attachment_id
-                filename = attachment.description or "unknown"
-                content_type = attachment.mime_type or "unknown"
-                created_at = attachment.created_at
-
-                # Ensure created_at is timezone-aware (SQLite may return naive datetimes)
-                if created_at.tzinfo is None:
-                    created_at = created_at.replace(tzinfo=UTC)
-
-                # Calculate age
-                age = now - created_at
-                if age.total_seconds() < 3600:  # Less than 1 hour
-                    minutes = int(age.total_seconds() / 60)
-                    age_str = f"{minutes} minute{'s' if minutes != 1 else ''} ago"
-                else:
-                    hours = int(age.total_seconds() / 3600)
-                    age_str = f"{hours} hour{'s' if hours != 1 else ''} ago"
-
-                attachment_items.append(
-                    f"- [{attachment_id}] {filename} ({content_type}) - {age_str}"
-                )
-
-            # Use prompt template
-            items_str = "\n".join(attachment_items)
-            header_template = prompts.get(
-                "thread_attachments_context_header",
-                "Recent Attachments in Conversation:\n{attachments_list}",
-            )
-
-            return header_template.format(attachments_list=items_str)
-
-        except Exception as e:
-            logger.error(
-                f"Error extracting conversation attachments context: {e}", exc_info=True
-            )
+        if not attachments:
             return ""
+
+        # Format attachment context
+        attachment_items = []
+        now = self.clock.now()
+
+        for attachment in attachments:
+            attachment_id = attachment.attachment_id
+            filename = attachment.description or "unknown"
+            content_type = attachment.mime_type or "unknown"
+            created_at = attachment.created_at
+
+            # Ensure created_at is timezone-aware (SQLite may return naive datetimes)
+            if created_at.tzinfo is None:
+                created_at = created_at.replace(tzinfo=UTC)
+
+            # Calculate age
+            age = now - created_at
+            if age.total_seconds() < 3600:  # Less than 1 hour
+                minutes = int(age.total_seconds() / 60)
+                age_str = f"{minutes} minute{'s' if minutes != 1 else ''} ago"
+            else:
+                hours = int(age.total_seconds() / 3600)
+                age_str = f"{hours} hour{'s' if hours != 1 else ''} ago"
+
+            attachment_items.append(
+                f"- [{attachment_id}] {filename} ({content_type}) - {age_str}"
+            )
+
+        # Use prompt template
+        items_str = "\n".join(attachment_items)
+        header_template = prompts.get(
+            "thread_attachments_context_header",
+            "Recent Attachments in Conversation:\n{attachments_list}",
+        )
+        return header_template.format(attachments_list=items_str)
 
     async def select_for_response(
         self,

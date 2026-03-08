@@ -17,10 +17,17 @@ from family_assistant.llm import (
     ToolCallFunction,
     ToolCallItem,
 )
-from family_assistant.llm.messages import AssistantMessage, ErrorMessage
+from family_assistant.llm.messages import (
+    AssistantMessage,
+    ErrorMessage,
+    SystemMessage,
+    ToolMessage,
+    UserMessage,
+)
 from family_assistant.processing import ProcessingService, ProcessingServiceConfig
 from family_assistant.processing.attachments import AttachmentProcessor
 from family_assistant.processing.context import ContextPreparer
+from family_assistant.processing.types import ToolExecutionResult
 from family_assistant.storage.context import get_db_context
 from family_assistant.tools.types import ToolAttachment, ToolResult
 from family_assistant.utils.clock import SystemClock
@@ -479,6 +486,100 @@ async def test_convert_urls_to_data_uris_missing_file_raises() -> None:
                 },
             }
         ])
+
+
+@pytest.mark.no_db
+@pytest.mark.asyncio
+async def test_extract_conversation_context_propagates_registry_failures() -> None:
+    mock_registry = AsyncMock()
+    mock_registry.get_recent_attachments_for_conversation.side_effect = RuntimeError(
+        "attachment context query failed"
+    )
+    processor = AttachmentProcessor(
+        attachment_registry=mock_registry,
+        llm_client=MagicMock(),
+        app_config=AppConfig(),
+        clock=SystemClock(),
+    )
+
+    with pytest.raises(RuntimeError, match="attachment context query failed"):
+        await processor.extract_conversation_context(
+            db_context=MagicMock(),
+            conversation_id="conv",
+            max_age_hours=24,
+            prompts={},
+        )
+
+
+@pytest.mark.no_db
+@pytest.mark.asyncio
+async def test_stream_done_attachment_metadata_lookup_propagates_failures() -> None:
+    class TwoStepToolThenContentLLM:
+        def __init__(self) -> None:
+            self.call_count = 0
+
+        async def generate_response_stream(
+            self,
+            *,
+            messages: list[object],  # noqa: ARG002
+            tools: list[dict[str, object]] | None,  # noqa: ARG002
+            tool_choice: str,  # noqa: ARG002
+        ) -> AsyncIterator[LLMStreamEvent]:
+            self.call_count += 1
+            if self.call_count == 1:
+                yield LLMStreamEvent(
+                    type="tool_call",
+                    tool_call=ToolCallItem(
+                        id="call-1",
+                        type="function",
+                        function=ToolCallFunction(name="example_tool", arguments="{}"),
+                    ),
+                )
+                yield LLMStreamEvent(type="done", metadata={})
+                return
+
+            yield LLMStreamEvent(type="content", content="final answer")
+            yield LLMStreamEvent(type="done", metadata={})
+
+    service = _make_service()
+    service.llm_client = cast("Any", TwoStepToolThenContentLLM())
+    service.tool_executor.execute = AsyncMock(  # type: ignore[method-assign]
+        return_value=ToolExecutionResult(
+            stream_event=LLMStreamEvent(
+                type="tool_result",
+                tool_call_id="call-1",
+                tool_result="ok",
+            ),
+            llm_message=ToolMessage(
+                tool_call_id="call-1",
+                content="ok",
+                name="example_tool",
+            ),
+            auto_attachment_ids=["missing-att"],
+            explicit_attachment_ids=None,
+        )
+    )
+    mock_registry = AsyncMock()
+    mock_registry.get_attachment_with_context.return_value = None
+    service.attachment_processor.attachment_registry = mock_registry
+
+    with pytest.raises(
+        ValueError, match="Missing metadata for pending attachment 'missing-att'"
+    ):
+        async for _event, _message in service.llm_loop.run_stream(
+            db_context=MagicMock(),
+            messages=[
+                SystemMessage(content="system"),
+                UserMessage(content="hello"),
+            ],
+            interface_type="test",
+            conversation_id="conv",
+            user_name="tester",
+            turn_id="turn",
+            chat_interface=None,
+            processing_service=service,
+        ):
+            pass
 
 
 @pytest.mark.no_db

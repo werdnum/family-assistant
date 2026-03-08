@@ -470,25 +470,21 @@ class LLMStreamingLoop:
                 attachment_details = []
                 if self.attachment_processor.attachment_registry:
                     for att_id in pending_attachment_ids:
-                        try:
-                            metadata = await self.attachment_processor.attachment_registry.get_attachment_with_context(
-                                att_id
+                        metadata = await self.attachment_processor.attachment_registry.get_attachment_with_context(
+                            att_id
+                        )
+                        if metadata is None:
+                            raise ValueError(
+                                f"Missing metadata for pending attachment '{att_id}'"
                             )
-                            if metadata:
-                                attachment_details.append({
-                                    "id": att_id,
-                                    "type": self._infer_attachment_type(
-                                        metadata.mime_type
-                                    ),
-                                    "name": metadata.description or "Attachment",
-                                    "content": f"/api/attachments/{att_id}",
-                                    "mime_type": metadata.mime_type,
-                                    "size": metadata.size,
-                                })
-                        except Exception as e:
-                            logger.warning(
-                                f"Failed to fetch metadata for attachment {att_id}: {e}"
-                            )
+                        attachment_details.append({
+                            "id": att_id,
+                            "type": self._infer_attachment_type(metadata.mime_type),
+                            "name": metadata.description or "Attachment",
+                            "content": f"/api/attachments/{att_id}",
+                            "mime_type": metadata.mime_type,
+                            "size": metadata.size,
+                        })
 
                 done_metadata["attachment_ids"] = pending_attachment_ids
                 done_metadata["attachments"] = attachment_details
