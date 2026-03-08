@@ -166,12 +166,18 @@ It now incorporates external analysis from:
 - **21. `attach_to_response` special handling is scattered across layers.**
 
   - Impact: Tool-specific behavior leaks into multiple pipeline stages.
+  - Status (2026-03-08): Phase 8a complete on branch `processing-phase8a-attach-and-log-cleanups`
+    (`ToolExecutionResult` now applies attachment queue updates directly, so `llm_loop` no longer
+    contains separate explicit-vs-auto attachment update logic).
   - References: `llm_loop.py:558`, `tool_execution.py:378`
   - Sources: `[C678]` (Added from PR #678)
 
 - **22. Tool execution logs full arguments.**
 
   - Impact: Sensitive values/PII may leak to logs.
+  - Status (2026-03-08): Phase 8a complete on branch `processing-phase8a-attach-and-log-cleanups`
+    (tool argument parse failures now log sanitized error summaries and store sanitized tracebacks
+    instead of raw argument payloads).
   - References: `tool_execution.py:186`
   - Sources: `[Cdx]`
 

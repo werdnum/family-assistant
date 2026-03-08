@@ -237,6 +237,25 @@ def test_llm_loop_infers_attachment_types_from_mime_type() -> None:
     assert service.llm_loop._infer_attachment_type(None) == "file"  # noqa: SLF001
 
 
+@pytest.mark.no_db
+def test_tool_execution_result_applies_attachment_updates_consistently() -> None:
+    result = ToolExecutionResult(
+        stream_event=LLMStreamEvent(type="tool_result", tool_call_id="call-1"),
+        llm_message=ToolMessage(
+            tool_call_id="call-1",
+            content="ok",
+            name="example_tool",
+        ),
+        auto_attachment_ids=["auto-1", "auto-2"],
+        explicit_attachment_ids=["explicit-1"],
+    )
+    pending_attachment_ids = ["existing", "auto-1"]
+
+    result.apply_attachment_updates(pending_attachment_ids)
+
+    assert pending_attachment_ids == ["explicit-1"]
+
+
 @pytest.mark.asyncio
 async def test_final_iteration_tool_calls_do_not_raise_processing_error(
     db_engine: AsyncEngine,
