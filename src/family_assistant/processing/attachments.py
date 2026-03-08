@@ -540,74 +540,55 @@ Call attach_to_response with your selected attachment IDs."""
         )
 
         if not self.attachment_registry:
-            logger.error(
-                "Tool '%s' returned %d bytes, exceeding %d bytes, but attachment registry is unavailable.",
-                tool_name,
-                len(content_bytes),
-                THRESHOLD_BYTES,
+            raise RuntimeError(
+                "Tool result exceeded large-result threshold but attachment storage is unavailable: "
+                f"tool='{tool_name}', bytes={len(content_bytes)}, threshold={THRESHOLD_BYTES}"
             )
-            return (
-                "Error: Tool result was too large to inline and could not be stored as an attachment "
-                "because attachment storage is unavailable.",
-                None,
+        file_extension = get_file_extension_from_mime_type(mime_type)
+        registered_metadata = (
+            await self.attachment_registry.store_and_register_tool_attachment(
+                file_content=content_bytes,
+                filename=f"large_result_{tool_name}_{uuid.uuid4()}{file_extension}",
+                content_type=mime_type,
+                tool_name=tool_name,
+                description=f"Large output from {tool_name}",
+                conversation_id=conversation_id,
+                metadata={
+                    "tool_call_id": call_id,
+                    "auto_display": True,
+                    "large_result_auto_convert": True,
+                },
+                db_context=db_context,
+            )
+        )
+
+        att_id = registered_metadata.attachment_id
+
+        hint = (
+            f"\n\n[NOTE: This result was too large ({len(content_bytes)} bytes) "
+            f"and has been automatically converted to an attachment with ID {att_id}.]"
+        )
+        if mime_type == "application/json":
+            hint += (
+                f"\nYou can use `jq_query(attachment_id='{att_id}', jq_program='...')` "
+                f"to process it without loading it all into your context."
+            )
+        else:
+            hint += (
+                f"\nYou can use `read_text_attachment(attachment_id='{att_id}', ...)` "
+                f"to read parts of it, or use `execute_script` to process it with a custom script."
+                f"\nExample script for searching:\n"
+                f"```python\n"
+                f"content = attachment_read('{att_id}')\n"
+                f"for line in content.split('\\n'):\n"
+                f"    if 'search_term' in line:\n"
+                f"        print(line)\n"
+                f"```"
             )
 
-        try:
-            file_extension = get_file_extension_from_mime_type(mime_type)
-            registered_metadata = (
-                await self.attachment_registry.store_and_register_tool_attachment(
-                    file_content=content_bytes,
-                    filename=f"large_result_{tool_name}_{uuid.uuid4()}{file_extension}",
-                    content_type=mime_type,
-                    tool_name=tool_name,
-                    description=f"Large output from {tool_name}",
-                    conversation_id=conversation_id,
-                    metadata={
-                        "tool_call_id": call_id,
-                        "auto_display": True,
-                        "large_result_auto_convert": True,
-                    },
-                    db_context=db_context,
-                )
-            )
-
-            att_id = registered_metadata.attachment_id
-
-            hint = (
-                f"\n\n[NOTE: This result was too large ({len(content_bytes)} bytes) "
-                f"and has been automatically converted to an attachment with ID {att_id}.]"
-            )
-            if mime_type == "application/json":
-                hint += (
-                    f"\nYou can use `jq_query(attachment_id='{att_id}', jq_program='...')` "
-                    f"to process it without loading it all into your context."
-                )
-            else:
-                hint += (
-                    f"\nYou can use `read_text_attachment(attachment_id='{att_id}', ...)` "
-                    f"to read parts of it, or use `execute_script` to process it with a custom script."
-                    f"\nExample script for searching:\n"
-                    f"```python\n"
-                    f"content = attachment_read('{att_id}')\n"
-                    f"for line in content.split('\\n'):\n"
-                    f"    if 'search_term' in line:\n"
-                    f"        print(line)\n"
-                    f"```"
-                )
-
-            new_content = f"Tool result from '{tool_name}' was too large and was saved as attachment {att_id}.{hint}"
-            logger.info(
-                f"Auto-converted large tool result ({len(content_bytes)} bytes) from "
-                f"'{tool_name}' to attachment {att_id}"
-            )
-            return new_content, att_id
-
-        except Exception as e:
-            logger.error(
-                f"Failed to auto-convert large tool result to attachment: {e}",
-                exc_info=True,
-            )
-            return (
-                f"Error: Tool result from '{tool_name}' was too large and could not be stored as an attachment.",
-                None,
-            )
+        new_content = f"Tool result from '{tool_name}' was too large and was saved as attachment {att_id}.{hint}"
+        logger.info(
+            f"Auto-converted large tool result ({len(content_bytes)} bytes) from "
+            f"'{tool_name}' to attachment {att_id}"
+        )
+        return new_content, att_id

@@ -25,7 +25,10 @@ from family_assistant.llm.messages import (
     UserMessage,
 )
 from family_assistant.processing import ProcessingService, ProcessingServiceConfig
-from family_assistant.processing.attachments import AttachmentProcessor
+from family_assistant.processing.attachments import (
+    AttachmentProcessor,
+    AttachmentSelectionError,
+)
 from family_assistant.processing.context import ContextPreparer
 from family_assistant.processing.types import ToolExecutionResult
 from family_assistant.storage.context import get_db_context
@@ -580,6 +583,107 @@ async def test_stream_done_attachment_metadata_lookup_propagates_failures() -> N
             processing_service=service,
         ):
             pass
+
+
+@pytest.mark.no_db
+@pytest.mark.asyncio
+async def test_stream_attachment_selection_failure_uses_capped_auto_queue() -> None:
+    class TwoStepToolThenContentLLM:
+        def __init__(self) -> None:
+            self.call_count = 0
+
+        async def generate_response_stream(
+            self,
+            *,
+            messages: list[object],  # noqa: ARG002
+            tools: list[dict[str, object]] | None,  # noqa: ARG002
+            tool_choice: str,  # noqa: ARG002
+        ) -> AsyncIterator[LLMStreamEvent]:
+            self.call_count += 1
+            if self.call_count == 1:
+                yield LLMStreamEvent(
+                    type="tool_call",
+                    tool_call=ToolCallItem(
+                        id="call-1",
+                        type="function",
+                        function=ToolCallFunction(name="example_tool", arguments="{}"),
+                    ),
+                )
+                yield LLMStreamEvent(
+                    type="tool_call",
+                    tool_call=ToolCallItem(
+                        id="call-2",
+                        type="function",
+                        function=ToolCallFunction(name="example_tool", arguments="{}"),
+                    ),
+                )
+                yield LLMStreamEvent(type="done", metadata={})
+                return
+
+            yield LLMStreamEvent(type="content", content="final answer")
+            yield LLMStreamEvent(type="done", metadata={})
+
+    service = _make_service()
+    service.app_config.attachment_selection_threshold = 0
+    service.app_config.max_response_attachments = 1
+    service.llm_client = cast("Any", TwoStepToolThenContentLLM())
+    service.tool_executor.execute = AsyncMock(  # type: ignore[method-assign]
+        side_effect=[
+            ToolExecutionResult(
+                stream_event=LLMStreamEvent(
+                    type="tool_result",
+                    tool_call_id="call-1",
+                    tool_result="ok",
+                ),
+                llm_message=ToolMessage(
+                    tool_call_id="call-1",
+                    content="ok",
+                    name="example_tool",
+                ),
+                auto_attachment_ids=["att-1"],
+                explicit_attachment_ids=None,
+            ),
+            ToolExecutionResult(
+                stream_event=LLMStreamEvent(
+                    type="tool_result",
+                    tool_call_id="call-2",
+                    tool_result="ok",
+                ),
+                llm_message=ToolMessage(
+                    tool_call_id="call-2",
+                    content="ok",
+                    name="example_tool",
+                ),
+                auto_attachment_ids=["att-2"],
+                explicit_attachment_ids=None,
+            ),
+        ],
+    )
+    service.attachment_processor.select_for_response = AsyncMock(  # type: ignore[method-assign]
+        side_effect=AttachmentSelectionError("selection failed")
+    )
+
+    done_event = None
+    async for event, _message in service.llm_loop.run_stream(
+        db_context=MagicMock(),
+        messages=[
+            SystemMessage(content="system"),
+            UserMessage(content="hello"),
+        ],
+        interface_type="test",
+        conversation_id="conv",
+        user_name="tester",
+        turn_id="turn",
+        chat_interface=None,
+        processing_service=service,
+    ):
+        if event.type == "done":
+            done_event = event
+
+    assert done_event is not None
+    assert done_event.metadata is not None
+    attachment_ids = done_event.metadata.get("attachment_ids")
+    assert attachment_ids == ["att-1"]
 
 
 @pytest.mark.no_db

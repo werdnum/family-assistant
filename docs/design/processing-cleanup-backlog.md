@@ -111,12 +111,19 @@ It now incorporates external analysis from:
 - **14. `select_for_response` fails open to "last N" attachments on parse/LLM errors.**
 
   - Impact: Can return irrelevant attachments instead of explicit failure handling.
+  - Status (2026-03-08): Phase 7b complete on branch
+    `processing-phase7b-attachment-fail-open-cleanup` (attachment-selection failures now use an
+    explicit warning path with deterministic, capped auto-queued ordering instead of open-ended
+    fallback selection).
   - References: `attachments.py:478`, `attachments.py:483`
   - Sources: `[Cdx][G677][C678]` (corroborated by both PRs)
 
 - **15. `handle_large_result` fails open to inline large content.**
 
   - Impact: Context explosion and degraded reliability when attachment storage fails.
+  - Status (2026-03-08): Phase 7b complete on branch
+    `processing-phase7b-attachment-fail-open-cleanup` (large-result auto-conversion now fails fast
+    when storage is unavailable or persistence fails, instead of returning fallback strings).
   - References: `attachments.py:543`, `attachments.py:593`
   - Sources: `[Cdx][G677][C678]` (corroborated by both PRs)
 
