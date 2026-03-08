@@ -37,6 +37,7 @@ from family_assistant.config_sources import (
     deep_merge_dicts,
     load_yaml_file,
 )
+from family_assistant.delegation_security import DelegationSecurityLevel
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -591,6 +592,30 @@ class TestValidateTimezone:
         """Test that invalid timezone raises a ValidationError instead of silently defaulting."""
         with pytest.raises(ValidationError, match="Invalid timezone"):
             ProcessingConfig(timezone="Invalid/Timezone")
+
+
+class TestDelegationSecurityLevel:
+    """Tests for delegation security level enum parsing."""
+
+    def test_default_security_level_is_confirm(self) -> None:
+        config = ProcessingConfig()
+        assert config.delegation_security_level == DelegationSecurityLevel.CONFIRM
+
+    def test_security_level_parses_unrestricted(self) -> None:
+        config = ProcessingConfig.model_validate({
+            "delegation_security_level": "unrestricted"
+        })
+        assert config.delegation_security_level == DelegationSecurityLevel.UNRESTRICTED
+
+    def test_legacy_none_security_level_still_parses(self) -> None:
+        config = ProcessingConfig.model_validate({"delegation_security_level": "none"})
+        assert config.delegation_security_level == DelegationSecurityLevel.NONE
+
+    def test_invalid_security_level_rejected(self) -> None:
+        with pytest.raises(ValidationError):
+            ProcessingConfig.model_validate({
+                "delegation_security_level": "definitely_invalid"
+            })
 
 
 class TestResolveServiceProfile:
