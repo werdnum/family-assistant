@@ -123,6 +123,7 @@ class ProcessingConfig(BaseModel):
     home_assistant_verify_ssl: bool = True
     include_system_docs: list[str] | None = None
     max_iterations: int = 5
+    context_pruning_min_turns: int = 3
     calendar_config: CalendarConfig | None = None  # Per-profile calendar config
     camera_config: CameraConfig | None = None  # Per-profile camera backend config
     greeting_wav_path: str | None = None

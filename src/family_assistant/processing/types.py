@@ -155,6 +155,7 @@ class ProcessingServiceConfig:
     web_max_history_messages: int | None = None  # If None, uses max_history_messages
     web_history_max_age_hours: float | None = None  # Can be fractional
     max_iterations: int = 5
+    context_pruning_min_turns: int = 3
     # Visibility grants for note access control
     visibility_grants: set[str] | None = None
     default_note_visibility_labels: list[str] | None = None

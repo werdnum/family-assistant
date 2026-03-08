@@ -71,6 +71,7 @@ def resolve_service_profile(
             "web_max_history_messages",
             "web_history_max_age_hours",
             "max_iterations",  # This was missing before the fix
+            "context_pruning_min_turns",
             "delegation_security_level",
             "retry_config",
             "camera_config",
@@ -319,6 +320,7 @@ class TestOtherScalarValuesMerging:
                 "web_max_history_messages": 20,
                 "web_history_max_age_hours": 48,
                 "max_iterations": 5,
+                "context_pruning_min_turns": 3,
                 "delegation_security_level": "confirm",
             },
         }
@@ -334,6 +336,7 @@ class TestOtherScalarValuesMerging:
                 "web_max_history_messages": 100,
                 "web_history_max_age_hours": 336,
                 "max_iterations": 100,
+                "context_pruning_min_turns": 9,
                 "delegation_security_level": "unrestricted",
                 "retry_config": {"max_retries": 3},
                 "camera_config": {"backend": "reolink"},
@@ -354,6 +357,7 @@ class TestOtherScalarValuesMerging:
         assert resolved["processing_config"]["web_max_history_messages"] == 100
         assert resolved["processing_config"]["web_history_max_age_hours"] == 336
         assert resolved["processing_config"]["max_iterations"] == 100
+        assert resolved["processing_config"]["context_pruning_min_turns"] == 9
         assert (
             resolved["processing_config"]["delegation_security_level"] == "unrestricted"
         )

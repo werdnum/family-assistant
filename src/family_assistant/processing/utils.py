@@ -87,6 +87,8 @@ def _normalize_error_type(error_type: str) -> str:
 
 def prune_messages_for_context(
     messages: Sequence[LLMMessage],
+    *,
+    min_turns: int = 3,
 ) -> list[LLMMessage]:
     """Prune messages to reduce context length.
 
@@ -156,7 +158,9 @@ def prune_messages_for_context(
     if current_turn:
         turns.append(current_turn)
 
-    min_turns = 3
+    if min_turns < 1:
+        raise ValueError("min_turns must be >= 1")
+
     if len(turns) > min_turns:
         kept_turns = turns[-min_turns:]
         dropped = len(turns) - min_turns

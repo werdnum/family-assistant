@@ -476,6 +476,16 @@ Call attach_to_response with your selected attachment IDs."""
         )
         return selected_ids
 
+    @staticmethod
+    def _looks_like_json_content(content: str) -> bool:
+        """Infer JSON shape from delimiters without fully parsing large payloads."""
+        stripped_content = content.strip()
+        if len(stripped_content) < 2:
+            return False
+
+        opening, closing = stripped_content[0], stripped_content[-1]
+        return (opening, closing) in {("{", "}"), ("[", "]")}
+
     async def handle_large_result(
         self,
         db_context: DatabaseContext,
@@ -518,13 +528,12 @@ Call attach_to_response with your selected attachment IDs."""
             )
             return content, None
 
-        # Determine MIME type
-        mime_type = "text/plain"
-        try:
-            json.loads(content)
-            mime_type = "application/json"
-        except json.JSONDecodeError:
-            pass
+        # Determine MIME type without a full JSON parse of large payloads.
+        mime_type = (
+            "application/json"
+            if self._looks_like_json_content(content)
+            else "text/plain"
+        )
 
         if not self.attachment_registry:
             logger.error(

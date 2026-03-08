@@ -336,7 +336,10 @@ class LLMStreamingLoop:
                     logger.warning(
                         f"Context length exceeded, pruning messages and retrying: {e}"
                     )
-                    messages = prune_messages_for_context(messages)
+                    messages = prune_messages_for_context(
+                        messages,
+                        min_turns=self.service_config.context_pruning_min_turns,
+                    )
                     context_retry_attempted = True
                     continue
 
