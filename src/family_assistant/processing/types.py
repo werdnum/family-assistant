@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
-from enum import StrEnum
+from enum import Enum
 from typing import TYPE_CHECKING, Any, Literal
 
 if TYPE_CHECKING:
@@ -17,7 +17,7 @@ if TYPE_CHECKING:
 DelegationSecurityLevel = Literal["blocked", "confirm", "unrestricted"]
 
 
-class ChatInteractionStatus(StrEnum):
+class ChatInteractionStatus(Enum):
     """Outcome status for ProcessingService.handle_chat_interaction."""
 
     SUCCESS = "success"
@@ -53,15 +53,15 @@ class ChatInteractionResult:
 
     def __post_init__(self) -> None:
         """Enforce a consistent success/error contract."""
-        if not isinstance(self.status, ChatInteractionStatus):
-            raise ValueError(f"Invalid status: {self.status!r}")
-
         if self.status == ChatInteractionStatus.SUCCESS:
             if self.error_traceback is not None:
                 raise ValueError(
                     "ChatInteractionResult(status='success') cannot include error_traceback"
                 )
             return
+
+        if self.status != ChatInteractionStatus.ERROR:
+            raise ValueError(f"Invalid status: {self.status!r}")
 
         if self.error_traceback is None:
             raise ValueError(
