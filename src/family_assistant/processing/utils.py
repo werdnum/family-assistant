@@ -95,9 +95,9 @@ def prune_messages_for_context(
     Strategy:
     1. Replace old ToolMessage content with compact placeholders (preserving the
        latest turn's tool results intact).
-    2. Drop the oldest non-system turns when there are more than 3 user/assistant
-       turns, keeping only the 3 most recent user/assistant turns and all system
-       messages.
+    2. Drop the oldest non-system turns when there are more than ``min_turns``
+       user/assistant turns, keeping only the most recent ``min_turns`` turns
+       and all system messages.
 
     Returns a new list; the input list is not modified.
     """
