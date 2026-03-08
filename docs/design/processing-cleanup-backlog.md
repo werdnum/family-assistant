@@ -124,12 +124,17 @@ It now incorporates external analysis from:
   mapping.**
 
   - Impact: Hard to test and reason about; high change risk.
+  - Status (2026-03-08): Phase 6b complete on branch `processing-phase6b-tool-executor-fail-fast`
+    (execution path split into explicit stages; tool runtime errors are mapped separately from
+    post-processing).
   - References: `tool_execution.py:58`
   - Sources: `[Cdx][G677][C678]` (corroborated by both PRs)
 
 - **17. Broad catches during attachment enrichment/storage in tool execution.**
 
   - Impact: Partial/incorrect metadata may leak through with weak observability.
+  - Status (2026-03-08): Phase 6b complete on branch `processing-phase6b-tool-executor-fail-fast`
+    (attachment enrichment/storage failures now propagate fail-fast; covered by unit tests).
   - References: `tool_execution.py:305`, `tool_execution.py:406`
   - Sources: `[Cdx][C678]`
 
