@@ -4,7 +4,7 @@ import asyncio
 import json
 import logging
 import traceback
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 from family_assistant.llm import LLMInterface, LLMStreamEvent, StreamEventMetadata
 from family_assistant.llm.base import ContextLengthError
@@ -18,20 +18,32 @@ from family_assistant.llm.messages import (
     UserMessage,
 )
 
-from .utils import _map_stream_error_to_exception, prune_messages_for_context
+from .attachments import AttachmentSelectionError
+from .utils import (
+    _map_stream_error_to_exception,
+    assistant_message_has_thought_signature,
+    prune_messages_for_context,
+)
 
 if TYPE_CHECKING:
-    from collections.abc import AsyncIterator, Awaitable, Callable
+    from collections.abc import AsyncIterator
 
+    from family_assistant.camera.protocol import CameraBackend
     from family_assistant.config_models import AppConfig
+    from family_assistant.events.sources import EventSource
+    from family_assistant.home_assistant_wrapper import HomeAssistantClientWrapper
     from family_assistant.interfaces import ChatInterface
     from family_assistant.llm.tool_call import ToolCallItem
     from family_assistant.storage.context import DatabaseContext
-    from family_assistant.tools import ToolExecutionContext
 
     from .attachments import AttachmentProcessor
+    from .service import ProcessingService
     from .tool_execution import ToolExecutor
-    from .types import ProcessingServiceConfig, ToolExecutionResult
+    from .types import (
+        ProcessingServiceConfig,
+        RequestConfirmationCallback,
+        ToolExecutionResult,
+    )
 
 logger = logging.getLogger(__name__)
 
@@ -79,31 +91,13 @@ class LLMStreamingLoop:
         chat_interface: ChatInterface | None,
         user_id: str | None = None,
         chat_interfaces: dict[str, ChatInterface] | None = None,
-        request_confirmation_callback: (
-            Callable[
-                # ast-grep-ignore: no-dict-any - tool args have varying keys per tool
-                [
-                    str,
-                    str,
-                    str | None,
-                    str,
-                    str,
-                    # ast-grep-ignore: no-dict-any - tool args have varying keys per tool
-                    dict[str, Any],
-                    float,
-                    ToolExecutionContext,
-                ],
-                Awaitable[bool],
-            ]
-            | None
-        ) = None,
+        request_confirmation_callback: RequestConfirmationCallback | None = None,
         subconversation_id: str | None = None,
         # Runtime deps passed through to tool_executor
-        processing_service: Any = None,  # noqa: ANN401 - Circular import with ProcessingService
-        home_assistant_client: Any = None,  # noqa: ANN401 - Optional runtime dependency
-        camera_backend: Any = None,  # noqa: ANN401 - Optional runtime dependency
-        # ast-grep-ignore: no-dict-any - maps source IDs to heterogeneous event source objects
-        event_sources: dict[str, Any] | None = None,
+        processing_service: ProcessingService | None = None,
+        home_assistant_client: HomeAssistantClientWrapper | None = None,
+        camera_backend: CameraBackend | None = None,
+        event_sources: dict[str, EventSource] | None = None,
     ) -> tuple[list[LLMMessage], MessageReasoningInfo | None, list[str] | None]:
         """
         Non-streaming version of process_message that uses the streaming generator internally.
@@ -157,31 +151,13 @@ class LLMStreamingLoop:
         chat_interface: ChatInterface | None,
         user_id: str | None = None,
         chat_interfaces: dict[str, ChatInterface] | None = None,
-        request_confirmation_callback: (
-            Callable[
-                # ast-grep-ignore: no-dict-any - tool args have varying keys per tool
-                [
-                    str,
-                    str,
-                    str | None,
-                    str,
-                    str,
-                    # ast-grep-ignore: no-dict-any - tool args have varying keys per tool
-                    dict[str, Any],
-                    float,
-                    ToolExecutionContext,
-                ],
-                Awaitable[bool],
-            ]
-            | None
-        ) = None,
+        request_confirmation_callback: RequestConfirmationCallback | None = None,
         subconversation_id: str | None = None,
         # Runtime deps passed through to tool_executor
-        processing_service: Any = None,  # noqa: ANN401 - Circular import with ProcessingService
-        home_assistant_client: Any = None,  # noqa: ANN401 - Optional runtime dependency
-        camera_backend: Any = None,  # noqa: ANN401 - Optional runtime dependency
-        # ast-grep-ignore: no-dict-any - maps source IDs to heterogeneous event source objects
-        event_sources: dict[str, Any] | None = None,
+        processing_service: ProcessingService | None = None,
+        home_assistant_client: HomeAssistantClientWrapper | None = None,
+        camera_backend: CameraBackend | None = None,
+        event_sources: dict[str, EventSource] | None = None,
     ) -> AsyncIterator[tuple[LLMStreamEvent, LLMMessage | None]]:
         """
         Streaming version of process_message that yields LLMStreamEvent objects as they are generated.
@@ -237,26 +213,13 @@ class LLMStreamingLoop:
                 else "",
             )
 
-            # Check if conversation has thought signatures that must be preserved
-            # If so, we cannot modify the system prompt as it would invalidate signatures
-            has_thought_signatures = False
-            for msg in messages:
-                if isinstance(msg, AssistantMessage) and msg.tool_calls:
-                    for tc in msg.tool_calls:
-                        if tc.provider_metadata:
-                            # Check if provider_metadata indicates Google thought signatures
-                            if isinstance(tc.provider_metadata, GeminiProviderMetadata):
-                                if tc.provider_metadata.thought_signature:
-                                    has_thought_signatures = True
-                                    break
-                            elif isinstance(tc.provider_metadata, dict) and (
-                                tc.provider_metadata.get("provider") == "google"
-                                and "thought_signature" in tc.provider_metadata
-                            ):
-                                has_thought_signatures = True
-                                break
-                if has_thought_signatures:
-                    break
+            # Check if conversation has thought signatures that must be preserved.
+            # If so, we cannot modify the system prompt as it would invalidate signatures.
+            has_thought_signatures = any(
+                assistant_message_has_thought_signature(msg)
+                for msg in messages
+                if isinstance(msg, AssistantMessage)
+            )
 
             # Add iteration context to system prompt ONLY if no thought signatures present
             # Thought signatures are cryptographically tied to the exact conversation context
@@ -453,15 +416,23 @@ class LLMStreamingLoop:
                             break
 
                 if original_query:
-                    pending_attachment_ids = (
-                        await self.attachment_processor.select_for_response(
-                            pending_attachment_ids=pending_attachment_ids,
-                            original_query=original_query,
+                    try:
+                        pending_attachment_ids = (
+                            await self.attachment_processor.select_for_response(
+                                pending_attachment_ids=pending_attachment_ids,
+                                original_query=original_query,
+                            )
                         )
-                    )
-                    logger.info(
-                        f"Attachment selection reduced from auto-queued to {len(pending_attachment_ids)} based on query relevance"
-                    )
+                        logger.info(
+                            "Attachment selection reduced auto-queued results to %d items",
+                            len(pending_attachment_ids),
+                        )
+                    except AttachmentSelectionError as exc:
+                        logger.error(
+                            "Attachment selection failed; omitting attachments from response.",
+                            exc_info=exc,
+                        )
+                        pending_attachment_ids = []
 
             done_metadata: StreamEventMetadata = {"message": assistant_message_for_turn}
             if serialized_reasoning_info:

@@ -1,7 +1,8 @@
 from __future__ import annotations
 
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Literal
 
 if TYPE_CHECKING:
     from zoneinfo import ZoneInfo
@@ -10,6 +11,24 @@ if TYPE_CHECKING:
     from family_assistant.llm import LLMStreamEvent
     from family_assistant.llm.messages import MessageReasoningInfo, ToolMessage
     from family_assistant.skills.registry import NoteRegistry
+    from family_assistant.tools import ToolExecutionContext
+
+DelegationSecurityLevel = Literal["blocked", "confirm", "unrestricted"]
+
+# ast-grep-ignore: no-dict-any - tool args have varying keys per tool
+RequestConfirmationCallback = Callable[
+    [
+        str,
+        str,
+        str | None,
+        str,
+        str,
+        dict[str, Any],
+        float,
+        "ToolExecutionContext",
+    ],
+    Awaitable[bool],
+]
 
 
 @dataclass
@@ -46,7 +65,7 @@ class ProcessingServiceConfig:
     max_history_messages: int
     history_max_age_hours: float  # Can be fractional (e.g., 0.5 hours)
     tools_config: ToolsConfig
-    delegation_security_level: str  # "blocked", "confirm", "unrestricted"
+    delegation_security_level: DelegationSecurityLevel
     id: str  # Unique identifier for this service profile
     description: str = ""  # Human-readable description of this profile
     # Type hint for model_parameters should reflect pattern -> params_dict structure

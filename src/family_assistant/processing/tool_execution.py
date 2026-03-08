@@ -4,7 +4,7 @@ import json
 import logging
 import traceback
 import uuid
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, cast
 
 from opentelemetry import trace
 from opentelemetry.trace import StatusCode
@@ -18,13 +18,17 @@ from family_assistant.tools import (
 )
 from family_assistant.tools.types import ToolResult
 
-from .types import ProcessingServiceConfig, ToolExecutionResult
+from .types import (
+    ProcessingServiceConfig,
+    RequestConfirmationCallback,
+    ToolExecutionResult,
+)
 from .utils import get_file_extension_from_mime_type
 
 if TYPE_CHECKING:
-    from collections.abc import Awaitable, Callable
-
     from family_assistant.camera.protocol import CameraBackend
+    from family_assistant.events.indexing_source import IndexingSource
+    from family_assistant.events.sources import EventSource
     from family_assistant.home_assistant_wrapper import HomeAssistantClientWrapper
     from family_assistant.interfaces import ChatInterface
     from family_assistant.llm.tool_call import ToolCallItem
@@ -33,6 +37,7 @@ if TYPE_CHECKING:
     from family_assistant.utils.clock import Clock
 
     from .attachments import AttachmentProcessor
+    from .service import ProcessingService
 
 logger = logging.getLogger(__name__)
 tracer = trace.get_tracer(__name__)
@@ -55,6 +60,54 @@ class ToolExecutor:
         self.attachment_registry = attachment_registry
         self.clock = clock
 
+    @staticmethod
+    def _extract_queued_attachment_ids(result_payload: str) -> list[str] | None:
+        """Parse attach_to_response JSON payload and return queued attachment IDs."""
+        parsed_payload = json.loads(result_payload)
+        if not isinstance(parsed_payload, dict):
+            raise ValueError("attach_to_response result payload must be an object")
+
+        if parsed_payload.get("status") != "attachments_queued":
+            return None
+
+        attachment_ids_raw = parsed_payload.get("attachment_ids")
+        if not isinstance(attachment_ids_raw, list):
+            raise ValueError(
+                "attach_to_response result must include attachment_ids as a list"
+            )
+        return [str(attachment_id) for attachment_id in attachment_ids_raw]
+
+    async def _build_attach_to_response_metadata(
+        self,
+        db_context: DatabaseContext,
+        attachment_ids: list[str],
+    ) -> list[dict[str, str | int | None]]:
+        """Fetch metadata for queued attachments to enrich stream output."""
+        if not self.attachment_registry:
+            raise RuntimeError(
+                "attach_to_response metadata enrichment requires AttachmentRegistry"
+            )
+
+        attachment_metadata_list: list[dict[str, str | int | None]] = []
+        for attachment_id in attachment_ids:
+            attachment_info = await self.attachment_registry.get_attachment(
+                db_context, attachment_id
+            )
+            if attachment_info is None:
+                raise ValueError(
+                    f"attach_to_response referenced unknown attachment '{attachment_id}'"
+                )
+            attachment_metadata_list.append({
+                "attachment_id": attachment_id,
+                "type": "tool_result",
+                "description": attachment_info.description or "Attachment",
+                "url": attachment_info.content_url,
+                "content_url": attachment_info.content_url,
+                "mime_type": attachment_info.mime_type,
+                "size": attachment_info.size,
+            })
+        return attachment_metadata_list
+
     async def execute(
         self,
         tool_call_item_obj: ToolCallItem,
@@ -67,30 +120,12 @@ class ToolExecutor:
         chat_interface: ChatInterface | None,
         user_id: str | None = None,
         chat_interfaces: dict[str, ChatInterface] | None = None,
-        request_confirmation_callback: (
-            Callable[
-                # ast-grep-ignore: no-dict-any - tool args have varying keys per tool
-                [
-                    str,
-                    str,
-                    str | None,
-                    str,
-                    str,
-                    # ast-grep-ignore: no-dict-any - tool args have varying keys per tool
-                    dict[str, Any],
-                    float,
-                    ToolExecutionContext,
-                ],
-                Awaitable[bool],
-            ]
-            | None
-        ) = None,
+        request_confirmation_callback: RequestConfirmationCallback | None = None,
         subconversation_id: str | None = None,
-        processing_service: Any = None,  # noqa: ANN401 - Circular import with ProcessingService
+        processing_service: ProcessingService | None = None,
         home_assistant_client: HomeAssistantClientWrapper | None = None,
         camera_backend: CameraBackend | None = None,
-        # ast-grep-ignore: no-dict-any - maps source IDs to heterogeneous event source objects
-        event_sources: dict[str, Any] | None = None,
+        event_sources: dict[str, EventSource] | None = None,
     ) -> ToolExecutionResult:
         """Execute a single tool call and return the result.
 
@@ -239,7 +274,9 @@ class ToolExecutor:
                 home_assistant_client=home_assistant_client,
                 event_sources=event_sources,
                 indexing_source=(
-                    event_sources.get("indexing") if event_sources else None
+                    cast("IndexingSource | None", event_sources.get("indexing"))
+                    if event_sources
+                    else None
                 ),
                 attachment_registry=self.attachment_registry,
                 camera_backend=camera_backend,
@@ -403,54 +440,20 @@ class ToolExecutor:
 
                     # Special handling for attach_to_response tool: enrich with attachment metadata
                     if function_name == "attach_to_response":
-                        try:
-                            result_data = json.loads(content_for_stream)
-                            if (
-                                result_data.get("status") == "attachments_queued"
-                                and "attachment_ids" in result_data
-                            ):
-                                # Only enrich metadata if attachment registry is available
-                                if self.attachment_registry:
-                                    attachment_registry = self.attachment_registry
-
-                                    attachment_metadata_list = []
-                                    for attachment_id in result_data["attachment_ids"]:
-                                        try:
-                                            attachment_info = await attachment_registry.get_attachment(
-                                                db_context, attachment_id
-                                            )
-                                            if attachment_info:
-                                                attachment_metadata_list.append({
-                                                    "attachment_id": attachment_id,
-                                                    "type": "tool_result",
-                                                    "description": attachment_info.description
-                                                    or "Attachment",
-                                                    "url": attachment_info.content_url,
-                                                    "content_url": attachment_info.content_url,
-                                                    "mime_type": attachment_info.mime_type,
-                                                    "size": attachment_info.size,
-                                                })
-                                        except Exception as e:
-                                            logger.warning(
-                                                f"Failed to get metadata for attachment {attachment_id}: {e}"
-                                            )
-
-                                    if attachment_metadata_list:
-                                        stream_metadata = {
-                                            "attachments": attachment_metadata_list
-                                        }
-                                        logger.info(
-                                            f"Enriched attach_to_response result with {len(attachment_metadata_list)} attachment metadata entries"
-                                        )
-                                else:
-                                    logger.warning(
-                                        "AttachmentRegistry not available, skipping metadata enrichment for attach_to_response"
-                                    )
-                        except (json.JSONDecodeError, KeyError) as e:
-                            logger.warning(
-                                f"Failed to parse attach_to_response result for metadata enrichment: {e}"
+                        queued_attachment_ids = self._extract_queued_attachment_ids(
+                            content_for_stream
+                        )
+                        if queued_attachment_ids:
+                            attachment_metadata_list = (
+                                await self._build_attach_to_response_metadata(
+                                    db_context, queued_attachment_ids
+                                )
                             )
-                            # Continue with normal processing if parsing fails
+                            stream_metadata = {"attachments": attachment_metadata_list}
+                            logger.info(
+                                "Enriched attach_to_response result with %d attachment metadata entries",
+                                len(attachment_metadata_list),
+                            )
 
                 span.set_attribute("tool.status", "success")
                 span.set_attribute("tool.result_size", len(content_for_stream))

@@ -4,7 +4,6 @@ from datetime import timedelta
 from opentelemetry import trace
 
 from family_assistant.context_providers import ContextProvider
-from family_assistant.llm.google_types import GeminiProviderMetadata
 from family_assistant.llm.messages import (
     AssistantMessage,
     ErrorMessage,
@@ -13,6 +12,8 @@ from family_assistant.llm.messages import (
 )
 from family_assistant.processing.types import ProcessingServiceConfig
 from family_assistant.utils.clock import Clock
+
+from .utils import assistant_message_has_thought_signature
 
 logger = logging.getLogger(__name__)
 tracer = trace.get_tracer(__name__)
@@ -129,24 +130,7 @@ class ContextPreparer:
         # Process history messages, formatting assistant tool calls correctly
         for msg in history_messages:
             if isinstance(msg, AssistantMessage):
-                # Check if tool_calls have thought signatures
-                has_thought_signature = False
-                if msg.tool_calls:
-                    for tc in msg.tool_calls:
-                        if tc.provider_metadata:
-                            tc_metadata = tc.provider_metadata
-                            # Check if it's a Google thought signature
-                            if isinstance(tc_metadata, GeminiProviderMetadata):
-                                if tc_metadata.thought_signature:
-                                    has_thought_signature = True
-                                    break
-                            elif (
-                                isinstance(tc_metadata, dict)
-                                and tc_metadata.get("provider") == "google"
-                                and "thought_signature" in tc_metadata
-                            ):
-                                has_thought_signature = True
-                                break
+                has_thought_signature = assistant_message_has_thought_signature(msg)
 
                 # Strip text content from messages with tool calls UNLESS they have thought signatures
                 # Thought signatures are cryptographically tied to exact conversation context

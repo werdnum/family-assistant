@@ -100,6 +100,7 @@ if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncEngine
 
     from family_assistant.llm import LLMInterface
+    from family_assistant.processing.types import DelegationSecurityLevel
     from family_assistant.services.attachment_registry import AttachmentRegistry
     from family_assistant.storage.types import EventConditionEvaluatorConfig
     from family_assistant.tools.types import CalendarConfig as CalendarConfigDict
@@ -864,7 +865,10 @@ class Assistant:
                 web_history_max_age_hours=profile_proc_conf.web_history_max_age_hours,
                 max_iterations=profile_proc_conf.max_iterations,
                 tools_config=profile_tools_conf,
-                delegation_security_level=profile_proc_conf.delegation_security_level,
+                delegation_security_level=cast(
+                    "DelegationSecurityLevel",
+                    profile_proc_conf.delegation_security_level,
+                ),
                 id=profile_id,
                 description=profile_conf.description
                 or f"Processing profile: {profile_id}",
