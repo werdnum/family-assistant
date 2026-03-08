@@ -683,9 +683,7 @@ async def test_stream_attachment_selection_failure_uses_capped_auto_queue() -> N
     assert done_event is not None
     assert done_event.metadata is not None
     attachment_ids = done_event.metadata.get("attachment_ids")
-    assert isinstance(attachment_ids, list)
-    assert len(attachment_ids) == 1
-    assert attachment_ids[0] in {"att-1", "att-2"}
+    assert attachment_ids == ["att-1"]
 
 
 @pytest.mark.no_db

@@ -453,14 +453,14 @@ class LLMStreamingLoop:
                         )
                     except AttachmentSelectionError as exc:
                         logger.warning(
-                            "Attachment selection failed; keeping auto-queued attachment order with max-response cap. error=%s",
+                            "Attachment selection failed; applying deterministic ID-sorted cap to auto-queued attachments. error=%s",
                             exc,
                         )
-                        pending_attachment_ids = pending_attachment_ids[
+                        pending_attachment_ids = sorted(pending_attachment_ids)[
                             : self.app_config.max_response_attachments
                         ]
                     logger.info(
-                        "Attachment selection reduced auto-queued results to %d items",
+                        "Final queued attachments count for response: %d",
                         len(pending_attachment_ids),
                     )
 
