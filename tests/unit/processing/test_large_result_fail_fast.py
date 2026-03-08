@@ -2,11 +2,15 @@
 
 from typing import cast
 from unittest.mock import AsyncMock, Mock
+from zoneinfo import ZoneInfo
 
 import pytest
 
-from family_assistant.config_models import AppConfig
+from family_assistant.config_models import AppConfig, ToolsConfig
+from family_assistant.llm import ToolCallFunction, ToolCallItem
 from family_assistant.processing.attachments import AttachmentProcessor
+from family_assistant.processing.tool_execution import ToolExecutor
+from family_assistant.processing.types import ProcessingServiceConfig
 from family_assistant.services.attachment_registry import AttachmentRegistry
 from family_assistant.utils.clock import SystemClock
 
@@ -26,27 +30,27 @@ def _create_processor(
 
 
 @pytest.mark.asyncio
-async def test_handle_large_result_without_registry_returns_explicit_error() -> None:
-    """Large content should not fall back to inline text when storage is unavailable."""
+async def test_handle_large_result_without_registry_raises() -> None:
+    """Large content should fail fast when storage is unavailable."""
     processor = _create_processor(attachment_registry=None)
     oversized_content = "A" * 4096
 
-    new_content, attachment_id = await processor.handle_large_result(
-        db_context=Mock(),
-        content=oversized_content,
-        tool_name="test_tool",
-        conversation_id="conv_1",
-        call_id="call_1",
-    )
-
-    assert attachment_id is None
-    assert "too large to inline" in new_content
-    assert len(new_content) < len(oversized_content)
+    with pytest.raises(
+        RuntimeError,
+        match="Tool result exceeded large-result threshold but attachment storage is unavailable",
+    ):
+        await processor.handle_large_result(
+            db_context=Mock(),
+            content=oversized_content,
+            tool_name="test_tool",
+            conversation_id="conv_1",
+            call_id="call_1",
+        )
 
 
 @pytest.mark.asyncio
-async def test_handle_large_result_storage_failure_returns_explicit_error() -> None:
-    """Attachment storage failures should return an explicit error message."""
+async def test_handle_large_result_storage_failure_raises() -> None:
+    """Attachment storage failures should propagate."""
     mock_registry = Mock()
     mock_registry.store_and_register_tool_attachment = AsyncMock(
         side_effect=RuntimeError("disk full")
@@ -56,20 +60,61 @@ async def test_handle_large_result_storage_failure_returns_explicit_error() -> N
     )
     oversized_content = "B" * 4096
 
-    new_content, attachment_id = await processor.handle_large_result(
-        db_context=Mock(),
-        content=oversized_content,
-        tool_name="test_tool",
-        conversation_id="conv_2",
-        call_id="call_2",
+    with pytest.raises(RuntimeError, match="disk full"):
+        await processor.handle_large_result(
+            db_context=Mock(),
+            content=oversized_content,
+            tool_name="test_tool",
+            conversation_id="conv_2",
+            call_id="call_2",
+        )
+
+    mock_registry.store_and_register_tool_attachment.assert_awaited_once()
+
+
+@pytest.mark.no_db
+@pytest.mark.asyncio
+async def test_tool_executor_propagates_large_result_registry_unavailable() -> None:
+    """ToolExecutor should fail fast when large-result conversion cannot persist."""
+    mock_tools_provider = AsyncMock()
+    mock_tools_provider.execute_tool.return_value = "X" * 4096
+    processor = _create_processor(attachment_registry=None, threshold_kb=1)
+    executor = ToolExecutor(
+        tools_provider=mock_tools_provider,
+        service_config=ProcessingServiceConfig(
+            id="test",
+            prompts={},
+            timezone=ZoneInfo("UTC"),
+            max_history_messages=10,
+            history_max_age_hours=24,
+            tools_config=ToolsConfig(),
+            delegation_security_level="confirm",
+        ),
+        attachment_processor=processor,
+        attachment_registry=None,
+        clock=SystemClock(),
     )
 
-    assert attachment_id is None
-    assert (
-        new_content
-        == "Error: Tool result from 'test_tool' was too large and could not be stored as an attachment."
-    )
-    mock_registry.store_and_register_tool_attachment.assert_awaited_once()
+    with pytest.raises(
+        RuntimeError,
+        match="Tool result exceeded large-result threshold but attachment storage is unavailable",
+    ):
+        await executor.execute(
+            tool_call_item_obj=ToolCallItem(
+                id="call-1",
+                type="function",
+                function=ToolCallFunction(name="test_tool", arguments="{}"),
+            ),
+            interface_type="test",
+            conversation_id="conv",
+            user_name="tester",
+            turn_id="turn",
+            db_context=Mock(),
+            chat_interface=None,
+            request_confirmation_callback=None,
+        )
+
+    mock_tools_provider.execute_tool.assert_awaited_once()
 
 
 @pytest.mark.asyncio

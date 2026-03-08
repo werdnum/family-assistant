@@ -451,16 +451,18 @@ class LLMStreamingLoop:
                                 original_query=original_query,
                             )
                         )
-                        logger.info(
-                            "Attachment selection reduced auto-queued results to %d items",
-                            len(pending_attachment_ids),
-                        )
                     except AttachmentSelectionError as exc:
-                        logger.error(
-                            "Attachment selection failed; omitting attachments from response.",
-                            exc_info=exc,
+                        logger.warning(
+                            "Attachment selection failed; keeping auto-queued attachment order with max-response cap. error=%s",
+                            exc,
                         )
-                        pending_attachment_ids = []
+                        pending_attachment_ids = pending_attachment_ids[
+                            : self.app_config.max_response_attachments
+                        ]
+                    logger.info(
+                        "Attachment selection reduced auto-queued results to %d items",
+                        len(pending_attachment_ids),
+                    )
 
             done_metadata: StreamEventMetadata = {"message": assistant_message_for_turn}
             if serialized_reasoning_info:
