@@ -4,7 +4,6 @@ import asyncio
 import json
 import logging
 import traceback
-import uuid
 from typing import TYPE_CHECKING, Any
 
 from family_assistant.llm import LLMInterface, LLMStreamEvent, StreamEventMetadata
@@ -26,12 +25,13 @@ if TYPE_CHECKING:
 
     from family_assistant.config_models import AppConfig
     from family_assistant.interfaces import ChatInterface
+    from family_assistant.llm.tool_call import ToolCallItem
     from family_assistant.storage.context import DatabaseContext
     from family_assistant.tools import ToolExecutionContext
 
     from .attachments import AttachmentProcessor
     from .tool_execution import ToolExecutor
-    from .types import ProcessingServiceConfig
+    from .types import ProcessingServiceConfig, ToolExecutionResult
 
 logger = logging.getLogger(__name__)
 
@@ -52,6 +52,21 @@ class LLMStreamingLoop:
         self.app_config = app_config
         self.tool_executor = tool_executor
         self.attachment_processor = attachment_processor
+
+    @staticmethod
+    def _infer_attachment_type(mime_type: str | None) -> str:
+        """Infer a display type for streamed attachment metadata."""
+        if mime_type is None:
+            return "file"
+        if mime_type.startswith("image/"):
+            return "image"
+        if mime_type.startswith("video/"):
+            return "video"
+        if mime_type.startswith("audio/"):
+            return "audio"
+        if mime_type == "application/pdf":
+            return "document"
+        return "file"
 
     async def run(
         self,
@@ -463,7 +478,9 @@ class LLMStreamingLoop:
                             if metadata:
                                 attachment_details.append({
                                     "id": att_id,
-                                    "type": "image",  # Currently all are images, could use metadata.mime_type
+                                    "type": self._infer_attachment_type(
+                                        metadata.mime_type
+                                    ),
                                     "name": metadata.description or "Attachment",
                                     "content": f"/api/attachments/{att_id}",
                                     "mime_type": metadata.mime_type,
@@ -502,22 +519,43 @@ class LLMStreamingLoop:
                 )
                 break
 
-            # Force break on final iteration to ensure we get a response
-            # This prevents infinite loops if LLM somehow returns tool calls on the last iteration
+            # On final iteration, report unexecuted tool calls explicitly rather than
+            # silently dropping them.
             if is_final_iteration:
                 logger.warning(
-                    f"Final iteration ({max_iterations}) reached but LLM returned tool calls. "
-                    "Forcing break to ensure response is returned. Tool calls will be ignored."
+                    "Final iteration (%d) reached but LLM returned %d tool call(s). "
+                    "Emitting explicit non-executed tool results and ending loop.",
+                    max_iterations,
+                    len(tool_calls_from_stream),
                 )
+                for tool_call in tool_calls_from_stream:
+                    non_executed_message = (
+                        f"Error: Tool call '{tool_call.function.name}' was not executed "
+                        f"because the maximum iteration limit ({max_iterations}) was reached."
+                    )
+                    tool_result_event = LLMStreamEvent(
+                        type="tool_result",
+                        tool_call_id=tool_call.id,
+                        tool_result=non_executed_message,
+                        error="max_iterations_reached",
+                    )
+                    tool_result_message = ToolMessage(
+                        tool_call_id=tool_call.id,
+                        content=non_executed_message,
+                        name=tool_call.function.name,
+                        error_traceback="max_iterations_reached",
+                    )
+                    yield (tool_result_event, tool_result_message)
                 break
 
             # Execute tool calls in parallel
             tool_response_messages_for_llm = []
 
-            # Create tasks for all tool calls
-            tool_tasks = [
-                asyncio.create_task(
-                    self.tool_executor.execute(
+            async def _execute_tool_call_with_id(
+                tool_call: ToolCallItem,
+            ) -> tuple[str, ToolExecutionResult | None, Exception | None]:
+                try:
+                    result = await self.tool_executor.execute(
                         tool_call,
                         interface_type=interface_type,
                         conversation_id=conversation_id,
@@ -534,14 +572,70 @@ class LLMStreamingLoop:
                         camera_backend=camera_backend,
                         event_sources=event_sources,
                     )
-                )
+                    return tool_call.id, result, None
+                except Exception as exc:  # pragma: no cover - defensive safety net
+                    return tool_call.id, None, exc
+
+            tool_execution_tasks = [
+                asyncio.create_task(_execute_tool_call_with_id(tool_call))
                 for tool_call in tool_calls_from_stream
             ]
 
             # Process results as they complete
-            for completed_task in asyncio.as_completed(tool_tasks):
+            for completed_task in asyncio.as_completed(tool_execution_tasks):
+                tool_call_id, result, execution_error = await completed_task
+                if execution_error is not None:
+                    logger.error(
+                        "Unexpected error in parallel tool execution for tool_call_id=%s: %s",
+                        tool_call_id,
+                        execution_error,
+                        exc_info=execution_error,
+                    )
+                    formatted_traceback = "".join(
+                        traceback.format_exception(
+                            type(execution_error),
+                            execution_error,
+                            execution_error.__traceback__,
+                        )
+                    )
+                    error_event = LLMStreamEvent(
+                        type="tool_result",
+                        tool_call_id=tool_call_id,
+                        tool_result=f"Unexpected error: {str(execution_error)}",
+                        error=formatted_traceback,
+                    )
+                    error_tool_message = ToolMessage(
+                        tool_call_id=tool_call_id,
+                        content=f"Unexpected error: {str(execution_error)}",
+                        error_traceback=formatted_traceback,
+                        name="unknown",
+                    )
+                    yield (error_event, error_tool_message)
+                    tool_response_messages_for_llm.append(error_tool_message)
+                    continue
+
+                if result is None:  # pragma: no cover - defensive safety net
+                    logger.error(
+                        "Parallel tool execution returned no result for tool_call_id=%s",
+                        tool_call_id,
+                    )
+                    error_event = LLMStreamEvent(
+                        type="tool_result",
+                        tool_call_id=tool_call_id,
+                        tool_result="Unexpected error: tool execution returned no result",
+                        error="missing_tool_result",
+                    )
+                    error_tool_message = ToolMessage(
+                        tool_call_id=tool_call_id,
+                        content="Unexpected error: tool execution returned no result",
+                        error_traceback="missing_tool_result",
+                        name="unknown",
+                    )
+                    yield (error_event, error_tool_message)
+                    tool_response_messages_for_llm.append(error_tool_message)
+                    continue
+
                 try:
-                    result = await completed_task
                     event = result.stream_event
                     llm_message = result.llm_message
                     auto_attachment_ids = result.auto_attachment_ids or []
@@ -585,17 +679,19 @@ class LLMStreamingLoop:
                     # This should not happen since we handle exceptions inside tool_executor.execute
                     # But adding as extra safety
                     logger.error(
-                        f"Unexpected error in parallel tool execution: {e}",
+                        "Unexpected error while handling parallel tool execution result for tool_call_id=%s: %s",
+                        tool_call_id,
+                        e,
                         exc_info=True,
                     )
                     error_event = LLMStreamEvent(
                         type="tool_result",
-                        tool_call_id=f"error_{uuid.uuid4()}",
+                        tool_call_id=tool_call_id,
                         tool_result=f"Unexpected error: {str(e)}",
                         error=traceback.format_exc(),
                     )
                     error_tool_message = ToolMessage(
-                        tool_call_id=f"error_{uuid.uuid4()}",
+                        tool_call_id=tool_call_id,
                         content=f"Unexpected error: {str(e)}",
                         error_traceback=traceback.format_exc(),
                         name="unknown",

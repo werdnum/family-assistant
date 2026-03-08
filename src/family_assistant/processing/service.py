@@ -4,7 +4,6 @@ import logging
 import re
 import traceback
 import uuid
-from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
 from opentelemetry import trace
@@ -14,6 +13,7 @@ from family_assistant.llm import LLMInterface, LLMStreamEvent
 from family_assistant.llm.messages import (
     AssistantMessage,
     ContentPartDict,
+    ErrorMessage,
     LLMMessage,
     MessageAttachmentMetadata,
     MessageReasoningInfo,
@@ -133,6 +133,225 @@ class ProcessingService:
     ) -> None:
         """Sets the registry of all processing services."""
         self.processing_services_registry = registry
+
+    async def _resolve_thread_root_id(
+        self,
+        db_context: DatabaseContext,
+        interface_type: str,
+        replied_to_interface_id: str | None,
+    ) -> int | None:
+        """Resolve the thread root ID when the user replied to an existing message."""
+        if replied_to_interface_id is None:
+            return None
+
+        replied_to_msg_row = await db_context.message_history.get_row_by_interface_id(
+            interface_type=interface_type,
+            interface_message_id=replied_to_interface_id,
+        )
+        if replied_to_msg_row:
+            thread_root_id = replied_to_msg_row.get(
+                "thread_root_id"
+            ) or replied_to_msg_row.get("internal_id")
+            logger.info(
+                "Received reply to interface message %s. Thread root ID: %s",
+                replied_to_interface_id,
+                thread_root_id,
+            )
+            return thread_root_id
+
+        logger.warning(
+            "Replied-to interface message %s not found. Creating new thread.",
+            replied_to_interface_id,
+        )
+        return None
+
+    def _extract_user_content_for_history(
+        self, trigger_content_parts: list[ContentPartDict]
+    ) -> str:
+        """Extract a concise text value for message-history storage."""
+        if not trigger_content_parts:
+            return ""
+
+        first_text_part = next(
+            (
+                part.get("text")
+                for part in trigger_content_parts
+                if part.get("type") == "text"
+            ),
+            None,
+        )
+        if first_text_part:
+            return str(first_text_part)
+        if trigger_content_parts[0].get("type") == "image_url":
+            return "[Media Attached]"
+        return ""
+
+    async def _build_initial_messages_for_llm(
+        self,
+        db_context: DatabaseContext,
+        interface_type: str,
+        conversation_id: str,
+        replied_to_interface_id: str | None,
+        thread_root_id_for_turn: int | None,
+        subconversation_id: str | None,
+    ) -> tuple[list[LLMMessage], str]:
+        """Load history and optional full-thread context for LLM processing."""
+        history_limit, history_max_age = self.context_preparer.get_history_limits(
+            interface_type
+        )
+        raw_history_messages = await db_context.message_history.get_recent(
+            interface_type=interface_type,
+            conversation_id=conversation_id,
+            limit=history_limit,
+            max_age=history_max_age,
+            processing_profile_id=self.service_config.id,
+            subconversation_id=subconversation_id,
+            current_time=self.clock.now(),
+        )
+        logger.debug("Raw history messages fetched (%d).", len(raw_history_messages))
+
+        initial_messages_for_llm = await self.context_preparer.format_history(
+            raw_history_messages
+        )
+        logger.debug(
+            "Initial messages for LLM after formatting history (%d).",
+            len(initial_messages_for_llm),
+        )
+
+        thread_attachments_context = ""
+        if replied_to_interface_id and thread_root_id_for_turn:
+            logger.info(
+                "Fetching full thread history for root ID %s due to reply.",
+                thread_root_id_for_turn,
+            )
+            full_thread_messages = await db_context.message_history.get_by_thread_id(
+                thread_root_id=thread_root_id_for_turn,
+                processing_profile_id=None,
+                subconversation_id=subconversation_id,
+            )
+            initial_messages_for_llm = await self.context_preparer.format_history(
+                full_thread_messages
+            )
+            logger.info(
+                "Using %d messages from full thread history for LLM context.",
+                len(initial_messages_for_llm),
+            )
+
+            thread_attachments_context = (
+                await self.attachment_processor.extract_conversation_context(
+                    db_context,
+                    conversation_id,
+                    self.service_config.history_max_age_hours,
+                    self.service_config.prompts,
+                )
+            )
+            if thread_attachments_context:
+                logger.debug(
+                    "Extracted attachment context from thread messages for LLM."
+                )
+
+        return initial_messages_for_llm, thread_attachments_context
+
+    @staticmethod
+    def _prune_leading_invalid_messages(messages_for_llm: list[LLMMessage]) -> int:
+        """Remove leading tool messages/tool-calling assistant messages."""
+        pruned_count = 0
+        while messages_for_llm:
+            first_msg = messages_for_llm[0]
+            is_tool_msg = isinstance(first_msg, ToolMessage)
+            is_assistant_with_tools = (
+                isinstance(first_msg, AssistantMessage) and first_msg.tool_calls
+            )
+            if is_tool_msg or is_assistant_with_tools:
+                messages_for_llm.pop(0)
+                pruned_count += 1
+            else:
+                break
+        return pruned_count
+
+    def _render_system_prompt(
+        self, user_name: str, aggregated_other_context_str: str
+    ) -> str:
+        """Render a system prompt with strict placeholder validation."""
+        system_prompt_template = self.service_config.prompts.get(
+            "system_prompt",
+            "You are a helpful assistant. Current time is {current_time}.",
+        )
+        current_time_str = (
+            self.clock
+            .now()
+            .astimezone(self.service_config.timezone)
+            .strftime("%Y-%m-%d %H:%M:%S %Z")
+        )
+        format_args = {
+            "user_name": user_name,
+            "current_time": current_time_str,
+            "aggregated_other_context": aggregated_other_context_str,
+            "server_url": self.server_url,
+            "profile_id": self.service_config.id,
+        }
+
+        placeholder_pattern = r"\{([a-zA-Z_][a-zA-Z0-9_]*)\}"
+        all_placeholders = sorted(
+            set(re.findall(placeholder_pattern, system_prompt_template))
+        )
+        placeholders = [
+            placeholder
+            for placeholder in all_placeholders
+            if placeholder in format_args
+        ]
+        unknown_placeholders = [
+            placeholder
+            for placeholder in all_placeholders
+            if placeholder not in format_args
+        ]
+        if unknown_placeholders:
+            logger.warning(
+                "System prompt template contains unknown placeholder-like tokens; keeping them as literals: %s",
+                ", ".join(unknown_placeholders),
+            )
+
+        # Escape literal braces while preserving valid placeholders.
+        template_with_markers = system_prompt_template
+        for index, placeholder in enumerate(placeholders):
+            marker = f"__PLACEHOLDER_{index}__"
+            template_with_markers = template_with_markers.replace(
+                f"{{{placeholder}}}",
+                marker,
+            )
+        escaped_template = template_with_markers.replace("{", "{{").replace("}", "}}")
+        for index, placeholder in enumerate(placeholders):
+            marker = f"__PLACEHOLDER_{index}__"
+            escaped_template = escaped_template.replace(marker, f"{{{placeholder}}}")
+
+        try:
+            final_system_prompt = escaped_template.format_map(format_args).strip()
+        except ValueError as exc:
+            raise ValueError(f"Failed to format system prompt template: {exc}") from exc
+
+        return self.context_preparer.prepend_profile_preamble(final_system_prompt)
+
+    @staticmethod
+    def _inject_trigger_attachment_metadata(
+        messages_for_llm: list[LLMMessage],
+        trigger_attachments: list[MessageAttachmentMetadata] | None,
+    ) -> None:
+        """Inject trigger-attachment metadata into the latest user message."""
+        if not trigger_attachments:
+            return
+
+        attachment_metadata_lines = generate_attachment_metadata_lines(
+            trigger_attachments
+        )
+        if not attachment_metadata_lines:
+            return
+
+        metadata_text = "\n".join(attachment_metadata_lines)
+        for i in range(len(messages_for_llm) - 1, -1, -1):
+            msg = messages_for_llm[i]
+            if isinstance(msg, UserMessage):
+                inject_metadata_into_user_message(msg, metadata_text)
+                return
 
     async def process_message(
         self,
@@ -322,49 +541,23 @@ class ProcessingService:
             f"Starting handle_chat_interaction for conversation {conversation_id}, turn {turn_id}"
         )
 
+        thread_root_id_for_turn: int | None = None
         try:
             # --- 1. Determine Thread Root ID & Save User Trigger Message ---
-            thread_root_id_for_turn: int | None = None
             user_message_timestamp = self.clock.now()
 
-            if replied_to_interface_id:
-                replied_to_msg_row = (
-                    await db_context.message_history.get_row_by_interface_id(
-                        interface_type=interface_type,
-                        interface_message_id=replied_to_interface_id,
-                    )
-                )
-                if replied_to_msg_row:
-                    thread_root_id_for_turn = replied_to_msg_row.get(
-                        "thread_root_id"
-                    ) or replied_to_msg_row.get("internal_id")
-                    logger.info(
-                        f"Received reply to interface message {replied_to_interface_id}. "
-                        f"Thread root ID: {thread_root_id_for_turn}"
-                    )
-                else:
-                    logger.warning(
-                        f"Replied-to interface message {replied_to_interface_id} not found. "
-                        "Creating new thread."
-                    )
+            thread_root_id_for_turn = await self._resolve_thread_root_id(
+                db_context=db_context,
+                interface_type=interface_type,
+                replied_to_interface_id=replied_to_interface_id,
+            )
 
             # Prepare user message content for history - store only text
             # Attachments are stored separately in the attachments column and
             # reconstructed into multimodal content when loading from history
-            user_content_for_history = ""
-            if trigger_content_parts:
-                first_text_part = next(
-                    (
-                        part.get("text")
-                        for part in trigger_content_parts
-                        if part.get("type") == "text"
-                    ),
-                    None,
-                )
-                if first_text_part:
-                    user_content_for_history = str(first_text_part)
-                elif trigger_content_parts[0].get("type") == "image_url":
-                    user_content_for_history = "[Media Attached]"
+            user_content_for_history = self._extract_user_content_for_history(
+                trigger_content_parts
+            )
 
             actual_interface_message_id = trigger_interface_message_id
             if actual_interface_message_id is None:
@@ -392,106 +585,24 @@ class ProcessingService:
                     )
 
             # --- 2. Prepare LLM Context (History, System Prompt) ---
-            history_limit, history_max_age = self.context_preparer.get_history_limits(
-                interface_type
+            (
+                messages_for_llm,
+                thread_attachments_context,
+            ) = await self._build_initial_messages_for_llm(
+                db_context=db_context,
+                interface_type=interface_type,
+                conversation_id=conversation_id,
+                replied_to_interface_id=replied_to_interface_id,
+                thread_root_id_for_turn=thread_root_id_for_turn,
+                subconversation_id=subconversation_id,
             )
-
-            try:
-                raw_history_messages = await db_context.message_history.get_recent(
-                    interface_type=interface_type,
-                    conversation_id=conversation_id,
-                    limit=history_limit,
-                    max_age=history_max_age,
-                    processing_profile_id=self.service_config.id,
-                    subconversation_id=subconversation_id,
-                    current_time=self.clock.now(),
-                )
-            except Exception as hist_err:
-                logger.error(
-                    f"Failed to get message history for {interface_type}:{conversation_id}: {hist_err}",
-                    exc_info=True,
-                )
-                raw_history_messages = []
-
-            logger.debug(f"Raw history messages fetched ({len(raw_history_messages)}).")
-
-            initial_messages_for_llm = await self.context_preparer.format_history(
-                raw_history_messages
-            )
-            logger.debug(
-                f"Initial messages for LLM after formatting history ({len(initial_messages_for_llm)})."
-            )
-
-            # Handle reply thread context
-            thread_attachments_context = ""
-            if replied_to_interface_id and thread_root_id_for_turn:
-                try:
-                    logger.info(
-                        f"Fetching full thread history for root ID {thread_root_id_for_turn} due to reply."
-                    )
-                    full_thread_messages = (
-                        await db_context.message_history.get_by_thread_id(
-                            thread_root_id=thread_root_id_for_turn,
-                            processing_profile_id=None,
-                            subconversation_id=subconversation_id,
-                        )
-                    )
-                    initial_messages_for_llm = (
-                        await self.context_preparer.format_history(full_thread_messages)
-                    )
-                    logger.info(
-                        f"Using {len(initial_messages_for_llm)} messages from full thread history for LLM context."
-                    )
-
-                    thread_attachments_context = (
-                        await self.attachment_processor.extract_conversation_context(
-                            db_context,
-                            conversation_id,
-                            self.service_config.history_max_age_hours,
-                            self.service_config.prompts,
-                        )
-                    )
-                    if thread_attachments_context:
-                        logger.debug(
-                            "Extracted attachment context from thread messages for LLM."
-                        )
-                except Exception as thread_fetch_err:
-                    logger.error(
-                        f"Error fetching full thread history: {thread_fetch_err}",
-                        exc_info=True,
-                    )
-
-            messages_for_llm = initial_messages_for_llm
 
             # Prune leading invalid messages
-            pruned_count = 0
-            while messages_for_llm:
-                first_msg = messages_for_llm[0]
-                is_tool_msg = isinstance(first_msg, ToolMessage)
-                is_assistant_with_tools = (
-                    isinstance(first_msg, AssistantMessage) and first_msg.tool_calls
-                )
-                if is_tool_msg or is_assistant_with_tools:
-                    messages_for_llm.pop(0)
-                    pruned_count += 1
-                else:
-                    break
+            pruned_count = self._prune_leading_invalid_messages(messages_for_llm)
             if pruned_count > 0:
                 logger.warning(
                     f"Pruned {pruned_count} leading messages from LLM history."
                 )
-
-            # Prepare System Prompt
-            system_prompt_template = self.service_config.prompts.get(
-                "system_prompt",
-                "You are a helpful assistant. Current time is {current_time}.",
-            )
-            current_time_str = (
-                self.clock
-                .now()
-                .astimezone(self.service_config.timezone)
-                .strftime("%Y-%m-%d %H:%M:%S %Z")
-            )
 
             aggregated_other_context_str = (
                 await self.context_preparer.aggregate_context()
@@ -504,54 +615,9 @@ class ProcessingService:
                 else:
                     aggregated_other_context_str = thread_attachments_context
 
-            format_args = {
-                "user_name": user_name,
-                "current_time": current_time_str,
-                "aggregated_other_context": aggregated_other_context_str,
-                "server_url": self.server_url,
-                "profile_id": self.service_config.id,
-            }
-
-            class SafePromptFormatter(dict[str, str]):
-                def __missing__(self, key: str) -> str:
-                    logger.warning(
-                        f"System prompt template used key '{{{key}}}' which was not found "
-                        f"in the provided format arguments: {list(self.keys())}. "
-                        f"Substituting with an empty string."
-                    )
-                    return ""
-
-            # Pre-process template to handle JSON examples and other literal braces
-            safe_template = system_prompt_template
-
-            placeholder_pattern = r"\{([a-zA-Z_][a-zA-Z0-9_]*)\}"
-            placeholders = set(re.findall(placeholder_pattern, safe_template))
-
-            temp_template = safe_template
-            for i, placeholder in enumerate(placeholders):
-                marker = f"__PLACEHOLDER_{i}__"
-                temp_template = temp_template.replace(f"{{{placeholder}}}", marker)
-
-            temp_template = temp_template.replace("{", "{{").replace("}", "}}")
-
-            for i, placeholder in enumerate(placeholders):
-                marker = f"__PLACEHOLDER_{i}__"
-                temp_template = temp_template.replace(marker, f"{{{placeholder}}}")
-
-            safe_template = temp_template
-
-            try:
-                final_system_prompt = safe_template.format_map(
-                    SafePromptFormatter(format_args)
-                ).strip()
-            except ValueError as e:
-                logger.error(
-                    f"Failed to format system prompt template: {e}. Using template without substitution."
-                )
-                final_system_prompt = system_prompt_template.strip()
-
-            final_system_prompt = self.context_preparer.prepend_profile_preamble(
-                final_system_prompt
+            final_system_prompt = self._render_system_prompt(
+                user_name=user_name,
+                aggregated_other_context_str=aggregated_other_context_str,
             )
 
             if final_system_prompt:
@@ -559,13 +625,17 @@ class ProcessingService:
 
             # Process attachment content parts from delegation
             (
-                processed_trigger_parts,
+                _processed_trigger_parts,
                 attachment_injection_messages,
             ) = await self.attachment_processor.process_content_parts(
                 db_context, conversation_id, trigger_content_parts
             )
 
             messages_for_llm.extend(attachment_injection_messages)
+            self._inject_trigger_attachment_metadata(
+                messages_for_llm=messages_for_llm,
+                trigger_attachments=trigger_attachments,
+            )
 
             # Convert attachment URLs to data URIs in messages from history
             typed_messages_for_llm = (
@@ -586,6 +656,7 @@ class ProcessingService:
                 user_id=user_id,
                 turn_id=turn_id,
                 chat_interface=chat_interface,
+                chat_interfaces=chat_interfaces,
                 request_confirmation_callback=request_confirmation_callback,
                 subconversation_id=subconversation_id,
             )
@@ -646,18 +717,21 @@ class ProcessingService:
             error_message_internal_id: int | None = None
             try:
                 error_message_record = await db_context.message_history.add_message(
-                    AssistantMessage(content=error_message),
+                    ErrorMessage(
+                        content=error_message,
+                        error_traceback=processing_error_traceback,
+                    ),
                     interface_type=interface_type,
                     conversation_id=conversation_id,
                     interface_message_id=None,
                     turn_id=turn_id,
                     thread_root_id=thread_root_id_for_turn,
-                    timestamp=datetime.now(UTC),
+                    timestamp=self.clock.now(),
+                    processing_profile_id=self.service_config.id,
                     subconversation_id=subconversation_id,
+                    user_id=user_id,
                 )
-                error_message_internal_id = (
-                    error_message_record if error_message_record is not None else None
-                )
+                error_message_internal_id = error_message_record
             except Exception as error_save_err:
                 logger.error(
                     f"Failed to save error message to history: {error_save_err}",
@@ -739,34 +813,23 @@ class ProcessingService:
                 f"Processing content part {i}: type={part.get('type')}, size={len(str(part))}"
             )
 
+        thread_root_id_for_turn: int | None = None
         try:
             with trace.use_span(span, end_on_exit=False):
                 try:
                     # --- 1. Determine Thread Root ID & Save User Trigger Message ---
-                    thread_root_id_for_turn: int | None = None
                     user_message_timestamp = self.clock.now()
 
-                    if replied_to_interface_id:
-                        logger.info(
-                            f"Received reply to interface message {replied_to_interface_id}. "
-                            "Thread root ID will be determined from saved message."
-                        )
+                    thread_root_id_for_turn = await self._resolve_thread_root_id(
+                        db_context=db_context,
+                        interface_type=interface_type,
+                        replied_to_interface_id=replied_to_interface_id,
+                    )
 
                     # Prepare user message content for history - store only text
-                    user_content_for_history = ""
-                    if trigger_content_parts:
-                        first_text_part = next(
-                            (
-                                part.get("text")
-                                for part in trigger_content_parts
-                                if part.get("type") == "text"
-                            ),
-                            None,
-                        )
-                        if first_text_part:
-                            user_content_for_history = str(first_text_part)
-                        elif trigger_content_parts[0].get("type") == "image_url":
-                            user_content_for_history = "[Media Attached]"
+                    user_content_for_history = self._extract_user_content_for_history(
+                        trigger_content_parts
+                    )
 
                     actual_interface_message_id = trigger_interface_message_id
                     if actual_interface_message_id is None:
@@ -821,103 +884,37 @@ class ProcessingService:
                         thread_root_id_for_turn = saved_user_msg_record
 
                     # --- 2. Prepare LLM Context ---
-                    history_limit, history_max_age = (
-                        self.context_preparer.get_history_limits(interface_type)
+                    (
+                        messages_for_llm,
+                        thread_attachments_context,
+                    ) = await self._build_initial_messages_for_llm(
+                        db_context=db_context,
+                        interface_type=interface_type,
+                        conversation_id=conversation_id,
+                        replied_to_interface_id=replied_to_interface_id,
+                        thread_root_id_for_turn=thread_root_id_for_turn,
+                        subconversation_id=subconversation_id,
                     )
-
-                    try:
-                        raw_history_messages = (
-                            await db_context.message_history.get_recent(
-                                interface_type=interface_type,
-                                conversation_id=conversation_id,
-                                limit=history_limit,
-                                max_age=history_max_age,
-                                processing_profile_id=self.service_config.id,
-                                subconversation_id=subconversation_id,
-                                current_time=self.clock.now(),
-                            )
-                        )
-                    except Exception as hist_err:
-                        logger.error(
-                            f"Failed to get message history: {hist_err}",
-                            exc_info=True,
-                        )
-                        raw_history_messages = []
-
-                    initial_messages_for_llm = (
-                        await self.context_preparer.format_history(raw_history_messages)
-                    )
-
-                    # Handle reply thread context
-                    if replied_to_interface_id and thread_root_id_for_turn:
-                        try:
-                            full_thread_messages_db = (
-                                await db_context.message_history.get_by_thread_id(
-                                    thread_root_id=thread_root_id_for_turn,
-                                    subconversation_id=subconversation_id,
-                                )
-                            )
-                            initial_messages_for_llm = (
-                                await self.context_preparer.format_history(
-                                    full_thread_messages_db
-                                )
-                            )
-                        except Exception as thread_fetch_err:
-                            logger.error(
-                                f"Error fetching thread history: {thread_fetch_err}"
-                            )
-
-                    messages_for_llm = initial_messages_for_llm
 
                     # Prune leading invalid messages
-                    while messages_for_llm:
-                        first_msg = messages_for_llm[0]
-                        is_tool_msg = isinstance(first_msg, ToolMessage)
-                        is_assistant_with_tools = (
-                            isinstance(first_msg, AssistantMessage)
-                            and first_msg.tool_calls
-                        )
-                        if is_tool_msg or is_assistant_with_tools:
-                            messages_for_llm.pop(0)
-                        else:
-                            break
-
-                    # Prepare System Prompt
-                    system_prompt_template = self.service_config.prompts.get(
-                        "system_prompt",
-                        "You are a helpful assistant. Current time is {current_time}.",
-                    )
-
-                    current_time_str = (
-                        self.clock
-                        .now()
-                        .astimezone(self.service_config.timezone)
-                        .strftime("%Y-%m-%d %H:%M:%S %Z")
-                    )
+                    self._prune_leading_invalid_messages(messages_for_llm)
 
                     aggregated_other_context_str = (
                         await self.context_preparer.aggregate_context()
                     )
 
-                    format_args = {
-                        "user_name": user_name,
-                        "current_time": current_time_str,
-                        "aggregated_other_context": aggregated_other_context_str,
-                        "server_url": self.server_url,
-                        "profile_id": self.service_config.id,
-                    }
+                    # Add thread attachments context if available
+                    if thread_attachments_context:
+                        if aggregated_other_context_str:
+                            aggregated_other_context_str += (
+                                "\n\n" + thread_attachments_context
+                            )
+                        else:
+                            aggregated_other_context_str = thread_attachments_context
 
-                    try:
-                        final_system_prompt = system_prompt_template.format(
-                            **format_args
-                        ).strip()
-                    except Exception:
-                        final_system_prompt = system_prompt_template.strip()
-
-                    final_system_prompt = (
-                        self.context_preparer.prepend_profile_preamble(
-                            final_system_prompt
-                        )
+                    final_system_prompt = self._render_system_prompt(
+                        user_name=user_name,
+                        aggregated_other_context_str=aggregated_other_context_str,
                     )
 
                     if final_system_prompt:
@@ -927,28 +924,17 @@ class ProcessingService:
 
                     # Process attachment content parts from delegation
                     (
-                        processed_trigger_parts,
+                        _processed_trigger_parts,
                         attachment_injection_messages,
                     ) = await self.attachment_processor.process_content_parts(
                         db_context, conversation_id, trigger_content_parts
                     )
 
                     messages_for_llm.extend(attachment_injection_messages)
-
-                    # Add inline attachment metadata to the last UserMessage if there are trigger attachments
-                    if trigger_attachments and len(trigger_attachments) > 0:
-                        attachment_metadata_lines = generate_attachment_metadata_lines(
-                            trigger_attachments
-                        )
-                        if attachment_metadata_lines:
-                            metadata_text = "\n".join(attachment_metadata_lines)
-                            for i in range(len(messages_for_llm) - 1, -1, -1):
-                                msg = messages_for_llm[i]
-                                if isinstance(msg, UserMessage):
-                                    inject_metadata_into_user_message(
-                                        msg, metadata_text
-                                    )
-                                    break
+                    self._inject_trigger_attachment_metadata(
+                        messages_for_llm=messages_for_llm,
+                        trigger_attachments=trigger_attachments,
+                    )
 
                     # Convert attachment URLs to data URIs in messages from history
                     typed_messages_for_llm = (
@@ -964,10 +950,12 @@ class ProcessingService:
                         interface_type=interface_type,
                         conversation_id=conversation_id,
                         user_name=user_name,
+                        user_id=user_id,
                         turn_id=turn_id,
                         chat_interface=chat_interface,
                         chat_interfaces=chat_interfaces,
                         request_confirmation_callback=request_confirmation_callback,
+                        subconversation_id=subconversation_id,
                     ):
                         yield event
 
@@ -1016,11 +1004,55 @@ class ProcessingService:
                     logger.error(
                         f"Error in streaming chat interaction: {e}", exc_info=True
                     )
+                    processing_error_traceback = traceback.format_exc()
                     error_message = _user_friendly_error_message(e)
-                    yield LLMStreamEvent(
+                    error_event = LLMStreamEvent(
                         type="error",
                         error=error_message,
                         metadata={"error_id": str(uuid.uuid4())},
                     )
+
+                    try:
+                        error_history_message = ErrorMessage(
+                            content=error_message,
+                            error_traceback=processing_error_traceback,
+                        )
+                        if db_context.engine.dialect.name == "postgresql":
+                            async with get_db_context(
+                                engine=db_context.engine,
+                                message_notifier=db_context.message_notifier,
+                            ) as error_db:
+                                await error_db.message_history.add_message(
+                                    message=error_history_message,
+                                    interface_type=interface_type,
+                                    conversation_id=conversation_id,
+                                    interface_message_id=None,
+                                    turn_id=turn_id,
+                                    thread_root_id=thread_root_id_for_turn,
+                                    timestamp=self.clock.now(),
+                                    processing_profile_id=self.service_config.id,
+                                    subconversation_id=subconversation_id,
+                                    user_id=user_id,
+                                )
+                        else:
+                            await db_context.message_history.add_message(
+                                message=error_history_message,
+                                interface_type=interface_type,
+                                conversation_id=conversation_id,
+                                interface_message_id=None,
+                                turn_id=turn_id,
+                                thread_root_id=thread_root_id_for_turn,
+                                timestamp=self.clock.now(),
+                                processing_profile_id=self.service_config.id,
+                                subconversation_id=subconversation_id,
+                                user_id=user_id,
+                            )
+                    except Exception:
+                        logger.error(
+                            "Failed to save streaming error message to history",
+                            exc_info=True,
+                        )
+
+                    yield error_event
         finally:
             span.end()

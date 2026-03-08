@@ -102,14 +102,12 @@ class ContextPreparer:
             for provider in self.context_providers:
                 try:
                     fragments_output = await provider.get_context_fragments()
+                except Exception as exc:
+                    raise RuntimeError(
+                        f"Context provider '{provider.name}' failed to provide fragments"
+                    ) from exc
 
-                    all_fragments.extend(fragments_output)
-                except Exception as e:
-                    # This catches errors from await provider.get_context_fragments() itself
-                    logger.error(
-                        f"Error calling get_context_fragments() for provider '{provider.name}': {e}",
-                        exc_info=True,
-                    )
+                all_fragments.extend(fragments_output)
             span.set_attribute("context.fragments_count", len(all_fragments))
             # Join all non-empty fragments (i.e., filter out empty strings from individual providers' lists)
             # separated by double newlines for clarity.

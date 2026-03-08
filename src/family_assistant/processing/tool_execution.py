@@ -182,8 +182,40 @@ class ToolExecutor:
                     auto_attachment_ids=None,
                 )
 
+            if not isinstance(arguments, dict):
+                logger.error(
+                    "Tool '%s' received non-object arguments of type %s",
+                    function_name,
+                    type(arguments).__name__,
+                )
+                error_content = f"Error: Invalid arguments format for {function_name}."
+                error_traceback = f"Expected JSON object for tool arguments, got {type(arguments).__name__}"
+
+                llm_message = ToolMessage(
+                    role="tool",
+                    tool_call_id=call_id,
+                    content=error_content,
+                    error_traceback=error_traceback,
+                    name=function_name,
+                )
+
+                return ToolExecutionResult(
+                    stream_event=LLMStreamEvent(
+                        type="tool_result",
+                        tool_call_id=call_id,
+                        tool_result=error_content,
+                        error=error_traceback,
+                    ),
+                    llm_message=llm_message,
+                    auto_attachment_ids=None,
+                )
+
             # Execute tool
-            logger.info(f"Executing tool '{function_name}' with args: {arguments}")
+            logger.info(
+                "Executing tool '%s' with argument keys: %s",
+                function_name,
+                sorted(arguments.keys()),
+            )
 
             chat_interfaces_dict = chat_interfaces
             if chat_interfaces_dict is None and chat_interface:
@@ -263,50 +295,45 @@ class ToolExecutor:
                             # Determine if this is a new attachment (has content) or a reference (has ID but no content)
                             if attachment.content and self.attachment_registry:
                                 # New attachment with content - store it
-                                try:
-                                    # Store the attachment content with proper file extension
-                                    file_extension = get_file_extension_from_mime_type(
-                                        attachment.mime_type
-                                    )
-                                    # Store and register the attachment using AttachmentRegistry
-                                    registered_metadata = await self.attachment_registry.store_and_register_tool_attachment(
-                                        file_content=attachment.content,
-                                        filename=f"tool_result_{uuid.uuid4()}{file_extension}",
-                                        content_type=attachment.mime_type,
-                                        tool_name=function_name,
-                                        description=attachment.description
-                                        or f"Output from {function_name}",
-                                        conversation_id=conversation_id,
-                                        metadata={
-                                            "tool_call_id": call_id,
-                                            "auto_display": True,
-                                        },
-                                    )
+                                # Store the attachment content with proper file extension
+                                file_extension = get_file_extension_from_mime_type(
+                                    attachment.mime_type
+                                )
+                                # Store and register the attachment using AttachmentRegistry
+                                registered_metadata = await self.attachment_registry.store_and_register_tool_attachment(
+                                    file_content=attachment.content,
+                                    filename=f"tool_result_{uuid.uuid4()}{file_extension}",
+                                    content_type=attachment.mime_type,
+                                    tool_name=function_name,
+                                    description=attachment.description
+                                    or f"Output from {function_name}",
+                                    conversation_id=conversation_id,
+                                    metadata={
+                                        "tool_call_id": call_id,
+                                        "auto_display": True,
+                                    },
+                                )
 
-                                    attachment_data["content_url"] = (
-                                        registered_metadata.content_url or ""
-                                    )
-                                    attachment_data["attachment_id"] = (
-                                        registered_metadata.attachment_id
-                                    )
-                                    # Queue this newly stored attachment
-                                    auto_attachment_ids.append(
-                                        registered_metadata.attachment_id
-                                    )
+                                attachment_data["content_url"] = (
+                                    registered_metadata.content_url or ""
+                                )
+                                attachment_data["attachment_id"] = (
+                                    registered_metadata.attachment_id
+                                )
+                                # Queue this newly stored attachment
+                                auto_attachment_ids.append(
+                                    registered_metadata.attachment_id
+                                )
 
-                                    # Populate the attachment_id in the ToolAttachment object
-                                    attachment.attachment_id = (
-                                        registered_metadata.attachment_id
-                                    )
+                                # Populate the attachment_id in the ToolAttachment object
+                                attachment.attachment_id = (
+                                    registered_metadata.attachment_id
+                                )
 
-                                    logger.info(
-                                        f"Stored and registered tool attachment: {registered_metadata.attachment_id}"
-                                    )
-                                except Exception as e:
-                                    logger.error(
-                                        f"Failed to store tool result attachment: {e}"
-                                    )
-                                    # Continue without URL if storage fails
+                                logger.info(
+                                    "Stored and registered tool attachment: %s",
+                                    registered_metadata.attachment_id,
+                                )
                             elif attachment.attachment_id:
                                 # Reference to existing attachment - just queue it
                                 attachment_data["attachment_id"] = (

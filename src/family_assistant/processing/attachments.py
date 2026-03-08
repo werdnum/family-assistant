@@ -83,54 +83,40 @@ class AttachmentProcessor:
                     )
                 attachment_id = part.get("attachment_id")
                 if not attachment_id:
-                    logger.warning(
-                        "Attachment content part missing attachment_id, skipping"
-                    )
-                    continue
-
-                try:
-                    attachment_metadata = await self.attachment_registry.get_attachment(
-                        db_context, attachment_id
+                    raise ValueError(
+                        "Attachment content part is missing required 'attachment_id'"
                     )
 
-                    if not attachment_metadata:
-                        logger.warning(
-                            f"Attachment {attachment_id} not found in registry, skipping"
-                        )
-                        continue
-
-                    content = await self.attachment_registry.get_attachment_content(
-                        db_context, attachment_id
+                attachment_metadata = await self.attachment_registry.get_attachment(
+                    db_context, attachment_id
+                )
+                if not attachment_metadata:
+                    raise ValueError(
+                        f"Attachment '{attachment_id}' was not found in attachment registry"
                     )
 
-                    if content is None:
-                        logger.warning(
-                            f"Could not retrieve content for attachment {attachment_id}"
-                        )
-                        continue
-
-                    tool_attachment = ToolAttachment(
-                        content=content,
-                        mime_type=attachment_metadata.mime_type,
-                        attachment_id=attachment_id,
-                        description=attachment_metadata.description or "Attachment",
+                content = await self.attachment_registry.get_attachment_content(
+                    db_context, attachment_id
+                )
+                if content is None:
+                    raise RuntimeError(
+                        f"Attachment '{attachment_id}' content could not be retrieved"
                     )
 
-                    injection_msg = self.llm_client.create_attachment_injection(
-                        tool_attachment
-                    )
-                    injection_messages.append(injection_msg)
-
-                    logger.info(
-                        f"Processed attachment content part {attachment_id} for LLM injection"
-                    )
-
-                except Exception as e:
-                    logger.error(
-                        f"Error processing attachment content part {attachment_id}: {e}",
-                        exc_info=True,
-                    )
-                    continue
+                tool_attachment = ToolAttachment(
+                    content=content,
+                    mime_type=attachment_metadata.mime_type,
+                    attachment_id=attachment_id,
+                    description=attachment_metadata.description or "Attachment",
+                )
+                injection_msg = self.llm_client.create_attachment_injection(
+                    tool_attachment
+                )
+                injection_messages.append(injection_msg)
+                logger.info(
+                    "Processed attachment content part %s for LLM injection",
+                    attachment_id,
+                )
             elif part.get("type") == "image_url":
                 # image_url parts (e.g. from A2A FileParts) go directly to the LLM
                 # as injection messages — the LLM handles URLs and data URIs natively
@@ -172,68 +158,51 @@ class AttachmentProcessor:
 
         converted_parts = []
 
-        # Check if we need to do any conversions
-        has_attachment_urls = any(
-            part.get("type") == "image_url"
-            and part.get("image_url", {}).get("url", "").startswith("/api/attachments/")
-            for part in content_parts
-        )
-
         for part in content_parts:
             if part.get("type") == "image_url":
                 image_url = part.get("image_url", {}).get("url", "")
 
                 # Check if it's a server URL that needs conversion
-                if image_url.startswith("/api/attachments/") and has_attachment_urls:
+                if image_url.startswith("/api/attachments/"):
                     # Extract attachment ID from URL
                     match = re.match(r"/api/attachments/([a-f0-9-]+)", image_url)
-                    if match:
-                        attachment_id = match.group(1)
-
-                        # Use AttachmentRegistry to get the file path
-                        file_path = self.attachment_registry.get_attachment_path(
-                            attachment_id
+                    if not match:
+                        raise ValueError(
+                            f"Invalid attachment URL format, cannot extract attachment ID: {image_url}"
                         )
 
-                        if file_path and file_path.exists():
-                            try:
-                                # Read file asynchronously
-                                async with aiofiles.open(file_path, "rb") as f:
-                                    file_bytes = await f.read()
+                    attachment_id = match.group(1)
 
-                                # Detect MIME type from file extension
-                                content_type = (
-                                    self.attachment_registry.get_content_type(file_path)
-                                )
+                    # Use AttachmentRegistry to get the file path
+                    file_path = self.attachment_registry.get_attachment_path(
+                        attachment_id
+                    )
+                    if not file_path or not file_path.exists():
+                        raise FileNotFoundError(
+                            f"Attachment file not found for ID: {attachment_id}"
+                        )
 
-                                # Convert to base64
-                                base64_data = base64.b64encode(file_bytes).decode(
-                                    "utf-8"
-                                )
-                                data_uri = f"data:{content_type};base64,{base64_data}"
+                    # Read file asynchronously
+                    async with aiofiles.open(file_path, "rb") as f:
+                        file_bytes = await f.read()
 
-                                # Replace with data URI
-                                converted_parts.append({
-                                    "type": "image_url",
-                                    "image_url": {"url": data_uri},
-                                })
-                                logger.info(
-                                    f"Converted attachment URL to data URI for attachment {attachment_id} (type: {content_type})"
-                                )
-                            except Exception as e:
-                                logger.error(
-                                    f"Failed to convert attachment URL to data URI: {e}"
-                                )
-                                # Keep original if conversion fails
-                                converted_parts.append(part)
-                        else:
-                            logger.warning(
-                                f"Attachment file not found for ID: {attachment_id}"
-                            )
-                            converted_parts.append(part)
-                    else:
-                        # Couldn't parse attachment ID, keep original
-                        converted_parts.append(part)
+                    # Detect MIME type from file extension
+                    content_type = self.attachment_registry.get_content_type(file_path)
+
+                    # Convert to base64
+                    base64_data = base64.b64encode(file_bytes).decode("utf-8")
+                    data_uri = f"data:{content_type};base64,{base64_data}"
+
+                    # Replace with data URI
+                    converted_parts.append({
+                        "type": "image_url",
+                        "image_url": {"url": data_uri},
+                    })
+                    logger.info(
+                        "Converted attachment URL to data URI for attachment %s (type: %s)",
+                        attachment_id,
+                        content_type,
+                    )
                 else:
                     # Already a data URI or external URL, keep as-is
                     converted_parts.append(part)

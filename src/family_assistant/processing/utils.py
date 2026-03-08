@@ -36,6 +36,32 @@ _ERROR_TYPE_TO_EXCEPTION: dict[str, type[LLMProviderError]] = {
     "ServiceUnavailableError": ServiceUnavailableError,
 }
 
+_NORMALIZED_ERROR_TYPE_TO_EXCEPTION: dict[str, type[LLMProviderError]] = {
+    # Canonical class names
+    "ratelimiterror": RateLimitError,
+    "contextlengtherror": ContextLengthError,
+    "authenticationerror": AuthenticationError,
+    "invalidrequesterror": InvalidRequestError,
+    "modelnotfounderror": ModelNotFoundError,
+    "providerconnectionerror": ProviderConnectionError,
+    "providertimeouterror": ProviderTimeoutError,
+    "serviceunavailableerror": ServiceUnavailableError,
+    # Provider snake_case / shorthand variants
+    "ratelimit": RateLimitError,
+    "contextlength": ContextLengthError,
+    "authentication": AuthenticationError,
+    "invalidrequest": InvalidRequestError,
+    "modelnotfound": ModelNotFoundError,
+    "connection": ProviderConnectionError,
+    "timeout": ProviderTimeoutError,
+    "serviceunavailable": ServiceUnavailableError,
+}
+
+
+def _normalize_error_type(error_type: str) -> str:
+    """Normalize provider error type values to a consistent lookup key."""
+    return "".join(char for char in error_type.lower() if char.isalnum())
+
 
 def prune_messages_for_context(
     messages: Sequence[LLMMessage],
@@ -161,6 +187,9 @@ def _map_stream_error_to_exception(event: LLMStreamEvent) -> Exception:
     model = metadata.get("model", "unknown")
 
     exc_class = _ERROR_TYPE_TO_EXCEPTION.get(error_type)
+    if exc_class is None and error_type:
+        normalized_error_type = _normalize_error_type(error_type)
+        exc_class = _NORMALIZED_ERROR_TYPE_TO_EXCEPTION.get(normalized_error_type)
     if exc_class:
         return exc_class(error_msg, provider=provider, model=model)
 
