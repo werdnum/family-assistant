@@ -108,6 +108,103 @@ class ToolExecutor:
             })
         return attachment_metadata_list
 
+    async def _build_attach_to_response_output(
+        self,
+        db_context: DatabaseContext,
+        result_payload: str,
+    ) -> tuple[list[str] | None, StreamEventMetadata | None]:
+        """Build explicit attachment IDs and metadata for attach_to_response output."""
+        queued_attachment_ids = self._extract_queued_attachment_ids(result_payload)
+        if not queued_attachment_ids:
+            return None, None
+
+        attachment_metadata_list = await self._build_attach_to_response_metadata(
+            db_context, queued_attachment_ids
+        )
+        logger.info(
+            "Enriched attach_to_response result with %d attachment metadata entries",
+            len(attachment_metadata_list),
+        )
+        return queued_attachment_ids, {"attachments": attachment_metadata_list}
+
+    def _build_execution_context(
+        self,
+        *,
+        interface_type: str,
+        conversation_id: str,
+        user_name: str,
+        user_id: str | None,
+        turn_id: str,
+        db_context: DatabaseContext,
+        chat_interface: ChatInterface | None,
+        chat_interfaces: dict[str, ChatInterface] | None,
+        request_confirmation_callback: RequestConfirmationCallback | None,
+        subconversation_id: str | None,
+        processing_service: ProcessingService | None,
+        home_assistant_client: HomeAssistantClientWrapper | None,
+        camera_backend: CameraBackend | None,
+        event_sources: dict[str, EventSource] | None,
+    ) -> ToolExecutionContext:
+        chat_interfaces_dict = chat_interfaces
+        if chat_interfaces_dict is None and chat_interface:
+            chat_interfaces_dict = {interface_type: chat_interface}
+
+        return ToolExecutionContext(
+            interface_type=interface_type,
+            conversation_id=conversation_id,
+            user_name=user_name,
+            user_id=user_id,
+            turn_id=turn_id,
+            db_context=db_context,
+            chat_interface=chat_interface,
+            chat_interfaces=chat_interfaces_dict,
+            timezone=self.service_config.timezone,
+            processing_profile_id=self.service_config.id,
+            subconversation_id=subconversation_id,
+            request_confirmation_callback=request_confirmation_callback,
+            processing_service=processing_service,
+            clock=self.clock,
+            home_assistant_client=home_assistant_client,
+            event_sources=event_sources,
+            indexing_source=(
+                cast("IndexingSource | None", event_sources.get("indexing"))
+                if event_sources
+                else None
+            ),
+            attachment_registry=self.attachment_registry,
+            camera_backend=camera_backend,
+            visibility_grants=self.service_config.visibility_grants,
+            default_note_visibility_labels=self.service_config.default_note_visibility_labels,
+            note_registry=self.service_config.note_registry,
+        )
+
+    @staticmethod
+    def _build_error_result(
+        *,
+        call_id: str | None,
+        function_name: str | None,
+        error_content: str,
+        error_traceback: str,
+    ) -> ToolExecutionResult:
+        """Build a standardized tool error result for stream and history."""
+        return ToolExecutionResult(
+            stream_event=LLMStreamEvent(
+                type="tool_result",
+                tool_call_id=call_id,
+                tool_result=error_content,
+                error=error_traceback,
+            ),
+            llm_message=ToolMessage(
+                role="tool",
+                tool_call_id=call_id or f"missing_id_{uuid.uuid4()}",
+                content=error_content,
+                error_traceback=error_traceback,
+                name=function_name or "unknown_function",
+            ),
+            auto_attachment_ids=None,
+            explicit_attachment_ids=None,
+        )
+
     async def execute(
         self,
         tool_call_item_obj: ToolCallItem,
@@ -166,23 +263,11 @@ class ToolExecutor:
                 error_traceback = "Invalid tool call structure received from LLM."
                 func_name = function_name or "unknown_function"
 
-                llm_message = ToolMessage(
-                    role="tool",
-                    tool_call_id=call_id or f"missing_id_{uuid.uuid4()}",
-                    content=error_content,
+                return self._build_error_result(
+                    call_id=call_id,
+                    function_name=func_name,
+                    error_content=error_content,
                     error_traceback=error_traceback,
-                    name=func_name,
-                )
-
-                return ToolExecutionResult(
-                    stream_event=LLMStreamEvent(
-                        type="tool_result",
-                        tool_call_id=call_id,
-                        tool_result=error_content,
-                        error=error_traceback,
-                    ),
-                    llm_message=llm_message,
-                    auto_attachment_ids=None,
                 )
 
             # Parse arguments
@@ -198,23 +283,11 @@ class ToolExecutor:
                 error_content = f"Error: Invalid arguments format for {function_name}."
                 error_traceback = f"JSONDecodeError: {function_args}"
 
-                llm_message = ToolMessage(
-                    role="tool",
-                    tool_call_id=call_id,
-                    content=error_content,
+                return self._build_error_result(
+                    call_id=call_id,
+                    function_name=function_name,
+                    error_content=error_content,
                     error_traceback=error_traceback,
-                    name=function_name,
-                )
-
-                return ToolExecutionResult(
-                    stream_event=LLMStreamEvent(
-                        type="tool_result",
-                        tool_call_id=call_id,
-                        tool_result=error_content,
-                        error=error_traceback,
-                    ),
-                    llm_message=llm_message,
-                    auto_attachment_ids=None,
                 )
 
             if not isinstance(arguments, dict):
@@ -226,23 +299,11 @@ class ToolExecutor:
                 error_content = f"Error: Invalid arguments format for {function_name}."
                 error_traceback = f"Expected JSON object for tool arguments, got {type(arguments).__name__}"
 
-                llm_message = ToolMessage(
-                    role="tool",
-                    tool_call_id=call_id,
-                    content=error_content,
+                return self._build_error_result(
+                    call_id=call_id,
+                    function_name=function_name,
+                    error_content=error_content,
                     error_traceback=error_traceback,
-                    name=function_name,
-                )
-
-                return ToolExecutionResult(
-                    stream_event=LLMStreamEvent(
-                        type="tool_result",
-                        tool_call_id=call_id,
-                        tool_result=error_content,
-                        error=error_traceback,
-                    ),
-                    llm_message=llm_message,
-                    auto_attachment_ids=None,
                 )
 
             # Execute tool
@@ -252,11 +313,7 @@ class ToolExecutor:
                 sorted(arguments.keys()),
             )
 
-            chat_interfaces_dict = chat_interfaces
-            if chat_interfaces_dict is None and chat_interface:
-                chat_interfaces_dict = {interface_type: chat_interface}
-
-            tool_execution_context = ToolExecutionContext(
+            tool_execution_context = self._build_execution_context(
                 interface_type=interface_type,
                 conversation_id=conversation_id,
                 user_name=user_name,
@@ -264,25 +321,13 @@ class ToolExecutor:
                 turn_id=turn_id,
                 db_context=db_context,
                 chat_interface=chat_interface,
-                chat_interfaces=chat_interfaces_dict,
-                timezone=self.service_config.timezone,
-                processing_profile_id=self.service_config.id,
-                subconversation_id=subconversation_id,
+                chat_interfaces=chat_interfaces,
                 request_confirmation_callback=request_confirmation_callback,
+                subconversation_id=subconversation_id,
                 processing_service=processing_service,
-                clock=self.clock,
                 home_assistant_client=home_assistant_client,
-                event_sources=event_sources,
-                indexing_source=(
-                    cast("IndexingSource | None", event_sources.get("indexing"))
-                    if event_sources
-                    else None
-                ),
-                attachment_registry=self.attachment_registry,
                 camera_backend=camera_backend,
-                visibility_grants=self.service_config.visibility_grants,
-                default_note_visibility_labels=self.service_config.default_note_visibility_labels,
-                note_registry=self.service_config.note_registry,
+                event_sources=event_sources,
             )
 
             try:
@@ -291,6 +336,8 @@ class ToolExecutor:
                     function_name, arguments, tool_execution_context, call_id
                 )
                 logger.info(f"Tool '{function_name}' executed successfully.")
+
+                explicit_attachment_ids: list[str] | None = None
 
                 # Handle both string and ToolResult
                 if isinstance(result, ToolResult):
@@ -438,22 +485,15 @@ class ToolExecutor:
                     )
                     stream_metadata: StreamEventMetadata | None = None
 
-                    # Special handling for attach_to_response tool: enrich with attachment metadata
-                    if function_name == "attach_to_response":
-                        queued_attachment_ids = self._extract_queued_attachment_ids(
-                            content_for_stream
-                        )
-                        if queued_attachment_ids:
-                            attachment_metadata_list = (
-                                await self._build_attach_to_response_metadata(
-                                    db_context, queued_attachment_ids
-                                )
-                            )
-                            stream_metadata = {"attachments": attachment_metadata_list}
-                            logger.info(
-                                "Enriched attach_to_response result with %d attachment metadata entries",
-                                len(attachment_metadata_list),
-                            )
+                if function_name == "attach_to_response":
+                    (
+                        explicit_attachment_ids,
+                        explicit_stream_metadata,
+                    ) = await self._build_attach_to_response_output(
+                        db_context, content_for_stream
+                    )
+                    if explicit_stream_metadata is not None:
+                        stream_metadata = explicit_stream_metadata
 
                 span.set_attribute("tool.status", "success")
                 span.set_attribute("tool.result_size", len(content_for_stream))
@@ -469,6 +509,7 @@ class ToolExecutor:
                     auto_attachment_ids=auto_attachment_ids
                     if auto_attachment_ids
                     else None,
+                    explicit_attachment_ids=explicit_attachment_ids,
                 )
 
             except ToolNotFoundError:
@@ -478,23 +519,11 @@ class ToolExecutor:
                 span.set_status(StatusCode.ERROR, f"Tool '{function_name}' not found.")
                 span.set_attribute("tool.status", "error")
 
-                llm_message = ToolMessage(
-                    role="tool",
-                    tool_call_id=call_id,
-                    content=error_content,
+                return self._build_error_result(
+                    call_id=call_id,
+                    function_name=function_name,
+                    error_content=error_content,
                     error_traceback=error_traceback,
-                    name=function_name,
-                )
-
-                return ToolExecutionResult(
-                    stream_event=LLMStreamEvent(
-                        type="tool_result",
-                        tool_call_id=call_id,
-                        tool_result=error_content,
-                        error=error_traceback,
-                    ),
-                    llm_message=llm_message,
-                    auto_attachment_ids=None,
                 )
 
             except Exception as e:
@@ -507,21 +536,9 @@ class ToolExecutor:
                 span.record_exception(e)
                 span.set_attribute("tool.status", "error")
 
-                llm_message = ToolMessage(
-                    role="tool",
-                    tool_call_id=call_id,
-                    content=error_content,
+                return self._build_error_result(
+                    call_id=call_id,
+                    function_name=function_name,
+                    error_content=error_content,
                     error_traceback=error_traceback,
-                    name=function_name,
                 )
-
-            return ToolExecutionResult(
-                stream_event=LLMStreamEvent(
-                    type="tool_result",
-                    tool_call_id=call_id,
-                    tool_result=error_content,
-                    error=error_traceback,
-                ),
-                llm_message=llm_message,
-                auto_attachment_ids=None,
-            )

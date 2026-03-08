@@ -54,6 +54,7 @@ class ToolExecutionResult:
     stream_event: LLMStreamEvent
     llm_message: ToolMessage
     auto_attachment_ids: list[str] | None = None  # list of attachment IDs
+    explicit_attachment_ids: list[str] | None = None
 
 
 @dataclass

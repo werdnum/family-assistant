@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import asyncio
-import json
 import logging
 import traceback
 from typing import TYPE_CHECKING
@@ -610,6 +609,7 @@ class LLMStreamingLoop:
                     event = result.stream_event
                     llm_message = result.llm_message
                     auto_attachment_ids = result.auto_attachment_ids or []
+                    explicit_attachment_ids = result.explicit_attachment_ids or []
 
                     # Auto-queue tool result attachments
                     for auto_attachment_id in auto_attachment_ids:
@@ -619,26 +619,17 @@ class LLMStreamingLoop:
                                 f"Auto-queued tool attachment {auto_attachment_id} for display"
                             )
 
-                    # Check if this is an attach_to_response tool call
-                    if llm_message.name == "attach_to_response" and event.tool_result:
-                        try:
-                            result_data = json.loads(event.tool_result)
-                            if (
-                                result_data.get("status") == "attachments_queued"
-                                and "attachment_ids" in result_data
-                            ):
-                                attachment_ids = result_data["attachment_ids"]
-                                # LLM is taking control - replace auto-collected attachments with explicit list
-                                old_count = len(pending_attachment_ids)
-                                pending_attachment_ids.clear()
-                                pending_attachment_ids.extend(attachment_ids)
-                                logger.info(
-                                    f"LLM explicitly controlling attachments: replaced {old_count} auto-queued with {len(attachment_ids)} explicit attachments"
-                                )
-                        except (json.JSONDecodeError, KeyError) as e:
-                            logger.warning(
-                                f"Failed to parse attach_to_response result: {e}"
-                            )
+                    if explicit_attachment_ids:
+                        # LLM is taking control - replace previously auto-collected
+                        # attachments with an explicit list from attach_to_response.
+                        old_count = len(pending_attachment_ids)
+                        pending_attachment_ids.clear()
+                        pending_attachment_ids.extend(explicit_attachment_ids)
+                        logger.info(
+                            "LLM explicitly controlling attachments: replaced %d auto-queued with %d explicit attachments",
+                            old_count,
+                            len(explicit_attachment_ids),
+                        )
 
                     # Yield tool result event (llm_message for database storage)
                     yield (event, llm_message)
