@@ -60,7 +60,7 @@ class AttachmentProcessor:
         db_context: DatabaseContext,
         conversation_id: str,
         content_parts: list[ContentPartDict],
-    ) -> tuple[list[ContentPartDict], list[LLMMessage]]:
+    ) -> list[LLMMessage]:
         """
         Process attachment content parts by fetching and injecting them as user messages.
 
@@ -74,9 +74,8 @@ class AttachmentProcessor:
             content_parts: List of content parts that may contain attachment references
 
         Returns:
-            Tuple of (modified_content_parts, injection_messages)
+            LLM injection messages created from attachment and image content parts.
         """
-        modified_parts: list[ContentPartDict] = []
         injection_messages: list[LLMMessage] = []
 
         for part in content_parts:
@@ -135,10 +134,7 @@ class AttachmentProcessor:
                             ]
                         )
                     )
-            else:
-                modified_parts.append(part)
-
-        return modified_parts, injection_messages
+        return injection_messages
 
     async def convert_urls_to_data_uris(
         self,

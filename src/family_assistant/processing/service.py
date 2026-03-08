@@ -41,6 +41,7 @@ from .utils import (
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator
+    from datetime import datetime
 
     from family_assistant.camera.protocol import CameraBackend
     from family_assistant.config_models import AppConfig
@@ -357,6 +358,152 @@ class ProcessingService:
                 inject_metadata_into_user_message(msg, metadata_text)
                 return
 
+    async def _save_history_message(
+        self,
+        db_context: DatabaseContext,
+        *,
+        message: LLMMessage,
+        interface_type: str,
+        conversation_id: str,
+        turn_id: str,
+        thread_root_id: int | None,
+        timestamp: datetime | None = None,
+        interface_message_id: str | None = None,
+        subconversation_id: str | None = None,
+        user_id: str | None = None,
+        reasoning_info: MessageReasoningInfo | None = None,
+        attachments: list[MessageAttachmentMetadata] | None = None,
+        save_with_isolated_context: bool = False,
+    ) -> int | None:
+        """Persist a history message using either the active context or a fresh one."""
+        message_timestamp = timestamp if timestamp is not None else self.clock.now()
+
+        if save_with_isolated_context:
+            async with get_db_context(
+                engine=db_context.engine,
+                message_notifier=db_context.message_notifier,
+            ) as isolated_db_context:
+                return await isolated_db_context.message_history.add_message(
+                    message=message,
+                    interface_type=interface_type,
+                    conversation_id=conversation_id,
+                    interface_message_id=interface_message_id,
+                    turn_id=turn_id,
+                    thread_root_id=thread_root_id,
+                    timestamp=message_timestamp,
+                    processing_profile_id=self.service_config.id,
+                    subconversation_id=subconversation_id,
+                    user_id=user_id,
+                    reasoning_info=reasoning_info,
+                    attachments=attachments,
+                )
+
+        return await db_context.message_history.add_message(
+            message=message,
+            interface_type=interface_type,
+            conversation_id=conversation_id,
+            interface_message_id=interface_message_id,
+            turn_id=turn_id,
+            thread_root_id=thread_root_id,
+            timestamp=message_timestamp,
+            processing_profile_id=self.service_config.id,
+            subconversation_id=subconversation_id,
+            user_id=user_id,
+            reasoning_info=reasoning_info,
+            attachments=attachments,
+        )
+
+    async def _prepare_turn_messages_for_llm(
+        self,
+        db_context: DatabaseContext,
+        *,
+        interface_type: str,
+        conversation_id: str,
+        trigger_content_parts: list[ContentPartDict],
+        trigger_interface_message_id: str | None,
+        user_name: str,
+        turn_id: str,
+        user_id: str | None,
+        replied_to_interface_id: str | None,
+        trigger_attachments: list[MessageAttachmentMetadata] | None,
+        subconversation_id: str | None,
+        save_user_message_with_isolated_context: bool,
+    ) -> tuple[int | None, list[LLMMessage]]:
+        """Build the full pre-LLM turn state shared by sync and streaming flows."""
+        thread_root_id_for_turn = await self._resolve_thread_root_id(
+            db_context=db_context,
+            interface_type=interface_type,
+            replied_to_interface_id=replied_to_interface_id,
+        )
+        user_content_for_history = self._extract_user_content_for_history(
+            trigger_content_parts
+        )
+        actual_interface_message_id = trigger_interface_message_id or f"temp_{turn_id}"
+
+        saved_user_msg_record = await self._save_history_message(
+            db_context,
+            message=UserMessage(content=user_content_for_history),
+            interface_type=interface_type,
+            conversation_id=conversation_id,
+            interface_message_id=actual_interface_message_id,
+            turn_id=turn_id,
+            thread_root_id=thread_root_id_for_turn,
+            timestamp=self.clock.now(),
+            attachments=trigger_attachments,
+            subconversation_id=subconversation_id,
+            user_id=user_id,
+            save_with_isolated_context=save_user_message_with_isolated_context,
+        )
+        if saved_user_msg_record is not None and thread_root_id_for_turn is None:
+            thread_root_id_for_turn = saved_user_msg_record
+            logger.info("Established new thread_root_id: %s", thread_root_id_for_turn)
+
+        (
+            messages_for_llm,
+            thread_attachments_context,
+        ) = await self._build_initial_messages_for_llm(
+            db_context=db_context,
+            interface_type=interface_type,
+            conversation_id=conversation_id,
+            replied_to_interface_id=replied_to_interface_id,
+            thread_root_id_for_turn=thread_root_id_for_turn,
+            subconversation_id=subconversation_id,
+        )
+        pruned_count = self._prune_leading_invalid_messages(messages_for_llm)
+        if pruned_count > 0:
+            logger.warning("Pruned %d leading messages from LLM history.", pruned_count)
+
+        aggregated_other_context_str = await self.context_preparer.aggregate_context()
+        if thread_attachments_context:
+            if aggregated_other_context_str:
+                aggregated_other_context_str += "\n\n" + thread_attachments_context
+            else:
+                aggregated_other_context_str = thread_attachments_context
+
+        final_system_prompt = self._render_system_prompt(
+            user_name=user_name,
+            aggregated_other_context_str=aggregated_other_context_str,
+        )
+        if final_system_prompt:
+            messages_for_llm.insert(0, SystemMessage(content=final_system_prompt))
+
+        attachment_injection_messages = (
+            await self.attachment_processor.process_content_parts(
+                db_context,
+                conversation_id,
+                trigger_content_parts,
+            )
+        )
+        messages_for_llm.extend(attachment_injection_messages)
+        self._inject_trigger_attachment_metadata(
+            messages_for_llm=messages_for_llm,
+            trigger_attachments=trigger_attachments,
+        )
+        typed_messages_for_llm = await self.attachment_processor.convert_message_urls(
+            messages_for_llm
+        )
+        return thread_root_id_for_turn, typed_messages_for_llm
+
     async def process_message(
         self,
         db_context: DatabaseContext,
@@ -496,103 +643,23 @@ class ProcessingService:
 
         thread_root_id_for_turn: int | None = None
         try:
-            # --- 1. Determine Thread Root ID & Save User Trigger Message ---
-            user_message_timestamp = self.clock.now()
-
-            thread_root_id_for_turn = await self._resolve_thread_root_id(
-                db_context=db_context,
-                interface_type=interface_type,
-                replied_to_interface_id=replied_to_interface_id,
-            )
-
-            # Prepare user message content for history - store only text
-            # Attachments are stored separately in the attachments column and
-            # reconstructed into multimodal content when loading from history
-            user_content_for_history = self._extract_user_content_for_history(
-                trigger_content_parts
-            )
-
-            actual_interface_message_id = trigger_interface_message_id
-            if actual_interface_message_id is None:
-                actual_interface_message_id = f"temp_{turn_id}"
-
-            saved_user_msg_record = await db_context.message_history.add_message(
-                UserMessage(content=user_content_for_history),
-                interface_type=interface_type,
-                conversation_id=conversation_id,
-                interface_message_id=actual_interface_message_id,
-                turn_id=turn_id,
-                thread_root_id=thread_root_id_for_turn,
-                timestamp=user_message_timestamp,
-                attachments=trigger_attachments,
-                processing_profile_id=self.service_config.id,
-                subconversation_id=subconversation_id,
-                user_id=user_id,
-            )
-
-            if saved_user_msg_record is not None and not thread_root_id_for_turn:
-                thread_root_id_for_turn = saved_user_msg_record
-                if thread_root_id_for_turn:
-                    logger.info(
-                        f"Established new thread_root_id: {thread_root_id_for_turn}"
-                    )
-
-            # --- 2. Prepare LLM Context (History, System Prompt) ---
+            # --- 1-2. Persist user trigger + build LLM-ready messages ---
             (
-                messages_for_llm,
-                thread_attachments_context,
-            ) = await self._build_initial_messages_for_llm(
-                db_context=db_context,
+                thread_root_id_for_turn,
+                typed_messages_for_llm,
+            ) = await self._prepare_turn_messages_for_llm(
+                db_context,
                 interface_type=interface_type,
                 conversation_id=conversation_id,
-                replied_to_interface_id=replied_to_interface_id,
-                thread_root_id_for_turn=thread_root_id_for_turn,
-                subconversation_id=subconversation_id,
-            )
-
-            # Prune leading invalid messages
-            pruned_count = self._prune_leading_invalid_messages(messages_for_llm)
-            if pruned_count > 0:
-                logger.warning(
-                    f"Pruned {pruned_count} leading messages from LLM history."
-                )
-
-            aggregated_other_context_str = (
-                await self.context_preparer.aggregate_context()
-            )
-
-            # Add thread attachments context if available
-            if thread_attachments_context:
-                if aggregated_other_context_str:
-                    aggregated_other_context_str += "\n\n" + thread_attachments_context
-                else:
-                    aggregated_other_context_str = thread_attachments_context
-
-            final_system_prompt = self._render_system_prompt(
+                trigger_content_parts=trigger_content_parts,
+                trigger_interface_message_id=trigger_interface_message_id,
                 user_name=user_name,
-                aggregated_other_context_str=aggregated_other_context_str,
-            )
-
-            if final_system_prompt:
-                messages_for_llm.insert(0, SystemMessage(content=final_system_prompt))
-
-            # Process attachment content parts from delegation
-            (
-                _processed_trigger_parts,
-                attachment_injection_messages,
-            ) = await self.attachment_processor.process_content_parts(
-                db_context, conversation_id, trigger_content_parts
-            )
-
-            messages_for_llm.extend(attachment_injection_messages)
-            self._inject_trigger_attachment_metadata(
-                messages_for_llm=messages_for_llm,
+                turn_id=turn_id,
+                user_id=user_id,
+                replied_to_interface_id=replied_to_interface_id,
                 trigger_attachments=trigger_attachments,
-            )
-
-            # Convert attachment URLs to data URIs in messages from history
-            typed_messages_for_llm = (
-                await self.attachment_processor.convert_message_urls(messages_for_llm)
+                subconversation_id=subconversation_id,
+                save_user_message_with_isolated_context=False,
             )
 
             # --- 3. Call Core LLM Processing (self.process_message) ---
@@ -626,19 +693,16 @@ class ProcessingService:
                         if isinstance(turn_msg, AssistantMessage)
                         else None
                     )
-                    saved_turn_msg_record = (
-                        await db_context.message_history.add_message(
-                            message=turn_msg,
-                            interface_type=interface_type,
-                            conversation_id=conversation_id,
-                            turn_id=turn_id,
-                            thread_root_id=thread_root_id_for_turn,
-                            timestamp=self.clock.now(),
-                            processing_profile_id=self.service_config.id,
-                            subconversation_id=subconversation_id,
-                            user_id=user_id,
-                            reasoning_info=reasoning_info_for_msg,
-                        )
+                    saved_turn_msg_record = await self._save_history_message(
+                        db_context,
+                        message=turn_msg,
+                        interface_type=interface_type,
+                        conversation_id=conversation_id,
+                        turn_id=turn_id,
+                        thread_root_id=thread_root_id_for_turn,
+                        subconversation_id=subconversation_id,
+                        user_id=user_id,
+                        reasoning_info=reasoning_info_for_msg,
                     )
 
                     if isinstance(turn_msg, AssistantMessage) and turn_msg.content:
@@ -669,8 +733,9 @@ class ProcessingService:
 
             error_message_internal_id: int | None = None
             try:
-                error_message_record = await db_context.message_history.add_message(
-                    ErrorMessage(
+                error_message_record = await self._save_history_message(
+                    db_context,
+                    message=ErrorMessage(
                         content=error_message,
                         error_traceback=processing_error_traceback,
                     ),
@@ -679,8 +744,6 @@ class ProcessingService:
                     interface_message_id=None,
                     turn_id=turn_id,
                     thread_root_id=thread_root_id_for_turn,
-                    timestamp=self.clock.now(),
-                    processing_profile_id=self.service_config.id,
                     subconversation_id=subconversation_id,
                     user_id=user_id,
                 )
@@ -753,130 +816,23 @@ class ProcessingService:
         try:
             with trace.use_span(span, end_on_exit=False):
                 try:
-                    # --- 1. Determine Thread Root ID & Save User Trigger Message ---
-                    user_message_timestamp = self.clock.now()
-
-                    thread_root_id_for_turn = await self._resolve_thread_root_id(
-                        db_context=db_context,
-                        interface_type=interface_type,
-                        replied_to_interface_id=replied_to_interface_id,
-                    )
-
-                    # Prepare user message content for history - store only text
-                    user_content_for_history = self._extract_user_content_for_history(
-                        trigger_content_parts
-                    )
-
-                    actual_interface_message_id = trigger_interface_message_id
-                    if actual_interface_message_id is None:
-                        actual_interface_message_id = f"temp_{turn_id}"
-
-                    # Save user message
-                    # On PostgreSQL, use a separate transaction so the message is committed and visible immediately
-                    # to other requests (like UI polling) while the LLM continues processing.
-                    # On SQLite, we avoid nested transactions due to connection sharing in StaticPool.
-                    user_msg = UserMessage(content=user_content_for_history)
-                    if db_context.engine.dialect.name == "postgresql":
-                        async with get_db_context(
-                            engine=db_context.engine,
-                            message_notifier=db_context.message_notifier,
-                        ) as user_msg_db:
-                            saved_user_msg_record = (
-                                await user_msg_db.message_history.add_message(
-                                    user_msg,
-                                    interface_type=interface_type,
-                                    conversation_id=conversation_id,
-                                    interface_message_id=actual_interface_message_id,
-                                    turn_id=turn_id,
-                                    thread_root_id=thread_root_id_for_turn,
-                                    timestamp=user_message_timestamp,
-                                    attachments=trigger_attachments,
-                                    processing_profile_id=self.service_config.id,
-                                    subconversation_id=subconversation_id,
-                                    user_id=user_id,
-                                )
-                            )
-                    else:
-                        saved_user_msg_record = (
-                            await db_context.message_history.add_message(
-                                user_msg,
-                                interface_type=interface_type,
-                                conversation_id=conversation_id,
-                                interface_message_id=actual_interface_message_id,
-                                turn_id=turn_id,
-                                thread_root_id=thread_root_id_for_turn,
-                                timestamp=user_message_timestamp,
-                                attachments=trigger_attachments,
-                                processing_profile_id=self.service_config.id,
-                                subconversation_id=subconversation_id,
-                                user_id=user_id,
-                            )
-                        )
-
-                    if (
-                        saved_user_msg_record is not None
-                        and not thread_root_id_for_turn
-                    ):
-                        thread_root_id_for_turn = saved_user_msg_record
-
-                    # --- 2. Prepare LLM Context ---
+                    # --- 1-2. Persist user trigger + build LLM-ready messages ---
                     (
-                        messages_for_llm,
-                        thread_attachments_context,
-                    ) = await self._build_initial_messages_for_llm(
-                        db_context=db_context,
+                        thread_root_id_for_turn,
+                        typed_messages_for_llm,
+                    ) = await self._prepare_turn_messages_for_llm(
+                        db_context,
                         interface_type=interface_type,
                         conversation_id=conversation_id,
-                        replied_to_interface_id=replied_to_interface_id,
-                        thread_root_id_for_turn=thread_root_id_for_turn,
-                        subconversation_id=subconversation_id,
-                    )
-
-                    # Prune leading invalid messages
-                    self._prune_leading_invalid_messages(messages_for_llm)
-
-                    aggregated_other_context_str = (
-                        await self.context_preparer.aggregate_context()
-                    )
-
-                    # Add thread attachments context if available
-                    if thread_attachments_context:
-                        if aggregated_other_context_str:
-                            aggregated_other_context_str += (
-                                "\n\n" + thread_attachments_context
-                            )
-                        else:
-                            aggregated_other_context_str = thread_attachments_context
-
-                    final_system_prompt = self._render_system_prompt(
+                        trigger_content_parts=trigger_content_parts,
+                        trigger_interface_message_id=trigger_interface_message_id,
                         user_name=user_name,
-                        aggregated_other_context_str=aggregated_other_context_str,
-                    )
-
-                    if final_system_prompt:
-                        messages_for_llm.insert(
-                            0, SystemMessage(content=final_system_prompt)
-                        )
-
-                    # Process attachment content parts from delegation
-                    (
-                        _processed_trigger_parts,
-                        attachment_injection_messages,
-                    ) = await self.attachment_processor.process_content_parts(
-                        db_context, conversation_id, trigger_content_parts
-                    )
-
-                    messages_for_llm.extend(attachment_injection_messages)
-                    self._inject_trigger_attachment_metadata(
-                        messages_for_llm=messages_for_llm,
+                        turn_id=turn_id,
+                        user_id=user_id,
+                        replied_to_interface_id=replied_to_interface_id,
                         trigger_attachments=trigger_attachments,
-                    )
-
-                    # Convert attachment URLs to data URIs in messages from history
-                    typed_messages_for_llm = (
-                        await self.attachment_processor.convert_message_urls(
-                            messages_for_llm
-                        )
+                        subconversation_id=subconversation_id,
+                        save_user_message_with_isolated_context=True,
                     )
 
                     # --- 3. Stream LLM Processing ---
@@ -903,36 +859,18 @@ class ProcessingService:
                                 and event.metadata
                                 else None
                             )
-                            if db_context.engine.dialect.name == "postgresql":
-                                async with get_db_context(
-                                    engine=db_context.engine,
-                                    message_notifier=db_context.message_notifier,
-                                ) as msg_db:
-                                    await msg_db.message_history.add_message(
-                                        message=stream_msg,
-                                        interface_type=interface_type,
-                                        conversation_id=conversation_id,
-                                        turn_id=turn_id,
-                                        thread_root_id=thread_root_id_for_turn,
-                                        timestamp=self.clock.now(),
-                                        processing_profile_id=self.service_config.id,
-                                        subconversation_id=subconversation_id,
-                                        user_id=user_id,
-                                        reasoning_info=reasoning_info_for_stream,
-                                    )
-                            else:
-                                await db_context.message_history.add_message(
-                                    message=stream_msg,
-                                    interface_type=interface_type,
-                                    conversation_id=conversation_id,
-                                    turn_id=turn_id,
-                                    thread_root_id=thread_root_id_for_turn,
-                                    timestamp=self.clock.now(),
-                                    processing_profile_id=self.service_config.id,
-                                    subconversation_id=subconversation_id,
-                                    user_id=user_id,
-                                    reasoning_info=reasoning_info_for_stream,
-                                )
+                            await self._save_history_message(
+                                db_context,
+                                message=stream_msg,
+                                interface_type=interface_type,
+                                conversation_id=conversation_id,
+                                turn_id=turn_id,
+                                thread_root_id=thread_root_id_for_turn,
+                                subconversation_id=subconversation_id,
+                                user_id=user_id,
+                                reasoning_info=reasoning_info_for_stream,
+                                save_with_isolated_context=True,
+                            )
 
                 except Exception as e:
                     span.set_status(StatusCode.ERROR, str(e))
@@ -953,36 +891,18 @@ class ProcessingService:
                             content=error_message,
                             error_traceback=processing_error_traceback,
                         )
-                        if db_context.engine.dialect.name == "postgresql":
-                            async with get_db_context(
-                                engine=db_context.engine,
-                                message_notifier=db_context.message_notifier,
-                            ) as error_db:
-                                await error_db.message_history.add_message(
-                                    message=error_history_message,
-                                    interface_type=interface_type,
-                                    conversation_id=conversation_id,
-                                    interface_message_id=None,
-                                    turn_id=turn_id,
-                                    thread_root_id=thread_root_id_for_turn,
-                                    timestamp=self.clock.now(),
-                                    processing_profile_id=self.service_config.id,
-                                    subconversation_id=subconversation_id,
-                                    user_id=user_id,
-                                )
-                        else:
-                            await db_context.message_history.add_message(
-                                message=error_history_message,
-                                interface_type=interface_type,
-                                conversation_id=conversation_id,
-                                interface_message_id=None,
-                                turn_id=turn_id,
-                                thread_root_id=thread_root_id_for_turn,
-                                timestamp=self.clock.now(),
-                                processing_profile_id=self.service_config.id,
-                                subconversation_id=subconversation_id,
-                                user_id=user_id,
-                            )
+                        await self._save_history_message(
+                            db_context,
+                            message=error_history_message,
+                            interface_type=interface_type,
+                            conversation_id=conversation_id,
+                            interface_message_id=None,
+                            turn_id=turn_id,
+                            thread_root_id=thread_root_id_for_turn,
+                            subconversation_id=subconversation_id,
+                            user_id=user_id,
+                            save_with_isolated_context=True,
+                        )
                     except Exception:
                         logger.error(
                             "Failed to save streaming error message to history",
