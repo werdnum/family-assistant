@@ -105,6 +105,7 @@ class TestProcessingServiceMultimodal:
         assert tool_message.content == "Simple string result"
         assert tool_message.error_traceback is None
         assert tool_message.transient_attachments is None
+        assert result.explicit_attachment_ids is None
 
     @pytest.mark.asyncio
     async def test_execute_single_tool_result_with_attachment(
@@ -595,6 +596,7 @@ class TestProcessingServiceMultimodal:
             not second_result.auto_attachment_ids
             or len(second_result.auto_attachment_ids) == 0
         )
+        assert second_result.explicit_attachment_ids == ["explicit_attachment_456"]
         # But it should return the JSON response for the processing loop to handle
         assert second_result.stream_event.tool_result is not None
         assert "attachments_queued" in second_result.stream_event.tool_result
@@ -686,9 +688,14 @@ class TestProcessingServiceMultimodal:
         # Both should return proper JSON responses
         assert first_result.stream_event.tool_result is not None
         assert "first_attachment" in first_result.stream_event.tool_result
+        assert first_result.explicit_attachment_ids == ["first_attachment"]
         assert second_result.stream_event.tool_result is not None
         assert "second_attachment_a" in second_result.stream_event.tool_result
         assert "second_attachment_b" in second_result.stream_event.tool_result
+        assert second_result.explicit_attachment_ids == [
+            "second_attachment_a",
+            "second_attachment_b",
+        ]
 
         # Neither generates auto-attachments (attach_to_response is explicit control)
         assert (
@@ -809,6 +816,7 @@ class TestProcessingServiceMultimodal:
             not attach_result.auto_attachment_ids
             or len(attach_result.auto_attachment_ids) == 0
         )
+        assert attach_result.explicit_attachment_ids == ["explicit_attachment"]
 
         # But new tool should still auto-queue its attachment
         # (Each tool execution is independent)
