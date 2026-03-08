@@ -35,16 +35,80 @@ RequestConfirmationCallback = Callable[
 class ChatInteractionResult:
     """Result of a chat interaction from ProcessingService.handle_chat_interaction."""
 
+    status: Literal["success", "error"]
     text_reply: str | None = None
     assistant_message_internal_id: int | None = None
     reasoning_info: MessageReasoningInfo | None = None
     error_traceback: str | None = None
     attachment_ids: list[str] | None = None
 
+    def __post_init__(self) -> None:
+        """Enforce a consistent success/error contract."""
+        if self.status == "success":
+            if self.error_traceback is not None:
+                raise ValueError(
+                    "ChatInteractionResult(status='success') cannot include error_traceback"
+                )
+            return
+
+        if self.error_traceback is None:
+            raise ValueError(
+                "ChatInteractionResult(status='error') requires error_traceback"
+            )
+        if self.text_reply is None:
+            raise ValueError(
+                "ChatInteractionResult(status='error') requires user-facing text_reply"
+            )
+        if self.reasoning_info is not None:
+            raise ValueError(
+                "ChatInteractionResult(status='error') cannot include reasoning_info"
+            )
+        if self.attachment_ids is not None:
+            raise ValueError(
+                "ChatInteractionResult(status='error') cannot include attachment_ids"
+            )
+
+    @classmethod
+    def success(
+        cls,
+        *,
+        text_reply: str | None = None,
+        assistant_message_internal_id: int | None = None,
+        reasoning_info: MessageReasoningInfo | None = None,
+        attachment_ids: list[str] | None = None,
+    ) -> ChatInteractionResult:
+        """Create a successful chat interaction result."""
+        return cls(
+            status="success",
+            text_reply=text_reply,
+            assistant_message_internal_id=assistant_message_internal_id,
+            reasoning_info=reasoning_info,
+            error_traceback=None,
+            attachment_ids=attachment_ids,
+        )
+
+    @classmethod
+    def error(
+        cls,
+        *,
+        text_reply: str,
+        error_traceback: str,
+        assistant_message_internal_id: int | None = None,
+    ) -> ChatInteractionResult:
+        """Create an error chat interaction result."""
+        return cls(
+            status="error",
+            text_reply=text_reply,
+            assistant_message_internal_id=assistant_message_internal_id,
+            reasoning_info=None,
+            error_traceback=error_traceback,
+            attachment_ids=None,
+        )
+
     @property
     def has_error(self) -> bool:
         """Check if this result represents an error."""
-        return self.error_traceback is not None
+        return self.status == "error"
 
 
 @dataclass

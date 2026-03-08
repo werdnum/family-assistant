@@ -161,7 +161,7 @@ class TestA2AMessageToContentParts:
 
 class TestChatResultToArtifact:
     def test_text_reply(self) -> None:
-        result = ChatInteractionResult(text_reply="Hello from the assistant")
+        result = ChatInteractionResult.success(text_reply="Hello from the assistant")
         artifact = chat_result_to_artifact(result)
         assert artifact is not None
         assert artifact.name == "response"
@@ -171,7 +171,7 @@ class TestChatResultToArtifact:
         assert artifact.artifact_id
 
     def test_with_attachments(self) -> None:
-        result = ChatInteractionResult(
+        result = ChatInteractionResult.success(
             text_reply="See attached", attachment_ids=["att-1", "att-2"]
         )
         artifact = chat_result_to_artifact(
@@ -188,12 +188,15 @@ class TestChatResultToArtifact:
         assert artifact.parts[2].root.file.uri == "att-2"
 
     def test_empty_result_returns_none(self) -> None:
-        result = ChatInteractionResult()
+        result = ChatInteractionResult.success()
         artifact = chat_result_to_artifact(result)
         assert artifact is None
 
     def test_error_result(self) -> None:
-        result = ChatInteractionResult(error_traceback="Something went wrong")
+        result = ChatInteractionResult.error(
+            text_reply="Something went wrong",
+            error_traceback="Something went wrong",
+        )
         assert result.has_error is True
         artifact = chat_result_to_artifact(result)
         assert artifact is None

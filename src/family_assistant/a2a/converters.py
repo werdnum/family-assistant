@@ -134,6 +134,9 @@ def chat_result_to_artifact(
         result: The chat interaction result.
         attachment_urls: Optional mapping of attachment_id -> download URL.
     """
+    if result.has_error:
+        return None
+
     parts: list[Part] = []
 
     if result.text_reply:
