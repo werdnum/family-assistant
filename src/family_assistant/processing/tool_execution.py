@@ -7,7 +7,7 @@ import uuid
 from typing import TYPE_CHECKING, cast
 
 from opentelemetry import trace
-from opentelemetry.trace import StatusCode
+from opentelemetry.trace import Span, StatusCode
 
 from family_assistant.llm import LLMStreamEvent, StreamEventMetadata
 from family_assistant.llm.messages import (
@@ -209,6 +209,53 @@ class ToolExecutor:
             auto_attachment_ids=None,
             explicit_attachment_ids=None,
         )
+
+    async def _execute_tool_with_error_mapping(
+        self,
+        *,
+        function_name: str,
+        arguments: dict[str, object],
+        tool_execution_context: ToolExecutionContext,
+        call_id: str,
+        span: Span,
+    ) -> ToolResult | object | ToolExecutionResult:
+        """Execute a tool and map tool runtime failures to tool_result errors."""
+        try:
+            result = await self.tools_provider.execute_tool(
+                function_name, arguments, tool_execution_context, call_id
+            )
+            logger.info("Tool '%s' executed successfully.", function_name)
+            return result
+        except ToolNotFoundError:
+            logger.error("Tool '%s' not found.", function_name)
+            error_content = f"Error: Tool '{function_name}' not found."
+            error_traceback = traceback.format_exc()
+            span.set_status(StatusCode.ERROR, f"Tool '{function_name}' not found.")
+            span.set_attribute("tool.status", "error")
+            return self._build_error_result(
+                call_id=call_id,
+                function_name=function_name,
+                error_content=error_content,
+                error_traceback=error_traceback,
+            )
+        except Exception as exc:  # Tool implementation/runtime error
+            logger.error(
+                "Error executing tool '%s': %s",
+                function_name,
+                exc,
+                exc_info=exc,
+            )
+            error_content = f"Error executing {function_name}: {exc}"
+            error_traceback = traceback.format_exc()
+            span.set_status(StatusCode.ERROR, str(exc))
+            span.record_exception(exc)
+            span.set_attribute("tool.status", "error")
+            return self._build_error_result(
+                call_id=call_id,
+                function_name=function_name,
+                error_content=error_content,
+                error_traceback=error_traceback,
+            )
 
     @staticmethod
     def _parse_arguments(
@@ -522,97 +569,72 @@ class ToolExecutor:
                 event_sources=event_sources,
             )
 
-            try:
-                # Execute the tool
-                result = await self.tools_provider.execute_tool(
-                    function_name, arguments, tool_execution_context, call_id
-                )
-                logger.info("Tool '%s' executed successfully.", function_name)
+            result_or_error = await self._execute_tool_with_error_mapping(
+                function_name=function_name,
+                arguments=arguments,
+                tool_execution_context=tool_execution_context,
+                call_id=call_id,
+                span=span,
+            )
+            if isinstance(result_or_error, ToolExecutionResult):
+                return result_or_error
 
-                explicit_attachment_ids: list[str] | None = None
+            # Post-execution processing failures (attachment IO/enrichment/metadata
+            # handling) should fail fast and propagate to callers.
+            result = result_or_error
+            explicit_attachment_ids: list[str] | None = None
 
-                if isinstance(result, ToolResult):
-                    (
-                        content_for_stream,
-                        llm_message,
-                        stream_metadata,
-                        auto_attachment_ids,
-                    ) = await self._build_output_for_tool_result(
-                        db_context=db_context,
-                        result=result,
-                        function_name=function_name,
-                        conversation_id=conversation_id,
-                        call_id=call_id,
-                        provider_metadata=tool_call_item_obj.provider_metadata,
-                    )
-                else:
-                    (
-                        content_for_stream,
-                        llm_message,
-                        stream_metadata,
-                        auto_attachment_ids,
-                    ) = await self._build_output_for_string_result(
-                        db_context=db_context,
-                        result=result,
-                        function_name=function_name,
-                        conversation_id=conversation_id,
-                        call_id=call_id,
-                    )
-
-                if function_name == "attach_to_response":
-                    (
-                        explicit_attachment_ids,
-                        explicit_stream_metadata,
-                    ) = await self._build_attach_to_response_output(
-                        db_context, content_for_stream
-                    )
-                    if explicit_stream_metadata is not None:
-                        stream_metadata = explicit_stream_metadata
-
-                span.set_attribute("tool.status", "success")
-                span.set_attribute("tool.result_size", len(content_for_stream))
-
-                return ToolExecutionResult(
-                    stream_event=LLMStreamEvent(
-                        type="tool_result",
-                        tool_call_id=call_id,
-                        tool_result=content_for_stream,
-                        metadata=stream_metadata,
-                    ),
-                    llm_message=llm_message,
-                    auto_attachment_ids=auto_attachment_ids
-                    if auto_attachment_ids
-                    else None,
-                    explicit_attachment_ids=explicit_attachment_ids,
-                )
-
-            except ToolNotFoundError:
-                logger.error("Tool '%s' not found.", function_name)
-                error_content = f"Error: Tool '{function_name}' not found."
-                error_traceback = traceback.format_exc()
-                span.set_status(StatusCode.ERROR, f"Tool '{function_name}' not found.")
-                span.set_attribute("tool.status", "error")
-
-                return self._build_error_result(
-                    call_id=call_id,
+            if isinstance(result, ToolResult):
+                (
+                    content_for_stream,
+                    llm_message,
+                    stream_metadata,
+                    auto_attachment_ids,
+                ) = await self._build_output_for_tool_result(
+                    db_context=db_context,
+                    result=result,
                     function_name=function_name,
-                    error_content=error_content,
-                    error_traceback=error_traceback,
-                )
-
-            except Exception as e:
-                logger.error(
-                    "Error executing tool '%s': %s", function_name, e, exc_info=e
-                )
-                error_content = f"Error executing {function_name}: {e}"
-                error_traceback = traceback.format_exc()
-                span.set_status(StatusCode.ERROR, str(e))
-                span.record_exception(e)
-                span.set_attribute("tool.status", "error")
-
-                return self._build_error_result(
+                    conversation_id=conversation_id,
                     call_id=call_id,
-                    function_name=function_name,
-                    error_content=error_content,
-                    error_traceback=error_traceback,
+                    provider_metadata=tool_call_item_obj.provider_metadata,
                 )
+            else:
+                (
+                    content_for_stream,
+                    llm_message,
+                    stream_metadata,
+                    auto_attachment_ids,
+                ) = await self._build_output_for_string_result(
+                    db_context=db_context,
+                    result=result,
+                    function_name=function_name,
+                    conversation_id=conversation_id,
+                    call_id=call_id,
+                )
+
+            if function_name == "attach_to_response":
+                (
+                    explicit_attachment_ids,
+                    explicit_stream_metadata,
+                ) = await self._build_attach_to_response_output(
+                    db_context, content_for_stream
+                )
+                if explicit_stream_metadata is not None:
+                    stream_metadata = explicit_stream_metadata
+
+            span.set_attribute("tool.status", "success")
+            span.set_attribute("tool.result_size", len(content_for_stream))
+
+            return ToolExecutionResult(
+                stream_event=LLMStreamEvent(
+                    type="tool_result",
+                    tool_call_id=call_id,
+                    tool_result=content_for_stream,
+                    metadata=stream_metadata,
+                ),
+                llm_message=llm_message,
+                auto_attachment_ids=auto_attachment_ids
+                if auto_attachment_ids
+                else None,
+                explicit_attachment_ids=explicit_attachment_ids,
+            )

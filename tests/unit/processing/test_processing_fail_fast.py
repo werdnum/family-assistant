@@ -22,6 +22,7 @@ from family_assistant.processing import ProcessingService, ProcessingServiceConf
 from family_assistant.processing.attachments import AttachmentProcessor
 from family_assistant.processing.context import ContextPreparer
 from family_assistant.storage.context import get_db_context
+from family_assistant.tools.types import ToolAttachment, ToolResult
 from family_assistant.utils.clock import SystemClock
 from tests.mocks.mock_llm import (  # pylint: disable=no-name-in-module
     RuleBasedMockLLMClient,
@@ -34,7 +35,7 @@ if TYPE_CHECKING:
 
     from family_assistant.llm.messages import ContentPartDict
     from family_assistant.tools import ToolExecutionContext
-    from family_assistant.tools.types import ToolDefinition, ToolResult
+    from family_assistant.tools.types import ToolDefinition
 
 
 class SimpleToolsProvider:
@@ -478,3 +479,81 @@ async def test_convert_urls_to_data_uris_missing_file_raises() -> None:
                 },
             }
         ])
+
+
+@pytest.mark.no_db
+@pytest.mark.asyncio
+async def test_tool_executor_propagates_attachment_storage_failures() -> None:
+    service = _make_service()
+    mock_tools_provider = AsyncMock()
+    mock_tools_provider.execute_tool.return_value = ToolResult(
+        text="ok",
+        attachments=[
+            ToolAttachment(
+                mime_type="image/png",
+                content=b"test-bytes",
+                description="test attachment",
+            )
+        ],
+    )
+    service.tool_executor.tools_provider = mock_tools_provider
+
+    mock_registry = AsyncMock()
+    mock_registry.store_and_register_tool_attachment.side_effect = RuntimeError(
+        "attachment storage failed"
+    )
+    service.tool_executor.attachment_registry = mock_registry
+
+    tool_call = ToolCallItem(
+        id="call_attachment_store_fail",
+        type="function",
+        function=ToolCallFunction(name="tool_with_attachment", arguments="{}"),
+    )
+
+    with pytest.raises(RuntimeError, match="attachment storage failed"):
+        await service.tool_executor.execute(
+            tool_call_item_obj=tool_call,
+            interface_type="test",
+            conversation_id="conv",
+            user_name="tester",
+            turn_id="turn",
+            db_context=MagicMock(),
+            chat_interface=None,
+            request_confirmation_callback=None,
+        )
+
+
+@pytest.mark.no_db
+@pytest.mark.asyncio
+async def test_tool_executor_propagates_attach_to_response_metadata_failures() -> None:
+    service = _make_service()
+    mock_tools_provider = AsyncMock()
+    mock_tools_provider.execute_tool.return_value = (
+        '{"status":"attachments_queued","attachment_ids":["missing-attachment"]}'
+    )
+    service.tool_executor.tools_provider = mock_tools_provider
+
+    mock_registry = AsyncMock()
+    mock_registry.get_attachment.return_value = None
+    service.tool_executor.attachment_registry = mock_registry
+
+    tool_call = ToolCallItem(
+        id="call_attach_metadata_fail",
+        type="function",
+        function=ToolCallFunction(name="attach_to_response", arguments="{}"),
+    )
+
+    with pytest.raises(
+        ValueError,
+        match="attach_to_response referenced unknown attachment",
+    ):
+        await service.tool_executor.execute(
+            tool_call_item_obj=tool_call,
+            interface_type="test",
+            conversation_id="conv",
+            user_name="tester",
+            turn_id="turn",
+            db_context=MagicMock(),
+            chat_interface=None,
+            request_confirmation_callback=None,
+        )
