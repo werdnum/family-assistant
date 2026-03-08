@@ -30,6 +30,7 @@ if TYPE_CHECKING:
     from pydantic_settings import PydanticBaseSettingsSource
 
 from .config_sources import DeepMergedYamlSource
+from .delegation_security import DelegationSecurityLevel
 
 
 class RetryModelConfig(BaseModel):
@@ -116,7 +117,7 @@ class ProcessingConfig(BaseModel):
     llm_model: str | None = None
     provider: str | None = None  # 'google', 'openai', 'litellm'
     retry_config: RetryConfig | None = None
-    delegation_security_level: str = "confirm"  # "blocked", "confirm", "unrestricted"
+    delegation_security_level: DelegationSecurityLevel = DelegationSecurityLevel.CONFIRM
     home_assistant_api_url: str | None = None
     home_assistant_token: str | None = None
     home_assistant_context_template: str | None = None

@@ -5,6 +5,8 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import TYPE_CHECKING, Any, Literal
 
+from family_assistant.delegation_security import DelegationSecurityLevel
+
 if TYPE_CHECKING:
     from zoneinfo import ZoneInfo
 
@@ -14,14 +16,17 @@ if TYPE_CHECKING:
     from family_assistant.skills.registry import NoteRegistry
     from family_assistant.tools import ToolExecutionContext
 
-DelegationSecurityLevel = Literal["blocked", "confirm", "unrestricted"]
-
 
 class ChatInteractionStatus(Enum):
     """Outcome status for ProcessingService.handle_chat_interaction."""
 
     SUCCESS = "success"
     ERROR = "error"
+
+
+type DelegationSecurityLevelValue = (
+    DelegationSecurityLevel | Literal["blocked", "confirm", "unrestricted"]
+)
 
 
 # ast-grep-ignore: no-dict-any - tool args have varying keys per tool
@@ -142,7 +147,7 @@ class ProcessingServiceConfig:
     max_history_messages: int
     history_max_age_hours: float  # Can be fractional (e.g., 0.5 hours)
     tools_config: ToolsConfig
-    delegation_security_level: DelegationSecurityLevel
+    delegation_security_level: DelegationSecurityLevelValue
     id: str  # Unique identifier for this service profile
     description: str = ""  # Human-readable description of this profile
     # Type hint for model_parameters should reflect pattern -> params_dict structure

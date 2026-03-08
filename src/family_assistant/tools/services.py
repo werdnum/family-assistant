@@ -14,6 +14,7 @@ from typing import TYPE_CHECKING, Any, cast
 
 import telegramify_markdown
 
+from family_assistant.delegation_security import DelegationSecurityLevel
 from family_assistant.llm.content_parts import text_content
 from family_assistant.tools.types import ToolAttachment, ToolDefinition, ToolResult
 
@@ -132,12 +133,9 @@ async def delegate_to_service_tool(
             attachments=None,
         )
 
-    # Check target service's delegation security level
-    target_security_level = getattr(
-        target_service.service_config, "delegation_security_level", "confirm"
-    )  # Default to 'confirm' if not set
+    target_security_level = target_service.service_config.delegation_security_level
 
-    if target_security_level == "blocked":
+    if target_security_level == DelegationSecurityLevel.BLOCKED:
         logger.warning(
             f"Delegation to service '{target_service_id}' is blocked by its security policy."
         )
@@ -147,7 +145,9 @@ async def delegate_to_service_tool(
         )
 
     # Determine if confirmation is needed based on target's policy and tool's argument
-    needs_confirmation_due_to_policy = target_security_level == "confirm"
+    needs_confirmation_due_to_policy = (
+        target_security_level == DelegationSecurityLevel.CONFIRM
+    )
     actual_confirm_delegation = confirm_delegation or needs_confirmation_due_to_policy
 
     if actual_confirm_delegation:
@@ -161,25 +161,8 @@ async def delegate_to_service_tool(
             )
         else:
             # Attempt to get a description from the target service's config
-            if (
-                hasattr(target_service, "service_config")
-                and target_service.service_config
-            ):
-                # Check if service_config has a description attribute or similar
-                # This part is speculative as ProcessingServiceConfig doesn't directly hold 'description'
-                # but the profile definition in config.yaml does.
-                # For now, we'll use a generic description or the profile ID.
-                # A more robust way would be to ensure profile description is accessible via ProcessingService.
-                pass  # Placeholder for actual description retrieval if different
-
-            # Use profile ID as part of the description if a more specific one isn't easily available
-            profile_id_for_prompt = target_service_id
-            if hasattr(target_service, "service_config") and hasattr(
-                target_service.service_config, "id"
-            ):  # Assuming service_config might have an id
-                profile_id_for_prompt = getattr(
-                    target_service.service_config, "id", target_service_id
-                )
+            # service_config is guaranteed on ProcessingService.
+            profile_id_for_prompt = target_service.service_config.id
 
             prompt_text = (
                 f"Do you want to delegate the task: '{telegramify_markdown.escape_markdown(user_request[:100])}...' "
