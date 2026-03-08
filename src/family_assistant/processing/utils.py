@@ -87,15 +87,17 @@ def _normalize_error_type(error_type: str) -> str:
 
 def prune_messages_for_context(
     messages: Sequence[LLMMessage],
+    *,
+    min_turns: int = 3,
 ) -> list[LLMMessage]:
     """Prune messages to reduce context length.
 
     Strategy:
     1. Replace old ToolMessage content with compact placeholders (preserving the
        latest turn's tool results intact).
-    2. Drop the oldest non-system turns when there are more than 3 user/assistant
-       turns, keeping only the 3 most recent user/assistant turns and all system
-       messages.
+    2. Drop the oldest non-system turns when there are more than ``min_turns``
+       user/assistant turns, keeping only the most recent ``min_turns`` turns
+       and all system messages.
 
     Returns a new list; the input list is not modified.
     """
@@ -156,7 +158,9 @@ def prune_messages_for_context(
     if current_turn:
         turns.append(current_turn)
 
-    min_turns = 3
+    if min_turns < 1:
+        raise ValueError("min_turns must be >= 1")
+
     if len(turns) > min_turns:
         kept_turns = turns[-min_turns:]
         dropped = len(turns) - min_turns

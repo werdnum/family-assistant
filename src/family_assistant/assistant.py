@@ -864,6 +864,7 @@ class Assistant:
                 web_max_history_messages=profile_proc_conf.web_max_history_messages,
                 web_history_max_age_hours=profile_proc_conf.web_history_max_age_hours,
                 max_iterations=profile_proc_conf.max_iterations,
+                context_pruning_min_turns=profile_proc_conf.context_pruning_min_turns,
                 tools_config=profile_tools_conf,
                 delegation_security_level=cast(
                     "DelegationSecurityLevel",

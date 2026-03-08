@@ -576,6 +576,7 @@ def resolve_service_profile(
             "web_max_history_messages",
             "web_history_max_age_hours",
             "max_iterations",
+            "context_pruning_min_turns",
             "delegation_security_level",
             "retry_config",
             "camera_config",

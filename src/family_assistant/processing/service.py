@@ -116,10 +116,8 @@ class ProcessingService:
     @llm_client.setter
     def llm_client(self, value: LLMInterface) -> None:
         self._llm_client = value
-        if hasattr(self, "llm_loop"):
-            self.llm_loop.llm_client = value
-        if hasattr(self, "attachment_processor"):
-            self.attachment_processor.llm_client = value
+        self.llm_loop.llm_client = value
+        self.attachment_processor.llm_client = value
 
     @property
     def attachment_registry(self) -> AttachmentRegistry | None:
@@ -128,10 +126,8 @@ class ProcessingService:
     @attachment_registry.setter
     def attachment_registry(self, value: AttachmentRegistry | None) -> None:
         self._attachment_registry = value
-        if hasattr(self, "attachment_processor"):
-            self.attachment_processor.attachment_registry = value
-        if hasattr(self, "tool_executor"):
-            self.tool_executor.attachment_registry = value
+        self.attachment_processor.attachment_registry = value
+        self.tool_executor.attachment_registry = value
 
     def set_processing_services_registry(
         self, registry: dict[str, ProcessingService]

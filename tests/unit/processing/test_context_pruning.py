@@ -236,3 +236,17 @@ class TestPruneMessagesForContext:
         assert pruned[0].role == "system"
         user_messages = [m for m in pruned if isinstance(m, UserMessage)]
         assert len(user_messages) >= 3
+
+    def test_respects_custom_min_turns(self) -> None:
+        """Custom min_turns keeps the requested number of latest turns."""
+        messages: list[LLMMessage] = [SystemMessage(content="System")]
+        for i in range(8):
+            messages.append(UserMessage(content=f"Question {i}"))
+            messages.append(AssistantMessage(content=f"Answer {i}"))
+
+        pruned = prune_messages_for_context(messages, min_turns=5)
+        user_messages = [m for m in pruned if isinstance(m, UserMessage)]
+
+        assert len(user_messages) == 5
+        for i in range(3, 8):
+            assert any(f"Question {i}" in str(m.content) for m in user_messages)
