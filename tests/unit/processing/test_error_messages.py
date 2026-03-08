@@ -8,7 +8,7 @@ from family_assistant.llm.base import (
     LLMProviderError,
     RateLimitError,
 )
-from family_assistant.processing import (
+from family_assistant.processing.utils import (
     _map_stream_error_to_exception,  # noqa: PLC2701 - Testing internal function
     _user_friendly_error_message,  # noqa: PLC2701 - Testing internal function
 )

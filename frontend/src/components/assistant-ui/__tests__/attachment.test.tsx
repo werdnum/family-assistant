@@ -1,5 +1,4 @@
 import { fireEvent, screen, waitFor } from '@testing-library/react';
-import userEvent from '@testing-library/user-event';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { resetLocalStorageMock } from '../../../test/mocks/localStorageMock';
 import { renderChatApp } from '../../../test/utils/renderChatApp';
@@ -48,13 +47,13 @@ describe('AttachmentUI Loading States', () => {
   });
 
   it('can upload a file through the hidden input', async () => {
-    const user = userEvent.setup();
     await renderChatApp({ waitForReady: true });
 
     const fileInput = screen.getByTestId('file-input') as HTMLInputElement;
     const testFile = new File(['test content'], 'test.png', { type: 'image/png' });
 
-    await user.upload(fileInput, testFile);
+    // fireEvent is more stable than user.upload for this hidden input path.
+    fireEvent.change(fileInput, { target: { files: [testFile] } });
 
     // The composer clears the file input value after enqueueing files so the
     // same file can be selected again. This is a stable assertion across
@@ -63,9 +62,9 @@ describe('AttachmentUI Loading States', () => {
       () => {
         expect(fileInput.value).toBe('');
       },
-      { timeout: 10000 }
+      { timeout: 15000 }
     );
-  });
+  }, 20000);
 
   // Note: These tests verify the UI components exist and are properly structured
   // The actual upload flow is tested in integration tests

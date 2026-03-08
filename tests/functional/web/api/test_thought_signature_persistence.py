@@ -71,7 +71,7 @@ async def llm_integration_processing_service(
         timezone=ZoneInfo("UTC"),
         max_history_messages=20,
         history_max_age_hours=72,
-        delegation_security_level="high",
+        delegation_security_level="confirm",
         tools_config=ToolsConfig(),
         id="test",
     )

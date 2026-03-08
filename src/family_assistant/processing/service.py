@@ -4,7 +4,7 @@ import logging
 import re
 import traceback
 import uuid
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 from opentelemetry import trace
 from opentelemetry.trace import StatusCode
@@ -28,7 +28,11 @@ from .attachments import AttachmentProcessor
 from .context import ContextPreparer
 from .llm_loop import LLMStreamingLoop
 from .tool_execution import ToolExecutor
-from .types import ChatInteractionResult, ProcessingServiceConfig
+from .types import (
+    ChatInteractionResult,
+    ProcessingServiceConfig,
+    RequestConfirmationCallback,
+)
 from .utils import (
     _user_friendly_error_message,
     generate_attachment_metadata_lines,
@@ -36,15 +40,16 @@ from .utils import (
 )
 
 if TYPE_CHECKING:
-    from collections.abc import AsyncIterator, Awaitable, Callable
+    from collections.abc import AsyncIterator
 
     from family_assistant.camera.protocol import CameraBackend
     from family_assistant.config_models import AppConfig
     from family_assistant.context_providers import ContextProvider
+    from family_assistant.events.sources import EventSource
     from family_assistant.home_assistant_wrapper import HomeAssistantClientWrapper
     from family_assistant.interfaces import ChatInterface
     from family_assistant.services.attachment_registry import AttachmentRegistry
-    from family_assistant.tools import ToolExecutionContext, ToolsProvider
+    from family_assistant.tools import ToolsProvider
 
 logger = logging.getLogger(__name__)
 tracer = trace.get_tracer(__name__)
@@ -66,8 +71,7 @@ class ProcessingService:
         app_config: AppConfig,
         clock: Clock | None = None,
         attachment_registry: AttachmentRegistry | None = None,
-        # ast-grep-ignore: no-dict-any - maps source IDs to heterogeneous event source objects
-        event_sources: dict[str, Any] | None = None,
+        event_sources: dict[str, EventSource] | None = None,
     ) -> None:
         self._llm_client = llm_client
         self.tools_provider = tools_provider
@@ -364,24 +368,7 @@ class ProcessingService:
         chat_interface: ChatInterface | None,
         user_id: str | None = None,
         chat_interfaces: dict[str, ChatInterface] | None = None,
-        request_confirmation_callback: (
-            Callable[
-                # ast-grep-ignore: no-dict-any - tool args have varying keys per tool
-                [
-                    str,
-                    str,
-                    str | None,
-                    str,
-                    str,
-                    # ast-grep-ignore: no-dict-any - tool args have varying keys per tool
-                    dict[str, Any],
-                    float,
-                    ToolExecutionContext,
-                ],
-                Awaitable[bool],
-            ]
-            | None
-        ) = None,
+        request_confirmation_callback: RequestConfirmationCallback | None = None,
         subconversation_id: str | None = None,
     ) -> tuple[list[LLMMessage], MessageReasoningInfo | None, list[str] | None]:
         """
@@ -422,24 +409,7 @@ class ProcessingService:
         chat_interface: ChatInterface | None,
         user_id: str | None = None,
         chat_interfaces: dict[str, ChatInterface] | None = None,
-        request_confirmation_callback: (
-            Callable[
-                # ast-grep-ignore: no-dict-any - tool args have varying keys per tool
-                [
-                    str,
-                    str,
-                    str | None,
-                    str,
-                    str,
-                    # ast-grep-ignore: no-dict-any - tool args have varying keys per tool
-                    dict[str, Any],
-                    float,
-                    ToolExecutionContext,
-                ],
-                Awaitable[bool],
-            ]
-            | None
-        ) = None,
+        request_confirmation_callback: RequestConfirmationCallback | None = None,
         subconversation_id: str | None = None,
     ) -> AsyncIterator[tuple[LLMStreamEvent, LLMMessage | None]]:
         """
@@ -482,24 +452,7 @@ class ProcessingService:
         replied_to_interface_id: str | None = None,
         chat_interface: ChatInterface | None = None,
         chat_interfaces: dict[str, ChatInterface] | None = None,
-        request_confirmation_callback: (
-            Callable[
-                # ast-grep-ignore: no-dict-any - tool args have varying keys per tool
-                [
-                    str,
-                    str,
-                    str | None,
-                    str,
-                    str,
-                    # ast-grep-ignore: no-dict-any - tool args have varying keys per tool
-                    dict[str, Any],
-                    float,
-                    ToolExecutionContext,
-                ],
-                Awaitable[bool],
-            ]
-            | None
-        ) = None,
+        request_confirmation_callback: RequestConfirmationCallback | None = None,
         trigger_attachments: list[MessageAttachmentMetadata] | None = None,
         subconversation_id: str | None = None,
     ) -> ChatInteractionResult:
@@ -758,24 +711,7 @@ class ProcessingService:
         replied_to_interface_id: str | None = None,
         chat_interface: ChatInterface | None = None,
         chat_interfaces: dict[str, ChatInterface] | None = None,
-        request_confirmation_callback: (
-            Callable[
-                # ast-grep-ignore: no-dict-any - tool args have varying keys per tool
-                [
-                    str,
-                    str,
-                    str | None,
-                    str,
-                    str,
-                    # ast-grep-ignore: no-dict-any - tool args have varying keys per tool
-                    dict[str, Any],
-                    float,
-                    ToolExecutionContext,
-                ],
-                Awaitable[bool],
-            ]
-            | None
-        ) = None,
+        request_confirmation_callback: RequestConfirmationCallback | None = None,
         trigger_attachments: list[MessageAttachmentMetadata] | None = None,
         subconversation_id: str | None = None,
     ) -> AsyncIterator[LLMStreamEvent]:

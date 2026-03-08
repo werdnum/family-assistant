@@ -23,6 +23,7 @@ from family_assistant.processing import (
     ProcessingService,
     ProcessingServiceConfig,
 )
+from family_assistant.processing.types import DelegationSecurityLevel
 from family_assistant.storage import message_history_table
 from family_assistant.storage.context import DatabaseContext
 from family_assistant.tools import (
@@ -86,8 +87,10 @@ def primary_service_config(dummy_prompts: dict[str, str]) -> ProcessingServiceCo
 @pytest.fixture
 def specialized_service_config_factory(
     dummy_prompts: dict[str, str],
-) -> Callable[[str], ProcessingServiceConfig]:
-    def _factory(delegation_security_level: str) -> ProcessingServiceConfig:
+) -> Callable[[DelegationSecurityLevel], ProcessingServiceConfig]:
+    def _factory(
+        delegation_security_level: DelegationSecurityLevel,
+    ) -> ProcessingServiceConfig:
         return ProcessingServiceConfig(
             prompts=dummy_prompts,
             timezone=ZoneInfo("UTC"),
@@ -376,11 +379,15 @@ async def primary_processing_service(
 
 @pytest_asyncio.fixture
 async def specialized_processing_service(
-    specialized_service_config_factory: Callable[[str], ProcessingServiceConfig],
+    specialized_service_config_factory: Callable[
+        [DelegationSecurityLevel], ProcessingServiceConfig
+    ],
     specialized_llm_mock: RuleBasedMockLLMClient,
     dummy_prompts: dict[str, str],
-) -> Callable[[str], Awaitable[ProcessingService]]:
-    async def _factory(delegation_security_level: str) -> ProcessingService:
+) -> Callable[[DelegationSecurityLevel], Awaitable[ProcessingService]]:
+    async def _factory(
+        delegation_security_level: DelegationSecurityLevel,
+    ) -> ProcessingService:
         config = specialized_service_config_factory(delegation_security_level)
         tools_provider = create_tools_provider(config.tools_config)
         await tools_provider.get_tool_definitions()  # Initialize

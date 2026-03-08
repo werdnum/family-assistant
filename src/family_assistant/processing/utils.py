@@ -13,6 +13,7 @@ from family_assistant.llm.base import (
     RateLimitError,
     ServiceUnavailableError,
 )
+from family_assistant.llm.google_types import GeminiProviderMetadata
 from family_assistant.llm.messages import (
     AssistantMessage,
     LLMMessage,
@@ -56,6 +57,27 @@ _NORMALIZED_ERROR_TYPE_TO_EXCEPTION: dict[str, type[LLMProviderError]] = {
     "timeout": ProviderTimeoutError,
     "serviceunavailable": ServiceUnavailableError,
 }
+
+
+def assistant_message_has_thought_signature(message: AssistantMessage) -> bool:
+    """Return True when an assistant tool call carries a Google thought signature."""
+    if not message.tool_calls:
+        return False
+
+    for tool_call in message.tool_calls:
+        provider_metadata = tool_call.provider_metadata
+        if isinstance(provider_metadata, GeminiProviderMetadata):
+            if provider_metadata.thought_signature:
+                return True
+            continue
+        if (
+            isinstance(provider_metadata, dict)
+            and provider_metadata.get("provider") == "google"
+            and "thought_signature" in provider_metadata
+        ):
+            return True
+
+    return False
 
 
 def _normalize_error_type(error_type: str) -> str:
