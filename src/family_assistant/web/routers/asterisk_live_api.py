@@ -65,6 +65,7 @@ if TYPE_CHECKING:
     from google.genai.live import AsyncSession
     from starlette.applications import Starlette
 
+    from family_assistant.events.indexing_source import IndexingSource
     from family_assistant.interfaces import ChatInterface
     from family_assistant.processing import ProcessingService
 
@@ -1281,7 +1282,10 @@ class AsteriskLiveHandler:
                         home_assistant_client=self.processing_service.home_assistant_client,
                         event_sources=self.processing_service.event_sources,
                         indexing_source=(
-                            self.processing_service.event_sources.get("indexing")
+                            cast(
+                                "IndexingSource | None",
+                                self.processing_service.event_sources.get("indexing"),
+                            )
                             if self.processing_service.event_sources
                             else None
                         ),

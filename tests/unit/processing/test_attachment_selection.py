@@ -14,6 +14,7 @@ import pytest
 from family_assistant.config_models import AppConfig, ToolsConfig
 from family_assistant.llm import LLMOutput, ToolCallFunction, ToolCallItem
 from family_assistant.processing import ProcessingService, ProcessingServiceConfig
+from family_assistant.processing.attachments import AttachmentSelectionError
 from family_assistant.services.attachment_registry import AttachmentMetadata
 
 
@@ -74,21 +75,44 @@ class TestAttachmentSelectionThreshold:
         return service
 
     @pytest.mark.asyncio
-    async def test_attachment_selection_not_triggered_below_threshold(
+    async def test_attachment_selection_handles_small_candidate_sets(
         self, processing_service: ProcessingService
     ) -> None:
-        """Test that selection is not triggered when attachment count is at or below threshold."""
-        # Test with exactly 3 attachments (equal to threshold of 3)
+        """Selection can still run correctly with a small candidate set."""
         pending_attachment_ids = ["att1", "att2", "att3"]
 
-        # Should return all attachments without calling selection
+        processing_service.attachment_processor.attachment_registry.get_attachment_with_context = AsyncMock(  # type: ignore[union-attr]
+            side_effect=lambda att_id: AttachmentMetadata(
+                attachment_id=att_id,
+                source_type="tool",
+                source_id="test_tool",
+                mime_type="image/jpeg",
+                description=f"Test attachment {att_id}",
+                size=1024,
+                created_at=datetime.now(),
+            )
+        )
+        processing_service.llm_client.generate_response = AsyncMock(  # type: ignore[attr-defined]
+            return_value=LLMOutput(
+                content="",
+                tool_calls=[
+                    ToolCallItem(
+                        id="call_123",
+                        type="function",
+                        function=ToolCallFunction(
+                            name="attach_to_response",
+                            arguments={"attachment_ids": pending_attachment_ids},
+                        ),
+                    )
+                ],
+            )
+        )
+
         result = await processing_service.attachment_processor.select_for_response(
             pending_attachment_ids=pending_attachment_ids,
             original_query="Test query",
         )
 
-        # With threshold=3, having 3 attachments should not trigger selection
-        # The logic is: if len > threshold (3), not if len >= threshold
         assert len(result) == 3
         assert set(result) == {"att1", "att2", "att3"}
 
@@ -298,13 +322,13 @@ class TestSelectAttachmentsForResponse:
         assert result == ["att1", "att3"]
 
     @pytest.mark.asyncio
-    async def test_select_attachments_fallback_on_no_tool_call(
+    async def test_select_attachments_errors_on_no_tool_call(
         self,
         processing_service: ProcessingService,
         mock_llm_client: MagicMock,
         mock_attachment_registry: AsyncMock,
     ) -> None:
-        """Test that fallback occurs when LLM doesn't return a tool call."""
+        """Selection fails explicitly when LLM returns no tool call."""
         processing_service.attachment_processor.attachment_registry = (
             mock_attachment_registry
         )
@@ -324,23 +348,20 @@ class TestSelectAttachmentsForResponse:
             )
         )
 
-        result = await processing_service.attachment_processor.select_for_response(
-            pending_attachment_ids=pending_ids,
-            original_query="Select images",
-        )
-
-        # Should fall back to last N attachments where N = max_response_attachments
-        assert len(result) == 4  # max_response_attachments is 6, so all 4 are returned
-        assert result == ["att1", "att2", "att3", "att4"]
+        with pytest.raises(AttachmentSelectionError):
+            await processing_service.attachment_processor.select_for_response(
+                pending_attachment_ids=pending_ids,
+                original_query="Select images",
+            )
 
     @pytest.mark.asyncio
-    async def test_select_attachments_fallback_on_wrong_tool_name(
+    async def test_select_attachments_errors_on_wrong_tool_name(
         self,
         processing_service: ProcessingService,
         mock_llm_client: MagicMock,
         mock_attachment_registry: AsyncMock,
     ) -> None:
-        """Test that fallback occurs when LLM calls wrong tool name."""
+        """Selection fails explicitly when LLM calls a wrong tool."""
         processing_service.attachment_processor.attachment_registry = (
             mock_attachment_registry
         )
@@ -369,14 +390,11 @@ class TestSelectAttachmentsForResponse:
             )
         )
 
-        result = await processing_service.attachment_processor.select_for_response(
-            pending_attachment_ids=pending_ids,
-            original_query="Select images",
-        )
-
-        # Should fall back to last N
-        assert len(result) == 4
-        assert result == ["att1", "att2", "att3", "att4"]
+        with pytest.raises(AttachmentSelectionError):
+            await processing_service.attachment_processor.select_for_response(
+                pending_attachment_ids=pending_ids,
+                original_query="Select images",
+            )
 
     @pytest.mark.asyncio
     async def test_select_attachments_respects_max_limit(
@@ -427,13 +445,13 @@ class TestSelectAttachmentsForResponse:
         assert result == [f"att{i}" for i in range(1, 7)]
 
     @pytest.mark.asyncio
-    async def test_select_attachments_fallback_respects_max_limit(
+    async def test_select_attachments_errors_on_missing_tool_call_even_with_many_attachments(
         self,
         processing_service: ProcessingService,
         mock_llm_client: MagicMock,
         mock_attachment_registry: AsyncMock,
     ) -> None:
-        """Test that fallback also respects max_response_attachments limit."""
+        """Selection fails explicitly when tool call is missing."""
         processing_service.attachment_processor.attachment_registry = (
             mock_attachment_registry
         )
@@ -454,23 +472,20 @@ class TestSelectAttachmentsForResponse:
             )
         )
 
-        result = await processing_service.attachment_processor.select_for_response(
-            pending_attachment_ids=pending_ids,
-            original_query="Select images",
-        )
-
-        # Should be limited to last max (6) even in fallback - last 6 are att5-att10
-        assert len(result) == 6
-        assert result == [f"att{i}" for i in range(5, 11)]
+        with pytest.raises(AttachmentSelectionError):
+            await processing_service.attachment_processor.select_for_response(
+                pending_attachment_ids=pending_ids,
+                original_query="Select images",
+            )
 
     @pytest.mark.asyncio
-    async def test_select_attachments_graceful_error_handling(
+    async def test_select_attachments_raises_on_metadata_error(
         self,
         processing_service: ProcessingService,
         mock_llm_client: MagicMock,
         mock_attachment_registry: AsyncMock,
     ) -> None:
-        """Test that errors during selection gracefully fall back to original list."""
+        """Unexpected metadata read errors are not silently swallowed."""
         processing_service.attachment_processor.attachment_registry = (
             mock_attachment_registry
         )
@@ -485,23 +500,20 @@ class TestSelectAttachmentsForResponse:
         # LLM doesn't matter since registry fails first
         mock_llm_client.generate_response = AsyncMock()
 
-        result = await processing_service.attachment_processor.select_for_response(
-            pending_attachment_ids=pending_ids,
-            original_query="Select images",
-        )
-
-        # Should gracefully return original list truncated to max
-        assert len(result) == 3
-        assert result == ["att1", "att2", "att3"]
+        with pytest.raises(RuntimeError, match="Registry error"):
+            await processing_service.attachment_processor.select_for_response(
+                pending_attachment_ids=pending_ids,
+                original_query="Select images",
+            )
 
     @pytest.mark.asyncio
-    async def test_select_attachments_llm_error_handling(
+    async def test_select_attachments_raises_on_llm_error(
         self,
         processing_service: ProcessingService,
         mock_llm_client: MagicMock,
         mock_attachment_registry: AsyncMock,
     ) -> None:
-        """Test that errors from LLM are handled gracefully."""
+        """LLM failures surface as explicit selection errors."""
         processing_service.attachment_processor.attachment_registry = (
             mock_attachment_registry
         )
@@ -518,14 +530,14 @@ class TestSelectAttachmentsForResponse:
             side_effect=RuntimeError("LLM error")
         )
 
-        result = await processing_service.attachment_processor.select_for_response(
-            pending_attachment_ids=pending_ids,
-            original_query="Select images",
-        )
-
-        # Should gracefully return original list truncated to max
-        assert len(result) == 5
-        assert result == pending_ids
+        with pytest.raises(
+            AttachmentSelectionError,
+            match="Failed to run LLM-based attachment selection",
+        ):
+            await processing_service.attachment_processor.select_for_response(
+                pending_attachment_ids=pending_ids,
+                original_query="Select images",
+            )
 
     @pytest.mark.asyncio
     async def test_select_attachments_empty_input(
@@ -568,7 +580,7 @@ class TestSelectAttachmentsForResponse:
         assert not mock_llm_client.generate_response.called
 
     @pytest.mark.asyncio
-    async def test_select_attachments_malformed_arguments(
+    async def test_select_attachments_errors_on_malformed_arguments(
         self,
         processing_service: ProcessingService,
         mock_llm_client: MagicMock,
@@ -603,11 +615,8 @@ class TestSelectAttachmentsForResponse:
             )
         )
 
-        result = await processing_service.attachment_processor.select_for_response(
-            pending_attachment_ids=pending_ids,
-            original_query="Select images",
-        )
-
-        # Should fall back gracefully
-        assert len(result) == 4
-        assert result == pending_ids
+        with pytest.raises(AttachmentSelectionError):
+            await processing_service.attachment_processor.select_for_response(
+                pending_attachment_ids=pending_ids,
+                original_query="Select images",
+            )

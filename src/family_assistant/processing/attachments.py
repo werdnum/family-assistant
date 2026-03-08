@@ -27,6 +27,10 @@ from .utils import get_file_extension_from_mime_type
 logger = logging.getLogger(__name__)
 
 
+class AttachmentSelectionError(RuntimeError):
+    """Raised when attachment selection cannot be completed correctly."""
+
+
 class AttachmentProcessor:
     """Handles attachment processing for the LLM interaction pipeline."""
 
@@ -360,22 +364,19 @@ class AttachmentProcessor:
         if not pending_attachment_ids or not self.attachment_registry:
             return pending_attachment_ids
 
-        try:
-            attachment_descriptions: list[str] = []
-            for att_id in pending_attachment_ids:
-                metadata = await self.attachment_registry.get_attachment_with_context(
-                    att_id
+        attachment_descriptions: list[str] = []
+        for att_id in pending_attachment_ids:
+            metadata = await self.attachment_registry.get_attachment_with_context(
+                att_id
+            )
+            if metadata:
+                attachment_descriptions.append(
+                    f"- {att_id}: {metadata.description or 'Attachment'} ({metadata.mime_type})"
                 )
-                if metadata:
-                    attachment_descriptions.append(
-                        f"- {att_id}: {metadata.description or 'Attachment'} ({metadata.mime_type})"
-                    )
-                else:
-                    attachment_descriptions.append(
-                        f"- {att_id}: (metadata unavailable)"
-                    )
+            else:
+                attachment_descriptions.append(f"- {att_id}: (metadata unavailable)")
 
-            selection_prompt = f"""You have {len(pending_attachment_ids)} attachments from tool results that could be sent to the user.
+        selection_prompt = f"""You have {len(pending_attachment_ids)} attachments from tool results that could be sent to the user.
 The user's original query was: "{original_query}"
 
 Select up to {self.app_config.max_response_attachments} attachments that best answer the user's question.
@@ -389,69 +390,95 @@ Available attachments:
 
 Call attach_to_response with your selected attachment IDs."""
 
-            selection_tools: list[ToolDefinition] = [
-                {
-                    "type": "function",
-                    "function": {
-                        "name": "attach_to_response",
-                        "description": "Select the most relevant attachments to include in the response to the user",
-                        "parameters": {
-                            "type": "object",
-                            "properties": {
-                                "attachment_ids": {
-                                    "type": "array",
-                                    "items": {"type": "string"},
-                                    "description": "List of attachment IDs to include",
-                                }
-                            },
-                            "required": ["attachment_ids"],
+        selection_tools: list[ToolDefinition] = [
+            {
+                "type": "function",
+                "function": {
+                    "name": "attach_to_response",
+                    "description": "Select the most relevant attachments to include in the response to the user",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "attachment_ids": {
+                                "type": "array",
+                                "items": {"type": "string"},
+                                "description": "List of attachment IDs to include",
+                            }
                         },
+                        "required": ["attachment_ids"],
                     },
-                }
-            ]
+                },
+            }
+        ]
 
-            selection_messages: list[LLMMessage] = [
-                UserMessage(content=selection_prompt),
-            ]
+        selection_messages: list[LLMMessage] = [
+            UserMessage(content=selection_prompt),
+        ]
 
-            logger.debug(
-                f"Selecting attachments from {len(pending_attachment_ids)} candidates using LLM"
-            )
+        logger.debug(
+            f"Selecting attachments from {len(pending_attachment_ids)} candidates using LLM"
+        )
 
+        try:
             response = await self.llm_client.generate_response(
                 messages=selection_messages,
                 tools=selection_tools,
                 tool_choice="required",
             )
+        except Exception as exc:
+            raise AttachmentSelectionError(
+                "Failed to run LLM-based attachment selection"
+            ) from exc
 
-            if response.tool_calls:
-                tool_call = response.tool_calls[0]
-                if tool_call.function.name == "attach_to_response":
-                    arguments = tool_call.function.arguments
-                    if isinstance(arguments, str):
-                        arguments = json.loads(arguments)
-                    selected_ids_raw = arguments.get("attachment_ids", [])
-                    selected_ids: list[str] = (
-                        [str(id_) for id_ in selected_ids_raw]
-                        if isinstance(selected_ids_raw, list)
-                        else []
-                    )
-                    selected_ids = selected_ids[
-                        : self.app_config.max_response_attachments
-                    ]
-                    logger.info(
-                        f"LLM selected {len(selected_ids)} attachments from {len(pending_attachment_ids)} candidates"
-                    )
-                    return selected_ids
-
-            logger.warning(
-                "LLM did not return attach_to_response tool call, falling back to last N attachments"
+        if not response.tool_calls:
+            raise AttachmentSelectionError(
+                "Attachment selection response did not contain any tool calls"
             )
-            return pending_attachment_ids[-self.app_config.max_response_attachments :]
 
-        except Exception as e:
-            logger.error(f"Error selecting attachments: {e}", exc_info=True)
-            return pending_attachment_ids[-self.app_config.max_response_attachments :]
+        tool_call = response.tool_calls[0]
+        if tool_call.function.name != "attach_to_response":
+            raise AttachmentSelectionError(
+                f"Attachment selection returned unexpected tool '{tool_call.function.name}'"
+            )
+
+        arguments = tool_call.function.arguments
+        if isinstance(arguments, str):
+            try:
+                arguments = json.loads(arguments)
+            except json.JSONDecodeError as exc:
+                raise AttachmentSelectionError(
+                    "Attachment selection returned invalid JSON arguments"
+                ) from exc
+
+        if not isinstance(arguments, dict):
+            raise AttachmentSelectionError(
+                f"Attachment selection arguments must be an object, got {type(arguments).__name__}"
+            )
+
+        selected_ids_raw = arguments.get("attachment_ids")
+        if not isinstance(selected_ids_raw, list):
+            raise AttachmentSelectionError(
+                "Attachment selection arguments must include attachment_ids as an array"
+            )
+
+        selected_ids = [str(id_) for id_ in selected_ids_raw]
+        pending_id_set = set(pending_attachment_ids)
+        unknown_ids = [
+            att_id for att_id in selected_ids if att_id not in pending_id_set
+        ]
+        if unknown_ids:
+            raise AttachmentSelectionError(
+                "Attachment selection returned unknown attachment IDs: "
+                + ", ".join(unknown_ids)
+            )
+
+        selected_ids = selected_ids[: self.app_config.max_response_attachments]
+        logger.info(
+            "LLM selected %d attachments from %d candidates",
+            len(selected_ids),
+            len(pending_attachment_ids),
+        )
+        return selected_ids
 
     async def handle_large_result(
         self,
@@ -504,10 +531,17 @@ Call attach_to_response with your selected attachment IDs."""
             pass
 
         if not self.attachment_registry:
-            logger.warning(
-                "Large tool result detected but AttachmentRegistry is not available."
+            logger.error(
+                "Tool '%s' returned %d bytes, exceeding %d bytes, but attachment registry is unavailable.",
+                tool_name,
+                len(content_bytes),
+                THRESHOLD_BYTES,
             )
-            return content, None
+            return (
+                "Error: Tool result was too large to inline and could not be stored as an attachment "
+                "because attachment storage is unavailable.",
+                None,
+            )
 
         try:
             file_extension = get_file_extension_from_mime_type(mime_type)
@@ -564,4 +598,7 @@ Call attach_to_response with your selected attachment IDs."""
                 f"Failed to auto-convert large tool result to attachment: {e}",
                 exc_info=True,
             )
-            return content, None
+            return (
+                f"Error: Tool result from '{tool_name}' was too large and could not be stored as an attachment.",
+                None,
+            )

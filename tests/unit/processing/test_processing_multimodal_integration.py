@@ -490,7 +490,6 @@ class TestProcessingServiceMultimodal:
 
         # Mock attachment registry and service
         mock_attachment_registry = Mock()
-        mock_attachment_registry = Mock()
         processing_service.tool_executor.attachment_registry = mock_attachment_registry
 
         # Simulate two tool calls in sequence
@@ -519,6 +518,18 @@ class TestProcessingServiceMultimodal:
                 size=13,
                 content_url="http://localhost:8000/attachments/generated_image_123",
                 storage_path="/tmp/generated_image_123.png",
+            )
+        )
+        mock_attachment_registry.get_attachment = AsyncMock(
+            return_value=AttachmentMetadata(
+                attachment_id="explicit_attachment_456",
+                source_type="tool",
+                source_id="attach_to_response",
+                mime_type="image/png",
+                description="Explicit attachment",
+                size=10,
+                content_url="http://localhost:8000/attachments/explicit_attachment_456",
+                storage_path="/tmp/explicit_attachment_456.png",
             )
         )
 
@@ -596,6 +607,20 @@ class TestProcessingServiceMultimodal:
         # The last call should win (replace previous explicit attachments)
 
         mock_tools_provider = AsyncMock()
+        mock_attachment_registry = Mock()
+        mock_attachment_registry.get_attachment = AsyncMock(
+            side_effect=lambda _db, attachment_id: AttachmentMetadata(
+                attachment_id=attachment_id,
+                source_type="tool",
+                source_id="attach_to_response",
+                mime_type="image/png",
+                description=f"Attachment {attachment_id}",
+                size=10,
+                content_url=f"http://localhost:8000/attachments/{attachment_id}",
+                storage_path=f"/tmp/{attachment_id}.png",
+            )
+        )
+        processing_service.tool_executor.attachment_registry = mock_attachment_registry
 
         # Mock attach_to_response to return different attachment lists
         call_count = 0
@@ -704,8 +729,17 @@ class TestProcessingServiceMultimodal:
 
         # Mock get_attachment for the attach_to_response tool
         mock_attachment_registry.get_attachment = AsyncMock(
-            return_value=None
-        )  # Return None for explicit_attachment lookup
+            return_value=AttachmentMetadata(
+                attachment_id="explicit_attachment",
+                source_type="tool",
+                source_id="attach_to_response",
+                mime_type="image/png",
+                description="Explicit attachment",
+                size=10,
+                content_url="http://localhost:8000/attachments/explicit_attachment",
+                storage_path="/tmp/explicit_attachment.png",
+            )
+        )
 
         processing_service.tool_executor.attachment_registry = mock_attachment_registry
 
