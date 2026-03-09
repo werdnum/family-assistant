@@ -17,6 +17,7 @@ if TYPE_CHECKING:
     from family_assistant.tools.types import ToolDefinition
 
 from family_assistant.config_models import AppConfig, ToolsConfig
+from family_assistant.llm import ToolCallFunction, ToolCallItem
 from family_assistant.llm.messages import (
     AssistantMessage,
     LLMMessage,
@@ -145,6 +146,66 @@ async def test_format_history_with_tool_call(
         history_messages
     )
     assert actual_output == expected_output
+
+
+async def test_format_history_strips_assistant_text_for_tool_call_without_signature(
+    processing_service: ProcessingService,
+) -> None:
+    """Assistant text is stripped when tool calls are present without thought signatures."""
+    tool_call = create_tool_call(
+        call_id="call_no_signature",
+        function_name="get_weather",
+        arguments='{"location": "London"}',
+    )
+    history_messages: list[LLMMessage] = [
+        create_assistant_message(
+            content="I will call a tool now",
+            tool_calls=[tool_call],
+        ),
+    ]
+
+    actual_output = await processing_service.context_preparer.format_history(
+        history_messages
+    )
+
+    assert actual_output == [
+        AssistantMessage(content=None, tool_calls=[tool_call]),
+    ]
+
+
+async def test_format_history_preserves_assistant_text_with_thought_signature(
+    processing_service: ProcessingService,
+) -> None:
+    """Assistant text is preserved when tool calls contain Google thought signatures."""
+    tool_call = ToolCallItem(
+        id="call_with_signature",
+        type="function",
+        function=ToolCallFunction(
+            name="get_weather",
+            arguments='{"location": "London"}',
+        ),
+        provider_metadata={
+            "provider": "google",
+            "thought_signature": "abc123",
+        },
+    )
+    history_messages: list[LLMMessage] = [
+        create_assistant_message(
+            content="I will call a tool now",
+            tool_calls=[tool_call],
+        ),
+    ]
+
+    actual_output = await processing_service.context_preparer.format_history(
+        history_messages
+    )
+
+    assert actual_output == [
+        AssistantMessage(
+            content="I will call a tool now",
+            tool_calls=[tool_call],
+        ),
+    ]
 
 
 async def test_format_history_preserves_leading_tool_and_assistant_tool_calls(

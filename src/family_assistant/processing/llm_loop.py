@@ -19,7 +19,7 @@ from family_assistant.llm.messages import (
 from .attachments import AttachmentSelectionError
 from .utils import (
     _map_stream_error_to_exception,
-    assistant_message_has_thought_signature,
+    messages_have_thought_signatures,
     prune_messages_for_context,
 )
 
@@ -213,11 +213,7 @@ class LLMStreamingLoop:
 
             # Check if conversation has thought signatures that must be preserved.
             # If so, we cannot modify the system prompt as it would invalidate signatures.
-            has_thought_signatures = any(
-                assistant_message_has_thought_signature(msg)
-                for msg in messages
-                if isinstance(msg, AssistantMessage)
-            )
+            has_thought_signatures = messages_have_thought_signatures(messages)
 
             # Add iteration context to system prompt ONLY if no thought signatures present
             # Thought signatures are cryptographically tied to the exact conversation context
@@ -476,7 +472,6 @@ class LLMStreamingLoop:
             # Reuse the original ToolCallItem objects from the stream
             # (no need to serialize and deserialize within the same function)
             llm_context_assistant_message = AssistantMessage(
-                role="assistant",
                 content=final_content,
                 tool_calls=effective_tool_calls,
             )

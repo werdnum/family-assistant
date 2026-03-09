@@ -158,12 +158,20 @@ It now incorporates external analysis from:
 - **19. `processed_trigger_parts` is computed but unused in both paths.**
 
   - Impact: Unclear contract and dead-return-path smell.
+  - Status (2026-03-09): Phase 8d complete on branch `processing-phase8d-signature-and-cleanups`
+    (shared turn-preparation path now returns only `typed_messages_for_llm`; no separate
+    `processed_trigger_parts` value is produced or threaded through sync/stream orchestration).
   - References: `service.py:561`, `service.py:930`
   - Sources: `[Cdx][C678]` (corroborated)
 
 - **20. Thought-signature detection logic is duplicated.**
 
   - Impact: Drift risk between history formatting and streaming loop behavior.
+  - Status (2026-03-09): Phase 8d complete on branch `processing-phase8d-signature-and-cleanups`
+    (conversation-level signature detection is now centralized in
+    `messages_have_thought_signatures(...)` and reused by `LLMStreamingLoop`; helper behavior is
+    covered by unit tests in `test_thought_signatures.py` and
+    `test_processing_history_formatting.py`).
   - References: `context.py:134`, `llm_loop.py:228`
   - Sources: `[C678]` (Added from PR #678)
 
