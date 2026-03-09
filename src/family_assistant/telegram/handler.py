@@ -209,14 +209,8 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
             yield
         finally:
             stop_event.set()
-            try:
+            with contextlib.suppress(TimeoutError):
                 await asyncio.wait_for(typing_task, timeout=1.0)
-            except TimeoutError:
-                # send_chat_action can hang under test/network pressure; do not fail
-                # the primary message flow for non-critical typing indicators.
-                typing_task.cancel()
-                with contextlib.suppress(asyncio.CancelledError):
-                    await typing_task
 
     async def start(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         """Sends a welcome message when the /start command is issued."""
