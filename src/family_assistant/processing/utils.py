@@ -80,6 +80,15 @@ def assistant_message_has_thought_signature(message: AssistantMessage) -> bool:
     return False
 
 
+def messages_have_thought_signatures(messages: Sequence[LLMMessage]) -> bool:
+    """Return True when any assistant message has a thought signature."""
+    return any(
+        isinstance(message, AssistantMessage)
+        and assistant_message_has_thought_signature(message)
+        for message in messages
+    )
+
+
 def _normalize_error_type(error_type: str) -> str:
     """Normalize provider error type values to a consistent lookup key."""
     return "".join(char for char in error_type.lower() if char.isalnum())
