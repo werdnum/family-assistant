@@ -4,11 +4,8 @@ import asyncio
 import json
 import logging
 import os  # Added os import
-import shutil
 import signal  # Import the signal module
-import sys
 import uuid  # Added for turn_id
-from pathlib import Path
 from typing import TYPE_CHECKING, cast
 from unittest.mock import MagicMock  # Keep mocks for LLM
 from zoneinfo import ZoneInfo
@@ -43,7 +40,7 @@ from family_assistant.tools import (
     LocalToolsProvider,
     MCPToolsProvider,
 )
-from tests.helpers import find_free_port, wait_for_server
+from tests.helpers import find_free_port, require_executable, wait_for_server
 from tests.mocks.mock_llm import (
     LLMOutput,  # Use LLMOutput from mocks for rules
     MatcherArgs,
@@ -53,24 +50,6 @@ from tests.mocks.mock_llm import (
 )
 
 logger = logging.getLogger(__name__)
-
-
-def _require_executable(command_name: str) -> str:
-    """Resolve a test dependency executable or fail with a clear message."""
-    executable = shutil.which(command_name)
-    if executable is not None:
-        return executable
-
-    for executable_dir in (
-        Path(sys.executable).parent,
-        Path(sys.executable).resolve().parent,
-    ):
-        venv_executable = executable_dir / command_name
-        if venv_executable.exists():
-            return str(venv_executable)
-
-    raise RuntimeError(f"Required test executable not found: {command_name}")
-
 
 # --- Test Configuration ---
 TEST_CHAT_ID = 65432
@@ -99,8 +78,8 @@ async def mcp_proxy_server() -> AsyncGenerator[str]:
     host = "127.0.0.1"
     port = find_free_port()
     sse_url = f"http://{host}:{port}/sse"
-    mcp_proxy_command = _require_executable("mcp-proxy")
-    mcp_server_time_command = _require_executable("mcp-server-time")
+    mcp_proxy_command = require_executable("mcp-proxy")
+    mcp_server_time_command = require_executable("mcp-server-time")
     command = [
         mcp_proxy_command,
         "--port",
@@ -285,7 +264,7 @@ async def test_mcp_time_conversion_stdio(db_engine: AsyncEngine) -> None:
     mcp_config: dict[str, MCPServerConfig] = {
         "time": {
             "transport": "stdio",
-            "command": _require_executable("mcp-server-time"),
+            "command": require_executable("mcp-server-time"),
         }
     }
     # Instantiate MCP provider with the in-memory config dictionary

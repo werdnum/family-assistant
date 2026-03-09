@@ -7,9 +7,12 @@ import inspect
 import logging
 import os
 import random
+import shutil
 import socket
+import sys
 from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 from typing import TypeVar
 
 import httpx
@@ -349,6 +352,23 @@ def find_free_port() -> int:
             return s.getsockname()[1]
 
 
+def require_executable(command_name: str) -> str:
+    """Resolve a test dependency executable or fail with a clear message."""
+    executable = shutil.which(command_name)
+    if executable is not None:
+        return executable
+
+    for executable_dir in (
+        Path(sys.executable).parent,
+        Path(sys.executable).resolve().parent,
+    ):
+        venv_executable = executable_dir / command_name
+        if venv_executable.exists():
+            return str(venv_executable)
+
+    raise RuntimeError(f"Required test executable not found: {command_name}")
+
+
 async def wait_for_server(
     url: str, timeout: float = 30.0, check_interval: float = 0.5
 ) -> None:
@@ -404,5 +424,6 @@ __all__ = [
     "wait_for_tasks_to_complete",
     "wait_for_condition",
     "find_free_port",
+    "require_executable",
     "wait_for_server",
 ]

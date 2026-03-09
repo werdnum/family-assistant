@@ -166,13 +166,13 @@ class TelegramTestServer:
             "--port",
             str(self.port),
             # Avoid blocking the mock server on unread subprocess pipe output during
-            # large xdist runs; access logs can otherwise fill the pipe and stall
-            # request handling.
+            # large xdist runs; unread child-process pipes can fill the OS buffer
+            # and stall request handling entirely.
             "--no-access-log",
             "--log-level",
             "warning",
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
+            stdout=asyncio.subprocess.DEVNULL,
+            stderr=asyncio.subprocess.DEVNULL,
         )
 
         # Poll for server readiness

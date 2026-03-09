@@ -1,10 +1,7 @@
 import asyncio
 import logging
 import os
-import shutil
 import signal
-import sys
-from pathlib import Path
 from typing import TYPE_CHECKING
 from unittest.mock import MagicMock
 from zoneinfo import ZoneInfo
@@ -14,30 +11,12 @@ import pytest_asyncio
 
 from family_assistant.tools.mcp import MCPToolsProvider
 from family_assistant.tools.types import MCPServerConfig, ToolExecutionContext
-from tests.helpers import find_free_port, wait_for_server
+from tests.helpers import find_free_port, require_executable, wait_for_server
 
 if TYPE_CHECKING:
     from collections.abc import AsyncGenerator
 
 logger = logging.getLogger(__name__)
-
-
-def _require_executable(command_name: str) -> str:
-    """Resolve a test dependency executable or fail with a clear message."""
-    executable = shutil.which(command_name)
-    if executable is not None:
-        return executable
-
-    for executable_dir in (
-        Path(sys.executable).parent,
-        Path(sys.executable).resolve().parent,
-    ):
-        venv_executable = executable_dir / command_name
-        if venv_executable.exists():
-            return str(venv_executable)
-
-    raise RuntimeError(f"Required test executable not found: {command_name}")
-
 
 # --- Controller ---
 
@@ -53,8 +32,8 @@ class MCPProxyController:
         if self.process:
             return
 
-        mcp_proxy_command = _require_executable("mcp-proxy")
-        mcp_server_time_command = _require_executable("mcp-server-time")
+        mcp_proxy_command = require_executable("mcp-proxy")
+        mcp_server_time_command = require_executable("mcp-server-time")
         command = [
             mcp_proxy_command,
             "--port",
