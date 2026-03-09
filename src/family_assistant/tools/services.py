@@ -6,13 +6,9 @@ assistant profiles (services).
 
 from __future__ import annotations
 
-import asyncio
 import logging
 import uuid
-from collections.abc import Callable
-from typing import TYPE_CHECKING, Any, cast
-
-import telegramify_markdown
+from typing import TYPE_CHECKING
 
 from family_assistant.delegation_security import DelegationSecurityLevel
 from family_assistant.llm.content_parts import text_content
@@ -24,12 +20,6 @@ if TYPE_CHECKING:
 
 
 logger = logging.getLogger(__name__)
-
-# Type alias for the confirmation callback
-ConfirmationCallbackSignature = Callable[
-    [str, str, str | None, str, str, dict[str, Any], float],
-    asyncio.Future[bool],
-]
 
 # Tool Definitions
 SERVICE_TOOLS_DEFINITION: list[ToolDefinition] = [
@@ -160,33 +150,20 @@ async def delegate_to_service_tool(
                 attachments=None,
             )
         else:
-            # Attempt to get a description from the target service's config
-            # service_config is guaranteed on ProcessingService.
-            profile_id_for_prompt = target_service.service_config.id
-
-            prompt_text = (
-                f"Do you want to delegate the task: '{telegramify_markdown.escape_markdown(user_request[:100])}...' "
-                f"to the '{telegramify_markdown.escape_markdown(profile_id_for_prompt)}' profile?"
-            )
             try:
-                # Ensure the callback is correctly typed/cast if necessary
-                typed_callback = cast(
-                    "ConfirmationCallbackSignature",
-                    exec_context.request_confirmation_callback,
-                )
-                # Call with positional arguments
-                user_confirmed = await typed_callback(
-                    exec_context.conversation_id,
-                    exec_context.interface_type,
-                    exec_context.turn_id,
-                    prompt_text,
-                    "delegate_to_service",
-                    {
+                user_confirmed = await exec_context.request_confirmation_callback(
+                    interface_type=exec_context.interface_type,
+                    conversation_id=exec_context.conversation_id,
+                    turn_id=exec_context.turn_id,
+                    tool_name="delegate_to_service",
+                    call_id=f"delegate_to_service_{uuid.uuid4()}",
+                    tool_args={
                         "target_service_id": target_service_id,
                         "user_request": user_request,
-                        "confirm_delegation": True,
+                        "confirm_delegation": actual_confirm_delegation,
                     },
-                    60.0,  # 60 second timeout
+                    timeout_seconds=60.0,
+                    context=exec_context,
                 )
                 if not user_confirmed:
                     logger.info(
