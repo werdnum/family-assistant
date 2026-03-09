@@ -541,24 +541,26 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
                     async with self._typing_notifications(context, chat_id):
 
                         async def confirmation_callback_wrapper(
-                            conversation_id: str,
                             interface_type: str,
+                            conversation_id: str,
                             turn_id: str | None,
-                            prompt_text: str,
                             tool_name: str,
+                            call_id: str,
                             # ast-grep-ignore: no-dict-any - tool args have varying keys per tool
                             tool_args: dict[str, Any],
                             timeout_seconds: float,
-                            exec_context: ToolExecutionContext,
+                            context: ToolExecutionContext,
                         ) -> bool:
                             logger.debug("confirmation_callback_wrapper called!")
                             # Allow custom renderers to override the prompt_text if available
                             renderer = TOOL_CONFIRMATION_RENDERERS.get(tool_name)
                             if renderer:
                                 # Async renderer that fetches its own data from context
-                                prompt_text = await renderer(tool_args, exec_context)
+                                prompt_text = await renderer(tool_args, context)
                             else:
                                 prompt_text = f"Confirm execution of tool: {tool_name}"
+
+                            _ = call_id
 
                             result = (
                                 await self.confirmation_manager.request_confirmation(
@@ -984,31 +986,33 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
             try:
 
                 async def confirmation_callback_wrapper(
-                    interface_type_cb: str,
-                    conversation_id_cb: str,
-                    turn_id_cb: str | None,
-                    tool_name_cb: str,
-                    call_id_cb: str,
+                    interface_type: str,
+                    conversation_id: str,
+                    turn_id: str | None,
+                    tool_name: str,
+                    call_id: str,
                     # ast-grep-ignore: no-dict-any - tool args have varying keys per tool
-                    tool_args_cb: dict[str, Any],
-                    timeout_cb: float,
-                    exec_context_cb: ToolExecutionContext,
+                    tool_args: dict[str, Any],
+                    timeout_seconds: float,
+                    context: ToolExecutionContext,
                 ) -> bool:
-                    renderer = TOOL_CONFIRMATION_RENDERERS.get(tool_name_cb)
+                    renderer = TOOL_CONFIRMATION_RENDERERS.get(tool_name)
                     if renderer:
                         # Async renderer that fetches its own data from context
-                        prompt_text_cb = await renderer(tool_args_cb, exec_context_cb)
+                        prompt_text = await renderer(tool_args, context)
                     else:
-                        prompt_text_cb = f"Confirm execution of tool: {tool_name_cb}"
+                        prompt_text = f"Confirm execution of tool: {tool_name}"
+
+                    _ = call_id
 
                     return await self.confirmation_manager.request_confirmation(
-                        conversation_id=conversation_id_cb,
-                        interface_type=interface_type_cb,
-                        turn_id=turn_id_cb,
-                        prompt_text=prompt_text_cb,
-                        tool_name=tool_name_cb,
-                        tool_args=tool_args_cb,
-                        timeout=timeout_cb,
+                        conversation_id=conversation_id,
+                        interface_type=interface_type,
+                        turn_id=turn_id,
+                        prompt_text=prompt_text,
+                        tool_name=tool_name,
+                        tool_args=tool_args,
+                        timeout=timeout_seconds,
                     )
 
                 chat_interfaces = self._get_chat_interfaces()

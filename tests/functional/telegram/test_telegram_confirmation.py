@@ -145,6 +145,14 @@ async def test_confirmation_accepted(
     with soft_assertions():  # type: ignore[attr-defined]
         # 1. Confirmation Manager was called because the tool was configured to require it
         fix.mock_confirmation_manager.assert_called_once()
+        confirmation_call_kwargs = fix.mock_confirmation_manager.call_args.kwargs
+        assert_that(confirmation_call_kwargs.get("tool_name")).is_equal_to(
+            TOOL_NAME_SENSITIVE
+        )
+        assert_that(confirmation_call_kwargs.get("tool_args")).is_equal_to({
+            "title": test_note_title,
+            "content": test_note_content,
+        })
 
         # 2. LLM was called twice (request tool, process result)
         assert_that(mock_llm_client._calls).described_as("LLM Call Count").is_length(2)

@@ -25,6 +25,7 @@ from family_assistant import calendar_integration
 from family_assistant.tools.attachment_utils import process_attachment_arguments
 from family_assistant.tools.types import (
     CalendarConfig,
+    RequestConfirmationCallback,
     ToolDefinition,
     ToolExecutionContext,
     ToolResult,
@@ -114,42 +115,8 @@ def translate_attachment_schemas_for_llm(
     return translated_definitions
 
 
-class ConfirmationCallbackProtocol(Protocol):
-    """Protocol for confirmation callback functions.
-
-    This protocol defines the expected signature for callbacks that request
-    user confirmation for tool actions. The callback should handle the
-    timeout internally and render the confirmation prompt using async renderers.
-    """
-
-    async def __call__(
-        self,
-        interface_type: str,
-        conversation_id: str,
-        turn_id: str | None,
-        tool_name: str,
-        call_id: str,
-        # ast-grep-ignore: no-dict-any - Tool arguments are dynamic JSON from LLM
-        tool_args: dict[str, Any],
-        timeout: float,
-        context: ToolExecutionContext,
-    ) -> bool:
-        """Request user confirmation for a tool action.
-
-        Args:
-            interface_type: Type of interface (e.g., 'telegram', 'api')
-            conversation_id: Unique identifier for the conversation
-            turn_id: Optional turn identifier for tracking
-            tool_name: Name of the tool requesting confirmation
-            call_id: Unique identifier for this tool call
-            tool_args: Arguments being passed to the tool
-            timeout: Timeout in seconds for the confirmation
-            context: Full execution context with timezone, calendar config, etc.
-
-        Returns:
-            True if user confirmed, False if cancelled/timeout
-        """
-        ...
+# Backwards-compatible alias for public API exports.
+ConfirmationCallbackProtocol = RequestConfirmationCallback
 
 
 class ToolConfirmationRequired(Exception):
@@ -748,19 +715,19 @@ class ConfirmingToolsProvider(ToolsProvider):
                 logger.debug(f"Requesting confirmation for tool '{name}' via callback.")
 
                 typed_callback = context.request_confirmation_callback
+                resolved_call_id = call_id or f"tool_{uuid.uuid4()}"
 
                 # The callback is expected to handle the timeout internally via asyncio.wait_for
                 # Pass context so renderers can fetch event details, timezone, etc.
                 user_confirmed = await typed_callback(
-                    context.interface_type,
-                    context.conversation_id,
-                    context.turn_id,
-                    name,
-                    call_id
-                    or f"tool_{uuid.uuid4()}",  # Generate a call_id if none provided
-                    arguments,
-                    self.confirmation_timeout,
-                    context,  # Pass full context for renderers
+                    interface_type=context.interface_type,
+                    conversation_id=context.conversation_id,
+                    turn_id=context.turn_id,
+                    tool_name=name,
+                    call_id=resolved_call_id,
+                    tool_args=arguments,
+                    timeout_seconds=self.confirmation_timeout,
+                    context=context,
                 )
 
                 if user_confirmed:

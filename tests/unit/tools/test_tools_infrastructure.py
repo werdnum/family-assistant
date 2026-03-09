@@ -12,8 +12,11 @@ from zoneinfo import ZoneInfo
 import pytest
 
 from family_assistant.storage.context import DatabaseContext
-from family_assistant.tools.infrastructure import LocalToolsProvider
-from family_assistant.tools.types import ToolExecutionContext
+from family_assistant.tools.infrastructure import (
+    ConfirmingToolsProvider,
+    LocalToolsProvider,
+)
+from family_assistant.tools.types import ToolDefinition, ToolExecutionContext
 
 
 class TestLocalToolsProvider:
@@ -580,3 +583,106 @@ class TestLocalToolsProvider:
             assert received_db[0] is mock_db_context
         finally:
             del sys.modules["fake_tool_module"]
+
+
+class TestConfirmingToolsProvider:
+    """Test cases for ConfirmingToolsProvider."""
+
+    @pytest.mark.asyncio
+    async def test_execute_tool_passes_confirmation_callback_arguments_by_name(
+        self,
+    ) -> None:
+        """Ensure confirmation callbacks receive semantically correct named values."""
+
+        class StubToolsProvider:
+            def __init__(self) -> None:
+                self.calls: list[tuple[str, dict[str, object], str | None]] = []
+
+            async def get_tool_definitions(self) -> list[ToolDefinition]:
+                return [
+                    {
+                        "type": "function",
+                        "function": {
+                            "name": "dangerous_tool",
+                            "description": "Tool requiring confirmation",
+                            "parameters": {"type": "object", "properties": {}},
+                        },
+                    }
+                ]
+
+            async def execute_tool(
+                self,
+                name: str,
+                arguments: dict[str, object],
+                context: ToolExecutionContext,
+                call_id: str | None = None,
+            ) -> str:
+                self.calls.append((name, arguments, call_id))
+                return "executed"
+
+            async def close(self) -> None:
+                return None
+
+        wrapped_provider = StubToolsProvider()
+        provider = ConfirmingToolsProvider(
+            wrapped_provider=wrapped_provider,
+            tools_requiring_confirmation={"dangerous_tool"},
+            confirmation_timeout=42.0,
+        )
+
+        captured: dict[str, object] = {}
+
+        async def confirmation_callback(
+            interface_type: str,
+            conversation_id: str,
+            turn_id: str | None,
+            tool_name: str,
+            call_id: str,
+            tool_args: dict[str, object],
+            timeout_seconds: float,
+            context: ToolExecutionContext,
+        ) -> bool:
+            captured["interface_type"] = interface_type
+            captured["conversation_id"] = conversation_id
+            captured["turn_id"] = turn_id
+            captured["tool_name"] = tool_name
+            captured["call_id"] = call_id
+            captured["tool_args"] = tool_args
+            captured["timeout_seconds"] = timeout_seconds
+            captured["context"] = context
+            return True
+
+        mock_db_context = MagicMock(spec=DatabaseContext)
+        exec_context = ToolExecutionContext(
+            conversation_id="conv-1",
+            user_name="test-user",
+            interface_type="telegram",
+            timezone=ZoneInfo("UTC"),
+            turn_id="turn-1",
+            db_context=mock_db_context,
+            processing_service=None,
+            clock=None,
+            home_assistant_client=None,
+            event_sources=None,
+            attachment_registry=None,
+            camera_backend=None,
+            request_confirmation_callback=confirmation_callback,
+        )
+
+        tool_args = {"title": "Hello"}
+        result = await provider.execute_tool(
+            "dangerous_tool",
+            tool_args,
+            exec_context,
+            call_id="call-explicit-123",
+        )
+
+        assert result == "executed"
+        assert captured["tool_name"] == "dangerous_tool"
+        assert captured["call_id"] == "call-explicit-123"
+        assert captured["tool_args"] == tool_args
+        assert captured["timeout_seconds"] == 42.0
+        assert captured["context"] is exec_context
+        assert wrapped_provider.calls == [
+            ("dangerous_tool", tool_args, "call-explicit-123")
+        ]

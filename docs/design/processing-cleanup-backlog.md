@@ -221,6 +221,10 @@ It now incorporates external analysis from:
 - **26. Complex confirmation callback type is duplicated across multiple method signatures.**
 
   - Impact: Hard to maintain; error-prone copy-paste types.
+  - Status (2026-03-09): Phase 10 complete on branch `processing-phase10-type-boundary-hardening`
+    (confirmation callback typing is now centralized as `RequestConfirmationCallback` in
+    `tools/types.py`; processing/tool layers reuse that contract, and `ConfirmingToolsProvider` now
+    invokes callbacks by keyword arguments to prevent positional signature drift).
   - References: `service.py:148`, `service.py:206`, `service.py:266`, `service.py:687`,
     `llm_loop.py:67`, `tool_execution.py:70`
   - Sources: `[C678]` (Added from PR #678)
@@ -260,12 +264,19 @@ It now incorporates external analysis from:
 - **28. Processing interfaces use `Any` where stronger types/protocols are available.**
 
   - Impact: Weaker static guarantees and easier contract drift.
+  - Status (2026-03-09): Phase 10 complete on branch `processing-phase10-type-boundary-hardening`
+    (processing callback typing now imports shared `RequestConfirmationCallback` protocol from tools
+    typing instead of defining an ad-hoc `dict[str, Any]` callback signature in
+    `processing/types.py`).
   - References: `service.py:70`, `llm_loop.py:87`, `tool_execution.py:89`
   - Sources: `[Cdx][G677][C678]` (corroborated by both PRs)
 
 - **29. `event_sources` typing in processing does not match tool-context typing.**
 
   - Impact: Type inconsistency across layer boundary.
+  - Status (2026-03-09): Phase 10 complete on branch `processing-phase10-type-boundary-hardening`
+    (`TaskWorker` and processing runtime paths now use shared `EventSourcesById` typing, matching
+    tool-context contracts).
   - References: `tool_execution.py:93`, `tools/types.py:243`
   - Sources: `[Cdx]`
 

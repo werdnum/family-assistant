@@ -1,12 +1,14 @@
 from __future__ import annotations
 
 import logging
-from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from enum import Enum
-from typing import TYPE_CHECKING, Any, Protocol
+from typing import TYPE_CHECKING, Protocol
 
 from family_assistant.delegation_security import DelegationSecurityLevel
+from family_assistant.tools.types import (
+    RequestConfirmationCallback as ToolRequestConfirmationCallback,
+)
 
 if TYPE_CHECKING:
     from zoneinfo import ZoneInfo
@@ -15,9 +17,11 @@ if TYPE_CHECKING:
     from family_assistant.llm import LLMStreamEvent
     from family_assistant.llm.messages import MessageReasoningInfo, ToolMessage
     from family_assistant.skills.registry import NoteRegistry
-    from family_assistant.tools import ToolExecutionContext
 
 logger = logging.getLogger(__name__)
+
+# Backwards-compatible export for processing-layer imports.
+RequestConfirmationCallback = ToolRequestConfirmationCallback
 
 
 class ChatInteractionStatus(Enum):
@@ -25,22 +29,6 @@ class ChatInteractionStatus(Enum):
 
     SUCCESS = "success"
     ERROR = "error"
-
-
-# ast-grep-ignore: no-dict-any - tool args have varying keys per tool
-RequestConfirmationCallback = Callable[
-    [
-        str,
-        str,
-        str | None,
-        str,
-        str,
-        dict[str, Any],
-        float,
-        "ToolExecutionContext",
-    ],
-    Awaitable[bool],
-]
 
 
 class ContextPreparerConfig(Protocol):
