@@ -7,9 +7,9 @@ from __future__ import annotations
 
 import base64
 import json
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, Literal, NotRequired, TypedDict
+from typing import TYPE_CHECKING, Any, Literal, NotRequired, Protocol, TypedDict
 
 # Note: CalendarConfig TypedDict kept here for backward compatibility with tool functions
 # The Pydantic CalendarConfig in config_models.py is used for config file validation
@@ -160,7 +160,6 @@ class ToolDefinition(TypedDict):
 
 
 if TYPE_CHECKING:
-    from collections.abc import Awaitable, Callable
     from datetime import date, datetime
     from zoneinfo import ZoneInfo
 
@@ -181,6 +180,25 @@ if TYPE_CHECKING:
 
 # Maps event source IDs to their corresponding EventSource instances.
 type EventSourcesById = Mapping[str, EventSource]
+
+
+class RequestConfirmationCallback(Protocol):
+    """Callback interface for user confirmation requests."""
+
+    async def __call__(
+        self,
+        interface_type: str,
+        conversation_id: str,
+        turn_id: str | None,
+        tool_name: str,
+        call_id: str,
+        # ast-grep-ignore: no-dict-any - tool args have varying keys per tool
+        tool_args: dict[str, Any],
+        timeout_seconds: float,
+        context: ToolExecutionContext,
+    ) -> bool:
+        """Request confirmation for a tool action."""
+        ...
 
 
 class CalendarEvent(TypedDict):
@@ -216,8 +234,9 @@ class ToolExecutionContext:
         request_confirmation_callback: Optional callback to request user confirmation.
             This function is typically called by `ConfirmingToolsProvider`.
             Expected signature:
-            (conversation_id: str, interface_type: str, turn_id: str | None,
-             prompt_text: str, tool_name: str, tool_args: dict[str, Any], timeout: float)
+            (interface_type: str, conversation_id: str, turn_id: str | None,
+             tool_name: str, call_id: str, tool_args: dict[str, Any],
+             timeout_seconds: float, context: ToolExecutionContext)
             -> Awaitable[bool]
         update_activity_callback: Optional callback to update task worker activity timestamp.
             Used by long-running tasks to prevent worker from being marked as stuck.
@@ -263,23 +282,7 @@ class ToolExecutionContext:
     subconversation_id: str | None = (
         None  # Subconversation ID for delegated conversations, None for main conversation
     )
-    request_confirmation_callback: (
-        Callable[
-            [
-                str,  # interface_type
-                str,  # conversation_id
-                str | None,  # turn_id
-                str,  # tool_name
-                str,  # call_id
-                # ast-grep-ignore: no-dict-any - tool args have varying keys per tool
-                dict[str, Any],  # tool_args
-                float,  # timeout
-                ToolExecutionContext,  # context (self-reference)
-            ],
-            Awaitable[bool],
-        ]
-        | None
-    ) = None
+    request_confirmation_callback: RequestConfirmationCallback | None = None
     update_activity_callback: Callable[[], None] | None = (
         None  # Optional callback to update task worker activity timestamp
     )

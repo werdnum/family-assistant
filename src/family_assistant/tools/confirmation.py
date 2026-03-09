@@ -227,8 +227,31 @@ async def render_modify_calendar_event_confirmation(
     )
 
 
+async def render_delegate_to_service_confirmation(
+    # ast-grep-ignore: no-dict-any - tool args have varying keys per tool
+    args: dict[str, Any],
+    context: ToolExecutionContext,
+) -> str:
+    """Render a confirmation prompt for delegating a task to another service."""
+    target_service_id = str(args.get("target_service_id", "")).strip()
+    user_request = str(args.get("user_request", "")).strip()
+
+    prompt_target = target_service_id if target_service_id else "target service"
+    request_preview = user_request[:100]
+    if user_request and len(user_request) > 100:
+        request_preview += "..."
+
+    _ = context
+    return (
+        "Do you want to delegate the task: "
+        f"'{telegramify_markdown.escape_markdown(request_preview)}' "
+        f"to the '{telegramify_markdown.escape_markdown(prompt_target)}' profile?"
+    )
+
+
 # Mapping of tool names to their confirmation renderers
 TOOL_CONFIRMATION_RENDERERS: dict[str, ConfirmationRenderer] = {
     "delete_calendar_event": render_delete_calendar_event_confirmation,
     "modify_calendar_event": render_modify_calendar_event_confirmation,
+    "delegate_to_service": render_delegate_to_service_confirmation,
 }

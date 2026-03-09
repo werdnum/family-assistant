@@ -852,11 +852,11 @@ async def api_chat_send_message_stream(
 
         # Create confirmation callback that queues events
         async def web_confirmation_callback(
-            interface_type_cb: str,
-            conversation_id_cb: str,
-            interface_message_id_cb: str | None,
+            interface_type: str,
+            conversation_id: str,
+            turn_id: str | None,
             tool_name: str,
-            tool_call_id: str,
+            call_id: str,
             # ast-grep-ignore: no-dict-any - Tool arguments vary per tool and cannot be statically typed
             tool_args: dict[str, Any],
             timeout_seconds: float,
@@ -879,20 +879,23 @@ async def api_chat_send_message_stream(
                 request_id,
                 future,
             ) = await web_confirmation_manager.request_confirmation(
-                conversation_id=conversation_id_cb,
-                interface_type=interface_type_cb,
+                conversation_id=conversation_id,
+                interface_type=interface_type,
                 tool_name=tool_name,
                 tool_args=tool_args,
                 confirmation_prompt=confirmation_prompt,
                 timeout_seconds=timeout_seconds,
             )
 
+            _ = turn_id
+            _ = context
+
             # Queue confirmation request event for client
             await confirmation_queue.put({
                 "type": "confirmation_request",
                 "request_id": request_id,
                 "tool_name": tool_name,
-                "tool_call_id": tool_call_id,
+                "tool_call_id": call_id,
                 "confirmation_prompt": confirmation_prompt,
                 "timeout_seconds": timeout_seconds,
                 "args": tool_args,

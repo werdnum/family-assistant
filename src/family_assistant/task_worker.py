@@ -34,11 +34,10 @@ from family_assistant.scripting import (
 )
 from family_assistant.scripting.config import ScriptConfig
 from family_assistant.scripting.monty_engine import WakeRequest
-from family_assistant.tools.types import CalendarConfig
+from family_assistant.tools.types import CalendarConfig, EventSourcesById
 
 if TYPE_CHECKING:
     from family_assistant.events.indexing_source import IndexingSource
-    from family_assistant.events.sources import EventSource
 
 # handle_index_email is now a method of EmailIndexer and registered in __main__.py
 from family_assistant.processing import ProcessingService
@@ -572,7 +571,7 @@ class TaskWorker:
         indexing_source: "IndexingSource | None" = None,
         engine: AsyncEngine
         | None = None,  # Add engine parameter for dependency injection
-        event_sources: "dict[str, EventSource] | None" = None,
+        event_sources: EventSourcesById | None = None,
         handler_timeout: float = TASK_HANDLER_TIMEOUT,  # Configurable timeout per instance
         chat_interfaces: dict[str, ChatInterface] | None = None,
     ) -> None:

@@ -8,7 +8,6 @@ from zoneinfo import ZoneInfo
 
 import pytest
 import pytest_asyncio
-import telegramify_markdown
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncEngine
 
@@ -590,19 +589,14 @@ async def test_delegation_confirm_target_granted(
     assert final_reply is not None
     assert f"Response from {SPECIALIZED_PROFILE_ID}" in final_reply
     awaited_mock_confirmation_callback.assert_called_once()
-    # Assert call args for confirmation if needed (tool_name, specific prompt text)
-    # The callback is called with positional args: (conversation_id, interface_type, turn_id, prompt_text, tool_name, tool_args, timeout)
-    call_args = awaited_mock_confirmation_callback.call_args[0]  # positional args
-    prompt_text = call_args[3]
-    tool_name = call_args[4]
-    assert tool_name == "delegate_to_service"
-    # Compare with the escaped version of the description
-    escaped_description = telegramify_markdown.escape_markdown(
-        DELEGATED_TASK_DESCRIPTION
-    )
-    assert escaped_description.lower() in prompt_text.lower()
-    escaped_profile_id = telegramify_markdown.escape_markdown(SPECIALIZED_PROFILE_ID)
-    assert escaped_profile_id.lower() in prompt_text.lower()
+    call_kwargs = awaited_mock_confirmation_callback.call_args.kwargs
+    assert call_kwargs.get("tool_name") == "delegate_to_service"
+    assert call_kwargs.get("conversation_id") == str(TEST_CHAT_ID)
+    confirmed_tool_args = call_kwargs.get("tool_args", {})
+    assert isinstance(confirmed_tool_args, dict)
+    assert confirmed_tool_args.get("target_service_id") == SPECIALIZED_PROFILE_ID
+    assert confirmed_tool_args.get("user_request") == DELEGATED_TASK_DESCRIPTION
+    assert confirmed_tool_args.get("confirm_delegation") is True
 
 
 @pytest.mark.asyncio
@@ -770,8 +764,8 @@ async def test_delegation_unrestricted_confirm_arg_granted(
     assert final_reply is not None
     assert f"Response from {SPECIALIZED_PROFILE_ID}" in final_reply
     awaited_mock_confirmation_callback.assert_called_once()
-    # Assert that the tool_args in the confirmation call reflect confirm_delegation=True
-    # The callback is called with positional args: (conversation_id, interface_type, turn_id, prompt_text, tool_name, tool_args, timeout)
-    call_args = awaited_mock_confirmation_callback.call_args[0]  # positional args
-    confirmed_tool_args = call_args[5]  # tool_args is the 6th argument (index 5)
+    # Assert that tool_args in the confirmation call reflect confirm_delegation=True
+    call_kwargs = awaited_mock_confirmation_callback.call_args.kwargs
+    confirmed_tool_args = call_kwargs.get("tool_args", {})
+    assert isinstance(confirmed_tool_args, dict)
     assert confirmed_tool_args.get("confirm_delegation") is True
