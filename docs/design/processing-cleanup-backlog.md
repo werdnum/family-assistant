@@ -148,6 +148,10 @@ It now incorporates external analysis from:
 - **18. Sync/stream feature drift in orchestration.**
 
   - Impact: Behavior inconsistencies and test blind spots.
+  - Status (2026-03-09): Phase 8c complete on branch `processing-phase8c-orchestration-error-parity`
+    (sync and stream orchestration now share a single history-write strategy via
+    `ProcessingService._USE_ISOLATED_HISTORY_WRITES`, including user-trigger persistence and
+    generated-message persistence).
   - References: `service.py:425`, `service.py:500`, `service.py:938`
   - Sources: `[Cdx][C678]`
 
@@ -190,6 +194,9 @@ It now incorporates external analysis from:
 - **24. Error persistence behavior is inconsistent between sync and stream.**
 
   - Impact: Divergent UX and history/audit trail behavior.
+  - Status (2026-03-09): Phase 8c complete on branch `processing-phase8c-orchestration-error-parity`
+    (sync and stream now both persist errors through shared helper `_persist_error_history_message`
+    with consistent `ErrorMessage` payloads and write strategy).
   - References: `service.py:647`, `service.py:655`, `service.py:1019`
   - Sources: `[Cdx][C678]`
 
