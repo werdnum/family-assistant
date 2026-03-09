@@ -200,7 +200,6 @@ class ToolExecutor:
                 error=error_traceback,
             ),
             llm_message=ToolMessage(
-                role="tool",
                 tool_call_id=call_id or "invalid_tool_call_missing_id",
                 content=error_content,
                 error_traceback=error_traceback,
@@ -448,7 +447,6 @@ class ToolExecutor:
         return (
             content_for_stream,
             ToolMessage(
-                role="tool",
                 tool_call_id=call_id,
                 content=content_for_stream,
                 name=function_name,

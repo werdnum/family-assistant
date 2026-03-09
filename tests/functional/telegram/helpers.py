@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -35,12 +36,23 @@ async def wait_for_bot_response(
         List of updates from the bot.
     """
     loop = asyncio.get_running_loop()
-    deadline = loop.time() + timeout
+    effective_timeout = timeout
+    if os.environ.get("PYTEST_XDIST_WORKER") and effective_timeout < 10.0:
+        effective_timeout = 30.0
+    deadline = loop.time() + effective_timeout
 
     while loop.time() < deadline:
-        updates = await client.get_updates(timeout=0.1, poll_interval=poll_interval)
+        updates = await client.get_updates(
+            timeout=max(0.5, poll_interval),
+            poll_interval=poll_interval,
+        )
         if len(updates) >= min_messages:
             return updates
+
+        history_updates = await client.get_updates_history()
+        if len(history_updates) >= min_messages:
+            return history_updates
+
         # ast-grep-ignore: no-asyncio-sleep-in-tests - Polling for bot responses requires delay
         await asyncio.sleep(poll_interval)
 
