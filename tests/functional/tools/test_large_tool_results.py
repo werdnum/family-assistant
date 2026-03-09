@@ -9,6 +9,7 @@ import pytest
 from sqlalchemy.ext.asyncio import AsyncEngine
 
 from family_assistant.config_models import ToolsConfig
+from family_assistant.delegation_security import DelegationSecurityLevel
 from family_assistant.llm.tool_call import ToolCallFunction, ToolCallItem
 from family_assistant.processing import ProcessingService, ProcessingServiceConfig
 from family_assistant.services.attachment_registry import AttachmentRegistry
@@ -46,7 +47,7 @@ async def test_large_tool_result_auto_attachment(
         max_history_messages=10,
         history_max_age_hours=1.0,
         tools_config=ToolsConfig(),
-        delegation_security_level="unrestricted",
+        delegation_security_level=DelegationSecurityLevel.UNRESTRICTED,
         id="test-profile",
     )
 
@@ -371,7 +372,7 @@ async def test_large_tool_result_data_field_triggers_auto_attachment(
         max_history_messages=10,
         history_max_age_hours=1.0,
         tools_config=ToolsConfig(),
-        delegation_security_level="unrestricted",
+        delegation_security_level=DelegationSecurityLevel.UNRESTRICTED,
         id="test-profile",
     )
 

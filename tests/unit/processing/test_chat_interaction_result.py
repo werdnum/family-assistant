@@ -25,6 +25,7 @@ def test_status_must_be_enum_not_plain_string() -> None:
 def test_success_factory_sets_enum_status() -> None:
     result = ChatInteractionResult.success(text_reply="ok")
     assert result.status == ChatInteractionStatus.SUCCESS
+    assert result.text_reply == "ok"
     assert result.has_error is False
 
 
@@ -36,6 +37,12 @@ def test_error_factory_sets_enum_status() -> None:
     )
     assert result.status == ChatInteractionStatus.ERROR
     assert result.has_error is True
+
+
+@pytest.mark.no_db
+def test_success_factory_defaults_to_empty_text_reply() -> None:
+    result = ChatInteractionResult.success()
+    assert not result.text_reply
 
 
 @pytest.mark.no_db
@@ -59,9 +66,10 @@ def test_post_init_enforces_error_requires_error_traceback() -> None:
 
 @pytest.mark.no_db
 def test_post_init_enforces_error_requires_user_facing_text_reply() -> None:
-    with pytest.raises(ValueError, match="requires user-facing text_reply"):
+    with pytest.raises(ValueError, match="requires non-empty user-facing text_reply"):
         ChatInteractionResult(
             status=ChatInteractionStatus.ERROR,
+            text_reply="",
             error_traceback="traceback",
         )
 

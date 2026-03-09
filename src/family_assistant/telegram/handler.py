@@ -209,7 +209,7 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
             yield
         finally:
             stop_event.set()
-            with contextlib.suppress(asyncio.CancelledError):
+            with contextlib.suppress(TimeoutError):
                 await asyncio.wait_for(typing_task, timeout=1.0)
 
     async def start(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:

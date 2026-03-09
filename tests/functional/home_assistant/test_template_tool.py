@@ -11,6 +11,7 @@ from homeassistant_api.errors import HomeassistantAPIError
 from sqlalchemy.ext.asyncio import AsyncEngine
 
 from family_assistant.config_models import AppConfig, ToolsConfig
+from family_assistant.delegation_security import DelegationSecurityLevel
 from family_assistant.llm import LLMInterface, ToolCallFunction, ToolCallItem
 from family_assistant.processing import ProcessingService, ProcessingServiceConfig
 from family_assistant.storage.context import DatabaseContext
@@ -144,7 +145,7 @@ async def test_render_home_assistant_template_success(
         max_history_messages=5,
         history_max_age_hours=24,
         tools_config=ToolsConfig(),
-        delegation_security_level="unrestricted",
+        delegation_security_level=DelegationSecurityLevel.UNRESTRICTED,
     )
 
     processing_service = ProcessingService(
@@ -273,7 +274,7 @@ async def test_render_home_assistant_template_no_client(
         max_history_messages=5,
         history_max_age_hours=24,
         tools_config=ToolsConfig(),
-        delegation_security_level="unrestricted",
+        delegation_security_level=DelegationSecurityLevel.UNRESTRICTED,
     )
 
     processing_service = ProcessingService(
@@ -425,7 +426,7 @@ Status: Comfortable"""
         max_history_messages=5,
         history_max_age_hours=24,
         tools_config=ToolsConfig(),
-        delegation_security_level="unrestricted",
+        delegation_security_level=DelegationSecurityLevel.UNRESTRICTED,
     )
 
     processing_service = ProcessingService(
@@ -568,7 +569,7 @@ async def test_render_home_assistant_template_api_error(
         max_history_messages=5,
         history_max_age_hours=24,
         tools_config=ToolsConfig(),
-        delegation_security_level="unrestricted",
+        delegation_security_level=DelegationSecurityLevel.UNRESTRICTED,
     )
 
     processing_service = ProcessingService(

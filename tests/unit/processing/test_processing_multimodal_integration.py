@@ -10,6 +10,7 @@ from zoneinfo import ZoneInfo
 import pytest
 
 from family_assistant.config_models import AppConfig, ToolsConfig
+from family_assistant.delegation_security import DelegationSecurityLevel
 from family_assistant.llm import LLMStreamEvent
 from family_assistant.processing import ProcessingService, ProcessingServiceConfig
 from family_assistant.services.attachment_registry import AttachmentMetadata
@@ -50,7 +51,7 @@ class TestProcessingServiceMultimodal:
             max_history_messages=10,
             history_max_age_hours=24,
             tools_config=ToolsConfig(),
-            delegation_security_level="unrestricted",
+            delegation_security_level=DelegationSecurityLevel.UNRESTRICTED,
         )
 
         service = ProcessingService(

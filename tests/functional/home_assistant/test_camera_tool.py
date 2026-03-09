@@ -12,6 +12,7 @@ from PIL import Image
 from sqlalchemy.ext.asyncio import AsyncEngine
 
 from family_assistant.config_models import AppConfig, ToolsConfig
+from family_assistant.delegation_security import DelegationSecurityLevel
 from family_assistant.llm import ToolCallFunction, ToolCallItem
 from family_assistant.processing import (
     ProcessingService,
@@ -119,7 +120,7 @@ async def create_processing_service_for_camera_tests(
         max_history_messages=5,
         history_max_age_hours=24,
         tools_config=ToolsConfig(),
-        delegation_security_level="unrestricted",
+        delegation_security_level=DelegationSecurityLevel.UNRESTRICTED,
     )
 
     return ProcessingService(

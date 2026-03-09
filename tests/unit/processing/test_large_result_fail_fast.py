@@ -7,6 +7,7 @@ from zoneinfo import ZoneInfo
 import pytest
 
 from family_assistant.config_models import AppConfig, ToolsConfig
+from family_assistant.delegation_security import DelegationSecurityLevel
 from family_assistant.llm import ToolCallFunction, ToolCallItem
 from family_assistant.processing.attachments import AttachmentProcessor
 from family_assistant.processing.tool_execution import ToolExecutor
@@ -81,14 +82,14 @@ async def test_tool_executor_propagates_large_result_registry_unavailable() -> N
     processor = _create_processor(attachment_registry=None, threshold_kb=1)
     executor = ToolExecutor(
         tools_provider=mock_tools_provider,
-        service_config=ProcessingServiceConfig(
+        config=ProcessingServiceConfig(
             id="test",
             prompts={},
             timezone=ZoneInfo("UTC"),
             max_history_messages=10,
             history_max_age_hours=24,
             tools_config=ToolsConfig(),
-            delegation_security_level="confirm",
+            delegation_security_level=DelegationSecurityLevel.CONFIRM,
         ),
         attachment_processor=processor,
         attachment_registry=None,

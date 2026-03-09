@@ -20,6 +20,7 @@ from family_assistant.context_providers import (
     KnownUsersContextProvider,
     NotesContextProvider,
 )
+from family_assistant.delegation_security import DelegationSecurityLevel
 from family_assistant.llm.providers.google_genai_client import GoogleGenAIClient
 from family_assistant.processing import ProcessingService, ProcessingServiceConfig
 from family_assistant.services.attachment_registry import AttachmentRegistry
@@ -71,7 +72,7 @@ async def llm_integration_processing_service(
         timezone=ZoneInfo("UTC"),
         max_history_messages=20,
         history_max_age_hours=72,
-        delegation_security_level="confirm",
+        delegation_security_level=DelegationSecurityLevel.CONFIRM,
         tools_config=ToolsConfig(),
         id="test",
     )

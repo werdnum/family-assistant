@@ -17,6 +17,7 @@ if TYPE_CHECKING:
     from family_assistant.tools.types import ToolDefinition
 
 from family_assistant.config_models import AppConfig, ToolsConfig
+from family_assistant.delegation_security import DelegationSecurityLevel
 from family_assistant.llm import ToolCallFunction, ToolCallItem
 from family_assistant.llm.messages import (
     AssistantMessage,
@@ -73,7 +74,7 @@ def processing_service() -> ProcessingService:
         max_history_messages=10,  # Not used
         history_max_age_hours=1,  # Not used
         tools_config=ToolsConfig(),
-        delegation_security_level="confirm",  # Added
+        delegation_security_level=DelegationSecurityLevel.CONFIRM,  # Added
         id="history_formatting_test_profile",  # Added
     )
     return ProcessingService(
@@ -364,7 +365,7 @@ def test_web_specific_history_configuration() -> None:
         web_max_history_messages=100,
         web_history_max_age_hours=720,
         tools_config=ToolsConfig(),
-        delegation_security_level="confirm",
+        delegation_security_level=DelegationSecurityLevel.CONFIRM,
         id="test_web_history_profile",
     )
 
@@ -404,7 +405,7 @@ def test_web_history_configuration_fallback() -> None:
         web_max_history_messages=None,
         web_history_max_age_hours=None,
         tools_config=ToolsConfig(),
-        delegation_security_level="confirm",
+        delegation_security_level=DelegationSecurityLevel.CONFIRM,
         id="test_fallback_profile",
     )
 
@@ -437,7 +438,7 @@ def test_web_history_configuration_with_zero_values() -> None:
         web_max_history_messages=0,
         web_history_max_age_hours=0,
         tools_config=ToolsConfig(),
-        delegation_security_level="confirm",
+        delegation_security_level=DelegationSecurityLevel.CONFIRM,
         id="test_zero_values_profile",
     )
 

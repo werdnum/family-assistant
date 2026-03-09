@@ -19,6 +19,7 @@ from family_assistant.calendar_integration import (
 )
 from family_assistant.config_models import AppConfig, ToolsConfig
 from family_assistant.context_providers import CalendarContextProvider
+from family_assistant.delegation_security import DelegationSecurityLevel
 from family_assistant.llm import LLMInterface, ToolCallFunction, ToolCallItem
 from family_assistant.processing import (
     ProcessingService,
@@ -266,7 +267,7 @@ async def test_modify_event(
         max_history_messages=5,
         history_max_age_hours=24,
         tools_config=ToolsConfig(),
-        delegation_security_level="unrestricted",
+        delegation_security_level=DelegationSecurityLevel.UNRESTRICTED,
     )
     processing_service_for_add = ProcessingService(
         llm_client=RuleBasedMockLLMClient(
@@ -495,7 +496,7 @@ async def test_modify_event(
         max_history_messages=5,
         history_max_age_hours=24,
         tools_config=ToolsConfig(),
-        delegation_security_level="unrestricted",
+        delegation_security_level=DelegationSecurityLevel.UNRESTRICTED,
     )
     processing_service = ProcessingService(
         llm_client=llm_client,
@@ -682,7 +683,7 @@ async def test_delete_event(
         max_history_messages=5,
         history_max_age_hours=24,
         tools_config=ToolsConfig(),
-        delegation_security_level="unrestricted",
+        delegation_security_level=DelegationSecurityLevel.UNRESTRICTED,
     )
     processing_service = ProcessingService(
         llm_client=MagicMock(),  # Will be replaced
@@ -913,7 +914,7 @@ async def test_search_events(
         max_history_messages=5,
         history_max_age_hours=24,
         tools_config=ToolsConfig(),
-        delegation_security_level="unrestricted",
+        delegation_security_level=DelegationSecurityLevel.UNRESTRICTED,
     )
     processing_service = ProcessingService(
         llm_client=MagicMock(),  # Will be replaced for each phase
@@ -1372,7 +1373,7 @@ async def test_similarity_based_search_finds_similar_events(
         max_history_messages=5,
         history_max_age_hours=24,
         tools_config=ToolsConfig(),
-        delegation_security_level="unrestricted",
+        delegation_security_level=DelegationSecurityLevel.UNRESTRICTED,
     )
     processing_service = ProcessingService(
         llm_client=MagicMock(),  # Will be replaced

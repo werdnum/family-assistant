@@ -4,6 +4,7 @@ import pytest
 from sqlalchemy.ext.asyncio import AsyncEngine
 
 from family_assistant.config_models import AppConfig, ToolsConfig
+from family_assistant.delegation_security import DelegationSecurityLevel
 from family_assistant.processing import ProcessingService, ProcessingServiceConfig
 from family_assistant.storage.context import get_db_context
 from family_assistant.tools import ToolExecutionContext
@@ -108,7 +109,7 @@ async def test_reply_with_different_profile_includes_history(
         max_history_messages=10,
         history_max_age_hours=24,
         tools_config=ToolsConfig(enable_local_tools=[], enable_mcp_server_ids=[]),
-        delegation_security_level="confirm",
+        delegation_security_level=DelegationSecurityLevel.CONFIRM,
         id="profile_a",
     )
     profile_a_service = ProcessingService(
@@ -126,7 +127,7 @@ async def test_reply_with_different_profile_includes_history(
         max_history_messages=10,
         history_max_age_hours=24,
         tools_config=ToolsConfig(enable_local_tools=[], enable_mcp_server_ids=[]),
-        delegation_security_level="confirm",
+        delegation_security_level=DelegationSecurityLevel.CONFIRM,
         id="profile_b",
     )
     profile_b_service = ProcessingService(

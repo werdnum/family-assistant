@@ -13,6 +13,7 @@ if TYPE_CHECKING:
 from pydantic import BaseModel
 
 from family_assistant.config_models import AppConfig, ToolsConfig
+from family_assistant.delegation_security import DelegationSecurityLevel
 from family_assistant.llm import (
     LLMMessage,
     LLMOutput,
@@ -260,7 +261,7 @@ async def test_thought_signatures_persist_and_roundtrip(
         max_history_messages=10,
         history_max_age_hours=24,
         tools_config=ToolsConfig(enable_local_tools=[], enable_mcp_server_ids=[]),
-        delegation_security_level="confirm",
+        delegation_security_level=DelegationSecurityLevel.CONFIRM,
         id="test_profile",
     )
     processing_service = ProcessingService(
@@ -339,7 +340,7 @@ async def test_thought_signatures_without_tool_calls(
         max_history_messages=10,
         history_max_age_hours=24,
         tools_config=ToolsConfig(enable_local_tools=[], enable_mcp_server_ids=[]),
-        delegation_security_level="confirm",
+        delegation_security_level=DelegationSecurityLevel.CONFIRM,
         id="test_profile",
     )
     processing_service = ProcessingService(

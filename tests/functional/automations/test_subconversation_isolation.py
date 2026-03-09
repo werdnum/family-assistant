@@ -12,6 +12,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncEngine
 
 from family_assistant.config_models import AppConfig, ToolsConfig
+from family_assistant.delegation_security import DelegationSecurityLevel
 from family_assistant.interfaces import ChatInterface
 from family_assistant.llm import (
     ToolCallFunction,
@@ -71,7 +72,7 @@ def primary_service_config(dummy_prompts: dict[str, str]) -> ProcessingServiceCo
             enable_local_tools=["delegate_to_service"],
             confirm_tools=[],
         ),
-        delegation_security_level="unrestricted",
+        delegation_security_level=DelegationSecurityLevel.UNRESTRICTED,
         id=PRIMARY_PROFILE_ID,
     )
 
@@ -87,7 +88,7 @@ def delegated_service_config(dummy_prompts: dict[str, str]) -> ProcessingService
             enable_local_tools=[],
             confirm_tools=[],
         ),
-        delegation_security_level="unrestricted",
+        delegation_security_level=DelegationSecurityLevel.UNRESTRICTED,
         id=DELEGATED_PROFILE_ID,
     )
 

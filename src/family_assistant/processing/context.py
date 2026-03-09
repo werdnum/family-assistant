@@ -10,7 +10,7 @@ from family_assistant.llm.messages import (
     LLMMessage,
     ToolMessage,
 )
-from family_assistant.processing.types import ProcessingServiceConfig
+from family_assistant.processing.types import ContextPreparerConfig
 from family_assistant.utils.clock import Clock
 
 from .utils import assistant_message_has_thought_signature
@@ -25,7 +25,7 @@ class ContextPreparer:
     def __init__(
         self,
         context_providers: list[ContextProvider],
-        service_config: ProcessingServiceConfig,
+        config: ContextPreparerConfig,
         clock: Clock,
     ) -> None:
         """
@@ -33,11 +33,11 @@ class ContextPreparer:
 
         Args:
             context_providers: List of context providers to aggregate context from.
-            service_config: Configuration for the processing service.
+            config: Context-preparation configuration.
             clock: Clock instance for time operations.
         """
         self.context_providers = context_providers
-        self.service_config = service_config
+        self.config = config
         self.clock = clock
 
     def get_history_limits(self, interface_type: str) -> tuple[int, timedelta]:
@@ -52,19 +52,19 @@ class ContextPreparer:
         if interface_type == "web":
             # Use web-specific setting if available, otherwise fall back to default
             web_max_messages = (
-                self.service_config.web_max_history_messages
-                if self.service_config.web_max_history_messages is not None
-                else self.service_config.max_history_messages
+                self.config.web_max_history_messages
+                if self.config.web_max_history_messages is not None
+                else self.config.max_history_messages
             )
             web_max_age = (
-                self.service_config.web_history_max_age_hours
-                if self.service_config.web_history_max_age_hours is not None
-                else self.service_config.history_max_age_hours
+                self.config.web_history_max_age_hours
+                if self.config.web_history_max_age_hours is not None
+                else self.config.history_max_age_hours
             )
             return web_max_messages, timedelta(hours=web_max_age)
         else:
-            return self.service_config.max_history_messages, timedelta(
-                hours=self.service_config.history_max_age_hours
+            return self.config.max_history_messages, timedelta(
+                hours=self.config.history_max_age_hours
             )
 
     def prepend_profile_preamble(self, system_prompt: str) -> str:
@@ -74,8 +74,8 @@ class ContextPreparer:
         that the user explicitly selected it.  If *system_prompt* is empty the
         preamble is returned without a trailing newline.
         """
-        profile_id = self.service_config.id
-        description = self.service_config.description
+        profile_id = self.config.id
+        description = self.config.description
         lines = [
             f"[Active Processing Profile: {profile_id}]",
             f'The user has explicitly selected the "{profile_id}" processing profile.',
