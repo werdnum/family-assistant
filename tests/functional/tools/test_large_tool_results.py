@@ -10,6 +10,8 @@ from sqlalchemy.ext.asyncio import AsyncEngine
 
 from family_assistant.config_models import ToolsConfig
 from family_assistant.delegation_security import DelegationSecurityLevel
+from family_assistant.llm import LLMOutput
+from family_assistant.llm.messages import SystemMessage, UserMessage
 from family_assistant.llm.tool_call import ToolCallFunction, ToolCallItem
 from family_assistant.processing import ProcessingService, ProcessingServiceConfig
 from family_assistant.services.attachment_registry import AttachmentRegistry
@@ -21,6 +23,9 @@ from family_assistant.tools.types import (
     ToolResult,
 )
 from family_assistant.utils.clock import SystemClock
+from tests.mocks.mock_llm import (  # pylint: disable=no-name-in-module
+    RuleBasedMockLLMClient,
+)
 
 
 @pytest.mark.asyncio
@@ -343,6 +348,126 @@ content
             f"Script should be able to read attachment created in same transaction. "
             f"Got: {result.text}"
         )
+
+
+@pytest.mark.asyncio
+async def test_stream_done_event_attachment_metadata_visible_same_transaction(
+    db_engine: AsyncEngine, tmp_path: Path
+) -> None:
+    """Done-event attachment enrichment should use the active transaction."""
+    storage_path = tmp_path / "attachments"
+    storage_path.mkdir()
+    attachment_registry = AttachmentRegistry(
+        storage_path=str(storage_path),
+        db_engine=db_engine,
+        config={
+            "max_file_size": 100 * 1024 * 1024,
+            "max_multimodal_size": 20 * 1024 * 1024,
+        },
+    )
+
+    service_config = ProcessingServiceConfig(
+        prompts={},
+        timezone=ZoneInfo("UTC"),
+        max_history_messages=10,
+        history_max_age_hours=1.0,
+        tools_config=ToolsConfig(),
+        delegation_security_level="unrestricted",
+        id="test-profile",
+    )
+
+    app_config = Mock()
+    app_config.attachment_selection_threshold = 5
+    app_config.max_response_attachments = 3
+    app_config.attachment_config = Mock()
+    app_config.attachment_config.large_tool_result_threshold_kb = 20
+
+    llm_client = RuleBasedMockLLMClient(
+        rules=[
+            (
+                lambda kwargs: (
+                    not any(
+                        getattr(message, "role", None) == "tool"
+                        for message in kwargs["messages"]
+                    )
+                ),
+                LLMOutput(
+                    content=None,
+                    tool_calls=[
+                        ToolCallItem(
+                            id="call_large_result",
+                            type="function",
+                            function=ToolCallFunction(
+                                name="read_error_logs", arguments="{}"
+                            ),
+                        )
+                    ],
+                ),
+            ),
+            (
+                lambda kwargs: any(
+                    getattr(message, "role", None) == "tool"
+                    for message in kwargs["messages"]
+                ),
+                LLMOutput(content="final answer"),
+            ),
+        ]
+    )
+
+    mock_tools_provider = AsyncMock()
+    mock_tools_provider.get_tool_definitions.return_value = [
+        {
+            "type": "function",
+            "function": {
+                "name": "read_error_logs",
+                "description": "Read error logs.",
+                "parameters": {"type": "object", "properties": {}},
+            },
+        }
+    ]
+    mock_tools_provider.execute_tool.return_value = "E" * (20 * 1024 + 100)
+
+    service = ProcessingService(
+        llm_client=llm_client,
+        tools_provider=mock_tools_provider,
+        service_config=service_config,
+        context_providers=[],
+        server_url="http://localhost:8000",
+        app_config=app_config,
+        attachment_registry=attachment_registry,
+        clock=SystemClock(),
+    )
+
+    done_event = None
+    async with DatabaseContext(engine=db_engine) as db:
+        async for event, _message in service.llm_loop.run_stream(
+            db_context=db,
+            messages=[
+                SystemMessage(content="system"),
+                UserMessage(content="show me the logs"),
+            ],
+            interface_type="test",
+            conversation_id="conv_stream_same_txn",
+            user_name="test_user",
+            turn_id="turn_stream_same_txn",
+            chat_interface=None,
+            processing_service=service,
+        ):
+            if event.type == "done":
+                done_event = event
+
+    assert done_event is not None
+    assert done_event.metadata is not None
+    attachment_ids = done_event.metadata.get("attachment_ids")
+    assert attachment_ids is not None
+    assert len(attachment_ids) == 1
+
+    attachments = done_event.metadata.get("attachments")
+    assert attachments is not None
+    assert len(attachments) == 1
+    assert attachments[0]["id"] == attachment_ids[0]
+    assert attachments[0]["mime_type"] == "text/plain"
+    assert attachments[0]["name"] == "Large output from read_error_logs"
 
 
 @pytest.mark.asyncio

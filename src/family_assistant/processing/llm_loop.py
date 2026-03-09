@@ -441,8 +441,8 @@ class LLMStreamingLoop:
                 attachment_details = []
                 if self.attachment_processor.attachment_registry:
                     for att_id in pending_attachment_ids:
-                        metadata = await self.attachment_processor.attachment_registry.get_attachment_with_context(
-                            att_id
+                        metadata = await self.attachment_processor.attachment_registry.get_attachment(
+                            db_context, att_id
                         )
                         if metadata is None:
                             raise ValueError(
