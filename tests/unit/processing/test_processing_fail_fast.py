@@ -159,9 +159,7 @@ async def test_stream_forwards_user_and_subconversation_to_process_message_strea
 
 @pytest.mark.no_db
 @pytest.mark.asyncio
-async def test_prepare_turn_messages_uses_isolated_write_strategy_for_user_trigger() -> (
-    None
-):
+async def test_prepare_turn_messages_uses_isolated_writes() -> None:
     service = _make_service()
     save_history_mock = AsyncMock(return_value=123)
     service._save_history_message = save_history_mock  # type: ignore[method-assign]
