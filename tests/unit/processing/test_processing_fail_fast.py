@@ -157,6 +157,94 @@ async def test_stream_forwards_user_and_subconversation_to_process_message_strea
     assert captured_kwargs.get("subconversation_id") == "sub-abc"
 
 
+@pytest.mark.no_db
+@pytest.mark.asyncio
+async def test_prepare_turn_messages_uses_isolated_write_strategy_for_user_trigger() -> (
+    None
+):
+    service = _make_service()
+    save_history_mock = AsyncMock(return_value=123)
+    service._save_history_message = save_history_mock  # type: ignore[method-assign]
+    service._resolve_thread_root_id = AsyncMock(return_value=None)  # type: ignore[method-assign]
+    service._build_initial_messages_for_llm = AsyncMock(  # type: ignore[method-assign]
+        return_value=([], "")
+    )
+    service.context_preparer.aggregate_context = AsyncMock(return_value="")
+    service._render_system_prompt = MagicMock(return_value="")  # type: ignore[method-assign]
+    service.attachment_processor.process_content_parts = AsyncMock(return_value=[])
+    service.attachment_processor.convert_message_urls = AsyncMock(
+        side_effect=lambda messages: messages
+    )
+
+    thread_root_id, typed_messages = await service._prepare_turn_messages_for_llm(  # noqa: SLF001
+        db_context=MagicMock(),
+        interface_type="test",
+        conversation_id="conv_prepare_isolated",
+        trigger_content_parts=[{"type": "text", "text": "hello"}],
+        trigger_interface_message_id="msg-prepare-1",
+        user_name="tester",
+        turn_id="turn-prepare-1",
+        user_id="user-prepare-1",
+        replied_to_interface_id=None,
+        trigger_attachments=None,
+        subconversation_id=None,
+    )
+
+    assert thread_root_id == 123
+    assert typed_messages == []
+    assert save_history_mock.await_args is not None
+    assert save_history_mock.await_args.kwargs["save_with_isolated_context"] is True
+
+
+@pytest.mark.no_db
+@pytest.mark.asyncio
+async def test_sync_and_stream_share_error_persistence_helper() -> None:
+    service = _make_service()
+    db_context = MagicMock()
+    service._prepare_turn_messages_for_llm = AsyncMock(  # type: ignore[method-assign]
+        return_value=(None, [])
+    )
+    service.process_message = AsyncMock(side_effect=RuntimeError("sync boom"))  # type: ignore[method-assign]
+
+    async def fake_process_message_stream(
+        **kwargs: object,
+    ) -> AsyncIterator[tuple[LLMStreamEvent, AssistantMessage | None]]:
+        if False:  # pragma: no cover - keeps this as an async generator
+            yield (LLMStreamEvent(type="done"), None)
+        raise RuntimeError("stream boom")
+
+    service.process_message_stream = fake_process_message_stream  # type: ignore[method-assign]
+    persist_error_mock = AsyncMock(return_value=99)
+    service._persist_error_history_message = persist_error_mock  # type: ignore[method-assign]
+
+    sync_result = await service.handle_chat_interaction(
+        db_context=db_context,
+        interface_type="test",
+        conversation_id="conv_sync_shared_error",
+        trigger_content_parts=[{"type": "text", "text": "hello"}],
+        trigger_interface_message_id="msg-sync-shared-error",
+        user_name="tester",
+    )
+    stream_events = [
+        event
+        async for event in service.handle_chat_interaction_stream(
+            db_context=db_context,
+            interface_type="test",
+            conversation_id="conv_stream_shared_error",
+            trigger_content_parts=[{"type": "text", "text": "hello"}],
+            trigger_interface_message_id="msg-stream-shared-error",
+            user_name="tester",
+        )
+    ]
+
+    assert sync_result.has_error
+    assert any(event.type == "error" for event in stream_events)
+    assert persist_error_mock.await_count == 2
+    for await_call in persist_error_mock.await_args_list:
+        assert await_call.kwargs["interface_type"] == "test"
+        assert await_call.kwargs["error_traceback"]
+
+
 @pytest.mark.asyncio
 async def test_sync_persists_errors_as_error_messages(db_engine: AsyncEngine) -> None:
     service = _make_service()

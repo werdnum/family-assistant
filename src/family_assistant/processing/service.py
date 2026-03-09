@@ -62,6 +62,8 @@ class ProcessingService:
     interacting with the LLM, and handling tool calls.
     """
 
+    _USE_ISOLATED_HISTORY_WRITES = True
+
     def __init__(
         self,
         llm_client: LLMInterface,
@@ -395,6 +397,40 @@ class ProcessingService:
 
         return await _persist_message(db_context)
 
+    async def _persist_error_history_message(
+        self,
+        db_context: DatabaseContext,
+        *,
+        error_message: str,
+        error_traceback: str,
+        interface_type: str,
+        conversation_id: str,
+        turn_id: str,
+        thread_root_id: int | None,
+        subconversation_id: str | None,
+        user_id: str | None,
+    ) -> int | None:
+        """Persist a processing error message with the standard write strategy."""
+        try:
+            return await self._save_history_message(
+                db_context,
+                message=ErrorMessage(
+                    content=error_message,
+                    error_traceback=error_traceback,
+                ),
+                interface_type=interface_type,
+                conversation_id=conversation_id,
+                interface_message_id=None,
+                turn_id=turn_id,
+                thread_root_id=thread_root_id,
+                subconversation_id=subconversation_id,
+                user_id=user_id,
+                save_with_isolated_context=self._USE_ISOLATED_HISTORY_WRITES,
+            )
+        except Exception:
+            logger.error("Failed to save error message to history", exc_info=True)
+            return None
+
     async def _prepare_turn_messages_for_llm(
         self,
         db_context: DatabaseContext,
@@ -409,7 +445,6 @@ class ProcessingService:
         replied_to_interface_id: str | None,
         trigger_attachments: list[MessageAttachmentMetadata] | None,
         subconversation_id: str | None,
-        save_user_message_with_isolated_context: bool,
     ) -> tuple[int | None, list[LLMMessage]]:
         """Build the full pre-LLM turn state shared by sync and streaming flows."""
         thread_root_id_for_turn = await self._resolve_thread_root_id(
@@ -434,7 +469,7 @@ class ProcessingService:
             attachments=trigger_attachments,
             subconversation_id=subconversation_id,
             user_id=user_id,
-            save_with_isolated_context=save_user_message_with_isolated_context,
+            save_with_isolated_context=self._USE_ISOLATED_HISTORY_WRITES,
         )
         if saved_user_msg_record is not None and thread_root_id_for_turn is None:
             thread_root_id_for_turn = saved_user_msg_record
@@ -641,7 +676,6 @@ class ProcessingService:
                 replied_to_interface_id=replied_to_interface_id,
                 trigger_attachments=trigger_attachments,
                 subconversation_id=subconversation_id,
-                save_user_message_with_isolated_context=False,
             )
 
             # --- 3. Call Core LLM Processing (self.process_message) ---
@@ -685,6 +719,7 @@ class ProcessingService:
                         subconversation_id=subconversation_id,
                         user_id=user_id,
                         reasoning_info=reasoning_info_for_msg,
+                        save_with_isolated_context=self._USE_ISOLATED_HISTORY_WRITES,
                     )
 
                     if isinstance(turn_msg, AssistantMessage) and turn_msg.content:
@@ -711,29 +746,17 @@ class ProcessingService:
             processing_error_traceback = traceback.format_exc()
 
             error_message = _user_friendly_error_message(exc)
-
-            error_message_internal_id: int | None = None
-            try:
-                error_message_record = await self._save_history_message(
-                    db_context,
-                    message=ErrorMessage(
-                        content=error_message,
-                        error_traceback=processing_error_traceback,
-                    ),
-                    interface_type=interface_type,
-                    conversation_id=conversation_id,
-                    interface_message_id=None,
-                    turn_id=turn_id,
-                    thread_root_id=thread_root_id_for_turn,
-                    subconversation_id=subconversation_id,
-                    user_id=user_id,
-                )
-                error_message_internal_id = error_message_record
-            except Exception as error_save_err:
-                logger.error(
-                    f"Failed to save error message to history: {error_save_err}",
-                    exc_info=True,
-                )
+            error_message_internal_id = await self._persist_error_history_message(
+                db_context,
+                error_message=error_message,
+                error_traceback=processing_error_traceback,
+                interface_type=interface_type,
+                conversation_id=conversation_id,
+                turn_id=turn_id,
+                thread_root_id=thread_root_id_for_turn,
+                subconversation_id=subconversation_id,
+                user_id=user_id,
+            )
 
             return ChatInteractionResult.error(
                 text_reply=error_message,
@@ -811,7 +834,6 @@ class ProcessingService:
                         replied_to_interface_id=replied_to_interface_id,
                         trigger_attachments=trigger_attachments,
                         subconversation_id=subconversation_id,
-                        save_user_message_with_isolated_context=True,
                     )
 
                     # --- 3. Stream LLM Processing ---
@@ -848,7 +870,7 @@ class ProcessingService:
                                 subconversation_id=subconversation_id,
                                 user_id=user_id,
                                 reasoning_info=reasoning_info_for_stream,
-                                save_with_isolated_context=True,
+                                save_with_isolated_context=self._USE_ISOLATED_HISTORY_WRITES,
                             )
 
                 except Exception as e:
@@ -859,34 +881,22 @@ class ProcessingService:
                     )
                     processing_error_traceback = traceback.format_exc()
                     error_message = _user_friendly_error_message(e)
+                    await self._persist_error_history_message(
+                        db_context,
+                        error_message=error_message,
+                        error_traceback=processing_error_traceback,
+                        interface_type=interface_type,
+                        conversation_id=conversation_id,
+                        turn_id=turn_id,
+                        thread_root_id=thread_root_id_for_turn,
+                        subconversation_id=subconversation_id,
+                        user_id=user_id,
+                    )
                     error_event = LLMStreamEvent(
                         type="error",
                         error=error_message,
                         metadata={"error_id": str(uuid.uuid4())},
                     )
-
-                    try:
-                        error_history_message = ErrorMessage(
-                            content=error_message,
-                            error_traceback=processing_error_traceback,
-                        )
-                        await self._save_history_message(
-                            db_context,
-                            message=error_history_message,
-                            interface_type=interface_type,
-                            conversation_id=conversation_id,
-                            interface_message_id=None,
-                            turn_id=turn_id,
-                            thread_root_id=thread_root_id_for_turn,
-                            subconversation_id=subconversation_id,
-                            user_id=user_id,
-                            save_with_isolated_context=True,
-                        )
-                    except Exception:
-                        logger.error(
-                            "Failed to save streaming error message to history",
-                            exc_info=True,
-                        )
 
                     yield error_event
         finally:
