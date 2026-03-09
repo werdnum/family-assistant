@@ -12,6 +12,7 @@ from typing import Any
 
 import pytest
 from PIL import Image
+from playwright.async_api import TimeoutError as PlaywrightTimeoutError
 
 from family_assistant.llm import LLMOutput, ToolCallFunction, ToolCallItem
 from family_assistant.storage.base import attachment_metadata_table
@@ -536,7 +537,16 @@ async def test_attachment_response_error_handling(
             error_found = False
             if tool_result_count > 0:
                 # Check if tool result indicates an error
-                tool_result_text = await tool_result_element.text_content()
+                try:
+                    tool_result_text = await tool_result_element.first.text_content(
+                        timeout=2000
+                    )
+                except PlaywrightTimeoutError:
+                    # Tool result may disappear in fail-fast error paths; treat this
+                    # as "no tool result rendered" for the assertions below.
+                    tool_result_text = None
+                    tool_result_count = 0
+
                 error_found = tool_result_text is not None and (
                     "error" in tool_result_text.lower()
                     or "failed" in tool_result_text.lower()

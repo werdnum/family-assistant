@@ -78,33 +78,6 @@ class LLMStreamingLoop:
             return "document"
         return "file"
 
-    @staticmethod
-    def _queue_auto_attachments(
-        pending_attachment_ids: list[str], auto_attachment_ids: list[str]
-    ) -> None:
-        """Append newly produced tool attachments while preserving order and uniqueness."""
-        for attachment_id in auto_attachment_ids:
-            if attachment_id not in pending_attachment_ids:
-                pending_attachment_ids.append(attachment_id)
-                logger.info("Auto-queued tool attachment %s for display", attachment_id)
-
-    @staticmethod
-    def _apply_explicit_attachments(
-        pending_attachment_ids: list[str], explicit_attachment_ids: list[str]
-    ) -> None:
-        """Apply attach_to_response output as authoritative attachment selection."""
-        if not explicit_attachment_ids:
-            return
-
-        old_count = len(pending_attachment_ids)
-        pending_attachment_ids.clear()
-        pending_attachment_ids.extend(explicit_attachment_ids)
-        logger.info(
-            "LLM explicitly controlling attachments: replaced %d auto-queued with %d explicit attachments",
-            old_count,
-            len(explicit_attachment_ids),
-        )
-
     async def run(
         self,
         db_context: DatabaseContext,
@@ -581,15 +554,7 @@ class LLMStreamingLoop:
                     result = await completed_task
                     event = result.stream_event
                     llm_message = result.llm_message
-                    auto_attachment_ids = result.auto_attachment_ids or []
-                    explicit_attachment_ids = result.explicit_attachment_ids or []
-
-                    self._queue_auto_attachments(
-                        pending_attachment_ids, auto_attachment_ids
-                    )
-                    self._apply_explicit_attachments(
-                        pending_attachment_ids, explicit_attachment_ids
-                    )
+                    result.apply_attachment_updates(pending_attachment_ids)
 
                     # Yield tool result event (llm_message for database storage)
                     yield (event, llm_message)

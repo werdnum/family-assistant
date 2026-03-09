@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from enum import Enum
@@ -15,6 +16,8 @@ if TYPE_CHECKING:
     from family_assistant.llm.messages import MessageReasoningInfo, ToolMessage
     from family_assistant.skills.registry import NoteRegistry
     from family_assistant.tools import ToolExecutionContext
+
+logger = logging.getLogger(__name__)
 
 
 class ChatInteractionStatus(Enum):
@@ -136,6 +139,27 @@ class ToolExecutionResult:
     llm_message: ToolMessage
     auto_attachment_ids: list[str] | None = None  # list of attachment IDs
     explicit_attachment_ids: list[str] | None = None
+
+    def apply_attachment_updates(self, pending_attachment_ids: list[str]) -> None:
+        """Apply attachment queue updates from this tool result to pending IDs."""
+        auto_attachment_ids = self.auto_attachment_ids or []
+        for attachment_id in auto_attachment_ids:
+            if attachment_id not in pending_attachment_ids:
+                pending_attachment_ids.append(attachment_id)
+                logger.info("Auto-queued tool attachment %s for display", attachment_id)
+
+        explicit_attachment_ids = self.explicit_attachment_ids or []
+        if not explicit_attachment_ids:
+            return
+
+        old_count = len(pending_attachment_ids)
+        pending_attachment_ids.clear()
+        pending_attachment_ids.extend(explicit_attachment_ids)
+        logger.info(
+            "LLM explicitly controlled attachments: replaced %d queued with %d selected attachments",
+            old_count,
+            len(explicit_attachment_ids),
+        )
 
 
 @dataclass

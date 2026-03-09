@@ -268,7 +268,10 @@ class ToolExecutor:
             try:
                 arguments = json.loads(function_args)
             except json.JSONDecodeError as exc:
-                raise ValueError(f"JSONDecodeError: {function_args}") from exc
+                raise ValueError(
+                    f"Invalid JSON arguments for tool '{function_name}' "
+                    f"(line {exc.lineno}, column {exc.colno})"
+                ) from exc
         else:
             arguments = function_args
 
@@ -522,15 +525,13 @@ class ToolExecutor:
             # Parse arguments
             try:
                 arguments = self._parse_arguments(function_name, function_args)
-            except ValueError:
-                logger.error(
-                    "Failed to parse arguments for %s: %s", function_name, function_args
-                )
+            except ValueError as exc:
+                logger.error("Failed to parse arguments for %s: %s", function_name, exc)
                 return self._build_error_result(
                     call_id=call_id,
                     function_name=function_name,
                     error_content=f"Error: Invalid arguments format for {function_name}.",
-                    error_traceback=f"JSONDecodeError: {function_args}",
+                    error_traceback=str(exc),
                 )
             except TypeError as exc:
                 logger.error(

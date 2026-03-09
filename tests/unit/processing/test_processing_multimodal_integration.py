@@ -2,6 +2,7 @@
 Integration tests for processing.py multimodal tool results handling.
 """
 
+import logging
 from typing import Any
 from unittest.mock import AsyncMock, Mock
 from zoneinfo import ZoneInfo
@@ -241,6 +242,40 @@ class TestProcessingServiceMultimodal:
         assert "error" in event.tool_result.lower()
         assert "invalid arguments" in tool_message.content.lower()
         assert tool_message.error_traceback is not None
+
+    @pytest.mark.asyncio
+    async def test_execute_single_tool_invalid_json_args_does_not_log_payload(
+        self,
+        processing_service: ProcessingService,
+        mock_tools_provider: AsyncMock,
+        mock_db_context: Mock,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        tool_call = Mock()
+        tool_call.id = "test_call_error_secret"
+        tool_call.function.name = "test_tool"
+        tool_call.function.arguments = (
+            '{"api_key": "SECRET-123"'  # Missing closing brace
+        )
+        secret_fragment = "SECRET-123"
+
+        caplog.set_level(logging.ERROR)
+        result = await processing_service.tool_executor.execute(
+            tool_call_item_obj=tool_call,
+            interface_type="test",
+            conversation_id="conv_error",
+            user_name="test_user",
+            turn_id="turn_error",
+            db_context=mock_db_context,
+            chat_interface=None,
+            request_confirmation_callback=None,
+        )
+
+        tool_message = result.llm_message
+        all_logs = "\n".join(record.getMessage() for record in caplog.records)
+
+        assert secret_fragment not in all_logs
+        assert secret_fragment not in (tool_message.error_traceback or "")
 
     @pytest.mark.asyncio
     async def test_execute_single_tool_non_object_json_args(
