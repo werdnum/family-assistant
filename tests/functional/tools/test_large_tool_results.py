@@ -372,7 +372,7 @@ async def test_stream_done_event_attachment_metadata_visible_same_transaction(
         max_history_messages=10,
         history_max_age_hours=1.0,
         tools_config=ToolsConfig(),
-        delegation_security_level="unrestricted",
+        delegation_security_level=DelegationSecurityLevel.UNRESTRICTED,
         id="test-profile",
     )
 
