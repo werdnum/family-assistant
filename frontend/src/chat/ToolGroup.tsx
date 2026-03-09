@@ -1,4 +1,4 @@
-import { type MessageState, useMessage } from '@assistant-ui/react';
+import { useAuiState } from '@assistant-ui/react';
 import { ChevronDownIcon } from 'lucide-react';
 import React, { useMemo, useState } from 'react';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
@@ -18,11 +18,10 @@ interface ToolGroupProps {
 
 // Hook to safely access message state with fallback
 function useSafeToolNames(startIndex: number, endIndex: number): string[] {
-  // Extract tool names and join to string to ensure stable reference
-  const toolNamesString = useMessage({
-    optional: true,
-    selector: (message: MessageState) => {
-      const parts = Array.isArray(message.content) ? message.content : [];
+  try {
+    // Extract tool names and join to string to ensure stable reference
+    const toolNamesString = useAuiState((s) => {
+      const parts = s.message.parts;
       const names: string[] = [];
       for (let i = startIndex; i <= endIndex && i < parts.length; i++) {
         const part = parts[i];
@@ -31,11 +30,14 @@ function useSafeToolNames(startIndex: number, endIndex: number): string[] {
         }
       }
       return names.join(',');
-    },
-  });
+    });
 
-  // Memoize the parsed array to avoid recreating on every render
-  return useMemo(() => (toolNamesString ? toolNamesString.split(',') : []), [toolNamesString]);
+    // Memoize the parsed array to avoid recreating on every render
+    return useMemo(() => (toolNamesString ? toolNamesString.split(',') : []), [toolNamesString]);
+  } catch {
+    // Fallback when message context is not available (e.g., in tests)
+    return [];
+  }
 }
 
 const ToolGroup: React.FC<ToolGroupProps> = ({ startIndex, endIndex, children }) => {
