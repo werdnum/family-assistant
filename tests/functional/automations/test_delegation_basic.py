@@ -493,8 +493,8 @@ async def test_delegation_unrestricted_target_no_forced_confirm(
         PRIMARY_PROFILE_ID: awaited_primary_service,
         SPECIALIZED_PROFILE_ID: target_service,
     }
-    awaited_primary_service.set_processing_services_registry(registry)
-    target_service.set_processing_services_registry(registry)
+    awaited_primary_service.processing_services_registry = registry
+    target_service.processing_services_registry = registry
 
     user_query = USER_QUERY_TEMPLATE.format(task_description=DELEGATED_TASK_DESCRIPTION)
 
@@ -565,8 +565,8 @@ async def test_delegation_confirm_target_granted(
         PRIMARY_PROFILE_ID: awaited_primary_service,
         SPECIALIZED_PROFILE_ID: target_service,
     }
-    awaited_primary_service.set_processing_services_registry(registry)
-    target_service.set_processing_services_registry(registry)
+    awaited_primary_service.processing_services_registry = registry
+    target_service.processing_services_registry = registry
 
     user_query = USER_QUERY_TEMPLATE.format(task_description=DELEGATED_TASK_DESCRIPTION)
 
@@ -630,8 +630,8 @@ async def test_delegation_confirm_target_denied(
         PRIMARY_PROFILE_ID: awaited_primary_service,
         SPECIALIZED_PROFILE_ID: target_service,
     }
-    awaited_primary_service.set_processing_services_registry(registry)
-    target_service.set_processing_services_registry(registry)
+    awaited_primary_service.processing_services_registry = registry
+    target_service.processing_services_registry = registry
 
     user_query = USER_QUERY_TEMPLATE.format(task_description=DELEGATED_TASK_DESCRIPTION)
 
@@ -683,8 +683,8 @@ async def test_delegation_blocked_target(
         PRIMARY_PROFILE_ID: awaited_primary_service,
         SPECIALIZED_PROFILE_ID: target_service,
     }
-    awaited_primary_service.set_processing_services_registry(registry)
-    target_service.set_processing_services_registry(registry)
+    awaited_primary_service.processing_services_registry = registry
+    target_service.processing_services_registry = registry
 
     user_query = USER_QUERY_TEMPLATE.format(task_description=DELEGATED_TASK_DESCRIPTION)
 
@@ -741,8 +741,8 @@ async def test_delegation_unrestricted_confirm_arg_granted(
         PRIMARY_PROFILE_ID: awaited_primary_service,
         SPECIALIZED_PROFILE_ID: target_service,
     }
-    awaited_primary_service.set_processing_services_registry(registry)
-    target_service.set_processing_services_registry(registry)
+    awaited_primary_service.processing_services_registry = registry
+    target_service.processing_services_registry = registry
 
     user_query = USER_QUERY_TEMPLATE.format(task_description=DELEGATED_TASK_DESCRIPTION)
 

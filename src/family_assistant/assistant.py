@@ -879,23 +879,10 @@ class Assistant:
                 greeting_wav_path=profile_proc_conf.greeting_wav_path,
             )
 
-            processing_service_instance = ProcessingService(
-                llm_client=llm_client_for_profile,
-                tools_provider=confirming_provider_for_profile,
-                service_config=service_config,
-                context_providers=context_providers,
-                server_url=self.config.server_url,
-                app_config=self.config,
-                attachment_registry=self.attachment_registry,
-                event_sources=self.event_processor.sources
-                if self.event_processor
-                else None,
+            home_assistant_client_for_profile = self.home_assistant_clients.get(
+                profile_id
             )
-            # Set the home_assistant_client if available for this profile
-            if profile_id in self.home_assistant_clients:
-                processing_service_instance.home_assistant_client = (
-                    self.home_assistant_clients[profile_id]
-                )
+            camera_backend_for_profile = None
 
             # Set camera backend if configured for this profile
             camera_config = profile_proc_conf.camera_config
@@ -912,7 +899,7 @@ class Assistant:
                             camera_config.cameras_config or None
                         )
                         if camera_backend:
-                            processing_service_instance.camera_backend = camera_backend
+                            camera_backend_for_profile = camera_backend
                             logger.info(
                                 f"Camera backend initialized for profile '{profile_id}'"
                             )
@@ -930,16 +917,27 @@ class Assistant:
                             f"Failed to create camera backend for profile '{profile_id}'"
                         )
 
+            processing_service_instance = ProcessingService(
+                llm_client=llm_client_for_profile,
+                tools_provider=confirming_provider_for_profile,
+                service_config=service_config,
+                context_providers=context_providers,
+                server_url=self.config.server_url,
+                app_config=self.config,
+                attachment_registry=self.attachment_registry,
+                event_sources=self.event_processor.sources
+                if self.event_processor
+                else None,
+                processing_services_registry=self.processing_services_registry,
+                home_assistant_client=home_assistant_client_for_profile,
+                camera_backend=camera_backend_for_profile,
+            )
+
             self.processing_services_registry[profile_id] = processing_service_instance
 
         if not self.processing_services_registry:
             logger.critical("No processing service profiles initialized.")
             raise SystemExit("No processing service profiles initialized.")
-
-        for service_instance in self.processing_services_registry.values():
-            service_instance.set_processing_services_registry(
-                self.processing_services_registry
-            )
 
         self.fastapi_app.state.processing_services = self.processing_services_registry
         self.fastapi_app.state.a2a_cancel_events = self.a2a_cancel_events

@@ -208,6 +208,20 @@ class DatabaseContext:
             self.conn = None
             self._transaction_cm = None
 
+    @property
+    def supports_isolated_writes(self) -> bool:
+        """Whether this context can safely use a nested isolated write context."""
+        return self.engine.dialect.name == "postgresql"
+
+    def create_isolated_context(self) -> "DatabaseContext":
+        """Create a new context sharing this context's engine/notifier settings."""
+        return DatabaseContext(
+            engine=self.engine,
+            max_retries=self.max_retries,
+            base_delay=self.base_delay,
+            message_notifier=self.message_notifier,
+        )
+
     # Removed begin, commit, rollback methods
 
     async def execute_with_retry(

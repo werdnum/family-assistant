@@ -239,8 +239,8 @@ async def test_subconversation_isolation(
         PRIMARY_PROFILE_ID: primary_processing_service,
         DELEGATED_PROFILE_ID: delegated_processing_service,
     }
-    primary_processing_service.set_processing_services_registry(registry)
-    delegated_processing_service.set_processing_services_registry(registry)
+    primary_processing_service.processing_services_registry = registry
+    delegated_processing_service.processing_services_registry = registry
 
     # Execute the interaction
     async with DatabaseContext(engine=db_engine) as db_context:
