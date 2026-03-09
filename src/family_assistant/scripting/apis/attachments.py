@@ -273,6 +273,14 @@ class AttachmentAPI:
         self.db_engine = db_engine
         self.db_context = db_context
 
+    def _require_db_engine(self) -> AsyncEngine:
+        """Return the configured engine or raise if this API cannot create DB contexts."""
+        if self.db_engine is None:
+            raise RuntimeError(
+                "AttachmentAPI requires either an active db_context or a db_engine"
+            )
+        return self.db_engine
+
     async def _read_async(self, attachment_id: str) -> str | None:
         """Read attachment content as a string."""
 
@@ -295,7 +303,7 @@ class AttachmentAPI:
             return await _do_read(self.db_context)
 
         # Fallback: create new context (for standalone use cases)
-        async with DatabaseContext(engine=self.db_engine) as db_context:
+        async with DatabaseContext(engine=self._require_db_engine()) as db_context:
             return await _do_read(db_context)
 
     async def _get_async(self, attachment_id: str) -> AttachmentInfoDict | None:
@@ -327,7 +335,7 @@ class AttachmentAPI:
             return await _do_get(self.db_context)
 
         # Fallback: create new context (for standalone use cases)
-        async with DatabaseContext(engine=self.db_engine) as db_context:
+        async with DatabaseContext(engine=self._require_db_engine()) as db_context:
             return await _do_get(db_context)
 
     async def _list_async(
@@ -368,13 +376,13 @@ class AttachmentAPI:
             return await _do_list(self.db_context)
 
         # Fallback: create new context (for standalone use cases)
-        async with DatabaseContext(engine=self.db_engine) as db_context:
+        async with DatabaseContext(engine=self._require_db_engine()) as db_context:
             return await _do_list(db_context)
 
     async def _send_async(self, attachment_id: str, message: str | None = None) -> str:
         """Send an attachment to the user."""
 
-        async with DatabaseContext(engine=self.db_engine) as db_context:
+        async with DatabaseContext(engine=self._require_db_engine()) as db_context:
             # Verify attachment exists and is accessible
             attachment = await self.attachment_registry.get_attachment(
                 db_context, attachment_id
@@ -427,7 +435,7 @@ class AttachmentAPI:
             return await _do_register(self.db_context)
 
         # Fallback: create new context (for standalone use cases)
-        async with DatabaseContext(engine=self.db_engine) as db_context:
+        async with DatabaseContext(engine=self._require_db_engine()) as db_context:
             return await _do_register(db_context)
 
 

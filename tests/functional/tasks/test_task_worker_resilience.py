@@ -136,6 +136,8 @@ async def test_successful_handler_completes(
         processing_service=MagicMock(),
         chat_interface=MagicMock(),
     )
+    engine = worker.engine
+    assert engine is not None
 
     # Quick handler that completes
     async def quick_handler(
@@ -149,7 +151,7 @@ async def test_successful_handler_completes(
     worker.register_task_handler("quick", quick_handler)
 
     # Create a task
-    async with DatabaseContext(engine=worker.engine) as db_context:
+    async with DatabaseContext(engine=engine) as db_context:
         await db_context.tasks.enqueue(
             task_id="success_test",
             task_type="quick",
@@ -164,15 +166,14 @@ async def test_successful_handler_completes(
     new_task_event.set()
 
     # Wait for task to complete
-    assert worker.engine is not None
     await wait_for_tasks_to_complete(
-        engine=worker.engine,
+        engine=engine,
         timeout_seconds=10.0,
         task_ids={"success_test"},
     )
 
     # Check task completed
-    async with DatabaseContext(engine=worker.engine) as db_context:
+    async with DatabaseContext(engine=engine) as db_context:
         stmt = select(tasks_table).where(tasks_table.c.task_id == "success_test")
         tasks = await db_context.fetch_all(stmt)
         task = tasks[0] if tasks else None
@@ -194,6 +195,8 @@ async def test_retry_exhaustion_leads_to_failure(
         chat_interface=MagicMock(),
         handler_timeout=0.1,  # Very short timeout to make test fast
     )
+    engine = worker.engine
+    assert engine is not None
 
     # Handler that always times out
     async def timeout_handler(
@@ -208,7 +211,7 @@ async def test_retry_exhaustion_leads_to_failure(
     worker.register_task_handler("timeout", timeout_handler)
 
     # Create task with NO retries allowed
-    async with DatabaseContext(engine=worker.engine) as db_context:
+    async with DatabaseContext(engine=engine) as db_context:
         await db_context.tasks.enqueue(
             task_id="no_retry_test",
             task_type="timeout",
@@ -236,9 +239,8 @@ async def test_retry_exhaustion_leads_to_failure(
     wake_task = asyncio.create_task(wake_worker_periodically())
 
     try:
-        assert worker.engine is not None
         await wait_for_tasks_to_complete(
-            engine=worker.engine,
+            engine=engine,
             timeout_seconds=20.0,  # Increased from 10.0 to handle slower CI environments
             task_ids={"no_retry_test"},
             allow_failures=True,
@@ -249,7 +251,7 @@ async def test_retry_exhaustion_leads_to_failure(
             await wake_task
 
     # Check task failed
-    async with DatabaseContext(engine=worker.engine) as db_context:
+    async with DatabaseContext(engine=engine) as db_context:
         stmt = select(tasks_table).where(tasks_table.c.task_id == "no_retry_test")
         tasks = await db_context.fetch_all(stmt)
         task = tasks[0] if tasks else None
