@@ -181,8 +181,8 @@ async def test_delegate_to_service_with_attachments(
         PRIMARY_PROFILE_ID: primary_service,
         SPECIALIZED_PROFILE_ID: specialized_service,
     }
-    primary_service.set_processing_services_registry(registry)
-    specialized_service.set_processing_services_registry(registry)
+    primary_service.processing_services_registry = registry
+    specialized_service.processing_services_registry = registry
 
     # Execute delegation with attachments
     user_query = USER_QUERY_TEMPLATE.format(task_description=DELEGATED_TASK_DESCRIPTION)
@@ -381,8 +381,8 @@ async def test_delegate_to_service_cross_conversation_attachment_allowed(
         PRIMARY_PROFILE_ID: primary_service,
         SPECIALIZED_PROFILE_ID: specialized_service,
     }
-    primary_service.set_processing_services_registry(registry)
-    specialized_service.set_processing_services_registry(registry)
+    primary_service.processing_services_registry = registry
+    specialized_service.processing_services_registry = registry
 
     # Execute delegation
     user_query = USER_QUERY_TEMPLATE.format(task_description=DELEGATED_TASK_DESCRIPTION)
@@ -568,8 +568,8 @@ async def test_delegate_to_service_propagates_generated_attachments(
         PRIMARY_PROFILE_ID: primary_service,
         SPECIALIZED_PROFILE_ID: specialized_service,
     }
-    primary_service.set_processing_services_registry(registry)
-    specialized_service.set_processing_services_registry(registry)
+    primary_service.processing_services_registry = registry
+    specialized_service.processing_services_registry = registry
 
     # Execute delegation - primary profile delegates to specialized profile
     user_query = "Please delegate this task: " + DELEGATED_TASK_DESCRIPTION

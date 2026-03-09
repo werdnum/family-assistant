@@ -104,11 +104,11 @@ async def test_events_with_actual_data(
     """Test events page with actual event data."""
     page = web_test_fixture.page
     server_url = web_test_fixture.base_url
+    engine = web_test_fixture.assistant.database_engine
+    assert engine is not None
 
     # Create some test event data via the repository
-    async with DatabaseContext(
-        engine=web_test_fixture.assistant.database_engine
-    ) as db_context:
+    async with DatabaseContext(engine=engine) as db_context:
         # Create a test event
         await db_context.events.store_event(
             source_id="home_assistant",
@@ -230,12 +230,12 @@ async def test_events_json_formatting_in_detail_view(
     """Test that JSON event data displays with proper formatting in detail view."""
     page = web_test_fixture.page
     server_url = web_test_fixture.base_url
+    engine = web_test_fixture.assistant.database_engine
+    assert engine is not None
 
     # Create a test event with complex JSON data
     test_event_id = None
-    async with DatabaseContext(
-        engine=web_test_fixture.assistant.database_engine
-    ) as db_context:
+    async with DatabaseContext(engine=engine) as db_context:
         await db_context.events.store_event(
             source_id="home_assistant",
             event_data={
@@ -288,12 +288,12 @@ async def test_events_triggered_listeners_display(
     """Test that triggered listeners section displays properly."""
     page = web_test_fixture.page
     server_url = web_test_fixture.base_url
+    engine = web_test_fixture.assistant.database_engine
+    assert engine is not None
 
     # Create a test event with triggered listeners
     test_event_id = None
-    async with DatabaseContext(
-        engine=web_test_fixture.assistant.database_engine
-    ) as db_context:
+    async with DatabaseContext(engine=engine) as db_context:
         await db_context.events.store_event(
             source_id="indexing",
             event_data={"document": "test.pdf", "status": "processed"},
@@ -335,11 +335,11 @@ async def test_events_source_icons_display(
     """Test that event source icons display correctly."""
     page = web_test_fixture.page
     server_url = web_test_fixture.base_url
+    engine = web_test_fixture.assistant.database_engine
+    assert engine is not None
 
     # Create events with different sources
-    async with DatabaseContext(
-        engine=web_test_fixture.assistant.database_engine
-    ) as db_context:
+    async with DatabaseContext(engine=engine) as db_context:
         await db_context.events.store_event(
             source_id="home_assistant",
             event_data={"test": "data"},
@@ -381,12 +381,12 @@ async def test_events_metadata_display(
     """Test that event metadata (ID, source, timestamp) shows correctly."""
     page = web_test_fixture.page
     server_url = web_test_fixture.base_url
+    engine = web_test_fixture.assistant.database_engine
+    assert engine is not None
 
     # Create a test event
     test_event_id = None
-    async with DatabaseContext(
-        engine=web_test_fixture.assistant.database_engine
-    ) as db_context:
+    async with DatabaseContext(engine=engine) as db_context:
         await db_context.events.store_event(
             source_id="home_assistant",
             event_data={"entity_id": "test.entity"},

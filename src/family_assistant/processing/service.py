@@ -21,7 +21,6 @@ from family_assistant.llm.messages import (
     ToolMessage,
     UserMessage,
 )
-from family_assistant.storage.context import DatabaseContext, get_db_context
 from family_assistant.utils.clock import Clock, SystemClock
 
 from .attachments import AttachmentProcessor
@@ -49,6 +48,7 @@ if TYPE_CHECKING:
     from family_assistant.home_assistant_wrapper import HomeAssistantClientWrapper
     from family_assistant.interfaces import ChatInterface
     from family_assistant.services.attachment_registry import AttachmentRegistry
+    from family_assistant.storage.context import DatabaseContext
     from family_assistant.tools import ToolsProvider
     from family_assistant.tools.types import EventSourcesById
 
@@ -73,6 +73,9 @@ class ProcessingService:
         clock: Clock | None = None,
         attachment_registry: AttachmentRegistry | None = None,
         event_sources: EventSourcesById | None = None,
+        processing_services_registry: dict[str, ProcessingService] | None = None,
+        home_assistant_client: HomeAssistantClientWrapper | None = None,
+        camera_backend: CameraBackend | None = None,
     ) -> None:
         self._llm_client = llm_client
         self.tools_provider = tools_provider
@@ -82,9 +85,9 @@ class ProcessingService:
         self.app_config = app_config
         self.clock = clock if clock is not None else SystemClock()
         self._attachment_registry = attachment_registry
-        self.processing_services_registry: dict[str, ProcessingService] | None = None
-        self.home_assistant_client: HomeAssistantClientWrapper | None = None
-        self.camera_backend: CameraBackend | None = None
+        self.processing_services_registry = processing_services_registry
+        self.home_assistant_client = home_assistant_client
+        self.camera_backend = camera_backend
         self.event_sources = event_sources
 
         # Compose helpers
@@ -128,12 +131,6 @@ class ProcessingService:
         self._attachment_registry = value
         self.attachment_processor.attachment_registry = value
         self.tool_executor.attachment_registry = value
-
-    def set_processing_services_registry(
-        self, registry: dict[str, ProcessingService]
-    ) -> None:
-        """Sets the registry of all processing services."""
-        self.processing_services_registry = registry
 
     async def _resolve_thread_root_id(
         self,
@@ -374,45 +371,29 @@ class ProcessingService:
         """Persist a history message using either the active context or a fresh one."""
         message_timestamp = timestamp if timestamp is not None else self.clock.now()
 
+        async def _persist_message(target_db_context: DatabaseContext) -> int | None:
+            return await target_db_context.message_history.add_message(
+                message=message,
+                interface_type=interface_type,
+                conversation_id=conversation_id,
+                interface_message_id=interface_message_id,
+                turn_id=turn_id,
+                thread_root_id=thread_root_id,
+                timestamp=message_timestamp,
+                processing_profile_id=self.service_config.id,
+                subconversation_id=subconversation_id,
+                user_id=user_id,
+                reasoning_info=reasoning_info,
+                attachments=attachments,
+            )
+
         # On SQLite, avoid nested contexts with StaticPool because they may share
         # the same underlying connection/transaction as the outer context.
-        if (
-            save_with_isolated_context
-            and db_context.engine.dialect.name == "postgresql"
-        ):
-            async with get_db_context(
-                engine=db_context.engine,
-                message_notifier=db_context.message_notifier,
-            ) as isolated_db_context:
-                return await isolated_db_context.message_history.add_message(
-                    message=message,
-                    interface_type=interface_type,
-                    conversation_id=conversation_id,
-                    interface_message_id=interface_message_id,
-                    turn_id=turn_id,
-                    thread_root_id=thread_root_id,
-                    timestamp=message_timestamp,
-                    processing_profile_id=self.service_config.id,
-                    subconversation_id=subconversation_id,
-                    user_id=user_id,
-                    reasoning_info=reasoning_info,
-                    attachments=attachments,
-                )
+        if save_with_isolated_context and db_context.supports_isolated_writes:
+            async with db_context.create_isolated_context() as isolated_db_context:
+                return await _persist_message(isolated_db_context)
 
-        return await db_context.message_history.add_message(
-            message=message,
-            interface_type=interface_type,
-            conversation_id=conversation_id,
-            interface_message_id=interface_message_id,
-            turn_id=turn_id,
-            thread_root_id=thread_root_id,
-            timestamp=message_timestamp,
-            processing_profile_id=self.service_config.id,
-            subconversation_id=subconversation_id,
-            user_id=user_id,
-            reasoning_info=reasoning_info,
-            attachments=attachments,
-        )
+        return await _persist_message(db_context)
 
     async def _prepare_turn_messages_for_llm(
         self,

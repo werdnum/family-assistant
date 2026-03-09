@@ -196,6 +196,10 @@ It now incorporates external analysis from:
 - **25. Processing layer contains database-dialect branching (`postgresql` vs others).**
 
   - Impact: Storage concerns leak into orchestration layer.
+  - Status (2026-03-09): Phase 8b complete on branch
+    `processing-phase8b-dialect-and-setter-cleanups` (`ProcessingService` now uses
+    `DatabaseContext.supports_isolated_writes` and `create_isolated_context()`; dialect detection is
+    owned by storage context instead of processing orchestration).
   - References: `service.py:780`, `service.py:982`
   - Sources: `[C678]` (Added from PR #678)
 
@@ -262,6 +266,10 @@ It now incorporates external analysis from:
   state.**
 
   - Impact: Temporal coupling and fragile initialization sequencing.
+  - Status (2026-03-09): Phase 8b complete on branch
+    `processing-phase8b-dialect-and-setter-cleanups` (`Assistant` now constructor-injects profile
+    runtime dependencies (`processing_services_registry`, Home Assistant client, camera backend)
+    instead of post-construction setter wiring).
   - References: `service.py:114`, `service.py:80`
   - Sources: `[C678]` (Added from PR #678)
 

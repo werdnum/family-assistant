@@ -139,7 +139,7 @@ class DatabaseContext:
 
     def __init__(
         self,
-        engine: AsyncEngine | None = None,
+        engine: AsyncEngine,
         max_retries: int = 3,
         base_delay: float = 0.5,
         message_notifier: "MessageNotifier | None" = None,
@@ -148,14 +148,11 @@ class DatabaseContext:
         Initialize the database context.
 
         Args:
-            engine: Optional SQLAlchemy AsyncEngine. If not provided, the default engine from
-                   storage.base will be used. This enables dependency injection for testing.
+            engine: Required SQLAlchemy AsyncEngine for dependency injection.
             max_retries: Maximum number of retries for database operations.
             base_delay: Base delay in seconds for exponential backoff.
             message_notifier: Optional MessageNotifier instance for live message updates.
         """
-        if engine is None:
-            raise ValueError("DatabaseContext requires an engine to be provided")
         self.engine = engine
         self.max_retries = max_retries
         self.base_delay = base_delay
@@ -207,6 +204,20 @@ class DatabaseContext:
             # Clean up references
             self.conn = None
             self._transaction_cm = None
+
+    @property
+    def supports_isolated_writes(self) -> bool:
+        """Whether this context can safely use a nested isolated write context."""
+        return self.engine.dialect.name == "postgresql"
+
+    def create_isolated_context(self) -> "DatabaseContext":
+        """Create a new context sharing this context's engine/notifier settings."""
+        return DatabaseContext(
+            engine=self.engine,
+            max_retries=self.max_retries,
+            base_delay=self.base_delay,
+            message_notifier=self.message_notifier,
+        )
 
     # Removed begin, commit, rollback methods
 

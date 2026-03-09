@@ -584,7 +584,7 @@ class AttachmentRegistry:
             attachment_id: The attachment ID to update
         """
         try:
-            async with DatabaseContext() as db:
+            async with DatabaseContext(engine=self.db_engine) as db:
                 await self._update_access_time(db, attachment_id)
         except Exception as e:
             # Log but don't fail - access time tracking is not critical

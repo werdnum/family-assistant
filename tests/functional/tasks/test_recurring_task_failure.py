@@ -28,7 +28,8 @@ async def test_recurring_task_failure_continues_recurrence(
         chat_interface=MagicMock(),
         handler_timeout=1.0,
     )
-    assert worker.engine is not None
+    engine = worker.engine
+    assert engine is not None
 
     # Handler that always raises exception
     async def failing_handler(
@@ -41,7 +42,7 @@ async def test_recurring_task_failure_continues_recurrence(
     worker.register_task_handler("fail_recur", failing_handler)
 
     # Create recurring task with NO retries allowed (for speed)
-    async with DatabaseContext(engine=worker.engine) as db_context:
+    async with DatabaseContext(engine=engine) as db_context:
         await db_context.tasks.enqueue(
             task_id="recur_fail_test",
             task_type="fail_recur",
@@ -61,7 +62,7 @@ async def test_recurring_task_failure_continues_recurrence(
     # This is necessary because with SQLite's StaticPool, we need a fresh context
     # to see committed data from concurrent transactions.
     async def check_conditions() -> bool:
-        async with DatabaseContext(engine=worker.engine) as db_context:
+        async with DatabaseContext(engine=engine) as db_context:
             # Check original task status
             stmt = select(tasks_table).where(tasks_table.c.task_id == "recur_fail_test")
             tasks = await db_context.fetch_all(stmt)
@@ -84,7 +85,7 @@ async def test_recurring_task_failure_continues_recurrence(
     )
 
     # Verify the original task has recurrence rule set
-    async with DatabaseContext(engine=worker.engine) as db_context:
+    async with DatabaseContext(engine=engine) as db_context:
         stmt = select(tasks_table).where(tasks_table.c.task_id == "recur_fail_test")
         tasks = await db_context.fetch_all(stmt)
         task = tasks[0] if tasks else None
