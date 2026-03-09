@@ -196,6 +196,9 @@ It now incorporates external analysis from:
 - **23. Done-event attachment payload hardcodes `"type": "image"`.**
 
   - Impact: Incorrect metadata for non-image attachments.
+  - Status (2026-03-09): Complete on branch `processing-phase11-final-cleanup-tail`
+    (`LLMStreamingLoop` now derives streamed attachment display types with
+    `_infer_attachment_type(...)` instead of hard-coding `"image"`).
   - References: `llm_loop.py:466`
   - Sources: `[Cdx]`
 
@@ -313,18 +316,27 @@ It now incorporates external analysis from:
 - **33. Internal helpers with leading underscore are exported via package `__all__`.**
 
   - Impact: Public API boundary ambiguity.
+  - Status (2026-03-09): Complete on branch `processing-phase11-final-cleanup-tail`
+    (\[processing/__init__.py\] now exposes only the intended public processing API; internal
+    pruning helpers remain importable from `processing.utils` only).
   - References: `processing/__init__.py:6`
   - Sources: `[Cdx][C678]` (corroborated)
 
 - **34. Hard-coded policy constants (for example, pruning turn count).**
 
   - Impact: Behavior tuning requires code edits instead of config.
+  - Status (2026-03-09): Complete on branch `processing-phase11-final-cleanup-tail` (context pruning
+    already uses configurable `context_pruning_min_turns`, and delegation confirmation now uses
+    profile `tools_config.confirmation_timeout_seconds` instead of a local `60.0` constant).
   - References: `processing/utils.py:111`
   - Sources: `[Cdx][C678]`
 
 - **35. MIME-type detection for large results relies on full `json.loads` attempt.**
 
   - Impact: Potentially expensive parsing used only for heuristic classification.
+  - Status (2026-03-09): Complete on branch `processing-phase11-final-cleanup-tail`
+    (`AttachmentProcessor.handle_large_result(...)` now uses `_looks_like_json_content(...)`
+    heuristic detection instead of eager `json.loads(...)` parsing for MIME classification).
   - References: `attachments.py:531`
   - Sources: `[C678]` (Added from PR #678)
 
@@ -332,6 +344,9 @@ It now incorporates external analysis from:
   constructors).**
 
   - Impact: Low-severity readability debt.
+  - Status (2026-03-09): Complete on branch `processing-phase11-final-cleanup-tail` (remaining
+    redundant `ToolMessage(role="tool", ...)` calls in processing code were removed; earlier phases
+    had already eliminated the other noted no-op conditional noise).
   - References: `service.py:658`, `llm_loop.py:491`, `tool_execution.py:134`
   - Sources: `[C678]` (Added from PR #678)
 

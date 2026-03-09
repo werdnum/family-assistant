@@ -31,6 +31,8 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+TELEGRAM_API_REQUEST_TIMEOUT_SECONDS = 30
+
 
 class TelegramService:
     """Manages the Telegram bot application lifecycle and update handling."""
@@ -65,7 +67,14 @@ class TelegramService:
             get_db_context_func: Async context manager function to get a DatabaseContext.
         """
         logger.info("Initializing TelegramService...")
-        builder = ApplicationBuilder().token(telegram_token)
+        builder = (
+            ApplicationBuilder()
+            .token(telegram_token)
+            .connect_timeout(TELEGRAM_API_REQUEST_TIMEOUT_SECONDS)
+            .read_timeout(TELEGRAM_API_REQUEST_TIMEOUT_SECONDS)
+            .write_timeout(TELEGRAM_API_REQUEST_TIMEOUT_SECONDS)
+            .pool_timeout(TELEGRAM_API_REQUEST_TIMEOUT_SECONDS)
+        )
         if app_config.telegram_api_base_url:
             builder = builder.base_url(app_config.telegram_api_base_url)
             logger.info(

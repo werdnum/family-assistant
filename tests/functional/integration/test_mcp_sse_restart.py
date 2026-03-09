@@ -11,7 +11,7 @@ import pytest_asyncio
 
 from family_assistant.tools.mcp import MCPToolsProvider
 from family_assistant.tools.types import MCPServerConfig, ToolExecutionContext
-from tests.helpers import find_free_port, wait_for_server
+from tests.helpers import find_free_port, require_executable, wait_for_server
 
 if TYPE_CHECKING:
     from collections.abc import AsyncGenerator
@@ -32,13 +32,15 @@ class MCPProxyController:
         if self.process:
             return
 
+        mcp_proxy_command = require_executable("mcp-proxy")
+        mcp_server_time_command = require_executable("mcp-server-time")
         command = [
-            "mcp-proxy",
+            mcp_proxy_command,
             "--port",
             str(self.port),
             "--host",
             self.host,
-            "mcp-server-time",
+            mcp_server_time_command,
         ]
         logger.info(f"Starting MCP proxy server: {' '.join(command)}")
         self.process = await asyncio.create_subprocess_exec(

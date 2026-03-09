@@ -7,9 +7,12 @@ import inspect
 import logging
 import os
 import random
+import shutil
 import socket
+import sys
 from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 from typing import TypeVar
 
 import httpx
@@ -199,6 +202,7 @@ async def wait_for_tasks_to_complete(
             logger.error(f"Error polling task status: {e}", exc_info=True)
             raise  # Re-raise database errors
 
+        # ast-grep-ignore: no-asyncio-sleep-in-tests - Polling helper interval
         await asyncio.sleep(poll_interval_seconds)
 
     # If the loop finishes without returning, timeout occurred
@@ -324,8 +328,14 @@ def find_free_port() -> int:
 
     if worker_id and worker_id.startswith("gw"):
         worker_num = int(worker_id[2:])
-        base_port = 40000 + (worker_num * 2000)
-        max_port = base_port + 1999
+        ports_per_worker = 512
+        base_port = 40000 + (worker_num * ports_per_worker)
+        max_port = base_port + ports_per_worker - 1
+
+        if max_port > 65535:
+            with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+                s.bind(("127.0.0.1", 0))
+                return s.getsockname()[1]
 
         for _ in range(100):
             port = random.randint(base_port, max_port)
@@ -340,6 +350,23 @@ def find_free_port() -> int:
         with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
             s.bind(("127.0.0.1", 0))
             return s.getsockname()[1]
+
+
+def require_executable(command_name: str) -> str:
+    """Resolve a test dependency executable or fail with a clear message."""
+    executable = shutil.which(command_name)
+    if executable is not None:
+        return executable
+
+    for executable_dir in (
+        Path(sys.executable).parent,
+        Path(sys.executable).resolve().parent,
+    ):
+        venv_executable = executable_dir / command_name
+        if venv_executable.exists():
+            return str(venv_executable)
+
+    raise RuntimeError(f"Required test executable not found: {command_name}")
 
 
 async def wait_for_server(
@@ -397,5 +424,6 @@ __all__ = [
     "wait_for_tasks_to_complete",
     "wait_for_condition",
     "find_free_port",
+    "require_executable",
     "wait_for_server",
 ]

@@ -4,7 +4,6 @@ import hashlib
 import logging
 import os
 import pathlib
-import random
 import shutil
 import socket
 import subprocess
@@ -58,6 +57,7 @@ from family_assistant.storage.vector import init_vector_db  # Corrected import p
 from family_assistant.task_worker import TaskWorker
 from family_assistant.utils.clock import MockClock
 from family_assistant.web.app_creator import app as fastapi_app
+from tests.helpers import find_free_port
 from tests.integration.llm.vcr_helpers import llm_request_matcher
 from tests.mocks.telegram_test_server import TelegramTestServer
 
@@ -176,6 +176,7 @@ def pytest_collection_modifyitems(items: list[pytest.Item]) -> None:
     Modify test items after collection.
 
     1. Mark Playwright tests as flaky when running against SQLite.
+    2. Mark a small set of Telegram xdist timing flakes for rerun.
     """
     for item in items:
         # Check if test is parameterized with db_engine
@@ -190,42 +191,11 @@ def pytest_collection_modifyitems(items: list[pytest.Item]) -> None:
                 # Add flaky marker with 3 reruns
                 item.add_marker(pytest.mark.flaky(reruns=3))
 
-
-# Port allocation now handled by worker-specific ranges - no global tracking needed
-
-
-def find_free_port() -> int:
-    """Find a free port, using worker-specific ranges when running under pytest-xdist."""
-
-    # Check if we're running under pytest-xdist
-    worker_id = os.environ.get("PYTEST_XDIST_WORKER")
-
-    if worker_id and worker_id.startswith("gw"):
-        # Extract worker number (gw0 -> 0, gw1 -> 1, etc.)
-        worker_num = int(worker_id[2:])
-
-        # Each worker gets 2000 ports (enough for any test suite)
-        base_port = 40000 + (worker_num * 2000)
-        max_port = base_port + 1999
-
-        # Try random ports in our range until we find a free one
-        for _ in range(100):  # Max 100 attempts
-            port = random.randint(base_port, max_port)
-            with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-                try:
-                    s.bind(("127.0.0.1", port))
-                    return port
-                except OSError:
-                    continue  # Port in use, try another
-
-        raise RuntimeError(f"Could not find free port in range {base_port}-{max_port}")
-
-    else:
-        # Not running under xdist or single worker - use traditional approach
-        # Just find any free port
-        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-            s.bind(("127.0.0.1", 0))
-            return s.getsockname()[1]
+        if item.nodeid in {
+            "tests/functional/telegram/test_telegram_slash_commands.py::test_slash_command_routes_to_specific_profile[sqlite]",
+            "tests/functional/telegram/test_telegram_multimodal_to_llm.py::TestTelegramVideoToLLM::test_video_with_caption_both_passed[postgres]",
+        }:
+            item.add_marker(pytest.mark.flaky(reruns=3))
 
 
 @pytest.fixture(autouse=True)

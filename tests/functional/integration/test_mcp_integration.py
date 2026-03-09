@@ -40,7 +40,7 @@ from family_assistant.tools import (
     LocalToolsProvider,
     MCPToolsProvider,
 )
-from tests.helpers import find_free_port, wait_for_server
+from tests.helpers import find_free_port, require_executable, wait_for_server
 from tests.mocks.mock_llm import (
     LLMOutput,  # Use LLMOutput from mocks for rules
     MatcherArgs,
@@ -78,13 +78,15 @@ async def mcp_proxy_server() -> AsyncGenerator[str]:
     host = "127.0.0.1"
     port = find_free_port()
     sse_url = f"http://{host}:{port}/sse"
+    mcp_proxy_command = require_executable("mcp-proxy")
+    mcp_server_time_command = require_executable("mcp-server-time")
     command = [
-        "mcp-proxy",
+        mcp_proxy_command,
         "--port",
         str(port),
         "--host",
         host,
-        "mcp-server-time",  # The stdio command mcp-proxy should run
+        mcp_server_time_command,  # The stdio command mcp-proxy should run
     ]
 
     logger.info(f"Starting MCP proxy server: {' '.join(command)}")
@@ -260,7 +262,10 @@ async def test_mcp_time_conversion_stdio(db_engine: AsyncEngine) -> None:
     # Hard-coded MCP configuration using stdio transport.
     # Assumes 'mcp-server-time' command is available via dev dependencies.
     mcp_config: dict[str, MCPServerConfig] = {
-        "time": {"transport": "stdio", "command": "mcp-server-time"}
+        "time": {
+            "transport": "stdio",
+            "command": require_executable("mcp-server-time"),
+        }
     }
     # Instantiate MCP provider with the in-memory config dictionary
     mcp_provider = MCPToolsProvider(mcp_server_configs=mcp_config)

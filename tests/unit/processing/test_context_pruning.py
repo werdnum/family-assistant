@@ -11,7 +11,7 @@ from family_assistant.llm.messages import (
     UserMessage,
 )
 from family_assistant.llm.tool_call import ToolCallFunction
-from family_assistant.processing import prune_messages_for_context
+from family_assistant.processing.utils import prune_messages_for_context
 
 
 def _make_tool_call(call_id: str, name: str = "search") -> ToolCallItem:

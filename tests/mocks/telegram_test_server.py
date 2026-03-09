@@ -12,6 +12,7 @@ from __future__ import annotations
 import asyncio
 import base64
 import logging
+import sys
 from typing import TYPE_CHECKING, Any, TypedDict
 
 import aiohttp
@@ -20,6 +21,9 @@ if TYPE_CHECKING:
     from asyncio.subprocess import Process
 
 logger = logging.getLogger(__name__)
+
+TEST_SERVER_CLIENT_TIMEOUT_SECONDS = 30
+TEST_SERVER_POLL_TIMEOUT_SECONDS = 10
 
 
 # --- TypedDict definitions for Telegram API structures ---
@@ -152,7 +156,7 @@ class TelegramTestServer:
 
         # Start uvicorn as a subprocess running telegram-bot-api-mock
         self.process = await asyncio.create_subprocess_exec(
-            "python",
+            sys.executable,
             "-m",
             "uvicorn",
             "telegram_bot_api_mock:create_app",
@@ -161,8 +165,14 @@ class TelegramTestServer:
             self.host,
             "--port",
             str(self.port),
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
+            # Avoid blocking the mock server on unread subprocess pipe output during
+            # large xdist runs; unread child-process pipes can fill the OS buffer
+            # and stall request handling entirely.
+            "--no-access-log",
+            "--log-level",
+            "warning",
+            stdout=asyncio.subprocess.DEVNULL,
+            stderr=asyncio.subprocess.DEVNULL,
         )
 
         # Poll for server readiness
@@ -207,7 +217,9 @@ class TelegramTestServer:
                     aiohttp.ClientSession() as session,
                     session.get(
                         f"{self._api_url}/bot123456789:testcheck/getMe",
-                        timeout=aiohttp.ClientTimeout(total=2),
+                        timeout=aiohttp.ClientTimeout(
+                            total=TEST_SERVER_POLL_TIMEOUT_SECONDS
+                        ),
                     ) as resp,
                 ):
                     # Server is ready if we get any response (even an error)
@@ -341,7 +353,7 @@ class TelegramTestClient:
             session.post(
                 f"{self.api_url}/client/sendMessage",
                 json=payload,
-                timeout=aiohttp.ClientTimeout(total=10),
+                timeout=aiohttp.ClientTimeout(total=TEST_SERVER_CLIENT_TIMEOUT_SECONDS),
             ) as resp,
         ):
             return await resp.json()
@@ -367,7 +379,7 @@ class TelegramTestClient:
             session.post(
                 f"{self.api_url}/client/sendCommand",
                 json=payload,
-                timeout=aiohttp.ClientTimeout(total=10),
+                timeout=aiohttp.ClientTimeout(total=TEST_SERVER_CLIENT_TIMEOUT_SECONDS),
             ) as resp,
         ):
             return await resp.json()
@@ -397,7 +409,7 @@ class TelegramTestClient:
             session.post(
                 f"{self.api_url}/client/sendCallback",
                 json=payload,
-                timeout=aiohttp.ClientTimeout(total=10),
+                timeout=aiohttp.ClientTimeout(total=TEST_SERVER_CLIENT_TIMEOUT_SECONDS),
             ) as resp,
         ):
             return await resp.json()
@@ -629,26 +641,37 @@ class TelegramTestClient:
         initial_count = 0  # Track initial message count to detect new messages
 
         while loop.time() < deadline:
-            async with (
-                aiohttp.ClientSession() as session,
-                session.get(
-                    f"{self.api_url}/client/getUpdates",
-                    params={"bot_token": self.token, "chat_id": self.chat_id},
-                    timeout=aiohttp.ClientTimeout(total=5),
-                ) as resp,
-            ):
-                data = await resp.json()
-                result = data.get("result", [])
+            remaining_time = deadline - loop.time()
+            request_timeout_seconds = min(
+                max(remaining_time, 1.0),
+                TEST_SERVER_CLIENT_TIMEOUT_SECONDS,
+            )
 
+            try:
+                async with (
+                    aiohttp.ClientSession() as session,
+                    session.get(
+                        f"{self.api_url}/client/getUpdates",
+                        params={"bot_token": self.token, "chat_id": self.chat_id},
+                        timeout=aiohttp.ClientTimeout(total=request_timeout_seconds),
+                    ) as resp,
+                ):
+                    data = await resp.json()
+                    result = data.get("result", [])
+
+                    logger.debug(
+                        f"getUpdates returned {len(result)} items for token {self.token}"
+                    )
+
+                    if result and len(result) > initial_count:
+                        return result
+
+                    if initial_count == 0:
+                        initial_count = len(result)
+            except (TimeoutError, aiohttp.ClientError) as exc:
                 logger.debug(
-                    f"getUpdates returned {len(result)} items for token {self.token}"
+                    "Retrying getUpdates after transient polling error: %s", exc
                 )
-
-                if result and len(result) > initial_count:
-                    return result
-
-                if initial_count == 0:
-                    initial_count = len(result)
 
             # ast-grep-ignore: no-asyncio-sleep-in-tests - Polling for bot responses requires delay
             await asyncio.sleep(poll_interval)

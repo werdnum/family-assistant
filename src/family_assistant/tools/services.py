@@ -124,6 +124,7 @@ async def delegate_to_service_tool(
         )
 
     target_security_level = target_service.service_config.delegation_security_level
+    confirmation_timeout_seconds = exec_context.processing_service.service_config.tools_config.confirmation_timeout_seconds
 
     if target_security_level == DelegationSecurityLevel.BLOCKED:
         logger.warning(
@@ -162,7 +163,7 @@ async def delegate_to_service_tool(
                         "user_request": user_request,
                         "confirm_delegation": actual_confirm_delegation,
                     },
-                    timeout_seconds=60.0,
+                    timeout_seconds=confirmation_timeout_seconds,
                     context=exec_context,
                 )
                 if not user_confirmed:

@@ -557,6 +557,9 @@ async def test_delegation_confirm_target_granted(
         False
     )  # Explicitly set confirm_delegation=False
     awaited_mock_confirmation_callback.return_value = True  # User confirms
+    awaited_primary_service.service_config.tools_config.confirmation_timeout_seconds = (
+        123.0
+    )
 
     target_service = await awaited_specialized_processing_service_factory(
         DelegationSecurityLevel.CONFIRM
@@ -597,6 +600,7 @@ async def test_delegation_confirm_target_granted(
     assert confirmed_tool_args.get("target_service_id") == SPECIALIZED_PROFILE_ID
     assert confirmed_tool_args.get("user_request") == DELEGATED_TASK_DESCRIPTION
     assert confirmed_tool_args.get("confirm_delegation") is True
+    assert call_kwargs.get("timeout_seconds") == 123.0
 
 
 @pytest.mark.asyncio
