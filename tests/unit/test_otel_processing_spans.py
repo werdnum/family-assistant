@@ -21,6 +21,7 @@ import family_assistant.processing.tool_execution as proc_tool_module
 import family_assistant.task_worker as tw_module
 import family_assistant.telegram.handler as tg_module
 from family_assistant.config_models import ToolsConfig
+from family_assistant.delegation_security import DelegationSecurityLevel
 from family_assistant.llm import LLMStreamEvent
 from family_assistant.llm.tool_call import ToolCallFunction, ToolCallItem
 from family_assistant.processing import ProcessingService, ProcessingServiceConfig
@@ -128,7 +129,7 @@ def _make_processing_service(
         max_history_messages=10,
         history_max_age_hours=1.0,
         tools_config=ToolsConfig(),
-        delegation_security_level="blocked",
+        delegation_security_level=DelegationSecurityLevel.BLOCKED,
         id="test-profile",
     )
     mock_app_config = MagicMock()

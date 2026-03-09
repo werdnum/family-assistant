@@ -229,6 +229,10 @@ It now incorporates external analysis from:
   success).**
 
   - Impact: Callers must infer state from multiple nullable fields.
+  - Status (2026-03-09): Phase 9 complete on branch `processing-phase9-types-and-config-cohesion`
+    (`ChatInteractionResult.success(...)` now always carries string `text_reply` (empty string when
+    no textual assistant reply), removing nullable success payload ambiguity while preserving
+    explicit error typing via `status` and `error_traceback`).
   - References: `types.py:16`
   - Sources: `[C678]` (Added from PR #678)
 
@@ -268,12 +272,19 @@ It now incorporates external analysis from:
 - **30. `delegation_security_level` is unbounded string rather than literal/enum.**
 
   - Impact: Invalid config states are not caught early.
+  - Status (2026-03-09): Phase 9 complete on branch `processing-phase9-types-and-config-cohesion`
+    (`ProcessingServiceConfig` now enforces `DelegationSecurityLevel` at runtime via
+    `__post_init__`; string callsites in tests were migrated to explicit enum values).
   - References: `processing/types.py:49`
   - Sources: `[Cdx]`
 
 - **31. `ProcessingServiceConfig` aggregates many unrelated concerns.**
 
   - Impact: Poor cohesion; difficult configuration evolution.
+  - Status (2026-03-09): Phase 9 complete on branch `processing-phase9-types-and-config-cohesion`
+    (processing helpers now depend on focused config protocols (`ContextPreparerConfig`,
+    `ToolExecutorConfig`, `LLMStreamingLoopConfig`) rather than the full concrete config contract,
+    reducing cross-component coupling while preserving runtime behavior).
   - References: `processing/types.py:41`
   - Sources: `[C678]` (Added from PR #678)
 

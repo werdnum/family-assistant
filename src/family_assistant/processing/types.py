@@ -4,7 +4,7 @@ import logging
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from enum import Enum
-from typing import TYPE_CHECKING, Any, Literal
+from typing import TYPE_CHECKING, Any, Protocol
 
 from family_assistant.delegation_security import DelegationSecurityLevel
 
@@ -27,11 +27,6 @@ class ChatInteractionStatus(Enum):
     ERROR = "error"
 
 
-type DelegationSecurityLevelValue = (
-    DelegationSecurityLevel | Literal["blocked", "confirm", "unrestricted"]
-)
-
-
 # ast-grep-ignore: no-dict-any - tool args have varying keys per tool
 RequestConfirmationCallback = Callable[
     [
@@ -48,12 +43,41 @@ RequestConfirmationCallback = Callable[
 ]
 
 
+class ContextPreparerConfig(Protocol):
+    """Config surface required by ContextPreparer."""
+
+    id: str
+    description: str
+    max_history_messages: int
+    history_max_age_hours: float
+    web_max_history_messages: int | None
+    web_history_max_age_hours: float | None
+
+
+class ToolExecutorConfig(Protocol):
+    """Config surface required by ToolExecutor."""
+
+    timezone: ZoneInfo
+    id: str
+    visibility_grants: set[str] | None
+    default_note_visibility_labels: list[str] | None
+    note_registry: NoteRegistry | None
+
+
+class LLMStreamingLoopConfig(Protocol):
+    """Config surface required by LLMStreamingLoop."""
+
+    max_iterations: int
+    context_pruning_min_turns: int
+    tools_config: ToolsConfig
+
+
 @dataclass
 class ChatInteractionResult:
     """Result of a chat interaction from ProcessingService.handle_chat_interaction."""
 
     status: ChatInteractionStatus
-    text_reply: str | None = None
+    text_reply: str = ""
     assistant_message_internal_id: int | None = None
     reasoning_info: MessageReasoningInfo | None = None
     error_traceback: str | None = None
@@ -75,9 +99,9 @@ class ChatInteractionResult:
             raise ValueError(
                 "ChatInteractionResult(status='error') requires error_traceback"
             )
-        if self.text_reply is None:
+        if not self.text_reply:
             raise ValueError(
-                "ChatInteractionResult(status='error') requires user-facing text_reply"
+                "ChatInteractionResult(status='error') requires non-empty user-facing text_reply"
             )
         if self.reasoning_info is not None:
             raise ValueError(
@@ -92,7 +116,7 @@ class ChatInteractionResult:
     def success(
         cls,
         *,
-        text_reply: str | None = None,
+        text_reply: str = "",
         assistant_message_internal_id: int | None = None,
         reasoning_info: MessageReasoningInfo | None = None,
         attachment_ids: list[str] | None = None,
@@ -171,7 +195,7 @@ class ProcessingServiceConfig:
     max_history_messages: int
     history_max_age_hours: float  # Can be fractional (e.g., 0.5 hours)
     tools_config: ToolsConfig
-    delegation_security_level: DelegationSecurityLevelValue
+    delegation_security_level: DelegationSecurityLevel
     id: str  # Unique identifier for this service profile
     description: str = ""  # Human-readable description of this profile
     model_parameters: dict[str, dict[str, object]] | None = (
@@ -191,3 +215,11 @@ class ProcessingServiceConfig:
     default_note_visibility_labels: list[str] | None = None
     note_registry: NoteRegistry | None = None
     greeting_wav_path: str | None = None
+
+    def __post_init__(self) -> None:
+        """Validate runtime invariants for processing config."""
+        if not isinstance(self.delegation_security_level, DelegationSecurityLevel):
+            raise TypeError(
+                "delegation_security_level must be DelegationSecurityLevel "
+                f"(got {type(self.delegation_security_level).__name__})"
+            )

@@ -19,6 +19,7 @@ from telegram import Chat, Message, Update, User
 from telegram.ext import Application, ContextTypes
 
 from family_assistant.config_models import AppConfig, ToolsConfig
+from family_assistant.delegation_security import DelegationSecurityLevel
 from family_assistant.llm import (
     LLMOutput as LLMResponseOutput,  # Renamed to avoid clash
 )
@@ -129,7 +130,7 @@ async def test_slash_command_routes_to_specific_profile(
         max_history_messages=5,
         history_max_age_hours=24,
         tools_config=ToolsConfig(),
-        delegation_security_level="confirm",  # Added
+        delegation_security_level=DelegationSecurityLevel.CONFIRM,  # Added
         id=focused_profile_id,  # Added
         # llm_model_name, llm_temperature, llm_max_tokens can be added if needed
     )

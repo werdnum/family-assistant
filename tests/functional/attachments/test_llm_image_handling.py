@@ -17,6 +17,7 @@ import pytest
 from sqlalchemy.ext.asyncio import AsyncEngine
 
 from family_assistant.config_models import AppConfig, ToolsConfig
+from family_assistant.delegation_security import DelegationSecurityLevel
 from family_assistant.llm import LLMStreamEvent, StreamEventMetadata
 from family_assistant.llm.messages import (
     AssistantMessage,
@@ -118,7 +119,7 @@ async def test_image_handling_with_real_db(
             max_history_messages=10,
             history_max_age_hours=24,
             tools_config=ToolsConfig(),
-            delegation_security_level="unrestricted",
+            delegation_security_level=DelegationSecurityLevel.UNRESTRICTED,
         )
 
         service = ProcessingService(

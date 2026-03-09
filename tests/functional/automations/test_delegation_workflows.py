@@ -10,6 +10,7 @@ import pytest
 from sqlalchemy.ext.asyncio import AsyncEngine
 
 from family_assistant.config_models import AppConfig, ToolsConfig
+from family_assistant.delegation_security import DelegationSecurityLevel
 from family_assistant.interfaces import ChatInterface
 from family_assistant.llm import (
     ToolCallFunction,
@@ -150,7 +151,7 @@ async def test_delegate_to_service_with_attachments(
             max_history_messages=10,
             history_max_age_hours=24,
             tools_config=ToolsConfig(),
-            delegation_security_level="unrestricted",
+            delegation_security_level=DelegationSecurityLevel.UNRESTRICTED,
         ),
         app_config=AppConfig(),
         context_providers=[],
@@ -168,7 +169,7 @@ async def test_delegate_to_service_with_attachments(
             max_history_messages=10,
             history_max_age_hours=24,
             tools_config=ToolsConfig(),
-            delegation_security_level="unrestricted",
+            delegation_security_level=DelegationSecurityLevel.UNRESTRICTED,
         ),
         app_config=AppConfig(),
         context_providers=[],
@@ -350,7 +351,7 @@ async def test_delegate_to_service_cross_conversation_attachment_allowed(
             max_history_messages=10,
             history_max_age_hours=24,
             tools_config=ToolsConfig(),
-            delegation_security_level="unrestricted",
+            delegation_security_level=DelegationSecurityLevel.UNRESTRICTED,
         ),
         app_config=AppConfig(),
         context_providers=[],
@@ -368,7 +369,7 @@ async def test_delegate_to_service_cross_conversation_attachment_allowed(
             max_history_messages=10,
             history_max_age_hours=24,
             tools_config=ToolsConfig(),
-            delegation_security_level="unrestricted",
+            delegation_security_level=DelegationSecurityLevel.UNRESTRICTED,
         ),
         app_config=AppConfig(),
         context_providers=[],
@@ -535,7 +536,7 @@ async def test_delegate_to_service_propagates_generated_attachments(
             max_history_messages=10,
             history_max_age_hours=24,
             tools_config=ToolsConfig(),
-            delegation_security_level="unrestricted",
+            delegation_security_level=DelegationSecurityLevel.UNRESTRICTED,
         ),
         app_config=AppConfig(),
         context_providers=[],
@@ -555,7 +556,7 @@ async def test_delegate_to_service_propagates_generated_attachments(
             max_history_messages=10,
             history_max_age_hours=24,
             tools_config=ToolsConfig(),
-            delegation_security_level="unrestricted",
+            delegation_security_level=DelegationSecurityLevel.UNRESTRICTED,
         ),
         app_config=AppConfig(),
         context_providers=[],

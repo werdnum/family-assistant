@@ -13,6 +13,8 @@ from zoneinfo import ZoneInfo
 import pytest
 import pytest_asyncio  # Import pytest_asyncio
 
+from family_assistant.delegation_security import DelegationSecurityLevel
+
 if TYPE_CHECKING:
     from collections.abc import AsyncGenerator
 
@@ -281,7 +283,7 @@ async def test_mcp_time_conversion_stdio(db_engine: AsyncEngine) -> None:
         max_history_messages=dummy_max_history,
         history_max_age_hours=dummy_history_age,
         tools_config=ToolsConfig(),
-        delegation_security_level="confirm",  # Added
+        delegation_security_level=DelegationSecurityLevel.CONFIRM,  # Added
         id="mcp_stdio_profile",  # Added
     )
 
@@ -478,7 +480,7 @@ async def test_mcp_time_conversion_sse(
         max_history_messages=dummy_max_history,
         history_max_age_hours=dummy_history_age,
         tools_config=ToolsConfig(),
-        delegation_security_level="confirm",  # Added
+        delegation_security_level=DelegationSecurityLevel.CONFIRM,  # Added
         id="mcp_sse_profile",  # Added
     )
     processing_service = ProcessingService(

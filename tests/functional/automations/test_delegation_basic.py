@@ -79,7 +79,7 @@ def primary_service_config(dummy_prompts: dict[str, str]) -> ProcessingServiceCo
             enable_local_tools=["delegate_to_service"],
             confirm_tools=[],
         ),
-        delegation_security_level="unrestricted",  # Primary can delegate freely
+        delegation_security_level=DelegationSecurityLevel.UNRESTRICTED,  # Primary can delegate freely
         id=PRIMARY_PROFILE_ID,
     )
 
@@ -486,7 +486,7 @@ async def test_delegation_unrestricted_target_no_forced_confirm(
     awaited_primary_service.llm_client = primary_llm_mock_factory(confirm_tool_arg)
 
     target_service = await awaited_specialized_processing_service_factory(
-        "unrestricted"
+        DelegationSecurityLevel.UNRESTRICTED
     )
 
     registry = {
@@ -559,7 +559,9 @@ async def test_delegation_confirm_target_granted(
     )  # Explicitly set confirm_delegation=False
     awaited_mock_confirmation_callback.return_value = True  # User confirms
 
-    target_service = await awaited_specialized_processing_service_factory("confirm")
+    target_service = await awaited_specialized_processing_service_factory(
+        DelegationSecurityLevel.CONFIRM
+    )
 
     registry = {
         PRIMARY_PROFILE_ID: awaited_primary_service,
@@ -624,7 +626,9 @@ async def test_delegation_confirm_target_denied(
     awaited_primary_service.llm_client = primary_llm_mock_factory(False)
     awaited_mock_confirmation_callback.return_value = False  # User denies
 
-    target_service = await awaited_specialized_processing_service_factory("confirm")
+    target_service = await awaited_specialized_processing_service_factory(
+        DelegationSecurityLevel.CONFIRM
+    )
 
     registry = {
         PRIMARY_PROFILE_ID: awaited_primary_service,
@@ -677,7 +681,9 @@ async def test_delegation_blocked_target(
     awaited_specialized_processing_service_factory = specialized_processing_service
     # Primary LLM mock will attempt to delegate (confirm_delegation arg doesn't matter here)
 
-    target_service = await awaited_specialized_processing_service_factory("blocked")
+    target_service = await awaited_specialized_processing_service_factory(
+        DelegationSecurityLevel.BLOCKED
+    )
 
     registry = {
         PRIMARY_PROFILE_ID: awaited_primary_service,
@@ -734,7 +740,7 @@ async def test_delegation_unrestricted_confirm_arg_granted(
     awaited_mock_confirmation_callback.return_value = True  # User confirms
 
     target_service = await awaited_specialized_processing_service_factory(
-        "unrestricted"
+        DelegationSecurityLevel.UNRESTRICTED
     )
 
     registry = {

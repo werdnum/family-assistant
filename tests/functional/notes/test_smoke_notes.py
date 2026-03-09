@@ -10,10 +10,12 @@ import pytest
 from sqlalchemy import text  # To query DB directly for assertion
 from sqlalchemy.ext.asyncio import AsyncEngine  # Added for type hints
 
-# Import ContextProvider and NotesContextProvider
 from family_assistant.context_providers import (
     NotesContextProvider,
 )
+
+# Import ContextProvider and NotesContextProvider
+from family_assistant.delegation_security import DelegationSecurityLevel
 
 if TYPE_CHECKING:
     from family_assistant.llm import LLMInterface  # Keep Interface
@@ -182,7 +184,7 @@ async def test_add_and_retrieve_note_rule_mock(
         max_history_messages=dummy_max_history,
         history_max_age_hours=dummy_history_age,
         tools_config=ToolsConfig(),
-        delegation_security_level="confirm",  # Added
+        delegation_security_level=DelegationSecurityLevel.CONFIRM,  # Added
         id="test_smoke_notes_profile",  # Added
     )
 

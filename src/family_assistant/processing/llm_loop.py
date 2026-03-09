@@ -38,7 +38,7 @@ if TYPE_CHECKING:
     from .service import ProcessingService
     from .tool_execution import ToolExecutor
     from .types import (
-        ProcessingServiceConfig,
+        LLMStreamingLoopConfig,
         RequestConfirmationCallback,
         ToolExecutionResult,
     )
@@ -52,13 +52,13 @@ class LLMStreamingLoop:
     def __init__(
         self,
         llm_client: LLMInterface,
-        service_config: ProcessingServiceConfig,
+        config: LLMStreamingLoopConfig,
         app_config: AppConfig,
         tool_executor: ToolExecutor,
         attachment_processor: AttachmentProcessor,
     ) -> None:
         self.llm_client = llm_client
-        self.service_config = service_config
+        self.config = config
         self.app_config = app_config
         self.tool_executor = tool_executor
         self.attachment_processor = attachment_processor
@@ -168,7 +168,7 @@ class LLMStreamingLoop:
         """
         final_content: str | None = None
         final_reasoning_info: MessageReasoningInfo | None = None
-        max_iterations = self.service_config.max_iterations
+        max_iterations = self.config.max_iterations
         current_iteration = 1
         pending_attachment_ids: list[
             str
@@ -183,7 +183,7 @@ class LLMStreamingLoop:
         logger.debug(f"Total available tools: {len(all_tool_definitions)}")
 
         if request_confirmation_callback is None:
-            confirmable_tool_names = self.service_config.tools_config.confirm_tools
+            confirmable_tool_names = self.config.tools_config.confirm_tools
             if confirmable_tool_names:
                 logger.info(
                     f"No confirmation callback available. Filtering out tools requiring confirmation: {confirmable_tool_names}"
@@ -333,7 +333,7 @@ class LLMStreamingLoop:
                     )
                     messages = prune_messages_for_context(
                         messages,
-                        min_turns=self.service_config.context_pruning_min_turns,
+                        min_turns=self.config.context_pruning_min_turns,
                     )
                     context_retry_attempted = True
                     continue

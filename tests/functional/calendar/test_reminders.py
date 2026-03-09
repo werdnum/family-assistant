@@ -17,6 +17,7 @@ if TYPE_CHECKING:
 from sqlalchemy.sql import select
 
 from family_assistant.config_models import AppConfig, ToolsConfig
+from family_assistant.delegation_security import DelegationSecurityLevel
 
 # Import necessary components from the application
 from family_assistant.interfaces import ChatInterface  # Import ChatInterface
@@ -198,7 +199,7 @@ async def test_schedule_and_execute_callback(
         max_history_messages=dummy_max_history,
         history_max_age_hours=dummy_history_age,
         tools_config=ToolsConfig(),
-        delegation_security_level="confirm",  # Added
+        delegation_security_level=DelegationSecurityLevel.CONFIRM,  # Added
         id="smoke_callback_profile",  # Added
     )
 
@@ -481,7 +482,7 @@ async def test_modify_pending_callback(
         max_history_messages=5,
         history_max_age_hours=24,
         tools_config=ToolsConfig(),
-        delegation_security_level="confirm",
+        delegation_security_level=DelegationSecurityLevel.CONFIRM,
         id="smoke_modify_profile",
     )
     processing_service = ProcessingService(
@@ -808,7 +809,7 @@ async def test_cancel_pending_callback(
         max_history_messages=5,
         history_max_age_hours=24,
         tools_config=ToolsConfig(),
-        delegation_security_level="confirm",
+        delegation_security_level=DelegationSecurityLevel.CONFIRM,
         id="smoke_cancel_profile",
     )
     processing_service = ProcessingService(
@@ -1109,7 +1110,7 @@ async def test_schedule_reminder_with_follow_up(
         max_history_messages=10,
         history_max_age_hours=24,
         tools_config=ToolsConfig(),
-        delegation_security_level="confirm",
+        delegation_security_level=DelegationSecurityLevel.CONFIRM,
         id="reminder_test_profile",
     )
 
@@ -1457,7 +1458,7 @@ async def test_schedule_recurring_callback(
         max_history_messages=10,
         history_max_age_hours=24,
         tools_config=ToolsConfig(),
-        delegation_security_level="confirm",
+        delegation_security_level=DelegationSecurityLevel.CONFIRM,
         id="recurring_test_profile",
     )
 
@@ -1683,7 +1684,7 @@ async def test_list_pending_callbacks(db_engine: AsyncEngine) -> None:
         max_history_messages=5,
         history_max_age_hours=24,
         tools_config=ToolsConfig(),
-        delegation_security_level="confirm",
+        delegation_security_level=DelegationSecurityLevel.CONFIRM,
         id="list_test_profile",
     )
 

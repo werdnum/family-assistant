@@ -17,6 +17,7 @@ from family_assistant.context_providers import (
     KnownUsersContextProvider,
     NotesContextProvider,
 )
+from family_assistant.delegation_security import DelegationSecurityLevel
 from family_assistant.llm import (
     LLMInterface,
     LLMOutput,
@@ -106,7 +107,7 @@ def mock_processing_service_config() -> ProcessingServiceConfig:
             enable_mcp_server_ids=[],
             confirm_tools=[],
         ),
-        delegation_security_level="confirm",
+        delegation_security_level=DelegationSecurityLevel.CONFIRM,
         id="chat_api_test_profile",
     )
 

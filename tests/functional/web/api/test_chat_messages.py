@@ -19,6 +19,7 @@ from family_assistant.context_providers import (
     KnownUsersContextProvider,
     NotesContextProvider,
 )
+from family_assistant.delegation_security import DelegationSecurityLevel
 from family_assistant.llm import (
     LLMInterface,
     LLMOutput,
@@ -88,7 +89,7 @@ def mock_processing_service_config() -> ProcessingServiceConfig:
             enable_mcp_server_ids=[],
             confirm_tools=[],
         ),
-        delegation_security_level="confirm",  # Added
+        delegation_security_level=DelegationSecurityLevel.CONFIRM,  # Added
         id="chat_api_test_profile",  # Added
     )
 
@@ -254,7 +255,7 @@ def mock_processing_service_config_no_tools() -> ProcessingServiceConfig:
             enable_mcp_server_ids=[],
             confirm_tools=[],
         ),
-        delegation_security_level="blocked",
+        delegation_security_level=DelegationSecurityLevel.BLOCKED,
         id="chat_api_test_profile_no_tools",
     )
 

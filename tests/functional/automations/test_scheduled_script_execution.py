@@ -12,6 +12,7 @@ import pytest
 from sqlalchemy.ext.asyncio import AsyncEngine
 
 from family_assistant.config_models import AppConfig, ToolsConfig
+from family_assistant.delegation_security import DelegationSecurityLevel
 from family_assistant.interfaces import ChatInterface
 from family_assistant.llm import LLMInterface, ToolCallFunction, ToolCallItem
 from family_assistant.processing import ProcessingService, ProcessingServiceConfig
@@ -136,7 +137,7 @@ print("Script executed - note created: " + str(result))
             max_history_messages=5,
             history_max_age_hours=24,
             tools_config=ToolsConfig(),
-            delegation_security_level="confirm",
+            delegation_security_level=DelegationSecurityLevel.CONFIRM,
             id="test_profile",
         ),
         app_config=AppConfig(),
@@ -305,7 +306,7 @@ print("Recurring script executed - note created")
             max_history_messages=5,
             history_max_age_hours=24,
             tools_config=ToolsConfig(),
-            delegation_security_level="confirm",
+            delegation_security_level=DelegationSecurityLevel.CONFIRM,
             id="test_profile",
         ),
         app_config=AppConfig(),
@@ -473,7 +474,7 @@ if True  # Missing colon
             max_history_messages=5,
             history_max_age_hours=24,
             tools_config=ToolsConfig(),
-            delegation_security_level="confirm",
+            delegation_security_level=DelegationSecurityLevel.CONFIRM,
             id="test_profile",
         ),
         app_config=AppConfig(),

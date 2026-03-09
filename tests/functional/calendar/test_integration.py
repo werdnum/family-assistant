@@ -17,6 +17,7 @@ from family_assistant.calendar_integration import (
 )
 from family_assistant.config_models import AppConfig, ToolsConfig
 from family_assistant.context_providers import CalendarContextProvider
+from family_assistant.delegation_security import DelegationSecurityLevel
 from family_assistant.llm import LLMInterface, ToolCallFunction, ToolCallItem
 from family_assistant.processing import (
     ProcessingService,
@@ -274,7 +275,7 @@ async def test_add_event_and_verify_in_system_prompt(
         max_history_messages=5,
         history_max_age_hours=24,
         tools_config=ToolsConfig(),
-        delegation_security_level="unrestricted",
+        delegation_security_level=DelegationSecurityLevel.UNRESTRICTED,
     )
     processing_service = ProcessingService(
         llm_client=llm_client_for_add_test,

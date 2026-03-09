@@ -284,7 +284,7 @@ async def delegate_to_service_tool(
                 text=f"Error from '{target_service_id}' service: An error occurred during processing.",
                 attachments=None,
             )
-        if final_text_reply is None:
+        if not final_text_reply:
             logger.info(
                 f"Delegated service '{target_service_id}' returned no textual reply."
             )

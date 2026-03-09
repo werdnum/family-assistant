@@ -11,6 +11,7 @@ from zoneinfo import ZoneInfo
 import pytest
 
 from family_assistant.config_models import AppConfig, ToolsConfig
+from family_assistant.delegation_security import DelegationSecurityLevel
 from family_assistant.llm import (
     LLMOutput,
     LLMStreamEvent,
@@ -76,7 +77,7 @@ def _make_service(
         max_history_messages=10,
         history_max_age_hours=24,
         tools_config=ToolsConfig(enable_local_tools=[], enable_mcp_server_ids=[]),
-        delegation_security_level="confirm",
+        delegation_security_level=DelegationSecurityLevel.CONFIRM,
         id="processing_fail_fast_test",
         max_iterations=max_iterations,
     )
@@ -473,12 +474,12 @@ async def test_context_aggregate_context_raises_on_provider_failure() -> None:
         max_history_messages=10,
         history_max_age_hours=24,
         tools_config=ToolsConfig(),
-        delegation_security_level="confirm",
+        delegation_security_level=DelegationSecurityLevel.CONFIRM,
         id="context-fail-fast",
     )
     preparer = ContextPreparer(
         context_providers=[BrokenProvider()],
-        service_config=config,
+        config=config,
         clock=SystemClock(),
     )
 

@@ -12,6 +12,7 @@ from zoneinfo import ZoneInfo
 import pytest
 
 from family_assistant.config_models import AppConfig, ToolsConfig
+from family_assistant.delegation_security import DelegationSecurityLevel
 from family_assistant.llm import LLMOutput, ToolCallFunction, ToolCallItem
 from family_assistant.processing import ProcessingService, ProcessingServiceConfig
 from family_assistant.processing.attachments import AttachmentSelectionError
@@ -60,7 +61,7 @@ class TestAttachmentSelectionThreshold:
             max_history_messages=10,
             history_max_age_hours=24,
             tools_config=ToolsConfig(),
-            delegation_security_level="unrestricted",
+            delegation_security_level=DelegationSecurityLevel.UNRESTRICTED,
         )
 
         service = ProcessingService(
@@ -207,7 +208,7 @@ class TestSelectAttachmentsForResponse:
             max_history_messages=10,
             history_max_age_hours=24,
             tools_config=ToolsConfig(),
-            delegation_security_level="unrestricted",
+            delegation_security_level=DelegationSecurityLevel.UNRESTRICTED,
         )
 
         service = ProcessingService(

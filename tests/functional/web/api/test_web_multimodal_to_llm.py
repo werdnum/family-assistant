@@ -30,6 +30,7 @@ from family_assistant.context_providers import (
     KnownUsersContextProvider,
     NotesContextProvider,
 )
+from family_assistant.delegation_security import DelegationSecurityLevel
 from family_assistant.llm import LLMOutput
 from family_assistant.llm.messages import ImageUrlContentPart
 from family_assistant.processing import ProcessingService, ProcessingServiceConfig
@@ -205,7 +206,7 @@ def mock_processing_service_config() -> ProcessingServiceConfig:
             enable_mcp_server_ids=[],
             confirm_tools=[],
         ),
-        delegation_security_level="confirm",
+        delegation_security_level=DelegationSecurityLevel.CONFIRM,
         id="multimodal_api_test_profile",
     )
 

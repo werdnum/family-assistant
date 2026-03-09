@@ -646,7 +646,7 @@ class ProcessingService:
 
         Returns:
             ChatInteractionResult containing:
-            - text_reply: Final LLM content to send to user (str | None)
+            - text_reply: Final LLM content to send to user (str; empty if no text)
             - assistant_message_internal_id: Internal message ID of assistant's response (int | None)
             - reasoning_info: Final reasoning information (dict | None)
             - error_traceback: Processing error traceback if any (str | None)
@@ -699,7 +699,7 @@ class ProcessingService:
             final_reasoning_info = final_reasoning_info_from_process_msg
 
             # --- 4. Save Generated Turn Messages & Extract Final Reply ---
-            final_text_reply = None
+            final_text_reply = ""
             final_assistant_message_internal_id = None
 
             if generated_turn_messages:

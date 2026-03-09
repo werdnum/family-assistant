@@ -23,9 +23,9 @@ from family_assistant.tools import (
 from family_assistant.tools.types import ToolAttachment, ToolResult
 
 from .types import (
-    ProcessingServiceConfig,
     RequestConfirmationCallback,
     ToolExecutionResult,
+    ToolExecutorConfig,
 )
 from .utils import get_file_extension_from_mime_type
 
@@ -54,13 +54,13 @@ class ToolExecutor:
     def __init__(
         self,
         tools_provider: ToolsProvider,
-        service_config: ProcessingServiceConfig,
+        config: ToolExecutorConfig,
         attachment_processor: AttachmentProcessor,
         attachment_registry: AttachmentRegistry | None,
         clock: Clock,
     ) -> None:
         self.tools_provider = tools_provider
-        self.service_config = service_config
+        self.config = config
         self.attachment_processor = attachment_processor
         self.attachment_registry = attachment_registry
         self.clock = clock
@@ -163,8 +163,8 @@ class ToolExecutor:
             db_context=db_context,
             chat_interface=chat_interface,
             chat_interfaces=chat_interfaces_dict,
-            timezone=self.service_config.timezone,
-            processing_profile_id=self.service_config.id,
+            timezone=self.config.timezone,
+            processing_profile_id=self.config.id,
             subconversation_id=subconversation_id,
             request_confirmation_callback=request_confirmation_callback,
             processing_service=processing_service,
@@ -178,9 +178,9 @@ class ToolExecutor:
             ),
             attachment_registry=self.attachment_registry,
             camera_backend=camera_backend,
-            visibility_grants=self.service_config.visibility_grants,
-            default_note_visibility_labels=self.service_config.default_note_visibility_labels,
-            note_registry=self.service_config.note_registry,
+            visibility_grants=self.config.visibility_grants,
+            default_note_visibility_labels=self.config.default_note_visibility_labels,
+            note_registry=self.config.note_registry,
         )
 
     @staticmethod

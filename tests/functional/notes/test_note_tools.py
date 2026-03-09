@@ -13,6 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncEngine
 
 from family_assistant.config_models import AppConfig, ToolsConfig
 from family_assistant.context_providers import NotesContextProvider
+from family_assistant.delegation_security import DelegationSecurityLevel
 from family_assistant.llm import ToolCallFunction, ToolCallItem
 from family_assistant.processing import ProcessingService, ProcessingServiceConfig
 from family_assistant.storage.context import DatabaseContext, get_db_context
@@ -81,7 +82,7 @@ async def create_processing_service(
         max_history_messages=5,
         history_max_age_hours=24,
         tools_config=ToolsConfig(),
-        delegation_security_level="confirm",
+        delegation_security_level=DelegationSecurityLevel.CONFIRM,
         id="test_notes_profile",
     )
 
