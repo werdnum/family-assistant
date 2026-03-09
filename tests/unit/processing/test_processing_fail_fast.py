@@ -669,7 +669,7 @@ async def test_stream_done_attachment_metadata_lookup_propagates_failures() -> N
         )
     )
     mock_registry = AsyncMock()
-    mock_registry.get_attachment_with_context.return_value = None
+    mock_registry.get_attachment.return_value = None
     service.attachment_processor.attachment_registry = mock_registry
 
     with pytest.raises(
