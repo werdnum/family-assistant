@@ -6,6 +6,7 @@ from zoneinfo import ZoneInfo
 import httpx
 import pytest
 
+from family_assistant import calendar_integration
 from family_assistant.calendar_integration import fetch_upcoming_events, parse_event
 from family_assistant.utils.clock import MockClock
 
@@ -41,7 +42,9 @@ async def test_fetch_ical_events_parses_vevents_from_vcalendar(
         "",
     ])
 
-    async def fake_get(self: httpx.AsyncClient, url: str) -> httpx.Response:
+    async def fake_get(
+        self: httpx.AsyncClient, url: str, follow_redirects: bool = False
+    ) -> httpx.Response:
         return httpx.Response(200, text=ics_data)
 
     monkeypatch.setattr(httpx.AsyncClient, "get", fake_get)
@@ -78,7 +81,9 @@ async def test_fetch_ical_events_expands_recurring_events(
         "",
     ])
 
-    async def fake_get(self: httpx.AsyncClient, url: str) -> httpx.Response:
+    async def fake_get(
+        self: httpx.AsyncClient, url: str, follow_redirects: bool = False
+    ) -> httpx.Response:
         return httpx.Response(200, text=ics_data)
 
     monkeypatch.setattr(httpx.AsyncClient, "get", fake_get)
@@ -97,7 +102,9 @@ async def test_fetch_ical_events_expands_recurring_events(
 async def test_fetch_real_world_nsw_school_calendar_end_to_end(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    async def fake_get(self: httpx.AsyncClient, url: str) -> httpx.Response:
+    async def fake_get(
+        self: httpx.AsyncClient, url: str, follow_redirects: bool = False
+    ) -> httpx.Response:
         return httpx.Response(200, text=NSW_SCHOOL_2026_ICS)
 
     monkeypatch.setattr(httpx.AsyncClient, "get", fake_get)
@@ -126,7 +133,9 @@ async def test_fetch_real_world_nsw_school_calendar_end_to_end(
 async def test_fetch_real_world_australia_holidays_calendar_end_to_end(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    async def fake_get(self: httpx.AsyncClient, url: str) -> httpx.Response:
+    async def fake_get(
+        self: httpx.AsyncClient, url: str, follow_redirects: bool = False
+    ) -> httpx.Response:
         return httpx.Response(200, text=AUSTRALIA_HOLIDAYS_ICS)
 
     monkeypatch.setattr(httpx.AsyncClient, "get", fake_get)
@@ -150,6 +159,107 @@ async def test_fetch_real_world_australia_holidays_calendar_end_to_end(
 
     assert "New Year's Day" in summaries
     assert "Day after New Year's Day" in summaries
+
+
+@pytest.mark.asyncio
+async def test_fetch_ical_events_follows_redirects(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    redirect_flags: list[bool] = []
+    ics_data = "\r\n".join([
+        "BEGIN:VCALENDAR",
+        "VERSION:2.0",
+        "PRODID:-//FamilyAssistant Test//EN",
+        "BEGIN:VEVENT",
+        "UID:test-redirect",
+        "DTSTART:20260110T100000Z",
+        "DTEND:20260110T110000Z",
+        "SUMMARY:Redirect Event",
+        "END:VEVENT",
+        "END:VCALENDAR",
+        "",
+    ])
+
+    async def fake_get(
+        self: httpx.AsyncClient, url: str, follow_redirects: bool = False
+    ) -> httpx.Response:
+        redirect_flags.append(follow_redirects)
+        return httpx.Response(200, text=ics_data)
+
+    monkeypatch.setattr(httpx.AsyncClient, "get", fake_get)
+
+    calendar_config: CalendarConfig = {
+        "ical": {"urls": ["https://example.com/redirect.ics"]}
+    }
+
+    mock_clock = MockClock(initial_time=datetime(2026, 1, 10, 8, 0, 0, tzinfo=UTC))
+
+    events = await fetch_upcoming_events(
+        calendar_config, ZoneInfo("UTC"), clock=mock_clock
+    )
+
+    assert len(events) == 1
+    assert redirect_flags == [True]
+
+
+@pytest.mark.asyncio
+async def test_fetch_ical_events_continues_when_individual_event_parse_fails(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    ics_data = "\r\n".join([
+        "BEGIN:VCALENDAR",
+        "VERSION:2.0",
+        "PRODID:-//FamilyAssistant Test//EN",
+        "BEGIN:VEVENT",
+        "UID:test-bad-1",
+        "DTSTART:20260110T100000Z",
+        "DTEND:20260110T110000Z",
+        "SUMMARY:Bad Event",
+        "END:VEVENT",
+        "BEGIN:VEVENT",
+        "UID:test-good-2",
+        "DTSTART:20260111T100000Z",
+        "DTEND:20260111T110000Z",
+        "SUMMARY:Good Event",
+        "END:VEVENT",
+        "END:VCALENDAR",
+        "",
+    ])
+
+    async def fake_get(
+        self: httpx.AsyncClient, url: str, follow_redirects: bool = False
+    ) -> httpx.Response:
+        return httpx.Response(200, text=ics_data)
+
+    monkeypatch.setattr(httpx.AsyncClient, "get", fake_get)
+
+    original_parser = calendar_integration._parse_icalendar_event_component
+    calls = {"count": 0}
+
+    def flaky_parser(event_component: object, timezone: ZoneInfo) -> object:
+        calls["count"] += 1
+        if calls["count"] == 1:
+            raise ValueError("broken event")
+        return original_parser(event_component, timezone)
+
+    monkeypatch.setattr(
+        calendar_integration,
+        "_parse_icalendar_event_component",
+        flaky_parser,
+    )
+
+    calendar_config: CalendarConfig = {
+        "ical": {"urls": ["https://example.com/flaky.ics"]}
+    }
+
+    mock_clock = MockClock(initial_time=datetime(2026, 1, 10, 8, 0, 0, tzinfo=UTC))
+
+    events = await fetch_upcoming_events(
+        calendar_config, ZoneInfo("UTC"), clock=mock_clock
+    )
+
+    assert len(events) == 1
+    assert events[0]["uid"] == "test-good-2"
 
 
 def test_parse_event_accepts_vevent_component() -> None:

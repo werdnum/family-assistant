@@ -259,7 +259,9 @@ async def _fetch_ical_events_async(
         for url_item in ical_urls:
             logger.info(f"Fetching iCal data from: {url_item}")
             # client.get returns a coroutine, ensure it's wrapped in a task for gather if not already
-            fetch_tasks.append(asyncio.create_task(client.get(url_item)))
+            fetch_tasks.append(
+                asyncio.create_task(client.get(url_item, follow_redirects=True))
+            )
 
         # `results` will be a list of httpx.Response objects or exceptions
         results: list[httpx.Response | BaseException] = await asyncio.gather(
@@ -288,13 +290,24 @@ async def _fetch_ical_events_async(
                     )
                     count = 0
                     for event_component in expanded_events:
-                        parsed = _parse_icalendar_event_component(
-                            event_component,
-                            timezone=timezone,
-                        )
+                        try:
+                            parsed = _parse_icalendar_event_component(
+                                event_component,
+                                timezone=timezone,
+                            )
+                        except Exception as event_parse_error:
+                            logger.error(
+                                "Failed to parse individual event in iCal URL %s: %s",
+                                url,
+                                event_parse_error,
+                                exc_info=True,
+                            )
+                            continue
+
                         if parsed:
                             all_events.append(parsed)
                             count += 1
+
                     logger.info(f"Parsed {count} events from iCal URL: {url}")
                 except Exception as e:
                     logger.error(
