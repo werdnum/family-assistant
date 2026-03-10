@@ -997,64 +997,83 @@ default_profile_settings:
         priority: 500
 ```
 
-## 10. Implementation Phases
+## 10. Execution Tracker
 
-### Phase 1: Tool Metadata
+This section is the execution plan for the project. Treat it as the source of truth for sequencing
+and progress tracking. As implementation lands, check items off here rather than creating a separate
+tracker elsewhere.
 
-Add tags to all local tool registrations and introduce the internal descriptor model. No behavior
-changes.
+### Tracker Conventions
 
-- Add `ToolTag` enum to `src/family_assistant/tools/metadata.py`
-- Add `ToolRegistration` / `ToolDescriptor` types
-- Add `tags` field to each local tool registration in tool modules
-- Add `tool_metadata` field to `MCPServerConfig`
-- Test: every local tool registration has a `tags` field; tag values are valid
+- Use `[ ]` for not started, `[~]` for in progress, and `[x]` for complete.
+- Do not mark an item complete until code, tests, and the relevant integration points are all done.
+- If implementation reveals that sequencing needs to change, update this section in the same PR that
+  changes the plan.
 
-### Phase 2: Policy Engine
+### Ordered Work Plan
 
-Implement the rule evaluation engine with exhaustive tests.
+- [ ] **Step 1: Tool metadata foundation** Scope: Add `ToolTag`, `ToolRegistration`, and
+  `ToolDescriptor`. Add required tags to every local tool registration. Add `tool_metadata` to
+  `MCPServerConfig`, including wildcard support and MCP-annotation fallback rules. Deliverables:
+  `src/family_assistant/tools/metadata.py`, updated local tool registration structures, updated MCP
+  config models, and metadata validation tests. Exit criteria: Every local tool is registered with
+  valid tags, MCP metadata resolution is implemented, and the runtime can build descriptors without
+  changing policy behavior yet.
 
-- Create `src/family_assistant/tools/policy.py` with `PolicyEngine`, `PolicyRule`, `ToolMatcher`,
-  `PolicyDecision`
-- Add config models: `ToolPolicyConfig`, `PolicyRuleConfig`, `ToolMatcherConfig`
-- Support automatic priority offsets for application defaults, profiles, and operator rules
-- Support `evaluate_for_advertisement(..., can_confirm=...)` and `evaluate_for_execution(...)`
-- Test: name matching, glob patterns, tag matching (all/any), MCP server matching, priority
-  ordering, default decisions, edge cases
+- [ ] **Step 2: Policy config and evaluation engine** Depends on: Step 1. Scope: Implement
+  `ToolMatcher`, `PolicyRule`, `ToolPolicyConfig`, and `PolicyEngine`. Support name globs,
+  `tags_all`, `tags_any`, `mcp_server_ids`, default decisions, deterministic tie-breaking, and the
+  documented priority offsets (`defaults +0`, `profile +100`, `operator +1000`). Deliverables:
+  `src/family_assistant/tools/policy.py`, config model updates, and unit tests covering evaluation
+  and merge semantics. Exit criteria: The engine can answer both
+  `evaluate_for_advertisement(..., can_confirm=...)` and `evaluate_for_execution(...)` correctly for
+  local and MCP tools.
 
-### Phase 3: PolicyEnforcingToolsProvider
+- [ ] **Step 3: Provider and descriptor plumbing** Depends on: Steps 1-2. Scope: Teach the provider
+  stack to expose descriptors and provenance. Add descriptor lookup support for local and MCP tools,
+  then implement `PolicyEnforcingToolsProvider` as the single allow/deny/confirm wrapper.
+  Deliverables: Provider interface changes, descriptor-aware local/MCP/composite providers, and
+  `PolicyEnforcingToolsProvider`. Exit criteria: Denied tools are hidden, confirmable tools stay
+  visible only when `can_confirm=True`, and execution-time confirmation still uses the existing
+  callback/rendering infrastructure.
 
-Unified provider that replaces FilteredToolsProvider + ConfirmingToolsProvider.
+- [ ] **Step 4: Assistant/runtime integration** Depends on: Step 3. Scope: Replace the legacy
+  `enable_local_tools` / `enable_mcp_server_ids` / `confirm_tools` assembly path in the assistant
+  with policy-driven provider construction. Update all tool-advertising paths to pass confirmation
+  capability explicitly. Deliverables: `assistant.py` integration, processing loop updates, Gemini
+  Live / voice updates, and profile/API surfaces that derive visibility from policy instead of
+  legacy config fields. Exit criteria: The runtime no longer depends on `FilteredToolsProvider` or
+  `ConfirmingToolsProvider`, and non-confirming channels never advertise confirm-only tools.
 
-- Create `PolicyEnforcingToolsProvider` in `infrastructure.py`
-- Add descriptor lookup/provenance support (`get_tool_descriptors`, `get_tool_descriptor`)
-- Preserve existing confirmation infrastructure (renderers, callbacks, timeout)
-- Update all tool-advertising call sites to pass `can_confirm`
-- Test: denied tools excluded from definitions, confirm tools trigger callback, confirm tools are
-  hidden when `can_confirm=False`
+- [ ] **Step 5: Config migration** Depends on: Step 4. Scope: Add `tools_policy` to profile/default
+  settings, implement merge behavior in config loading, remove the old policy fields from
+  `ToolsConfig`, and migrate `defaults.yaml` to the new format. Deliverables: Updated config models,
+  config loader merge logic, migrated defaults, and migration-oriented tests. Exit criteria: The
+  application boots from the new config format and all existing profiles are represented in
+  `tools_policy`.
 
-### Phase 4: Config Migration
+- [ ] **Step 6: Delegation restrictions** Depends on: Step 5. Scope: Add
+  `allowed_delegation_sources` to `ProcessingConfig` and enforce it inside `delegate_to_service`,
+  keeping target-specific confirmation logic in the delegation tool. Deliverables: Delegation config
+  model changes, delegation tool enforcement, and focused tests. Exit criteria: Delegation obeys
+  both source-profile policy and target-profile restrictions without double-confirmation.
 
-Replace `enable_local_tools`/`confirm_tools`/`enable_mcp_server_ids` with `tools_policy`.
+- [ ] **Step 7: Cleanup and removal of legacy concepts** Depends on: Steps 1-6. Scope: Remove dead
+  code and stale documentation for the old allowlist/confirm list model. Update any README, CLAUDE
+  guidance, or operator docs that still describe `enable_local_tools`, `enable_mcp_server_ids`, or
+  `confirm_tools`. Deliverables: Deleted legacy providers/config references, updated docs, and final
+  test fixes. Exit criteria: There is one policy model in code and docs, and no user-facing
+  documentation points at the removed configuration.
 
-- Update `config_models.py`: add `tools_policy` to `ServiceProfile` and `DefaultProfileSettings`,
-  remove old fields from `ToolsConfig`
-- Update `assistant.py` setup: build `PolicyEngine` from merged config, create
-  `PolicyEnforcingToolsProvider`
-- Update config loading to merge `tools_policy` with layer-specific priority offsets
-- Migrate `defaults.yaml` to new policy format
-- Update non-chat tool advertisement surfaces (for example, voice mode and profile listing) to use
-  policy-derived visibility instead of legacy config fields
-- Remove `FilteredToolsProvider` and `ConfirmingToolsProvider`
-- Update all tests
+### Suggested PR Slices
 
-### Phase 5: Enhanced Delegation
-
-Richer delegation controls.
-
-- Add `allowed_delegation_sources` to `ProcessingConfig`
-- Update `delegate_to_service` tool to check source restrictions
-- Test: source restrictions, backwards compatibility
+- PR 1: Step 1 only. Metadata and descriptor groundwork with no behavior change.
+- PR 2: Step 2 only. Policy engine plus unit tests.
+- PR 3: Step 3 and the minimum provider-interface changes needed for descriptor plumbing.
+- PR 4: Step 4 and Step 5 together if the integration is easier to review end-to-end; otherwise
+  split them.
+- PR 5: Step 6 plus any small follow-on fixes from integration.
+- PR 6: Step 7 cleanup and documentation removal.
 
 ## 11. Future Work: Taint Tracking
 
