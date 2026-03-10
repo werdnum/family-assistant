@@ -53,6 +53,10 @@ dependencies = [
     # CalDAV client library
     "vobject>=0.9.6",
     # For parsing VCALENDAR data
+    "icalendar>=6.0.0",
+    # Robust iCalendar parsing
+    "recurring-ical-events>=3.0.0",
+    # RRULE expansion for iCal URL feeds
     "httpx>=0.27.0",
     # For fetching iCal URLs asynchronously
     "telegramify-markdown>=0.5.1",

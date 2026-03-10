@@ -1,0 +1,308 @@
+BEGIN:VCALENDAR
+VERSION:2.0
+PRODID:-//Calendar Labs//Calendar 1.0//EN
+CALSCALE:GREGORIAN
+METHOD:PUBLISH
+X-WR-CALNAME:New Zealand Holidays
+X-WR-TIMEZONE:UTC
+BEGIN:VEVENT
+SUMMARY:New Year's Day
+DTSTART;VALUE=DATE:20250101
+DTEND;VALUE=DATE:20250101
+LOCATION:New Zealand
+DESCRIPTION:Visit https://calendarlabs.com/holidays/us/new-years-day.php to know more about New Year's Day. \n\n Like us on Facebook: http://fb.com/calendarlabs to get updates
+UID:695b8b5938f621767607129@calendarlabs.com
+DTSTAMP:20260105T045849Z
+STATUS:CONFIRMED
+TRANSP:TRANSPARENT
+SEQUENCE:0
+END:VEVENT
+BEGIN:VEVENT
+SUMMARY:Day after New Year's Day
+DTSTART;VALUE=DATE:20250102
+DTEND;VALUE=DATE:20250102
+LOCATION:New Zealand
+DESCRIPTION:Visit https://calendarlabs.com/holidays/us/new-years-day.php to know more about Day after New Year's Day. \n\n Like us on Facebook: http://fb.com/calendarlabs to get updates
+UID:695b8b5938f741767607129@calendarlabs.com
+DTSTAMP:20260105T045849Z
+STATUS:CONFIRMED
+TRANSP:TRANSPARENT
+SEQUENCE:0
+END:VEVENT
+BEGIN:VEVENT
+SUMMARY:Waitangi Day
+DTSTART;VALUE=DATE:20250206
+DTEND;VALUE=DATE:20250206
+LOCATION:New Zealand
+DESCRIPTION:Visit https://calendarlabs.com/holidays/new-zealand/waitangi-day.php to know more about Waitangi Day. \n\n Like us on Facebook: http://fb.com/calendarlabs to get updates
+UID:695b8b5938f811767607129@calendarlabs.com
+DTSTAMP:20260105T045849Z
+STATUS:CONFIRMED
+TRANSP:TRANSPARENT
+SEQUENCE:0
+END:VEVENT
+BEGIN:VEVENT
+SUMMARY:Good Friday
+DTSTART;VALUE=DATE:20250418
+DTEND;VALUE=DATE:20250418
+LOCATION:New Zealand
+DESCRIPTION:Visit https://calendarlabs.com/holidays/us/good-friday.php to know more about Good Friday. \n\n Like us on Facebook: http://fb.com/calendarlabs to get updates
+UID:695b8b5938f8c1767607129@calendarlabs.com
+DTSTAMP:20260105T045849Z
+STATUS:CONFIRMED
+TRANSP:TRANSPARENT
+SEQUENCE:0
+END:VEVENT
+BEGIN:VEVENT
+SUMMARY:Easter
+DTSTART;VALUE=DATE:20250420
+DTEND;VALUE=DATE:20250420
+LOCATION:New Zealand
+DESCRIPTION:Visit https://calendarlabs.com/holidays/us/easter.php to know more about Easter. \n\n Like us on Facebook: http://fb.com/calendarlabs to get updates
+UID:695b8b5938f971767607129@calendarlabs.com
+DTSTAMP:20260105T045849Z
+STATUS:CONFIRMED
+TRANSP:TRANSPARENT
+SEQUENCE:0
+END:VEVENT
+BEGIN:VEVENT
+SUMMARY:Easter Monday
+DTSTART;VALUE=DATE:20250421
+DTEND;VALUE=DATE:20250421
+LOCATION:New Zealand
+DESCRIPTION:Visit https://calendarlabs.com/holidays/christian/easter-monday.php to know more about Easter Monday. \n\n Like us on Facebook: http://fb.com/calendarlabs to get updates
+UID:695b8b5938fa31767607129@calendarlabs.com
+DTSTAMP:20260105T045849Z
+STATUS:CONFIRMED
+TRANSP:TRANSPARENT
+SEQUENCE:0
+END:VEVENT
+BEGIN:VEVENT
+SUMMARY:ANZAC Day
+DTSTART;VALUE=DATE:20250425
+DTEND;VALUE=DATE:20250425
+LOCATION:New Zealand
+DESCRIPTION:Visit https://calendarlabs.com/holidays/australia/anzac-day.php to know more about ANZAC Day. \n\n Like us on Facebook: http://fb.com/calendarlabs to get updates
+UID:695b8b5938fae1767607129@calendarlabs.com
+DTSTAMP:20260105T045849Z
+STATUS:CONFIRMED
+TRANSP:TRANSPARENT
+SEQUENCE:0
+END:VEVENT
+BEGIN:VEVENT
+SUMMARY:King's Birthday
+DTSTART;VALUE=DATE:20250602
+DTEND;VALUE=DATE:20250602
+LOCATION:New Zealand
+DESCRIPTION:Visit https://calendarlabs.com/holidays/new-zealand/kings-birthday.php to know more about King's Birthday. \n\n Like us on Facebook: http://fb.com/calendarlabs to get updates
+UID:695b8b5938fb91767607129@calendarlabs.com
+DTSTAMP:20260105T045849Z
+STATUS:CONFIRMED
+TRANSP:TRANSPARENT
+SEQUENCE:0
+END:VEVENT
+BEGIN:VEVENT
+SUMMARY:Labour Day
+DTSTART;VALUE=DATE:20251027
+DTEND;VALUE=DATE:20251027
+LOCATION:New Zealand
+DESCRIPTION:Visit https://calendarlabs.com/holidays/new-zealand/labor-day.php to know more about Labour Day. \n\n Like us on Facebook: http://fb.com/calendarlabs to get updates
+UID:695b8b5938fc41767607129@calendarlabs.com
+DTSTAMP:20260105T045849Z
+STATUS:CONFIRMED
+TRANSP:TRANSPARENT
+SEQUENCE:0
+END:VEVENT
+BEGIN:VEVENT
+SUMMARY:Christmas Day
+DTSTART;VALUE=DATE:20251225
+DTEND;VALUE=DATE:20251225
+LOCATION:New Zealand
+DESCRIPTION:Visit https://calendarlabs.com/holidays/us/christmas.php to know more about Christmas Day. \n\n Like us on Facebook: http://fb.com/calendarlabs to get updates
+UID:695b8b5938fd01767607129@calendarlabs.com
+DTSTAMP:20260105T045849Z
+STATUS:CONFIRMED
+TRANSP:TRANSPARENT
+SEQUENCE:0
+END:VEVENT
+BEGIN:VEVENT
+SUMMARY:Boxing Day
+DTSTART;VALUE=DATE:20251226
+DTEND;VALUE=DATE:20251226
+LOCATION:New Zealand
+DESCRIPTION:Visit https://calendarlabs.com/holidays/canada/boxing-day.php to know more about Boxing Day. \n\n Like us on Facebook: http://fb.com/calendarlabs to get updates
+UID:695b8b5938fdb1767607129@calendarlabs.com
+DTSTAMP:20260105T045849Z
+STATUS:CONFIRMED
+TRANSP:TRANSPARENT
+SEQUENCE:0
+END:VEVENT
+BEGIN:VEVENT
+SUMMARY:New Year's Eve
+DTSTART;VALUE=DATE:20251231
+DTEND;VALUE=DATE:20251231
+LOCATION:New Zealand
+DESCRIPTION:Visit https://calendarlabs.com/holidays/us/new-years-day.php to know more about New Year's Eve. \n\n Like us on Facebook: http://fb.com/calendarlabs to get updates
+UID:695b8b5938fe71767607129@calendarlabs.com
+DTSTAMP:20260105T045849Z
+STATUS:CONFIRMED
+TRANSP:TRANSPARENT
+SEQUENCE:0
+END:VEVENT
+BEGIN:VEVENT
+SUMMARY:New Year's Day
+DTSTART;VALUE=DATE:20260101
+DTEND;VALUE=DATE:20260101
+LOCATION:New Zealand
+DESCRIPTION:Visit https://calendarlabs.com/holidays/us/new-years-day.php to know more about New Year's Day. \n\n Like us on Facebook: http://fb.com/calendarlabs to get updates
+UID:695b8b5938ff31767607129@calendarlabs.com
+DTSTAMP:20260105T045849Z
+STATUS:CONFIRMED
+TRANSP:TRANSPARENT
+SEQUENCE:0
+END:VEVENT
+BEGIN:VEVENT
+SUMMARY:Day after New Year's Day
+DTSTART;VALUE=DATE:20260102
+DTEND;VALUE=DATE:20260102
+LOCATION:New Zealand
+DESCRIPTION:Visit https://calendarlabs.com/holidays/us/new-years-day.php to know more about Day after New Year's Day. \n\n Like us on Facebook: http://fb.com/calendarlabs to get updates
+UID:695b8b5938fff1767607129@calendarlabs.com
+DTSTAMP:20260105T045849Z
+STATUS:CONFIRMED
+TRANSP:TRANSPARENT
+SEQUENCE:0
+END:VEVENT
+BEGIN:VEVENT
+SUMMARY:Waitangi Day
+DTSTART;VALUE=DATE:20260206
+DTEND;VALUE=DATE:20260206
+LOCATION:New Zealand
+DESCRIPTION:Visit https://calendarlabs.com/holidays/new-zealand/waitangi-day.php to know more about Waitangi Day. \n\n Like us on Facebook: http://fb.com/calendarlabs to get updates
+UID:695b8b593900a1767607129@calendarlabs.com
+DTSTAMP:20260105T045849Z
+STATUS:CONFIRMED
+TRANSP:TRANSPARENT
+SEQUENCE:0
+END:VEVENT
+BEGIN:VEVENT
+SUMMARY:Good Friday
+DTSTART;VALUE=DATE:20260403
+DTEND;VALUE=DATE:20260403
+LOCATION:New Zealand
+DESCRIPTION:Visit https://calendarlabs.com/holidays/us/good-friday.php to know more about Good Friday. \n\n Like us on Facebook: http://fb.com/calendarlabs to get updates
+UID:695b8b59390161767607129@calendarlabs.com
+DTSTAMP:20260105T045849Z
+STATUS:CONFIRMED
+TRANSP:TRANSPARENT
+SEQUENCE:0
+END:VEVENT
+BEGIN:VEVENT
+SUMMARY:Easter Monday
+DTSTART;VALUE=DATE:20260406
+DTEND;VALUE=DATE:20260406
+LOCATION:New Zealand
+DESCRIPTION:Visit https://calendarlabs.com/holidays/christian/easter-monday.php to know more about Easter Monday. \n\n Like us on Facebook: http://fb.com/calendarlabs to get updates
+UID:695b8b59390221767607129@calendarlabs.com
+DTSTAMP:20260105T045849Z
+STATUS:CONFIRMED
+TRANSP:TRANSPARENT
+SEQUENCE:0
+END:VEVENT
+BEGIN:VEVENT
+SUMMARY:ANZAC Day
+DTSTART;VALUE=DATE:20260425
+DTEND;VALUE=DATE:20260425
+LOCATION:New Zealand
+DESCRIPTION:Visit https://calendarlabs.com/holidays/australia/anzac-day.php to know more about ANZAC Day. \n\n Like us on Facebook: http://fb.com/calendarlabs to get updates
+UID:695b8b593902d1767607129@calendarlabs.com
+DTSTAMP:20260105T045849Z
+STATUS:CONFIRMED
+TRANSP:TRANSPARENT
+SEQUENCE:0
+END:VEVENT
+BEGIN:VEVENT
+SUMMARY:ANZAC Day Holiday
+DTSTART;VALUE=DATE:20260427
+DTEND;VALUE=DATE:20260427
+LOCATION:New Zealand
+DESCRIPTION:Visit https://calendarlabs.com/holidays/australia/anzac-day.php to know more about ANZAC Day Holiday. \n\n Like us on Facebook: http://fb.com/calendarlabs to get updates
+UID:695b8b59390391767607129@calendarlabs.com
+DTSTAMP:20260105T045849Z
+STATUS:CONFIRMED
+TRANSP:TRANSPARENT
+SEQUENCE:0
+END:VEVENT
+BEGIN:VEVENT
+SUMMARY:King's Birthday
+DTSTART;VALUE=DATE:20260601
+DTEND;VALUE=DATE:20260601
+LOCATION:New Zealand
+DESCRIPTION:Visit https://calendarlabs.com/holidays/new-zealand/kings-birthday.php to know more about King's Birthday. \n\n Like us on Facebook: http://fb.com/calendarlabs to get updates
+UID:695b8b59390461767607129@calendarlabs.com
+DTSTAMP:20260105T045849Z
+STATUS:CONFIRMED
+TRANSP:TRANSPARENT
+SEQUENCE:0
+END:VEVENT
+BEGIN:VEVENT
+SUMMARY:Matariki
+DTSTART;VALUE=DATE:20260710
+DTEND;VALUE=DATE:20260710
+LOCATION:New Zealand
+DESCRIPTION:Visit https://calendarlabs.com/holidays/new-zealand/matariki.php to know more about Matariki. \n\n Like us on Facebook: http://fb.com/calendarlabs to get updates
+UID:695b8b59390521767607129@calendarlabs.com
+DTSTAMP:20260105T045849Z
+STATUS:CONFIRMED
+TRANSP:TRANSPARENT
+SEQUENCE:0
+END:VEVENT
+BEGIN:VEVENT
+SUMMARY:Labour Day
+DTSTART;VALUE=DATE:20261026
+DTEND;VALUE=DATE:20261026
+LOCATION:New Zealand
+DESCRIPTION:Visit https://calendarlabs.com/holidays/new-zealand/labor-day.php to know more about Labour Day. \n\n Like us on Facebook: http://fb.com/calendarlabs to get updates
+UID:695b8b593905e1767607129@calendarlabs.com
+DTSTAMP:20260105T045849Z
+STATUS:CONFIRMED
+TRANSP:TRANSPARENT
+SEQUENCE:0
+END:VEVENT
+BEGIN:VEVENT
+SUMMARY:Christmas Day
+DTSTART;VALUE=DATE:20261225
+DTEND;VALUE=DATE:20261225
+LOCATION:New Zealand
+DESCRIPTION:Visit https://calendarlabs.com/holidays/us/christmas.php to know more about Christmas Day. \n\n Like us on Facebook: http://fb.com/calendarlabs to get updates
+UID:695b8b593906b1767607129@calendarlabs.com
+DTSTAMP:20260105T045849Z
+STATUS:CONFIRMED
+TRANSP:TRANSPARENT
+SEQUENCE:0
+END:VEVENT
+BEGIN:VEVENT
+SUMMARY:Boxing Day
+DTSTART;VALUE=DATE:20261226
+DTEND;VALUE=DATE:20261226
+LOCATION:New Zealand
+DESCRIPTION:Visit https://calendarlabs.com/holidays/canada/boxing-day.php to know more about Boxing Day. \n\n Like us on Facebook: http://fb.com/calendarlabs to get updates
+UID:695b8b59390771767607129@calendarlabs.com
+DTSTAMP:20260105T045849Z
+STATUS:CONFIRMED
+TRANSP:TRANSPARENT
+SEQUENCE:0
+END:VEVENT
+BEGIN:VEVENT
+SUMMARY:Boxing Day Holiday
+DTSTART;VALUE=DATE:20261228
+DTEND;VALUE=DATE:20261228
+LOCATION:New Zealand
+DESCRIPTION:Visit https://calendarlabs.com/holidays/canada/boxing-day.php to know more about Boxing Day Holiday. \n\n Like us on Facebook: http://fb.com/calendarlabs to get updates
+UID:695b8b59390841767607129@calendarlabs.com
+DTSTAMP:20260105T045849Z
+STATUS:CONFIRMED
+TRANSP:TRANSPARENT
+SEQUENCE:0
+END:VEVENT
+END:VCALENDAR
