@@ -73,9 +73,9 @@ It now incorporates external analysis from:
 
   - Impact: Prompt template mistakes can still pass through as literal text instead of failing fast,
     even though sync/stream divergence has been removed.
-  - Status (2026-03-10): Narrowed. Sync/stream inconsistency is fixed because both paths share
-    `_prepare_turn_messages_for_llm(...)` and `_render_system_prompt(...)`. The remaining issue is
-    that unknown placeholders are logged and preserved as literals rather than rejected.
+  - Status (2026-03-10): Complete in merged code. `_render_system_prompt(...)` now rejects unknown
+    placeholders with a `ValueError` and requires literal braces to be escaped explicitly with `{{`
+    and `}}`.
   - References: `service.py:303`, `service.py:500`, `service.py:832`
   - Sources: `[Cdx][G677][C678]` (corroborated by both PRs)
 
@@ -116,9 +116,9 @@ It now incorporates external analysis from:
 
   - Impact: If an invalid tool call without an ID ever reaches `ToolExecutor`, the generated
     `ToolMessage` still uses a placeholder ID that may not match provider correlation semantics.
-  - Status (2026-03-10): Narrowed. The old parallel loop safety-net path is gone and unexpected
-    executor failures now propagate. The remaining issue is the local defensive fallback in
-    `ToolExecutor._build_error_result(...)` for invalid tool-call structures.
+  - Status (2026-03-10): Complete in merged code. `ToolExecutor.execute(...)` now enforces non-empty
+    tool-call IDs and function names as fail-fast invariants, and `_build_error_result()` only
+    accepts validated call IDs instead of fabricating placeholders.
   - References: `tool_execution.py:203`, `tool_execution.py:508`
   - Sources: `[C678]` (Added from PR #678)
 

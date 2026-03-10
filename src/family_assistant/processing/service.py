@@ -291,7 +291,7 @@ class ProcessingService:
             "profile_id": self.service_config.id,
         }
 
-        placeholder_pattern = r"\{([a-zA-Z_][a-zA-Z0-9_]*)\}"
+        placeholder_pattern = r"(?<!\{)\{([a-zA-Z_][a-zA-Z0-9_]*)\}(?!\})"
         all_placeholders = sorted(
             set(re.findall(placeholder_pattern, system_prompt_template))
         )
@@ -306,12 +306,13 @@ class ProcessingService:
             if placeholder not in format_args
         ]
         if unknown_placeholders:
-            logger.warning(
-                "System prompt template contains unknown placeholder-like tokens; keeping them as literals: %s",
-                ", ".join(unknown_placeholders),
+            unknown_placeholder_list = ", ".join(unknown_placeholders)
+            raise ValueError(
+                "System prompt template contains unknown placeholders: "
+                f"{unknown_placeholder_list}. Escape literal braces with '{{' and '}}'."
             )
 
-        # Escape literal braces while preserving valid placeholders.
+        # Preserve supported placeholders while escaping every other brace sequence.
         template_with_markers = system_prompt_template
         for index, placeholder in enumerate(placeholders):
             marker = f"__PLACEHOLDER_{index}__"
@@ -319,7 +320,15 @@ class ProcessingService:
                 f"{{{placeholder}}}",
                 marker,
             )
-        escaped_template = template_with_markers.replace("{", "{{").replace("}", "}}")
+        escaped_template = (
+            template_with_markers
+            .replace("{{", "__LITERAL_OPEN__")
+            .replace("}}", "__LITERAL_CLOSE__")
+            .replace("{", "{{")
+            .replace("}", "}}")
+            .replace("__LITERAL_OPEN__", "{{")
+            .replace("__LITERAL_CLOSE__", "}}")
+        )
         for index, placeholder in enumerate(placeholders):
             marker = f"__PLACEHOLDER_{index}__"
             escaped_template = escaped_template.replace(marker, f"{{{placeholder}}}")
