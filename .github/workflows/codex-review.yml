@@ -19,7 +19,7 @@ defaults:
 jobs:
   review:
     if: |-
-      ${{ github.event.pull_request.head.repo.fork == false && !github.event.pull_request.draft }}
+      github.event.pull_request.head.repo.fork == false && !github.event.pull_request.draft
     runs-on: 'ubuntu-latest'
     timeout-minutes: 30
     permissions:
@@ -35,35 +35,50 @@ jobs:
           ref: 'refs/pull/${{ github.event.pull_request.number }}/merge'
 
       - name: 'Pre-fetch base and head refs for the pull request'
+        env:
+          BASE_REF: '${{ github.event.pull_request.base.ref }}'
+          PR_NUMBER: '${{ github.event.pull_request.number }}'
         run: |-
           git fetch --no-tags origin \
-            '${{ github.event.pull_request.base.ref }}' \
-            '+refs/pull/${{ github.event.pull_request.number }}/head'
+            "${BASE_REF}" \
+            "+refs/pull/${PR_NUMBER}/head"
+
+      - name: 'Build Codex review prompt'
+        env:
+          BASE_SHA: '${{ github.event.pull_request.base.sha }}'
+          HEAD_SHA: '${{ github.event.pull_request.head.sha }}'
+          PR_NUMBER: '${{ github.event.pull_request.number }}'
+          PR_TITLE: '${{ github.event.pull_request.title }}'
+          PR_BODY: '${{ github.event.pull_request.body }}'
+        run: |-
+          {
+            echo "This is PR #${PR_NUMBER} for ${GITHUB_REPOSITORY}."
+            echo
+            echo "Review ONLY the changes introduced by this pull request."
+            echo "Focus on correctness issues, regressions, missing tests, and maintainability concerns."
+            echo "Keep feedback concise and actionable."
+            echo
+            echo "Pull request title and body:"
+            echo "----"
+            echo "${PR_TITLE}"
+            echo "${PR_BODY}"
+            echo
+            echo "Unified diff for this pull request:"
+            echo "----"
+            git diff --no-color "${BASE_SHA}...${HEAD_SHA}"
+          } > '.codex-review-prompt.txt'
 
       - name: 'Run Codex pull request review'
         id: 'run_codex'
         uses: 'openai/codex-action@v1'
         with:
           openai-api-key: '${{ secrets.OPENAI_API_KEY }}'
-          prompt: |-
-            This is PR #${{ github.event.pull_request.number }} for ${{ github.repository }}.
-
-            Review ONLY the changes introduced by this pull request.
-            Use this range:
-            git log --oneline ${{ github.event.pull_request.base.sha }}...${{ github.event.pull_request.head.sha }}
-
-            Focus on correctness issues, regressions, missing tests, and maintainability concerns.
-            Keep feedback concise and actionable.
-
-            Pull request title and body:
-            ----
-            ${{ github.event.pull_request.title }}
-            ${{ github.event.pull_request.body }}
+          prompt-file: '.codex-review-prompt.txt'
 
   post_feedback:
     needs: 'review'
     if: |-
-      ${{ needs.review.outputs.final_message != '' }}
+      needs.review.outputs.final_message != ''
     runs-on: 'ubuntu-latest'
     permissions:
       issues: 'write'
