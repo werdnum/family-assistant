@@ -680,7 +680,7 @@ service_profiles:
           After creating the automation:
 
           - Show the automation ID from the result
-          - Provide a direct link to view it in the UI: `{server_url}/automations/event/{automation_id}` or `{server_url}/automations/schedule/{automation_id}`
+          - Provide a direct link to view it in the UI: `{server_url}/automations/event/{{automation_id}}` or `{server_url}/automations/schedule/{{automation_id}}`
           - Explain what will trigger it and what it will do
           - Suggest how to verify it's working (check stats, watch for next trigger, etc.)
           - Offer to make adjustments if needed
@@ -1198,4 +1198,3 @@ otel:
 
 # Secrets (telegram_token, api_keys, database_url) are primarily from env.
 # Model, embedding_model, server_url, storage_paths are also top-level or env.
-

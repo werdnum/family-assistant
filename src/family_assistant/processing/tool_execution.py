@@ -186,8 +186,8 @@ class ToolExecutor:
     @staticmethod
     def _build_error_result(
         *,
-        call_id: str | None,
-        function_name: str | None,
+        call_id: str,
+        function_name: str,
         error_content: str,
         error_traceback: str,
     ) -> ToolExecutionResult:
@@ -200,10 +200,10 @@ class ToolExecutor:
                 error=error_traceback,
             ),
             llm_message=ToolMessage(
-                tool_call_id=call_id or "invalid_tool_call_missing_id",
+                tool_call_id=call_id,
                 content=error_content,
                 error_traceback=error_traceback,
-                name=function_name or "unknown_function",
+                name=function_name,
             ),
             auto_attachment_ids=None,
             explicit_attachment_ids=None,
@@ -494,32 +494,24 @@ class ToolExecutor:
             ToolExecutionResult with stream event, LLM message, and attachment IDs
         """
         call_id = tool_call_item_obj.id
+        if not call_id:
+            raise ValueError("Tool call must include a non-empty id")
+
         function_name = tool_call_item_obj.function.name
+        if not function_name:
+            raise ValueError(
+                f"Tool call '{call_id}' must include a non-empty function name"
+            )
+
         function_args = tool_call_item_obj.function.arguments
 
         with tracer.start_as_current_span(
             f"tool.execute.{function_name}",
             attributes={
                 "tool.name": function_name,
-                "tool.call_id": call_id or "",
+                "tool.call_id": call_id,
             },
         ) as span:
-            # Validate tool call
-            if not call_id or not function_name:
-                logger.error(
-                    f"Invalid tool call: id='{call_id}', name='{function_name}'"
-                )
-                error_content = "Error: Invalid tool call structure."
-                error_traceback = "Invalid tool call structure received from LLM."
-                func_name = function_name or "unknown_function"
-
-                return self._build_error_result(
-                    call_id=call_id,
-                    function_name=func_name,
-                    error_content=error_content,
-                    error_traceback=error_traceback,
-                )
-
             # Parse arguments
             try:
                 arguments = self._parse_arguments(function_name, function_args)

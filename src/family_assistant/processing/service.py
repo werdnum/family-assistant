@@ -4,6 +4,7 @@ import logging
 import re
 import traceback
 import uuid
+from string import Formatter
 from typing import TYPE_CHECKING
 
 from opentelemetry import trace
@@ -291,38 +292,48 @@ class ProcessingService:
             "profile_id": self.service_config.id,
         }
 
-        placeholder_pattern = r"\{([a-zA-Z_][a-zA-Z0-9_]*)\}"
-        all_placeholders = sorted(
-            set(re.findall(placeholder_pattern, system_prompt_template))
-        )
-        placeholders = [
-            placeholder
-            for placeholder in all_placeholders
-            if placeholder in format_args
-        ]
-        unknown_placeholders = [
-            placeholder
-            for placeholder in all_placeholders
-            if placeholder not in format_args
-        ]
-        if unknown_placeholders:
-            logger.warning(
-                "System prompt template contains unknown placeholder-like tokens; keeping them as literals: %s",
-                ", ".join(unknown_placeholders),
+        formatter = Formatter()
+        escaped_template_parts: list[str] = []
+        unknown_placeholders: set[str] = set()
+        simple_placeholder_pattern = re.compile(r"^[a-zA-Z_][a-zA-Z0-9_]*$")
+
+        for literal_text, field_name, format_spec, conversion in formatter.parse(
+            system_prompt_template
+        ):
+            escaped_template_parts.append(
+                literal_text.replace("{", "{{").replace("}", "}}")
+            )
+            if field_name is None:
+                continue
+
+            if (
+                simple_placeholder_pattern.fullmatch(field_name)
+                and not format_spec
+                and conversion is None
+            ):
+                if field_name not in format_args:
+                    unknown_placeholders.add(field_name)
+                    continue
+                escaped_template_parts.append(f"{{{field_name}}}")
+                continue
+
+            literal_field = "{" + field_name
+            if conversion is not None:
+                literal_field += f"!{conversion}"
+            if format_spec:
+                literal_field += f":{format_spec}"
+            literal_field += "}"
+            escaped_template_parts.append(
+                literal_field.replace("{", "{{").replace("}", "}}")
             )
 
-        # Escape literal braces while preserving valid placeholders.
-        template_with_markers = system_prompt_template
-        for index, placeholder in enumerate(placeholders):
-            marker = f"__PLACEHOLDER_{index}__"
-            template_with_markers = template_with_markers.replace(
-                f"{{{placeholder}}}",
-                marker,
+        if unknown_placeholders:
+            unknown_placeholder_list = ", ".join(sorted(unknown_placeholders))
+            raise ValueError(
+                "System prompt template contains unknown placeholders: "
+                f"{unknown_placeholder_list}. Escape literal braces with '{{' and '}}'."
             )
-        escaped_template = template_with_markers.replace("{", "{{").replace("}", "}}")
-        for index, placeholder in enumerate(placeholders):
-            marker = f"__PLACEHOLDER_{index}__"
-            escaped_template = escaped_template.replace(marker, f"{{{placeholder}}}")
+        escaped_template = "".join(escaped_template_parts)
 
         try:
             final_system_prompt = escaped_template.format_map(format_args).strip()

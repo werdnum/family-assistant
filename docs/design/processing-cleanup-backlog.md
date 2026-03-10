@@ -30,54 +30,76 @@ It now incorporates external analysis from:
 - **01. Stream path drops `user_id` and `subconversation_id` before LLM processing.**
 
   - Impact: Wrong tool context/permissions and broken delegated-subconversation behavior.
+  - Status (2026-03-10): Complete in merged code. Stream interactions now pass both `user_id` and
+    `subconversation_id` through the shared turn-preparation path into `process_message_stream` and
+    `LLMStreamingLoop.run_stream(...)`, so tool execution receives the correct context.
   - References: `service.py:961`
   - Sources: `[Cdx]`
 
 - **02. Sync path drops `chat_interfaces` before LLM processing.**
 
   - Impact: Sync/stream mismatch for cross-interface tool behavior.
+  - Status (2026-03-10): Complete in merged code. `handle_chat_interaction(...)` now passes
+    `chat_interfaces` into `process_message(...)`, and the sync path forwards them into
+    `LLMStreamingLoop.run(...)`.
   - References: `service.py:580`
   - Sources: `[Cdx]`
 
 - **03. Reply threading logic differs between sync and stream paths.**
 
   - Impact: Different thread context depending on endpoint used.
+  - Status (2026-03-10): Complete in merged code. Sync and stream now share reply-thread resolution
+    and initial-message construction through `_prepare_turn_messages_for_llm(...)`.
   - References: `service.py:330`, `service.py:749`
   - Sources: `[Cdx]`
 
 - **04. History fetch errors are swallowed with `raw_history_messages = []`.**
 
   - Impact: Silent context loss and confusing downstream behavior.
+  - Status (2026-03-10): Complete in merged code. History loading now calls
+    `db_context.message_history.get_recent(...)` directly with no broad catch/fallback to `[]`.
   - References: `service.py:399`, `service.py:828`
   - Sources: `[Cdx][G677][C678]` (corroborated by both PRs)
 
 - **05. Thread fetch errors are swallowed and processing continues with partial context.**
 
   - Impact: Hidden failure with inconsistent conversation grounding.
+  - Status (2026-03-10): Complete in merged code. Full-thread loading now calls
+    `db_context.message_history.get_by_thread_id(...)` directly with no catch-and-continue path.
   - References: `service.py:458`, `service.py:865`
   - Sources: `[Cdx][G677][C678]` (corroborated by both PRs)
 
-- **06. Prompt formatting is permissive and inconsistent across sync/stream.**
+- **06. System prompt formatting still tolerates unknown placeholders by keeping them as literals.**
 
-  - Impact: Silent prompt corruption and divergent behavior by code path.
-  - References: `service.py:515`, `service.py:910`
+  - Impact: Prompt template mistakes can still pass through as literal text instead of failing fast,
+    even though sync/stream divergence has been removed.
+  - Status (2026-03-10): Complete in merged code. `_render_system_prompt(...)` now rejects unknown
+    placeholders with a `ValueError` and requires literal braces to be escaped explicitly with `{{`
+    and `}}`.
+  - References: `service.py:303`, `service.py:500`, `service.py:832`
   - Sources: `[Cdx][G677][C678]` (corroborated by both PRs)
 
 - **07. Attachment content-part processing can drop user input on exceptions.**
 
   - Impact: Silent loss of user-provided attachments.
+  - Status (2026-03-10): Complete in merged code. Attachment content-part processing now fails fast
+    on missing registry, missing attachment IDs, missing metadata, or missing content.
   - References: `attachments.py:91`
   - Sources: `[Cdx][G677][C678]` (corroborated by both PRs)
 
 - **08. URL-to-data-URI conversion swallows failures and keeps internal URLs.**
 
   - Impact: External providers cannot fetch internal attachment URLs.
+  - Status (2026-03-10): Complete in merged code. Internal attachment URLs now raise on invalid
+    format or missing files instead of silently remaining as internal URLs.
   - References: `attachments.py:223`
   - Sources: `[Cdx][G677][C678]` (corroborated by both PRs)
 
 - **09. Stream error-type mapping does not align with provider metadata values.**
 
   - Impact: Typed provider errors (rate limit/auth/context) are lost.
+  - Status (2026-03-10): Complete in merged code. Stream error mapping now normalizes canonical and
+    provider-style snake_case values such as `rate_limit`, `model_not_found`, and `context_length`.
   - References: `processing/utils.py:28`, `processing/utils.py:159`,
     `llm/providers/openai_client.py:591`, `llm/providers/anthropic_client.py:908`
   - Sources: `[Cdx]`
@@ -85,24 +107,34 @@ It now incorporates external analysis from:
 - **10. Final-iteration tool calls are ignored.**
 
   - Impact: Side-effecting tool calls may be silently skipped on last iteration.
+  - Status (2026-03-10): Complete in merged code. Final-iteration tool calls now emit explicit
+    non-executed tool-result messages instead of disappearing silently.
   - References: `llm_loop.py:505`
   - Sources: `[Cdx]`
 
-- **11. Parallel tool-execution safety net fabricates tool-call IDs on unexpected errors.**
+- **11. Defensive invalid-tool-call fallback still fabricates a placeholder tool-call ID.**
 
-  - Impact: Generated tool messages can fail provider/tool-call correlation semantics.
-  - References: `llm_loop.py:584`
+  - Impact: If an invalid tool call without an ID ever reaches `ToolExecutor`, the generated
+    `ToolMessage` still uses a placeholder ID that may not match provider correlation semantics.
+  - Status (2026-03-10): Complete in merged code. `ToolExecutor.execute(...)` now enforces non-empty
+    tool-call IDs and function names as fail-fast invariants, and `_build_error_result()` only
+    accepts validated call IDs instead of fabricating placeholders.
+  - References: `tool_execution.py:203`, `tool_execution.py:508`
   - Sources: `[C678]` (Added from PR #678)
 
 - **12. Context provider aggregation catches broad exceptions and continues silently.**
 
   - Impact: Broken providers are hidden; context quality degrades invisibly.
+  - Status (2026-03-10): Complete in merged code. `ContextPreparer.aggregate_context()` now raises a
+    contextual `RuntimeError` instead of catching and continuing.
   - References: `context.py:103`
   - Sources: `[Cdx][G677][C678]` (corroborated by both PRs)
 
 - **13. Errors are persisted as `AssistantMessage` rather than `ErrorMessage`.**
 
   - Impact: History cannot clearly distinguish failures from normal assistant replies.
+  - Status (2026-03-10): Complete in merged code. Processing errors are now persisted via
+    `_persist_error_history_message(...)` as `ErrorMessage`.
   - References: `service.py:648`
   - Sources: `[C678]` (Added from PR #678)
 

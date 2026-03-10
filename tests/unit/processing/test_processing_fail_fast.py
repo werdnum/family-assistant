@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from datetime import timedelta
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
@@ -9,6 +10,7 @@ from unittest.mock import AsyncMock, MagicMock
 from zoneinfo import ZoneInfo
 
 import pytest
+import yaml
 
 from family_assistant.config_models import AppConfig, ToolsConfig
 from family_assistant.delegation_security import DelegationSecurityLevel
@@ -491,6 +493,78 @@ async def test_context_aggregate_context_raises_on_provider_failure() -> None:
 
 
 @pytest.mark.no_db
+def test_render_system_prompt_raises_on_unknown_placeholder() -> None:
+    service = _make_service()
+    service.service_config.prompts["system_prompt"] = (
+        "Link: {server_url}/automations/{automation_id}"
+    )
+
+    with pytest.raises(
+        ValueError,
+        match="System prompt template contains unknown placeholders: automation_id",
+    ):
+        service._render_system_prompt("tester", "")
+
+
+@pytest.mark.no_db
+def test_render_system_prompt_allows_escaped_literal_braces() -> None:
+    service = _make_service()
+    service.service_config.prompts["system_prompt"] = (
+        "Link: {server_url}/automations/{{automation_id}}"
+    )
+
+    rendered_prompt = service._render_system_prompt("tester", "")
+
+    assert "http://testserver/automations/{automation_id}" in rendered_prompt
+
+
+@pytest.mark.no_db
+def test_render_system_prompt_supports_placeholder_adjacent_to_escaped_braces() -> None:
+    service = _make_service()
+    service.service_config.prompts["system_prompt"] = "Wrapped: {{{server_url}}}"
+
+    rendered_prompt = service._render_system_prompt("tester", "")
+
+    assert "{http://testserver}" in rendered_prompt
+
+
+@pytest.mark.no_db
+def test_default_system_prompt_templates_only_use_supported_placeholders() -> None:
+    defaults_path = Path(__file__).resolve().parents[3] / "defaults.yaml"
+    with defaults_path.open(encoding="utf-8") as defaults_file:
+        config = yaml.safe_load(defaults_file)
+
+    allowed_placeholders = {
+        "aggregated_other_context",
+        "current_time",
+        "profile_id",
+        "server_url",
+        "user_name",
+    }
+    invalid_placeholders_by_profile: dict[str, list[str]] = {}
+    placeholder_pattern = r"(?<!\{)\{([a-zA-Z_][a-zA-Z0-9_]*)\}(?!\})"
+
+    profile_configs = [
+        ("default_profile_settings", config["default_profile_settings"]),
+        *((profile["id"], profile) for profile in config.get("service_profiles", [])),
+    ]
+    for profile_id, profile_config in profile_configs:
+        processing_config = profile_config.get("processing_config") or {}
+        prompts = processing_config.get("prompts") or {}
+        system_prompt = prompts.get("system_prompt")
+        if not isinstance(system_prompt, str):
+            continue
+
+        placeholders = sorted(
+            set(re.findall(placeholder_pattern, system_prompt)) - allowed_placeholders
+        )
+        if placeholders:
+            invalid_placeholders_by_profile[profile_id] = placeholders
+
+    assert invalid_placeholders_by_profile == {}
+
+
+@pytest.mark.no_db
 @pytest.mark.asyncio
 async def test_process_content_parts_missing_attachment_id_raises() -> None:
     processor = AttachmentProcessor(
@@ -858,6 +932,29 @@ async def test_tool_executor_propagates_attach_to_response_metadata_failures() -
         ValueError,
         match="attach_to_response referenced unknown attachment",
     ):
+        await service.tool_executor.execute(
+            tool_call_item_obj=tool_call,
+            interface_type="test",
+            conversation_id="conv",
+            user_name="tester",
+            turn_id="turn",
+            db_context=MagicMock(),
+            chat_interface=None,
+            request_confirmation_callback=None,
+        )
+
+
+@pytest.mark.no_db
+@pytest.mark.asyncio
+async def test_tool_executor_rejects_missing_tool_call_id() -> None:
+    service = _make_service()
+    tool_call = ToolCallItem(
+        id="",
+        type="function",
+        function=ToolCallFunction(name="example_tool", arguments="{}"),
+    )
+
+    with pytest.raises(ValueError, match="Tool call must include a non-empty id"):
         await service.tool_executor.execute(
             tool_call_item_obj=tool_call,
             interface_type="test",
