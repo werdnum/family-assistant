@@ -278,6 +278,7 @@ class ProcessingService:
             "system_prompt",
             "You are a helpful assistant. Current time is {current_time}.",
         )
+        system_prompt_docs = self.service_config.prompts.get("system_prompt_docs", "")
         current_time_str = (
             self.clock
             .now()
@@ -339,6 +340,14 @@ class ProcessingService:
             final_system_prompt = escaped_template.format_map(format_args).strip()
         except ValueError as exc:
             raise ValueError(f"Failed to format system prompt template: {exc}") from exc
+
+        if isinstance(system_prompt_docs, str) and system_prompt_docs.strip():
+            if final_system_prompt:
+                final_system_prompt = (
+                    f"{final_system_prompt}\n{system_prompt_docs}".strip()
+                )
+            else:
+                final_system_prompt = system_prompt_docs.strip()
 
         return self.context_preparer.prepend_profile_preamble(final_system_prompt)
 

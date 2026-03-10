@@ -32,6 +32,8 @@ from .config_sources import deep_merge_dicts
 
 logger = logging.getLogger(__name__)
 
+SYSTEM_PROMPT_DOCS_KEY = "system_prompt_docs"
+
 # Default paths
 # defaults.yaml: Shipped with the application, contains default configuration
 # config.yaml: Operator-provided, overrides defaults.yaml
@@ -599,19 +601,14 @@ def resolve_service_profile(
                 )
                 loaded_content = load_user_documentation(include_docs)
                 if loaded_content:
-                    current_prompt = resolved["processing_config"]["prompts"].get(
-                        "system_prompt", ""
+                    resolved["processing_config"]["prompts"][SYSTEM_PROMPT_DOCS_KEY] = (
+                        loaded_content
                     )
-                    if current_prompt:
-                        resolved["processing_config"]["prompts"]["system_prompt"] = (
-                            current_prompt + "\n" + loaded_content
-                        )
-                    else:
-                        resolved["processing_config"]["prompts"]["system_prompt"] = (
-                            loaded_content
-                        )
                     logger.info(
-                        f"Appended {len(loaded_content)} chars of docs to system prompt for '{profile_id}'"
+                        "Loaded %s chars of docs for '%s' into prompts.%s",
+                        len(loaded_content),
+                        profile_id,
+                        SYSTEM_PROMPT_DOCS_KEY,
                     )
 
     # Replace tools_config entirely if defined

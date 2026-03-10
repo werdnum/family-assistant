@@ -12,6 +12,7 @@ from zoneinfo import ZoneInfo
 import pytest
 import yaml
 
+from family_assistant.config_loader import load_config
 from family_assistant.config_models import AppConfig, ToolsConfig
 from family_assistant.delegation_security import DelegationSecurityLevel
 from family_assistant.llm import (
@@ -526,6 +527,36 @@ def test_render_system_prompt_supports_placeholder_adjacent_to_escaped_braces() 
     rendered_prompt = service._render_system_prompt("tester", "")
 
     assert "{http://testserver}" in rendered_prompt
+
+
+@pytest.mark.no_db
+def test_all_processing_profile_system_prompts_can_be_rendered() -> None:
+    app_config = load_config(load_dotenv_file=False)
+
+    profile_processing_configs = [
+        (
+            "default_profile_settings",
+            app_config.default_profile_settings.processing_config,
+        ),
+        *(
+            (profile.id, profile.processing_config)
+            for profile in app_config.service_profiles
+        ),
+    ]
+
+    for profile_id, processing_config in profile_processing_configs:
+        service = _make_service()
+        service.service_config.id = profile_id
+        service.service_config.prompts = processing_config.prompts
+
+        rendered_prompt = service._render_system_prompt(
+            "tester", "Context with literal braces: {name}"
+        )
+
+        assert rendered_prompt
+
+        if profile_id == "automation_creation":
+            assert 'f"Hello {name}"' in rendered_prompt
 
 
 @pytest.mark.no_db
