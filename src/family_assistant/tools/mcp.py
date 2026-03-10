@@ -12,12 +12,20 @@ from typing import (
 import anyio
 
 if TYPE_CHECKING:
-    from collections.abc import Mapping
+    from collections.abc import Mapping, Sequence
 
     from mcp import ClientSession
 from mcp import ClientSession, StdioServerParameters, stdio_client
 from mcp.client.sse import sse_client  # Assuming sse_client is in mcp.client.sse
 from mcp.types import TextContent  # Import TextContent from mcp.types
+
+from family_assistant.tools.metadata import (
+    ToolDescriptor,
+    build_tool_descriptor,
+    derive_mcp_annotation_tags,
+    normalize_mcp_tool_metadata,
+    resolve_mcp_tool_tags,
+)
 
 # Import storage functions needed by local tools
 # Import the context from the new types file
@@ -58,6 +66,7 @@ class MCPToolsProvider:
         self._sessions: dict[str, ClientSession] = {}
         self._tool_map: dict[str, str] = {}  # Map tool name -> server_id
         self._definitions: list[ToolDefinition] = []
+        self._descriptors: list[ToolDescriptor] = []
         self._initialized = False
         self._connection_contexts: dict[str, contextlib.AsyncExitStack] = {}
         self._server_statuses: dict[str, str] = {
@@ -77,6 +86,43 @@ class MCPToolsProvider:
     def server_configs(self) -> dict[str, MCPServerConfig]:
         """Returns the configured MCP servers."""
         return self._mcp_server_configs
+
+    def _build_mcp_descriptors(
+        self,
+        server_id: str,
+        definitions: Sequence[ToolDefinition],
+        discovered_tools: Sequence[Any],
+    ) -> list[ToolDescriptor]:
+        """Build descriptors for discovered MCP tools."""
+        configured_tool_metadata = normalize_mcp_tool_metadata(
+            self._mcp_server_configs[server_id].get("tool_metadata")
+        )
+        descriptors: list[ToolDescriptor] = []
+
+        for definition, discovered_tool in zip(
+            definitions, discovered_tools, strict=False
+        ):
+            annotations = getattr(discovered_tool, "annotations", None)
+            annotation_tags = derive_mcp_annotation_tags(
+                read_only_hint=getattr(annotations, "readOnlyHint", None),
+                destructive_hint=getattr(annotations, "destructiveHint", None),
+                open_world_hint=getattr(annotations, "openWorldHint", None),
+            )
+            tags = resolve_mcp_tool_tags(
+                tool_name=definition["function"]["name"],
+                configured_tool_metadata=configured_tool_metadata,
+                annotation_tags=annotation_tags,
+            )
+            descriptors.append(
+                build_tool_descriptor(
+                    definition,
+                    tags,
+                    origin="mcp",
+                    mcp_server_id=server_id,
+                )
+            )
+
+        return descriptors
 
     async def _log_mcp_initialization_progress(
         self, stop_event: asyncio.Event, start_time: float
@@ -127,10 +173,16 @@ class MCPToolsProvider:
         self,
         server_id: str,
         server_conf: MCPServerConfig,
-    ) -> tuple[ClientSession | None, list[ToolDefinition], dict[str, str]]:
+    ) -> tuple[
+        ClientSession | None,
+        list[ToolDefinition],
+        list[ToolDescriptor],
+        dict[str, str],
+    ]:
         """Connects to a single MCP server, discovers tools, and returns results."""
         self._server_statuses[server_id] = MCP_SERVER_STATUS_CONNECTING
         discovered_tools = []
+        discovered_descriptors = []
         tool_map = {}
         session = None
         exit_stack = contextlib.AsyncExitStack()
@@ -207,7 +259,7 @@ class MCPToolsProvider:
                     self._server_statuses[server_id] = MCP_SERVER_STATUS_FAILED
                     with contextlib.suppress(Exception):
                         await exit_stack.aclose()
-                    return None, [], {}
+                    return None, [], [], {}
                 server_params = StdioServerParameters(
                     command=command,
                     args=args,
@@ -230,7 +282,7 @@ class MCPToolsProvider:
                     self._server_statuses[server_id] = MCP_SERVER_STATUS_FAILED
                     with contextlib.suppress(Exception):
                         await exit_stack.aclose()
-                    return None, [], {}
+                    return None, [], [], {}
 
                 # Construct headers using the resolved token
                 headers = {}
@@ -262,7 +314,7 @@ class MCPToolsProvider:
                 self._server_statuses[server_id] = MCP_SERVER_STATUS_FAILED
                 with contextlib.suppress(Exception):
                     await exit_stack.aclose()
-                return None, [], {}
+                return None, [], [], {}
 
             # --- Initialize Session and Discover Tools (Common Logic) ---
             await session.initialize()
@@ -291,7 +343,13 @@ class MCPToolsProvider:
                         f"Found tool definition without a name on server '{server_id}': {tool_def}"
                     )
 
-            return session, discovered_tools, tool_map
+            discovered_descriptors = self._build_mcp_descriptors(
+                server_id=server_id,
+                definitions=sanitized_tools,
+                discovered_tools=server_tools,
+            )
+
+            return session, discovered_tools, discovered_descriptors, tool_map
 
         except Exception as e:
             logger.error(
@@ -304,7 +362,7 @@ class MCPToolsProvider:
             # Clean up any partially created contexts
             if server_id in self._connection_contexts:
                 await self._close_server_connections(server_id)
-            return None, [], {}  # Return empty on failure
+            return None, [], [], {}  # Return empty on failure
 
     async def initialize(self) -> None:
         """Connects to configured MCP servers, fetches and sanitizes tool definitions."""
@@ -318,6 +376,7 @@ class MCPToolsProvider:
         self._sessions = {}
         self._tool_map = {}
         self._definitions = []
+        self._descriptors = []
         # Reset server statuses to PENDING if re-initializing
         self._server_statuses = {
             sid: MCP_SERVER_STATUS_PENDING for sid in self._mcp_server_configs
@@ -433,15 +492,21 @@ class MCPToolsProvider:
                 )
                 self._server_statuses[server_id] = MCP_SERVER_STATUS_FAILED
             else:
-                session, discovered_tools, tool_map_for_server = res_item
+                (
+                    session,
+                    discovered_tools,
+                    descriptors_for_server,
+                    tool_map_for_server,
+                ) = res_item
                 if session:
                     # Status should be CONNECTED from _connect_and_discover_mcp
                     self._sessions[server_id] = session
 
                     # Check for duplicates before adding
-                    for tool_def in discovered_tools:
-                        func_def = tool_def.get("function", {})
-                        tool_name = func_def.get("name")
+                    for tool_def, descriptor in zip(
+                        discovered_tools, descriptors_for_server, strict=False
+                    ):
+                        tool_name = descriptor.name
                         if tool_name:
                             if tool_name in all_tool_names:
                                 logger.warning(
@@ -453,6 +518,7 @@ class MCPToolsProvider:
                             else:
                                 all_tool_names.add(tool_name)
                                 self._definitions.append(tool_def)
+                                self._descriptors.append(descriptor)
 
                     self._tool_map.update(tool_map_for_server)
                 else:
@@ -538,6 +604,21 @@ class MCPToolsProvider:
         if not self._initialized:
             await self.initialize()
         return self._definitions
+
+    async def get_tool_descriptors(self) -> list[ToolDescriptor]:
+        """Return descriptors for discovered MCP tools."""
+        if not self._initialized:
+            await self.initialize()
+        return list(self._descriptors)
+
+    async def get_tool_descriptor(self, name: str) -> ToolDescriptor | None:
+        """Return a single MCP tool descriptor by name."""
+        if not self._initialized:
+            await self.initialize()
+        for descriptor in self._descriptors:
+            if descriptor.name == name:
+                return descriptor
+        return None
 
     async def _health_check_loop(self) -> None:
         """Periodically checks the health of connected MCP servers."""
@@ -649,17 +730,26 @@ class MCPToolsProvider:
             for d in self._definitions
             if d.get("function", {}).get("name") not in tools_to_remove
         ]
+        self._descriptors = [
+            descriptor
+            for descriptor in self._descriptors
+            if descriptor.mcp_server_id != server_id
+        ]
 
         # Attempt reconnection
         try:
             # Call the existing connection method
-            session, discovered_tools, tool_map = await self._connect_and_discover_mcp(
-                server_id, server_conf
-            )
+            (
+                session,
+                discovered_tools,
+                discovered_descriptors,
+                tool_map,
+            ) = await self._connect_and_discover_mcp(server_id, server_conf)
 
             if session:
                 self._sessions[server_id] = session
                 self._definitions.extend(discovered_tools)
+                self._descriptors.extend(discovered_descriptors)
                 self._tool_map.update(tool_map)
                 logger.info(
                     f"Successfully reconnected MCP server '{server_id}' with {len(discovered_tools)} tools"
@@ -863,5 +953,6 @@ class MCPToolsProvider:
         self._sessions.clear()
         self._tool_map.clear()
         self._definitions.clear()
+        self._descriptors.clear()
         self._initialized = False
         logger.info("MCPToolsProvider closed.")

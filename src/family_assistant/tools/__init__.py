@@ -7,7 +7,6 @@ The tools are organized into thematic submodules for better maintainability.
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING
 
 from family_assistant import storage
 from family_assistant.tools.attachments import (
@@ -137,6 +136,16 @@ from family_assistant.tools.media_download import (
     MEDIA_DOWNLOAD_TOOLS_DEFINITION,
     download_media_tool,
 )
+from family_assistant.tools.metadata import (
+    LocalToolMetadata,
+    ToolDescriptor,
+    ToolImplementation,
+    ToolRegistration,
+    ToolTag,
+    build_local_tool_descriptors,
+    build_local_tool_registrations,
+    make_local_tool_metadata,
+)
 from family_assistant.tools.mock_image_tools import (
     MOCK_IMAGE_TOOLS_DEFINITION,
     annotate_image_tool,
@@ -191,9 +200,6 @@ from family_assistant.tools.workspace_files import (
     workspace_write_tool,
 )
 
-if TYPE_CHECKING:
-    from collections.abc import Callable
-
 logger = logging.getLogger(__name__)
 
 
@@ -213,9 +219,17 @@ __all__ = [
     "ConfirmationCallbackProtocol",
     # From types
     "ToolExecutionContext",
+    "ToolTag",
+    "LocalToolMetadata",
+    "ToolRegistration",
+    "ToolDescriptor",
     # Tool definitions
     "TOOLS_DEFINITION",
     "AVAILABLE_FUNCTIONS",
+    "LOCAL_TOOL_METADATA_BY_NAME",
+    "LOCAL_TOOL_REGISTRATIONS",
+    "LOCAL_TOOL_DESCRIPTORS",
+    "build_local_tool_registrations",
     # Confirmation renderers
     "TOOL_CONFIRMATION_RENDERERS",
     # Individual tool functions (for testing/direct use)
@@ -335,19 +349,51 @@ except ImportError:
 # IMPORTANT: Tool Registration Process
 # ====================================
 # To add a new tool to the system, you MUST:
-# 1. Add the tool function to AVAILABLE_FUNCTIONS below
+# 1. Add the tool function to the implementation map below
 # 2. Add the tool definition to the appropriate TOOLS_DEFINITION list (e.g., NOTE_TOOLS_DEFINITION)
-# 3. Add the tool name to config.yaml under enable_local_tools for each profile that should have access
+# 3. Add tool metadata in LOCAL_TOOL_METADATA_BY_NAME below
+# 4. Add the tool name to config.yaml under enable_local_tools for each profile that should have access
 #
-# The dual registration provides security and flexibility:
+# The registration-backed catalog provides security and flexibility:
 # - Different profiles can have different tool access (e.g., browser profile has only browser tools)
 # - Destructive tools can be excluded from certain profiles
 # - New profiles can mix and match tools without code changes
 #
 # Note: If enable_local_tools is not specified for a profile, ALL tools are enabled by default.
 
-# Define available functions mapping
-AVAILABLE_FUNCTIONS: dict[str, Callable] = {
+
+def _metadata(*tags: ToolTag) -> LocalToolMetadata:
+    """Create validated metadata for a local tool registration."""
+    return make_local_tool_metadata(list(tags))
+
+
+_LOCAL_TOOL_DEFINITIONS: list[ToolDefinition] = (
+    NOTE_TOOLS_DEFINITION
+    + SERVICE_TOOLS_DEFINITION
+    + TASK_TOOLS_DEFINITION
+    + DOCUMENT_TOOLS_DEFINITION
+    + EVENT_TOOLS_DEFINITION
+    + AUTOMATIONS_TOOLS_DEFINITION
+    + HOME_ASSISTANT_TOOLS_DEFINITION
+    + CAMERA_TOOLS_DEFINITION
+    + CALENDAR_TOOLS_DEFINITION
+    + COMMUNICATION_TOOLS_DEFINITION
+    + SCRIPT_TOOLS_DEFINITION
+    + ATTACHMENT_TOOLS_DEFINITION
+    + IMAGE_TOOLS_DEFINITION
+    + IMAGE_GENERATION_TOOLS_DEFINITION
+    + DATA_VISUALIZATION_TOOLS_DEFINITION
+    + DATA_MANIPULATION_TOOLS_DEFINITION
+    + VIDEO_GENERATION_TOOLS_DEFINITION
+    + MEDIA_DOWNLOAD_TOOLS_DEFINITION
+    + MOCK_IMAGE_TOOLS_DEFINITION
+    + COMPUTER_USE_TOOLS_DEFINITION
+    + WORKSPACE_TOOLS_DEFINITION
+    + WORKER_TOOLS_DEFINITION
+    + ENGINEERING_TOOLS_DEFINITION
+)
+
+_LOCAL_TOOL_IMPLEMENTATIONS: dict[str, ToolImplementation] = {
     "add_or_update_note": add_or_update_note_tool,
     "get_note": get_note_tool,
     "list_notes": list_notes_tool,
@@ -451,30 +497,554 @@ AVAILABLE_FUNCTIONS: dict[str, Callable] = {
     "get_llm_request_history": get_llm_request_history,
 }
 
+LOCAL_TOOL_METADATA_BY_NAME: dict[str, LocalToolMetadata] = {
+    "add_or_update_note": _metadata(
+        ToolTag.STATE_CHANGING,
+        ToolTag.STATE_PERSISTING,
+        ToolTag.SENSITIVE_DATA,
+        ToolTag.NOTES,
+        ToolTag.OUTPUT_TRUSTED,
+    ),
+    "get_note": _metadata(
+        ToolTag.READ_ONLY,
+        ToolTag.SENSITIVE_DATA,
+        ToolTag.NOTES,
+        ToolTag.OUTPUT_TRUSTED,
+    ),
+    "list_notes": _metadata(
+        ToolTag.READ_ONLY,
+        ToolTag.SENSITIVE_DATA,
+        ToolTag.NOTES,
+        ToolTag.OUTPUT_TRUSTED,
+    ),
+    "delete_note": _metadata(
+        ToolTag.DESTRUCTIVE,
+        ToolTag.STATE_CHANGING,
+        ToolTag.STATE_PERSISTING,
+        ToolTag.SENSITIVE_DATA,
+        ToolTag.NOTES,
+        ToolTag.OUTPUT_TRUSTED,
+    ),
+    "delegate_to_service": _metadata(
+        ToolTag.DELEGATION,
+        ToolTag.OUTPUT_UNSPECIFIED,
+    ),
+    "schedule_reminder": _metadata(
+        ToolTag.STATE_CHANGING,
+        ToolTag.SCHEDULING,
+        ToolTag.OUTPUT_TRUSTED,
+    ),
+    "schedule_future_callback": _metadata(
+        ToolTag.STATE_CHANGING,
+        ToolTag.SCHEDULING,
+        ToolTag.OUTPUT_TRUSTED,
+    ),
+    "schedule_recurring_task": _metadata(
+        ToolTag.STATE_CHANGING,
+        ToolTag.SCHEDULING,
+        ToolTag.OUTPUT_TRUSTED,
+    ),
+    "list_pending_callbacks": _metadata(
+        ToolTag.READ_ONLY,
+        ToolTag.SCHEDULING,
+        ToolTag.OUTPUT_TRUSTED,
+    ),
+    "modify_pending_callback": _metadata(
+        ToolTag.STATE_CHANGING,
+        ToolTag.SCHEDULING,
+        ToolTag.OUTPUT_TRUSTED,
+    ),
+    "cancel_pending_callback": _metadata(
+        ToolTag.DESTRUCTIVE,
+        ToolTag.STATE_CHANGING,
+        ToolTag.SCHEDULING,
+        ToolTag.OUTPUT_TRUSTED,
+    ),
+    "schedule_action": _metadata(
+        ToolTag.STATE_CHANGING,
+        ToolTag.SCHEDULING,
+        ToolTag.AUTOMATION,
+        ToolTag.OUTPUT_TRUSTED,
+    ),
+    "schedule_recurring_action": _metadata(
+        ToolTag.STATE_CHANGING,
+        ToolTag.SCHEDULING,
+        ToolTag.AUTOMATION,
+        ToolTag.OUTPUT_TRUSTED,
+    ),
+    "search_documents": _metadata(
+        ToolTag.READ_ONLY,
+        ToolTag.SENSITIVE_DATA,
+        ToolTag.DOCUMENTS,
+        ToolTag.OUTPUT_UNTRUSTED,
+    ),
+    "get_full_document_content": _metadata(
+        ToolTag.READ_ONLY,
+        ToolTag.SENSITIVE_DATA,
+        ToolTag.DOCUMENTS,
+        ToolTag.OUTPUT_UNTRUSTED,
+    ),
+    "ingest_document_from_url": _metadata(
+        ToolTag.STATE_CHANGING,
+        ToolTag.STATE_PERSISTING,
+        ToolTag.DOCUMENTS,
+        ToolTag.EXTERNAL_COMM,
+        ToolTag.OUTPUT_UNTRUSTED,
+    ),
+    "get_user_documentation_content": _metadata(
+        ToolTag.READ_ONLY,
+        ToolTag.DOCUMENTS,
+        ToolTag.OUTPUT_TRUSTED,
+    ),
+    "query_recent_events": _metadata(
+        ToolTag.READ_ONLY,
+        ToolTag.SENSITIVE_DATA,
+        ToolTag.AUTOMATION,
+        ToolTag.OUTPUT_UNTRUSTED,
+    ),
+    "test_event_listener": _metadata(
+        ToolTag.READ_ONLY,
+        ToolTag.SENSITIVE_DATA,
+        ToolTag.AUTOMATION,
+        ToolTag.OUTPUT_UNTRUSTED,
+    ),
+    "create_automation": _metadata(
+        ToolTag.STATE_CHANGING,
+        ToolTag.STATE_PERSISTING,
+        ToolTag.AUTOMATION,
+        ToolTag.OUTPUT_TRUSTED,
+    ),
+    "list_automations": _metadata(
+        ToolTag.READ_ONLY,
+        ToolTag.AUTOMATION,
+        ToolTag.OUTPUT_TRUSTED,
+    ),
+    "get_automation": _metadata(
+        ToolTag.READ_ONLY,
+        ToolTag.AUTOMATION,
+        ToolTag.OUTPUT_TRUSTED,
+    ),
+    "update_automation": _metadata(
+        ToolTag.STATE_CHANGING,
+        ToolTag.STATE_PERSISTING,
+        ToolTag.AUTOMATION,
+        ToolTag.OUTPUT_TRUSTED,
+    ),
+    "enable_automation": _metadata(
+        ToolTag.STATE_CHANGING,
+        ToolTag.STATE_PERSISTING,
+        ToolTag.AUTOMATION,
+        ToolTag.OUTPUT_TRUSTED,
+    ),
+    "disable_automation": _metadata(
+        ToolTag.STATE_CHANGING,
+        ToolTag.STATE_PERSISTING,
+        ToolTag.AUTOMATION,
+        ToolTag.OUTPUT_TRUSTED,
+    ),
+    "delete_automation": _metadata(
+        ToolTag.DESTRUCTIVE,
+        ToolTag.STATE_CHANGING,
+        ToolTag.STATE_PERSISTING,
+        ToolTag.AUTOMATION,
+        ToolTag.OUTPUT_TRUSTED,
+    ),
+    "get_automation_stats": _metadata(
+        ToolTag.READ_ONLY,
+        ToolTag.AUTOMATION,
+        ToolTag.OUTPUT_TRUSTED,
+    ),
+    "download_state_history": _metadata(
+        ToolTag.READ_ONLY,
+        ToolTag.SENSITIVE_DATA,
+        ToolTag.HOME_AUTOMATION,
+        ToolTag.DATA,
+        ToolTag.OUTPUT_TRUSTED,
+    ),
+    "render_home_assistant_template": _metadata(
+        ToolTag.READ_ONLY,
+        ToolTag.SENSITIVE_DATA,
+        ToolTag.HOME_AUTOMATION,
+        ToolTag.DATA,
+        ToolTag.OUTPUT_TRUSTED,
+    ),
+    "get_camera_snapshot": _metadata(
+        ToolTag.READ_ONLY,
+        ToolTag.SENSITIVE_DATA,
+        ToolTag.HOME_AUTOMATION,
+        ToolTag.CAMERA,
+        ToolTag.MEDIA,
+        ToolTag.OUTPUT_UNTRUSTED,
+    ),
+    "list_home_assistant_entities": _metadata(
+        ToolTag.READ_ONLY,
+        ToolTag.SENSITIVE_DATA,
+        ToolTag.HOME_AUTOMATION,
+        ToolTag.OUTPUT_TRUSTED,
+    ),
+    "list_cameras": _metadata(
+        ToolTag.READ_ONLY,
+        ToolTag.SENSITIVE_DATA,
+        ToolTag.CAMERA,
+        ToolTag.OUTPUT_TRUSTED,
+    ),
+    "search_camera_events": _metadata(
+        ToolTag.READ_ONLY,
+        ToolTag.SENSITIVE_DATA,
+        ToolTag.CAMERA,
+        ToolTag.MEDIA,
+        ToolTag.OUTPUT_UNTRUSTED,
+    ),
+    "get_camera_frame": _metadata(
+        ToolTag.READ_ONLY,
+        ToolTag.SENSITIVE_DATA,
+        ToolTag.CAMERA,
+        ToolTag.MEDIA,
+        ToolTag.OUTPUT_UNTRUSTED,
+    ),
+    "get_camera_frames_batch": _metadata(
+        ToolTag.READ_ONLY,
+        ToolTag.SENSITIVE_DATA,
+        ToolTag.CAMERA,
+        ToolTag.MEDIA,
+        ToolTag.OUTPUT_UNTRUSTED,
+    ),
+    "get_camera_recordings": _metadata(
+        ToolTag.READ_ONLY,
+        ToolTag.SENSITIVE_DATA,
+        ToolTag.CAMERA,
+        ToolTag.MEDIA,
+        ToolTag.OUTPUT_UNTRUSTED,
+    ),
+    "get_live_camera_snapshot": _metadata(
+        ToolTag.READ_ONLY,
+        ToolTag.SENSITIVE_DATA,
+        ToolTag.CAMERA,
+        ToolTag.MEDIA,
+        ToolTag.OUTPUT_UNTRUSTED,
+    ),
+    "scan_camera_frames": _metadata(
+        ToolTag.READ_ONLY,
+        ToolTag.SENSITIVE_DATA,
+        ToolTag.CAMERA,
+        ToolTag.MEDIA,
+        ToolTag.OUTPUT_UNTRUSTED,
+    ),
+    "add_calendar_event": _metadata(
+        ToolTag.STATE_CHANGING,
+        ToolTag.SENSITIVE_DATA,
+        ToolTag.CALENDAR,
+        ToolTag.SCHEDULING,
+        ToolTag.OUTPUT_TRUSTED,
+    ),
+    "search_calendar_events": _metadata(
+        ToolTag.READ_ONLY,
+        ToolTag.SENSITIVE_DATA,
+        ToolTag.CALENDAR,
+        ToolTag.SCHEDULING,
+        ToolTag.OUTPUT_TRUSTED,
+    ),
+    "modify_calendar_event": _metadata(
+        ToolTag.STATE_CHANGING,
+        ToolTag.SENSITIVE_DATA,
+        ToolTag.CALENDAR,
+        ToolTag.SCHEDULING,
+        ToolTag.OUTPUT_TRUSTED,
+    ),
+    "delete_calendar_event": _metadata(
+        ToolTag.DESTRUCTIVE,
+        ToolTag.STATE_CHANGING,
+        ToolTag.SENSITIVE_DATA,
+        ToolTag.CALENDAR,
+        ToolTag.SCHEDULING,
+        ToolTag.OUTPUT_TRUSTED,
+    ),
+    "get_message_history": _metadata(
+        ToolTag.READ_ONLY,
+        ToolTag.SENSITIVE_DATA,
+        ToolTag.OUTPUT_TRUSTED,
+    ),
+    "send_message_to_user": _metadata(
+        ToolTag.EXTERNAL_COMM,
+        ToolTag.SENSITIVE_DATA,
+        ToolTag.OUTPUT_TRUSTED,
+    ),
+    "get_attachment_info": _metadata(
+        ToolTag.READ_ONLY,
+        ToolTag.SENSITIVE_DATA,
+        ToolTag.MEDIA,
+        ToolTag.OUTPUT_TRUSTED,
+    ),
+    "execute_script": _metadata(
+        ToolTag.CODE_EXECUTION,
+        ToolTag.STATE_CHANGING,
+        ToolTag.OUTPUT_UNSPECIFIED,
+    ),
+    "attach_to_response": _metadata(
+        ToolTag.EXTERNAL_COMM,
+        ToolTag.MEDIA,
+        ToolTag.OUTPUT_TRUSTED,
+    ),
+    "read_text_attachment": _metadata(
+        ToolTag.READ_ONLY,
+        ToolTag.SENSITIVE_DATA,
+        ToolTag.DOCUMENTS,
+        ToolTag.MEDIA,
+        ToolTag.OUTPUT_UNTRUSTED,
+    ),
+    "highlight_image": _metadata(
+        ToolTag.STATE_CHANGING,
+        ToolTag.MEDIA,
+        ToolTag.OUTPUT_UNTRUSTED,
+    ),
+    "generate_image": _metadata(
+        ToolTag.STATE_CHANGING,
+        ToolTag.EXTERNAL_COMM,
+        ToolTag.MEDIA,
+        ToolTag.OUTPUT_UNTRUSTED,
+    ),
+    "transform_image": _metadata(
+        ToolTag.STATE_CHANGING,
+        ToolTag.EXTERNAL_COMM,
+        ToolTag.MEDIA,
+        ToolTag.OUTPUT_UNTRUSTED,
+    ),
+    "create_vega_chart": _metadata(
+        ToolTag.STATE_CHANGING,
+        ToolTag.DATA,
+        ToolTag.MEDIA,
+        ToolTag.OUTPUT_UNTRUSTED,
+    ),
+    "jq_query": _metadata(
+        ToolTag.READ_ONLY,
+        ToolTag.DATA,
+        ToolTag.OUTPUT_UNTRUSTED,
+    ),
+    "generate_video": _metadata(
+        ToolTag.STATE_CHANGING,
+        ToolTag.EXTERNAL_COMM,
+        ToolTag.MEDIA,
+        ToolTag.OUTPUT_UNTRUSTED,
+    ),
+    "download_media": _metadata(
+        ToolTag.READ_ONLY,
+        ToolTag.EXTERNAL_COMM,
+        ToolTag.MEDIA,
+        ToolTag.OUTPUT_UNTRUSTED,
+    ),
+    "mock_camera_snapshot": _metadata(
+        ToolTag.READ_ONLY,
+        ToolTag.CAMERA,
+        ToolTag.MEDIA,
+        ToolTag.OUTPUT_UNTRUSTED,
+    ),
+    "annotate_image": _metadata(
+        ToolTag.STATE_CHANGING,
+        ToolTag.MEDIA,
+        ToolTag.OUTPUT_UNTRUSTED,
+    ),
+    "click_at": _metadata(
+        ToolTag.BROWSER,
+        ToolTag.STATE_CHANGING,
+        ToolTag.EXTERNAL_COMM,
+        ToolTag.OUTPUT_UNTRUSTED,
+    ),
+    "type_text_at": _metadata(
+        ToolTag.BROWSER,
+        ToolTag.STATE_CHANGING,
+        ToolTag.EXTERNAL_COMM,
+        ToolTag.OUTPUT_UNTRUSTED,
+    ),
+    "scroll_at": _metadata(
+        ToolTag.BROWSER,
+        ToolTag.STATE_CHANGING,
+        ToolTag.EXTERNAL_COMM,
+        ToolTag.OUTPUT_UNTRUSTED,
+    ),
+    "open_web_browser": _metadata(
+        ToolTag.BROWSER,
+        ToolTag.STATE_CHANGING,
+        ToolTag.EXTERNAL_COMM,
+        ToolTag.OUTPUT_UNTRUSTED,
+    ),
+    "navigate": _metadata(
+        ToolTag.BROWSER,
+        ToolTag.STATE_CHANGING,
+        ToolTag.EXTERNAL_COMM,
+        ToolTag.OUTPUT_UNTRUSTED,
+    ),
+    "search": _metadata(
+        ToolTag.BROWSER,
+        ToolTag.STATE_CHANGING,
+        ToolTag.EXTERNAL_COMM,
+        ToolTag.OUTPUT_UNTRUSTED,
+    ),
+    "go_back": _metadata(
+        ToolTag.BROWSER,
+        ToolTag.STATE_CHANGING,
+        ToolTag.EXTERNAL_COMM,
+        ToolTag.OUTPUT_UNTRUSTED,
+    ),
+    "go_forward": _metadata(
+        ToolTag.BROWSER,
+        ToolTag.STATE_CHANGING,
+        ToolTag.EXTERNAL_COMM,
+        ToolTag.OUTPUT_UNTRUSTED,
+    ),
+    "key_combination": _metadata(
+        ToolTag.BROWSER,
+        ToolTag.STATE_CHANGING,
+        ToolTag.EXTERNAL_COMM,
+        ToolTag.OUTPUT_UNTRUSTED,
+    ),
+    "wait_5_seconds": _metadata(
+        ToolTag.BROWSER,
+        ToolTag.STATE_CHANGING,
+        ToolTag.EXTERNAL_COMM,
+        ToolTag.OUTPUT_UNTRUSTED,
+    ),
+    "hover_at": _metadata(
+        ToolTag.BROWSER,
+        ToolTag.STATE_CHANGING,
+        ToolTag.EXTERNAL_COMM,
+        ToolTag.OUTPUT_UNTRUSTED,
+    ),
+    "drag_and_drop": _metadata(
+        ToolTag.BROWSER,
+        ToolTag.STATE_CHANGING,
+        ToolTag.EXTERNAL_COMM,
+        ToolTag.OUTPUT_UNTRUSTED,
+    ),
+    "scroll_document": _metadata(
+        ToolTag.BROWSER,
+        ToolTag.STATE_CHANGING,
+        ToolTag.EXTERNAL_COMM,
+        ToolTag.OUTPUT_UNTRUSTED,
+    ),
+    "workspace_read": _metadata(
+        ToolTag.READ_ONLY,
+        ToolTag.SENSITIVE_DATA,
+        ToolTag.FILE_SYSTEM,
+        ToolTag.OUTPUT_TRUSTED,
+    ),
+    "workspace_write": _metadata(
+        ToolTag.STATE_CHANGING,
+        ToolTag.STATE_PERSISTING,
+        ToolTag.SENSITIVE_DATA,
+        ToolTag.FILE_SYSTEM,
+        ToolTag.OUTPUT_TRUSTED,
+    ),
+    "workspace_glob": _metadata(
+        ToolTag.READ_ONLY,
+        ToolTag.SENSITIVE_DATA,
+        ToolTag.FILE_SYSTEM,
+        ToolTag.OUTPUT_TRUSTED,
+    ),
+    "workspace_delete": _metadata(
+        ToolTag.DESTRUCTIVE,
+        ToolTag.STATE_CHANGING,
+        ToolTag.STATE_PERSISTING,
+        ToolTag.SENSITIVE_DATA,
+        ToolTag.FILE_SYSTEM,
+        ToolTag.OUTPUT_TRUSTED,
+    ),
+    "workspace_mkdir": _metadata(
+        ToolTag.STATE_CHANGING,
+        ToolTag.STATE_PERSISTING,
+        ToolTag.FILE_SYSTEM,
+        ToolTag.OUTPUT_TRUSTED,
+    ),
+    "workspace_export_notes": _metadata(
+        ToolTag.READ_ONLY,
+        ToolTag.SENSITIVE_DATA,
+        ToolTag.FILE_SYSTEM,
+        ToolTag.NOTES,
+        ToolTag.OUTPUT_TRUSTED,
+    ),
+    "workspace_import_note": _metadata(
+        ToolTag.STATE_CHANGING,
+        ToolTag.STATE_PERSISTING,
+        ToolTag.SENSITIVE_DATA,
+        ToolTag.FILE_SYSTEM,
+        ToolTag.NOTES,
+        ToolTag.OUTPUT_TRUSTED,
+    ),
+    "spawn_worker": _metadata(
+        ToolTag.CODE_EXECUTION,
+        ToolTag.STATE_CHANGING,
+        ToolTag.WORKER,
+        ToolTag.OUTPUT_UNSPECIFIED,
+    ),
+    "read_task_result": _metadata(
+        ToolTag.READ_ONLY,
+        ToolTag.WORKER,
+        ToolTag.OUTPUT_UNSPECIFIED,
+    ),
+    "cancel_worker_task": _metadata(
+        ToolTag.DESTRUCTIVE,
+        ToolTag.STATE_CHANGING,
+        ToolTag.WORKER,
+        ToolTag.OUTPUT_TRUSTED,
+    ),
+    "list_worker_tasks": _metadata(
+        ToolTag.READ_ONLY,
+        ToolTag.WORKER,
+        ToolTag.OUTPUT_TRUSTED,
+    ),
+    "read_source_file": _metadata(
+        ToolTag.READ_ONLY,
+        ToolTag.SENSITIVE_DATA,
+        ToolTag.FILE_SYSTEM,
+        ToolTag.DOCUMENTS,
+        ToolTag.OUTPUT_TRUSTED,
+    ),
+    "search_source_code": _metadata(
+        ToolTag.READ_ONLY,
+        ToolTag.SENSITIVE_DATA,
+        ToolTag.FILE_SYSTEM,
+        ToolTag.DOCUMENTS,
+        ToolTag.OUTPUT_TRUSTED,
+    ),
+    "query_database": _metadata(
+        ToolTag.READ_ONLY,
+        ToolTag.SENSITIVE_DATA,
+        ToolTag.DATA,
+        ToolTag.OUTPUT_TRUSTED,
+    ),
+    "read_error_logs": _metadata(
+        ToolTag.READ_ONLY,
+        ToolTag.SENSITIVE_DATA,
+        ToolTag.FILE_SYSTEM,
+        ToolTag.DOCUMENTS,
+        ToolTag.OUTPUT_TRUSTED,
+    ),
+    "get_llm_request_history": _metadata(
+        ToolTag.READ_ONLY,
+        ToolTag.SENSITIVE_DATA,
+        ToolTag.DATA,
+        ToolTag.OUTPUT_TRUSTED,
+    ),
+    "create_github_issue": _metadata(
+        ToolTag.EXTERNAL_COMM,
+        ToolTag.STATE_CHANGING,
+        ToolTag.OUTPUT_TRUSTED,
+    ),
+}
 
-# Combine all tool definitions
-TOOLS_DEFINITION: list[ToolDefinition] = (
-    NOTE_TOOLS_DEFINITION
-    + SERVICE_TOOLS_DEFINITION
-    + TASK_TOOLS_DEFINITION
-    + DOCUMENT_TOOLS_DEFINITION
-    + EVENT_TOOLS_DEFINITION
-    + AUTOMATIONS_TOOLS_DEFINITION  # Unified automations (event + schedule)
-    + HOME_ASSISTANT_TOOLS_DEFINITION
-    + CAMERA_TOOLS_DEFINITION
-    + CALENDAR_TOOLS_DEFINITION
-    + COMMUNICATION_TOOLS_DEFINITION
-    + SCRIPT_TOOLS_DEFINITION
-    + ATTACHMENT_TOOLS_DEFINITION
-    + IMAGE_TOOLS_DEFINITION
-    + IMAGE_GENERATION_TOOLS_DEFINITION
-    + DATA_VISUALIZATION_TOOLS_DEFINITION
-    + DATA_MANIPULATION_TOOLS_DEFINITION
-    + VIDEO_GENERATION_TOOLS_DEFINITION
-    + MEDIA_DOWNLOAD_TOOLS_DEFINITION
-    + MOCK_IMAGE_TOOLS_DEFINITION
-    + COMPUTER_USE_TOOLS_DEFINITION
-    + WORKSPACE_TOOLS_DEFINITION
-    + WORKER_TOOLS_DEFINITION
-    + ENGINEERING_TOOLS_DEFINITION
+LOCAL_TOOL_REGISTRATIONS: list[ToolRegistration] = build_local_tool_registrations(
+    definitions=_LOCAL_TOOL_DEFINITIONS,
+    implementations=_LOCAL_TOOL_IMPLEMENTATIONS,
+    metadata_by_name=LOCAL_TOOL_METADATA_BY_NAME,
 )
+LOCAL_TOOL_DESCRIPTORS: list[ToolDescriptor] = build_local_tool_descriptors(
+    LOCAL_TOOL_REGISTRATIONS
+)
+
+AVAILABLE_FUNCTIONS: dict[str, ToolImplementation] = {
+    registration.name: registration.implementation
+    for registration in LOCAL_TOOL_REGISTRATIONS
+}
+
+TOOLS_DEFINITION: list[ToolDefinition] = [
+    registration.definition for registration in LOCAL_TOOL_REGISTRATIONS
+]

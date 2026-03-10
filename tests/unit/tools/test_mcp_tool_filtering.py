@@ -1,14 +1,20 @@
 """Unit tests for MCP tool filtering by server ID."""
 
+from typing import TYPE_CHECKING
 from unittest.mock import AsyncMock
 
 import pytest
+from mcp.types import Tool, ToolAnnotations
 
 from family_assistant.tools import (
     FilteredToolsProvider,
     MCPServerConfig,
     MCPToolsProvider,
 )
+from family_assistant.tools.metadata import ToolTag
+
+if TYPE_CHECKING:
+    from family_assistant.tools.types import ToolDefinition
 
 
 @pytest.mark.asyncio
@@ -112,3 +118,46 @@ async def test_profile_builds_correct_tool_set_with_mcp_servers() -> None:
     assert "delete_note" not in all_enabled_tool_names
     assert "get_time" not in all_enabled_tool_names
     assert "set_timer" not in all_enabled_tool_names
+
+
+@pytest.mark.asyncio
+async def test_mcp_provider_builds_descriptors_from_configured_metadata() -> None:
+    """Configured MCP metadata should override annotation-derived tags."""
+    provider = MCPToolsProvider({
+        "browser": {
+            "transport": "stdio",
+            "command": "echo",
+            "tool_metadata": {
+                "search_web": ["browser", "output_untrusted"],
+                "*": ["read_only", "output_trusted"],
+            },
+        }
+    })
+    discovered_tool = Tool(
+        name="search_web",
+        description="Search the web",
+        inputSchema={"type": "object", "properties": {}},
+        annotations=ToolAnnotations(
+            readOnlyHint=True,
+            openWorldHint=False,
+        ),
+    )
+    definition: ToolDefinition = {
+        "type": "function",
+        "function": {
+            "name": "search_web",
+            "description": "Search the web",
+            "parameters": {"type": "object", "properties": {}},
+        },
+    }
+
+    descriptors = provider._build_mcp_descriptors(
+        server_id="browser",
+        definitions=[definition],
+        discovered_tools=[discovered_tool],
+    )
+
+    assert len(descriptors) == 1
+    assert descriptors[0].origin == "mcp"
+    assert descriptors[0].mcp_server_id == "browser"
+    assert descriptors[0].tags == {ToolTag.BROWSER, ToolTag.OUTPUT_UNTRUSTED}
