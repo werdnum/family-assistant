@@ -519,6 +519,16 @@ def test_render_system_prompt_allows_escaped_literal_braces() -> None:
 
 
 @pytest.mark.no_db
+def test_render_system_prompt_supports_placeholder_adjacent_to_escaped_braces() -> None:
+    service = _make_service()
+    service.service_config.prompts["system_prompt"] = "Wrapped: {{{server_url}}}"
+
+    rendered_prompt = service._render_system_prompt("tester", "")
+
+    assert "{http://testserver}" in rendered_prompt
+
+
+@pytest.mark.no_db
 def test_default_system_prompt_templates_only_use_supported_placeholders() -> None:
     defaults_path = Path(__file__).resolve().parents[3] / "defaults.yaml"
     with defaults_path.open(encoding="utf-8") as defaults_file:
