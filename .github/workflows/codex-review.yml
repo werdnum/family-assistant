@@ -1,0 +1,84 @@
+name: '🧠 Codex Review'
+
+on:
+  pull_request:
+    types:
+      - 'opened'
+      - 'reopened'
+      - 'ready_for_review'
+      - 'synchronize'
+
+concurrency:
+  group: '${{ github.workflow }}-${{ github.event.pull_request.number }}'
+  cancel-in-progress: true
+
+defaults:
+  run:
+    shell: 'bash'
+
+jobs:
+  review:
+    if: |-
+      ${{ github.event.pull_request.head.repo.fork == false && !github.event.pull_request.draft }}
+    runs-on: 'ubuntu-latest'
+    timeout-minutes: 30
+    permissions:
+      contents: 'read'
+      issues: 'write'
+      pull-requests: 'write'
+    outputs:
+      final_message: '${{ steps.run_codex.outputs.final-message }}'
+    steps:
+      - name: 'Checkout repository'
+        uses: 'actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8' # ratchet:actions/checkout@v6
+        with:
+          ref: 'refs/pull/${{ github.event.pull_request.number }}/merge'
+
+      - name: 'Pre-fetch base and head refs for the pull request'
+        run: |-
+          git fetch --no-tags origin \
+            '${{ github.event.pull_request.base.ref }}' \
+            '+refs/pull/${{ github.event.pull_request.number }}/head'
+
+      - name: 'Run Codex pull request review'
+        id: 'run_codex'
+        uses: 'openai/codex-action@v1'
+        with:
+          openai-api-key: '${{ secrets.OPENAI_API_KEY }}'
+          prompt: |-
+            This is PR #${{ github.event.pull_request.number }} for ${{ github.repository }}.
+
+            Review ONLY the changes introduced by this pull request.
+            Use this range:
+            git log --oneline ${{ github.event.pull_request.base.sha }}...${{ github.event.pull_request.head.sha }}
+
+            Focus on correctness issues, regressions, missing tests, and maintainability concerns.
+            Keep feedback concise and actionable.
+
+            Pull request title and body:
+            ----
+            ${{ github.event.pull_request.title }}
+            ${{ github.event.pull_request.body }}
+
+  post_feedback:
+    needs: 'review'
+    if: |-
+      ${{ needs.review.outputs.final_message != '' }}
+    runs-on: 'ubuntu-latest'
+    permissions:
+      issues: 'write'
+      pull-requests: 'write'
+    steps:
+      - name: 'Report Codex feedback'
+        uses: 'actions/github-script@60a0d83039c74a4aee543508d2ffcb1c3799cdea' # ratchet:actions/github-script@v7
+        env:
+          CODEX_FINAL_MESSAGE: '${{ needs.review.outputs.final_message }}'
+        with:
+          github-token: '${{ github.token }}'
+          script: |-
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.payload.pull_request.number,
+              body: process.env.CODEX_FINAL_MESSAGE,
+            });
