@@ -98,10 +98,15 @@ class MCPToolsProvider:
             self._mcp_server_configs[server_id].get("tool_metadata")
         )
         descriptors: list[ToolDescriptor] = []
+        discovered_tools_by_name = {
+            discovered_tool.name: discovered_tool
+            for discovered_tool in discovered_tools
+            if getattr(discovered_tool, "name", None)
+        }
 
-        for definition, discovered_tool in zip(
-            definitions, discovered_tools, strict=False
-        ):
+        for definition in definitions:
+            tool_name = definition["function"]["name"]
+            discovered_tool = discovered_tools_by_name.get(tool_name)
             annotations = getattr(discovered_tool, "annotations", None)
             annotation_tags = derive_mcp_annotation_tags(
                 read_only_hint=getattr(annotations, "readOnlyHint", None),
@@ -109,7 +114,7 @@ class MCPToolsProvider:
                 open_world_hint=getattr(annotations, "openWorldHint", None),
             )
             tags = resolve_mcp_tool_tags(
-                tool_name=definition["function"]["name"],
+                tool_name=tool_name,
                 configured_tool_metadata=configured_tool_metadata,
                 annotation_tags=annotation_tags,
             )
@@ -748,9 +753,22 @@ class MCPToolsProvider:
 
             if session:
                 self._sessions[server_id] = session
-                self._definitions.extend(discovered_tools)
-                self._descriptors.extend(discovered_descriptors)
-                self._tool_map.update(tool_map)
+                for tool_def, descriptor in zip(
+                    discovered_tools, discovered_descriptors, strict=False
+                ):
+                    tool_name = descriptor.name
+                    if tool_name in self._tool_map:
+                        logger.warning(
+                            "Skipping duplicate tool '%s' from reconnected server '%s' "
+                            "(already provided by '%s')",
+                            tool_name,
+                            server_id,
+                            self._tool_map[tool_name],
+                        )
+                        continue
+                    self._definitions.append(tool_def)
+                    self._descriptors.append(descriptor)
+                    self._tool_map[tool_name] = server_id
                 logger.info(
                     f"Successfully reconnected MCP server '{server_id}' with {len(discovered_tools)} tools"
                 )

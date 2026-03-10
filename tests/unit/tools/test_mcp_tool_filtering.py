@@ -1,6 +1,7 @@
 """Unit tests for MCP tool filtering by server ID."""
 
-from typing import TYPE_CHECKING
+from types import SimpleNamespace
+from typing import TYPE_CHECKING, cast
 from unittest.mock import AsyncMock
 
 import pytest
@@ -11,10 +12,11 @@ from family_assistant.tools import (
     MCPServerConfig,
     MCPToolsProvider,
 )
-from family_assistant.tools.metadata import ToolTag
+from family_assistant.tools.metadata import ToolTag, build_tool_descriptor
+from family_assistant.tools.types import ToolDefinition
 
 if TYPE_CHECKING:
-    from family_assistant.tools.types import ToolDefinition
+    from mcp import ClientSession
 
 
 @pytest.mark.asyncio
@@ -161,3 +163,115 @@ async def test_mcp_provider_builds_descriptors_from_configured_metadata() -> Non
     assert descriptors[0].origin == "mcp"
     assert descriptors[0].mcp_server_id == "browser"
     assert descriptors[0].tags == {ToolTag.BROWSER, ToolTag.OUTPUT_UNTRUSTED}
+
+
+@pytest.mark.asyncio
+async def test_mcp_provider_matches_descriptors_by_tool_name_not_position() -> None:
+    """Descriptor annotation lookup should survive sanitized-tool omissions."""
+    provider = MCPToolsProvider({
+        "browser": {
+            "transport": "stdio",
+            "command": "echo",
+        }
+    })
+    definition: ToolDefinition = {
+        "type": "function",
+        "function": {
+            "name": "search_web",
+            "description": "Search the web",
+            "parameters": {"type": "object", "properties": {}},
+        },
+    }
+    skipped_tool = Tool(
+        name="broken_tool",
+        description="Broken",
+        inputSchema={"type": "object", "properties": {}},
+        annotations=ToolAnnotations(
+            readOnlyHint=True,
+            openWorldHint=False,
+        ),
+    )
+    matched_tool = Tool(
+        name="search_web",
+        description="Search the web",
+        inputSchema={"type": "object", "properties": {}},
+        annotations=ToolAnnotations(
+            readOnlyHint=False,
+            destructiveHint=True,
+            openWorldHint=True,
+        ),
+    )
+
+    descriptors = provider._build_mcp_descriptors(
+        server_id="browser",
+        definitions=[definition],
+        discovered_tools=[skipped_tool, matched_tool],
+    )
+
+    assert len(descriptors) == 1
+    assert descriptors[0].name == "search_web"
+    assert descriptors[0].tags == {
+        ToolTag.DESTRUCTIVE,
+        ToolTag.OUTPUT_UNTRUSTED,
+    }
+
+
+@pytest.mark.asyncio
+async def test_mcp_reconnect_preserves_existing_duplicate_tool_mapping() -> None:
+    """Reconnect should not overwrite a tool already owned by another server."""
+    provider = MCPToolsProvider({
+        "server1": {"transport": "stdio", "command": "echo"},
+        "server2": {"transport": "stdio", "command": "echo"},
+    })
+    existing_definition: ToolDefinition = {
+        "type": "function",
+        "function": {
+            "name": "shared_tool",
+            "description": "Shared tool",
+            "parameters": {"type": "object", "properties": {}},
+        },
+    }
+    provider._tool_map = {"shared_tool": "server2"}
+    provider._definitions = [existing_definition]
+    provider._descriptors = [
+        build_tool_descriptor(
+            existing_definition,
+            frozenset({ToolTag.READ_ONLY, ToolTag.OUTPUT_TRUSTED}),
+            origin="mcp",
+            mcp_server_id="server2",
+        )
+    ]
+
+    async def fake_connect_and_discover_mcp(
+        server_id: str,
+        server_conf: MCPServerConfig,
+    ) -> tuple[object, list[ToolDefinition], list, dict[str, str]]:
+        assert server_id == "server1"
+        assert server_conf.get("command") == "echo"
+        return (
+            object(),
+            [existing_definition],
+            [
+                build_tool_descriptor(
+                    existing_definition,
+                    frozenset({ToolTag.DESTRUCTIVE, ToolTag.OUTPUT_UNTRUSTED}),
+                    origin="mcp",
+                    mcp_server_id="server1",
+                )
+            ],
+            {"shared_tool": "server1"},
+        )
+
+    provider._connect_and_discover_mcp = fake_connect_and_discover_mcp  # type: ignore[method-assign]
+    provider._close_server_connections = AsyncMock()
+    provider._sessions = cast(
+        "dict[str, ClientSession]", {"server1": SimpleNamespace()}
+    )
+    provider._connection_contexts = {"server1": AsyncMock()}
+
+    reconnected = await provider._reconnect_server("server1")
+
+    assert reconnected is True
+    assert provider._tool_map["shared_tool"] == "server2"
+    assert len(provider._definitions) == 1
+    assert provider._descriptors[0].mcp_server_id == "server2"
