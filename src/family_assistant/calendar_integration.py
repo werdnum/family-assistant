@@ -6,11 +6,13 @@ from zoneinfo import ZoneInfo  # Import ZoneInfo
 
 import caldav
 import httpx  # Import httpx
+import recurring_ical_events
 import vobject
 from caldav.lib.error import (  # Reverted to original-like import path
     DAVError,
     NotFoundError,
 )
+from icalendar import Calendar as ICalendar
 
 from family_assistant.utils.clock import Clock, SystemClock
 
@@ -107,11 +109,13 @@ def parse_event(
     local_tz: ZoneInfo | None = timezone
 
     try:
-        # vobject.readComponents returns an iterator.
-        # We expect a single VCALENDAR component, then access its VEVENT.
         components = vobject.readComponents(event_data)  # type: ignore[attr-defined]
-        ical_component = next(components)  # Get the VCALENDAR component
-        vevent = ical_component.vevent  # Access the VEVENT sub-component
+        ical_component = next(components)
+
+        if getattr(ical_component, "name", "").upper() == "VEVENT":
+            vevent = ical_component
+        else:
+            vevent = ical_component.vevent
         summary = vevent.summary.value if hasattr(vevent, "summary") else "No Title"  # type: ignore[union-attr]
         dtstart = vevent.dtstart.value if hasattr(vevent, "dtstart") else None  # type: ignore[union-attr]
         dtend = vevent.dtend.value if hasattr(vevent, "dtend") else None  # type: ignore[union-attr]
@@ -182,21 +186,82 @@ def parse_event(
         return None
 
 
+def _parse_icalendar_event_component(
+    event_component: object,
+    timezone: ZoneInfo,
+) -> "CalendarEvent | None":
+    raw_event = cast("Any", event_component)
+    summary_prop = raw_event.get("SUMMARY")
+    summary = str(summary_prop) if summary_prop is not None else "No Title"
+    uid_prop = raw_event.get("UID")
+    uid = str(uid_prop) if uid_prop is not None else None
+
+    if uid is None:
+        logger.warning("Skipping iCal event without UID.")
+        return None
+
+    dtstart = raw_event.decoded("DTSTART", None)
+    dtend = raw_event.decoded("DTEND", None)
+
+    if dtstart is None:
+        logger.warning("Skipping iCal event without DTSTART. UID='%s'", uid)
+        return None
+
+    is_all_day = not isinstance(dtstart, datetime)
+
+    if isinstance(dtstart, datetime):
+        if dtstart.tzinfo is None:
+            dtstart = dtstart.replace(tzinfo=timezone)
+        else:
+            dtstart = dtstart.astimezone(timezone)
+
+    if isinstance(dtend, datetime):
+        if dtend.tzinfo is None:
+            dtend = dtend.replace(tzinfo=timezone)
+        else:
+            dtend = dtend.astimezone(timezone)
+
+    if dtend is None:
+        if is_all_day:
+            dtend = dtstart + timedelta(days=1)
+        else:
+            dtend = dtstart + timedelta(hours=1)
+
+    return cast(
+        "CalendarEvent",
+        {
+            "uid": uid,
+            "summary": summary,
+            "start": dtstart,
+            "end": dtend,
+            "all_day": is_all_day,
+            "calendar_url": None,
+            "similarity": None,
+        },
+    )
+
+
 # --- Core Fetching Functions ---
 
 
 async def _fetch_ical_events_async(
     ical_urls: list[str],
     timezone: ZoneInfo,
+    clock: Clock | None = None,
 ) -> list["CalendarEvent"]:
     """Asynchronously fetches and parses events from a list of iCal URLs."""
+    if clock is None:
+        clock = SystemClock()
+
     all_events: list[CalendarEvent] = []
     async with httpx.AsyncClient(timeout=30.0) as client:  # Increased timeout
         fetch_tasks: list[asyncio.Task[httpx.Response]] = []
         for url_item in ical_urls:
             logger.info(f"Fetching iCal data from: {url_item}")
             # client.get returns a coroutine, ensure it's wrapped in a task for gather if not already
-            fetch_tasks.append(asyncio.create_task(client.get(url_item)))
+            fetch_tasks.append(
+                asyncio.create_task(client.get(url_item, follow_redirects=True))
+            )
 
         # `results` will be a list of httpx.Response objects or exceptions
         results: list[httpx.Response | BaseException] = await asyncio.gather(
@@ -216,18 +281,33 @@ async def _fetch_ical_events_async(
                     logger.debug(
                         f"Parsing iCal data from {url} (first 500 chars):\n{ical_data[:500]}..."
                     )
-                    # Use vobject to parse the fetched data
-                    components = vobject.readComponents(ical_data)  # type: ignore[attr-defined]
+                    calendar = ICalendar.from_ical(ical_data)
+                    start_date = clock.now().astimezone(timezone)
+                    end_date = start_date + timedelta(days=16)
+                    expanded_events = recurring_ical_events.of(calendar).between(
+                        start_date,
+                        end_date,
+                    )
                     count = 0
-                    for component in components:  # component is vobject.base.Component
-                        if component.name.upper() == "VEVENT":  # type: ignore[union-attr]
-                            parsed = parse_event(
-                                component.serialize(),  # type: ignore[union-attr]
+                    for event_component in expanded_events:
+                        try:
+                            parsed = _parse_icalendar_event_component(
+                                event_component,
                                 timezone=timezone,
-                            )  # Reuse existing parser
-                            if parsed:
-                                all_events.append(parsed)
-                                count += 1
+                            )
+                        except Exception as event_parse_error:
+                            logger.error(
+                                "Failed to parse individual event in iCal URL %s: %s",
+                                url,
+                                event_parse_error,
+                                exc_info=True,
+                            )
+                            continue
+
+                        if parsed:
+                            all_events.append(parsed)
+                            count += 1
+
                     logger.info(f"Parsed {count} events from iCal URL: {url}")
                 except Exception as e:
                     logger.error(
@@ -420,6 +500,7 @@ def _fetch_caldav_events_sync(
 async def fetch_upcoming_events(
     calendar_config: "CalendarConfig",
     timezone: ZoneInfo,
+    clock: Clock | None = None,
 ) -> list["CalendarEvent"]:
     """Fetches events from configured CalDAV and iCal sources and merges them."""
     logger.debug("Entering fetch_upcoming_events orchestrator.")
@@ -465,7 +546,7 @@ async def fetch_upcoming_events(
         if ical_urls:
             logger.debug("Scheduling asynchronous iCal fetch.")
             ical_task = asyncio.create_task(
-                _fetch_ical_events_async(ical_urls, timezone)
+                _fetch_ical_events_async(ical_urls, timezone, clock=clock)
             )
             tasks.append(ical_task)
         else:
