@@ -43,7 +43,7 @@ async def test_fetch_ical_events_parses_vevents_from_vcalendar(
     ])
 
     async def fake_get(
-        self: httpx.AsyncClient, url: str, follow_redirects: bool = False
+        self: httpx.AsyncClient, url: str, **kwargs: object
     ) -> httpx.Response:
         return httpx.Response(200, text=ics_data)
 
@@ -82,7 +82,7 @@ async def test_fetch_ical_events_expands_recurring_events(
     ])
 
     async def fake_get(
-        self: httpx.AsyncClient, url: str, follow_redirects: bool = False
+        self: httpx.AsyncClient, url: str, **kwargs: object
     ) -> httpx.Response:
         return httpx.Response(200, text=ics_data)
 
@@ -103,7 +103,7 @@ async def test_fetch_real_world_nsw_school_calendar_end_to_end(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     async def fake_get(
-        self: httpx.AsyncClient, url: str, follow_redirects: bool = False
+        self: httpx.AsyncClient, url: str, **kwargs: object
     ) -> httpx.Response:
         return httpx.Response(200, text=NSW_SCHOOL_2026_ICS)
 
@@ -134,7 +134,7 @@ async def test_fetch_real_world_australia_holidays_calendar_end_to_end(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     async def fake_get(
-        self: httpx.AsyncClient, url: str, follow_redirects: bool = False
+        self: httpx.AsyncClient, url: str, **kwargs: object
     ) -> httpx.Response:
         return httpx.Response(200, text=AUSTRALIA_HOLIDAYS_ICS)
 
@@ -181,9 +181,10 @@ async def test_fetch_ical_events_follows_redirects(
     ])
 
     async def fake_get(
-        self: httpx.AsyncClient, url: str, follow_redirects: bool = False
+        self: httpx.AsyncClient, url: str, **kwargs: object
     ) -> httpx.Response:
-        redirect_flags.append(follow_redirects)
+        follow_redirects = kwargs.get("follow_redirects")
+        redirect_flags.append(follow_redirects is True)
         return httpx.Response(200, text=ics_data)
 
     monkeypatch.setattr(httpx.AsyncClient, "get", fake_get)
@@ -227,7 +228,7 @@ async def test_fetch_ical_events_continues_when_individual_event_parse_fails(
     ])
 
     async def fake_get(
-        self: httpx.AsyncClient, url: str, follow_redirects: bool = False
+        self: httpx.AsyncClient, url: str, **kwargs: object
     ) -> httpx.Response:
         return httpx.Response(200, text=ics_data)
 
