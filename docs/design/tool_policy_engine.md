@@ -57,8 +57,23 @@ This design draws inspiration from:
 ### 2.1. Tool Metadata Registry
 
 Every tool -- both local Python tools and MCP server tools -- has a set of **tags** that describe
-its security-relevant properties. Tags are declared inline in tool definitions for local tools and
-in configuration for MCP tools.
+its security-relevant properties. Tags are declared alongside local tool registrations and in
+configuration for MCP tools.
+
+The policy engine operates on an internal `ToolDescriptor` registry, not directly on the wire-format
+tool definitions sent to LLMs. This keeps security metadata and provenance available to the
+application without leaking extra fields into provider-specific tool schemas:
+
+```python
+class ToolDescriptor(TypedDict):
+    definition: ToolDefinition
+    tags: frozenset[str]
+    origin: Literal["local", "mcp"]
+    mcp_server_id: str | None
+```
+
+Local tools populate this registry from code. MCP tools populate it at discovery time by combining
+discovered tool schemas with configured metadata (and MCP annotation hints when available).
 
 ### 2.2. Policy Rules
 
@@ -77,8 +92,10 @@ Policies compose across three layers:
 3. **Per-profile rules**: Each service profile can specify additional rules that apply only when
    that profile is active.
 
-Higher layers override lower layers through priority: operator rules at higher priority than
-defaults, profile rules at higher priority than operator rules.
+Higher layers override lower layers through priority: profile rules at higher priority than
+defaults, operator rules at higher priority than both. This matches the intended trust model:
+application defaults provide the baseline, profiles specialize within the application, and the
+deployment operator retains final authority.
 
 ## 3. Tool Metadata
 
@@ -90,6 +107,7 @@ class ToolTag(StrEnum):
 
     # === Capability tags (what the tool does) ===
     READ_ONLY = "read_only"            # Only reads data, no side effects
+    SENSITIVE_DATA = "sensitive_data"  # Reads or exposes private family/application data
     STATE_CHANGING = "state_changing"   # Modifies persistent state (DB, calendar, notes)
     STATE_PERSISTING = "state_persisting"  # Persists data that may be re-injected into LLM context (notes, system state)
     EXTERNAL_COMM = "external_comm"    # Communicates externally (sends messages, emails)
@@ -123,8 +141,8 @@ class ToolTag(StrEnum):
 ```
 
 Tags are not mutually exclusive. A tool can be both `STATE_CHANGING` and `CALENDAR` and
-`OUTPUT_TRUSTED`. The capability and output trust tags are the most security-relevant; the
-functional group tags exist for ergonomic rule writing.
+`OUTPUT_TRUSTED`. The capability tags, data sensitivity tags, and output trust tags are the most
+security-relevant; the functional group tags exist for ergonomic rule writing.
 
 **`CODE_EXECUTION` note**: Execution environments are sandboxed, and scripts propagate the calling
 profile's tool policy. A script cannot make tool calls that the calling profile wouldn't normally
@@ -143,55 +161,72 @@ a tool that modifies a calendar event is state-changing but not necessarily stat
 `add_or_update_note` is both state-changing and state-persisting because notes can appear in the
 system prompt.
 
+**`SENSITIVE_DATA` note**: This tag is what lets the policy engine model Rule-of-Two property [B]
+("accessing sensitive data"). It should be applied to tools that read or expose private family or
+application data such as notes, documents, calendar contents, message history, source code, logs, or
+database contents. Without this tag, all read-only tools look equivalent to the policy engine, which
+is too coarse for profiles that may use untrusted input but must not read sensitive data.
+
 ### 3.2. Local Tool Metadata Declaration
 
-Tool metadata is declared inline as part of the tool definition itself, using a `tags` field in the
-`ToolDefinition` TypedDict:
+Tool metadata is declared alongside the LLM-facing tool definition using an internal registration
+type:
 
 ```python
-class ToolDefinition(TypedDict):
-    type: str
-    function: ToolFunctionSchema
+class ToolRegistration(TypedDict):
+    definition: ToolDefinition
     tags: set[str]  # Security-relevant metadata tags (required for all local tools)
 ```
 
-Each tool module declares tags alongside its tool definitions:
+Each tool module declares registrations rather than bare tool definitions:
 
 ```python
 # src/family_assistant/tools/calendar.py
 
-CALENDAR_TOOLS_DEFINITION: list[ToolDefinition] = [
+CALENDAR_TOOL_REGISTRATIONS: list[ToolRegistration] = [
     {
-        "type": "function",
-        "function": {
-            "name": "add_calendar_event",
-            "description": "...",
-            "parameters": { ... },
+        "definition": {
+            "type": "function",
+            "function": {
+                "name": "add_calendar_event",
+                "description": "...",
+                "parameters": { ... },
+            },
         },
         "tags": {"state_changing", "calendar", "output_trusted"},
     },
     {
-        "type": "function",
-        "function": {
-            "name": "search_calendar_events",
-            "description": "...",
-            "parameters": { ... },
+        "definition": {
+            "type": "function",
+            "function": {
+                "name": "search_calendar_events",
+                "description": "...",
+                "parameters": { ... },
+            },
         },
-        "tags": {"read_only", "calendar", "output_trusted"},
+        "tags": {"read_only", "sensitive_data", "calendar", "output_trusted"},
     },
     {
-        "type": "function",
-        "function": {
-            "name": "delete_calendar_event",
-            "description": "...",
-            "parameters": { ... },
+        "definition": {
+            "type": "function",
+            "function": {
+                "name": "delete_calendar_event",
+                "description": "...",
+                "parameters": { ... },
+            },
         },
-        "tags": {"destructive", "state_changing", "calendar", "output_trusted"},
+        "tags": {
+            "destructive",
+            "state_changing",
+            "sensitive_data",
+            "calendar",
+            "output_trusted",
+        },
     },
 ]
 ```
 
-A test validates that every tool definition has a `tags` field, ensuring developers cannot
+A test validates that every local tool registration has a `tags` field, ensuring developers cannot
 accidentally ship a tool without considering its security properties.
 
 ### 3.3. MCP Tool Metadata
@@ -439,10 +474,11 @@ default_profile_settings:
         decision: "confirm"
         priority: 20
 
-      # --- Require confirmation for delegation ---
+      # --- Allow delegation; target profile policy decides if it is blocked or confirmed ---
       - match: { tags_any: ["delegation"] }
-        decision: "confirm"
-        priority: 20
+        decision: "allow"
+        priority: 10
+        description: "Delegation availability is policy-controlled; target checks happen in the tool"
 
       # --- Allow all tools from homeassistant and brave MCP servers ---
       - match: { mcp_server_ids: ["homeassistant", "brave", "time", "google-maps"] }
@@ -463,8 +499,10 @@ default_profile_settings:
 
 ### 5.2. Per-Profile Overrides
 
-Profiles specify their own policy rules that compose with the defaults. Profile rules run at their
-declared priority -- if a profile needs to override a default rule, it uses a higher priority.
+Profiles specify their own policy rules that compose with the defaults. Profile rules receive an
+automatic priority offset of +100, so profile-local rules override application defaults without
+profile authors needing to reason about application-wide priority numbers. Within a profile, the
+declared `priority` still orders rules relative to each other.
 
 ```yaml
 service_profiles:
@@ -599,8 +637,8 @@ priority offsetting:
 ```
 effective_rules = merge(
     application defaults (priority as-is: 0-99),
+    profile-specific     (priority += 100, scoped to profile),
     operator overrides   (priority += 1000),
-    profile-specific     (priority as-is: 0-99, scoped to profile),
 )
 sorted by effective_priority descending, then declaration order for tie-breaking
 ```
@@ -613,12 +651,11 @@ defaults).
 | Layer                | Offset | Effective Range | Description                        |
 | -------------------- | ------ | --------------- | ---------------------------------- |
 | Application defaults | +0     | 0-99            | Base policies shipped with the app |
-| Profile-specific     | +0     | 0-99            | Profile's own tool access rules    |
+| Profile-specific     | +100   | 100-199         | Profile's own tool access rules    |
 | Operator overrides   | +1000  | 1000-1099       | Deployment-specific overrides      |
 
-Profile-specific rules use the same priority range as defaults (0-99) because they are scoped to a
-single profile and compose with defaults within that scope. Operator rules always override both due
-to the +1000 offset.
+Profile-specific rules use their own offset so that profile-local specializations override the
+application defaults by default, while operator rules always override both due to the +1000 offset.
 
 **Why prepend + offset instead of append?** Two reasons:
 
@@ -655,14 +692,24 @@ class PolicyEnforcingToolsProvider(ToolsProvider):
         confirmation_timeout: float = 3600.0,
     ) -> None: ...
 
-    async def get_tool_definitions(self) -> list[ToolDefinition]:
-        """Return only tool definitions for allowed and confirm-required tools.
-        Denied tools are excluded entirely -- the LLM never sees them."""
-        all_defs = await self.wrapped_provider.get_tool_definitions()
+    async def get_tool_definitions(
+        self,
+        *,
+        can_confirm: bool,
+    ) -> list[ToolDefinition]:
+        """Return tool definitions that are valid to advertise for this interaction.
+
+        Denied tools are excluded entirely. Confirm-required tools are advertised only
+        when the current interaction can actually present and receive confirmation."""
+        all_descriptors = await self.wrapped_provider.get_tool_descriptors()
         return [
-            d for d in all_defs
-            if self.policy_engine.evaluate(d["function"]["name"], ...)
-               != PolicyDecision.DENY
+            descriptor["definition"]
+            for descriptor in all_descriptors
+            if self.policy_engine.evaluate_for_advertisement(
+                descriptor,
+                can_confirm=can_confirm,
+            )
+            != PolicyDecision.DENY
         ]
 
     async def execute_tool(
@@ -672,9 +719,10 @@ class PolicyEnforcingToolsProvider(ToolsProvider):
         exec_context: ToolExecutionContext,
     ) -> ToolResult:
         """Execute a tool, enforcing policy decisions."""
-        decision = self.policy_engine.evaluate(
-            tool_name,
-            mcp_server_id=self._get_server_id(tool_name),
+        descriptor = await self.wrapped_provider.get_tool_descriptor(tool_name)
+        decision = self.policy_engine.evaluate_for_execution(
+            descriptor,
+            can_confirm=bool(exec_context.request_confirmation_callback),
         )
 
         if decision == PolicyDecision.DENY:
@@ -691,6 +739,14 @@ class PolicyEnforcingToolsProvider(ToolsProvider):
         return result
 ```
 
+Advertising and execution use different policy paths:
+
+- **Advertisement**: `confirm` behaves like `allow` only when `can_confirm=True`; otherwise the tool
+  is hidden from the model/client for that interaction.
+- **Execution**: `confirm` triggers the existing confirmation flow.
+
+This preserves current behavior for channels such as voice mode that cannot handle confirmations.
+
 ### 6.3. Confirmation Integration
 
 The existing confirmation infrastructure (confirmation renderers for calendar events, timeout
@@ -704,13 +760,13 @@ The key difference: instead of checking a `confirm_tools` set, it queries the `P
 
 ### 7.1. Current Model
 
-The current `delegation_security_level` field on `ProcessingConfig` remains conceptually the same
-but is now expressed as part of the policy system:
+The current `delegation_security_level` field on `ProcessingConfig` remains conceptually the same,
+but its enforcement is owned by the delegation tool rather than by generic tool policy rules:
 
-- `"blocked"`: The profile's policy includes a deny rule for the `delegate_to_service` tool
-  targeting this profile (enforced at the delegation tool level, not the policy engine).
-- `"confirm"`: Delegation requires confirmation.
-- `"unrestricted"`: Delegation is allowed without confirmation.
+- Source profile policy determines whether `delegate_to_service` is available at all.
+- Target profile `delegation_security_level` determines whether delegation to that target is
+  blocked, requires confirmation, or is unrestricted.
+- This avoids double-confirmation, because target-specific confirmation stays in one place.
 
 ### 7.2. Enhanced Delegation Controls
 
@@ -945,12 +1001,14 @@ default_profile_settings:
 
 ### Phase 1: Tool Metadata
 
-Add tags to all local tool definitions. No behavior changes.
+Add tags to all local tool registrations and introduce the internal descriptor model. No behavior
+changes.
 
 - Add `ToolTag` enum to `src/family_assistant/tools/metadata.py`
-- Add `tags` field to each tool definition dict in tool modules
+- Add `ToolRegistration` / `ToolDescriptor` types
+- Add `tags` field to each local tool registration in tool modules
 - Add `tool_metadata` field to `MCPServerConfig`
-- Test: every tool definition has a `tags` field; tag values are valid
+- Test: every local tool registration has a `tags` field; tag values are valid
 
 ### Phase 2: Policy Engine
 
@@ -959,6 +1017,8 @@ Implement the rule evaluation engine with exhaustive tests.
 - Create `src/family_assistant/tools/policy.py` with `PolicyEngine`, `PolicyRule`, `ToolMatcher`,
   `PolicyDecision`
 - Add config models: `ToolPolicyConfig`, `PolicyRuleConfig`, `ToolMatcherConfig`
+- Support automatic priority offsets for application defaults, profiles, and operator rules
+- Support `evaluate_for_advertisement(..., can_confirm=...)` and `evaluate_for_execution(...)`
 - Test: name matching, glob patterns, tag matching (all/any), MCP server matching, priority
   ordering, default decisions, edge cases
 
@@ -967,8 +1027,11 @@ Implement the rule evaluation engine with exhaustive tests.
 Unified provider that replaces FilteredToolsProvider + ConfirmingToolsProvider.
 
 - Create `PolicyEnforcingToolsProvider` in `infrastructure.py`
+- Add descriptor lookup/provenance support (`get_tool_descriptors`, `get_tool_descriptor`)
 - Preserve existing confirmation infrastructure (renderers, callbacks, timeout)
-- Test: denied tools excluded from definitions, confirm tools trigger callback
+- Update all tool-advertising call sites to pass `can_confirm`
+- Test: denied tools excluded from definitions, confirm tools trigger callback, confirm tools are
+  hidden when `can_confirm=False`
 
 ### Phase 4: Config Migration
 
@@ -978,7 +1041,10 @@ Replace `enable_local_tools`/`confirm_tools`/`enable_mcp_server_ids` with `tools
   remove old fields from `ToolsConfig`
 - Update `assistant.py` setup: build `PolicyEngine` from merged config, create
   `PolicyEnforcingToolsProvider`
+- Update config loading to merge `tools_policy` with layer-specific priority offsets
 - Migrate `defaults.yaml` to new policy format
+- Update non-chat tool advertisement surfaces (for example, voice mode and profile listing) to use
+  policy-derived visibility instead of legacy config fields
 - Remove `FilteredToolsProvider` and `ConfirmingToolsProvider`
 - Update all tests
 
@@ -1035,7 +1101,8 @@ based on taint level) is the primary use case driving this design.
 
 ### 12.1. Unit Tests
 
-- **`test_tool_metadata.py`**: Every tool definition has a `tags` field; tag values are valid
+- **`test_tool_metadata.py`**: Every local tool registration has a `tags` field; tag values are
+  valid
 - **`test_policy_engine.py`**: Rule evaluation logic -- name globs, tag matching, priorities,
   defaults, edge cases. This is the most critical test file.
 - **`test_policy_enforcing_provider.py`**: Provider filters definitions, blocks denied tools,
