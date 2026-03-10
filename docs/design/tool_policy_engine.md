@@ -1012,7 +1012,7 @@ tracker elsewhere.
 
 ### Ordered Work Plan
 
-- [ ] **Step 1: Tool metadata foundation** Scope: Add `ToolTag`, `ToolRegistration`, and
+- [x] **Step 1: Tool metadata foundation** Scope: Add `ToolTag`, `ToolRegistration`, and
   `ToolDescriptor`. Add required tags to every local tool registration. Add `tool_metadata` to
   `MCPServerConfig`, including wildcard support and MCP-annotation fallback rules. Deliverables:
   `src/family_assistant/tools/metadata.py`, updated local tool registration structures, updated MCP

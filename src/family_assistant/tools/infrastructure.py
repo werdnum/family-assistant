@@ -23,6 +23,11 @@ from typing import (
 
 from family_assistant import calendar_integration
 from family_assistant.tools.attachment_utils import process_attachment_arguments
+from family_assistant.tools.metadata import (
+    ToolDescriptor,
+    ToolRegistration,
+    build_local_tool_descriptors,
+)
 from family_assistant.tools.types import (
     CalendarConfig,
     RequestConfirmationCallback,
@@ -155,6 +160,15 @@ class ToolProviderComposite(Protocol):
     def get_providers(self) -> list[ToolsProvider]: ...
 
 
+@runtime_checkable
+class ToolDescriptorProvider(Protocol):
+    """Protocol for providers that can expose tool descriptors."""
+
+    async def get_tool_descriptors(self) -> list[ToolDescriptor]: ...
+
+    async def get_tool_descriptor(self, name: str) -> ToolDescriptor | None: ...
+
+
 class ToolsProvider(Protocol):
     """Protocol for tool providers.
 
@@ -217,14 +231,39 @@ class LocalToolsProvider:
 
     def __init__(
         self,
-        definitions: Sequence[ToolDefinition],
+        definitions: Sequence[ToolDefinition] | None = None,
         # ast-grep-ignore: no-dict-any - Implementation map has heterogeneous callable types
-        implementations: dict[str, Any],  # dict[str, Callable]
+        implementations: dict[str, Any] | None = None,  # dict[str, Callable]
         embedding_generator: EmbeddingGenerator | None = None,
         calendar_config: CalendarConfig | None = None,
+        registrations: Sequence[ToolRegistration] | None = None,
+        descriptors: Sequence[ToolDescriptor] | None = None,
     ) -> None:
-        self._definitions = list(definitions)
-        self._implementations = implementations
+        if registrations is not None:
+            self._registrations = list(registrations)
+            self._definitions = [
+                registration.definition for registration in self._registrations
+            ]
+            self._implementations = {
+                registration.name: registration.implementation
+                for registration in self._registrations
+            }
+            self._descriptors = (
+                list(descriptors)
+                if descriptors is not None
+                else build_local_tool_descriptors(self._registrations)
+            )
+        else:
+            if definitions is None or implementations is None:
+                msg = (
+                    "LocalToolsProvider requires either registrations or both "
+                    "definitions and implementations."
+                )
+                raise ValueError(msg)
+            self._registrations = None
+            self._definitions = list(definitions)
+            self._implementations = implementations
+            self._descriptors = list(descriptors) if descriptors is not None else []
         self._embedding_generator = embedding_generator
         self._calendar_config = calendar_config
         logger.info(
@@ -253,6 +292,17 @@ class LocalToolsProvider:
             Raw tool definitions with original attachment types
         """
         return self._definitions
+
+    async def get_tool_descriptors(self) -> list[ToolDescriptor]:
+        """Return the provider's internal tool descriptors."""
+        return list(self._descriptors)
+
+    async def get_tool_descriptor(self, name: str) -> ToolDescriptor | None:
+        """Return a single descriptor by tool name."""
+        for descriptor in self._descriptors:
+            if descriptor.name == name:
+                return descriptor
+        return None
 
     async def execute_tool(
         self,
@@ -488,6 +538,25 @@ class CompositeToolsProvider(ToolsProvider):
                 )
         return all_definitions
 
+    async def get_tool_descriptors(self) -> list[ToolDescriptor]:
+        """Return combined descriptors from providers that expose them."""
+        descriptors: list[ToolDescriptor] = []
+        for provider in self._providers:
+            if not isinstance(provider, ToolDescriptorProvider):
+                continue
+            descriptors.extend(await provider.get_tool_descriptors())
+        return descriptors
+
+    async def get_tool_descriptor(self, name: str) -> ToolDescriptor | None:
+        """Return the first matching descriptor by name."""
+        for provider in self._providers:
+            if not isinstance(provider, ToolDescriptorProvider):
+                continue
+            descriptor = await provider.get_tool_descriptor(name)
+            if descriptor is not None:
+                return descriptor
+        return None
+
     async def execute_tool(
         self,
         name: str,
@@ -582,6 +651,30 @@ class FilteredToolsProvider(ToolsProvider):
                 ]
         return self._filtered_definitions
 
+    async def get_tool_descriptors(self) -> list[ToolDescriptor]:
+        """Get filtered tool descriptors when supported by the wrapped provider."""
+        if not isinstance(self._wrapped_provider, ToolDescriptorProvider):
+            return []
+        all_descriptors = await self._wrapped_provider.get_tool_descriptors()
+        if self._allowed_tool_names is None:
+            return all_descriptors
+        return [
+            descriptor
+            for descriptor in all_descriptors
+            if descriptor.name in self._allowed_tool_names
+        ]
+
+    async def get_tool_descriptor(self, name: str) -> ToolDescriptor | None:
+        """Get a filtered descriptor by name."""
+        if (
+            self._allowed_tool_names is not None
+            and name not in self._allowed_tool_names
+        ):
+            return None
+        if not isinstance(self._wrapped_provider, ToolDescriptorProvider):
+            return None
+        return await self._wrapped_provider.get_tool_descriptor(name)
+
     async def execute_tool(
         self,
         name: str,
@@ -627,6 +720,18 @@ class ConfirmingToolsProvider(ToolsProvider):
             self._tool_definitions = await self.wrapped_provider.get_tool_definitions()
             # Optionally, we could modify the descriptions to indicate confirmation required
         return self._tool_definitions
+
+    async def get_tool_descriptors(self) -> list[ToolDescriptor]:
+        """Return descriptors from the wrapped provider when available."""
+        if not isinstance(self.wrapped_provider, ToolDescriptorProvider):
+            return []
+        return await self.wrapped_provider.get_tool_descriptors()
+
+    async def get_tool_descriptor(self, name: str) -> ToolDescriptor | None:
+        """Return a descriptor by name from the wrapped provider."""
+        if not isinstance(self.wrapped_provider, ToolDescriptorProvider):
+            return None
+        return await self.wrapped_provider.get_tool_descriptor(name)
 
     async def _get_event_details_for_confirmation(
         self,

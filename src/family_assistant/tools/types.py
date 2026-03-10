@@ -44,6 +44,7 @@ class MCPServerStdIOConfig(TypedDict, total=False):
     command: str
     args: list[str]
     env: dict[str, str]
+    tool_metadata: dict[str, list[str]]
 
 
 class MCPServerSSEConfig(TypedDict):
@@ -52,6 +53,7 @@ class MCPServerSSEConfig(TypedDict):
     transport: Literal["sse"]
     url: str
     token: NotRequired[str | None]
+    tool_metadata: NotRequired[dict[str, list[str]]]
 
 
 class MCPServerGenericConfig(TypedDict, total=False):
@@ -63,6 +65,7 @@ class MCPServerGenericConfig(TypedDict, total=False):
     env: dict[str, str]
     url: str
     token: str
+    tool_metadata: dict[str, list[str]]
 
 
 # Use a Union to represent the allowed MCP server configurations.

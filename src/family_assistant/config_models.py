@@ -516,6 +516,7 @@ class MCPServerConfig(BaseModel):
     command: str | None = None
     args: list[str] = Field(default_factory=list)
     env: dict[str, str] = Field(default_factory=dict)
+    tool_metadata: dict[str, list[str]] = Field(default_factory=dict)
 
 
 class MCPConfig(BaseModel):

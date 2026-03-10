@@ -74,6 +74,9 @@ from family_assistant.tools import (
     AVAILABLE_FUNCTIONS as local_tool_implementations,
 )
 from family_assistant.tools import (
+    LOCAL_TOOL_METADATA_BY_NAME as local_tool_metadata_by_name,
+)
+from family_assistant.tools import (
     TOOLS_DEFINITION as local_tools_definition,
 )
 from family_assistant.tools import (
@@ -84,6 +87,7 @@ from family_assistant.tools import (
     MCPServerConfig,
     MCPToolsProvider,
     _scan_user_docs,
+    build_local_tool_registrations,
 )
 from family_assistant.tools.worker import reconcile_stale_tasks
 from family_assistant.utils.logging_handler import setup_error_logging
@@ -552,9 +556,13 @@ class Assistant:
         logger.info("Creating root ToolsProvider with all available tools")
 
         # Create root local provider with ALL tools
+        root_local_registrations = build_local_tool_registrations(
+            definitions=base_local_tools_definition,
+            implementations=local_tool_implementations,
+            metadata_by_name=local_tool_metadata_by_name,
+        )
         root_local_provider = LocalToolsProvider(
-            definitions=base_local_tools_definition,  # ALL local tools
-            implementations=local_tool_implementations,  # ALL implementations
+            registrations=root_local_registrations,
             embedding_generator=self.embedding_generator,
             calendar_config=_calendar_config_to_dict(self.config.calendar_config),
         )
