@@ -57,7 +57,9 @@ jobs:
             echo
             echo "Review ONLY the changes introduced by this pull request."
             echo "Focus on correctness issues, regressions, missing tests, and maintainability concerns."
-            echo "Keep feedback concise and actionable."
+            echo "Return strict JSON that matches the provided output schema."
+            echo "For inline_comments, include only high-confidence findings tied to changed files and exact line numbers in the head revision."
+            echo "Do not include praise-only comments."
             echo
             echo "Pull request title and body:"
             echo "----"
@@ -75,6 +77,42 @@ jobs:
         with:
           openai-api-key: '${{ secrets.OPENAI_API_KEY }}'
           prompt-file: '.codex-review-prompt.txt'
+          output-schema: |-
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["summary", "inline_comments"],
+              "properties": {
+                "summary": {
+                  "type": "string",
+                  "description": "High-level review summary for the PR."
+                },
+                "inline_comments": {
+                  "type": "array",
+                  "maxItems": 10,
+                  "items": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "required": ["path", "line", "body"],
+                    "properties": {
+                      "path": {
+                        "type": "string",
+                        "description": "Repository-relative file path."
+                      },
+                      "line": {
+                        "type": "integer",
+                        "minimum": 1,
+                        "description": "Line number in the head revision where the issue applies."
+                      },
+                      "body": {
+                        "type": "string",
+                        "description": "Concise, actionable review comment."
+                      }
+                    }
+                  }
+                }
+              }
+            }
 
   post_feedback:
     needs: 'review'
@@ -85,22 +123,65 @@ jobs:
       issues: 'write'
       pull-requests: 'write'
     steps:
-      - name: 'Upsert Codex feedback comment'
+      - name: 'Upsert Codex summary and publish inline comments'
         uses: 'actions/github-script@60a0d83039c74a4aee543508d2ffcb1c3799cdea' # ratchet:actions/github-script@v7
         env:
           CODEX_FINAL_MESSAGE: '${{ needs.review.outputs.final_message }}'
+          PR_NUMBER: '${{ github.event.pull_request.number }}'
+          HEAD_SHA: '${{ github.event.pull_request.head.sha }}'
         with:
           github-token: '${{ github.token }}'
           script: |-
             const marker = '<!-- codex-review-comment -->';
+            const issueNumber = Number(process.env.PR_NUMBER);
+            const rawMessage = process.env.CODEX_FINAL_MESSAGE || '';
+
+            let parsed;
+            try {
+              parsed = JSON.parse(rawMessage);
+            } catch {
+              parsed = { summary: rawMessage, inline_comments: [] };
+            }
+
+            const summary = String(parsed.summary || 'No summary produced.').trim();
+            const inlineComments = Array.isArray(parsed.inline_comments) ? parsed.inline_comments : [];
+
+            let postedInlineCount = 0;
+            for (const comment of inlineComments.slice(0, 10)) {
+              const path = typeof comment.path === 'string' ? comment.path : '';
+              const line = Number(comment.line);
+              const body = typeof comment.body === 'string' ? comment.body : '';
+
+              if (!path || !Number.isInteger(line) || line < 1 || !body.trim()) {
+                continue;
+              }
+
+              try {
+                await github.rest.pulls.createReviewComment({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  pull_number: issueNumber,
+                  commit_id: process.env.HEAD_SHA,
+                  path,
+                  line,
+                  side: 'RIGHT',
+                  body,
+                });
+                postedInlineCount += 1;
+              } catch {
+                // Ignore invalid/obsolete line anchors and continue posting the rest.
+              }
+            }
+
             const body = [
               marker,
               '## 🧠 Codex Review (OpenAI)',
               '',
-              process.env.CODEX_FINAL_MESSAGE,
+              summary,
+              '',
+              `Inline comments posted: ${postedInlineCount}`,
             ].join('\n');
 
-            const issueNumber = context.payload.pull_request.number;
             const { data: comments } = await github.rest.issues.listComments({
               owner: context.repo.owner,
               repo: context.repo.repo,
