@@ -158,6 +158,18 @@ from family_assistant.tools.notes import (
     get_note_tool,
     list_notes_tool,
 )
+from family_assistant.tools.policy import (
+    DEFAULT_POLICY_PRIORITY_OFFSET,
+    OPERATOR_POLICY_PRIORITY_OFFSET,
+    PROFILE_POLICY_PRIORITY_OFFSET,
+    PolicyEngine,
+    PolicyEvaluation,
+    PolicyRule,
+    ResolvedPolicyRule,
+    ToolMatcher,
+    ToolPolicyConfig,
+    ToolPolicyDecision,
+)
 from family_assistant.tools.services import (
     SERVICE_TOOLS_DEFINITION,
     delegate_to_service_tool,
@@ -223,6 +235,16 @@ __all__ = [
     "LocalToolMetadata",
     "ToolRegistration",
     "ToolDescriptor",
+    "ToolMatcher",
+    "PolicyRule",
+    "ToolPolicyConfig",
+    "ToolPolicyDecision",
+    "PolicyEvaluation",
+    "ResolvedPolicyRule",
+    "PolicyEngine",
+    "DEFAULT_POLICY_PRIORITY_OFFSET",
+    "PROFILE_POLICY_PRIORITY_OFFSET",
+    "OPERATOR_POLICY_PRIORITY_OFFSET",
     # Tool definitions
     "TOOLS_DEFINITION",
     "AVAILABLE_FUNCTIONS",

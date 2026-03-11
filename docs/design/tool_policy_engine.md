@@ -1020,7 +1020,7 @@ tracker elsewhere.
   valid tags, MCP metadata resolution is implemented, and the runtime can build descriptors without
   changing policy behavior yet.
 
-- [ ] **Step 2: Policy config and evaluation engine** Depends on: Step 1. Scope: Implement
+- [x] **Step 2: Policy config and evaluation engine** Depends on: Step 1. Scope: Implement
   `ToolMatcher`, `PolicyRule`, `ToolPolicyConfig`, and `PolicyEngine`. Support name globs,
   `tags_all`, `tags_any`, `mcp_server_ids`, default decisions, deterministic tie-breaking, and the
   documented priority offsets (`defaults +0`, `profile +100`, `operator +1000`). Deliverables:
