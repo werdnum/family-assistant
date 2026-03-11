@@ -68,10 +68,10 @@ class ToolMatcher(BaseModel):
         ):
             return False
 
-        if self.tags_all and not set(self.tags_all).issubset(descriptor.tags):
+        if self.tags_all and not descriptor.tags.issuperset(self.tags_all):
             return False
 
-        if self.tags_any and not set(self.tags_any).intersection(descriptor.tags):
+        if self.tags_any and descriptor.tags.isdisjoint(self.tags_any):
             return False
 
         if self.mcp_server_ids:
@@ -92,7 +92,7 @@ class PolicyRule(BaseModel):
 
     match: ToolMatcher
     decision: ToolPolicyDecision
-    priority: int = 0
+    priority: int = Field(default=0, ge=0, le=99)
     description: str = ""
 
 

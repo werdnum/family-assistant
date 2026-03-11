@@ -2,6 +2,9 @@ from __future__ import annotations
 
 from typing import Literal
 
+import pytest
+from pydantic import ValidationError
+
 from family_assistant.config_models import DefaultProfileSettings, ServiceProfile
 from family_assistant.tools.metadata import ToolDescriptor, ToolTag
 from family_assistant.tools.policy import (
@@ -329,3 +332,19 @@ def test_rules_are_sorted_by_effective_priority_then_layer_then_order() -> None:
     assert engine.rules[1].effective_priority == PROFILE_POLICY_PRIORITY_OFFSET + 1
     assert engine.rules[2].layer == "defaults"
     assert engine.rules[2].effective_priority == DEFAULT_POLICY_PRIORITY_OFFSET + 1
+
+
+def test_policy_rule_priority_is_bounded_to_documented_range() -> None:
+    with pytest.raises(ValidationError, match="less than or equal to 99"):
+        PolicyRule(
+            match=ToolMatcher(names=["too_high"]),
+            decision=ToolPolicyDecision.ALLOW,
+            priority=100,
+        )
+
+    with pytest.raises(ValidationError, match="greater than or equal to 0"):
+        PolicyRule(
+            match=ToolMatcher(names=["negative"]),
+            decision=ToolPolicyDecision.ALLOW,
+            priority=-1,
+        )
