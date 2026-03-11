@@ -15,6 +15,16 @@ from family_assistant.storage.context import DatabaseContext
 from family_assistant.tools.infrastructure import (
     ConfirmingToolsProvider,
     LocalToolsProvider,
+    PolicyEnforcingToolsProvider,
+    ToolNotFoundError,
+)
+from family_assistant.tools.metadata import ToolDescriptor, ToolTag
+from family_assistant.tools.policy import (
+    PolicyEngine,
+    PolicyRule,
+    ToolMatcher,
+    ToolPolicyConfig,
+    ToolPolicyDecision,
 )
 from family_assistant.tools.types import ToolDefinition, ToolExecutionContext
 
@@ -686,3 +696,281 @@ class TestConfirmingToolsProvider:
         assert wrapped_provider.calls == [
             ("dangerous_tool", tool_args, "call-explicit-123")
         ]
+
+
+class TestPolicyEnforcingToolsProvider:
+    """Test cases for PolicyEnforcingToolsProvider."""
+
+    @staticmethod
+    def _make_descriptor(
+        name: str,
+        *,
+        tags: set[ToolTag],
+    ) -> ToolDescriptor:
+        return ToolDescriptor(
+            name=name,
+            definition={
+                "type": "function",
+                "function": {
+                    "name": name,
+                    "description": f"{name} description",
+                    "parameters": {"type": "object", "properties": {}},
+                },
+            },
+            tags=frozenset(tags),
+            origin="local",
+        )
+
+    @staticmethod
+    def _make_context(
+        *,
+        request_confirmation_callback: Any = None,  # noqa: ANN401 - test helper
+    ) -> ToolExecutionContext:
+        mock_db_context = MagicMock(spec=DatabaseContext)
+        return ToolExecutionContext(
+            conversation_id="policy-conv",
+            user_name="test-user",
+            interface_type="test",
+            timezone=ZoneInfo("UTC"),
+            turn_id="turn-1",
+            db_context=mock_db_context,
+            processing_service=None,
+            clock=None,
+            home_assistant_client=None,
+            event_sources=None,
+            attachment_registry=None,
+            camera_backend=None,
+            request_confirmation_callback=request_confirmation_callback,
+        )
+
+    @pytest.mark.asyncio
+    async def test_get_tool_definitions_hides_confirm_only_tools_without_confirmation(
+        self,
+    ) -> None:
+        class StubDescriptorProvider:
+            def __init__(self, descriptors: list[ToolDescriptor]) -> None:
+                self._descriptors = descriptors
+
+            async def get_tool_definitions(self) -> list[ToolDefinition]:
+                return [descriptor.definition for descriptor in self._descriptors]
+
+            async def get_tool_descriptors(self) -> list[ToolDescriptor]:
+                return list(self._descriptors)
+
+            async def get_tool_descriptor(self, name: str) -> ToolDescriptor | None:
+                for descriptor in self._descriptors:
+                    if descriptor.name == name:
+                        return descriptor
+                return None
+
+            async def execute_tool(
+                self,
+                name: str,
+                arguments: dict[str, object],
+                context: ToolExecutionContext,
+                call_id: str | None = None,
+            ) -> str:
+                return f"executed:{name}"
+
+            async def close(self) -> None:
+                return None
+
+        descriptors = [
+            self._make_descriptor(
+                "get_note",
+                tags={ToolTag.NOTES, ToolTag.READ_ONLY, ToolTag.SENSITIVE_DATA},
+            ),
+            self._make_descriptor(
+                "delete_note",
+                tags={ToolTag.NOTES, ToolTag.DESTRUCTIVE, ToolTag.STATE_CHANGING},
+            ),
+        ]
+        policy_engine = PolicyEngine.from_policy_config(
+            ToolPolicyConfig(
+                default_decision=ToolPolicyDecision.DENY,
+                rules=[
+                    PolicyRule(
+                        match=ToolMatcher(tags_any=[ToolTag.NOTES]),
+                        decision=ToolPolicyDecision.ALLOW,
+                        priority=10,
+                    ),
+                    PolicyRule(
+                        match=ToolMatcher(tags_any=[ToolTag.DESTRUCTIVE]),
+                        decision=ToolPolicyDecision.CONFIRM,
+                        priority=20,
+                    ),
+                ],
+            )
+        )
+        provider = PolicyEnforcingToolsProvider(
+            wrapped_provider=StubDescriptorProvider(descriptors),
+            policy_engine=policy_engine,
+        )
+
+        definitions_without_confirm = await provider.get_tool_definitions(
+            can_confirm=False
+        )
+        definitions_with_confirm = await provider.get_tool_definitions(can_confirm=True)
+
+        assert [d["function"]["name"] for d in definitions_without_confirm] == [
+            "get_note"
+        ]
+        assert [d["function"]["name"] for d in definitions_with_confirm] == [
+            "get_note",
+            "delete_note",
+        ]
+
+    @pytest.mark.asyncio
+    async def test_execute_tool_requests_confirmation_when_policy_requires_it(
+        self,
+    ) -> None:
+        class StubDescriptorProvider:
+            def __init__(self, descriptor: ToolDescriptor) -> None:
+                self._descriptor = descriptor
+                self.calls: list[tuple[str, dict[str, object], str | None]] = []
+
+            async def get_tool_definitions(self) -> list[ToolDefinition]:
+                return [self._descriptor.definition]
+
+            async def get_tool_descriptors(self) -> list[ToolDescriptor]:
+                return [self._descriptor]
+
+            async def get_tool_descriptor(self, name: str) -> ToolDescriptor | None:
+                if name == self._descriptor.name:
+                    return self._descriptor
+                return None
+
+            async def execute_tool(
+                self,
+                name: str,
+                arguments: dict[str, object],
+                context: ToolExecutionContext,
+                call_id: str | None = None,
+            ) -> str:
+                self.calls.append((name, arguments, call_id))
+                return "executed"
+
+            async def close(self) -> None:
+                return None
+
+        descriptor = self._make_descriptor(
+            "delete_note",
+            tags={ToolTag.NOTES, ToolTag.DESTRUCTIVE, ToolTag.STATE_CHANGING},
+        )
+        wrapped_provider = StubDescriptorProvider(descriptor)
+        policy_engine = PolicyEngine.from_policy_config(
+            ToolPolicyConfig(
+                default_decision=ToolPolicyDecision.DENY,
+                rules=[
+                    PolicyRule(
+                        match=ToolMatcher(tags_any=[ToolTag.DESTRUCTIVE]),
+                        decision=ToolPolicyDecision.CONFIRM,
+                        priority=20,
+                    )
+                ],
+            )
+        )
+        provider = PolicyEnforcingToolsProvider(
+            wrapped_provider=wrapped_provider,
+            policy_engine=policy_engine,
+            confirmation_timeout=42.0,
+        )
+
+        captured: dict[str, object] = {}
+
+        async def confirmation_callback(
+            interface_type: str,
+            conversation_id: str,
+            turn_id: str | None,
+            tool_name: str,
+            call_id: str,
+            tool_args: dict[str, object],
+            timeout_seconds: float,
+            context: ToolExecutionContext,
+        ) -> bool:
+            captured["interface_type"] = interface_type
+            captured["conversation_id"] = conversation_id
+            captured["turn_id"] = turn_id
+            captured["tool_name"] = tool_name
+            captured["call_id"] = call_id
+            captured["tool_args"] = tool_args
+            captured["timeout_seconds"] = timeout_seconds
+            captured["context"] = context
+            return True
+
+        exec_context = self._make_context(
+            request_confirmation_callback=confirmation_callback
+        )
+        result = await provider.execute_tool(
+            "delete_note",
+            {"title": "hello"},
+            exec_context,
+            call_id="call-explicit-123",
+        )
+
+        assert result == "executed"
+        assert captured["tool_name"] == "delete_note"
+        assert captured["call_id"] == "call-explicit-123"
+        assert captured["timeout_seconds"] == 42.0
+        assert captured["context"] is exec_context
+        assert wrapped_provider.calls == [
+            ("delete_note", {"title": "hello"}, "call-explicit-123")
+        ]
+
+    @pytest.mark.asyncio
+    async def test_execute_tool_denies_confirm_only_tool_without_confirmation_path(
+        self,
+    ) -> None:
+        class StubDescriptorProvider:
+            def __init__(self, descriptor: ToolDescriptor) -> None:
+                self._descriptor = descriptor
+
+            async def get_tool_definitions(self) -> list[ToolDefinition]:
+                return [self._descriptor.definition]
+
+            async def get_tool_descriptors(self) -> list[ToolDescriptor]:
+                return [self._descriptor]
+
+            async def get_tool_descriptor(self, name: str) -> ToolDescriptor | None:
+                if name == self._descriptor.name:
+                    return self._descriptor
+                return None
+
+            async def execute_tool(
+                self,
+                name: str,
+                arguments: dict[str, object],
+                context: ToolExecutionContext,
+                call_id: str | None = None,
+            ) -> str:
+                return "executed"
+
+            async def close(self) -> None:
+                return None
+
+        descriptor = self._make_descriptor(
+            "delete_note",
+            tags={ToolTag.NOTES, ToolTag.DESTRUCTIVE, ToolTag.STATE_CHANGING},
+        )
+        provider = PolicyEnforcingToolsProvider(
+            wrapped_provider=StubDescriptorProvider(descriptor),
+            policy_engine=PolicyEngine.from_policy_config(
+                ToolPolicyConfig(
+                    default_decision=ToolPolicyDecision.DENY,
+                    rules=[
+                        PolicyRule(
+                            match=ToolMatcher(tags_any=[ToolTag.DESTRUCTIVE]),
+                            decision=ToolPolicyDecision.CONFIRM,
+                            priority=20,
+                        )
+                    ],
+                )
+            ),
+        )
+
+        with pytest.raises(ToolNotFoundError):
+            await provider.execute_tool(
+                "delete_note",
+                {"title": "hello"},
+                self._make_context(),
+            )
