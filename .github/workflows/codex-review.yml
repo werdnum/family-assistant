@@ -1,0 +1,214 @@
+name: '🧠 Codex Review'
+
+on:
+  pull_request:
+    types:
+      - 'opened'
+      - 'reopened'
+      - 'ready_for_review'
+      - 'synchronize'
+
+concurrency:
+  group: '${{ github.workflow }}-${{ github.event.pull_request.number }}'
+  cancel-in-progress: true
+
+defaults:
+  run:
+    shell: 'bash'
+
+jobs:
+  review:
+    if: |-
+      github.event.pull_request.head.repo.fork == false && !github.event.pull_request.draft && github.actor != 'dependabot[bot]'
+    runs-on: 'ubuntu-latest'
+    timeout-minutes: 30
+    permissions:
+      contents: 'read'
+      issues: 'write'
+      pull-requests: 'write'
+    outputs:
+      final_message: '${{ steps.run_codex.outputs.final-message }}'
+    steps:
+      - name: 'Checkout repository'
+        uses: 'actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8' # ratchet:actions/checkout@v6
+        with:
+          ref: 'refs/pull/${{ github.event.pull_request.number }}/merge'
+          fetch-depth: 0
+
+      - name: 'Pre-fetch base and head refs for the pull request'
+        env:
+          BASE_REF: '${{ github.event.pull_request.base.ref }}'
+          PR_NUMBER: '${{ github.event.pull_request.number }}'
+        run: |-
+          git fetch --no-tags origin \
+            "${BASE_REF}" \
+            "+refs/pull/${PR_NUMBER}/head"
+
+      - name: 'Build Codex review prompt'
+        env:
+          BASE_SHA: '${{ github.event.pull_request.base.sha }}'
+          HEAD_SHA: '${{ github.event.pull_request.head.sha }}'
+          PR_NUMBER: '${{ github.event.pull_request.number }}'
+          PR_TITLE: '${{ github.event.pull_request.title }}'
+          PR_BODY: '${{ github.event.pull_request.body }}'
+        run: |-
+          {
+            echo "This is PR #${PR_NUMBER} for ${GITHUB_REPOSITORY}."
+            echo
+            echo "Review ONLY the changes introduced by this pull request."
+            echo "Focus on correctness issues, regressions, missing tests, and maintainability concerns."
+            echo "Return strict JSON that matches the provided output schema."
+            echo "For inline_comments, include only high-confidence findings tied to changed files and exact line numbers in the head revision."
+            echo "Do not include praise-only comments."
+            echo
+            echo "Pull request title and body:"
+            echo "----"
+            echo "${PR_TITLE}"
+            echo "${PR_BODY}"
+            echo
+            echo "Unified diff for this pull request:"
+            echo "----"
+            git diff --no-color "${BASE_SHA}...${HEAD_SHA}"
+          } > '.codex-review-prompt.txt'
+
+      - name: 'Run Codex pull request review'
+        id: 'run_codex'
+        if: |-
+          secrets.OPENAI_API_KEY != ''
+        uses: 'openai/codex-action@v1'
+        with:
+          openai-api-key: '${{ secrets.OPENAI_API_KEY }}'
+          prompt-file: '.codex-review-prompt.txt'
+          output-schema: |-
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["summary", "inline_comments"],
+              "properties": {
+                "summary": {
+                  "type": "string",
+                  "description": "High-level review summary for the PR."
+                },
+                "inline_comments": {
+                  "type": "array",
+                  "maxItems": 10,
+                  "items": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "required": ["path", "line", "body"],
+                    "properties": {
+                      "path": {
+                        "type": "string",
+                        "description": "Repository-relative file path."
+                      },
+                      "line": {
+                        "type": "integer",
+                        "minimum": 1,
+                        "description": "Line number in the head revision where the issue applies."
+                      },
+                      "body": {
+                        "type": "string",
+                        "description": "Concise, actionable review comment."
+                      }
+                    }
+                  }
+                }
+              }
+            }
+
+  post_feedback:
+    needs: 'review'
+    if: |-
+      needs.review.outputs.final_message != ''
+    runs-on: 'ubuntu-latest'
+    permissions:
+      issues: 'write'
+      pull-requests: 'write'
+    steps:
+      - name: 'Upsert Codex summary and publish inline comments'
+        uses: 'actions/github-script@60a0d83039c74a4aee543508d2ffcb1c3799cdea' # ratchet:actions/github-script@v7
+        env:
+          CODEX_FINAL_MESSAGE: '${{ needs.review.outputs.final_message }}'
+          PR_NUMBER: '${{ github.event.pull_request.number }}'
+          HEAD_SHA: '${{ github.event.pull_request.head.sha }}'
+        with:
+          github-token: '${{ github.token }}'
+          script: |-
+            const marker = '<!-- codex-review-comment -->';
+            const issueNumber = Number(process.env.PR_NUMBER);
+            const rawMessage = process.env.CODEX_FINAL_MESSAGE || '';
+
+            let parsed;
+            try {
+              parsed = JSON.parse(rawMessage);
+            } catch {
+              parsed = { summary: rawMessage, inline_comments: [] };
+            }
+
+            const summary = String(parsed.summary || 'No summary produced.').trim();
+            const inlineComments = Array.isArray(parsed.inline_comments) ? parsed.inline_comments : [];
+
+            let postedInlineCount = 0;
+            for (const comment of inlineComments.slice(0, 10)) {
+              const path = typeof comment.path === 'string' ? comment.path : '';
+              const line = Number(comment.line);
+              const body = typeof comment.body === 'string' ? comment.body : '';
+
+              if (!path || !Number.isInteger(line) || line < 1 || !body.trim()) {
+                continue;
+              }
+
+              try {
+                await github.rest.pulls.createReviewComment({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  pull_number: issueNumber,
+                  commit_id: process.env.HEAD_SHA,
+                  path,
+                  line,
+                  side: 'RIGHT',
+                  body,
+                });
+                postedInlineCount += 1;
+              } catch {
+                // Ignore invalid/obsolete line anchors and continue posting the rest.
+              }
+            }
+
+            const body = [
+              marker,
+              '## 🧠 Codex Review (OpenAI)',
+              '',
+              summary,
+              '',
+              `Inline comments posted: ${postedInlineCount}`,
+            ].join('\n');
+
+            const comments = await github.paginate(github.rest.issues.listComments, {
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: issueNumber,
+              per_page: 100,
+            });
+
+            const existingComment = comments.find(
+              (comment) =>
+                comment.user?.login === 'github-actions[bot]' && comment.body?.includes(marker),
+            );
+
+            if (existingComment) {
+              await github.rest.issues.updateComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                comment_id: existingComment.id,
+                body,
+              });
+              return;
+            }
+
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: issueNumber,
+              body,
+            });
