@@ -33,6 +33,7 @@ jobs:
         uses: 'actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8' # ratchet:actions/checkout@v6
         with:
           ref: 'refs/pull/${{ github.event.pull_request.number }}/merge'
+          fetch-depth: 0
 
       - name: 'Pre-fetch base and head refs for the pull request'
         env:
@@ -84,16 +85,47 @@ jobs:
       issues: 'write'
       pull-requests: 'write'
     steps:
-      - name: 'Report Codex feedback'
+      - name: 'Upsert Codex feedback comment'
         uses: 'actions/github-script@60a0d83039c74a4aee543508d2ffcb1c3799cdea' # ratchet:actions/github-script@v7
         env:
           CODEX_FINAL_MESSAGE: '${{ needs.review.outputs.final_message }}'
         with:
           github-token: '${{ github.token }}'
           script: |-
+            const marker = '<!-- codex-review-comment -->';
+            const body = [
+              marker,
+              '## 🧠 Codex Review (OpenAI)',
+              '',
+              process.env.CODEX_FINAL_MESSAGE,
+            ].join('\n');
+
+            const issueNumber = context.payload.pull_request.number;
+            const { data: comments } = await github.rest.issues.listComments({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: issueNumber,
+              per_page: 100,
+            });
+
+            const existingComment = comments.find(
+              (comment) =>
+                comment.user?.login === 'github-actions[bot]' && comment.body?.includes(marker),
+            );
+
+            if (existingComment) {
+              await github.rest.issues.updateComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                comment_id: existingComment.id,
+                body,
+              });
+              return;
+            }
+
             await github.rest.issues.createComment({
               owner: context.repo.owner,
               repo: context.repo.repo,
-              issue_number: context.payload.pull_request.number,
-              body: process.env.CODEX_FINAL_MESSAGE,
+              issue_number: issueNumber,
+              body,
             });
