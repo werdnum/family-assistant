@@ -1466,6 +1466,7 @@ async def get_available_profiles(
 
         # Derive enabled MCP servers from the profile's visible tool descriptors.
         descriptor_provider = service.tools_provider
+        mcp_servers_derived = False
         if isinstance(descriptor_provider, ToolDescriptorProvider):
             try:
                 descriptors = await descriptor_provider.get_tool_descriptors()
@@ -1475,12 +1476,13 @@ async def get_available_profiles(
                     if descriptor.origin == "mcp"
                     and descriptor.mcp_server_id is not None
                 })
+                mcp_servers_derived = True
             except Exception:
                 logger.exception(
                     "Error fetching tool descriptors for profile %s", profile_id
                 )
 
-        if not enabled_mcp_servers and MCPToolsProvider is not None:
+        if not mcp_servers_derived and MCPToolsProvider is not None:
             mcp_provider = find_provider_by_type(
                 service.tools_provider, MCPToolsProvider
             )
