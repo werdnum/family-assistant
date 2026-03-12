@@ -28,6 +28,7 @@ from family_assistant.tools.metadata import (
     ToolRegistration,
     build_local_tool_descriptors,
 )
+from family_assistant.tools.policy import PolicyEngine, ToolPolicyDecision
 from family_assistant.tools.types import (
     CalendarConfig,
     RequestConfirmationCallback,
@@ -877,6 +878,148 @@ class ConfirmingToolsProvider(ToolsProvider):
         )
         await self.wrapped_provider.close()
         logger.info("ConfirmingToolsProvider finished closing wrapped provider.")
+
+
+class PolicyEnforcingToolsProvider(ToolsProvider):
+    """Wraps another provider and enforces policy allow/deny/confirm decisions."""
+
+    def __init__(
+        self,
+        wrapped_provider: ToolsProvider,
+        policy_engine: PolicyEngine,
+        confirmation_timeout: float = 3600.0,
+    ) -> None:
+        if not isinstance(wrapped_provider, ToolDescriptorProvider):
+            msg = (
+                "PolicyEnforcingToolsProvider requires a wrapped provider that "
+                "supports tool descriptors."
+            )
+            raise ValueError(msg)
+
+        self.wrapped_provider = wrapped_provider
+        self._descriptor_provider = wrapped_provider
+        self._policy_engine = policy_engine
+        self.confirmation_timeout = confirmation_timeout
+        self._tool_definitions_by_confirmation: dict[bool, list[ToolDefinition]] = {}
+
+    async def get_tool_definitions(
+        self,
+        *,
+        can_confirm: bool = True,
+    ) -> list[ToolDefinition]:
+        """Return tool definitions that are advertisable in this interaction."""
+        if can_confirm in self._tool_definitions_by_confirmation:
+            return self._tool_definitions_by_confirmation[can_confirm]
+
+        allowed_names = {
+            descriptor.name
+            for descriptor in await self._descriptor_provider.get_tool_descriptors()
+            if self._policy_engine.evaluate_for_advertisement(
+                descriptor,
+                can_confirm=can_confirm,
+            ).decision
+            is not ToolPolicyDecision.DENY
+        }
+
+        self._tool_definitions_by_confirmation[can_confirm] = [
+            definition
+            for definition in await self.wrapped_provider.get_tool_definitions()
+            if definition.get("function", {}).get("name") in allowed_names
+        ]
+        return self._tool_definitions_by_confirmation[can_confirm]
+
+    async def get_tool_descriptors(self) -> list[ToolDescriptor]:
+        """Return descriptors for tools that are not denied by policy."""
+        return [
+            descriptor
+            for descriptor in await self._descriptor_provider.get_tool_descriptors()
+            if self._policy_engine.evaluate(descriptor).decision
+            is not ToolPolicyDecision.DENY
+        ]
+
+    async def get_tool_descriptor(self, name: str) -> ToolDescriptor | None:
+        """Return a descriptor for a tool that is not denied by policy."""
+        descriptor = await self._descriptor_provider.get_tool_descriptor(name)
+        if descriptor is None:
+            return None
+        if self._policy_engine.evaluate(descriptor).decision is ToolPolicyDecision.DENY:
+            return None
+        return descriptor
+
+    async def execute_tool(
+        self,
+        name: str,
+        # ast-grep-ignore: no-dict-any - Tool arguments are dynamic JSON from LLM
+        arguments: dict[str, Any],
+        context: ToolExecutionContext,
+        call_id: str | None = None,
+    ) -> str | ToolResult:
+        """Execute a tool while enforcing policy decisions."""
+        descriptor = await self._descriptor_provider.get_tool_descriptor(name)
+        if descriptor is None:
+            raise ToolNotFoundError(name, type(self).__name__)
+
+        evaluation = self._policy_engine.evaluate_for_execution(
+            descriptor,
+            can_confirm=context.request_confirmation_callback is not None,
+        )
+        if evaluation.decision is ToolPolicyDecision.DENY:
+            logger.info(
+                "Tool '%s' denied by policy during execution: %s",
+                name,
+                evaluation.reason,
+            )
+            raise ToolNotFoundError(name, type(self).__name__)
+
+        if evaluation.decision is ToolPolicyDecision.CONFIRM:
+            logger.info("Tool '%s' requires policy confirmation.", name)
+            if not context.request_confirmation_callback:
+                raise ToolNotFoundError(name, type(self).__name__)
+
+            try:
+                typed_callback = context.request_confirmation_callback
+                resolved_call_id = call_id or f"tool_{uuid.uuid4()}"
+                user_confirmed = await typed_callback(
+                    interface_type=context.interface_type,
+                    conversation_id=context.conversation_id,
+                    turn_id=context.turn_id,
+                    tool_name=name,
+                    call_id=resolved_call_id,
+                    tool_args=arguments,
+                    timeout_seconds=self.confirmation_timeout,
+                    context=context,
+                )
+
+                if not user_confirmed:
+                    logger.info("User cancelled execution for tool '%s'.", name)
+                    return f"OK. Action cancelled by user for tool '{name}'."
+            except TimeoutError:
+                logger.warning("Confirmation request for tool '%s' timed out.", name)
+                return f"Action cancelled: Confirmation request for tool '{name}' timed out."
+            except asyncio.CancelledError:
+                logger.info(
+                    "Confirmation request for tool '%s' was cancelled.",
+                    name,
+                )
+                return f"Action cancelled: Confirmation request for tool '{name}' was cancelled."
+            except Exception as conf_err:
+                logger.error(
+                    "Error during confirmation request for tool '%s': %s",
+                    name,
+                    conf_err,
+                    exc_info=True,
+                )
+                return (
+                    f"Error during confirmation process for tool '{name}': {conf_err}"
+                )
+
+        return await self.wrapped_provider.execute_tool(
+            name, arguments, context, call_id
+        )
+
+    async def close(self) -> None:
+        """Close the wrapped provider."""
+        await self.wrapped_provider.close()
 
 
 def find_provider_by_type[T](

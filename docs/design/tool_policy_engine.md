@@ -1029,7 +1029,7 @@ tracker elsewhere.
   `evaluate_for_advertisement(..., can_confirm=...)` and `evaluate_for_execution(...)` correctly for
   local and MCP tools.
 
-- [ ] **Step 3: Provider and descriptor plumbing** Depends on: Steps 1-2. Scope: Teach the provider
+- [x] **Step 3: Provider and descriptor plumbing** Depends on: Steps 1-2. Scope: Teach the provider
   stack to expose descriptors and provenance. Add descriptor lookup support for local and MCP tools,
   then implement `PolicyEnforcingToolsProvider` as the single allow/deny/confirm wrapper.
   Deliverables: Provider interface changes, descriptor-aware local/MCP/composite providers, and
