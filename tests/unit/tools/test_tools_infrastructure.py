@@ -821,6 +821,129 @@ class TestPolicyEnforcingToolsProvider:
         ]
 
     @pytest.mark.asyncio
+    async def test_get_tool_descriptors_filters_denied_tools(self) -> None:
+        class StubDescriptorProvider:
+            def __init__(self, descriptors: list[ToolDescriptor]) -> None:
+                self._descriptors = descriptors
+
+            async def get_tool_definitions(self) -> list[ToolDefinition]:
+                return [descriptor.definition for descriptor in self._descriptors]
+
+            async def get_tool_descriptors(self) -> list[ToolDescriptor]:
+                return list(self._descriptors)
+
+            async def get_tool_descriptor(self, name: str) -> ToolDescriptor | None:
+                for descriptor in self._descriptors:
+                    if descriptor.name == name:
+                        return descriptor
+                return None
+
+            async def execute_tool(
+                self,
+                name: str,
+                arguments: dict[str, object],
+                context: ToolExecutionContext,
+                call_id: str | None = None,
+            ) -> str:
+                return f"executed:{name}"
+
+            async def close(self) -> None:
+                return None
+
+        descriptors = [
+            self._make_descriptor(
+                "get_note",
+                tags={ToolTag.NOTES, ToolTag.READ_ONLY, ToolTag.SENSITIVE_DATA},
+            ),
+            self._make_descriptor(
+                "delete_note",
+                tags={ToolTag.NOTES, ToolTag.DESTRUCTIVE, ToolTag.STATE_CHANGING},
+            ),
+        ]
+        provider = PolicyEnforcingToolsProvider(
+            wrapped_provider=StubDescriptorProvider(descriptors),
+            policy_engine=PolicyEngine.from_policy_config(
+                ToolPolicyConfig(
+                    default_decision=ToolPolicyDecision.DENY,
+                    rules=[
+                        PolicyRule(
+                            match=ToolMatcher(names=["get_note"]),
+                            decision=ToolPolicyDecision.ALLOW,
+                            priority=10,
+                        )
+                    ],
+                )
+            ),
+        )
+
+        filtered_descriptors = await provider.get_tool_descriptors()
+
+        assert [descriptor.name for descriptor in filtered_descriptors] == ["get_note"]
+
+    @pytest.mark.asyncio
+    async def test_get_tool_descriptor_returns_none_for_denied_tool(self) -> None:
+        class StubDescriptorProvider:
+            def __init__(self, descriptors: list[ToolDescriptor]) -> None:
+                self._descriptors = descriptors
+
+            async def get_tool_definitions(self) -> list[ToolDefinition]:
+                return [descriptor.definition for descriptor in self._descriptors]
+
+            async def get_tool_descriptors(self) -> list[ToolDescriptor]:
+                return list(self._descriptors)
+
+            async def get_tool_descriptor(self, name: str) -> ToolDescriptor | None:
+                for descriptor in self._descriptors:
+                    if descriptor.name == name:
+                        return descriptor
+                return None
+
+            async def execute_tool(
+                self,
+                name: str,
+                arguments: dict[str, object],
+                context: ToolExecutionContext,
+                call_id: str | None = None,
+            ) -> str:
+                return f"executed:{name}"
+
+            async def close(self) -> None:
+                return None
+
+        descriptors = [
+            self._make_descriptor(
+                "get_note",
+                tags={ToolTag.NOTES, ToolTag.READ_ONLY, ToolTag.SENSITIVE_DATA},
+            ),
+            self._make_descriptor(
+                "delete_note",
+                tags={ToolTag.NOTES, ToolTag.DESTRUCTIVE, ToolTag.STATE_CHANGING},
+            ),
+        ]
+        provider = PolicyEnforcingToolsProvider(
+            wrapped_provider=StubDescriptorProvider(descriptors),
+            policy_engine=PolicyEngine.from_policy_config(
+                ToolPolicyConfig(
+                    default_decision=ToolPolicyDecision.DENY,
+                    rules=[
+                        PolicyRule(
+                            match=ToolMatcher(names=["get_note"]),
+                            decision=ToolPolicyDecision.ALLOW,
+                            priority=10,
+                        )
+                    ],
+                )
+            ),
+        )
+
+        allowed_descriptor = await provider.get_tool_descriptor("get_note")
+        denied_descriptor = await provider.get_tool_descriptor("delete_note")
+
+        assert allowed_descriptor is not None
+        assert allowed_descriptor.name == "get_note"
+        assert denied_descriptor is None
+
+    @pytest.mark.asyncio
     async def test_execute_tool_requests_confirmation_when_policy_requires_it(
         self,
     ) -> None:
