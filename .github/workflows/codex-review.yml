@@ -7,9 +7,15 @@ on:
       - 'reopened'
       - 'ready_for_review'
       - 'synchronize'
+  workflow_dispatch:
+    inputs:
+      pr_number:
+        description: 'Pull request number to review'
+        required: true
+        type: 'string'
 
 concurrency:
-  group: '${{ github.workflow }}-${{ github.event.pull_request.number }}'
+  group: '${{ github.workflow }}-${{ inputs.pr_number || github.event.pull_request.number }}'
   cancel-in-progress: true
 
 defaults:
@@ -19,7 +25,7 @@ defaults:
 jobs:
   review:
     if: |-
-      github.event.pull_request.head.repo.fork == false && !github.event.pull_request.draft && github.actor != 'dependabot[bot]'
+      github.event_name == 'workflow_dispatch' || (github.event.pull_request.head.repo.fork == false && !github.event.pull_request.draft && github.actor != 'dependabot[bot]')
     runs-on: 'ubuntu-latest'
     timeout-minutes: 30
     permissions:
@@ -28,17 +34,43 @@ jobs:
       pull-requests: 'write'
     outputs:
       final_message: '${{ steps.run_codex.outputs.final-message }}'
+      pr_number: '${{ steps.pr_meta.outputs.number }}'
+      head_sha: '${{ steps.pr_meta.outputs.head_sha }}'
     steps:
+      - name: 'Resolve PR metadata'
+        id: 'pr_meta'
+        uses: 'actions/github-script@60a0d83039c74a4aee543508d2ffcb1c3799cdea' # ratchet:actions/github-script@v7
+        with:
+          script: |-
+            let pr;
+            if (context.eventName === 'workflow_dispatch') {
+              const prNumber = Number('${{ inputs.pr_number }}');
+              const { data } = await github.rest.pulls.get({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                pull_number: prNumber,
+              });
+              pr = data;
+            } else {
+              pr = context.payload.pull_request;
+            }
+            core.setOutput('number', pr.number);
+            core.setOutput('base_ref', pr.base.ref);
+            core.setOutput('base_sha', pr.base.sha);
+            core.setOutput('head_sha', pr.head.sha);
+            core.setOutput('title', pr.title);
+            core.setOutput('body', pr.body || '');
+
       - name: 'Checkout repository'
         uses: 'actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8' # ratchet:actions/checkout@v6
         with:
-          ref: 'refs/pull/${{ github.event.pull_request.number }}/merge'
+          ref: 'refs/pull/${{ steps.pr_meta.outputs.number }}/merge'
           fetch-depth: 0
 
       - name: 'Pre-fetch base and head refs for the pull request'
         env:
-          BASE_REF: '${{ github.event.pull_request.base.ref }}'
-          PR_NUMBER: '${{ github.event.pull_request.number }}'
+          BASE_REF: '${{ steps.pr_meta.outputs.base_ref }}'
+          PR_NUMBER: '${{ steps.pr_meta.outputs.number }}'
         run: |-
           git fetch --no-tags origin \
             "${BASE_REF}" \
@@ -46,11 +78,11 @@ jobs:
 
       - name: 'Build Codex review prompt'
         env:
-          BASE_SHA: '${{ github.event.pull_request.base.sha }}'
-          HEAD_SHA: '${{ github.event.pull_request.head.sha }}'
-          PR_NUMBER: '${{ github.event.pull_request.number }}'
-          PR_TITLE: '${{ github.event.pull_request.title }}'
-          PR_BODY: '${{ github.event.pull_request.body }}'
+          BASE_SHA: '${{ steps.pr_meta.outputs.base_sha }}'
+          HEAD_SHA: '${{ steps.pr_meta.outputs.head_sha }}'
+          PR_NUMBER: '${{ steps.pr_meta.outputs.number }}'
+          PR_TITLE: '${{ steps.pr_meta.outputs.title }}'
+          PR_BODY: '${{ steps.pr_meta.outputs.body }}'
         run: |-
           {
             echo "This is PR #${PR_NUMBER} for ${GITHUB_REPOSITORY}."
@@ -129,8 +161,8 @@ jobs:
         uses: 'actions/github-script@60a0d83039c74a4aee543508d2ffcb1c3799cdea' # ratchet:actions/github-script@v7
         env:
           CODEX_FINAL_MESSAGE: '${{ needs.review.outputs.final_message }}'
-          PR_NUMBER: '${{ github.event.pull_request.number }}'
-          HEAD_SHA: '${{ github.event.pull_request.head.sha }}'
+          PR_NUMBER: '${{ needs.review.outputs.pr_number }}'
+          HEAD_SHA: '${{ needs.review.outputs.head_sha }}'
         with:
           github-token: '${{ github.token }}'
           script: |-
