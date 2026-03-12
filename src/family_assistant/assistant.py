@@ -86,9 +86,7 @@ from family_assistant.tools import (
     MCPToolsProvider,
     PolicyEnforcingToolsProvider,
     PolicyEngine,
-    ToolDescriptor,
     ToolPolicyConfig,
-    ToolPolicyDecision,
     _scan_user_docs,
     build_local_tool_registrations,
 )
@@ -106,7 +104,6 @@ if TYPE_CHECKING:
     from fastapi import FastAPI
     from sqlalchemy.ext.asyncio import AsyncEngine
 
-    from family_assistant.config_models import ToolsConfig
     from family_assistant.llm import LLMInterface
     from family_assistant.services.attachment_registry import AttachmentRegistry
     from family_assistant.storage.types import EventConditionEvaluatorConfig
@@ -135,78 +132,18 @@ def deep_merge_dicts(base_dict: dict, merge_dict: dict) -> dict:
     return result
 
 
-def _build_legacy_policy_config(
-    descriptors: list[ToolDescriptor],
-    profile_tools_config: ToolsConfig,
-) -> ToolPolicyConfig:
-    """Translate legacy tool config into an equivalent explicit policy."""
-    enabled_local_tools = (
-        None
-        if profile_tools_config.enable_local_tools is None
-        else set(profile_tools_config.enable_local_tools)
-    )
-    enabled_mcp_server_ids = (
-        None
-        if profile_tools_config.enable_mcp_server_ids is None
-        else set(profile_tools_config.enable_mcp_server_ids)
-    )
-    confirm_tools = set(profile_tools_config.confirm_tools)
-
-    allowed_names = {
-        descriptor.name
-        for descriptor in descriptors
-        if (
-            descriptor.origin == "local"
-            and (enabled_local_tools is None or descriptor.name in enabled_local_tools)
-        )
-        or (
-            descriptor.origin == "mcp"
-            and (
-                enabled_mcp_server_ids is None
-                or descriptor.mcp_server_id in enabled_mcp_server_ids
-            )
-        )
-    }
-
-    rules = []
-    if allowed_names:
-        rules.append({
-            "match": {"names": sorted(allowed_names)},
-            "decision": ToolPolicyDecision.ALLOW,
-            "priority": 10,
-            "description": "Legacy enabled tools",
-        })
-
-    confirmable_allowed_names = sorted(allowed_names & confirm_tools)
-    if confirmable_allowed_names:
-        rules.append({
-            "match": {"names": confirmable_allowed_names},
-            "decision": ToolPolicyDecision.CONFIRM,
-            "priority": 20,
-            "description": "Legacy confirmation-required tools",
-        })
-
-    return ToolPolicyConfig.model_validate({
-        "default_decision": ToolPolicyDecision.DENY,
-        "rules": rules,
-    })
-
-
 def _build_profile_policy_engine(
+    profile_id: str,
     profile_tools_policy: ToolPolicyConfig | None,
-    profile_tools_config: ToolsConfig,
-    root_descriptors: list[ToolDescriptor],
 ) -> PolicyEngine:
-    """Build a policy engine for a profile, falling back to legacy config in tests."""
+    """Build a policy engine for a profile from explicit policy config."""
     if profile_tools_policy is None:
-        logger.info("Synthesizing tools policy from legacy config for a test profile.")
-        resolved_policy = _build_legacy_policy_config(
-            root_descriptors,
-            profile_tools_config,
+        msg = (
+            f"Profile '{profile_id}' is missing tools_policy. "
+            "Every runtime profile must define explicit tools_policy."
         )
-    else:
-        resolved_policy = profile_tools_policy
-    return PolicyEngine.from_policy_config(resolved_policy)
+        raise ValueError(msg)
+    return PolicyEngine.from_policy_config(profile_tools_policy)
 
 
 class NullChatInterface:
@@ -673,7 +610,6 @@ class Assistant:
 
         # Initialize and store for UI/API access
         await self.root_tools_provider.get_tool_definitions()
-        root_tool_descriptors = await self.root_tools_provider.get_tool_descriptors()
         self.fastapi_app.state.tools_provider = self.root_tools_provider
         self.fastapi_app.state.tool_definitions = (
             await self.root_tools_provider.get_tool_definitions()
@@ -773,9 +709,8 @@ class Assistant:
                 )
 
             policy_engine = _build_profile_policy_engine(
+                profile_id,
                 profile_tools_policy,
-                profile_tools_conf,
-                root_tool_descriptors,
             )
             # Get confirmation timeout from config, default to 3600 seconds (1 hour)
             confirmation_timeout = profile_tools_conf.confirmation_timeout_seconds

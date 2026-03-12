@@ -42,6 +42,7 @@ class TestEventSourceDeduplication:
                         "history_max_age_hours": 24,
                     },
                     "tools_config": {},
+                    "tools_policy": {"default_decision": "allow", "rules": []},
                 },
                 {
                     "id": "profile2",
@@ -55,6 +56,7 @@ class TestEventSourceDeduplication:
                         "history_max_age_hours": 24,
                     },
                     "tools_config": {},
+                    "tools_policy": {"default_decision": "allow", "rules": []},
                 },
             ],
         }

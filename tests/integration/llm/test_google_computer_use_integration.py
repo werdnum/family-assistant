@@ -423,6 +423,32 @@ async def test_computer_use_browser_navigation_e2e(db_engine: AsyncEngine) -> No
                     "enable_mcp_server_ids": [],
                     "confirm_tools": [],
                 },
+                "tools_policy": {
+                    "default_decision": "deny",
+                    "rules": [
+                        {
+                            "match": {
+                                "names": [
+                                    "click_at",
+                                    "type_text_at",
+                                    "scroll_at",
+                                    "open_web_browser",
+                                    "navigate",
+                                    "search",
+                                    "go_back",
+                                    "go_forward",
+                                    "key_combination",
+                                    "wait_5_seconds",
+                                    "hover_at",
+                                    "drag_and_drop",
+                                    "scroll_document",
+                                ]
+                            },
+                            "decision": "allow",
+                            "priority": 10,
+                        }
+                    ],
+                },
             }
         ],
         "mcp_config": {"mcpServers": {}},
@@ -571,6 +597,32 @@ async def test_grab_screenshot_of_website(db_engine: AsyncEngine) -> None:
                     ],
                     "enable_mcp_server_ids": [],
                     "confirm_tools": [],
+                },
+                "tools_policy": {
+                    "default_decision": "deny",
+                    "rules": [
+                        {
+                            "match": {
+                                "names": [
+                                    "click_at",
+                                    "type_text_at",
+                                    "scroll_at",
+                                    "open_web_browser",
+                                    "navigate",
+                                    "search",
+                                    "go_back",
+                                    "go_forward",
+                                    "key_combination",
+                                    "wait_5_seconds",
+                                    "hover_at",
+                                    "drag_and_drop",
+                                    "scroll_document",
+                                ]
+                            },
+                            "decision": "allow",
+                            "priority": 10,
+                        }
+                    ],
                 },
             }
         ],

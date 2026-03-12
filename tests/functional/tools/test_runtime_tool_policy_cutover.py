@@ -17,6 +17,30 @@ if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncEngine
 
 
+def _build_policy_config(
+    *,
+    allowed_names: list[str],
+    confirm_names: list[str] | None = None,
+) -> dict[str, object]:
+    rules: list[dict[str, object]] = [
+        {
+            "match": {"names": allowed_names},
+            "decision": "allow",
+            "priority": 10,
+        }
+    ]
+    if confirm_names:
+        rules.append({
+            "match": {"names": confirm_names},
+            "decision": "confirm",
+            "priority": 20,
+        })
+    return {
+        "default_decision": "deny",
+        "rules": rules,
+    }
+
+
 def _build_test_config(
     db_engine: AsyncEngine,
     *,
@@ -40,23 +64,13 @@ def _build_test_config(
             "confirmation_timeout_seconds": 10.0,
             "mcp_initialization_timeout_seconds": 5,
         },
+        "tools_policy": _build_policy_config(
+            allowed_names=["get_note", "delete_note"],
+            confirm_names=["delete_note"],
+        ),
     }
-    if include_tools_policy:
-        profile_config["tools_policy"] = {
-            "default_decision": "deny",
-            "rules": [
-                {
-                    "match": {"names": ["get_note", "delete_note"]},
-                    "decision": "allow",
-                    "priority": 10,
-                },
-                {
-                    "match": {"names": ["delete_note"]},
-                    "decision": "confirm",
-                    "priority": 20,
-                },
-            ],
-        }
+    if not include_tools_policy:
+        del profile_config["tools_policy"]
 
     return AppConfig.model_validate({
         "telegram_enabled": False,
@@ -81,6 +95,7 @@ def _build_test_config(
                 "enable_mcp_server_ids": [],
                 "confirm_tools": [],
             },
+            "tools_policy": _build_policy_config(allowed_names=[]),
         },
         "service_profiles": [profile_config],
         "mcp_config": {"mcpServers": {}},
@@ -90,15 +105,13 @@ def _build_test_config(
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("include_tools_policy", [True, False])
 async def test_assistant_profile_tools_are_policy_enforced(
     db_engine: AsyncEngine,
-    include_tools_policy: bool,
 ) -> None:
     assistant = Assistant(
         config=_build_test_config(
             db_engine,
-            include_tools_policy=include_tools_policy,
+            include_tools_policy=True,
         ),
         llm_client_overrides={
             "default_assistant": RuleBasedMockLLMClient(rules=[]),
@@ -133,3 +146,25 @@ async def test_assistant_profile_tools_are_policy_enforced(
         assert names_with_confirm == {"get_note", "delete_note"}
     finally:
         await assistant.stop_services()
+
+
+@pytest.mark.asyncio
+async def test_assistant_requires_explicit_tools_policy(
+    db_engine: AsyncEngine,
+) -> None:
+    assistant = Assistant(
+        config=_build_test_config(
+            db_engine,
+            include_tools_policy=False,
+        ),
+        llm_client_overrides={
+            "default_assistant": RuleBasedMockLLMClient(rules=[]),
+        },
+        database_engine=db_engine,
+    )
+
+    with pytest.raises(
+        ValueError,
+        match="Profile 'default_assistant' is missing tools_policy",
+    ):
+        await assistant.setup_dependencies()

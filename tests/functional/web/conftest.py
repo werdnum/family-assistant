@@ -106,6 +106,7 @@ async def wait_for_server(url: str, timeout: int = 60) -> None:
             except Exception as e:
                 print(f"[{elapsed:.1f}s] Unexpected error: {type(e).__name__}: {e}")
 
+            # ast-grep-ignore: no-asyncio-sleep-in-tests - Polling interval while waiting for server readiness
             await asyncio.sleep(0.2)
     raise TimeoutError(
         f"Server at {url} did not become available within {timeout} seconds"
@@ -350,6 +351,33 @@ async def _create_web_assistant(
                     "confirmation_timeout_seconds": 10.0,
                     "mcp_initialization_timeout_seconds": 5,
                 },
+                "tools_policy": {
+                    "default_decision": "deny",
+                    "rules": [
+                        {
+                            "match": {
+                                "names": [
+                                    "add_or_update_note",
+                                    "search_documents",
+                                    "delete_calendar_event",
+                                    "attach_to_response",
+                                ]
+                            },
+                            "decision": "allow",
+                            "priority": 10,
+                        },
+                        {
+                            "match": {
+                                "names": [
+                                    "add_or_update_note",
+                                    "delete_calendar_event",
+                                ]
+                            },
+                            "decision": "confirm",
+                            "priority": 20,
+                        },
+                    ],
+                },
                 "chat_id_to_name_map": {},
                 "slash_commands": [],
             },
@@ -371,6 +399,16 @@ async def _create_web_assistant(
                     "confirmation_timeout_seconds": 10.0,
                     "mcp_initialization_timeout_seconds": 5,
                 },
+                "tools_policy": {
+                    "default_decision": "deny",
+                    "rules": [
+                        {
+                            "match": {"names": ["search_documents"]},
+                            "decision": "allow",
+                            "priority": 10,
+                        }
+                    ],
+                },
                 "chat_id_to_name_map": {},
                 "slash_commands": ["/browse"],
             },
@@ -391,6 +429,10 @@ async def _create_web_assistant(
                     "confirm_tools": [],
                     "confirmation_timeout_seconds": 10.0,
                     "mcp_initialization_timeout_seconds": 5,
+                },
+                "tools_policy": {
+                    "default_decision": "deny",
+                    "rules": [],
                 },
                 "chat_id_to_name_map": {},
                 "slash_commands": ["/research"],
@@ -710,6 +752,7 @@ async def web_test_fixture(
 
     # Brief delay to ensure all connections are fully closed and cleanup completes
     print("Waiting for connection cleanup...")
+    # ast-grep-ignore: no-asyncio-sleep-in-tests - Small teardown delay to let SSE cleanup finish
     await asyncio.sleep(0.1)
 
 
@@ -777,6 +820,7 @@ async def web_test_fixture_readonly(
 
     # Brief delay to ensure all connections are fully closed
     print("Waiting for connection cleanup...")
+    # ast-grep-ignore: no-asyncio-sleep-in-tests - Small teardown delay to let SSE cleanup finish
     await asyncio.sleep(0.1)
 
 
