@@ -73,12 +73,11 @@ jobs:
 
       - name: 'Run Codex pull request review'
         id: 'run_codex'
-        if: |-
-          secrets.OPENAI_API_KEY != ''
         uses: 'openai/codex-action@v1'
         with:
           openai-api-key: '${{ secrets.OPENAI_API_KEY }}'
           prompt-file: '.codex-review-prompt.txt'
+          allow-bots: true
           output-schema: |-
             {
               "type": "object",
@@ -122,9 +121,22 @@ jobs:
       needs.review.outputs.final_message != ''
     runs-on: 'ubuntu-latest'
     permissions:
+      contents: 'read'
+      id-token: 'write'
       issues: 'write'
       pull-requests: 'write'
     steps:
+      - name: 'Mint identity token'
+        id: 'mint_identity_token'
+        if: |-
+          ${{ vars.APP_ID }}
+        uses: 'actions/create-github-app-token@29824e69f54612133e76f7eaac726eef6c875baf' # ratchet:actions/create-github-app-token@v2
+        with:
+          app-id: '${{ vars.APP_ID }}'
+          private-key: '${{ secrets.APP_PRIVATE_KEY }}'
+          permission-issues: 'write'
+          permission-pull-requests: 'write'
+
       - name: 'Upsert Codex summary and publish inline comments'
         uses: 'actions/github-script@60a0d83039c74a4aee543508d2ffcb1c3799cdea' # ratchet:actions/github-script@v7
         env:
@@ -132,7 +144,7 @@ jobs:
           PR_NUMBER: '${{ github.event.pull_request.number }}'
           HEAD_SHA: '${{ github.event.pull_request.head.sha }}'
         with:
-          github-token: '${{ github.token }}'
+          github-token: '${{ steps.mint_identity_token.outputs.token || github.token }}'
           script: |-
             const marker = '<!-- codex-review-comment -->';
             const issueNumber = Number(process.env.PR_NUMBER);
@@ -212,3 +224,4 @@ jobs:
               issue_number: issueNumber,
               body,
             });
+
