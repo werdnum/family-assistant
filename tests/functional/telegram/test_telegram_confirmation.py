@@ -2,7 +2,7 @@ import asyncio
 import json
 import logging
 import uuid
-from typing import cast
+from typing import Any, cast
 
 import pytest
 import telegramify_markdown  # type: ignore[import-untyped]  # No type stubs available
@@ -10,6 +10,7 @@ from assertpy import assert_that, soft_assertions
 
 # Import mock LLM helpers
 from family_assistant.llm import ToolCallFunction, ToolCallItem
+from family_assistant.tools import PolicyEngine, ToolPolicyConfig, ToolPolicyDecision
 from tests.functional.telegram.test_telegram_handler import (
     create_context,
     create_mock_update,
@@ -37,6 +38,50 @@ USER_ID = 12345
 TOOL_NAME_SENSITIVE = "add_or_update_note"
 
 
+def _require_confirmation_for_test_tool(
+    fix: TelegramHandlerTestFixture,
+    tool_name: str,
+) -> None:
+    processing_service = fix.processing_service
+    assert processing_service is not None
+    provider = processing_service.tools_provider
+
+    if hasattr(provider, "_tools_requiring_confirmation"):
+        provider._tools_requiring_confirmation.add(tool_name)  # type: ignore[attr-defined]
+        return
+
+    if hasattr(provider, "_policy_engine") and hasattr(
+        provider, "_tool_definitions_by_confirmation"
+    ):
+        provider_impl = cast("Any", provider)
+        enabled_tool_names = (
+            processing_service.service_config.tools_config.enable_local_tools or []
+        )
+        provider_impl._policy_engine = PolicyEngine.from_policy_config(
+            ToolPolicyConfig.model_validate({
+                "default_decision": ToolPolicyDecision.DENY,
+                "rules": [
+                    {
+                        "match": {"names": enabled_tool_names},
+                        "decision": ToolPolicyDecision.ALLOW,
+                        "priority": 10,
+                    },
+                    {
+                        "match": {"names": [tool_name]},
+                        "decision": ToolPolicyDecision.CONFIRM,
+                        "priority": 20,
+                    },
+                ],
+            })
+        )
+        provider_impl._tool_definitions_by_confirmation.clear()
+        return
+
+    raise AssertionError(
+        f"Unsupported tools provider for confirmation test: {provider!r}"
+    )
+
+
 @pytest.mark.asyncio
 async def test_confirmation_accepted(
     telegram_handler_fixture: TelegramHandlerTestFixture,
@@ -50,13 +95,7 @@ async def test_confirmation_accepted(
 
     # Temporarily add add_or_update_note to confirm_tools just for this test
     # This is a test-specific override to verify confirmation flow works
-    processing_service = fix.processing_service
-    if processing_service and processing_service.tools_provider:
-        # Get the ConfirmingToolsProvider if it exists
-        provider = processing_service.tools_provider
-        if hasattr(provider, "_tools_requiring_confirmation"):
-            # Add the tool to the set of tools requiring confirmation for this test
-            provider._tools_requiring_confirmation.add(TOOL_NAME_SENSITIVE)  # type: ignore[attr-defined]
+    _require_confirmation_for_test_tool(fix, TOOL_NAME_SENSITIVE)
     # Cast mock_llm to the concrete type to access specific attributes like .rules and ._calls
     mock_llm_client = cast("RuleBasedMockLLMClient", fix.mock_llm)
     user_message_id = 401
@@ -186,13 +225,7 @@ async def test_confirmation_rejected(
 
     # Temporarily add add_or_update_note to confirm_tools just for this test
     # This is a test-specific override to verify confirmation flow works
-    processing_service = fix.processing_service
-    if processing_service and processing_service.tools_provider:
-        # Get the ConfirmingToolsProvider if it exists
-        provider = processing_service.tools_provider
-        if hasattr(provider, "_tools_requiring_confirmation"):
-            # Add the tool to the set of tools requiring confirmation for this test
-            provider._tools_requiring_confirmation.add(TOOL_NAME_SENSITIVE)  # type: ignore[attr-defined]
+    _require_confirmation_for_test_tool(fix, TOOL_NAME_SENSITIVE)
     # Cast mock_llm to the concrete type
     mock_llm_client = cast("RuleBasedMockLLMClient", fix.mock_llm)
     user_message_id = 501
@@ -306,13 +339,7 @@ async def test_confirmation_timed_out(
 
     # Temporarily add add_or_update_note to confirm_tools just for this test
     # This is a test-specific override to verify confirmation flow works
-    processing_service = fix.processing_service
-    if processing_service and processing_service.tools_provider:
-        # Get the ConfirmingToolsProvider if it exists
-        provider = processing_service.tools_provider
-        if hasattr(provider, "_tools_requiring_confirmation"):
-            # Add the tool to the set of tools requiring confirmation for this test
-            provider._tools_requiring_confirmation.add(TOOL_NAME_SENSITIVE)  # type: ignore[attr-defined]
+    _require_confirmation_for_test_tool(fix, TOOL_NAME_SENSITIVE)
     # Cast mock_llm to the concrete type
     mock_llm_client = cast("RuleBasedMockLLMClient", fix.mock_llm)
     user_message_id = 601

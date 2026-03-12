@@ -15,6 +15,7 @@ from family_assistant.llm.messages import (
     ToolMessage,
     UserMessage,
 )
+from family_assistant.tools import get_tool_definitions_for_advertisement
 
 from .attachments import AttachmentSelectionError
 from .utils import (
@@ -176,27 +177,13 @@ class LLMStreamingLoop:
         original_system_content: str | None = None  # Store original system prompt
 
         # Get tool definitions
-        all_tool_definitions = (
-            await self.tool_executor.tools_provider.get_tool_definitions()
+        tools_for_llm = await get_tool_definitions_for_advertisement(
+            self.tool_executor.tools_provider,
+            can_confirm=request_confirmation_callback is not None,
         )
-        tools_for_llm = all_tool_definitions
-        logger.debug(f"Total available tools: {len(all_tool_definitions)}")
-
-        if request_confirmation_callback is None:
-            confirmable_tool_names = self.config.tools_config.confirm_tools
-            if confirmable_tool_names:
-                logger.info(
-                    f"No confirmation callback available. Filtering out tools requiring confirmation: {confirmable_tool_names}"
-                )
-                tools_for_llm = [
-                    tool_def
-                    for tool_def in all_tool_definitions
-                    if tool_def.get("function", {}).get("name")
-                    not in confirmable_tool_names
-                ]
-                logger.debug(
-                    f"Tools after filtering out confirmable tools: {len(tools_for_llm)}"
-                )
+        logger.debug(
+            f"Total available tools for this interaction: {len(tools_for_llm)}"
+        )
 
         # Tool call loop
         while current_iteration <= max_iterations:

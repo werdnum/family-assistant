@@ -227,6 +227,23 @@ class ToolNotFoundError(Exception):
         super().__init__(message)
 
 
+async def get_tool_definitions_for_advertisement(
+    provider: ToolsProvider,
+    *,
+    can_confirm: bool,
+) -> list[ToolDefinition]:
+    """Return advertisable tools, using confirmation-aware providers when available."""
+    method = provider.get_tool_definitions
+    parameters = inspect.signature(method).parameters.values()
+    if any(
+        parameter.name == "can_confirm"
+        or parameter.kind is inspect.Parameter.VAR_KEYWORD
+        for parameter in parameters
+    ):
+        return await cast("Any", method)(can_confirm=can_confirm)
+    return await method()
+
+
 class LocalToolsProvider:
     """Provides and executes locally defined Python functions as tools."""
 

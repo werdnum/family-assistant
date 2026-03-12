@@ -81,11 +81,14 @@ from family_assistant.tools import (
 )
 from family_assistant.tools import (
     CompositeToolsProvider,
-    ConfirmingToolsProvider,
-    FilteredToolsProvider,
     LocalToolsProvider,
     MCPServerConfig,
     MCPToolsProvider,
+    PolicyEnforcingToolsProvider,
+    PolicyEngine,
+    ToolDescriptor,
+    ToolPolicyConfig,
+    ToolPolicyDecision,
     _scan_user_docs,
     build_local_tool_registrations,
 )
@@ -103,6 +106,7 @@ if TYPE_CHECKING:
     from fastapi import FastAPI
     from sqlalchemy.ext.asyncio import AsyncEngine
 
+    from family_assistant.config_models import ToolsConfig
     from family_assistant.llm import LLMInterface
     from family_assistant.services.attachment_registry import AttachmentRegistry
     from family_assistant.storage.types import EventConditionEvaluatorConfig
@@ -129,6 +133,80 @@ def deep_merge_dicts(base_dict: dict, merge_dict: dict) -> dict:
         else:
             result[key] = value
     return result
+
+
+def _build_legacy_policy_config(
+    descriptors: list[ToolDescriptor],
+    profile_tools_config: ToolsConfig,
+) -> ToolPolicyConfig:
+    """Translate legacy tool config into an equivalent explicit policy."""
+    enabled_local_tools = (
+        None
+        if profile_tools_config.enable_local_tools is None
+        else set(profile_tools_config.enable_local_tools)
+    )
+    enabled_mcp_server_ids = (
+        None
+        if profile_tools_config.enable_mcp_server_ids is None
+        else set(profile_tools_config.enable_mcp_server_ids)
+    )
+    confirm_tools = set(profile_tools_config.confirm_tools)
+
+    allowed_names = {
+        descriptor.name
+        for descriptor in descriptors
+        if (
+            descriptor.origin == "local"
+            and (enabled_local_tools is None or descriptor.name in enabled_local_tools)
+        )
+        or (
+            descriptor.origin == "mcp"
+            and (
+                enabled_mcp_server_ids is None
+                or descriptor.mcp_server_id in enabled_mcp_server_ids
+            )
+        )
+    }
+
+    rules = []
+    if allowed_names:
+        rules.append({
+            "match": {"names": sorted(allowed_names)},
+            "decision": ToolPolicyDecision.ALLOW,
+            "priority": 10,
+            "description": "Legacy enabled tools",
+        })
+
+    confirmable_allowed_names = sorted(allowed_names & confirm_tools)
+    if confirmable_allowed_names:
+        rules.append({
+            "match": {"names": confirmable_allowed_names},
+            "decision": ToolPolicyDecision.CONFIRM,
+            "priority": 20,
+            "description": "Legacy confirmation-required tools",
+        })
+
+    return ToolPolicyConfig.model_validate({
+        "default_decision": ToolPolicyDecision.DENY,
+        "rules": rules,
+    })
+
+
+def _build_profile_policy_engine(
+    profile_tools_policy: ToolPolicyConfig | None,
+    profile_tools_config: ToolsConfig,
+    root_descriptors: list[ToolDescriptor],
+) -> PolicyEngine:
+    """Build a policy engine for a profile, falling back to legacy config in tests."""
+    if profile_tools_policy is None:
+        logger.info("Synthesizing tools policy from legacy config for a test profile.")
+        resolved_policy = _build_legacy_policy_config(
+            root_descriptors,
+            profile_tools_config,
+        )
+    else:
+        resolved_policy = profile_tools_policy
+    return PolicyEngine.from_policy_config(resolved_policy)
 
 
 class NullChatInterface:
@@ -508,10 +586,20 @@ class Assistant:
         # Update the description of the delegate_to_service tool in the base definition list
         # This ensures all profiles get the fully described delegate_to_service tool.
         for tool_def_template in base_local_tools_definition:
-            if (
-                tool_def_template.get("function", {}).get("name")
-                == "delegate_to_service"
-            ):
+            tool_name = tool_def_template.get("function", {}).get("name")
+            if tool_name == "get_user_documentation_content":
+                try:
+                    tool_def_template["function"]["description"] = tool_def_template[
+                        "function"
+                    ]["description"].format(
+                        available_doc_files=formatted_doc_list_for_tool_desc
+                    )
+                except KeyError as e:
+                    logger.error(
+                        "Failed to format doc tool description during assistant setup: %s",
+                        e,
+                    )
+            if tool_name == "delegate_to_service":
                 original_description = tool_def_template["function"].get(
                     "description", ""
                 )
@@ -585,6 +673,7 @@ class Assistant:
 
         # Initialize and store for UI/API access
         await self.root_tools_provider.get_tool_definitions()
+        root_tool_descriptors = await self.root_tools_provider.get_tool_descriptors()
         self.fastapi_app.state.tools_provider = self.root_tools_provider
         self.fastapi_app.state.tool_definitions = (
             await self.root_tools_provider.get_tool_definitions()
@@ -616,6 +705,7 @@ class Assistant:
             )
             profile_proc_conf = profile_conf.processing_config
             profile_tools_conf = profile_conf.tools_config
+            profile_tools_policy = profile_conf.tools_policy
             profile_chat_id_map = profile_conf.chat_id_to_name_map
 
             profile_llm_model = profile_proc_conf.llm_model or self.config.model
@@ -682,81 +772,19 @@ class Assistant:
                     f"Profile '{profile_id}' using client: {type(llm_client_for_profile).__name__}"
                 )
 
-            local_tools_list_from_config = profile_tools_conf.enable_local_tools
-            enabled_local_tool_names = (
-                set(local_tool_implementations.keys())
-                if local_tools_list_from_config is None
-                else set(local_tools_list_from_config)
-            )
-
-            profile_specific_local_definitions = []
-            for tool_def_template in base_local_tools_definition:
-                tool_name = tool_def_template.get("function", {}).get("name")
-                if tool_name in enabled_local_tool_names:
-                    current_tool_def = copy.deepcopy(tool_def_template)
-                    if tool_name == "get_user_documentation_content":
-                        try:
-                            current_tool_def["function"]["description"] = (
-                                current_tool_def["function"]["description"].format(
-                                    available_doc_files=formatted_doc_list_for_tool_desc
-                                )
-                            )
-                        except KeyError as e:
-                            logger.error(
-                                f"Failed to format doc tool description for profile {profile_id}: {e}"
-                            )
-                    profile_specific_local_definitions.append(current_tool_def)
-
-            # Build complete set of allowed tools (local + MCP)
-            mcp_server_ids_from_config = profile_tools_conf.enable_mcp_server_ids
-
-            # Start with local tools
-            all_enabled_tool_names = enabled_local_tool_names.copy()
-
-            # Add MCP tools from enabled servers
-            if mcp_server_ids_from_config is not None:
-                # Get MCP tool-to-server mapping
-                mcp_tool_to_server = root_mcp_provider.get_tool_to_server_mapping()
-
-                # Add tools from enabled MCP servers
-                for tool_name, server_id in mcp_tool_to_server.items():
-                    if server_id in mcp_server_ids_from_config:
-                        all_enabled_tool_names.add(tool_name)
-
-                logger.info(
-                    f"Profile '{profile_id}' has {len(enabled_local_tool_names)} local tools "
-                    f"and {len(all_enabled_tool_names) - len(enabled_local_tool_names)} MCP tools "
-                    f"from servers: {mcp_server_ids_from_config}"
-                )
-
-            # Create filtered view of root provider for this profile
-            if (
-                local_tools_list_from_config is None
-                and mcp_server_ids_from_config is None
-            ):
-                # All tools enabled for this profile
-                filtered_provider = self.root_tools_provider
-            else:
-                # Filter to only allowed tools
-                filtered_provider = FilteredToolsProvider(
-                    wrapped_provider=self.root_tools_provider,
-                    allowed_tool_names=all_enabled_tool_names,
-                )
-            profile_confirm_tools_set = set(profile_tools_conf.confirm_tools)
-            logger.debug(
-                f"Assistant: Profile {profile_id} confirm_tools from config: {profile_tools_conf.confirm_tools}"
-            )
-            logger.debug(
-                f"Assistant: Profile {profile_id} confirm_tools_set: {profile_confirm_tools_set}"
+            policy_engine = _build_profile_policy_engine(
+                profile_tools_policy,
+                profile_tools_conf,
+                root_tool_descriptors,
             )
             # Get confirmation timeout from config, default to 3600 seconds (1 hour)
             confirmation_timeout = profile_tools_conf.confirmation_timeout_seconds
-            confirming_provider_for_profile = ConfirmingToolsProvider(
-                wrapped_provider=filtered_provider,
-                tools_requiring_confirmation=profile_confirm_tools_set,
+            profile_tools_provider = PolicyEnforcingToolsProvider(
+                wrapped_provider=self.root_tools_provider,
+                policy_engine=policy_engine,
                 confirmation_timeout=confirmation_timeout,
             )
-            await confirming_provider_for_profile.get_tool_definitions()
+            await profile_tools_provider.get_tool_definitions()
 
             profile_grants = (
                 set(profile_conf.visibility_grants)
@@ -927,7 +955,7 @@ class Assistant:
 
             processing_service_instance = ProcessingService(
                 llm_client=llm_client_for_profile,
-                tools_provider=confirming_provider_for_profile,
+                tools_provider=profile_tools_provider,
                 service_config=service_config,
                 context_providers=context_providers,
                 server_url=self.config.server_url,

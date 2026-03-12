@@ -26,6 +26,7 @@ from family_assistant.llm.messages import (
 from family_assistant.processing import ProcessingService
 from family_assistant.storage.context import DatabaseContext, get_db_context
 from family_assistant.tools import MCPToolsProvider, find_provider_by_type
+from family_assistant.tools.infrastructure import ToolDescriptorProvider
 from family_assistant.tools.types import ToolExecutionContext
 from family_assistant.web.confirmation_manager import web_confirmation_manager
 from family_assistant.web.dependencies import (
@@ -1463,14 +1464,23 @@ async def get_available_profiles(
                 f"Error fetching tool definitions for profile {profile_id}"
             )
 
-        # Get enabled MCP servers
-        # First check explicit configuration in the profile
-        mcp_server_ids = service_config.tools_config.enable_mcp_server_ids
-        if mcp_server_ids is not None:
-            enabled_mcp_servers = list(mcp_server_ids)
-        # If None, all configured servers are enabled for this profile
-        # Find the MCP provider in the chain to get the list of all configured servers
-        elif MCPToolsProvider is not None:
+        # Derive enabled MCP servers from the profile's visible tool descriptors.
+        descriptor_provider = service.tools_provider
+        if isinstance(descriptor_provider, ToolDescriptorProvider):
+            try:
+                descriptors = await descriptor_provider.get_tool_descriptors()
+                enabled_mcp_servers = sorted({
+                    descriptor.mcp_server_id
+                    for descriptor in descriptors
+                    if descriptor.origin == "mcp"
+                    and descriptor.mcp_server_id is not None
+                })
+            except Exception:
+                logger.exception(
+                    "Error fetching tool descriptors for profile %s", profile_id
+                )
+
+        if not enabled_mcp_servers and MCPToolsProvider is not None:
             mcp_provider = find_provider_by_type(
                 service.tools_provider, MCPToolsProvider
             )
