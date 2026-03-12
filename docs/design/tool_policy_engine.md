@@ -1037,7 +1037,17 @@ tracker elsewhere.
   visible only when `can_confirm=True`, and execution-time confirmation still uses the existing
   callback/rendering infrastructure.
 
-- [ ] **Step 4: Assistant/runtime integration** Depends on: Step 3. Scope: Replace the legacy
+- [x] **Step 4: Dual-authored config and parity tests** Depends on: Step 3. Scope: Add
+  `tools_policy` alongside the existing legacy `tools_config` entries in `defaults.yaml`, keep the
+  runtime using the legacy fields for now, and add parity coverage proving the two representations
+  stay equivalent. Deliverables: migrated defaults with both config forms present, config-loader
+  support for carrying/inheriting `tools_policy`, and parity tests that compare legacy allow/confirm
+  behavior with policy-engine decisions for representative profiles. Exit criteria: checked-in
+  config includes both `tools_config` and equivalent `tools_policy`, the current runtime still boots
+  unchanged, and parity tests prove the default configuration behaves the same before the runtime
+  cutover.
+
+- [ ] **Step 5: Assistant/runtime integration** Depends on: Step 4. Scope: Replace the legacy
   `enable_local_tools` / `enable_mcp_server_ids` / `confirm_tools` assembly path in the assistant
   with policy-driven provider construction. Update all tool-advertising paths to pass confirmation
   capability explicitly. Deliverables: `assistant.py` integration, processing loop updates, Gemini
@@ -1045,20 +1055,19 @@ tracker elsewhere.
   legacy config fields. Exit criteria: The runtime no longer depends on `FilteredToolsProvider` or
   `ConfirmingToolsProvider`, and non-confirming channels never advertise confirm-only tools.
 
-- [ ] **Step 5: Config migration** Depends on: Step 4. Scope: Add `tools_policy` to profile/default
-  settings, implement merge behavior in config loading, remove the old policy fields from
-  `ToolsConfig`, and migrate `defaults.yaml` to the new format. Deliverables: Updated config models,
-  config loader merge logic, migrated defaults, and migration-oriented tests. Exit criteria: The
-  application boots from the new config format and all existing profiles are represented in
-  `tools_policy`.
+- [ ] **Step 6: Config cleanup and merge semantics** Depends on: Step 5. Scope: Remove the temporary
+  dual-authored state, implement final `tools_policy` merge behavior in config loading, and delete
+  the old policy fields from `ToolsConfig`. Deliverables: Updated config models, final config loader
+  semantics, and migration-oriented tests. Exit criteria: The application boots from `tools_policy`
+  alone and no runtime path reads the removed legacy policy fields.
 
-- [ ] **Step 6: Delegation restrictions** Depends on: Step 5. Scope: Add
+- [ ] **Step 7: Delegation restrictions** Depends on: Step 6. Scope: Add
   `allowed_delegation_sources` to `ProcessingConfig` and enforce it inside `delegate_to_service`,
   keeping target-specific confirmation logic in the delegation tool. Deliverables: Delegation config
   model changes, delegation tool enforcement, and focused tests. Exit criteria: Delegation obeys
   both source-profile policy and target-profile restrictions without double-confirmation.
 
-- [ ] **Step 7: Cleanup and removal of legacy concepts** Depends on: Steps 1-6. Scope: Remove dead
+- [ ] **Step 8: Cleanup and removal of legacy concepts** Depends on: Steps 1-7. Scope: Remove dead
   code and stale documentation for the old allowlist/confirm list model. Update any README, CLAUDE
   guidance, or operator docs that still describe `enable_local_tools`, `enable_mcp_server_ids`, or
   `confirm_tools`. Deliverables: Deleted legacy providers/config references, updated docs, and final
@@ -1070,10 +1079,12 @@ tracker elsewhere.
 - PR 1: Step 1 only. Metadata and descriptor groundwork with no behavior change.
 - PR 2: Step 2 only. Policy engine plus unit tests.
 - PR 3: Step 3 and the minimum provider-interface changes needed for descriptor plumbing.
-- PR 4: Step 4 and Step 5 together if the integration is easier to review end-to-end; otherwise
-  split them.
-- PR 5: Step 6 plus any small follow-on fixes from integration.
-- PR 6: Step 7 cleanup and documentation removal.
+- PR 4: Step 4 only. Add `tools_policy` alongside legacy config in defaults and land parity coverage
+  before changing runtime behavior.
+- PR 5: Step 5 only. Assistant/runtime cutover to policy-driven providers.
+- PR 6: Step 6 and Step 7 together if convenient, otherwise split config cleanup from delegation
+  restrictions.
+- PR 7: Step 8 cleanup and documentation removal.
 
 ## 11. Future Work: Taint Tracking
 

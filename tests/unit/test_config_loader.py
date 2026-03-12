@@ -764,6 +764,66 @@ class TestResolveServiceProfile:
         # tools_config should be completely replaced
         assert result["tools_config"] == {"enable_local_tools": ["specific_tool"]}
 
+    def test_tools_policy_inherited_from_defaults(self) -> None:
+        """Test that tools_policy is inherited when the profile does not override it."""
+        default_settings: dict[str, Any] = {
+            "processing_config": {},
+            "tools_config": {},
+            "tools_policy": {
+                "default_decision": "deny",
+                "rules": [
+                    {
+                        "match": {"names": ["get_note"]},
+                        "decision": "allow",
+                        "priority": 10,
+                    }
+                ],
+            },
+            "chat_id_to_name_map": {},
+            "slash_commands": [],
+        }
+        profile_def = {"id": "test_profile"}
+
+        result = resolve_service_profile(profile_def, default_settings, {})
+
+        assert result["tools_policy"] == default_settings["tools_policy"]
+
+    def test_tools_policy_replaced_entirely(self) -> None:
+        """Test that tools_policy is replaced, not merged."""
+        default_settings: dict[str, Any] = {
+            "processing_config": {},
+            "tools_config": {},
+            "tools_policy": {
+                "default_decision": "deny",
+                "rules": [
+                    {
+                        "match": {"names": ["tool1", "tool2"]},
+                        "decision": "allow",
+                        "priority": 10,
+                    }
+                ],
+            },
+            "chat_id_to_name_map": {},
+            "slash_commands": [],
+        }
+        profile_def = {
+            "id": "test_profile",
+            "tools_policy": {
+                "default_decision": "deny",
+                "rules": [
+                    {
+                        "match": {"names": ["specific_tool"]},
+                        "decision": "allow",
+                        "priority": 10,
+                    }
+                ],
+            },
+        }
+
+        result = resolve_service_profile(profile_def, default_settings, {})
+
+        assert result["tools_policy"] == profile_def["tools_policy"]
+
     def test_slash_commands_replaced(self) -> None:
         """Test that slash_commands list is replaced, not merged."""
         default_settings: dict[str, Any] = {

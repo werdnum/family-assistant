@@ -615,6 +615,10 @@ def resolve_service_profile(
     if "tools_config" in profile_def and isinstance(profile_def["tools_config"], dict):
         resolved["tools_config"] = profile_def["tools_config"]
 
+    # Replace tools_policy entirely if defined
+    if "tools_policy" in profile_def:
+        resolved["tools_policy"] = profile_def["tools_policy"]
+
     # Merge chat_id_to_name_map
     if "chat_id_to_name_map" in profile_def and isinstance(
         profile_def["chat_id_to_name_map"], dict
