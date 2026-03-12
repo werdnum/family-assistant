@@ -73,8 +73,6 @@ jobs:
 
       - name: 'Run Codex pull request review'
         id: 'run_codex'
-        if: |-
-          secrets.OPENAI_API_KEY != ''
         uses: 'openai/codex-action@v1'
         with:
           openai-api-key: '${{ secrets.OPENAI_API_KEY }}'
@@ -212,3 +210,4 @@ jobs:
               issue_number: issueNumber,
               body,
             });
+
