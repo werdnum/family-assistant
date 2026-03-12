@@ -331,6 +331,70 @@ default_profile_settings:
       - modify_calendar_event
       # - tool_that_posts_online
     mcp_initialization_timeout_seconds: 60 # Default 1 minute
+  tools_policy:
+    default_decision: "deny"
+    rules:
+      - match:
+          names:
+            - "add_or_update_note"
+            - "get_note"
+            - "list_notes"
+            - "delete_note"
+            - "schedule_future_callback"
+            - "schedule_recurring_task"
+            - "schedule_reminder"
+            - "schedule_action"
+            - "schedule_recurring_action"
+            - "list_pending_callbacks"
+            - "modify_pending_callback"
+            - "cancel_pending_callback"
+            - "search_documents"
+            - "get_full_document_content"
+            - "get_attachment_info"
+            - "get_message_history"
+            - "get_user_documentation_content"
+            - "ingest_document_from_url"
+            - "execute_script"
+            - "send_message_to_user"
+            - "attach_to_response"
+            - "add_calendar_event"
+            - "search_calendar_events"
+            - "modify_calendar_event"
+            - "delete_calendar_event"
+            - "delegate_to_service"
+            - "query_recent_events"
+            - "render_home_assistant_template"
+            - "get_camera_snapshot"
+            - "download_state_history"
+            - "list_home_assistant_entities"
+            - "list_automations"
+            - "get_automation"
+            - "get_automation_stats"
+            - "generate_image"
+            - "transform_image"
+            - "generate_video"
+            - "download_media"
+            - "highlight_image"
+            - "spawn_worker"
+            - "read_task_result"
+            - "list_worker_tasks"
+            - "cancel_worker_task"
+        decision: "allow"
+        priority: 10
+      - match:
+          mcp_server_ids:
+            - "time"
+            - "brave"
+            - "homeassistant"
+            - "google-maps"
+        decision: "allow"
+        priority: 10
+      - match:
+          names:
+            - "delete_calendar_event"
+            - "modify_calendar_event"
+        decision: "confirm"
+        priority: 20
   # Default list of slash commands that trigger this profile.
   # Can be overridden by individual service_profiles.
   slash_commands: []
@@ -348,8 +412,8 @@ service_profiles:
   - id: "default_assistant"
     description: "Main assistant using default settings, without browser tools. Suitable for general tasks, note-taking, calendar management, and information retrieval from stored documents."
     # This profile implicitly uses all settings from 'default_profile_settings'
-    # as no specific 'processing_config' or 'tools_config' is defined here,
-    # thus inheriting the tools_config that excludes the browser.
+    # as no specific 'processing_config', 'tools_config', or 'tools_policy' is
+    # defined here, thus inheriting the default non-browser tool access.
   - id: "reminder"
     description: "Assistant profile for handling system reminders. Its sole purpose is to formulate the reminder message to be sent to the user."
     processing_config:
@@ -368,6 +432,19 @@ service_profiles:
         - "get_user_documentation_content"
       enable_mcp_server_ids: []
       confirm_tools: []
+    tools_policy:
+      default_decision: "deny"
+      rules:
+        - match:
+            names:
+              - "search_calendar_events"
+              - "get_note"
+              - "list_notes"
+              - "search_documents"
+              - "get_full_document_content"
+              - "get_user_documentation_content"
+          decision: "allow"
+          priority: 10
     slash_commands: []
   - id: "browser_profile"
     description: "Assistant profile with web browsing capabilities for complex browser interactions like filling forms or navigating JavaScript-heavy sites. For simple web scraping, consider using the ingest_document_from_url tool or direct MCP browser tools."
@@ -397,6 +474,27 @@ service_profiles:
         - "attach_to_response"
       enable_mcp_server_ids: []
       confirm_tools: [] # No tools to confirm
+    tools_policy: # REPLACES default_profile_settings.tools_policy entirely for this profile
+      default_decision: "deny"
+      rules:
+        - match:
+            names:
+              - "click_at"
+              - "type_text_at"
+              - "scroll_at"
+              - "open_web_browser"
+              - "navigate"
+              - "search"
+              - "go_back"
+              - "go_forward"
+              - "key_combination"
+              - "wait_5_seconds"
+              - "hover_at"
+              - "drag_and_drop"
+              - "scroll_document"
+              - "attach_to_response"
+          decision: "allow"
+          priority: 10
     slash_commands:
       - "/browse"
   - id: "research"
@@ -414,6 +512,8 @@ service_profiles:
       enable_local_tools: [] # No local tools for this profile
       enable_mcp_server_ids: [] # No MCP tools for this profile
       confirm_tools: [] # No tools to confirm
+    tools_policy: # REPLACES default_profile_settings.tools_policy entirely for this profile
+      default_decision: "deny"
     slash_commands:
       - "/research"
   - id: "data_visualization"
@@ -443,6 +543,32 @@ service_profiles:
       enable_mcp_server_ids:
         - "homeassistant"
         - "scrape"
+    tools_policy:
+      default_decision: "deny"
+      rules:
+        - match:
+            names:
+              - "create_vega_chart"
+              - "jq_query"
+              - "attach_to_response"
+              - "get_attachment_info"
+              - "search_documents"
+              - "get_full_document_content"
+              - "download_state_history"
+              - "list_home_assistant_entities"
+              - "render_home_assistant_template"
+              - "execute_script"
+              - "spawn_worker"
+              - "read_task_result"
+              - "list_worker_tasks"
+          decision: "allow"
+          priority: 10
+        - match:
+            mcp_server_ids:
+              - "homeassistant"
+              - "scrape"
+          decision: "allow"
+          priority: 10
     slash_commands:
       - "/visualize"
       - "/chart"
@@ -477,6 +603,25 @@ service_profiles:
         # Home Assistant read-only access
         - "homeassistant" # Configured to only allow get_entity_state and get_all_entities
       confirm_tools: [] # No confirmation needed for automated operations
+    tools_policy: # REPLACES default_profile_settings.tools_policy entirely for this profile
+      default_decision: "deny"
+      rules:
+        - match:
+            names:
+              - "add_or_update_note"
+              - "list_notes"
+              - "get_note"
+              - "search_documents"
+              - "send_message_to_user"
+              - "search_calendar_events"
+              - "query_recent_events"
+          decision: "allow"
+          priority: 10
+        - match:
+            mcp_server_ids:
+              - "homeassistant"
+          decision: "allow"
+          priority: 10
     slash_commands: [] # Not accessible via slash commands
   - id: "automation_creation"
     description: "Specialized profile for creating and validating event-based and schedule-based automations. Includes comprehensive scripting documentation and validation tools."
@@ -794,6 +939,46 @@ service_profiles:
       enable_mcp_server_ids:
         - "homeassistant" # For validating entity IDs and states
       confirm_tools: [] # No confirmation needed for automation creation workflows
+    tools_policy:
+      default_decision: "deny"
+      rules:
+        - match:
+            names:
+              - "create_automation"
+              - "list_automations"
+              - "get_automation"
+              - "update_automation"
+              - "enable_automation"
+              - "disable_automation"
+              - "delete_automation"
+              - "get_automation_stats"
+              - "query_recent_events"
+              - "test_event_listener"
+              - "execute_script"
+              - "search_calendar_events"
+              - "get_calendar_events"
+              - "list_notes"
+              - "get_note"
+              - "search_notes"
+              - "send_message_to_user"
+              - "search_documents"
+              - "get_full_document_content"
+              - "get_user_documentation_content"
+              - "download_state_history"
+              - "render_home_assistant_template"
+              - "schedule_action"
+              - "schedule_recurring_action"
+              - "list_pending_callbacks"
+              - "spawn_worker"
+              - "read_task_result"
+              - "list_worker_tasks"
+          decision: "allow"
+          priority: 10
+        - match:
+            mcp_server_ids:
+              - "homeassistant"
+          decision: "allow"
+          priority: 10
     slash_commands:
       - "/automate"
   - id: "artist"
@@ -851,6 +1036,23 @@ service_profiles:
         - "search_documents"
       enable_mcp_server_ids: []
       confirm_tools: []
+    tools_policy:
+      default_decision: "deny"
+      rules:
+        - match:
+            names:
+              - "generate_image"
+              - "transform_image"
+              - "highlight_image"
+              - "generate_video"
+              - "get_attachment_info"
+              - "attach_to_response"
+              - "execute_script"
+              - "send_message_to_user"
+              - "get_message_history"
+              - "search_documents"
+          decision: "allow"
+          priority: 10
     slash_commands:
       - "/artist"
       - "/image"
@@ -909,6 +1111,55 @@ service_profiles:
         - "homeassistant"
         - "google-maps"
       confirm_tools: []
+    tools_policy:
+      default_decision: "deny"
+      rules:
+        - match:
+            names:
+              - "add_or_update_note"
+              - "get_note"
+              - "list_notes"
+              - "delete_note"
+              - "schedule_future_callback"
+              - "schedule_recurring_task"
+              - "schedule_reminder"
+              - "schedule_action"
+              - "schedule_recurring_action"
+              - "list_pending_callbacks"
+              - "modify_pending_callback"
+              - "cancel_pending_callback"
+              - "search_documents"
+              - "get_full_document_content"
+              - "get_attachment_info"
+              - "get_message_history"
+              - "get_user_documentation_content"
+              - "ingest_document_from_url"
+              - "execute_script"
+              - "send_message_to_user"
+              - "add_calendar_event"
+              - "search_calendar_events"
+              - "modify_calendar_event"
+              - "delete_calendar_event"
+              - "delegate_to_service"
+              - "query_recent_events"
+              - "render_home_assistant_template"
+              - "get_camera_snapshot"
+              - "download_state_history"
+              - "list_home_assistant_entities"
+              - "list_automations"
+              - "get_automation"
+              - "get_automation_stats"
+              - "generate_video"
+          decision: "allow"
+          priority: 10
+        - match:
+            mcp_server_ids:
+              - "time"
+              - "brave"
+              - "homeassistant"
+              - "google-maps"
+          decision: "allow"
+          priority: 10
     slash_commands: []
   - id: "telephone_external"
     description: "Restricted profile for external callers. Takes messages and notifies family."
@@ -940,6 +1191,16 @@ service_profiles:
         - "list_notes"
       enable_mcp_server_ids: []
       confirm_tools: []
+    tools_policy:
+      default_decision: "deny"
+      rules:
+        - match:
+            names:
+              - "send_message_to_user"
+              - "get_note"
+              - "list_notes"
+          decision: "allow"
+          priority: 10
     slash_commands: []
   - id: "camera_analyst"
     description: "Analyze camera footage to investigate events using binary search through thumbnails"
@@ -973,6 +1234,22 @@ service_profiles:
         - "attach_to_response"
         - "get_attachment_info"
       enable_mcp_server_ids: []
+    tools_policy:
+      default_decision: "deny"
+      rules:
+        - match:
+            names:
+              - "list_cameras"
+              - "search_camera_events"
+              - "get_camera_frame"
+              - "get_camera_frames_batch"
+              - "get_camera_recordings"
+              - "get_live_camera_snapshot"
+              - "scan_camera_frames"
+              - "attach_to_response"
+              - "get_attachment_info"
+          decision: "allow"
+          priority: 10
     slash_commands:
       - "/camera"
       - "/investigate"
@@ -1059,6 +1336,70 @@ service_profiles:
       confirm_tools:
         - delete_calendar_event
         - modify_calendar_event
+    tools_policy:
+      default_decision: "deny"
+      rules:
+        - match:
+            names:
+              - "add_or_update_note"
+              - "get_note"
+              - "list_notes"
+              - "delete_note"
+              - "schedule_future_callback"
+              - "schedule_recurring_task"
+              - "schedule_reminder"
+              - "schedule_action"
+              - "schedule_recurring_action"
+              - "list_pending_callbacks"
+              - "modify_pending_callback"
+              - "cancel_pending_callback"
+              - "search_documents"
+              - "get_full_document_content"
+              - "get_attachment_info"
+              - "get_message_history"
+              - "get_user_documentation_content"
+              - "ingest_document_from_url"
+              - "execute_script"
+              - "send_message_to_user"
+              - "attach_to_response"
+              - "add_calendar_event"
+              - "search_calendar_events"
+              - "modify_calendar_event"
+              - "delete_calendar_event"
+              - "delegate_to_service"
+              - "query_recent_events"
+              - "render_home_assistant_template"
+              - "get_camera_snapshot"
+              - "download_state_history"
+              - "list_home_assistant_entities"
+              - "list_automations"
+              - "get_automation"
+              - "get_automation_stats"
+              - "generate_image"
+              - "transform_image"
+              - "generate_video"
+              - "download_media"
+              - "highlight_image"
+              - "spawn_worker"
+              - "read_task_result"
+              - "list_worker_tasks"
+              - "cancel_worker_task"
+          decision: "allow"
+          priority: 10
+        - match:
+            mcp_server_ids:
+              - "time"
+              - "brave"
+              - "homeassistant"
+              - "google-maps"
+          decision: "allow"
+          priority: 10
+        - match:
+            names:
+              - "delete_calendar_event"
+              - "modify_calendar_event"
+          decision: "confirm"
+          priority: 20
     slash_commands:
       - "/complex"
   - id: "engineer"
@@ -1126,6 +1467,35 @@ service_profiles:
       enable_mcp_server_ids: []
       confirm_tools:
         - "create_github_issue"
+    tools_policy:
+      default_decision: "deny"
+      rules:
+        - match:
+            names:
+              - "read_source_file"
+              - "search_source_code"
+              - "query_database"
+              - "read_error_logs"
+              - "get_llm_request_history"
+              - "create_github_issue"
+              - "get_message_history"
+              - "list_notes"
+              - "get_note"
+              - "search_documents"
+              - "get_full_document_content"
+              - "get_user_documentation_content"
+              - "list_pending_callbacks"
+              - "query_recent_events"
+              - "list_automations"
+              - "get_automation"
+              - "get_automation_stats"
+          decision: "allow"
+          priority: 10
+        - match:
+            names:
+              - "create_github_issue"
+          decision: "confirm"
+          priority: 20
     slash_commands:
       - "/engineer"
 # Other global settings like llm_parameters, indexing_pipeline_config remain at top level.

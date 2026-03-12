@@ -200,6 +200,10 @@ async def test_attachment_response_flow(
     assert tool_call_text is not None and "Attachments" in tool_call_text
 
     # Verify that attachment preview is displayed
+    await page.locator('[data-testid="attachment-preview"]').first.wait_for(
+        state="visible",
+        timeout=30000,
+    )
     attachment_previews = page.locator('[data-testid="attachment-preview"]')
     preview_count = await attachment_previews.count()
     assert preview_count == 1, f"Expected 1 attachment preview, found {preview_count}"
@@ -378,6 +382,10 @@ async def test_attachment_response_with_multiple_attachments(
     # Verify attachment previews are now available
     try:
         # The wait_for_attachments_ready should have already ensured these exist
+        await page.locator('[data-testid="attachment-preview"]').first.wait_for(
+            state="visible",
+            timeout=30000,
+        )
         attachment_previews = page.locator('[data-testid="attachment-preview"]')
         preview_count = await attachment_previews.count()
         assert preview_count > 0, (
@@ -521,11 +529,16 @@ async def test_attachment_response_error_handling(
 
     if tool_call_rendered:
         # If tool rendered, verify it shows error state appropriately
-        tool_call_element = page.locator('[data-ui="tool-call-content"]')
-        tool_call_count = await tool_call_element.count()
+        tool_call_locator = page.locator('[data-ui="tool-call-content"]')
+        tool_call_count = await tool_call_locator.count()
 
         if tool_call_count > 0:
-            tool_call_text = await tool_call_element.text_content()
+            tool_call_element = tool_call_locator.first
+            try:
+                await tool_call_element.wait_for(state="attached", timeout=5000)
+                tool_call_text = await tool_call_element.text_content(timeout=2000)
+            except PlaywrightTimeoutError:
+                tool_call_text = None
             print(
                 f"Tool call rendered with text: {tool_call_text[:100] if tool_call_text else 'None'}"
             )
