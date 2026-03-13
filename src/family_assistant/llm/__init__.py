@@ -31,7 +31,7 @@ from litellm.exceptions import (
 )
 from opentelemetry import trace as otel_trace
 from opentelemetry.trace import StatusCode as OtelStatusCode
-from pydantic import BaseModel, ValidationError
+from pydantic import BaseModel, RootModel, ValidationError
 
 from family_assistant.tools.types import ToolDefinition
 
@@ -73,6 +73,14 @@ _otel_tracer = otel_trace.get_tracer(__name__)
 
 # TypeVar for generic structured output support
 T = TypeVar("T", bound=BaseModel)
+
+type JsonPrimitive = str | int | float | bool | None
+type JsonValue = JsonPrimitive | list[JsonValue] | dict[str, JsonValue]
+type JsonObject = dict[str, JsonValue]
+
+
+class _JsonObjectResponse(RootModel[JsonObject]):
+    """Internal RootModel used to expose JSON object output through structured output."""
 
 
 class ParsedChoice(TypedDict, total=False):
@@ -336,6 +344,35 @@ class BaseLLMClient:
 
         # Fall back to original content (let JSON parser give the error)
         return content
+
+    async def generate_json(
+        self,
+        messages: Sequence[LLMMessage],
+        max_retries: int = 2,
+    ) -> JsonObject:
+        """
+        Generate a parsed JSON object response.
+
+        This is a convenience wrapper over generate_structured for callers that
+        want validated JSON output without defining a dedicated Pydantic model.
+
+        Args:
+            messages: Conversation messages
+            max_retries: Maximum number of retry attempts on validation failure
+
+        Returns:
+            Parsed JSON object response
+
+        Raises:
+            StructuredOutputError: If response cannot be parsed/validated after retries
+        """
+        llm_client = cast("LLMInterface", self)
+        response = await llm_client.generate_structured(
+            messages=messages,
+            response_model=_JsonObjectResponse,
+            max_retries=max_retries,
+        )
+        return response.root
 
     async def generate_structured(
         self,
@@ -875,6 +912,7 @@ class LLMInterface(Protocol):
         self,
         messages: Sequence[LLMMessage],
         response_model: type[T],
+        max_retries: int = 2,
     ) -> T:
         """
         Generate a structured response matching the given Pydantic model.
@@ -886,9 +924,33 @@ class LLMInterface(Protocol):
         Args:
             messages: Conversation messages
             response_model: Pydantic model class defining the expected response schema
+            max_retries: Maximum number of retry attempts on validation failure
 
         Returns:
             Instance of response_model populated with the LLM's response
+
+        Raises:
+            StructuredOutputError: If response cannot be parsed/validated after retries
+        """
+        ...
+
+    async def generate_json(
+        self,
+        messages: Sequence[LLMMessage],
+        max_retries: int = 2,
+    ) -> JsonObject:
+        """
+        Generate a parsed JSON object response.
+
+        This is a convenience wrapper over structured output for callers that
+        want JSON output without defining a dedicated Pydantic model.
+
+        Args:
+            messages: Conversation messages
+            max_retries: Maximum number of retry attempts on validation failure
+
+        Returns:
+            Parsed JSON object response
 
         Raises:
             StructuredOutputError: If response cannot be parsed/validated after retries
@@ -2244,7 +2306,7 @@ class InteractionRecord(TypedDict):
 
     Each record contains the serialized input arguments and the serialized output
     from a single LLM method call (generate_response, format_user_message_with_file,
-    or generate_structured).
+    generate_structured, or generate_json).
     """
 
     input: dict[str, object]
@@ -2386,6 +2448,7 @@ class RecordingLLMClient:
         self,
         messages: Sequence[LLMMessage],
         response_model: type[T],
+        max_retries: int = 2,
     ) -> T:
         """Calls the wrapped client's generate_structured, records, and returns."""
         messages_dict = [message_to_json_dict(msg) for msg in messages]
@@ -2394,10 +2457,13 @@ class RecordingLLMClient:
             "messages": messages_dict,
             "response_model_name": response_model.__name__,
             "response_model_schema": response_model.model_json_schema(),
+            "max_retries": max_retries,
         }
         try:
             output_data = await self.wrapped_client.generate_structured(
-                messages=messages, response_model=response_model
+                messages=messages,
+                response_model=response_model,
+                max_retries=max_retries,
             )
             record: InteractionRecord = {
                 "input": input_data,
@@ -2411,6 +2477,35 @@ class RecordingLLMClient:
         except Exception as e:
             logger.error(
                 f"Error in RecordingLLMClient.generate_structured: {e}", exc_info=True
+            )
+            raise
+
+    async def generate_json(
+        self,
+        messages: Sequence[LLMMessage],
+        max_retries: int = 2,
+    ) -> JsonObject:
+        """Calls the wrapped client's generate_json, records, and returns."""
+        messages_dict = [message_to_json_dict(msg) for msg in messages]
+        input_data: dict[str, object] = {
+            "method": "generate_json",
+            "messages": messages_dict,
+            "max_retries": max_retries,
+        }
+        try:
+            output_data = await self.wrapped_client.generate_json(
+                messages=messages,
+                max_retries=max_retries,
+            )
+            record: InteractionRecord = {
+                "input": input_data,
+                "output": {"json_data": output_data},
+            }
+            await self._write_record_to_file(record)
+            return output_data
+        except Exception as e:
+            logger.error(
+                f"Error in RecordingLLMClient.generate_json: {e}", exc_info=True
             )
             raise
 
@@ -2659,6 +2754,7 @@ class PlaybackLLMClient:
         self,
         messages: Sequence[LLMMessage],
         response_model: type[T],
+        max_retries: int = 2,
     ) -> T:
         """Plays back for the generate_structured method."""
         messages_dict = [message_to_json_dict(msg) for msg in messages]
@@ -2667,6 +2763,7 @@ class PlaybackLLMClient:
             "messages": messages_dict,
             "response_model_name": response_model.__name__,
             "response_model_schema": response_model.model_json_schema(),
+            "max_retries": max_retries,
         }
 
         logger.debug(
@@ -2703,6 +2800,49 @@ class PlaybackLLMClient:
             f"for model {response_model.__name__}."
         )
 
+    async def generate_json(
+        self,
+        messages: Sequence[LLMMessage],
+        max_retries: int = 2,
+    ) -> JsonObject:
+        """Plays back for the generate_json method."""
+        messages_dict = [message_to_json_dict(msg) for msg in messages]
+        current_input_args: dict[str, object] = {
+            "method": "generate_json",
+            "messages": messages_dict,
+            "max_retries": max_retries,
+        }
+
+        logger.debug(
+            f"PlaybackLLMClient attempting to find JSON output match for input args: "
+            f"{json.dumps(current_input_args, indent=2, default=str)[:500]}..."
+        )
+
+        for record in self.recorded_interactions:
+            if record.get("input") == current_input_args:
+                logger.info(
+                    f"Found matching JSON output interaction in {self.recording_path}."
+                )
+                output_data = record["output"]
+                if not isinstance(output_data, dict):
+                    logger.error(
+                        f"Recorded output for matched JSON input is not a dict: {output_data}"
+                    )
+                    raise LookupError("Matched recorded output is not a dictionary.")
+
+                json_data = output_data.get("json_data")
+                if json_data is None:
+                    raise LookupError("Recorded JSON output missing 'json_data' field.")
+                if not isinstance(json_data, dict):
+                    raise LookupError("Recorded JSON output is not a JSON object.")
+
+                return cast("JsonObject", json_data)
+
+        await self._log_no_match_error(current_input_args)
+        raise LookupError(
+            f"No matching JSON output recorded interaction found in {self.recording_path}."
+        )
+
 
 # Export all public classes and interfaces
 __all__ = [
@@ -2727,6 +2867,8 @@ __all__ = [
     "StructuredOutputError",
     "StreamEventMetadata",
     "MessageReasoningInfo",
+    "JsonObject",
+    "JsonValue",
     "UserMessageContentPart",
     "UserMessageDict",
 ]

@@ -20,6 +20,7 @@ if TYPE_CHECKING:
     from family_assistant.tools.types import ToolAttachment, ToolDefinition
 
 from . import (
+    JsonObject,
     LLMInterface,
     LLMMessage,
     LLMOutput,
@@ -443,6 +444,7 @@ class RetryingLLMClient:
         self,
         messages: Sequence[LLMMessage],
         response_model: type[T],
+        max_retries: int = 2,
     ) -> T:
         """Generate structured response with retry and fallback logic.
 
@@ -481,6 +483,7 @@ class RetryingLLMClient:
                 result = await self.primary_client.generate_structured(
                     messages=messages,
                     response_model=response_model,
+                    max_retries=max_retries,
                 )
                 span.set_attribute("gen_ai.response.model", self.primary_model)
                 return result
@@ -529,6 +532,7 @@ class RetryingLLMClient:
                     result = await self.primary_client.generate_structured(
                         messages=messages,
                         response_model=response_model,
+                        max_retries=max_retries,
                     )
                     span.set_attribute("gen_ai.response.model", self.primary_model)
                     return result
@@ -576,6 +580,7 @@ class RetryingLLMClient:
                     result = await self.fallback_client.generate_structured(
                         messages=messages,
                         response_model=response_model,
+                        max_retries=max_retries,
                     )
                     span.set_attribute(
                         "gen_ai.response.model", self.fallback_model or ""
@@ -602,3 +607,157 @@ class RetryingLLMClient:
                     provider="unknown",
                     model=self.primary_model,
                 )
+
+    async def generate_json(
+        self,
+        messages: Sequence[LLMMessage],
+        max_retries: int = 2,
+    ) -> JsonObject:
+        """Generate JSON object response with retry and fallback logic."""
+        with tracer.start_as_current_span(
+            "llm.generate_json",
+            attributes={
+                "gen_ai.request.model": self.primary_model,
+                "llm.has_fallback": bool(self.fallback_client),
+            },
+        ) as span:
+            retriable_errors = (
+                ProviderConnectionError,
+                ProviderTimeoutError,
+                RateLimitError,
+                ServiceUnavailableError,
+            )
+
+            last_exception: Exception | None = None
+
+            span.add_event(
+                "llm.attempt",
+                attributes={
+                    "attempt_number": 1,
+                    "model": self.primary_model,
+                    "is_fallback": False,
+                },
+            )
+            try:
+                logger.info(
+                    f"JSON output attempt 1: Primary model ({self.primary_model})"
+                )
+                result = await self.primary_client.generate_json(
+                    messages=messages,
+                    max_retries=max_retries,
+                )
+                span.set_attribute("gen_ai.response.model", self.primary_model)
+                return result
+            except retriable_errors as e:
+                logger.warning(
+                    f"JSON output attempt 1 (Primary model {self.primary_model}) "
+                    f"failed with retriable error: {e}. Retrying primary model."
+                )
+                last_exception = e
+            except StructuredOutputError as e:
+                logger.warning(
+                    f"JSON output attempt 1 (Primary model {self.primary_model}) "
+                    f"failed with structured output error: {e}. Proceeding to fallback."
+                )
+                last_exception = e
+            except LLMProviderError as e:
+                logger.warning(
+                    f"JSON output attempt 1 (Primary model {self.primary_model}) "
+                    f"failed with provider error: {e}. Proceeding to fallback."
+                )
+                last_exception = e
+            except Exception as e:
+                logger.error(
+                    f"JSON output attempt 1 (Primary model {self.primary_model}) "
+                    f"failed with unexpected error: {e}",
+                    exc_info=True,
+                )
+                last_exception = e
+
+            if isinstance(last_exception, retriable_errors):
+                span.add_event(
+                    "llm.attempt",
+                    attributes={
+                        "attempt_number": 2,
+                        "model": self.primary_model,
+                        "is_fallback": False,
+                    },
+                )
+                try:
+                    logger.info(
+                        f"JSON output attempt 2: Retrying primary model ({self.primary_model})"
+                    )
+                    result = await self.primary_client.generate_json(
+                        messages=messages,
+                        max_retries=max_retries,
+                    )
+                    span.set_attribute("gen_ai.response.model", self.primary_model)
+                    return result
+                except retriable_errors as e:
+                    logger.warning(
+                        f"JSON output attempt 2 (Retry Primary model {self.primary_model}) "
+                        f"failed with retriable error: {e}. Proceeding to fallback."
+                    )
+                    last_exception = e
+                except LLMProviderError as e:
+                    logger.warning(
+                        f"JSON output attempt 2 (Retry Primary model {self.primary_model}) "
+                        f"failed with provider error: {e}. Proceeding to fallback."
+                    )
+                    last_exception = e
+                except Exception as e:
+                    logger.error(
+                        f"JSON output attempt 2 (Retry Primary model {self.primary_model}) "
+                        f"failed with unexpected error: {e}",
+                        exc_info=True,
+                    )
+                    last_exception = e
+
+            if self.fallback_client and last_exception:
+                if self.fallback_model == self.primary_model:
+                    logger.warning(
+                        f"Fallback model '{self.fallback_model}' is the same as the primary model "
+                        f"'{self.primary_model}'. Skipping fallback."
+                    )
+                    raise last_exception
+
+                span.add_event(
+                    "llm.attempt",
+                    attributes={
+                        "attempt_number": 3,
+                        "model": self.fallback_model or "",
+                        "is_fallback": True,
+                    },
+                )
+                logger.info(
+                    f"JSON output attempt 3: Fallback model ({self.fallback_model})"
+                )
+                try:
+                    result = await self.fallback_client.generate_json(
+                        messages=messages,
+                        max_retries=max_retries,
+                    )
+                    span.set_attribute(
+                        "gen_ai.response.model", self.fallback_model or ""
+                    )
+                    return result
+                except Exception as e:
+                    logger.error(
+                        f"JSON output attempt 3 (Fallback model {self.fallback_model}) "
+                        f"also failed: {e}",
+                        exc_info=True,
+                    )
+                    raise last_exception from e
+
+            if last_exception:
+                logger.error(
+                    f"All JSON output attempts failed. "
+                    f"Raising last recorded exception: {last_exception}"
+                )
+                raise last_exception
+
+            raise LLMProviderError(
+                message="All JSON output attempts failed without a specific exception.",
+                provider="unknown",
+                model=self.primary_model,
+            )

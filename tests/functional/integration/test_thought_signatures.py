@@ -15,6 +15,7 @@ from pydantic import BaseModel
 from family_assistant.config_models import AppConfig, ToolsConfig
 from family_assistant.delegation_security import DelegationSecurityLevel
 from family_assistant.llm import (
+    JsonObject,
     LLMMessage,
     LLMOutput,
     LLMStreamEvent,
@@ -163,10 +164,23 @@ class MockLLMWithThoughtSignatures:
         self,
         messages: Sequence[LLMMessage],
         response_model: type[T],
+        max_retries: int = 2,
     ) -> T:
         """Mock implementation - raises error as not used in these tests."""
         raise StructuredOutputError(
             message="generate_structured not implemented in mock",
+            provider="mock",
+            model="mock",
+        )
+
+    async def generate_json(
+        self,
+        messages: Sequence[LLMMessage],
+        max_retries: int = 2,
+    ) -> JsonObject:
+        """Mock implementation - raises error as not used in these tests."""
+        raise StructuredOutputError(
+            message="generate_json not implemented in mock",
             provider="mock",
             model="mock",
         )
@@ -239,10 +253,23 @@ class MockLLMWithThoughtSignaturesNoToolCalls:
         self,
         messages: Sequence[LLMMessage],
         response_model: type[T],
+        max_retries: int = 2,
     ) -> T:
         """Mock implementation - raises error as not used in these tests."""
         raise StructuredOutputError(
             message="generate_structured not implemented in mock",
+            provider="mock",
+            model="mock",
+        )
+
+    async def generate_json(
+        self,
+        messages: Sequence[LLMMessage],
+        max_retries: int = 2,
+    ) -> JsonObject:
+        """Mock implementation - raises error as not used in these tests."""
+        raise StructuredOutputError(
+            message="generate_json not implemented in mock",
             provider="mock",
             model="mock",
         )

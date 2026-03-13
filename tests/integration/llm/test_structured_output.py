@@ -7,7 +7,7 @@ import pytest
 import pytest_asyncio
 from pydantic import BaseModel, Field
 
-from family_assistant.llm import LLMInterface, StructuredOutputError
+from family_assistant.llm import LLMInterface, LLMOutput, StructuredOutputError
 from family_assistant.llm.factory import LLMClientFactory
 from tests.factories.messages import create_system_message, create_user_message
 from tests.mocks.mock_llm import RuleBasedMockLLMClient
@@ -185,6 +185,71 @@ class TestMockClientStructuredOutput:
         assert len(calls) == 1
         assert calls[0]["method_name"] == "generate_structured"
         assert calls[0]["kwargs"]["response_model_name"] == "SimpleResponse"
+
+    async def test_mock_client_returns_json_object(self) -> None:
+        """Test that mock client can return parsed JSON objects."""
+
+        def always_match(_args: dict) -> bool:
+            return True
+
+        mock_client = RuleBasedMockLLMClient(
+            rules=[
+                (
+                    always_match,
+                    LLMOutput(
+                        content='{"answer": "42", "confidence": 0.95, "tags": ["math"]}'
+                    ),
+                )
+            ]
+        )
+
+        messages = [create_user_message("Return JSON")]
+
+        result = await mock_client.generate_json(messages=messages)
+
+        assert result == {
+            "answer": "42",
+            "confidence": 0.95,
+            "tags": ["math"],
+        }
+
+    async def test_mock_client_records_json_calls(self) -> None:
+        """Test that mock client records generate_json calls."""
+
+        def always_match(_args: dict) -> bool:
+            return True
+
+        mock_client = RuleBasedMockLLMClient(
+            rules=[(always_match, LLMOutput(content='{"answer": "ok"}'))]
+        )
+
+        messages = [create_user_message("Return JSON")]
+
+        await mock_client.generate_json(messages=messages, max_retries=4)
+
+        calls = mock_client.get_calls()
+        assert [call["method_name"] for call in calls] == [
+            "generate_json",
+            "generate_response",
+        ]
+        assert calls[0]["kwargs"]["max_retries"] == 4
+
+    async def test_mock_client_invalid_json_raises_error(self) -> None:
+        """Test that invalid JSON raises StructuredOutputError."""
+
+        def always_match(_args: dict) -> bool:
+            return True
+
+        mock_client = RuleBasedMockLLMClient(
+            rules=[(always_match, LLMOutput(content="not json"))]
+        )
+
+        messages = [create_user_message("Return JSON")]
+
+        with pytest.raises(StructuredOutputError) as exc_info:
+            await mock_client.generate_json(messages=messages)
+
+        assert "invalid JSON" in str(exc_info.value)
 
 
 # --- Provider Integration Tests ---

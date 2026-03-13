@@ -16,6 +16,7 @@ if TYPE_CHECKING:
 
 from family_assistant.llm import (
     BaseLLMClient,
+    JsonObject,
     LLMInterface,
     LLMMessage,
     LLMOutput,
@@ -337,6 +338,7 @@ class RuleBasedMockLLMClient(BaseLLMClient, LLMInterface):
         self,
         messages: Sequence[LLMMessage],
         response_model: type[T],
+        max_retries: int = 2,
     ) -> T:
         """
         Mock implementation of generate_structured for testing.
@@ -348,6 +350,7 @@ class RuleBasedMockLLMClient(BaseLLMClient, LLMInterface):
             "messages": list(messages),
             "response_model": response_model,
             "response_model_name": response_model.__name__,
+            "max_retries": max_retries,
         }
         self._record_call("generate_structured", actual_kwargs)
 
@@ -411,6 +414,50 @@ class RuleBasedMockLLMClient(BaseLLMClient, LLMInterface):
             raw_response=None,
             validation_error=None,
         )
+
+    async def generate_json(
+        self,
+        messages: Sequence[LLMMessage],
+        max_retries: int = 2,
+    ) -> JsonObject:
+        """Mock implementation of generate_json for testing."""
+        actual_kwargs: MatcherArgs = {
+            "messages": list(messages),
+            "max_retries": max_retries,
+        }
+        self._record_call("generate_json", actual_kwargs)
+
+        response = await self.generate_response(list(messages))
+        if not response.content:
+            raise StructuredOutputError(
+                message="Mock returned empty response for generate_json",
+                provider="mock",
+                model=self.model,
+                raw_response=None,
+                validation_error=None,
+            )
+
+        try:
+            parsed = json.loads(self._extract_json_from_response(response.content))
+        except json.JSONDecodeError as e:
+            raise StructuredOutputError(
+                message="Mock returned invalid JSON for generate_json",
+                provider="mock",
+                model=self.model,
+                raw_response=response.content,
+                validation_error=e,
+            ) from e
+
+        if not isinstance(parsed, dict):
+            raise StructuredOutputError(
+                message="Mock returned JSON that was not a JSON object",
+                provider="mock",
+                model=self.model,
+                raw_response=response.content,
+                validation_error=None,
+            )
+
+        return parsed
 
 
 # --- Helper functions for working with typed messages in matchers ---
