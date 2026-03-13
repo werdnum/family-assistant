@@ -7,11 +7,15 @@ import pytest
 from family_assistant.llm import LLMOutput
 from family_assistant.scripting.apis.llm import (
     DEFAULT_MODEL,
+    extract_json_from_response,
     llm_call_async,
     llm_call_json_async,
 )
 from family_assistant.scripting.config import ScriptConfig
 from family_assistant.scripting.monty_engine import MontyEngine
+
+# Patch location: llm_call_async now uses one_shot internally
+PATCH_TARGET = "family_assistant.llm.one_shot.LLMClientFactory.create_client"
 
 
 @pytest.fixture
@@ -33,10 +37,7 @@ def test_default_model() -> None:
 @pytest.mark.no_db
 async def test_llm_call_async(mock_llm_client: AsyncMock) -> None:
     """Test basic llm_call_async."""
-    with patch(
-        "family_assistant.scripting.apis.llm.LLMClientFactory.create_client",
-        return_value=mock_llm_client,
-    ) as mock_factory:
+    with patch(PATCH_TARGET, return_value=mock_llm_client) as mock_factory:
         result = await llm_call_async("Hello")
 
         mock_factory.assert_called_once_with({"model": DEFAULT_MODEL})
@@ -46,10 +47,7 @@ async def test_llm_call_async(mock_llm_client: AsyncMock) -> None:
 @pytest.mark.no_db
 async def test_llm_call_async_with_system(mock_llm_client: AsyncMock) -> None:
     """Test llm_call_async with system prompt."""
-    with patch(
-        "family_assistant.scripting.apis.llm.LLMClientFactory.create_client",
-        return_value=mock_llm_client,
-    ):
+    with patch(PATCH_TARGET, return_value=mock_llm_client):
         await llm_call_async("Hello", system="You are helpful.")
 
         call_args = mock_llm_client.generate_response.call_args
@@ -63,10 +61,7 @@ async def test_llm_call_async_with_system(mock_llm_client: AsyncMock) -> None:
 @pytest.mark.no_db
 async def test_llm_call_async_with_custom_model(mock_llm_client: AsyncMock) -> None:
     """Test llm_call_async with custom model."""
-    with patch(
-        "family_assistant.scripting.apis.llm.LLMClientFactory.create_client",
-        return_value=mock_llm_client,
-    ) as mock_factory:
+    with patch(PATCH_TARGET, return_value=mock_llm_client) as mock_factory:
         await llm_call_async("Hello", model="gpt-4o")
 
         mock_factory.assert_called_once_with({"model": "gpt-4o"})
@@ -79,10 +74,7 @@ async def test_llm_call_json_async(mock_llm_client: AsyncMock) -> None:
         return_value=LLMOutput(content='{"name": "Alice", "age": 30}')
     )
 
-    with patch(
-        "family_assistant.scripting.apis.llm.LLMClientFactory.create_client",
-        return_value=mock_llm_client,
-    ):
+    with patch(PATCH_TARGET, return_value=mock_llm_client):
         result = await llm_call_json_async("Extract info")
 
         assert result == {"name": "Alice", "age": 30}
@@ -100,10 +92,7 @@ async def test_llm_call_json_async_with_schema(mock_llm_client: AsyncMock) -> No
         "properties": {"title": {"type": "string"}},
     }
 
-    with patch(
-        "family_assistant.scripting.apis.llm.LLMClientFactory.create_client",
-        return_value=mock_llm_client,
-    ):
+    with patch(PATCH_TARGET, return_value=mock_llm_client):
         result = await llm_call_json_async("Extract info", schema=schema)
 
         assert result == {"title": "Test"}
@@ -122,13 +111,67 @@ async def test_llm_call_json_strips_markdown(mock_llm_client: AsyncMock) -> None
         return_value=LLMOutput(content='```json\n{"key": "value"}\n```')
     )
 
-    with patch(
-        "family_assistant.scripting.apis.llm.LLMClientFactory.create_client",
-        return_value=mock_llm_client,
-    ):
+    with patch(PATCH_TARGET, return_value=mock_llm_client):
         result = await llm_call_json_async("Extract info")
 
         assert result == {"key": "value"}
+
+
+@pytest.mark.no_db
+async def test_llm_call_json_handles_conversational_text(
+    mock_llm_client: AsyncMock,
+) -> None:
+    """Test that llm_call_json_async handles conversational text before JSON fences."""
+    mock_llm_client.generate_response = AsyncMock(
+        return_value=LLMOutput(
+            content='Here is the JSON you requested:\n```json\n{"status": "ok"}\n```'
+        )
+    )
+
+    with patch(PATCH_TARGET, return_value=mock_llm_client):
+        result = await llm_call_json_async("Extract info")
+
+        assert result == {"status": "ok"}
+
+
+@pytest.mark.no_db
+async def test_llm_call_json_rejects_scalar_string(mock_llm_client: AsyncMock) -> None:
+    """Test that llm_call_json_async raises on scalar string JSON."""
+    mock_llm_client.generate_response = AsyncMock(
+        return_value=LLMOutput(content='"just a string"')
+    )
+
+    with (
+        patch(PATCH_TARGET, return_value=mock_llm_client),
+        pytest.raises(ValueError, match="Expected JSON object or array"),
+    ):
+        await llm_call_json_async("Extract info")
+
+
+@pytest.mark.no_db
+async def test_llm_call_json_rejects_scalar_number(mock_llm_client: AsyncMock) -> None:
+    """Test that llm_call_json_async raises on scalar number JSON."""
+    mock_llm_client.generate_response = AsyncMock(return_value=LLMOutput(content="42"))
+
+    with (
+        patch(PATCH_TARGET, return_value=mock_llm_client),
+        pytest.raises(ValueError, match="Expected JSON object or array"),
+    ):
+        await llm_call_json_async("Extract info")
+
+
+@pytest.mark.no_db
+async def test_llm_call_json_rejects_null(mock_llm_client: AsyncMock) -> None:
+    """Test that llm_call_json_async raises on null JSON."""
+    mock_llm_client.generate_response = AsyncMock(
+        return_value=LLMOutput(content="null")
+    )
+
+    with (
+        patch(PATCH_TARGET, return_value=mock_llm_client),
+        pytest.raises(ValueError, match="Expected JSON object or array"),
+    ):
+        await llm_call_json_async("Extract info")
 
 
 @pytest.mark.no_db
@@ -137,10 +180,7 @@ async def test_llm_call_async_no_content(mock_llm_client: AsyncMock) -> None:
     mock_llm_client.generate_response = AsyncMock(return_value=LLMOutput(content=None))
 
     with (
-        patch(
-            "family_assistant.scripting.apis.llm.LLMClientFactory.create_client",
-            return_value=mock_llm_client,
-        ),
+        patch(PATCH_TARGET, return_value=mock_llm_client),
         pytest.raises(ValueError, match="LLM returned no content"),
     ):
         await llm_call_async("Hello")
@@ -149,10 +189,7 @@ async def test_llm_call_async_no_content(mock_llm_client: AsyncMock) -> None:
 @pytest.mark.no_db
 async def test_llm_available_in_engine(mock_llm_client: AsyncMock) -> None:
     """Test that llm() is available in MontyEngine scripts."""
-    with patch(
-        "family_assistant.scripting.apis.llm.LLMClientFactory.create_client",
-        return_value=mock_llm_client,
-    ):
+    with patch(PATCH_TARGET, return_value=mock_llm_client):
         engine = MontyEngine()
         result = await engine.evaluate_async("llm('Summarise this')")
         assert result == "Test LLM response"
@@ -165,10 +202,7 @@ async def test_llm_json_available_in_engine(mock_llm_client: AsyncMock) -> None:
         return_value=LLMOutput(content='{"summary": "short"}')
     )
 
-    with patch(
-        "family_assistant.scripting.apis.llm.LLMClientFactory.create_client",
-        return_value=mock_llm_client,
-    ):
+    with patch(PATCH_TARGET, return_value=mock_llm_client):
         engine = MontyEngine()
         result = await engine.evaluate_async("llm_json('Extract info')")
         assert result == {"summary": "short"}
@@ -177,10 +211,44 @@ async def test_llm_json_available_in_engine(mock_llm_client: AsyncMock) -> None:
 @pytest.mark.no_db
 async def test_llm_not_available_when_apis_disabled(mock_llm_client: AsyncMock) -> None:
     """Test that llm() is not available when APIs are disabled."""
-    with patch(
-        "family_assistant.scripting.apis.llm.LLMClientFactory.create_client",
-        return_value=mock_llm_client,
-    ):
+    with patch(PATCH_TARGET, return_value=mock_llm_client):
         engine = MontyEngine(config=ScriptConfig(disable_apis=True))
         with pytest.raises(Exception, match="llm"):
             await engine.evaluate_async("llm('test')")
+
+
+# Unit tests for the JSON extraction helper
+@pytest.mark.no_db
+def test_extract_json_pure_json() -> None:
+    """Test extraction of pure JSON without fences."""
+    assert extract_json_from_response('{"key": "value"}') == '{"key": "value"}'
+
+
+@pytest.mark.no_db
+def test_extract_json_with_fences() -> None:
+    """Test extraction of JSON with markdown fences."""
+    assert (
+        extract_json_from_response('```json\n{"key": "value"}\n```')
+        == '{"key": "value"}'
+    )
+
+
+@pytest.mark.no_db
+def test_extract_json_with_conversational_prefix() -> None:
+    """Test extraction when LLM adds conversational text before fences."""
+    text = 'Here is the JSON:\n```json\n{"key": "value"}\n```'
+    assert extract_json_from_response(text) == '{"key": "value"}'
+
+
+@pytest.mark.no_db
+def test_extract_json_with_fences_no_language_tag() -> None:
+    """Test extraction with fences but no json language tag."""
+    assert (
+        extract_json_from_response('```\n{"key": "value"}\n```') == '{"key": "value"}'
+    )
+
+
+@pytest.mark.no_db
+def test_extract_json_returns_list() -> None:
+    """Test extraction of JSON array."""
+    assert extract_json_from_response("[1, 2, 3]") == "[1, 2, 3]"

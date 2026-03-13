@@ -9,16 +9,28 @@ import logging
 import re
 from typing import Any
 
-from family_assistant.llm.factory import LLMClientFactory
-from family_assistant.llm.messages import SystemMessage, UserMessage
-
-DEFAULT_MODEL = "gemini-3-flash-preview"
+from family_assistant.llm.one_shot import DEFAULT_MODEL, one_shot
 
 logger = logging.getLogger(__name__)
 
+# Re-export DEFAULT_MODEL for tests that import from this module
+__all__ = ["DEFAULT_MODEL", "llm_call_async", "llm_call_json_async"]
 
-def _strip_markdown_fences(text: str) -> str:
-    """Strip markdown code fences from LLM JSON responses."""
+
+def extract_json_from_response(text: str) -> str:
+    """Extract JSON from LLM response, handling markdown fences and conversational text.
+
+    Handles cases like:
+    - Pure JSON: {"key": "value"}
+    - Fenced JSON: ```json\n{"key": "value"}\n```
+    - Conversational: "Here is the JSON:\n```json\n{"key": "value"}\n```"
+    """
+    # First try to find JSON in markdown fences (handles conversational text before fences)
+    fence_match = re.search(r"```(?:json)?\s*\n(.*?)\n?```", text, re.DOTALL)
+    if fence_match:
+        return fence_match.group(1).strip()
+
+    # Fall back to stripping fences at start/end (for simple cases)
     stripped = re.sub(r"^```(?:json)?\s*\n?", "", text.strip())
     stripped = re.sub(r"\n?```\s*$", "", stripped)
     return stripped.strip()
@@ -42,20 +54,7 @@ async def llm_call_async(
     Raises:
         ValueError: If the LLM returns no content.
     """
-    effective_model = model or DEFAULT_MODEL
-    client = LLMClientFactory.create_client({"model": effective_model})
-
-    messages: list[SystemMessage | UserMessage] = []
-    if system:
-        messages.append(SystemMessage(content=system))
-    messages.append(UserMessage(content=prompt))
-
-    result = await client.generate_response(messages)
-
-    if not result.content:
-        raise ValueError("LLM returned no content")
-
-    return result.content
+    return await one_shot(prompt, system=system, model=model or DEFAULT_MODEL)
 
 
 async def llm_call_json_async(
@@ -78,7 +77,7 @@ async def llm_call_json_async(
         Parsed JSON as a dict or list.
 
     Raises:
-        ValueError: If the LLM returns no content or invalid JSON.
+        ValueError: If the LLM returns no content, invalid JSON, or a scalar JSON value.
     """
     json_system = "Respond with valid JSON only. No markdown, no explanation."
     if schema:
@@ -87,5 +86,13 @@ async def llm_call_json_async(
         json_system += f"\n\n{system}"
 
     raw = await llm_call_async(prompt, system=json_system, model=model)
-    cleaned = _strip_markdown_fences(raw)
-    return json.loads(cleaned)  # type: ignore[no-any-return]
+    cleaned = extract_json_from_response(raw)
+    result = json.loads(cleaned)
+
+    # Validate that result is dict or list per type contract
+    if not isinstance(result, (dict, list)):
+        raise ValueError(
+            f"Expected JSON object or array, got {type(result).__name__}: {result!r}"
+        )
+
+    return result  # type: ignore[no-any-return]  # json.loads returns Any, narrowed by isinstance above
