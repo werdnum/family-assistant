@@ -10,12 +10,14 @@ This router provides endpoints for:
 import datetime
 import logging
 import os
-from typing import Annotated, Any
+from collections.abc import Sequence
+from typing import Annotated, Any, cast
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel
 
 from family_assistant.processing import ProcessingService
+from family_assistant.tools import get_tool_definitions_for_advertisement
 from family_assistant.web.auth import get_user_from_request
 from family_assistant.web.dependencies import get_processing_service
 from family_assistant.web.models import GeminiLiveConfig
@@ -121,7 +123,7 @@ def _convert_tool_to_gemini_format(tool: ToolSchema) -> GeminiToolDeclaration:
 
 
 def convert_tools_to_gemini_format(
-    openai_tools: list[ToolSchema], tools_to_exclude: set[str]
+    openai_tools: Sequence[ToolSchema], tools_to_exclude: set[str]
 ) -> list[GeminiToolDeclaration]:
     """
     Convert OpenAI function format tools to Gemini FunctionDeclaration format.
@@ -247,24 +249,16 @@ async def create_ephemeral_token(
                 f"Profile ID '{profile_id}' not found, using default service"
             )
 
-    # Get tool definitions from app state
-    tool_definitions = getattr(request.app.state, "tool_definitions", [])
+    tool_definitions = await get_tool_definitions_for_advertisement(
+        target_service.tools_provider,
+        can_confirm=False,
+    )
 
-    # Get tools requiring confirmation from the profile config
-    # These will be excluded from voice mode
-    profile_config = target_service.service_config
-    tools_config = getattr(profile_config, "tools", {})
-    confirm_tools: set[str] = set()
-
-    if isinstance(tools_config, dict):
-        confirm_tools = set(tools_config.get("confirm_tools", []))
-    elif hasattr(tools_config, "confirm_tools"):
-        confirm_tools = set(getattr(tools_config, "confirm_tools", []))
-
-    logger.info(f"Tools requiring confirmation (excluded from voice): {confirm_tools}")
-
-    # Convert tools to Gemini format, filtering out confirmation-required tools
-    gemini_tools = convert_tools_to_gemini_format(tool_definitions, confirm_tools)
+    # Convert tools to Gemini format after capability-aware advertisement filtering
+    gemini_tools = convert_tools_to_gemini_format(
+        cast("Sequence[ToolSchema]", tool_definitions),
+        set(),
+    )
     tool_count = len(gemini_tools[0]["functionDeclarations"]) if gemini_tools else 0
     logger.info(f"Converted {tool_count} tools to Gemini format for voice mode")
 

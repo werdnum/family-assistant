@@ -132,6 +132,7 @@ from family_assistant.tools.infrastructure import (
     ToolNotFoundError,
     ToolsProvider,
     find_provider_by_type,
+    get_tool_definitions_for_advertisement,
 )
 from family_assistant.tools.media_download import (
     MEDIA_DOWNLOAD_TOOLS_DEFINITION,
@@ -227,6 +228,7 @@ __all__ = [
     "PolicyEnforcingToolsProvider",
     "MCPServerConfig",
     "find_provider_by_type",
+    "get_tool_definitions_for_advertisement",
     "ToolNotFoundError",
     "ToolConfirmationRequired",
     "ToolConfirmationFailed",

@@ -116,6 +116,21 @@ async def telegram_handler_fixture(
                     "confirm_tools": [],  # No tools require confirmation in tests
                     "mcp_initialization_timeout_seconds": 5,
                 },
+                "tools_policy": {
+                    "default_decision": "deny",
+                    "rules": [
+                        {
+                            "match": {
+                                "names": [
+                                    "add_or_update_note",
+                                    "send_message_to_user",
+                                ]
+                            },
+                            "decision": "allow",
+                            "priority": 10,
+                        }
+                    ],
+                },
                 "chat_id_to_name_map": {12345: "TestUser"},
                 "slash_commands": [],
             }

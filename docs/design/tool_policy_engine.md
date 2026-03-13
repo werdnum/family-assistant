@@ -1047,7 +1047,7 @@ tracker elsewhere.
   unchanged, and parity tests prove the default configuration behaves the same before the runtime
   cutover.
 
-- [ ] **Step 5: Assistant/runtime integration** Depends on: Step 4. Scope: Replace the legacy
+- [x] **Step 5: Assistant/runtime integration** Depends on: Step 4. Scope: Replace the legacy
   `enable_local_tools` / `enable_mcp_server_ids` / `confirm_tools` assembly path in the assistant
   with policy-driven provider construction. Update all tool-advertising paths to pass confirmation
   capability explicitly. Deliverables: `assistant.py` integration, processing loop updates, Gemini
