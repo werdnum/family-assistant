@@ -522,6 +522,49 @@ json_str = json_encode(data)
 parsed = json_decode('{"name": "test", "value": 42}')
 ```
 
+### LLM API Functions
+
+Scripts can make one-shot LLM calls for summarisation, data extraction, classification, and similar
+tasks. The default model is `gemini-3-flash-preview`.
+
+#### `llm(prompt, system=None, model=None)`
+
+Make a one-shot LLM call and return the text response.
+
+```python
+# Simple summarisation
+summary = llm("Summarise this text: " + long_text)
+
+# With system prompt
+sentiment = llm(
+    "What is the sentiment of this review?",
+    system="Respond with exactly one word: positive, negative, or neutral.",
+)
+
+# With custom model
+result = llm("Translate to French: Hello world", model="gpt-4o")
+```
+
+#### `llm_json(prompt, schema=None, system=None, model=None)`
+
+Make a one-shot LLM call and return parsed JSON.
+
+```python
+# Extract structured data
+data = llm_json("Extract the name and age from: John is 30 years old")
+# Returns: {"name": "John", "age": 30}
+
+# With JSON schema for guided extraction
+schema = {
+    "type": "object",
+    "properties": {
+        "title": {"type": "string"},
+        "tags": {"type": "array", "items": {"type": "string"}},
+    },
+}
+metadata = llm_json("Extract metadata from: " + article_text, schema=schema)
+```
+
 ### Time API Functions
 
 A comprehensive time API is available for working with dates, times, and timezones:
