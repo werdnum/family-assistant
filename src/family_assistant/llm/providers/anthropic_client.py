@@ -8,10 +8,18 @@ import logging
 import os
 import time
 import uuid
-from collections.abc import AsyncIterator, Sequence
+from collections.abc import AsyncIterator, Callable, Sequence
 from dataclasses import asdict
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING, Any, Literal, NoReturn, TypedDict, cast
+from typing import (
+    TYPE_CHECKING,
+    Any,
+    Literal,
+    NoReturn,
+    TypedDict,
+    TypeVar,
+    cast,
+)
 
 if TYPE_CHECKING:
     from family_assistant.tools.types import ToolAttachment
@@ -32,12 +40,15 @@ from anthropic.types import (
 )
 from opentelemetry import trace
 from opentelemetry.trace import StatusCode
+from pydantic import BaseModel, ValidationError
 
 from family_assistant.llm import (
     BaseLLMClient,
+    JsonObject,
     LLMOutput,
     LLMStreamEvent,
     StreamEventMetadata,
+    StructuredOutputError,
     ToolCallFunction,
     ToolCallItem,
     UserMessageDict,
@@ -80,6 +91,8 @@ _VALID_IMAGE_MEDIA_TYPES: set[str] = {
 
 logger = logging.getLogger(__name__)
 tracer = trace.get_tracer(__name__)
+T = TypeVar("T", bound=BaseModel)
+R = TypeVar("R")
 
 
 class _StreamingToolAccumulator(TypedDict):
@@ -266,6 +279,149 @@ class AnthropicClient(BaseLLMClient):
                     f"Applied parameters for pattern '{pattern}': {pattern_params}"
                 )
         return params
+
+    def _create_native_output_tool(
+        self,
+        *,
+        name: str,
+        description: str,
+        input_schema: dict[str, object],
+    ) -> ToolParam:
+        """Create a synthetic Anthropic tool for native structured output."""
+        return {
+            "name": name,
+            "description": description,
+            "input_schema": input_schema,
+        }
+
+    def _extract_forced_tool_input(
+        self,
+        response: Any,  # noqa: ANN401 - Anthropic SDK content block union
+        tool_name: str,
+    ) -> dict[str, object]:
+        """Extract the input object from a forced tool-use response."""
+        for block in response.content:
+            if block.type == "tool_use" and block.name == tool_name:
+                if isinstance(block.input, dict):
+                    return cast("dict[str, object]", block.input)
+                raise TypeError("Anthropic tool input was not a JSON object")
+
+        raise ValueError(
+            f"Anthropic response did not include expected tool '{tool_name}'"
+        )
+
+    async def _generate_with_native_output_tool(
+        self,
+        *,
+        messages: Sequence[LLMMessage],
+        tool_name: str,
+        description: str,
+        input_schema: dict[str, object],
+        max_retries: int,
+        parse_output: Callable[[dict[str, object]], R],
+        error_message_prefix: str,
+    ) -> R:
+        """Run a native Anthropic tool-use round-trip for structured output."""
+        self._validate_user_input(messages)
+
+        attempt_messages = list(messages)
+        raw_response: str | None = None
+        last_error: Exception | None = None
+
+        for attempt in range(max_retries + 1):
+            try:
+                processed_messages = self._process_tool_messages(attempt_messages)
+                system_prompt, api_messages = (
+                    self._convert_messages_to_anthropic_format(processed_messages)
+                )
+                # ast-grep-ignore: no-dict-any - kwargs dict for client.messages.create(**params) requires heterogeneous values
+                params: dict[str, Any] = {
+                    "model": self.model,
+                    "messages": api_messages,
+                    "max_tokens": 8192,
+                    "tools": [
+                        self._create_native_output_tool(
+                            name=tool_name,
+                            description=description,
+                            input_schema=input_schema,
+                        )
+                    ],
+                    "tool_choice": {"type": "tool", "name": tool_name},
+                    **self.default_kwargs,
+                    **self._get_model_specific_params(self.model),
+                }
+                if system_prompt:
+                    params["system"] = system_prompt
+
+                response = await self.client.messages.create(**params)
+                tool_input = self._extract_forced_tool_input(response, tool_name)
+                raw_response = json.dumps(tool_input)
+                return parse_output(tool_input)
+
+            except (ValidationError, TypeError, ValueError) as e:
+                last_error = e
+                logger.warning(
+                    f"{error_message_prefix} validation failed "
+                    f"(attempt {attempt + 1}/{max_retries + 1}): {e}"
+                )
+                if attempt < max_retries:
+                    attempt_messages.append(
+                        UserMessage(
+                            content=(
+                                f"Your previous tool input was invalid. Error: {e}\n\n"
+                                f"Please call the '{tool_name}' tool again with a corrected JSON object."
+                            )
+                        )
+                    )
+            except Exception as e:
+                self._raise_mapped_error(e)
+
+        raise StructuredOutputError(
+            message=(
+                f"Failed to generate valid {error_message_prefix.lower()} after "
+                f"{max_retries + 1} attempts"
+            ),
+            provider="anthropic",
+            model=self.model,
+            raw_response=raw_response,
+            validation_error=last_error,
+        )
+
+    async def generate_structured(
+        self,
+        messages: Sequence[LLMMessage],
+        response_model: type[T],
+        max_retries: int = 2,
+    ) -> T:
+        """Generate structured output using Anthropic's native tool-use schema enforcement."""
+        return await self._generate_with_native_output_tool(
+            messages=messages,
+            tool_name="return_structured_response",
+            description="Return the final response as a structured JSON object.",
+            input_schema=cast("dict[str, object]", response_model.model_json_schema()),
+            max_retries=max_retries,
+            parse_output=lambda tool_input: response_model.model_validate(tool_input),
+            error_message_prefix="Anthropic structured output",
+        )
+
+    async def generate_json(
+        self,
+        messages: Sequence[LLMMessage],
+        max_retries: int = 2,
+    ) -> JsonObject:
+        """Generate a JSON object using Anthropic's native tool-use mode."""
+        return await self._generate_with_native_output_tool(
+            messages=messages,
+            tool_name="return_json_object",
+            description="Return the final response as a JSON object.",
+            input_schema={
+                "type": "object",
+                "additionalProperties": True,
+            },
+            max_retries=max_retries,
+            parse_output=lambda tool_input: cast("JsonObject", tool_input),
+            error_message_prefix="Anthropic JSON output",
+        )
 
     @staticmethod
     def _convert_tools_to_anthropic_format(

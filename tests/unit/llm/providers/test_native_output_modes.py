@@ -1,0 +1,208 @@
+"""Unit tests for provider-native structured and JSON output modes."""
+
+# pylint: disable=no-name-in-module
+
+from types import SimpleNamespace
+from unittest.mock import AsyncMock, MagicMock, patch
+
+import pytest
+from google.genai import types
+from pydantic import BaseModel
+
+from family_assistant.llm import LiteLLMClient, UserMessage
+from family_assistant.llm.providers.anthropic_client import AnthropicClient
+from family_assistant.llm.providers.google_genai_client import GoogleGenAIClient
+from family_assistant.llm.providers.openai_client import OpenAIClient
+
+
+class SampleResponse(BaseModel):
+    answer: str
+
+
+@pytest.mark.no_db
+@pytest.mark.asyncio
+async def test_openai_generate_structured_uses_native_parse() -> None:
+    """OpenAI structured output should use the native parse endpoint."""
+    client = OpenAIClient(api_key="test", model="gpt-4.1-nano")
+    response = MagicMock()
+    response.choices = [MagicMock()]
+    response.choices[0].message = MagicMock(
+        parsed=SampleResponse(answer="ok"),
+        content='{"answer":"ok"}',
+    )
+
+    with patch.object(
+        client.client.beta.chat.completions, "parse", new_callable=AsyncMock
+    ) as mock_parse:
+        mock_parse.return_value = response
+
+        result = await client.generate_structured(
+            messages=[UserMessage(content="Return structured output")],
+            response_model=SampleResponse,
+        )
+
+    assert result == SampleResponse(answer="ok")
+    assert mock_parse.await_args is not None
+    assert mock_parse.await_args.kwargs["response_format"] is SampleResponse
+
+
+@pytest.mark.no_db
+@pytest.mark.asyncio
+async def test_openai_generate_json_uses_native_json_mode() -> None:
+    """OpenAI JSON output should use response_format=json_object."""
+    client = OpenAIClient(api_key="test", model="gpt-4.1-nano")
+    response = MagicMock()
+    response.choices = [MagicMock()]
+    response.choices[0].message = MagicMock(content='{"answer":"ok"}')
+
+    with patch.object(
+        client.client.chat.completions, "create", new_callable=AsyncMock
+    ) as mock_create:
+        mock_create.return_value = response
+
+        result = await client.generate_json(
+            messages=[UserMessage(content="Return JSON")]
+        )
+
+    assert result == {"answer": "ok"}
+    assert mock_create.await_args is not None
+    assert mock_create.await_args.kwargs["response_format"] == {"type": "json_object"}
+
+
+@pytest.mark.no_db
+@pytest.mark.asyncio
+async def test_anthropic_generate_structured_uses_forced_tool_schema() -> None:
+    """Anthropic structured output should use forced native tool use."""
+    client = AnthropicClient(api_key="test", model="claude-sonnet-4-5")
+    response = MagicMock()
+    response.content = [
+        SimpleNamespace(
+            type="tool_use",
+            name="return_structured_response",
+            input={"answer": "ok"},
+        )
+    ]
+
+    with patch.object(
+        client.client.messages, "create", new_callable=AsyncMock
+    ) as mock_create:
+        mock_create.return_value = response
+
+        result = await client.generate_structured(
+            messages=[UserMessage(content="Return structured output")],
+            response_model=SampleResponse,
+        )
+
+    assert result == SampleResponse(answer="ok")
+    assert mock_create.await_args is not None
+    tools = mock_create.await_args.kwargs["tools"]
+    assert tools[0]["name"] == "return_structured_response"
+    assert mock_create.await_args.kwargs["tool_choice"] == {
+        "type": "tool",
+        "name": "return_structured_response",
+    }
+
+
+@pytest.mark.no_db
+@pytest.mark.asyncio
+async def test_anthropic_generate_json_uses_forced_object_tool() -> None:
+    """Anthropic JSON output should use forced native tool use."""
+    client = AnthropicClient(api_key="test", model="claude-sonnet-4-5")
+    response = MagicMock()
+    response.content = [
+        SimpleNamespace(
+            type="tool_use",
+            name="return_json_object",
+            input={"answer": "ok"},
+        )
+    ]
+
+    with patch.object(
+        client.client.messages, "create", new_callable=AsyncMock
+    ) as mock_create:
+        mock_create.return_value = response
+
+        result = await client.generate_json(
+            messages=[UserMessage(content="Return JSON")]
+        )
+
+    assert result == {"answer": "ok"}
+    assert mock_create.await_args is not None
+    tools = mock_create.await_args.kwargs["tools"]
+    assert tools[0]["input_schema"]["type"] == "object"
+    assert tools[0]["input_schema"]["additionalProperties"] is True
+
+
+@pytest.mark.no_db
+@pytest.mark.asyncio
+async def test_google_generate_structured_uses_response_schema() -> None:
+    """Gemini structured output should use response_schema and JSON MIME type."""
+    client = GoogleGenAIClient(api_key="test", model="gemini-2.5-flash")
+    response = MagicMock()
+    response.text = '{"answer":"ok"}'
+
+    with patch.object(
+        client.client.aio.models, "generate_content", new_callable=AsyncMock
+    ) as mock_generate:
+        mock_generate.return_value = response
+
+        result = await client.generate_structured(
+            messages=[UserMessage(content="Return structured output")],
+            response_model=SampleResponse,
+        )
+
+    assert result == SampleResponse(answer="ok")
+    assert mock_generate.await_args is not None
+    config = mock_generate.await_args.kwargs["config"]
+    assert config.response_mime_type == "application/json"
+    assert config.response_schema is SampleResponse
+
+
+@pytest.mark.no_db
+@pytest.mark.asyncio
+async def test_google_generate_json_uses_object_schema() -> None:
+    """Gemini JSON output should use an object response schema."""
+    client = GoogleGenAIClient(api_key="test", model="gemini-2.5-flash")
+    response = MagicMock()
+    response.text = '{"answer":"ok"}'
+
+    with patch.object(
+        client.client.aio.models, "generate_content", new_callable=AsyncMock
+    ) as mock_generate:
+        mock_generate.return_value = response
+
+        result = await client.generate_json(
+            messages=[UserMessage(content="Return JSON")]
+        )
+
+    assert result == {"answer": "ok"}
+    assert mock_generate.await_args is not None
+    config = mock_generate.await_args.kwargs["config"]
+    assert config.response_mime_type == "application/json"
+    assert isinstance(config.response_schema, types.Schema)
+    assert config.response_schema.type == types.Type.OBJECT
+
+
+@pytest.mark.no_db
+@pytest.mark.asyncio
+async def test_litellm_generate_structured_uses_native_response_format() -> None:
+    """LiteLLM structured output should pass the model class as response_format."""
+    client = LiteLLMClient(model="openai/gpt-4.1-nano")
+    response = MagicMock()
+    response.choices = [MagicMock()]
+    response.choices[0].message = MagicMock(content='{"answer":"ok"}')
+    response.usage = None
+
+    with patch(
+        "family_assistant.llm.acompletion", new_callable=AsyncMock
+    ) as mock_acompletion:
+        mock_acompletion.return_value = response
+
+        result = await client.generate_structured(
+            messages=[UserMessage(content="Return structured output")],
+            response_model=SampleResponse,
+        )
+
+    assert result == SampleResponse(answer="ok")
+    assert mock_acompletion.await_args is not None
+    assert mock_acompletion.await_args.kwargs["response_format"] is SampleResponse

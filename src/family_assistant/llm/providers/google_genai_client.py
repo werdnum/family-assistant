@@ -14,7 +14,7 @@ from collections.abc import AsyncIterator, Sequence
 from dataclasses import asdict
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, TypeVar, cast
 
 if TYPE_CHECKING:
     from family_assistant.tools.types import ToolAttachment
@@ -25,12 +25,15 @@ from google.genai import types
 from google.genai.client import DebugConfig
 from opentelemetry import trace
 from opentelemetry.trace import StatusCode
+from pydantic import BaseModel, ValidationError
 
 from family_assistant.llm import (
     BaseLLMClient,
+    JsonObject,
     LLMOutput,
     LLMStreamEvent,
     StreamEventMetadata,
+    StructuredOutputError,
     ToolCallFunction,
     ToolCallItem,
     UserMessageDict,
@@ -67,6 +70,7 @@ from ..base import (
 
 logger = logging.getLogger(__name__)
 tracer = trace.get_tracer(__name__)
+T = TypeVar("T", bound=BaseModel)
 
 # Maps Interactions API ErrorEvent.error.code values to our typed exception classes.
 # See https://cloud.google.com/apis/design/errors for canonical error codes.
@@ -277,6 +281,148 @@ class GoogleGenAIClient(BaseLLMClient):
                     f"Applied parameters for pattern '{pattern}': {pattern_params}"
                 )
         return params
+
+    def _build_base_generation_config(self) -> types.GenerateContentConfig:
+        """Build common GenerateContentConfig fields shared by native output modes."""
+        config_params = {
+            **self.default_kwargs,
+            **self._get_model_specific_params(self.model_name),
+        }
+
+        generation_config = types.GenerateContentConfig()
+        generation_config.media_resolution = types.MediaResolution.MEDIA_RESOLUTION_HIGH
+
+        if "temperature" in config_params:
+            generation_config.temperature = float(config_params["temperature"])
+        if "max_tokens" in config_params:
+            generation_config.max_output_tokens = int(config_params["max_tokens"])
+        if "top_p" in config_params:
+            generation_config.top_p = float(config_params["top_p"])
+        if "top_k" in config_params:
+            generation_config.top_k = int(config_params["top_k"])
+
+        return generation_config
+
+    def _extract_text_response(self, response: object) -> str | None:
+        """Extract text content from a GenerateContent response."""
+        response_obj = cast("Any", response)
+
+        if hasattr(response_obj, "text") and response_obj.text:
+            return cast("str", response_obj.text)
+
+        if hasattr(response_obj, "candidates") and response_obj.candidates:
+            candidates = response_obj.candidates
+            candidate = candidates[0]
+            if (
+                hasattr(candidate, "content")
+                and candidate.content
+                and hasattr(candidate.content, "parts")
+            ):
+                text_parts: list[str] = []
+                for part in candidate.content.parts:
+                    is_thought = hasattr(part, "thought") and part.thought
+                    if not is_thought and hasattr(part, "text") and part.text:
+                        text_parts.append(part.text)
+                if text_parts:
+                    return "".join(text_parts)
+
+        return None
+
+    async def generate_structured(
+        self,
+        messages: Sequence[LLMMessage],
+        response_model: type[T],
+        max_retries: int = 2,
+    ) -> T:
+        """Generate structured output using Gemini's native response_schema mode."""
+        self._validate_user_input(messages)
+
+        contents = self._convert_messages_to_genai_format(
+            self._process_tool_messages(list(messages))
+        )
+        generation_config = self._build_base_generation_config()
+        generation_config.response_mime_type = "application/json"
+        generation_config.response_schema = response_model
+
+        raw_response: str | None = None
+        last_error: Exception | None = None
+
+        for attempt in range(max_retries + 1):
+            try:
+                response = await self.client.aio.models.generate_content(
+                    model=self.model_name,
+                    contents=contents,
+                    config=generation_config,
+                )
+                raw_response = self._extract_text_response(response)
+                if not raw_response:
+                    raise ValueError("LLM returned empty content")
+                return response_model.model_validate_json(raw_response)
+            except (ValidationError, json.JSONDecodeError, ValueError) as e:
+                last_error = e
+                logger.warning(
+                    "Gemini structured output validation failed "
+                    f"(attempt {attempt + 1}/{max_retries + 1}): {e}"
+                )
+            except Exception as e:
+                raise self._map_error_to_typed_exception(e) from e
+
+        raise StructuredOutputError(
+            message=f"Failed to generate valid structured output after {max_retries + 1} attempts",
+            provider="google",
+            model=self.model_name,
+            raw_response=raw_response,
+            validation_error=last_error,
+        )
+
+    async def generate_json(
+        self,
+        messages: Sequence[LLMMessage],
+        max_retries: int = 2,
+    ) -> JsonObject:
+        """Generate a JSON object using Gemini's native JSON-object mode."""
+        self._validate_user_input(messages)
+
+        contents = self._convert_messages_to_genai_format(
+            self._process_tool_messages(list(messages))
+        )
+        generation_config = self._build_base_generation_config()
+        generation_config.response_mime_type = "application/json"
+        generation_config.response_schema = types.Schema(
+            type=types.Type.OBJECT,
+            additional_properties=True,
+        )
+
+        raw_response: str | None = None
+        last_error: Exception | None = None
+
+        for attempt in range(max_retries + 1):
+            try:
+                response = await self.client.aio.models.generate_content(
+                    model=self.model_name,
+                    contents=contents,
+                    config=generation_config,
+                )
+                raw_response = self._extract_text_response(response)
+                if not raw_response:
+                    raise ValueError("LLM returned empty content")
+                return self._parse_json_object_response(raw_response)
+            except (json.JSONDecodeError, TypeError, ValueError) as e:
+                last_error = e
+                logger.warning(
+                    "Gemini JSON output validation failed "
+                    f"(attempt {attempt + 1}/{max_retries + 1}): {e}"
+                )
+            except Exception as e:
+                raise self._map_error_to_typed_exception(e) from e
+
+        raise StructuredOutputError(
+            message=f"Failed to generate valid JSON output after {max_retries + 1} attempts",
+            provider="google",
+            model=self.model_name,
+            raw_response=raw_response,
+            validation_error=last_error,
+        )
 
     def _supports_multimodal_tools(self) -> bool:
         """Check if model supports multimodal tool responses.
