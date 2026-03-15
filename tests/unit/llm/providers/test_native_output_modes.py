@@ -7,6 +7,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from google.genai import types
+from litellm.exceptions import RateLimitError
 from pydantic import BaseModel
 
 from family_assistant.llm import LiteLLMClient, UserMessage
@@ -160,6 +161,33 @@ async def test_google_generate_structured_uses_response_schema() -> None:
 
 @pytest.mark.no_db
 @pytest.mark.asyncio
+async def test_google_generate_structured_retry_adds_feedback() -> None:
+    """Gemini structured retries should mutate the conversation with feedback."""
+    client = GoogleGenAIClient(api_key="test", model="gemini-2.5-flash")
+    invalid_response = MagicMock()
+    invalid_response.text = "not-json"
+    valid_response = MagicMock()
+    valid_response.text = '{"answer":"ok"}'
+
+    with patch.object(
+        client.client.aio.models, "generate_content", new_callable=AsyncMock
+    ) as mock_generate:
+        mock_generate.side_effect = [invalid_response, valid_response]
+
+        result = await client.generate_structured(
+            messages=[UserMessage(content="Return structured output")],
+            response_model=SampleResponse,
+            max_retries=1,
+        )
+
+    assert result == SampleResponse(answer="ok")
+    first_contents = mock_generate.await_args_list[0].kwargs["contents"]
+    second_contents = mock_generate.await_args_list[1].kwargs["contents"]
+    assert len(second_contents) > len(first_contents)
+
+
+@pytest.mark.no_db
+@pytest.mark.asyncio
 async def test_google_generate_json_uses_object_schema() -> None:
     """Gemini JSON output should use an object response schema."""
     client = GoogleGenAIClient(api_key="test", model="gemini-2.5-flash")
@@ -185,6 +213,32 @@ async def test_google_generate_json_uses_object_schema() -> None:
 
 @pytest.mark.no_db
 @pytest.mark.asyncio
+async def test_google_generate_json_retry_adds_feedback() -> None:
+    """Gemini JSON retries should mutate the conversation with feedback."""
+    client = GoogleGenAIClient(api_key="test", model="gemini-2.5-flash")
+    invalid_response = MagicMock()
+    invalid_response.text = '["wrong"]'
+    valid_response = MagicMock()
+    valid_response.text = '{"answer":"ok"}'
+
+    with patch.object(
+        client.client.aio.models, "generate_content", new_callable=AsyncMock
+    ) as mock_generate:
+        mock_generate.side_effect = [invalid_response, valid_response]
+
+        result = await client.generate_json(
+            messages=[UserMessage(content="Return JSON")],
+            max_retries=1,
+        )
+
+    assert result == {"answer": "ok"}
+    first_contents = mock_generate.await_args_list[0].kwargs["contents"]
+    second_contents = mock_generate.await_args_list[1].kwargs["contents"]
+    assert len(second_contents) > len(first_contents)
+
+
+@pytest.mark.no_db
+@pytest.mark.asyncio
 async def test_litellm_generate_structured_uses_native_response_format() -> None:
     """LiteLLM structured output should pass the model class as response_format."""
     client = LiteLLMClient(model="openai/gpt-4.1-nano")
@@ -206,3 +260,22 @@ async def test_litellm_generate_structured_uses_native_response_format() -> None
     assert result == SampleResponse(answer="ok")
     assert mock_acompletion.await_args is not None
     assert mock_acompletion.await_args.kwargs["response_format"] is SampleResponse
+
+
+@pytest.mark.no_db
+@pytest.mark.asyncio
+async def test_litellm_generate_json_preserves_provider_error_type() -> None:
+    """LiteLLM JSON mode should re-raise provider errors for outer retry logic."""
+    client = LiteLLMClient(model="openai/gpt-4.1-nano")
+
+    with patch(
+        "family_assistant.llm.acompletion", new_callable=AsyncMock
+    ) as mock_acompletion:
+        mock_acompletion.side_effect = RateLimitError(
+            "429 Too Many Requests",
+            llm_provider="openai",
+            model="openai/gpt-4.1-nano",
+        )
+
+        with pytest.raises(RateLimitError):
+            await client.generate_json(messages=[UserMessage(content="Return JSON")])

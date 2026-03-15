@@ -2358,11 +2358,12 @@ class LiteLLMClient(BaseLLMClient):
                     ServiceUnavailableError,
                     Timeout,
                 ) as e:
-                    last_error = e
                     logger.error(
                         f"LLM provider error in structured output generation: {e}"
                     )
-                    break
+                    span.set_status(OtelStatusCode.ERROR, str(e))
+                    span.record_exception(e)
+                    raise
 
                 except Exception as e:
                     last_error = e
@@ -2468,9 +2469,10 @@ class LiteLLMClient(BaseLLMClient):
                     ServiceUnavailableError,
                     Timeout,
                 ) as e:
-                    last_error = e
                     logger.error(f"LLM provider error in JSON output generation: {e}")
-                    break
+                    span.set_status(OtelStatusCode.ERROR, str(e))
+                    span.record_exception(e)
+                    raise
 
                 except Exception as e:
                     last_error = e

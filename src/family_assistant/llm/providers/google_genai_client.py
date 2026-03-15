@@ -337,9 +337,7 @@ class GoogleGenAIClient(BaseLLMClient):
         """Generate structured output using Gemini's native response_schema mode."""
         self._validate_user_input(messages)
 
-        contents = self._convert_messages_to_genai_format(
-            self._process_tool_messages(list(messages))
-        )
+        attempt_messages = list(messages)
         generation_config = self._build_base_generation_config()
         generation_config.response_mime_type = "application/json"
         generation_config.response_schema = response_model
@@ -349,6 +347,9 @@ class GoogleGenAIClient(BaseLLMClient):
 
         for attempt in range(max_retries + 1):
             try:
+                contents = self._convert_messages_to_genai_format(
+                    self._process_tool_messages(attempt_messages)
+                )
                 response = await self.client.aio.models.generate_content(
                     model=self.model_name,
                     contents=contents,
@@ -364,6 +365,18 @@ class GoogleGenAIClient(BaseLLMClient):
                     "Gemini structured output validation failed "
                     f"(attempt {attempt + 1}/{max_retries + 1}): {e}"
                 )
+                if attempt < max_retries:
+                    if raw_response is not None:
+                        attempt_messages.append(AssistantMessage(content=raw_response))
+                    attempt_messages.append(
+                        UserMessage(
+                            content=(
+                                "Your previous response did not satisfy the required schema. "
+                                f"Error: {e}\n\n"
+                                "Please try again with valid structured JSON."
+                            )
+                        )
+                    )
             except Exception as e:
                 raise self._map_error_to_typed_exception(e) from e
 
@@ -383,9 +396,7 @@ class GoogleGenAIClient(BaseLLMClient):
         """Generate a JSON object using Gemini's native JSON-object mode."""
         self._validate_user_input(messages)
 
-        contents = self._convert_messages_to_genai_format(
-            self._process_tool_messages(list(messages))
-        )
+        attempt_messages = list(messages)
         generation_config = self._build_base_generation_config()
         generation_config.response_mime_type = "application/json"
         generation_config.response_schema = types.Schema(
@@ -398,6 +409,9 @@ class GoogleGenAIClient(BaseLLMClient):
 
         for attempt in range(max_retries + 1):
             try:
+                contents = self._convert_messages_to_genai_format(
+                    self._process_tool_messages(attempt_messages)
+                )
                 response = await self.client.aio.models.generate_content(
                     model=self.model_name,
                     contents=contents,
@@ -413,6 +427,17 @@ class GoogleGenAIClient(BaseLLMClient):
                     "Gemini JSON output validation failed "
                     f"(attempt {attempt + 1}/{max_retries + 1}): {e}"
                 )
+                if attempt < max_retries:
+                    if raw_response is not None:
+                        attempt_messages.append(AssistantMessage(content=raw_response))
+                    attempt_messages.append(
+                        UserMessage(
+                            content=(
+                                f"Your previous response was not a valid JSON object. Error: {e}\n\n"
+                                "Please try again and respond with a JSON object only."
+                            )
+                        )
+                    )
             except Exception as e:
                 raise self._map_error_to_typed_exception(e) from e
 
