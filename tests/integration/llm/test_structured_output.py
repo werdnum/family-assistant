@@ -14,6 +14,13 @@ from tests.mocks.mock_llm import RuleBasedMockLLMClient
 
 from .vcr_helpers import sanitize_response
 
+DIRECT_PROVIDER_MODELS = [
+    ("openai", "gpt-4.1-nano"),
+    ("google", "gemini-2.5-flash-lite"),
+    ("anthropic", "claude-haiku-4-5-20251001"),
+]
+LITELLM_MODEL = "gemini/gemini-2.5-flash-lite"
+
 # --- Test Models ---
 
 
@@ -258,14 +265,7 @@ class TestMockClientStructuredOutput:
 @pytest.mark.no_db
 @pytest.mark.llm_integration
 @pytest.mark.vcr(before_record_response=sanitize_response)
-@pytest.mark.parametrize(
-    "provider,model",
-    [
-        ("openai", "gpt-4.1-nano"),
-        ("google", "gemini-2.5-flash-lite"),
-        ("anthropic", "claude-haiku-4-5-20251001"),
-    ],
-)
+@pytest.mark.parametrize("provider,model", DIRECT_PROVIDER_MODELS)
 async def test_basic_structured_output(
     provider: str,
     model: str,
@@ -296,14 +296,7 @@ async def test_basic_structured_output(
 @pytest.mark.no_db
 @pytest.mark.llm_integration
 @pytest.mark.vcr(before_record_response=sanitize_response)
-@pytest.mark.parametrize(
-    "provider,model",
-    [
-        ("openai", "gpt-4.1-nano"),
-        ("google", "gemini-2.5-flash-lite"),
-        ("anthropic", "claude-haiku-4-5-20251001"),
-    ],
-)
+@pytest.mark.parametrize("provider,model", DIRECT_PROVIDER_MODELS)
 async def test_structured_output_with_system_message(
     provider: str,
     model: str,
@@ -337,14 +330,7 @@ async def test_structured_output_with_system_message(
 @pytest.mark.no_db
 @pytest.mark.llm_integration
 @pytest.mark.vcr(before_record_response=sanitize_response)
-@pytest.mark.parametrize(
-    "provider,model",
-    [
-        ("openai", "gpt-4.1-nano"),
-        ("google", "gemini-2.5-flash-lite"),
-        ("anthropic", "claude-haiku-4-5-20251001"),
-    ],
-)
+@pytest.mark.parametrize("provider,model", DIRECT_PROVIDER_MODELS)
 async def test_nested_structured_output(
     provider: str,
     model: str,
@@ -414,14 +400,7 @@ async def test_structured_output_with_optional_fields(
 @pytest.mark.no_db
 @pytest.mark.llm_integration
 @pytest.mark.vcr(before_record_response=sanitize_response)
-@pytest.mark.parametrize(
-    "provider,model",
-    [
-        ("openai", "gpt-4.1-nano"),
-        ("google", "gemini-2.5-flash-lite"),
-        ("anthropic", "claude-haiku-4-5-20251001"),
-    ],
-)
+@pytest.mark.parametrize("provider,model", DIRECT_PROVIDER_MODELS)
 async def test_structured_output_with_constrained_fields(
     provider: str,
     model: str,
@@ -447,3 +426,85 @@ async def test_structured_output_with_constrained_fields(
     assert "paris" in result.answer.lower()
     # Confidence should be within the constrained range
     assert 0.0 <= result.confidence <= 1.0
+
+
+@pytest.mark.no_db
+@pytest.mark.llm_integration
+@pytest.mark.vcr(before_record_response=sanitize_response)
+@pytest.mark.parametrize("provider,model", DIRECT_PROVIDER_MODELS)
+async def test_basic_json_output(
+    provider: str,
+    model: str,
+    llm_client_factory: Callable[[str, str, str | None], Awaitable[LLMInterface]],
+) -> None:
+    """Test native JSON-object output for each direct provider."""
+    if os.getenv("CI") and not os.getenv(f"{provider.upper()}_API_KEY"):
+        pytest.skip(f"Skipping {provider} test in CI without API key")
+
+    client = await llm_client_factory(provider, model, None)
+    messages = [
+        create_user_message(
+            "What is 2 + 2? Respond with a JSON object containing "
+            "'expression', 'result', and 'explanation'."
+        )
+    ]
+
+    result = await client.generate_json(messages=messages)
+
+    assert result["result"] == 4
+    assert "2" in str(result["expression"])
+    assert isinstance(result["explanation"], str)
+    assert result["explanation"]
+
+
+@pytest.mark.no_db
+@pytest.mark.llm_integration
+@pytest.mark.no_vcr
+async def test_litellm_structured_output_with_gemini_backend(
+    llm_client_factory: Callable[[str, str, str | None], Awaitable[LLMInterface]],
+) -> None:
+    """Test LiteLLM structured output using a real Gemini-backed model."""
+    if os.getenv("CI") or not os.getenv("GEMINI_API_KEY"):
+        pytest.skip("Skipping LiteLLM structured-output test without API key")
+
+    client = await llm_client_factory("litellm", LITELLM_MODEL, None)
+    messages = [
+        create_user_message(
+            "What is 2 + 2? Provide the expression, result, and a brief explanation."
+        )
+    ]
+
+    result = await client.generate_structured(
+        messages=messages,
+        response_model=MathResult,
+    )
+
+    assert isinstance(result, MathResult)
+    assert result.result == 4
+    assert "2" in result.expression
+    assert result.explanation
+
+
+@pytest.mark.no_db
+@pytest.mark.llm_integration
+@pytest.mark.no_vcr
+async def test_litellm_json_output_with_gemini_backend(
+    llm_client_factory: Callable[[str, str, str | None], Awaitable[LLMInterface]],
+) -> None:
+    """Test LiteLLM JSON-object output using a real Gemini-backed model."""
+    if os.getenv("CI") or not os.getenv("GEMINI_API_KEY"):
+        pytest.skip("Skipping LiteLLM JSON-output test without API key")
+
+    client = await llm_client_factory("litellm", LITELLM_MODEL, None)
+    messages = [
+        create_user_message(
+            "Create a JSON object with keys 'name', 'age', and 'occupation' "
+            "for John, a 25-year-old software developer."
+        )
+    ]
+
+    result = await client.generate_json(messages=messages)
+
+    assert "john" in str(result["name"]).lower()
+    assert result["age"] == 25
+    assert isinstance(result["occupation"], str)

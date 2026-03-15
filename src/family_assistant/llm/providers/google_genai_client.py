@@ -396,13 +396,16 @@ class GoogleGenAIClient(BaseLLMClient):
         """Generate a JSON object using Gemini's native JSON-object mode."""
         self._validate_user_input(messages)
 
-        attempt_messages = list(messages)
+        attempt_messages = self._add_system_instruction(
+            messages,
+            (
+                "You must respond with a valid JSON object. "
+                "The required fields and structure are defined by the conversation. "
+                "Do not omit requested keys. Respond ONLY with the JSON object."
+            ),
+        )
         generation_config = self._build_base_generation_config()
         generation_config.response_mime_type = "application/json"
-        generation_config.response_schema = types.Schema(
-            type=types.Type.OBJECT,
-            additional_properties=True,
-        )
 
         raw_response: str | None = None
         last_error: Exception | None = None

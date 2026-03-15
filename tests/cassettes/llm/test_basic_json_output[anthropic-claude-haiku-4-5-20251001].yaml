@@ -1,0 +1,22 @@
+interactions:
+  - request:
+      body: '{"max_tokens":8192,"messages":[{"role":"user","content":"What is 2 + 2? Respond with a JSON object containing ''expression'', ''result'', and ''explanation''."}],"model":"claude-haiku-4-5-20251001","system":"You must respond with a valid JSON object. The required fields and structure are defined by the conversation. Do not omit requested keys.","tool_choice":{"type":"tool","name":"return_json_object"},"tools":[{"name":"return_json_object","description":"Return the final response as a JSON object.","input_schema":{"type":"object","additionalProperties":true}}]}'
+      headers:
+        accept:
+          - application/json
+        content-type:
+          - application/json
+      method: POST
+      uri: https://api.anthropic.com/v1/messages
+    response:
+      body:
+        string: '{"model":"claude-haiku-4-5-20251001","id":"msg_test_basic_json_output","type":"message","role":"assistant","content":[{"type":"tool_use","id":"toolu_test_basic_json_output","name":"return_json_object","input":{"expression":"2 + 2","result":4,"explanation":"Adding two and two gives four."},"caller":{"type":"direct"}}],"stop_reason":"tool_use","stop_sequence":null,"usage":{"input_tokens":148,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"cache_creation":{"ephemeral_5m_input_tokens":0,"ephemeral_1h_input_tokens":0},"output_tokens":42,"service_tier":"standard","inference_geo":"not_available"}}'
+      headers:
+        Content-Type:
+          - application/json
+        request-id:
+          - req_test_basic_json_output
+      status:
+        code: 200
+        message: OK
+version: 1

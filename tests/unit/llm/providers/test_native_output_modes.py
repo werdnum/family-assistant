@@ -6,7 +6,6 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-from google.genai import types
 from litellm.exceptions import RateLimitError
 from pydantic import BaseModel
 
@@ -207,8 +206,7 @@ async def test_google_generate_json_uses_object_schema() -> None:
     assert mock_generate.await_args is not None
     config = mock_generate.await_args.kwargs["config"]
     assert config.response_mime_type == "application/json"
-    assert isinstance(config.response_schema, types.Schema)
-    assert config.response_schema.type == types.Type.OBJECT
+    assert config.response_schema is None
 
 
 @pytest.mark.no_db

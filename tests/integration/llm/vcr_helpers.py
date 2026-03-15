@@ -8,6 +8,15 @@ from typing import Any
 logger = logging.getLogger(__name__)
 
 
+def _normalize_json_value(value: Any) -> Any:  # noqa: ANN401
+    """Recursively normalize JSON-like data for stable VCR matching."""
+    if isinstance(value, dict):
+        return {key: _normalize_json_value(value[key]) for key in sorted(value)}
+    if isinstance(value, list):
+        return [_normalize_json_value(item) for item in value]
+    return value
+
+
 # ast-grep-ignore: no-dict-any - VCR cassette body matches external LLM API JSON format
 # ast-grep-ignore: no-dict-any - VCR cassette body matches external LLM API JSON format
 def normalize_llm_request_body(body: dict[str, Any]) -> dict[str, Any]:
@@ -43,6 +52,9 @@ def normalize_llm_request_body(body: dict[str, Any]) -> dict[str, Any]:
     if "contents" in body:
         normalized["contents"] = body["contents"]
 
+    if "generationConfig" in body:
+        normalized["generationConfig"] = _normalize_json_value(body["generationConfig"])
+
     # Handle model parameter
     if "model" in body:
         normalized["model"] = body["model"]
@@ -67,6 +79,9 @@ def normalize_llm_request_body(body: dict[str, Any]) -> dict[str, Any]:
     # Handle tool_choice
     if "tool_choice" in body:
         normalized["tool_choice"] = body["tool_choice"]
+
+    if "response_format" in body:
+        normalized["response_format"] = _normalize_json_value(body["response_format"])
 
     # Handle streaming parameter
     if "stream" in body:

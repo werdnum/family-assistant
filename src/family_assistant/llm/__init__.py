@@ -2396,7 +2396,15 @@ class LiteLLMClient(BaseLLMClient):
                 "gen_ai.request.model": self.model,
             },
         ) as span:
-            messages_list = self._process_tool_messages(list(messages))
+            messages_with_instruction = self._add_system_instruction(
+                messages,
+                (
+                    "You must respond with a valid JSON object. "
+                    "The required fields and structure are defined by the conversation. "
+                    "Do not omit requested keys. Respond ONLY with the JSON object."
+                ),
+            )
+            messages_list = self._process_tool_messages(list(messages_with_instruction))
             message_dicts = [message_to_json_dict(msg) for msg in messages_list]
 
             last_error: Exception | None = None

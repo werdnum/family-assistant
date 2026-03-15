@@ -1,6 +1,6 @@
 interactions:
   - request:
-      body: '{"messages":[{"role":"system","content":"You must respond with valid JSON that matches this schema:\n```json\n{\n  \"description\": \"Person information model.\",\n  \"properties\": {\n    \"name\": {\n      \"title\": \"Name\",\n      \"type\": \"string\"\n    },\n    \"age\": {\n      \"maximum\": 150,\n      \"minimum\": 0,\n      \"title\": \"Age\",\n      \"type\": \"integer\"\n    },\n    \"occupation\": {\n      \"anyOf\": [\n        {\n          \"type\": \"string\"\n        },\n        {\n          \"type\": \"null\"\n        }\n      ],\n      \"default\": null,\n      \"title\": \"Occupation\"\n    }\n  },\n  \"required\": [\n    \"name\",\n    \"age\"\n  ],\n  \"title\": \"PersonInfo\",\n  \"type\": \"object\"\n}\n```\n\nRespond ONLY with the JSON object, no additional text or markdown."},{"role":"user","content":"Create a person profile for Bob who is 40 years old. Don''t include an occupation."}],"model":"gpt-4.1-nano"}'
+      body: '{"messages":[{"role":"user","content":"Create a person profile for Bob who is 40 years old. Don''t include an occupation."}],"model":"gpt-4.1-nano","response_format":{"type":"json_schema","json_schema":{"schema":{"description":"Person information model.","properties":{"name":{"title":"Name","type":"string"},"age":{"maximum":150,"minimum":0,"title":"Age","type":"integer"},"occupation":{"anyOf":[{"type":"string"},{"type":"null"}],"title":"Occupation"}},"required":["name","age","occupation"],"title":"PersonInfo","type":"object","additionalProperties":false},"name":"PersonInfo","strict":true}},"stream":false}'
       headers:
         accept:
           - application/json
@@ -9,7 +9,7 @@ interactions:
         connection:
           - keep-alive
         content-length:
-          - '946'
+          - '611'
         content-type:
           - application/json
         host:
@@ -20,6 +20,8 @@ interactions:
           - arm64
         x-stainless-async:
           - async:asyncio
+        x-stainless-helper-method:
+          - chat.completions.parse
         x-stainless-lang:
           - python
         x-stainless-os:
@@ -39,17 +41,19 @@ interactions:
     response:
       body:
         string: !!binary |
-          H4sIAAAAAAAA/41SwW6jMBC95yuQz1BhIIrSW6vsYdtLTytVpULGHoh3jW3Zpto2yr/XNkkh3a7U
-          C5Lfm/eYNzOHVZIgztB1guieODpoke22Dz/K8vFX8XL/QO/Y2w3Z5T/XsMZiBxilQaHa30DdWXVF
-          ldeB40pONDVAHARXvNlgXFbFFkdiUAxEkPXaZdUVziSRKivyYp3lVYark3yvOAXr6578M0kO8Rsa
-          lQz+ejhPz8gA1pIePHYu8qBRIiCIWMutI9KhdCapkg5k7P1QyySpkSQD1P5do1vV1iidUO8awCo/
-          vRWloyYhY4DlKEQtj0tjA91oiTiRC4JIqVxUxkjPJ+b4EUKoXhvV2k9S1HHJ7b7xw7R+sr5h65RG
-          kT3673Mc1niRH3mjQbvGqT8Qf1fgYvJD85IW7Jl0vkOxwMsq/cKvYeAIF3YxbkQJ3QObpfNuyMi4
-          WhCrRep/u/nKe0rOZf8d+5mgFLQ/v0YbYJxeJp7LDIQb/l/Zx5Rjw8iCefE32TgOJmyCQUdGMR0W
-          sq/WwdD4dfVgtOHTdXW6afN2W3XlJt+i1XH1DnfQBeBsAwAA
+          H4sIAAAAAAAA/41SwW7UMBC971dEc06qZDd01d5AnBBIIJBAIlXktSdZF8e2bAdaVvvvjJ3dJi2t
+          1IsVv+f3Mm9mDqssAyngOgO+Z4EPVhXvP6jbH18+8fpPtfv87etb5T/+tZvvl1d3ZXkPeVSY3S3y
+          cFZdcEM6DNLoieYOWcDoWm23m8uyLq+qRAxGoIqy3oaivqgKzbQp1uX6TVHWRVWf5HsjOXp695Ou
+          WXZIZyxUC7wjuMzPyIDesx4JOz8i0BkVEWDeSx+YDpDPJDc6oE61HxrQbMAGrht4Z3YN5A2QGd3r
+          kj4N56NlMRUhelTquPRx2I2exTCRWhBMaxOSLCW4OTHHh5qV6a0zO/9ECp3U0u9b6p2nRlJ9PhgL
+          iT3SeZN6Mz6KC2Q02NAG8wvT76qymvxgnsmC3ZzIQBWqBV7V+TN+rcDApPKL7gJnfI9ils6jYKOQ
+          ZkGsFqn/r+Y57ym51P1r7GeCc7S0ba11KCR/nHh+5jCu7EvPHrqcCgaP7jetYBskujgJgR0b1bRH
+          4O99wKGlcfXorJPTMnW2ZUzUm3XHxRZWx9U/sSiV/1sDAAA=
       headers:
-        CF-RAY:
-          - 9ce27ee41c75dcc6-FRA
+        CF-Cache-Status:
+          - DYNAMIC
+        CF-Ray:
+          - 9dce08c15c231c11-FRA
         Connection:
           - keep-alive
         Content-Encoding:
@@ -57,7 +61,7 @@ interactions:
         Content-Type:
           - application/json
         Date:
-          - Sun, 15 Feb 2026 05:44:52 GMT
+          - Sun, 15 Mar 2026 19:48:11 GMT
         Server:
           - cloudflare
         Strict-Transport-Security:
@@ -70,18 +74,16 @@ interactions:
           - X-Request-ID
         alt-svc:
           - h3=":443"; ma=86400
-        cf-cache-status:
-          - DYNAMIC
         openai-organization:
           - REDACTED
         openai-processing-ms:
-          - '218'
+          - '401'
         openai-project:
           - proj_wvaoRBrBR9ayhT5aPMqWgDtI
         openai-version:
           - '2020-10-01'
         set-cookie:
-          - __cf_bm=KmNjrawRqJrCFXLg97vdlxQZvzilMwP_lo.F7BwQrew-1771134290.5774605-1.0.1.1-kMKQUF7yblEO6ZJIFcVcLfpFvnSz1jKSKt6DXqKSD5bJqZ6QSxAaaNicCr410ErKY326APIbfjZMm8Mx7VWAm.JJd2fDYPSyCp1jsFEsT7ZLmWbbrm6EipgFf0vn.5O2; HttpOnly; Secure; Path=/; Domain=api.openai.com; Expires=Sun, 15 Feb 2026 06:14:52 GMT
+          - __cf_bm=4aX6w47sKwEZmxsfHQG5LpQlgX3irgY6LDqptozCK_w-1773604091.0989633-1.0.1.1-YDh27tu1O.2hTfLHvDT0b2v47WBw9.rXLoMZ7WY1pYy4vmjqq4IQvQX_9Dp2lNBXpEQdyjfiqW3TgEIpFFa1yXJPSsjnp5aC6bzWH3si2SQaX9ih8bA91P5emOEHko6W; HttpOnly; Secure; Path=/; Domain=api.openai.com; Expires=Sun, 15 Mar 2026 20:18:11 GMT
         x-openai-proxy-wasm:
           - v0.1
         x-ratelimit-limit-requests:
@@ -91,13 +93,13 @@ interactions:
         x-ratelimit-remaining-requests:
           - '499'
         x-ratelimit-remaining-tokens:
-          - '199809'
+          - '199977'
         x-ratelimit-reset-requests:
           - 120ms
         x-ratelimit-reset-tokens:
-          - 57ms
+          - 6ms
         x-request-id:
-          - req_f735f76064b34de3a33b6b3840602be3
+          - req_f87fd507eb4b4bed94a16e4aa07ce4ae
       status:
         code: 200
         message: OK

@@ -411,7 +411,14 @@ class AnthropicClient(BaseLLMClient):
     ) -> JsonObject:
         """Generate a JSON object using Anthropic's native tool-use mode."""
         return await self._generate_with_native_output_tool(
-            messages=messages,
+            messages=self._add_system_instruction(
+                messages,
+                (
+                    "You must respond with a valid JSON object. "
+                    "The required fields and structure are defined by the conversation. "
+                    "Do not omit requested keys."
+                ),
+            ),
             tool_name="return_json_object",
             description="Return the final response as a JSON object.",
             input_schema={
