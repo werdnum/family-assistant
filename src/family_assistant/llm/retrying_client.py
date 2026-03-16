@@ -9,8 +9,8 @@ This implementation mimics LiteLLM's simple retry strategy:
 
 import asyncio
 import logging
-from collections.abc import AsyncIterator, Sequence
-from typing import TYPE_CHECKING, TypeVar
+from collections.abc import AsyncIterator, Awaitable, Callable, Sequence
+from typing import TYPE_CHECKING, TypeVar, cast
 
 from opentelemetry import trace
 from opentelemetry.trace import StatusCode
@@ -20,6 +20,7 @@ if TYPE_CHECKING:
     from family_assistant.tools.types import ToolAttachment, ToolDefinition
 
 from . import (
+    JsonObject,
     LLMInterface,
     LLMMessage,
     LLMOutput,
@@ -37,6 +38,7 @@ from .base import (
 from .messages import UserMessage
 
 T = TypeVar("T", bound=BaseModel)
+R = TypeVar("R")
 
 logger = logging.getLogger(__name__)
 tracer = trace.get_tracer(__name__)
@@ -439,18 +441,17 @@ class RetryingLLMClient:
         """Create attachment injection - delegates to primary client."""
         return self.primary_client.create_attachment_injection(attachment)
 
-    async def generate_structured(
+    async def _run_non_streaming_with_retry(
         self,
-        messages: Sequence[LLMMessage],
-        response_model: type[T],
-    ) -> T:
-        """Generate structured response with retry and fallback logic.
-
-        Note: The underlying client handles validation retries. This method only
-        handles provider-level retries (connection errors, rate limits, etc.).
-        """
+        *,
+        span_name: str,
+        operation_name: str,
+        invoke_primary: Callable[[], Awaitable[R]],
+        invoke_fallback: Callable[[], Awaitable[R]],
+    ) -> R:
+        """Run a non-streaming operation with retry on the primary and fallback."""
         with tracer.start_as_current_span(
-            "llm.generate_structured",
+            span_name,
             attributes={
                 "gen_ai.request.model": self.primary_model,
                 "llm.has_fallback": bool(self.fallback_client),
@@ -465,7 +466,6 @@ class RetryingLLMClient:
 
             last_exception: Exception | None = None
 
-            # Attempt 1: Primary model
             span.add_event(
                 "llm.attempt",
                 attributes={
@@ -476,43 +476,37 @@ class RetryingLLMClient:
             )
             try:
                 logger.info(
-                    f"Structured output attempt 1: Primary model ({self.primary_model})"
+                    f"{operation_name} attempt 1: Primary model ({self.primary_model})"
                 )
-                result = await self.primary_client.generate_structured(
-                    messages=messages,
-                    response_model=response_model,
-                )
+                result = await invoke_primary()
                 span.set_attribute("gen_ai.response.model", self.primary_model)
                 return result
             except retriable_errors as e:
                 logger.warning(
-                    f"Structured output attempt 1 (Primary model {self.primary_model}) "
+                    f"{operation_name} attempt 1 (Primary model {self.primary_model}) "
                     f"failed with retriable error: {e}. Retrying primary model."
                 )
                 last_exception = e
             except StructuredOutputError as e:
-                # Structured output errors are not retriable at this level
-                # The underlying client already retried validation errors
                 logger.warning(
-                    f"Structured output attempt 1 (Primary model {self.primary_model}) "
+                    f"{operation_name} attempt 1 (Primary model {self.primary_model}) "
                     f"failed with structured output error: {e}. Proceeding to fallback."
                 )
                 last_exception = e
             except LLMProviderError as e:
                 logger.warning(
-                    f"Structured output attempt 1 (Primary model {self.primary_model}) "
+                    f"{operation_name} attempt 1 (Primary model {self.primary_model}) "
                     f"failed with provider error: {e}. Proceeding to fallback."
                 )
                 last_exception = e
             except Exception as e:
                 logger.error(
-                    f"Structured output attempt 1 (Primary model {self.primary_model}) "
+                    f"{operation_name} attempt 1 (Primary model {self.primary_model}) "
                     f"failed with unexpected error: {e}",
                     exc_info=True,
                 )
                 last_exception = e
 
-            # Attempt 2: Retry Primary model (if Attempt 1 was a retriable error)
             if isinstance(last_exception, retriable_errors):
                 span.add_event(
                     "llm.attempt",
@@ -524,35 +518,31 @@ class RetryingLLMClient:
                 )
                 try:
                     logger.info(
-                        f"Structured output attempt 2: Retrying primary model ({self.primary_model})"
+                        f"{operation_name} attempt 2: Retrying primary model ({self.primary_model})"
                     )
-                    result = await self.primary_client.generate_structured(
-                        messages=messages,
-                        response_model=response_model,
-                    )
+                    result = await invoke_primary()
                     span.set_attribute("gen_ai.response.model", self.primary_model)
                     return result
                 except retriable_errors as e:
                     logger.warning(
-                        f"Structured output attempt 2 (Retry Primary model {self.primary_model}) "
+                        f"{operation_name} attempt 2 (Retry Primary model {self.primary_model}) "
                         f"failed with retriable error: {e}. Proceeding to fallback."
                     )
                     last_exception = e
                 except LLMProviderError as e:
                     logger.warning(
-                        f"Structured output attempt 2 (Retry Primary model {self.primary_model}) "
+                        f"{operation_name} attempt 2 (Retry Primary model {self.primary_model}) "
                         f"failed with provider error: {e}. Proceeding to fallback."
                     )
                     last_exception = e
                 except Exception as e:
                     logger.error(
-                        f"Structured output attempt 2 (Retry Primary model {self.primary_model}) "
+                        f"{operation_name} attempt 2 (Retry Primary model {self.primary_model}) "
                         f"failed with unexpected error: {e}",
                         exc_info=True,
                     )
                     last_exception = e
 
-            # Attempt 3: Fallback model (if configured and primary attempts failed)
             if self.fallback_client and last_exception:
                 if self.fallback_model == self.primary_model:
                     logger.warning(
@@ -570,35 +560,80 @@ class RetryingLLMClient:
                     },
                 )
                 logger.info(
-                    f"Structured output attempt 3: Fallback model ({self.fallback_model})"
+                    f"{operation_name} attempt 3: Fallback model ({self.fallback_model})"
                 )
                 try:
-                    result = await self.fallback_client.generate_structured(
-                        messages=messages,
-                        response_model=response_model,
-                    )
+                    result = await invoke_fallback()
                     span.set_attribute(
                         "gen_ai.response.model", self.fallback_model or ""
                     )
                     return result
                 except Exception as e:
                     logger.error(
-                        f"Structured output attempt 3 (Fallback model {self.fallback_model}) "
+                        f"{operation_name} attempt 3 (Fallback model {self.fallback_model}) "
                         f"also failed: {e}",
                         exc_info=True,
                     )
                     raise last_exception from e
 
-            # If all attempts failed, raise the last exception
             if last_exception:
                 logger.error(
-                    f"All structured output attempts failed. "
+                    f"All {operation_name.lower()} attempts failed. "
                     f"Raising last recorded exception: {last_exception}"
                 )
                 raise last_exception
-            else:
-                raise LLMProviderError(
-                    message="All structured output attempts failed without a specific exception.",
-                    provider="unknown",
-                    model=self.primary_model,
-                )
+
+            raise LLMProviderError(
+                message=f"All {operation_name.lower()} attempts failed without a specific exception.",
+                provider="unknown",
+                model=self.primary_model,
+            )
+
+    async def generate_structured(
+        self,
+        messages: Sequence[LLMMessage],
+        response_model: type[T],
+        max_retries: int = 2,
+    ) -> T:
+        """Generate structured response with retry and fallback logic.
+
+        Note: The underlying client handles validation retries. This method only
+        handles provider-level retries (connection errors, rate limits, etc.).
+        """
+        return await self._run_non_streaming_with_retry(
+            span_name="llm.generate_structured",
+            operation_name="Structured output",
+            invoke_primary=lambda: self.primary_client.generate_structured(
+                messages=messages,
+                response_model=response_model,
+                max_retries=max_retries,
+            ),
+            invoke_fallback=lambda: cast(
+                "LLMInterface", self.fallback_client
+            ).generate_structured(
+                messages=messages,
+                response_model=response_model,
+                max_retries=max_retries,
+            ),
+        )
+
+    async def generate_json(
+        self,
+        messages: Sequence[LLMMessage],
+        max_retries: int = 2,
+    ) -> JsonObject:
+        """Generate JSON object response with retry and fallback logic."""
+        return await self._run_non_streaming_with_retry(
+            span_name="llm.generate_json",
+            operation_name="JSON output",
+            invoke_primary=lambda: self.primary_client.generate_json(
+                messages=messages,
+                max_retries=max_retries,
+            ),
+            invoke_fallback=lambda: cast(
+                "LLMInterface", self.fallback_client
+            ).generate_json(
+                messages=messages,
+                max_retries=max_retries,
+            ),
+        )

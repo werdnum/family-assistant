@@ -1,8 +1,11 @@
 """Unit tests for RetryingLLMClient."""
 
+# pylint: disable=no-name-in-module
+
 from unittest.mock import AsyncMock
 
 import pytest
+from pydantic import BaseModel
 
 from family_assistant.llm import LLMOutput
 from family_assistant.llm.base import (
@@ -14,8 +17,12 @@ from family_assistant.llm.base import (
 )
 from family_assistant.llm.retrying_client import RetryingLLMClient
 from tests.factories.messages import (
-    create_user_message,
+    create_user_message,  # pylint: disable=no-name-in-module
 )
+
+
+class StructuredResult(BaseModel):
+    answer: str
 
 
 @pytest.fixture
@@ -324,3 +331,59 @@ async def test_format_user_message_with_file(
     assert result == expected_result
     assert mock_primary_client.format_user_message_with_file.call_count == 1
     assert mock_fallback_client.format_user_message_with_file.call_count == 0
+
+
+@pytest.mark.no_db
+async def test_generate_structured_falls_back_after_primary_error(
+    mock_primary_client: AsyncMock, mock_fallback_client: AsyncMock
+) -> None:
+    """Structured output should use fallback after a primary failure."""
+    mock_primary_client.generate_structured = AsyncMock(
+        side_effect=InvalidRequestError("invalid", "test", "test-model")
+    )
+    mock_fallback_client.generate_structured = AsyncMock(
+        return_value=StructuredResult(answer="fallback")
+    )
+
+    client = RetryingLLMClient(
+        primary_client=mock_primary_client,
+        primary_model="test-model",
+        fallback_client=mock_fallback_client,
+        fallback_model="fallback-model",
+    )
+
+    result = await client.generate_structured(
+        messages=[create_user_message("test")],
+        response_model=StructuredResult,
+    )
+
+    assert result == StructuredResult(answer="fallback")
+    assert mock_primary_client.generate_structured.call_count == 1
+    assert mock_fallback_client.generate_structured.call_count == 1
+
+
+@pytest.mark.no_db
+async def test_generate_json_retries_primary_before_fallback(
+    mock_primary_client: AsyncMock, mock_fallback_client: AsyncMock
+) -> None:
+    """JSON output should retry retriable errors before using fallback."""
+    mock_primary_client.generate_json = AsyncMock(
+        side_effect=[
+            ProviderConnectionError("down", "test", "test-model"),
+            ProviderConnectionError("still down", "test", "test-model"),
+        ]
+    )
+    mock_fallback_client.generate_json = AsyncMock(return_value={"answer": "fallback"})
+
+    client = RetryingLLMClient(
+        primary_client=mock_primary_client,
+        primary_model="test-model",
+        fallback_client=mock_fallback_client,
+        fallback_model="fallback-model",
+    )
+
+    result = await client.generate_json(messages=[create_user_message("test")])
+
+    assert result == {"answer": "fallback"}
+    assert mock_primary_client.generate_json.call_count == 2
+    assert mock_fallback_client.generate_json.call_count == 1

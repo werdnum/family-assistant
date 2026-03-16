@@ -12,7 +12,7 @@ from opentelemetry.trace import StatusCode
 from pydantic import BaseModel
 
 import family_assistant.llm.retrying_client as rc_module
-from family_assistant.llm import LLMMessage, LLMOutput
+from family_assistant.llm import JsonObject, LLMMessage, LLMOutput
 from family_assistant.llm.base import ProviderConnectionError
 from family_assistant.llm.messages import SystemMessage, UserMessage
 from family_assistant.llm.retrying_client import RetryingLLMClient
@@ -61,7 +61,17 @@ class FailingMockClient(RuleBasedMockLLMClient):
         self,
         messages: Sequence[LLMMessage],
         response_model: type[_T],
+        max_retries: int = 2,
     ) -> _T:
+        raise ProviderConnectionError(
+            "Connection failed", provider="test", model="test-model"
+        )
+
+    async def generate_json(
+        self,
+        messages: Sequence[LLMMessage],
+        max_retries: int = 2,
+    ) -> JsonObject:
         raise ProviderConnectionError(
             "Connection failed", provider="test", model="test-model"
         )
@@ -262,5 +272,29 @@ class TestRetryingLLMClientSpans:
         assert len(spans) == 1
         span = spans[0]
         assert span.name == "llm.generate_structured"
+        assert span.attributes is not None
+        assert span.attributes["gen_ai.request.model"] == "test-model"
+
+    @pytest.mark.asyncio
+    async def test_generate_json_creates_span(
+        self, span_exporter: InMemorySpanExporter
+    ) -> None:
+        mock_client = RuleBasedMockLLMClient(
+            rules=[(lambda _args: True, LLMOutput(content='{"answer": "42"}'))],
+            default_response=LLMOutput(content="unused"),
+        )
+        client = RetryingLLMClient(
+            primary_client=mock_client,
+            primary_model="test-model",
+        )
+        messages = [SystemMessage(content="system"), UserMessage(content="hello")]
+
+        result = await client.generate_json(messages=messages)
+        assert result == {"answer": "42"}
+
+        spans = span_exporter.get_finished_spans()
+        assert len(spans) == 1
+        span = spans[0]
+        assert span.name == "llm.generate_json"
         assert span.attributes is not None
         assert span.attributes["gen_ai.request.model"] == "test-model"

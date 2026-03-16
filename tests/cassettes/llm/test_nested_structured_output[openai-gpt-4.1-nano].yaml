@@ -1,6 +1,6 @@
 interactions:
   - request:
-      body: '{"messages":[{"role":"system","content":"You must respond with valid JSON that matches this schema:\n```json\n{\n  \"$defs\": {\n    \"PersonInfo\": {\n      \"description\": \"Person information model.\",\n      \"properties\": {\n        \"name\": {\n          \"title\": \"Name\",\n          \"type\": \"string\"\n        },\n        \"age\": {\n          \"maximum\": 150,\n          \"minimum\": 0,\n          \"title\": \"Age\",\n          \"type\": \"integer\"\n        },\n        \"occupation\": {\n          \"anyOf\": [\n            {\n              \"type\": \"string\"\n            },\n            {\n              \"type\": \"null\"\n            }\n          ],\n          \"default\": null,\n          \"title\": \"Occupation\"\n        }\n      },\n      \"required\": [\n        \"name\",\n        \"age\"\n      ],\n      \"title\": \"PersonInfo\",\n      \"type\": \"object\"\n    }\n  },\n  \"description\": \"Response with nested model.\",\n  \"properties\": {\n    \"person\": {\n      \"$ref\": \"#/$defs/PersonInfo\"\n    },\n    \"summary\": {\n      \"title\": \"Summary\",\n      \"type\": \"string\"\n    }\n  },\n  \"required\": [\n    \"person\",\n    \"summary\"\n  ],\n  \"title\": \"NestedResponse\",\n  \"type\": \"object\"\n}\n```\n\nRespond ONLY with the JSON object, no additional text or markdown."},{"role":"user","content":"Create a profile for Sarah, age 35, who works as a doctor. Also provide a one-sentence summary about her."}],"model":"gpt-4.1-nano"}'
+      body: '{"messages":[{"role":"user","content":"Create a profile for Sarah, age 35, who works as a doctor. Also provide a one-sentence summary about her."}],"model":"gpt-4.1-nano","response_format":{"type":"json_schema","json_schema":{"schema":{"$defs":{"PersonInfo":{"description":"Person information model.","properties":{"name":{"title":"Name","type":"string"},"age":{"maximum":150,"minimum":0,"title":"Age","type":"integer"},"occupation":{"anyOf":[{"type":"string"},{"type":"null"}],"title":"Occupation"}},"required":["name","age","occupation"],"title":"PersonInfo","type":"object","additionalProperties":false}},"description":"Response with nested model.","properties":{"person":{"$ref":"#/$defs/PersonInfo"},"summary":{"title":"Summary","type":"string"}},"required":["person","summary"],"title":"NestedResponse","type":"object","additionalProperties":false},"name":"NestedResponse","strict":true}},"stream":false}'
       headers:
         accept:
           - application/json
@@ -9,7 +9,7 @@ interactions:
         connection:
           - keep-alive
         content-length:
-          - '1496'
+          - '910'
         content-type:
           - application/json
         host:
@@ -20,6 +20,8 @@ interactions:
           - arm64
         x-stainless-async:
           - async:asyncio
+        x-stainless-helper-method:
+          - chat.completions.parse
         x-stainless-lang:
           - python
         x-stainless-os:
@@ -39,18 +41,21 @@ interactions:
     response:
       body:
         string: !!binary |
-          H4sIAAAAAAAA/41Ty46bMBTd5yssryEKCXl1286iUjtq1F3LCDn2JXgKtmWbtlHEv/faJIGZTqVu
-          EJxzz7lPLjNCqBT0HaG8Zp63pkk/7L88ZB8X8vB+u3uWj83mfHh4/FQdvh1F/ZkmQaGPz8D9TTXn
-          GnXgpVYDzS0wD8E1226zbJUvd/tItFpAE2Qn49N8nqWKKZ0uF8t1usjTLL/Kay05OIz7jp+EXOIz
-          FKoE/EZ4kdyQFpxjJ0DsFoSg1U1AKHNOOs+Up8lIcq08qFj7pVCEFNSAdVoVwSMAAVKshQAU9Cuz
-          rC5ocmMwWSBW6zuiOe8MC80PCqG517agge+TIYXr2pbZ88SSSEcYESAkD6MibXxriLG6wp7QDT9+
-          SV9jlGERIJW2JGTC8glnFuYhST9tzkLVORYmrLqmmRBMKe1jkXGsT1emvw+y0SdMfXSvpLSSSrq6
-          xIXijMLQnNeGRrbH51NcWPdiBxSNWuNLr39ATLdaZoMfHQ9lZPPdlfRYYTNRbfbJG36lAM9k4yYr
-          p5zxGsQoHe+DdULqCTGbdP13NW95D51Ldfof+5HgHAzutTQ2LPZlx2OYhfAf/SvsPuVYMHVgf+J/
-          UeIB2LAJARXrmuG4qTs7D22J6zqBNVYOF16ZcrXaCMjWGcvprJ/9Ac8BMn/wAwAA
+          H4sIAAAAAAAA/6rmUlBQykxRslJQSs5ILEnOLcjRdfHKyQr1LwIAAAD//4xTwW7bMAy95ysEnePA
+          ie0m3XHADrsMA4IC6+bCYCXa1iZLhiR3C4r8+yg7qd2tA3YRZD6+J/KR/npff/oM4f2XD8f9vb5r
+          j3c/PxYFX0eGffyOIlxZG2GJh0FZM8HCIQSMqtv9PrtJ8/RwGIHOStSR1vQhyTfbxICxyS7dFUma
+          J9v8Qm+tEugp7xt9MvY8nrFQI/EXhdP1NdKh99Agxa5JFHRWxwgH75UPYAJfz6CwJqAZa38ueY/O
+          W1Pyd3Q30CHdSn4EB23J1yUnaYpkBV2tEEMPsccxR1oRrCv5mSA/dB2408xlyjNgEqUS0QeWFckJ
+          wSVWSzYRGVnWqRDBYFnUpZqYAIcMjGQtgg4tA/lkBYjTht5Z9uCwHjxEI82g9QIAY2wYixzde7gg
+          5xe/tG16Zx/9H1ReK6N8W9HcyI7ojQ+25yN6pvNhnMvwympOQl0fqmB/4PjctjhMenzehxnNbi5g
+          oAr1gnWbr9/QqyQGUNovJsvJihblTJ3XAAap7AJYLbr+u5q3tKfOlWn+R34GhMCehlj1Lg77dcdz
+          msP4u/wr7cXlsWDu0T3R+le0Ei5OQmINg552mPuTD9hVNK4GXe/UtMh1XwHIPNvVQu756rz6DQAA
+          //8DAFQ7VlnXAwAA
       headers:
-        CF-RAY:
-          - 9ce27eda09fcd295-FRA
+        CF-Cache-Status:
+          - DYNAMIC
+        CF-Ray:
+          - 9dce08afed269765-FRA
         Connection:
           - keep-alive
         Content-Encoding:
@@ -58,7 +63,7 @@ interactions:
         Content-Type:
           - application/json
         Date:
-          - Sun, 15 Feb 2026 05:44:50 GMT
+          - Sun, 15 Mar 2026 19:48:09 GMT
         Server:
           - cloudflare
         Strict-Transport-Security:
@@ -71,18 +76,16 @@ interactions:
           - X-Request-ID
         alt-svc:
           - h3=":443"; ma=86400
-        cf-cache-status:
-          - DYNAMIC
         openai-organization:
           - REDACTED
         openai-processing-ms:
-          - '898'
+          - '1079'
         openai-project:
           - proj_wvaoRBrBR9ayhT5aPMqWgDtI
         openai-version:
           - '2020-10-01'
         set-cookie:
-          - __cf_bm=BqARIzValIkVM5Vz.Kb67vONCLDUFOLnIM52REyeRaM-1771134288.9704678-1.0.1.1-PV5PyujVUzjGm9tUY1l7bsg0Oi814c906u7tQQo.7g_qQvvHCfTllAK1CjvVIhnMRIK9kLps4O4juBCydHkBkZ23w2hLJV3oxwfHRNlXYI1gFXjdZ44uAo8vRf15tDuS; HttpOnly; Secure; Path=/; Domain=api.openai.com; Expires=Sun, 15 Feb 2026 06:14:50 GMT
+          - __cf_bm=trzg9T.KZP5wA.hjdgg2e3yhzvMz1EOT.pAKQad4pYE-1773604088.3030448-1.0.1.1-jeBf_4xlAf6o5N5xD.AIXhsMv6DFyGS5nO49pteYoi8o4rhdJUNE5vqRO3KlbtnMExYWYcG9UcQhjBQxaiEOMEPPN8FwYdwRE3FnoEcE4MN4mip9ZhrTpja2tLmMPFjM; HttpOnly; Secure; Path=/; Domain=api.openai.com; Expires=Sun, 15 Mar 2026 20:18:09 GMT
         x-openai-proxy-wasm:
           - v0.1
         x-ratelimit-limit-requests:
@@ -92,13 +95,13 @@ interactions:
         x-ratelimit-remaining-requests:
           - '499'
         x-ratelimit-remaining-tokens:
-          - '199687'
+          - '199971'
         x-ratelimit-reset-requests:
           - 120ms
         x-ratelimit-reset-tokens:
-          - 93ms
+          - 8ms
         x-request-id:
-          - req_448afae923674dac8be7612f28598485
+          - req_eb35e82d6c02490ca38e4275bea3f395
       status:
         code: 200
         message: OK
