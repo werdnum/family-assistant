@@ -6,6 +6,7 @@ client lifecycle or message construction.
 
 from pydantic import BaseModel
 
+from family_assistant.llm import JsonObject
 from family_assistant.llm.factory import LLMClientFactory
 from family_assistant.llm.messages import LLMMessage, SystemMessage, UserMessage
 
@@ -72,3 +73,35 @@ async def one_shot_structured[T: BaseModel](
     messages.append(UserMessage(content=prompt))
 
     return await client.generate_structured(messages, response_model)
+
+
+async def one_shot_json(
+    prompt: str,
+    *,
+    system: str | None = None,
+    model: str = DEFAULT_MODEL,
+) -> JsonObject:
+    """Make a single LLM call and return a parsed JSON object.
+
+    Uses native JSON mode when available (OpenAI, Gemini) for more
+    reliable JSON output.
+
+    Args:
+        prompt: The user prompt to send.
+        system: Optional system message.
+        model: Model identifier (default: gemini-3-flash-preview).
+
+    Returns:
+        Parsed JSON object (dict).
+
+    Raises:
+        StructuredOutputError: If response cannot be parsed as JSON.
+    """
+    client = LLMClientFactory.create_client({"model": model})
+
+    messages: list[LLMMessage] = []
+    if system:
+        messages.append(SystemMessage(content=system))
+    messages.append(UserMessage(content=prompt))
+
+    return await client.generate_json(messages)

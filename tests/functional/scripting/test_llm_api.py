@@ -5,9 +5,9 @@ from unittest.mock import AsyncMock, patch
 import pytest
 
 from family_assistant.llm import LLMOutput
+from family_assistant.llm.base import StructuredOutputError
 from family_assistant.scripting.apis.llm import (
     DEFAULT_MODEL,
-    extract_json_from_response,
     llm_call_async,
     llm_call_json_async,
 )
@@ -25,6 +25,7 @@ def mock_llm_client() -> AsyncMock:
     mock.generate_response = AsyncMock(
         return_value=LLMOutput(content="Test LLM response")
     )
+    mock.generate_json = AsyncMock(return_value={"key": "value"})
     return mock
 
 
@@ -69,23 +70,20 @@ async def test_llm_call_async_with_custom_model(mock_llm_client: AsyncMock) -> N
 
 @pytest.mark.no_db
 async def test_llm_call_json_async(mock_llm_client: AsyncMock) -> None:
-    """Test llm_call_json_async returns parsed JSON."""
-    mock_llm_client.generate_response = AsyncMock(
-        return_value=LLMOutput(content='{"name": "Alice", "age": 30}')
-    )
+    """Test llm_call_json_async returns parsed JSON using native JSON mode."""
+    mock_llm_client.generate_json = AsyncMock(return_value={"name": "Alice", "age": 30})
 
     with patch(PATCH_TARGET, return_value=mock_llm_client):
         result = await llm_call_json_async("Extract info")
 
         assert result == {"name": "Alice", "age": 30}
+        mock_llm_client.generate_json.assert_called_once()
 
 
 @pytest.mark.no_db
 async def test_llm_call_json_async_with_schema(mock_llm_client: AsyncMock) -> None:
-    """Test llm_call_json_async with schema parameter."""
-    mock_llm_client.generate_response = AsyncMock(
-        return_value=LLMOutput(content='{"title": "Test"}')
-    )
+    """Test llm_call_json_async with schema parameter includes schema in system message."""
+    mock_llm_client.generate_json = AsyncMock(return_value={"title": "Test"})
 
     schema = {
         "type": "object",
@@ -97,79 +95,42 @@ async def test_llm_call_json_async_with_schema(mock_llm_client: AsyncMock) -> No
 
         assert result == {"title": "Test"}
 
-        call_args = mock_llm_client.generate_response.call_args
+        # Verify schema was included in system message
+        call_args = mock_llm_client.generate_json.call_args
         messages = call_args[0][0]
+        assert len(messages) == 2
         system_content = messages[0].content
-        assert "JSON" in system_content
-        assert "schema" in system_content
+        assert "schema" in system_content.lower()
+        assert '"title"' in system_content
 
 
 @pytest.mark.no_db
-async def test_llm_call_json_strips_markdown(mock_llm_client: AsyncMock) -> None:
-    """Test that llm_call_json_async strips markdown code fences."""
-    mock_llm_client.generate_response = AsyncMock(
-        return_value=LLMOutput(content='```json\n{"key": "value"}\n```')
-    )
+async def test_llm_call_json_async_with_system(mock_llm_client: AsyncMock) -> None:
+    """Test llm_call_json_async with custom system message."""
+    mock_llm_client.generate_json = AsyncMock(return_value={"result": "ok"})
 
     with patch(PATCH_TARGET, return_value=mock_llm_client):
-        result = await llm_call_json_async("Extract info")
+        await llm_call_json_async("Extract info", system="Be concise.")
 
-        assert result == {"key": "value"}
+        call_args = mock_llm_client.generate_json.call_args
+        messages = call_args[0][0]
+        assert len(messages) == 2
+        assert messages[0].role == "system"
+        assert "Be concise." in messages[0].content
 
 
 @pytest.mark.no_db
-async def test_llm_call_json_handles_conversational_text(
-    mock_llm_client: AsyncMock,
-) -> None:
-    """Test that llm_call_json_async handles conversational text before JSON fences."""
-    mock_llm_client.generate_response = AsyncMock(
-        return_value=LLMOutput(
-            content='Here is the JSON you requested:\n```json\n{"status": "ok"}\n```'
+async def test_llm_call_json_async_error_handling(mock_llm_client: AsyncMock) -> None:
+    """Test llm_call_json_async propagates StructuredOutputError."""
+    mock_llm_client.generate_json = AsyncMock(
+        side_effect=StructuredOutputError(
+            message="Failed to parse JSON", provider="test", model="test-model"
         )
     )
 
-    with patch(PATCH_TARGET, return_value=mock_llm_client):
-        result = await llm_call_json_async("Extract info")
-
-        assert result == {"status": "ok"}
-
-
-@pytest.mark.no_db
-async def test_llm_call_json_rejects_scalar_string(mock_llm_client: AsyncMock) -> None:
-    """Test that llm_call_json_async raises on scalar string JSON."""
-    mock_llm_client.generate_response = AsyncMock(
-        return_value=LLMOutput(content='"just a string"')
-    )
-
     with (
         patch(PATCH_TARGET, return_value=mock_llm_client),
-        pytest.raises(ValueError, match="Expected JSON object or array"),
-    ):
-        await llm_call_json_async("Extract info")
-
-
-@pytest.mark.no_db
-async def test_llm_call_json_rejects_scalar_number(mock_llm_client: AsyncMock) -> None:
-    """Test that llm_call_json_async raises on scalar number JSON."""
-    mock_llm_client.generate_response = AsyncMock(return_value=LLMOutput(content="42"))
-
-    with (
-        patch(PATCH_TARGET, return_value=mock_llm_client),
-        pytest.raises(ValueError, match="Expected JSON object or array"),
-    ):
-        await llm_call_json_async("Extract info")
-
-
-@pytest.mark.no_db
-async def test_llm_call_json_rejects_null(mock_llm_client: AsyncMock) -> None:
-    """Test that llm_call_json_async raises on null JSON."""
-    mock_llm_client.generate_response = AsyncMock(
-        return_value=LLMOutput(content="null")
-    )
-
-    with (
-        patch(PATCH_TARGET, return_value=mock_llm_client),
-        pytest.raises(ValueError, match="Expected JSON object or array"),
+        pytest.raises(StructuredOutputError, match="Failed to parse JSON"),
     ):
         await llm_call_json_async("Extract info")
 
@@ -198,9 +159,7 @@ async def test_llm_available_in_engine(mock_llm_client: AsyncMock) -> None:
 @pytest.mark.no_db
 async def test_llm_json_available_in_engine(mock_llm_client: AsyncMock) -> None:
     """Test that llm_json() works from MontyEngine scripts."""
-    mock_llm_client.generate_response = AsyncMock(
-        return_value=LLMOutput(content='{"summary": "short"}')
-    )
+    mock_llm_client.generate_json = AsyncMock(return_value={"summary": "short"})
 
     with patch(PATCH_TARGET, return_value=mock_llm_client):
         engine = MontyEngine()
@@ -215,40 +174,3 @@ async def test_llm_not_available_when_apis_disabled(mock_llm_client: AsyncMock) 
         engine = MontyEngine(config=ScriptConfig(disable_apis=True))
         with pytest.raises(Exception, match="llm"):
             await engine.evaluate_async("llm('test')")
-
-
-# Unit tests for the JSON extraction helper
-@pytest.mark.no_db
-def test_extract_json_pure_json() -> None:
-    """Test extraction of pure JSON without fences."""
-    assert extract_json_from_response('{"key": "value"}') == '{"key": "value"}'
-
-
-@pytest.mark.no_db
-def test_extract_json_with_fences() -> None:
-    """Test extraction of JSON with markdown fences."""
-    assert (
-        extract_json_from_response('```json\n{"key": "value"}\n```')
-        == '{"key": "value"}'
-    )
-
-
-@pytest.mark.no_db
-def test_extract_json_with_conversational_prefix() -> None:
-    """Test extraction when LLM adds conversational text before fences."""
-    text = 'Here is the JSON:\n```json\n{"key": "value"}\n```'
-    assert extract_json_from_response(text) == '{"key": "value"}'
-
-
-@pytest.mark.no_db
-def test_extract_json_with_fences_no_language_tag() -> None:
-    """Test extraction with fences but no json language tag."""
-    assert (
-        extract_json_from_response('```\n{"key": "value"}\n```') == '{"key": "value"}'
-    )
-
-
-@pytest.mark.no_db
-def test_extract_json_returns_list() -> None:
-    """Test extraction of JSON array."""
-    assert extract_json_from_response("[1, 2, 3]") == "[1, 2, 3]"

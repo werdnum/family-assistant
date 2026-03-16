@@ -6,34 +6,14 @@ LLM calls for summarisation, data extraction, and similar tasks.
 
 import json
 import logging
-import re
-from typing import Any
+from typing import Any, cast
 
-from family_assistant.llm.one_shot import DEFAULT_MODEL, one_shot
+from family_assistant.llm.one_shot import DEFAULT_MODEL, one_shot, one_shot_json
 
 logger = logging.getLogger(__name__)
 
 # Re-export DEFAULT_MODEL for tests that import from this module
 __all__ = ["DEFAULT_MODEL", "llm_call_async", "llm_call_json_async"]
-
-
-def extract_json_from_response(text: str) -> str:
-    """Extract JSON from LLM response, handling markdown fences and conversational text.
-
-    Handles cases like:
-    - Pure JSON: {"key": "value"}
-    - Fenced JSON: ```json\n{"key": "value"}\n```
-    - Conversational: "Here is the JSON:\n```json\n{"key": "value"}\n```"
-    """
-    # First try to find JSON in markdown fences (handles conversational text before fences)
-    fence_match = re.search(r"```(?:json)?\s*\n(.*?)\n?```", text, re.DOTALL)
-    if fence_match:
-        return fence_match.group(1).strip()
-
-    # Fall back to stripping fences at start/end (for simple cases)
-    stripped = re.sub(r"^```(?:json)?\s*\n?", "", text.strip())
-    stripped = re.sub(r"\n?```\s*$", "", stripped)
-    return stripped.strip()
 
 
 async def llm_call_async(
@@ -64,8 +44,11 @@ async def llm_call_json_async(
     system: str | None = None,
     model: str | None = None,
     # ast-grep-ignore: no-dict-any - JSON output structure is determined by LLM
-) -> dict[str, Any] | list[Any]:
-    """Make a one-shot LLM call and return parsed JSON.
+) -> dict[str, Any]:
+    """Make a one-shot LLM call and return parsed JSON object.
+
+    Uses native JSON mode when available (OpenAI, Gemini) for more
+    reliable JSON output.
 
     Args:
         prompt: The user prompt to send.
@@ -74,25 +57,21 @@ async def llm_call_json_async(
         model: Model identifier (default: gemini-3-flash-preview).
 
     Returns:
-        Parsed JSON as a dict or list.
+        Parsed JSON object (dict).
 
     Raises:
-        ValueError: If the LLM returns no content, invalid JSON, or a scalar JSON value.
+        StructuredOutputError: If response cannot be parsed as JSON.
     """
-    json_system = "Respond with valid JSON only. No markdown, no explanation."
-    if schema:
-        json_system += f"\n\nExpected JSON schema:\n{json.dumps(schema, indent=2)}"
-    if system:
-        json_system += f"\n\n{system}"
+    combined_system: str | None = None
+    if schema or system:
+        parts = []
+        if schema:
+            parts.append(f"Expected JSON schema:\n{json.dumps(schema, indent=2)}")
+        if system:
+            parts.append(system)
+        combined_system = "\n\n".join(parts)
 
-    raw = await llm_call_async(prompt, system=json_system, model=model)
-    cleaned = extract_json_from_response(raw)
-    result = json.loads(cleaned)
-
-    # Validate that result is dict or list per type contract
-    if not isinstance(result, (dict, list)):
-        raise ValueError(
-            f"Expected JSON object or array, got {type(result).__name__}: {result!r}"
-        )
-
-    return result  # type: ignore[no-any-return]  # json.loads returns Any, narrowed by isinstance above
+    result = await one_shot_json(
+        prompt, system=combined_system, model=model or DEFAULT_MODEL
+    )
+    return cast("dict[str, Any]", result)

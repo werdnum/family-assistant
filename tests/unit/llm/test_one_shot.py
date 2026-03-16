@@ -6,7 +6,12 @@ import pytest
 from pydantic import BaseModel
 
 from family_assistant.llm import LLMOutput
-from family_assistant.llm.one_shot import DEFAULT_MODEL, one_shot, one_shot_structured
+from family_assistant.llm.one_shot import (
+    DEFAULT_MODEL,
+    one_shot,
+    one_shot_json,
+    one_shot_structured,
+)
 
 
 class SummaryModel(BaseModel):
@@ -173,3 +178,63 @@ async def test_one_shot_structured_with_custom_model(
 def test_default_model_is_gemini_flash() -> None:
     """Test that the default model is gemini-3-flash-preview."""
     assert DEFAULT_MODEL == "gemini-3-flash-preview"
+
+
+@pytest.mark.no_db
+async def test_one_shot_json(mock_llm_client: AsyncMock) -> None:
+    """Test one_shot_json call."""
+    expected_result = {"name": "Alice", "age": 30}
+    mock_llm_client.generate_json = AsyncMock(return_value=expected_result)
+
+    with patch(
+        "family_assistant.llm.one_shot.LLMClientFactory.create_client",
+        return_value=mock_llm_client,
+    ) as mock_factory:
+        result = await one_shot_json("Extract info from: Alice is 30 years old")
+
+        mock_factory.assert_called_once_with({"model": DEFAULT_MODEL})
+
+        call_args = mock_llm_client.generate_json.call_args
+        messages = call_args[0][0]
+
+        assert len(messages) == 1
+        assert messages[0].role == "user"
+
+        assert result == expected_result
+
+
+@pytest.mark.no_db
+async def test_one_shot_json_with_system(mock_llm_client: AsyncMock) -> None:
+    """Test one_shot_json with system message."""
+    mock_llm_client.generate_json = AsyncMock(return_value={"key": "value"})
+
+    with patch(
+        "family_assistant.llm.one_shot.LLMClientFactory.create_client",
+        return_value=mock_llm_client,
+    ):
+        await one_shot_json(
+            "Extract info",
+            system="Be concise.",
+        )
+
+        call_args = mock_llm_client.generate_json.call_args
+        messages = call_args[0][0]
+
+        assert len(messages) == 2
+        assert messages[0].role == "system"
+        assert messages[0].content == "Be concise."
+        assert messages[1].role == "user"
+
+
+@pytest.mark.no_db
+async def test_one_shot_json_with_custom_model(mock_llm_client: AsyncMock) -> None:
+    """Test one_shot_json with custom model."""
+    mock_llm_client.generate_json = AsyncMock(return_value={})
+
+    with patch(
+        "family_assistant.llm.one_shot.LLMClientFactory.create_client",
+        return_value=mock_llm_client,
+    ) as mock_factory:
+        await one_shot_json("Extract info", model="gpt-4o")
+
+        mock_factory.assert_called_once_with({"model": "gpt-4o"})
