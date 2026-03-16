@@ -1,6 +1,6 @@
 interactions:
   - request:
-      body: '{"contents": [{"parts": [{"text": "System: You must respond with valid JSON that matches this schema:\n```json\n{\n  \"description\": \"Simple response model for basic tests.\",\n  \"properties\": {\n    \"answer\": {\n      \"title\": \"Answer\",\n      \"type\": \"string\"\n    },\n    \"confidence\": {\n      \"maximum\": 1.0,\n      \"minimum\": 0.0,\n      \"title\": \"Confidence\",\n      \"type\": \"number\"\n    }\n  },\n  \"required\": [\n    \"answer\",\n    \"confidence\"\n  ],\n  \"title\": \"SimpleResponse\",\n  \"type\": \"object\"\n}\n```\n\nRespond ONLY with the JSON object, no additional text or markdown."}], "role": "user"}, {"parts": [{"text": "What is the capital of France? Provide a one-word answer and your confidence level between 0 and 1."}], "role": "user"}], "generationConfig": {"mediaResolution": "MEDIA_RESOLUTION_HIGH"}}'
+      body: '{"contents": [{"parts": [{"text": "What is the capital of France? Provide a one-word answer and your confidence level between 0 and 1."}], "role": "user"}], "generationConfig": {"responseMimeType": "application/json", "responseSchema": {"description": "Simple response model for basic tests.", "properties": {"answer": {"title": "Answer", "type": "STRING"}, "confidence": {"maximum": 1.0, "minimum": 0.0, "title": "Confidence", "type": "NUMBER"}}, "property_ordering": ["answer", "confidence"], "required": ["answer", "confidence"], "title": "SimpleResponse", "type": "OBJECT"}, "mediaResolution": "MEDIA_RESOLUTION_HIGH"}}'
       headers:
         Content-Type:
           - application/json
@@ -12,7 +12,7 @@ interactions:
       uri: https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-lite:generateContent
     response:
       body:
-        string: "{\n  \"candidates\": [\n    {\n      \"content\": {\n        \"parts\": [\n          {\n            \"text\": \"```json\\n{\\n  \\\"answer\\\": \\\"Paris\\\",\\n  \\\"confidence\\\": 1.0\\n}\\n```\"\n          }\n        ],\n        \"role\": \"model\"\n      },\n      \"finishReason\": \"STOP\",\n      \"index\": 0\n    }\n  ],\n  \"usageMetadata\": {\n    \"promptTokenCount\": 190,\n    \"candidatesTokenCount\": 25,\n    \"totalTokenCount\": 215,\n    \"promptTokensDetails\": [\n      {\n        \"modality\": \"TEXT\",\n        \"tokenCount\": 190\n      }\n    ]\n  },\n  \"modelVersion\": \"gemini-2.5-flash-lite\",\n  \"responseId\": \"y12RaenNF_WMxs0Ptu-_uQ8\"\n}\n"
+        string: "{\n  \"candidates\": [\n    {\n      \"content\": {\n        \"parts\": [\n          {\n            \"text\": \"{\\n  \\\"answer\\\": \\\"Paris\\\",\\n  \\\"confidence\\\": 0.99\\n}\"\n          }\n        ],\n        \"role\": \"model\"\n      },\n      \"finishReason\": \"STOP\",\n      \"index\": 0\n    }\n  ],\n  \"usageMetadata\": {\n    \"promptTokenCount\": 25,\n    \"candidatesTokenCount\": 21,\n    \"totalTokenCount\": 46,\n    \"promptTokensDetails\": [\n      {\n        \"modality\": \"TEXT\",\n        \"tokenCount\": 25\n      }\n    ]\n  },\n  \"modelVersion\": \"gemini-2.5-flash-lite\",\n  \"responseId\": \"_Ay3aeKjMpSkkdUP_-CmiQE\"\n}\n"
       headers:
         Alt-Svc:
           - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
@@ -21,11 +21,11 @@ interactions:
         Content-Type:
           - application/json; charset=UTF-8
         Date:
-          - Sun, 15 Feb 2026 05:46:51 GMT
+          - Sun, 15 Mar 2026 19:48:12 GMT
         Server:
           - scaffolding on HTTPServer2
         Server-Timing:
-          - gfet4t7; dur=396
+          - gfet4t7; dur=466
         Transfer-Encoding:
           - chunked
         Vary:

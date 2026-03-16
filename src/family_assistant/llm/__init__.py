@@ -74,6 +74,10 @@ _otel_tracer = otel_trace.get_tracer(__name__)
 # TypeVar for generic structured output support
 T = TypeVar("T", bound=BaseModel)
 
+type JsonPrimitive = str | int | float | bool | None
+type JsonValue = JsonPrimitive | list[JsonValue] | dict[str, JsonValue]
+type JsonObject = dict[str, JsonValue]
+
 
 class ParsedChoice(TypedDict, total=False):
     delta: Mapping[str, object]
@@ -337,6 +341,134 @@ class BaseLLMClient:
         # Fall back to original content (let JSON parser give the error)
         return content
 
+    def _add_system_instruction(
+        self,
+        messages: Sequence[LLMMessage],
+        instruction: str,
+    ) -> list[LLMMessage]:
+        """Return a message list with the instruction merged into the system prompt."""
+        messages_with_instruction = list(messages)
+
+        if messages_with_instruction and isinstance(
+            messages_with_instruction[0], SystemMessage
+        ):
+            original_content = messages_with_instruction[0].content
+            messages_with_instruction[0] = SystemMessage(
+                content=f"{original_content}\n\n{instruction}"
+            )
+            return messages_with_instruction
+
+        messages_with_instruction.insert(0, SystemMessage(content=instruction))
+        return messages_with_instruction
+
+    def _append_retry_feedback(
+        self,
+        messages: list[LLMMessage],
+        raw_response: str | None,
+        feedback: str,
+    ) -> None:
+        """Append the failed response and retry feedback to the conversation."""
+        if raw_response is not None:
+            messages.append(AssistantMessage(content=raw_response))
+        messages.append(UserMessage(content=feedback))
+
+    def _parse_json_object_response(self, raw_response: str) -> JsonObject:
+        """Parse a top-level JSON object from raw model output."""
+        parsed = json.loads(self._extract_json_from_response(raw_response))
+        if not isinstance(parsed, dict):
+            raise TypeError(
+                f"Expected a JSON object but received {type(parsed).__name__}"
+            )
+        return cast("JsonObject", parsed)
+
+    async def generate_json(
+        self,
+        messages: Sequence[LLMMessage],
+        max_retries: int = 2,
+    ) -> JsonObject:
+        """
+        Generate a parsed top-level JSON object response.
+
+        This is the schemaless JSON mode. The provider is told to return a JSON
+        object, but the expected keys and nesting are defined by the prompt
+        rather than by an RPC-level schema.
+
+        Args:
+            messages: Conversation messages
+            max_retries: Maximum number of retry attempts on validation failure
+
+        Returns:
+            Parsed JSON object response
+
+        Raises:
+            StructuredOutputError: If response cannot be parsed/validated after retries
+        """
+        instruction = (
+            "You must respond with a valid JSON object. "
+            "The required fields and structure are defined by the conversation. "
+            "Respond ONLY with the JSON object, with no markdown or extra text."
+        )
+        messages_with_instruction = self._add_system_instruction(messages, instruction)
+
+        last_error: Exception | None = None
+        raw_response: str | None = None
+
+        for attempt in range(max_retries + 1):
+            try:
+                llm_client = cast("LLMInterface", self)
+                response = await llm_client.generate_response(messages_with_instruction)
+
+                if not response.content:
+                    raise ValueError("LLM returned empty response")
+
+                raw_response = response.content
+                return self._parse_json_object_response(raw_response)
+
+            except json.JSONDecodeError as e:
+                last_error = e
+                logger.warning(
+                    f"JSON output parsing failed (attempt {attempt + 1}/{max_retries + 1}): {e}"
+                )
+
+                if attempt < max_retries:
+                    self._append_retry_feedback(
+                        messages_with_instruction,
+                        raw_response,
+                        (
+                            f"Your response was not valid JSON. Parse error: {e}\n\n"
+                            "Please try again. Respond ONLY with a valid JSON object."
+                        ),
+                    )
+
+            except TypeError as e:
+                last_error = e
+                logger.warning(
+                    f"JSON output validation failed (attempt {attempt + 1}/{max_retries + 1}): {e}"
+                )
+
+                if attempt < max_retries:
+                    self._append_retry_feedback(
+                        messages_with_instruction,
+                        raw_response,
+                        (
+                            f"Your response was valid JSON but not a JSON object. Error: {e}\n\n"
+                            "Please try again. Respond ONLY with a valid JSON object."
+                        ),
+                    )
+
+            except Exception as e:
+                last_error = e
+                logger.error(f"Unexpected error in JSON output generation: {e}")
+                break
+
+        raise StructuredOutputError(
+            message=f"Failed to generate valid JSON output after {max_retries + 1} attempts",
+            provider=getattr(self, "model", "unknown").split("/")[0],
+            model=getattr(self, "model", "unknown"),
+            raw_response=raw_response,
+            validation_error=last_error,
+        )
+
     async def generate_structured(
         self,
         messages: Sequence[LLMMessage],
@@ -375,20 +507,9 @@ class BaseLLMClient:
         )
 
         # Create messages with schema instruction
-        messages_with_schema: list[LLMMessage] = list(messages)
-
-        # Add schema instruction as a system message at the beginning
-        # or append to existing system message
-        if messages_with_schema and isinstance(messages_with_schema[0], SystemMessage):
-            # Append to existing system message
-            original_content = messages_with_schema[0].content
-            updated_system = SystemMessage(
-                content=f"{original_content}\n\n{schema_instruction}"
-            )
-            messages_with_schema[0] = updated_system
-        else:
-            # Insert new system message at the beginning
-            messages_with_schema.insert(0, SystemMessage(content=schema_instruction))
+        messages_with_schema = self._add_system_instruction(
+            messages, schema_instruction
+        )
 
         last_error: Exception | None = None
         raw_response: str | None = None
@@ -418,16 +539,15 @@ class BaseLLMClient:
                 )
 
                 if attempt < max_retries:
-                    # Add error feedback for retry
-                    error_feedback = UserMessage(
-                        content=(
+                    self._append_retry_feedback(
+                        messages_with_schema,
+                        raw_response,
+                        (
                             f"Your response was not valid JSON matching the required schema. "
                             f"Error: {e}\n\n"
                             f"Please try again. Respond ONLY with valid JSON matching the schema."
-                        )
+                        ),
                     )
-                    messages_with_schema.append(AssistantMessage(content=raw_response))
-                    messages_with_schema.append(error_feedback)
 
             except json.JSONDecodeError as e:
                 last_error = e
@@ -436,16 +556,15 @@ class BaseLLMClient:
                 )
 
                 if attempt < max_retries:
-                    # Add error feedback for retry
-                    error_feedback = UserMessage(
-                        content=(
+                    self._append_retry_feedback(
+                        messages_with_schema,
+                        raw_response,
+                        (
                             f"Your response was not valid JSON. "
                             f"Parse error: {e}\n\n"
                             f"Please try again. Respond ONLY with valid JSON, no markdown or extra text."
-                        )
+                        ),
                     )
-                    messages_with_schema.append(AssistantMessage(content=raw_response))
-                    messages_with_schema.append(error_feedback)
 
             except Exception as e:
                 # For other errors, don't retry
@@ -875,6 +994,7 @@ class LLMInterface(Protocol):
         self,
         messages: Sequence[LLMMessage],
         response_model: type[T],
+        max_retries: int = 2,
     ) -> T:
         """
         Generate a structured response matching the given Pydantic model.
@@ -886,9 +1006,33 @@ class LLMInterface(Protocol):
         Args:
             messages: Conversation messages
             response_model: Pydantic model class defining the expected response schema
+            max_retries: Maximum number of retry attempts on validation failure
 
         Returns:
             Instance of response_model populated with the LLM's response
+
+        Raises:
+            StructuredOutputError: If response cannot be parsed/validated after retries
+        """
+        ...
+
+    async def generate_json(
+        self,
+        messages: Sequence[LLMMessage],
+        max_retries: int = 2,
+    ) -> JsonObject:
+        """
+        Generate a parsed JSON object response.
+
+        This is the schemaless JSON mode. It guarantees a top-level JSON
+        object but does not take a response schema.
+
+        Args:
+            messages: Conversation messages
+            max_retries: Maximum number of retry attempts on validation failure
+
+        Returns:
+            Parsed JSON object response
 
         Raises:
             StructuredOutputError: If response cannot be parsed/validated after retries
@@ -2214,11 +2358,12 @@ class LiteLLMClient(BaseLLMClient):
                     ServiceUnavailableError,
                     Timeout,
                 ) as e:
-                    last_error = e
                     logger.error(
                         f"LLM provider error in structured output generation: {e}"
                     )
-                    break
+                    span.set_status(OtelStatusCode.ERROR, str(e))
+                    span.record_exception(e)
+                    raise
 
                 except Exception as e:
                     last_error = e
@@ -2238,13 +2383,128 @@ class LiteLLMClient(BaseLLMClient):
                 validation_error=last_error,
             )
 
+    async def generate_json(
+        self,
+        messages: Sequence[LLMMessage],
+        max_retries: int = 2,
+    ) -> JsonObject:
+        """Generate a top-level JSON object using LiteLLM's native JSON mode."""
+        with _otel_tracer.start_as_current_span(
+            "llm.provider.generate_json",
+            attributes={
+                "gen_ai.system": "litellm",
+                "gen_ai.request.model": self.model,
+            },
+        ) as span:
+            messages_with_instruction = self._add_system_instruction(
+                messages,
+                (
+                    "You must respond with a valid JSON object. "
+                    "The required fields and structure are defined by the conversation. "
+                    "Do not omit requested keys. Respond ONLY with the JSON object."
+                ),
+            )
+            messages_list = self._process_tool_messages(list(messages_with_instruction))
+            message_dicts = [message_to_json_dict(msg) for msg in messages_list]
+
+            last_error: Exception | None = None
+            raw_response: str | None = None
+
+            for attempt in range(max_retries + 1):
+                try:
+                    completion_params = self.default_kwargs.copy()
+
+                    response_obj = await acompletion(
+                        model=self.model,
+                        messages=message_dicts,
+                        response_format={"type": "json_object"},
+                        **completion_params,  # type: ignore[reportArgumentType] # LiteLLM accepts dynamic kwargs
+                    )
+                    response = cast("ModelResponse", response_obj)
+
+                    if not response.choices or not response.choices[0].message:  # type: ignore[attr-defined]
+                        raise ValueError("LLM returned empty response")
+
+                    message = response.choices[0].message  # type: ignore[attr-defined]
+                    content = message.content
+
+                    if not content:
+                        raise ValueError("LLM returned empty content")
+
+                    raw_response = content
+                    result = self._parse_json_object_response(content)
+                    if hasattr(response, "usage") and response.usage:  # type: ignore[attr-defined]
+                        try:
+                            usage_data = response.usage.model_dump(mode="json")  # type: ignore[attr-defined]
+                            if isinstance(usage_data, dict):
+                                span.set_attribute(
+                                    "gen_ai.usage.input_tokens",
+                                    usage_data.get("prompt_tokens", 0),
+                                )
+                                span.set_attribute(
+                                    "gen_ai.usage.output_tokens",
+                                    usage_data.get("completion_tokens", 0),
+                                )
+                        except Exception:
+                            pass
+                    return result
+
+                except (json.JSONDecodeError, TypeError) as e:
+                    last_error = e
+                    logger.warning(
+                        f"JSON output validation failed (attempt {attempt + 1}/{max_retries + 1}): {e}"
+                    )
+
+                    if attempt < max_retries:
+                        message_dicts.append({
+                            "role": "assistant",
+                            "content": raw_response or "",
+                        })
+                        message_dicts.append({
+                            "role": "user",
+                            "content": (
+                                f"Your response was not a valid JSON object. "
+                                f"Error: {e}\n\n"
+                                f"Please respond with a valid JSON object only."
+                            ),
+                        })
+
+                except (
+                    APIConnectionError,
+                    APIError,
+                    BadRequestError,
+                    RateLimitError,
+                    ServiceUnavailableError,
+                    Timeout,
+                ) as e:
+                    logger.error(f"LLM provider error in JSON output generation: {e}")
+                    span.set_status(OtelStatusCode.ERROR, str(e))
+                    span.record_exception(e)
+                    raise
+
+                except Exception as e:
+                    last_error = e
+                    logger.error(f"Unexpected error in JSON output generation: {e}")
+                    break
+
+            span.set_status(OtelStatusCode.ERROR, str(last_error))
+            if last_error:
+                span.record_exception(last_error)
+            raise StructuredOutputError(
+                message=f"Failed to generate valid JSON output after {max_retries + 1} attempts",
+                provider=self.model.split("/")[0],
+                model=self.model,
+                raw_response=raw_response,
+                validation_error=last_error,
+            )
+
 
 class InteractionRecord(TypedDict):
     """A single recorded LLM interaction in JSONL format.
 
     Each record contains the serialized input arguments and the serialized output
     from a single LLM method call (generate_response, format_user_message_with_file,
-    or generate_structured).
+    generate_structured, or generate_json).
     """
 
     input: dict[str, object]
@@ -2386,6 +2646,7 @@ class RecordingLLMClient:
         self,
         messages: Sequence[LLMMessage],
         response_model: type[T],
+        max_retries: int = 2,
     ) -> T:
         """Calls the wrapped client's generate_structured, records, and returns."""
         messages_dict = [message_to_json_dict(msg) for msg in messages]
@@ -2394,10 +2655,13 @@ class RecordingLLMClient:
             "messages": messages_dict,
             "response_model_name": response_model.__name__,
             "response_model_schema": response_model.model_json_schema(),
+            "max_retries": max_retries,
         }
         try:
             output_data = await self.wrapped_client.generate_structured(
-                messages=messages, response_model=response_model
+                messages=messages,
+                response_model=response_model,
+                max_retries=max_retries,
             )
             record: InteractionRecord = {
                 "input": input_data,
@@ -2411,6 +2675,35 @@ class RecordingLLMClient:
         except Exception as e:
             logger.error(
                 f"Error in RecordingLLMClient.generate_structured: {e}", exc_info=True
+            )
+            raise
+
+    async def generate_json(
+        self,
+        messages: Sequence[LLMMessage],
+        max_retries: int = 2,
+    ) -> JsonObject:
+        """Calls the wrapped client's generate_json, records, and returns."""
+        messages_dict = [message_to_json_dict(msg) for msg in messages]
+        input_data: dict[str, object] = {
+            "method": "generate_json",
+            "messages": messages_dict,
+            "max_retries": max_retries,
+        }
+        try:
+            output_data = await self.wrapped_client.generate_json(
+                messages=messages,
+                max_retries=max_retries,
+            )
+            record: InteractionRecord = {
+                "input": input_data,
+                "output": {"json_data": output_data},
+            }
+            await self._write_record_to_file(record)
+            return output_data
+        except Exception as e:
+            logger.error(
+                f"Error in RecordingLLMClient.generate_json: {e}", exc_info=True
             )
             raise
 
@@ -2530,7 +2823,7 @@ class PlaybackLLMClient:
             f"PlaybackLLMClient attempting to find LLMOutput match for input args: {json.dumps(current_input_args, indent=2, default=str)[:500]}..."
         )
         for record in self.recorded_interactions:
-            if record.get("input") == current_input_args:
+            if self._recorded_input_matches(record.get("input"), current_input_args):
                 logger.info(f"Found matching interaction in {self.recording_path}.")
                 output_data = record["output"]
                 if not isinstance(output_data, dict):
@@ -2598,7 +2891,7 @@ class PlaybackLLMClient:
             f"PlaybackLLMClient attempting to find dict match for input args: {json.dumps(current_input_args, indent=2, default=str)[:500]}..."
         )
         for record in self.recorded_interactions:
-            if record.get("input") == current_input_args:
+            if self._recorded_input_matches(record.get("input"), current_input_args):
                 logger.info(f"Found matching interaction in {self.recording_path}.")
                 output_data = record["output"]
                 if not isinstance(output_data, dict):
@@ -2655,10 +2948,34 @@ class PlaybackLLMClient:
             failed_input_str = str(current_input_args)
         logger.error(f"Failed Input Args:\n{failed_input_str}")
 
+    def _normalize_recorded_input(
+        self,
+        input_args: object,
+    ) -> dict[str, object] | None:
+        """Normalize recorded input keys so old recordings still match defaults."""
+        if not isinstance(input_args, dict):
+            return None
+
+        normalized = dict(input_args)
+        if normalized.get("method") in {"generate_structured", "generate_json"}:
+            normalized.setdefault("max_retries", 2)
+        return normalized
+
+    def _recorded_input_matches(
+        self,
+        recorded_input: object,
+        current_input_args: dict[str, object],
+    ) -> bool:
+        """Compare current input args against a normalized recorded input."""
+        normalized_recorded = self._normalize_recorded_input(recorded_input)
+        normalized_current = self._normalize_recorded_input(current_input_args)
+        return normalized_recorded == normalized_current
+
     async def generate_structured(
         self,
         messages: Sequence[LLMMessage],
         response_model: type[T],
+        max_retries: int = 2,
     ) -> T:
         """Plays back for the generate_structured method."""
         messages_dict = [message_to_json_dict(msg) for msg in messages]
@@ -2667,6 +2984,7 @@ class PlaybackLLMClient:
             "messages": messages_dict,
             "response_model_name": response_model.__name__,
             "response_model_schema": response_model.model_json_schema(),
+            "max_retries": max_retries,
         }
 
         logger.debug(
@@ -2675,7 +2993,7 @@ class PlaybackLLMClient:
         )
 
         for record in self.recorded_interactions:
-            if record.get("input") == current_input_args:
+            if self._recorded_input_matches(record.get("input"), current_input_args):
                 logger.info(
                     f"Found matching structured output interaction in {self.recording_path}."
                 )
@@ -2703,6 +3021,49 @@ class PlaybackLLMClient:
             f"for model {response_model.__name__}."
         )
 
+    async def generate_json(
+        self,
+        messages: Sequence[LLMMessage],
+        max_retries: int = 2,
+    ) -> JsonObject:
+        """Plays back for the generate_json method."""
+        messages_dict = [message_to_json_dict(msg) for msg in messages]
+        current_input_args: dict[str, object] = {
+            "method": "generate_json",
+            "messages": messages_dict,
+            "max_retries": max_retries,
+        }
+
+        logger.debug(
+            f"PlaybackLLMClient attempting to find JSON output match for input args: "
+            f"{json.dumps(current_input_args, indent=2, default=str)[:500]}..."
+        )
+
+        for record in self.recorded_interactions:
+            if self._recorded_input_matches(record.get("input"), current_input_args):
+                logger.info(
+                    f"Found matching JSON output interaction in {self.recording_path}."
+                )
+                output_data = record["output"]
+                if not isinstance(output_data, dict):
+                    logger.error(
+                        f"Recorded output for matched JSON input is not a dict: {output_data}"
+                    )
+                    raise LookupError("Matched recorded output is not a dictionary.")
+
+                json_data = output_data.get("json_data")
+                if json_data is None:
+                    raise LookupError("Recorded JSON output missing 'json_data' field.")
+                if not isinstance(json_data, dict):
+                    raise LookupError("Recorded JSON output is not a JSON object.")
+
+                return cast("JsonObject", json_data)
+
+        await self._log_no_match_error(current_input_args)
+        raise LookupError(
+            f"No matching JSON output recorded interaction found in {self.recording_path}."
+        )
+
 
 # Export all public classes and interfaces
 __all__ = [
@@ -2727,6 +3088,8 @@ __all__ = [
     "StructuredOutputError",
     "StreamEventMetadata",
     "MessageReasoningInfo",
+    "JsonObject",
+    "JsonValue",
     "UserMessageContentPart",
     "UserMessageDict",
 ]

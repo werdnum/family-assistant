@@ -1,6 +1,6 @@
 interactions:
   - request:
-      body: '{"contents": [{"parts": [{"text": "System: You must respond with valid JSON that matches this schema:\n```json\n{\n  \"$defs\": {\n    \"PersonInfo\": {\n      \"description\": \"Person information model.\",\n      \"properties\": {\n        \"name\": {\n          \"title\": \"Name\",\n          \"type\": \"string\"\n        },\n        \"age\": {\n          \"maximum\": 150,\n          \"minimum\": 0,\n          \"title\": \"Age\",\n          \"type\": \"integer\"\n        },\n        \"occupation\": {\n          \"anyOf\": [\n            {\n              \"type\": \"string\"\n            },\n            {\n              \"type\": \"null\"\n            }\n          ],\n          \"default\": null,\n          \"title\": \"Occupation\"\n        }\n      },\n      \"required\": [\n        \"name\",\n        \"age\"\n      ],\n      \"title\": \"PersonInfo\",\n      \"type\": \"object\"\n    }\n  },\n  \"description\": \"Response with nested model.\",\n  \"properties\": {\n    \"person\": {\n      \"$ref\": \"#/$defs/PersonInfo\"\n    },\n    \"summary\": {\n      \"title\": \"Summary\",\n      \"type\": \"string\"\n    }\n  },\n  \"required\": [\n    \"person\",\n    \"summary\"\n  ],\n  \"title\": \"NestedResponse\",\n  \"type\": \"object\"\n}\n```\n\nRespond ONLY with the JSON object, no additional text or markdown."}], "role": "user"}, {"parts": [{"text": "Create a profile for Sarah, age 35, who works as a doctor. Also provide a one-sentence summary about her."}], "role": "user"}], "generationConfig": {"mediaResolution": "MEDIA_RESOLUTION_HIGH"}}'
+      body: '{"contents": [{"parts": [{"text": "Create a profile for Sarah, age 35, who works as a doctor. Also provide a one-sentence summary about her."}], "role": "user"}], "generationConfig": {"responseMimeType": "application/json", "responseSchema": {"description": "Response with nested model.", "properties": {"person": {"description": "Person information model.", "properties": {"name": {"title": "Name", "type": "STRING"}, "age": {"maximum": 150.0, "minimum": 0.0, "title": "Age", "type": "INTEGER"}, "occupation": {"nullable": true, "title": "Occupation", "type": "STRING"}}, "property_ordering": ["name", "age", "occupation"], "required": ["name", "age"], "title": "PersonInfo", "type": "OBJECT"}, "summary": {"title": "Summary", "type": "STRING"}}, "property_ordering": ["person", "summary"], "required": ["person", "summary"], "title": "NestedResponse", "type": "OBJECT"}, "mediaResolution": "MEDIA_RESOLUTION_HIGH"}}'
       headers:
         Content-Type:
           - application/json
@@ -12,7 +12,7 @@ interactions:
       uri: https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-lite:generateContent
     response:
       body:
-        string: "{\n  \"candidates\": [\n    {\n      \"content\": {\n        \"parts\": [\n          {\n            \"text\": \"```json\\n{\\n  \\\"person\\\": {\\n    \\\"name\\\": \\\"Sarah\\\",\\n    \\\"age\\\": 35,\\n    \\\"occupation\\\": \\\"Doctor\\\"\\n  },\\n  \\\"summary\\\": \\\"Sarah is a 35-year-old doctor dedicated to her profession.\\\"\\n}\\n```\"\n          }\n        ],\n        \"role\": \"model\"\n      },\n      \"finishReason\": \"STOP\",\n      \"index\": 0\n    }\n  ],\n  \"usageMetadata\": {\n    \"promptTokenCount\": 371,\n    \"candidatesTokenCount\": 64,\n    \"totalTokenCount\": 435,\n    \"promptTokensDetails\": [\n      {\n        \"modality\": \"TEXT\",\n        \"tokenCount\": 371\n      }\n    ]\n  },\n  \"modelVersion\": \"gemini-2.5-flash-lite\",\n  \"responseId\": \"yl2Rae-iNaLv7M8PsbbEwQY\"\n}\n"
+        string: "{\n  \"candidates\": [\n    {\n      \"content\": {\n        \"parts\": [\n          {\n            \"text\": \"{\\n  \\\"person\\\": {\\n    \\\"name\\\": \\\"Sarah\\\",\\n    \\\"age\\\": 35,\\n    \\\"occupation\\\": \\\"Doctor\\\"\\n  },\\n  \\\"summary\\\": \\\"Sarah is a dedicated 35-year-old doctor committed to her patients' well-being.\\\"\\n}\"\n          }\n        ],\n        \"role\": \"model\"\n      },\n      \"finishReason\": \"STOP\",\n      \"index\": 0\n    }\n  ],\n  \"usageMetadata\": {\n    \"promptTokenCount\": 28,\n    \"candidatesTokenCount\": 64,\n    \"totalTokenCount\": 92,\n    \"promptTokensDetails\": [\n      {\n        \"modality\": \"TEXT\",\n        \"tokenCount\": 28\n      }\n    ]\n  },\n  \"modelVersion\": \"gemini-2.5-flash-lite\",\n  \"responseId\": \"-gy3aaqMO5iE7M8PueatsQM\"\n}\n"
       headers:
         Alt-Svc:
           - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
@@ -21,11 +21,11 @@ interactions:
         Content-Type:
           - application/json; charset=UTF-8
         Date:
-          - Sun, 15 Feb 2026 05:46:50 GMT
+          - Sun, 15 Mar 2026 19:48:11 GMT
         Server:
           - scaffolding on HTTPServer2
         Server-Timing:
-          - gfet4t7; dur=577
+          - gfet4t7; dur=1380
         Transfer-Encoding:
           - chunked
         Vary:

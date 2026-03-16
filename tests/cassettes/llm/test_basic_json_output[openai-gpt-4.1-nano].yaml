@@ -1,6 +1,6 @@
 interactions:
   - request:
-      body: '{"messages":[{"role":"user","content":"What is 2 + 2? Provide the expression, result, and a brief explanation."}],"model":"gpt-4.1-nano","response_format":{"type":"json_schema","json_schema":{"schema":{"description":"Math calculation result.","properties":{"expression":{"title":"Expression","type":"string"},"result":{"title":"Result","type":"integer"},"explanation":{"title":"Explanation","type":"string"}},"required":["expression","result","explanation"],"title":"MathResult","type":"object","additionalProperties":false},"name":"MathResult","strict":true}},"stream":false}'
+      body: '{"messages":[{"role":"system","content":"You must respond with a valid JSON object. Respond ONLY with the JSON object and no additional text."},{"role":"user","content":"What is 2 + 2? Respond with a JSON object containing ''expression'', ''result'', and ''explanation''."}],"model":"gpt-4.1-nano","response_format":{"type":"json_object"}}'
       headers:
         accept:
           - application/json
@@ -9,7 +9,7 @@ interactions:
         connection:
           - keep-alive
         content-length:
-          - '576'
+          - '333'
         content-type:
           - application/json
         host:
@@ -20,8 +20,6 @@ interactions:
           - arm64
         x-stainless-async:
           - async:asyncio
-        x-stainless-helper-method:
-          - chat.completions.parse
         x-stainless-lang:
           - python
         x-stainless-os:
@@ -41,20 +39,20 @@ interactions:
     response:
       body:
         string: !!binary |
-          H4sIAAAAAAAA/4xTy27bMBC8+ysIXisZtqzUTW59HII07aE9FVEg0ORKYkqRBLlK0hr+965kK5L7
-          AHohoJmd5XJmtV8wxrXiV4zLRqBsvUk/3JiHLz50t++/ffp5ffsu3Hj58XqjvrrN5Wee9Aq3ewCJ
-          o2opHekAtbNHWgYQCH3X9Xa7eb3KV28uBqJ1Ckwvqz2m+XKdWmFdmq2yi3SVp+v8JG+clhCp7o4+
-          GdsPZz+oVfBM8CoZkRZiFDUQNhYRGJzpES5i1BGFRZ5MpHQWwQ6z7wsOzz5QC5q84FcFz9grlhU8
-          KTihnUEC82SoMsIKHMveKqVtzTImrKKz1o8QmWDoUBjmKpYn7KnRsmE6MmyA7UTUkomgsWnJJsli
-          1/Z1xEVg+OSY7dodhLgs+GE+bICqi6J3zHbGzAhhLV3WDzTYdH9iDi/GGFf74HbxNymvtNWxKSmg
-          SGmRCRGd5wN7oPN+CKA785RTo9Zjie47DNdd5sd2fMp9IvNTOHxwY8LXm1F11q5UgEKbOEuQSyEb
-          UJN0ilt0SrsZsZg9+s9p/tb7+HBK73/aT4SU4GmjS9oWpeX5i6eyAP1v8a+yF5OHgXmE8EhrXqKG
-          0AehoBK0csdfIP6ICG1JadUQfNDHha18KYTKN1kl1ZYvDotfAAAA//8DAKpJA1m/AwAA
+          H4sIAAAAAAAA/6rmUlBQykxRslJQSs5ILEnOLcjRdfHKyYpyDQYAAAD//4xTTY+bMBC951dYvpZE
+          QMhGe1xV6qXqoYdKrcoKOfYAbsCmnqG71Sr/vQMkgf2SerHMvHnPM/MG8+nYltRhCd+Od/rL7e8f
+          n79//CqjgeEPv0DThbXRnnlA1rsJ1gEUwaCa7PfbmziLb7cj0HoDzUCrOlpnm2TtlPPrNE536zhb
+          J9mZXnurATnvJ38K8TSeQ6HOwCOH4+gSaQFRVcCxSxIHg2+GiFSIFkk5ktEMau8I3Fj7U+6EyCU8
+          doFluPqco7lMxQeR5jKaUIb6hgYki675jXKKroQ7Y6yrRCqUM3xODBTWMUU81FbXwqKgGgT2rfDl
+          eKUHL1zfHiDgJpe5Oy2LDFD2qIZJub5pFoByztP49Die+zNyug6k8VUX/AFfUGVpncW6YGOQXeLm
+          kXwnR/TE5/04+P7ZLCULtR0V5I8wPre7meTk7PcMZrszSFxgM8eTOInekCsMkLINLpyTWukazEyd
+          bVa9sX4BrBZNv67mLe2pcbbpf+RnQGvoeJML3hBj9fOO57QAw+/wXtp1yGPBEiH84fUuyEIYjDBQ
+          Kt6XafXxLxK0BbtVQeiCnRa17AqlTLZNS232cnVa/QMAAP//AwD/U4cbtwMAAA==
       headers:
         CF-Cache-Status:
           - DYNAMIC
         CF-Ray:
-          - 9dce089c4b6cdbd7-FRA
+          - 9dce08ccebd56ae2-FRA
         Connection:
           - keep-alive
         Content-Encoding:
@@ -62,7 +60,7 @@ interactions:
         Content-Type:
           - application/json
         Date:
-          - Sun, 15 Mar 2026 19:48:05 GMT
+          - Sun, 15 Mar 2026 19:48:13 GMT
         Server:
           - cloudflare
         Strict-Transport-Security:
@@ -78,13 +76,13 @@ interactions:
         openai-organization:
           - REDACTED
         openai-processing-ms:
-          - '597'
+          - '662'
         openai-project:
           - proj_wvaoRBrBR9ayhT5aPMqWgDtI
         openai-version:
           - '2020-10-01'
         set-cookie:
-          - __cf_bm=ZdCAnv5zunx.szYniEWwEzTCqBZCxpYlVeQzhZovbGU-1773604085.161262-1.0.1.1-MxKwW8vC0me3Faquq48NUjjGMFq.8ITgKcn4WfL_H83Z9wB5qq9WsjoRFLDE2GYY_mSOSzvqKf5FW5y0EOo0KR5ST2x0Oi9j35Cx28lqIWBxYYtqe9JQhKC.mDh2K84Q; HttpOnly; Secure; Path=/; Domain=api.openai.com; Expires=Sun, 15 Mar 2026 20:18:05 GMT
+          - __cf_bm=ZT55sl4JfLaaKB3gt.RWq72HQCFv80a5N1QkfxAXV.M-1773604092.9419034-1.0.1.1-kKmZmlWqSKV3FohzOi2zLlV6C5cqMiLDbIuN5nb83zpMzyX70AGv0apYhyXQ0Qqy6CrRjwZN3zki1Ps.R6zk2EdGo9eyM6WbPzv9WP.bTihuYaZ4XBqj1cbwt9jqqqxU; HttpOnly; Secure; Path=/; Domain=api.openai.com; Expires=Sun, 15 Mar 2026 20:18:13 GMT
         x-openai-proxy-wasm:
           - v0.1
         x-ratelimit-limit-requests:
@@ -94,13 +92,13 @@ interactions:
         x-ratelimit-remaining-requests:
           - '499'
         x-ratelimit-remaining-tokens:
-          - '199980'
+          - '199947'
         x-ratelimit-reset-requests:
           - 120ms
         x-ratelimit-reset-tokens:
-          - 6ms
+          - 15ms
         x-request-id:
-          - req_cea4b8cbab9543388a842d0c4cf81f46
+          - req_d23e1ac4518641529790559f505ffaf4
       status:
         code: 200
         message: OK

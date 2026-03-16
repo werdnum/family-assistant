@@ -11,19 +11,22 @@ import uuid
 from collections.abc import AsyncIterator, Sequence
 from dataclasses import asdict
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING, Any, TypedDict
+from typing import TYPE_CHECKING, Any, TypedDict, TypeVar, cast
 
 if TYPE_CHECKING:
     from family_assistant.tools.types import ToolAttachment, ToolDefinition
 
 import aiofiles
 from openai import AsyncOpenAI
+from pydantic import BaseModel, ValidationError
 
 from family_assistant.llm import (
     BaseLLMClient,
+    JsonObject,
     LLMOutput,
     LLMStreamEvent,
     StreamEventMetadata,
+    StructuredOutputError,
     ToolCallFunction,
     ToolCallItem,
     UserMessageDict,
@@ -51,6 +54,7 @@ from ..base import (
 )
 
 logger = logging.getLogger(__name__)
+T = TypeVar("T", bound=BaseModel)
 
 
 class _StreamingToolFunction(TypedDict):
@@ -177,6 +181,43 @@ class OpenAIClient(BaseLLMClient):
                 )
         return params
 
+    def _map_error_to_typed_exception(self, e: Exception) -> LLMProviderError:
+        """Map a raw OpenAI exception to the typed provider error hierarchy."""
+        error_message = str(e)
+
+        if "401" in error_message or "authentication" in error_message.lower():
+            return AuthenticationError(
+                error_message, provider="openai", model=self.model
+            )
+        if "429" in error_message or "rate limit" in error_message.lower():
+            return RateLimitError(error_message, provider="openai", model=self.model)
+        if "404" in error_message or "model not found" in error_message.lower():
+            return ModelNotFoundError(
+                error_message, provider="openai", model=self.model
+            )
+        if (
+            "context length" in error_message.lower()
+            or "maximum" in error_message.lower()
+        ):
+            return ContextLengthError(
+                error_message, provider="openai", model=self.model
+            )
+        if "invalid" in error_message.lower() or "400" in error_message:
+            return InvalidRequestError(
+                error_message, provider="openai", model=self.model
+            )
+        if "connection" in error_message.lower() or "network" in error_message.lower():
+            return ProviderConnectionError(
+                error_message, provider="openai", model=self.model
+            )
+        if "timeout" in error_message.lower():
+            return ProviderTimeoutError(
+                error_message, provider="openai", model=self.model
+            )
+
+        logger.error(f"OpenAI API error: {e}", exc_info=True)
+        return LLMProviderError(error_message, provider="openai", model=self.model)
+
     async def generate_response(
         self,
         messages: Sequence[LLMMessage],
@@ -300,48 +341,151 @@ class OpenAIClient(BaseLLMClient):
                 )
             except Exception as record_err:
                 logger.debug(f"Failed to record LLM request error: {record_err}")
-            # Map OpenAI exceptions to our exception hierarchy
-            error_message = str(e)
+            raise self._map_error_to_typed_exception(e) from e
 
-            if "401" in error_message or "authentication" in error_message.lower():
-                raise AuthenticationError(
-                    error_message, provider="openai", model=self.model
-                ) from e
-            elif "429" in error_message or "rate limit" in error_message.lower():
-                raise RateLimitError(
-                    error_message, provider="openai", model=self.model
-                ) from e
-            elif "404" in error_message or "model not found" in error_message.lower():
-                raise ModelNotFoundError(
-                    error_message, provider="openai", model=self.model
-                ) from e
-            elif (
-                "context length" in error_message.lower()
-                or "maximum" in error_message.lower()
-            ):
-                raise ContextLengthError(
-                    error_message, provider="openai", model=self.model
-                ) from e
-            elif "invalid" in error_message.lower() or "400" in error_message:
-                raise InvalidRequestError(
-                    error_message, provider="openai", model=self.model
-                ) from e
-            elif (
-                "connection" in error_message.lower()
-                or "network" in error_message.lower()
-            ):
-                raise ProviderConnectionError(
-                    error_message, provider="openai", model=self.model
-                ) from e
-            elif "timeout" in error_message.lower():
-                raise ProviderTimeoutError(
-                    error_message, provider="openai", model=self.model
-                ) from e
-            else:
-                logger.error(f"OpenAI API error: {e}", exc_info=True)
-                raise LLMProviderError(
-                    error_message, provider="openai", model=self.model
-                ) from e
+    async def generate_structured(
+        self,
+        messages: Sequence[LLMMessage],
+        response_model: type[T],
+        max_retries: int = 2,
+    ) -> T:
+        """Generate structured output using OpenAI's native parse endpoint."""
+        self._validate_user_input(messages)
+
+        processed_messages = self._process_tool_messages(list(messages))
+        api_message_dicts = [message_to_json_dict(msg) for msg in processed_messages]
+        base_params = {
+            "model": self.model,
+            "messages": api_message_dicts,
+            **self.default_kwargs,
+            **self._get_model_specific_params(self.model),
+        }
+
+        raw_response: str | None = None
+        last_error: Exception | None = None
+
+        for attempt in range(max_retries + 1):
+            try:
+                response = await self.client.beta.chat.completions.parse(
+                    response_format=response_model,
+                    **base_params,
+                )
+
+                if not response.choices:
+                    raise ValueError("LLM returned empty response")
+
+                message = response.choices[0].message
+                raw_response = message.content
+
+                if message.parsed is not None:
+                    return cast("T", message.parsed)
+                if raw_response:
+                    return response_model.model_validate_json(
+                        self._extract_json_from_response(raw_response)
+                    )
+                raise ValueError("LLM returned no parsed structured output")
+
+            except (ValidationError, json.JSONDecodeError, ValueError, TypeError) as e:
+                last_error = e
+                logger.warning(
+                    "OpenAI structured output validation failed "
+                    f"(attempt {attempt + 1}/{max_retries + 1}): {e}"
+                )
+                if attempt < max_retries:
+                    api_message_dicts.append({
+                        "role": "assistant",
+                        "content": raw_response or "",
+                    })
+                    api_message_dicts.append({
+                        "role": "user",
+                        "content": (
+                            "Your previous response did not satisfy the required schema. "
+                            f"Error: {e}\n\nPlease try again with valid structured output."
+                        ),
+                    })
+                    raw_response = None
+            except Exception as e:
+                raise self._map_error_to_typed_exception(e) from e
+
+        raise StructuredOutputError(
+            message=f"Failed to generate valid structured output after {max_retries + 1} attempts",
+            provider="openai",
+            model=self.model,
+            raw_response=raw_response,
+            validation_error=last_error,
+        )
+
+    async def generate_json(
+        self,
+        messages: Sequence[LLMMessage],
+        max_retries: int = 2,
+    ) -> JsonObject:
+        """Generate a JSON object using OpenAI's native JSON mode."""
+        self._validate_user_input(messages)
+
+        messages_with_instruction = self._add_system_instruction(
+            messages,
+            (
+                "You must respond with a valid JSON object. "
+                "Respond ONLY with the JSON object and no additional text."
+            ),
+        )
+        processed_messages = self._process_tool_messages(
+            list(messages_with_instruction)
+        )
+        api_message_dicts = [message_to_json_dict(msg) for msg in processed_messages]
+        base_params = {
+            "model": self.model,
+            "messages": api_message_dicts,
+            "response_format": {"type": "json_object"},
+            **self.default_kwargs,
+            **self._get_model_specific_params(self.model),
+        }
+
+        raw_response: str | None = None
+        last_error: Exception | None = None
+
+        for attempt in range(max_retries + 1):
+            try:
+                response = await self.client.chat.completions.create(**base_params)
+                if not response.choices:
+                    raise ValueError("LLM returned empty response")
+
+                message = response.choices[0].message
+                raw_response = message.content
+                if not raw_response:
+                    raise ValueError("LLM returned empty content")
+                return self._parse_json_object_response(raw_response)
+
+            except (json.JSONDecodeError, TypeError, ValueError) as e:
+                last_error = e
+                logger.warning(
+                    "OpenAI JSON output validation failed "
+                    f"(attempt {attempt + 1}/{max_retries + 1}): {e}"
+                )
+                if attempt < max_retries:
+                    api_message_dicts.append({
+                        "role": "assistant",
+                        "content": raw_response or "",
+                    })
+                    api_message_dicts.append({
+                        "role": "user",
+                        "content": (
+                            f"Your previous response was not a valid JSON object. Error: {e}\n\n"
+                            "Please try again and respond with JSON only."
+                        ),
+                    })
+                    raw_response = None
+            except Exception as e:
+                raise self._map_error_to_typed_exception(e) from e
+
+        raise StructuredOutputError(
+            message=f"Failed to generate valid JSON output after {max_retries + 1} attempts",
+            provider="openai",
+            model=self.model,
+            raw_response=raw_response,
+            validation_error=last_error,
+        )
 
     async def format_user_message_with_file(
         self,
