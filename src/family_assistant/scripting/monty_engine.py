@@ -283,6 +283,7 @@ class MontyEngine:
         if not self.config.disable_apis:
             self._add_json_api(ext_fn_names, ext_fn_impls)
             self._add_time_api(ext_fn_names, ext_fn_impls, inputs)
+            self._add_llm_api(ext_fn_names, ext_fn_impls)
 
         if execution_context and execution_context.attachment_registry:
             try:
@@ -718,6 +719,19 @@ class MontyEngine:
             "DAY": time_api.DAY,
             "WEEK": time_api.WEEK,
         })
+
+    def _add_llm_api(
+        self,
+        names: list[str],
+        impls: dict[str, Callable[..., Any]],
+    ) -> None:
+        """Add LLM API functions (llm, llm_json)."""
+        from .apis.llm import llm_call_async, llm_call_json_async  # noqa: PLC0415
+
+        names.append("llm")
+        impls["llm"] = llm_call_async
+        names.append("llm_json")
+        impls["llm_json"] = llm_call_json_async
 
     def _build_resource_limits(self) -> pydantic_monty.ResourceLimits:
         """Build Monty resource limits from config.
