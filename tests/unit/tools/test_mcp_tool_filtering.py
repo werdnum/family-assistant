@@ -1,5 +1,7 @@
 """Unit tests for MCP tool filtering by server ID."""
 
+import asyncio
+import contextlib
 from types import SimpleNamespace
 from typing import TYPE_CHECKING, cast
 from unittest.mock import AsyncMock
@@ -11,6 +13,11 @@ from family_assistant.tools import (
     FilteredToolsProvider,
     MCPServerConfig,
     MCPToolsProvider,
+)
+from family_assistant.tools.mcp import (
+    MCP_SERVER_STATUS_CANCELLED,
+    MCP_SERVER_STATUS_CONNECTED,
+    MCP_SERVER_STATUS_FAILED,
 )
 from family_assistant.tools.metadata import ToolTag, build_tool_descriptor
 from family_assistant.tools.types import ToolDefinition
@@ -275,3 +282,110 @@ async def test_mcp_reconnect_preserves_existing_duplicate_tool_mapping() -> None
     assert provider._tool_map["shared_tool"] == "server2"
     assert len(provider._definitions) == 1
     assert provider._descriptors[0].mcp_server_id == "server2"
+
+
+@pytest.mark.asyncio
+async def test_health_check_retries_failed_and_cancelled_servers() -> None:
+    """Health check loop retries servers that failed or timed out during init."""
+    all_retried = asyncio.Event()
+    retried_servers: set[str] = set()
+
+    provider = MCPToolsProvider(
+        {
+            "healthy": {"transport": "stdio", "command": "echo"},
+            "failed_server": {"transport": "stdio", "command": "echo"},
+            "cancelled_server": {"transport": "stdio", "command": "echo"},
+        },
+        health_check_interval_seconds=0,
+    )
+
+    async def fake_connect(
+        server_id: str, server_conf: MCPServerConfig
+    ) -> tuple[object | None, list[ToolDefinition], list, dict[str, str]]:
+        if server_id == "healthy":
+            session = SimpleNamespace(list_tools=AsyncMock())
+            provider._server_statuses[server_id] = MCP_SERVER_STATUS_CONNECTED
+            return session, [], [], {}
+        # On first call (init), fail. On retry via _reconnect_server, succeed.
+        if server_id not in retried_servers:
+            provider._server_statuses[server_id] = MCP_SERVER_STATUS_FAILED
+            return None, [], [], {}
+        session = SimpleNamespace(list_tools=AsyncMock())
+        provider._server_statuses[server_id] = MCP_SERVER_STATUS_CONNECTED
+        return session, [], [], {}
+
+    original_reconnect = provider._reconnect_server
+
+    async def tracking_reconnect(server_id: str) -> bool:
+        retried_servers.add(server_id)
+        result = await original_reconnect(server_id)
+        if retried_servers >= {"failed_server", "cancelled_server"}:
+            all_retried.set()
+        return result
+
+    provider._connect_and_discover_mcp = fake_connect  # type: ignore[method-assign]
+    provider._reconnect_server = tracking_reconnect  # type: ignore[method-assign]
+    await provider.initialize()
+
+    # Simulate one server being cancelled (as if it timed out during init)
+    provider._server_statuses["cancelled_server"] = MCP_SERVER_STATUS_CANCELLED
+
+    # Wait for the health check to retry both failed/cancelled servers
+    await asyncio.wait_for(all_retried.wait(), timeout=5.0)
+
+    assert provider._server_statuses["failed_server"] == MCP_SERVER_STATUS_CONNECTED
+    assert provider._server_statuses["cancelled_server"] == MCP_SERVER_STATUS_CONNECTED
+    assert "healthy" not in retried_servers
+
+    # Clean up
+    provider._health_check_enabled = False
+    if provider._health_check_task:
+        provider._health_check_task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await provider._health_check_task
+
+
+@pytest.mark.asyncio
+async def test_initialize_starts_health_check_with_no_sessions() -> None:
+    """initialize() starts health check even when all servers fail, enabling recovery."""
+    reconnected = asyncio.Event()
+
+    provider = MCPToolsProvider(
+        {"server1": {"transport": "stdio", "command": "echo"}},
+        health_check_interval_seconds=0,
+    )
+
+    async def fake_connect(
+        server_id: str, server_conf: MCPServerConfig
+    ) -> tuple[object | None, list, list, dict]:
+        if not reconnected.is_set():
+            provider._server_statuses[server_id] = MCP_SERVER_STATUS_FAILED
+            return None, [], [], {}
+        session = SimpleNamespace(list_tools=AsyncMock())
+        provider._server_statuses[server_id] = MCP_SERVER_STATUS_CONNECTED
+        return session, [], [], {}
+
+    original_reconnect = provider._reconnect_server
+
+    async def tracking_reconnect(server_id: str) -> bool:
+        reconnected.set()
+        return await original_reconnect(server_id)
+
+    provider._connect_and_discover_mcp = fake_connect  # type: ignore[method-assign]
+    provider._reconnect_server = tracking_reconnect  # type: ignore[method-assign]
+    await provider.initialize()
+
+    # Health check task should be started even though no sessions exist
+    assert provider._health_check_task is not None
+    assert not provider._health_check_task.done()
+    assert len(provider._sessions) == 0
+
+    # Wait for the health check to actually reconnect the server
+    await asyncio.wait_for(reconnected.wait(), timeout=5.0)
+    assert provider._server_statuses["server1"] == MCP_SERVER_STATUS_CONNECTED
+
+    # Clean up
+    provider._health_check_enabled = False
+    provider._health_check_task.cancel()
+    with contextlib.suppress(asyncio.CancelledError):
+        await provider._health_check_task

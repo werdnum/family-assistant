@@ -559,8 +559,8 @@ class MCPToolsProvider:
             f"Active sessions: {len(self._sessions)}. Mapped {len(self._tool_map)} unique tools from {len(self._definitions)} total definitions."
         )
 
-        # Start health check task if we have any connected sessions
-        if self._sessions and self._health_check_enabled:
+        # Start health check task to monitor connected servers and retry failed/cancelled ones
+        if self._health_check_enabled:
             self._health_check_task = asyncio.create_task(self._health_check_loop())
             logger.info("Started MCP server health check task")
 
@@ -626,7 +626,7 @@ class MCPToolsProvider:
         return None
 
     async def _health_check_loop(self) -> None:
-        """Periodically checks the health of connected MCP servers."""
+        """Periodically checks the health of connected MCP servers and retries failed/cancelled ones."""
         logger.info(
             f"Starting health check loop with interval {self._health_check_interval_seconds}s"
         )
@@ -638,6 +638,14 @@ class MCPToolsProvider:
 
                 if not self._health_check_enabled:
                     break
+
+                # Collect servers needing retry before health checks run,
+                # so servers that fail health check below aren't retried twice
+                servers_to_retry = [
+                    server_id
+                    for server_id, status in self._server_statuses.items()
+                    if status in {MCP_SERVER_STATUS_FAILED, MCP_SERVER_STATUS_CANCELLED}
+                ]
 
                 # Check each connected server
                 for server_id, session in list(self._sessions.items()):
@@ -690,6 +698,24 @@ class MCPToolsProvider:
                                 logger.error(
                                     f"Failed to reconnect server '{server_id}' during health check"
                                 )
+
+                # Retry servers that were failed/cancelled before this cycle started
+                for server_id in servers_to_retry:
+                    if not self._health_check_enabled:
+                        break
+
+                    logger.info(
+                        f"Retrying previously {self._server_statuses[server_id]} server '{server_id}'..."
+                    )
+                    reconnected = await self._reconnect_server(server_id)
+                    if reconnected:
+                        logger.info(
+                            f"Successfully connected previously failed server '{server_id}'"
+                        )
+                    else:
+                        logger.warning(
+                            f"Retry failed for server '{server_id}', will try again next cycle"
+                        )
 
             except asyncio.CancelledError:
                 logger.info("Health check loop cancelled")
