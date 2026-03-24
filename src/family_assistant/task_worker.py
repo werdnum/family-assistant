@@ -962,26 +962,33 @@ class TaskWorker:
             )
             # Handle recurrence even if task failed (after max retries)
             await self._handle_recurrence(db_context, task)
-            # Notify user about script execution failures
-            if task["task_type"] == "script_execution":
-                await self._enqueue_script_error_notification(
-                    db_context, task, error_str
-                )
+            # Notify user about automation failures
+            await self._enqueue_automation_error_notification(
+                db_context, task, error_str
+            )
 
-    async def _enqueue_script_error_notification(
+    async def _enqueue_automation_error_notification(
         self,
         db_context: DatabaseContext,
         task: TaskDict,
         error_str: str,
     ) -> None:
-        """Enqueue an llm_callback task to notify the user about a script failure.
+        """Enqueue an llm_callback task to notify the user about an automation failure.
 
-        Only called after a script_execution task exhausts its retries.
-        The notification task uses max_retries=1 and its own failure will NOT
-        trigger another notification (loop prevention: only script_execution
-        failures trigger this).
+        Called after any automation task (script_execution or llm_callback)
+        exhausts its retries. Loop prevention: notification tasks lack
+        automation_id/listener_id, so they won't trigger further notifications.
         """
         payload_dict = task.get("payload") or {}
+        task_type = task["task_type"]
+
+        # Only notify for automation-related tasks (have automation_id or listener_id)
+        is_automation_task = task_type == "script_execution" or bool(
+            payload_dict.get("automation_id") or payload_dict.get("listener_id")
+        )
+        if not is_automation_task:
+            return
+
         config = payload_dict.get("config") or {}
 
         if config.get("notify_on_failure") is False:
@@ -993,17 +1000,6 @@ class TaskWorker:
 
         conversation_id = payload_dict.get("conversation_id", "")
         interface_type = payload_dict.get("interface_type", "telegram")
-
-        # Build informative error context for the LLM
-        script_code = payload_dict.get("script_code") or ""
-        script_lines = script_code.strip().splitlines()
-        if len(script_lines) > 100:
-            script_code = "\n".join(script_lines[:100]) + "\n... (truncated)"
-
-        event_data = payload_dict.get("event_data")
-        event_data_str = str(event_data) if event_data else ""
-        if len(event_data_str) > 2000:
-            event_data_str = event_data_str[:2000] + "... (truncated)"
 
         automation_id = payload_dict.get("automation_id", "unknown")
         task_name = payload_dict.get("task_name", task["task_id"])
@@ -1020,24 +1016,53 @@ class TaskWorker:
         if len(error_lines) > 50:
             error_str = "\n".join(error_lines[-50:])
 
-        callback_context = (
-            f"An automation script has failed after exhausting all retries.\n\n"
-            f"**Task:** {task_name}\n"
-            f"**Source:** {source_label}\n"
-            f"**Retries exhausted:** {retry_count}\n\n"
-            f"**Error:**\n```\n{error_str}\n```\n\n"
-            f"**Script code:**\n```python\n{script_code}\n```\n\n"
-        )
-        if event_data_str and event_data_str != "{}":
-            callback_context += (
-                f"**Triggering event data:**\n```\n{event_data_str}\n```\n\n"
-            )
-        callback_context += (
-            "Please summarize this error for the user and suggest possible fixes. "
-            "Do NOT re-run the script."
-        )
+        if task_type == "script_execution":
+            # Build script-specific error context
+            script_code = payload_dict.get("script_code") or ""
+            script_lines = script_code.strip().splitlines()
+            if len(script_lines) > 100:
+                script_code = "\n".join(script_lines[:100]) + "\n... (truncated)"
 
-        notification_task_id = f"script_error_notify_{uuid.uuid4().hex[:8]}"
+            callback_context = (
+                f"An automation script has failed after exhausting all retries.\n\n"
+                f"**Task:** {task_name}\n"
+                f"**Source:** {source_label}\n"
+                f"**Retries exhausted:** {retry_count}\n\n"
+                f"**Error:**\n```\n{error_str}\n```\n\n"
+                f"**Script code:**\n```python\n{script_code}\n```\n\n"
+            )
+
+            event_data = payload_dict.get("event_data")
+            event_data_str = str(event_data) if event_data else ""
+            if len(event_data_str) > 2000:
+                event_data_str = event_data_str[:2000] + "... (truncated)"
+
+            if event_data_str and event_data_str != "{}":
+                callback_context += (
+                    f"**Triggering event data:**\n```\n{event_data_str}\n```\n\n"
+                )
+            callback_context += (
+                "Please summarize this error for the user and suggest possible fixes. "
+                "Do NOT re-run the script."
+            )
+        else:
+            # llm_callback (wake_llm) failure
+            original_context = payload_dict.get("callback_context", "")
+            context_str = (
+                str(original_context)[:2000] if original_context else "(no context)"
+            )
+
+            callback_context = (
+                f"An automation has failed after exhausting all retries.\n\n"
+                f"**Task:** {task_name}\n"
+                f"**Source:** {source_label}\n"
+                f"**Retries exhausted:** {retry_count}\n\n"
+                f"**Error:**\n```\n{error_str}\n```\n\n"
+                f"**Original callback context:**\n```\n{context_str}\n```\n\n"
+                "Please summarize this error for the user and suggest possible fixes."
+            )
+
+        notification_task_id = f"automation_error_notify_{uuid.uuid4().hex[:8]}"
 
         try:
             await enqueue_task(
@@ -1053,7 +1078,7 @@ class TaskWorker:
             )
             logger.info(
                 f"Enqueued error notification {notification_task_id} "
-                f"for failed script task {task['task_id']}"
+                f"for failed {task_type} task {task['task_id']}"
             )
         except Exception:
             logger.exception(

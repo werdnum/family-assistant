@@ -1,8 +1,10 @@
 """
-Tests for script error notification via LLM wake.
+Tests for automation error notification via LLM wake.
 
-When a script_execution task exhausts all retries, the TaskWorker should
-enqueue an llm_callback task to notify the user about the failure.
+When an automation task (script_execution or llm_callback) exhausts all retries,
+the TaskWorker should enqueue an llm_callback task to notify the user about the
+failure. Notification tasks (which lack automation_id/listener_id) do NOT trigger
+further notifications, preventing loops.
 """
 
 import asyncio
@@ -81,7 +83,7 @@ async def _wait_for_notification_tasks(
     expected_count: int = 1,
     timeout_seconds: float = 10.0,
 ) -> list[TaskDict]:
-    """Poll until the expected number of script_error_notify tasks appear (or timeout)."""
+    """Poll until the expected number of automation_error_notify tasks appear (or timeout)."""
     notification_tasks: list[TaskDict] = []
     deadline = datetime.now(UTC) + timedelta(seconds=timeout_seconds)
     while datetime.now(UTC) < deadline:
@@ -93,7 +95,7 @@ async def _wait_for_notification_tasks(
             notification_tasks = [
                 cast("TaskDict", r)
                 for r in rows
-                if r["task_id"].startswith("script_error_notify_")
+                if r["task_id"].startswith("automation_error_notify_")
             ]
             if len(notification_tasks) >= expected_count:
                 return notification_tasks
@@ -213,11 +215,11 @@ async def test_notify_on_failure_false_suppresses_notification(
 
 
 @pytest.mark.asyncio
-async def test_llm_callback_failure_does_not_trigger_notification(
+async def test_non_automation_llm_callback_failure_does_not_trigger_notification(
     db_engine: AsyncEngine,
     task_worker_manager: Callable[..., tuple[TaskWorker, asyncio.Event, asyncio.Event]],
 ) -> None:
-    """An llm_callback task failure should NOT trigger error notification (loop prevention)."""
+    """A plain llm_callback (no automation_id/listener_id) should NOT trigger notification."""
     tools_provider = await _make_tools_provider()
     processing_service = _make_processing_service(tools_provider)
 
@@ -226,7 +228,6 @@ async def test_llm_callback_failure_does_not_trigger_notification(
         AsyncMock(spec=ChatInterface),
     )
 
-    # Register a handler that always raises for llm_callback
     async def failing_llm_handler(
         exec_context: object, payload: dict[str, object]
     ) -> None:
@@ -257,13 +258,136 @@ async def test_llm_callback_failure_does_not_trigger_notification(
             db_engine, task_types={"llm_callback"}, timeout_seconds=15
         )
 
-    # Give a brief window for any notification to appear (it shouldn't)
     notification_tasks = await _wait_for_notification_tasks(
         db_engine, expected_count=1, timeout_seconds=1.0
     )
     assert len(notification_tasks) == 0, (
-        "llm_callback failures should NOT spawn error notifications"
+        "Non-automation llm_callback failures should NOT spawn error notifications"
     )
+
+
+@pytest.mark.asyncio
+async def test_automation_llm_callback_failure_enqueues_notification(
+    db_engine: AsyncEngine,
+    task_worker_manager: Callable[..., tuple[TaskWorker, asyncio.Event, asyncio.Event]],
+) -> None:
+    """An llm_callback task with automation_id should trigger error notification on failure."""
+    tools_provider = await _make_tools_provider()
+    processing_service = _make_processing_service(tools_provider)
+
+    worker, new_task_event, shutdown_event = task_worker_manager(
+        processing_service,
+        AsyncMock(spec=ChatInterface),
+    )
+
+    async def failing_llm_handler(
+        exec_context: object, payload: dict[str, object]
+    ) -> None:
+        raise RuntimeError("Automation LLM callback failed")
+
+    worker.register_task_handler("llm_callback", failing_llm_handler)
+    # ast-grep-ignore: no-asyncio-sleep-in-tests - Waiting for task worker to start and register handler
+    await asyncio.sleep(0.1)
+
+    task_id = f"test_auto_llm_fail_{uuid.uuid4().hex[:8]}"
+    async with get_db_context(engine=db_engine) as db_ctx:
+        await enqueue_task(
+            db_context=db_ctx,
+            task_id=task_id,
+            task_type="llm_callback",
+            payload={
+                "conversation_id": "test_conv",
+                "interface_type": "telegram",
+                "callback_context": {
+                    "trigger": "Morning briefing",
+                    "message": "Good morning",
+                },
+                "automation_id": "7",
+                "automation_type": "schedule",
+                "task_name": "Morning Briefing",
+            },
+            max_retries_override=0,
+        )
+
+    new_task_event.set()
+
+    with pytest.raises(RuntimeError, match="Task.*failed"):
+        await wait_for_tasks_to_complete(
+            db_engine, task_types={"llm_callback"}, timeout_seconds=15
+        )
+
+    notification_tasks = await _wait_for_notification_tasks(db_engine)
+    assert len(notification_tasks) == 1, (
+        f"Expected 1 notification task for automation llm_callback failure, found {len(notification_tasks)}"
+    )
+
+    notif = notification_tasks[0]
+    assert notif["max_retries"] == 1
+    payload = notif["payload"]
+    assert payload is not None
+    assert payload["conversation_id"] == "test_conv"
+    assert payload["interface_type"] == "telegram"
+    assert "Morning Briefing" in payload["callback_context"]
+    assert "automation 7" in payload["callback_context"]
+    assert "Automation LLM callback failed" in payload["callback_context"]
+
+
+@pytest.mark.asyncio
+async def test_event_listener_llm_callback_failure_enqueues_notification(
+    db_engine: AsyncEngine,
+    task_worker_manager: Callable[..., tuple[TaskWorker, asyncio.Event, asyncio.Event]],
+) -> None:
+    """An llm_callback task with listener_id should trigger error notification on failure."""
+    tools_provider = await _make_tools_provider()
+    processing_service = _make_processing_service(tools_provider)
+
+    worker, new_task_event, shutdown_event = task_worker_manager(
+        processing_service,
+        AsyncMock(spec=ChatInterface),
+    )
+
+    async def failing_llm_handler(
+        exec_context: object, payload: dict[str, object]
+    ) -> None:
+        raise RuntimeError("Event LLM callback failed")
+
+    worker.register_task_handler("llm_callback", failing_llm_handler)
+    # ast-grep-ignore: no-asyncio-sleep-in-tests - Waiting for task worker to start and register handler
+    await asyncio.sleep(0.1)
+
+    task_id = f"test_evt_llm_fail_{uuid.uuid4().hex[:8]}"
+    async with get_db_context(engine=db_engine) as db_ctx:
+        await enqueue_task(
+            db_context=db_ctx,
+            task_id=task_id,
+            task_type="llm_callback",
+            payload={
+                "conversation_id": "test_conv",
+                "interface_type": "telegram",
+                "callback_context": {
+                    "trigger": "Door opened",
+                    "source": "home_assistant",
+                },
+                "listener_id": "42",
+                "task_name": "Door Alert",
+            },
+            max_retries_override=0,
+        )
+
+    new_task_event.set()
+
+    with pytest.raises(RuntimeError, match="Task.*failed"):
+        await wait_for_tasks_to_complete(
+            db_engine, task_types={"llm_callback"}, timeout_seconds=15
+        )
+
+    notification_tasks = await _wait_for_notification_tasks(db_engine)
+    assert len(notification_tasks) == 1
+
+    payload = notification_tasks[0]["payload"]
+    assert payload is not None
+    assert "Door Alert" in payload["callback_context"]
+    assert "event listener 42" in payload["callback_context"]
 
 
 @pytest.mark.asyncio

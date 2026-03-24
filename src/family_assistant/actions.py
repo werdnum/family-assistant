@@ -73,6 +73,13 @@ async def execute_action(
         if user_name:
             payload["user_name"] = user_name
 
+        # Propagate automation identifiers to top-level payload for error
+        # notification routing (listener_id for event automations)
+        if "listener_id" in context:
+            payload["listener_id"] = context["listener_id"]
+        if "task_name" in context:
+            payload["task_name"] = context["task_name"]
+
         await enqueue_task(
             db_context=db_ctx,
             task_id=task_id,
