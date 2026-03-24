@@ -1,5 +1,6 @@
 """Unit tests for MCP tool filtering by server ID."""
 
+import asyncio
 from types import SimpleNamespace
 from typing import TYPE_CHECKING, cast
 from unittest.mock import AsyncMock
@@ -11,6 +12,11 @@ from family_assistant.tools import (
     FilteredToolsProvider,
     MCPServerConfig,
     MCPToolsProvider,
+)
+from family_assistant.tools.mcp import (
+    MCP_SERVER_STATUS_CANCELLED,
+    MCP_SERVER_STATUS_CONNECTED,
+    MCP_SERVER_STATUS_FAILED,
 )
 from family_assistant.tools.metadata import ToolTag, build_tool_descriptor
 from family_assistant.tools.types import ToolDefinition
@@ -275,3 +281,99 @@ async def test_mcp_reconnect_preserves_existing_duplicate_tool_mapping() -> None
     assert provider._tool_map["shared_tool"] == "server2"
     assert len(provider._definitions) == 1
     assert provider._descriptors[0].mcp_server_id == "server2"
+
+
+@pytest.mark.asyncio
+async def test_health_check_retries_failed_and_cancelled_servers() -> None:
+    """Health check loop should retry servers that failed or timed out during initialization."""
+    provider = MCPToolsProvider(
+        {
+            "healthy": {"transport": "stdio", "command": "echo"},
+            "failed": {"transport": "stdio", "command": "echo"},
+            "cancelled": {"transport": "stdio", "command": "echo"},
+        },
+        health_check_interval_seconds=0,
+    )
+    provider._initialized = True
+
+    # Simulate post-init state: healthy is connected, failed/cancelled never got sessions
+    provider._server_statuses = {
+        "healthy": MCP_SERVER_STATUS_CONNECTED,
+        "failed": MCP_SERVER_STATUS_FAILED,
+        "cancelled": MCP_SERVER_STATUS_CANCELLED,
+    }
+    healthy_session = SimpleNamespace(list_tools=AsyncMock())
+    provider._sessions = cast("dict[str, ClientSession]", {"healthy": healthy_session})
+
+    reconnect_calls: list[str] = []
+
+    async def fake_reconnect(server_id: str) -> bool:
+        reconnect_calls.append(server_id)
+        provider._server_statuses[server_id] = MCP_SERVER_STATUS_CONNECTED
+        return True
+
+    provider._reconnect_server = fake_reconnect  # type: ignore[method-assign]
+
+    # Run one iteration of the health check loop then stop
+    iteration_count = 0
+
+    original_sleep = asyncio.sleep
+
+    async def counting_sleep(seconds: float) -> None:
+        nonlocal iteration_count
+        iteration_count += 1
+        if iteration_count >= 2:
+            provider._health_check_enabled = False
+        await original_sleep(0)
+
+    asyncio.sleep = counting_sleep  # type: ignore[assignment]
+    try:
+        await provider._health_check_loop()
+    finally:
+        asyncio.sleep = original_sleep  # type: ignore[assignment]
+
+    assert "failed" in reconnect_calls
+    assert "cancelled" in reconnect_calls
+    assert "healthy" not in reconnect_calls
+
+
+@pytest.mark.asyncio
+async def test_health_check_starts_even_with_no_sessions() -> None:
+    """Health check should start even when all servers failed during init, to allow recovery."""
+    provider = MCPToolsProvider(
+        {"server1": {"transport": "stdio", "command": "echo"}},
+        health_check_interval_seconds=0,
+    )
+
+    # Simulate init completing with no successful connections
+    provider._initialized = True
+    provider._server_statuses = {"server1": MCP_SERVER_STATUS_FAILED}
+    provider._sessions = {}
+
+    reconnect_called = False
+
+    async def fake_reconnect(server_id: str) -> bool:
+        nonlocal reconnect_called
+        reconnect_called = True
+        provider._server_statuses[server_id] = MCP_SERVER_STATUS_CONNECTED
+        return True
+
+    provider._reconnect_server = fake_reconnect  # type: ignore[method-assign]
+
+    iteration_count = 0
+    original_sleep = asyncio.sleep
+
+    async def counting_sleep(seconds: float) -> None:
+        nonlocal iteration_count
+        iteration_count += 1
+        if iteration_count >= 2:
+            provider._health_check_enabled = False
+        await original_sleep(0)
+
+    asyncio.sleep = counting_sleep  # type: ignore[assignment]
+    try:
+        await provider._health_check_loop()
+    finally:
+        asyncio.sleep = original_sleep  # type: ignore[assignment]
+
+    assert reconnect_called
