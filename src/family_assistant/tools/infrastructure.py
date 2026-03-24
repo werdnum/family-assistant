@@ -562,7 +562,13 @@ class CompositeToolsProvider(ToolsProvider):
         for provider in self._providers:
             if not isinstance(provider, ToolDescriptorProvider):
                 continue
-            descriptors.extend(await provider.get_tool_descriptors())
+            try:
+                descriptors.extend(await provider.get_tool_descriptors())
+            except Exception as e:
+                logger.error(
+                    f"Error getting tool descriptors from {type(provider).__name__}: {e}",
+                    exc_info=True,
+                )
         return descriptors
 
     async def get_tool_descriptor(self, name: str) -> ToolDescriptor | None:
@@ -570,9 +576,15 @@ class CompositeToolsProvider(ToolsProvider):
         for provider in self._providers:
             if not isinstance(provider, ToolDescriptorProvider):
                 continue
-            descriptor = await provider.get_tool_descriptor(name)
-            if descriptor is not None:
-                return descriptor
+            try:
+                descriptor = await provider.get_tool_descriptor(name)
+                if descriptor is not None:
+                    return descriptor
+            except Exception as e:
+                logger.error(
+                    f"Error getting tool descriptor '{name}' from {type(provider).__name__}: {e}",
+                    exc_info=True,
+                )
         return None
 
     async def execute_tool(
