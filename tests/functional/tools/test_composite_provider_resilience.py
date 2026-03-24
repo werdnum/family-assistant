@@ -114,11 +114,15 @@ async def test_composite_provider_descriptors_survive_crashing_provider() -> Non
 async def test_composite_provider_single_descriptor_survives_crashing_provider() -> (
     None
 ):
-    """get_tool_descriptor should not crash when one provider fails."""
+    """get_tool_descriptor should not crash when one provider fails.
+
+    The exploding provider must come FIRST so the composite actually hits the
+    exception path before falling through to the local provider.
+    """
     local_provider = LocalToolsProvider(registrations=LOCAL_TOOL_REGISTRATIONS)
     exploding_provider = ExplodingToolsProvider()
 
-    composite = CompositeToolsProvider(providers=[local_provider, exploding_provider])
+    composite = CompositeToolsProvider(providers=[exploding_provider, local_provider])
 
     descriptor = await composite.get_tool_descriptor("get_note")
     assert descriptor is not None
