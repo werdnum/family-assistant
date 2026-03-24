@@ -1,9 +1,10 @@
 """Unit tests for MCP tool filtering by server ID."""
 
 import asyncio
+import contextlib
 from types import SimpleNamespace
 from typing import TYPE_CHECKING, cast
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, patch
 
 import pytest
 from mcp.types import Tool, ToolAnnotations
@@ -314,23 +315,16 @@ async def test_health_check_retries_failed_and_cancelled_servers() -> None:
 
     provider._reconnect_server = fake_reconnect  # type: ignore[method-assign]
 
-    # Run one iteration of the health check loop then stop
     iteration_count = 0
 
-    original_sleep = asyncio.sleep
-
-    async def counting_sleep(seconds: float) -> None:
+    async def counting_sleep(_seconds: float) -> None:
         nonlocal iteration_count
         iteration_count += 1
         if iteration_count >= 2:
             provider._health_check_enabled = False
-        await original_sleep(0)
 
-    asyncio.sleep = counting_sleep  # type: ignore[assignment]
-    try:
+    with patch("asyncio.sleep", side_effect=counting_sleep):
         await provider._health_check_loop()
-    finally:
-        asyncio.sleep = original_sleep  # type: ignore[assignment]
 
     assert "failed" in reconnect_calls
     assert "cancelled" in reconnect_calls
@@ -338,42 +332,31 @@ async def test_health_check_retries_failed_and_cancelled_servers() -> None:
 
 
 @pytest.mark.asyncio
-async def test_health_check_starts_even_with_no_sessions() -> None:
-    """Health check should start even when all servers failed during init, to allow recovery."""
+async def test_initialize_starts_health_check_with_no_sessions() -> None:
+    """initialize() should start health check even when all servers fail, to allow recovery."""
     provider = MCPToolsProvider(
         {"server1": {"transport": "stdio", "command": "echo"}},
-        health_check_interval_seconds=0,
+        health_check_interval_seconds=30,
     )
 
-    # Simulate init completing with no successful connections
-    provider._initialized = True
-    provider._server_statuses = {"server1": MCP_SERVER_STATUS_FAILED}
-    provider._sessions = {}
+    # Mock _connect_and_discover_mcp to simulate a failed server
+    async def fake_connect(
+        server_id: str, server_conf: MCPServerConfig
+    ) -> tuple[None, list, list, dict]:
+        provider._server_statuses[server_id] = MCP_SERVER_STATUS_FAILED
+        return None, [], [], {}
 
-    reconnect_called = False
+    provider._connect_and_discover_mcp = fake_connect  # type: ignore[method-assign]
 
-    async def fake_reconnect(server_id: str) -> bool:
-        nonlocal reconnect_called
-        reconnect_called = True
-        provider._server_statuses[server_id] = MCP_SERVER_STATUS_CONNECTED
-        return True
+    await provider.initialize()
 
-    provider._reconnect_server = fake_reconnect  # type: ignore[method-assign]
+    # Health check task should be started even though no sessions exist
+    assert provider._health_check_task is not None
+    assert not provider._health_check_task.done()
+    assert len(provider._sessions) == 0
 
-    iteration_count = 0
-    original_sleep = asyncio.sleep
-
-    async def counting_sleep(seconds: float) -> None:
-        nonlocal iteration_count
-        iteration_count += 1
-        if iteration_count >= 2:
-            provider._health_check_enabled = False
-        await original_sleep(0)
-
-    asyncio.sleep = counting_sleep  # type: ignore[assignment]
-    try:
-        await provider._health_check_loop()
-    finally:
-        asyncio.sleep = original_sleep  # type: ignore[assignment]
-
-    assert reconnect_called
+    # Clean up
+    provider._health_check_enabled = False
+    provider._health_check_task.cancel()
+    with contextlib.suppress(asyncio.CancelledError):
+        await provider._health_check_task

@@ -639,6 +639,14 @@ class MCPToolsProvider:
                 if not self._health_check_enabled:
                     break
 
+                # Collect servers needing retry before health checks run,
+                # so servers that fail health check below aren't retried twice
+                servers_to_retry = [
+                    server_id
+                    for server_id, status in self._server_statuses.items()
+                    if status in {MCP_SERVER_STATUS_FAILED, MCP_SERVER_STATUS_CANCELLED}
+                ]
+
                 # Check each connected server
                 for server_id, session in list(self._sessions.items()):
                     if not self._health_check_enabled:
@@ -691,12 +699,7 @@ class MCPToolsProvider:
                                     f"Failed to reconnect server '{server_id}' during health check"
                                 )
 
-                # Retry servers that failed or were cancelled during initialization
-                servers_to_retry = [
-                    server_id
-                    for server_id, status in self._server_statuses.items()
-                    if status in {MCP_SERVER_STATUS_FAILED, MCP_SERVER_STATUS_CANCELLED}
-                ]
+                # Retry servers that were failed/cancelled before this cycle started
                 for server_id in servers_to_retry:
                     if not self._health_check_enabled:
                         break
