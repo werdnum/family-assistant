@@ -88,6 +88,8 @@ class GoogleEmbeddingGenerator:
             raise ValueError("Embedding model identifier cannot be empty.")
         self._model_name = model
         self._api_model_name = model.removeprefix("gemini/")
+        if not self._api_model_name:
+            raise ValueError("Embedding model identifier cannot be just 'gemini/'.")
         self._dimensions = dimensions
         self._task_type = task_type
         self._client = genai.Client(api_key=api_key, debug_config=debug_config)

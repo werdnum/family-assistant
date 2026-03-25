@@ -46,6 +46,11 @@ def test_empty_model_raises() -> None:
         GoogleEmbeddingGenerator(model="")
 
 
+def test_bare_prefix_raises() -> None:
+    with pytest.raises(ValueError, match="cannot be just"):
+        GoogleEmbeddingGenerator(model="gemini/")
+
+
 @pytest.mark.no_db
 async def test_empty_input_returns_empty() -> None:
     """Empty input returns empty result without making an API call."""
