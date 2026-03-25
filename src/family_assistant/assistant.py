@@ -411,7 +411,7 @@ class Assistant:
                     f"Failed to initialize local embedding model '{embedding_model_name}': {e}"
                 )
                 raise SystemExit(f"Local embedding model init failed: {e}") from e
-        elif embedding_model_name.startswith("gemini/"):
+        elif embedding_model_name.startswith(("gemini/", "gemini-")):
             self.embedding_generator = GoogleEmbeddingGenerator(
                 model=embedding_model_name,
                 dimensions=embedding_dimensions,
