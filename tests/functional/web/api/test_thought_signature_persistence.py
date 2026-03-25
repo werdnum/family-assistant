@@ -1,11 +1,12 @@
 """Integration test for thought signature persistence through HTTP API.
 
 This test verifies that thought signatures are preserved through the entire
-user journey via the HTTP API with real LLM integration.
+user journey via the HTTP API using Gemini SDK record/replay.
 """
 
 import os
 from collections.abc import AsyncGenerator
+from pathlib import Path
 from typing import TYPE_CHECKING
 from zoneinfo import ZoneInfo
 
@@ -43,15 +44,57 @@ if TYPE_CHECKING:
     from fastapi import FastAPI
 
 
+GEMINI_REPLAY_DIR = "tests/cassettes/gemini"
+
+
+def _replay_file_path(module_name: str, test_name: str) -> Path:
+    return Path(GEMINI_REPLAY_DIR) / module_name / test_name / "mldev.json"
+
+
+@pytest.fixture
+def gemini_http_api_debug_config(
+    request: pytest.FixtureRequest, llm_record_mode: str
+) -> dict[str, str | None]:
+    """Build Google SDK replay config for HTTP API tests."""
+    module_name = request.node.module.__name__.replace("tests.", "")
+    test_name = request.node.name
+    replay_path = _replay_file_path(module_name, test_name)
+    api_key = os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY")
+
+    if llm_record_mode == "replay" and not replay_path.exists():
+        pytest.fail(
+            f"Replay file missing for {test_name}. Record with LLM_RECORD_MODE=record."
+        )
+
+    if llm_record_mode == "record" and not api_key:
+        pytest.skip(
+            "Recording Gemini replays requires GEMINI_API_KEY or GOOGLE_API_KEY."
+        )
+
+    if llm_record_mode == "auto" and not replay_path.exists() and not api_key:
+        pytest.skip(
+            "Auto-recording missing Gemini replays requires GEMINI_API_KEY or GOOGLE_API_KEY."
+        )
+
+    return {
+        "client_mode": llm_record_mode,
+        "replay_id": f"{module_name}/{test_name}/mldev",
+        "replays_directory": GEMINI_REPLAY_DIR,
+    }
+
+
 @pytest_asyncio.fixture
 async def llm_integration_processing_service(
     db_engine: AsyncEngine,
+    gemini_http_api_debug_config: dict[str, str | None],
 ) -> AsyncGenerator[ProcessingService]:
-    """ProcessingService with real Gemini LLM client for integration testing."""
-    # Create real LLM client with thinking model
+    """ProcessingService with replay-backed Gemini LLM client for integration testing."""
     llm_client = GoogleGenAIClient(
-        api_key=os.getenv("GEMINI_API_KEY", "test-key"),
+        api_key=os.getenv("GEMINI_API_KEY")
+        or os.getenv("GOOGLE_API_KEY")
+        or "test-key",
         model="gemini-3-flash-preview",  # V3 model with thought signatures, cheaper than pro
+        debug_config=gemini_http_api_debug_config,
     )
 
     # Set up tools provider
@@ -151,11 +194,8 @@ async def test_multiturn_conversation_with_tool_calls_preserves_thought_signatur
     3. Ask another question
     4. Should work without errors
 
-    This makes real API calls to verify the end-to-end flow works.
+    Runs against recorded Gemini responses so PR CI stays deterministic.
     """
-    if not os.getenv("GEMINI_API_KEY"):
-        pytest.skip("Skipping test - GEMINI_API_KEY not available")
-
     # Turn 1: Ask question requiring tool use
     response1 = await llm_integration_client.post(
         "/api/v1/chat/send_message",
@@ -183,9 +223,6 @@ async def test_streaming_multiturn_with_tool_calls_reproduces_bug(
     The web UI uses streaming, and this should fail with "Corrupted thought signature"
     on turn 2 because the streaming code path still has the base64 encoding bug.
     """
-    if not os.getenv("GEMINI_API_KEY"):
-        pytest.skip("Skipping test - GEMINI_API_KEY not available")
-
     # Turn 1: Ask question requiring tool use (streaming)
     response1_chunks = []
     tool_call_seen = False
@@ -234,15 +271,12 @@ async def test_multiturn_conversation_non_streaming_preserves_thought_signatures
     catching bugs that direct LLM client tests miss.
 
     Note: Even though the HTTP endpoint is non-streaming (returns full JSON),
-    ProcessingService uses streaming internally, so VCR cannot be used.
-    Requires a real GEMINI_API_KEY to run.
+    ProcessingService uses streaming internally, so this test uses the Google
+    SDK's native replay support instead of VCR.py.
 
     If thought_signature is not preserved through the database, the second
     request would fail with: "Function call is missing a thought_signature"
     """
-    if not os.getenv("GEMINI_API_KEY"):
-        pytest.skip("Skipping test - GEMINI_API_KEY not available")
-
     # Turn 1: Send message requiring tool call
     response1 = await llm_integration_client.post(
         "/api/v1/chat/send_message",
