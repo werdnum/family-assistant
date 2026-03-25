@@ -96,6 +96,7 @@ async def test_empty_input() -> None:
     generator = GoogleEmbeddingGenerator(
         model=EMBEDDING_MODEL,
         dimensions=EMBEDDING_DIMENSIONS,
+        api_key="dummy-key-not-used-for-empty-input",
     )
 
     result = await generator.generate_embeddings([])
