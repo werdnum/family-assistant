@@ -55,14 +55,14 @@ def _replay_file_path(module_name: str, test_name: str) -> Path:
 def gemini_http_api_debug_config(
     request: pytest.FixtureRequest, llm_record_mode: str
 ) -> dict[str, str | None]:
-    """Build Google SDK replay config for non-parameterized HTTP API tests."""
+    """Build Google SDK replay config for HTTP API tests."""
     module_name = request.node.module.__name__.replace("tests.", "")
     test_name = request.node.name
     replay_path = _replay_file_path(module_name, test_name)
     api_key = os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY")
 
     if llm_record_mode == "replay" and not replay_path.exists():
-        pytest.skip(
+        pytest.fail(
             f"Replay file missing for {test_name}. Record with LLM_RECORD_MODE=record."
         )
 
