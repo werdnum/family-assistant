@@ -24,6 +24,8 @@ depends_on: str | Sequence[str] | None = None
 
 def upgrade() -> None:
     """Rename embedding model from LiteLLM to native format."""
+    # Skip on SQLite - document_embeddings table requires PostgreSQL with pgvector
+    # (see alembic/env.py include_object and initial_schema migration)
     conn = op.get_bind()
     if conn.dialect.name != "postgresql":
         return
@@ -37,6 +39,7 @@ def upgrade() -> None:
 
 def downgrade() -> None:
     """Revert to LiteLLM model name format."""
+    # Skip on SQLite - document_embeddings table requires PostgreSQL with pgvector
     conn = op.get_bind()
     if conn.dialect.name != "postgresql":
         return
