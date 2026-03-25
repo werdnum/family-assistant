@@ -27,6 +27,10 @@ from family_assistant.tools.types import ToolDefinition, ToolExecutionContext
 
 logger = logging.getLogger(__name__)
 
+# All tests in this module require either a valid GEMINI_API_KEY or a real
+# browser environment. Exclude from default CI backend runs.
+pytestmark = pytest.mark.llm_integration
+
 
 def _has_internet() -> bool:
     """Check if external network access is available."""
