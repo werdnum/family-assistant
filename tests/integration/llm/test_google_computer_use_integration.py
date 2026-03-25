@@ -214,7 +214,7 @@ async def test_computer_use_end_to_end_flow(gemini_client: GoogleGenAIClient) ->
         assert tool_call.function.arguments == {"x": 500, "y": 300}
 
 
-@pytest.mark.integration
+@pytest.mark.llm_integration
 @pytest.mark.skipif(
     os.getenv("GEMINI_API_KEY") is None, reason="Requires GEMINI_API_KEY"
 )
@@ -359,7 +359,7 @@ class TestComputerUseTools:
         assert len(attachment.content) > 0
 
 
-@pytest.mark.integration
+@pytest.mark.llm_integration
 @pytest.mark.skipif(
     os.getenv("GEMINI_API_KEY") is None, reason="Requires GEMINI_API_KEY"
 )
@@ -535,7 +535,7 @@ async def test_computer_use_browser_navigation_e2e(db_engine: AsyncEngine) -> No
         await assistant.stop_services()
 
 
-@pytest.mark.integration
+@pytest.mark.llm_integration
 @pytest.mark.skipif(
     os.getenv("GEMINI_API_KEY") is None, reason="Requires GEMINI_API_KEY"
 )

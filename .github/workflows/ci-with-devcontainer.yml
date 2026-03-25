@@ -364,7 +364,7 @@ jobs:
                 echo "No pre-built frontend assets found at /opt/frontend-dist"; \
               fi && \
               mkdir -p test-results && \
-              .venv/bin/pytest -q --timeout=300 --db sqlite -m "not postgres and not playwright and not integration" \
+              .venv/bin/pytest -q --timeout=300 --db sqlite -m "not postgres and not playwright" \
                 --json-report --json-report-file=test-results/backend-sqlite-report.json'
       - name: Upload backend test results (SQLite)
         uses: actions/upload-artifact@v6
@@ -434,7 +434,7 @@ jobs:
                 echo "No pre-built frontend assets found at /opt/frontend-dist"; \
               fi && \
               mkdir -p test-results && \
-              .venv/bin/pytest --postgres -q --timeout=300 -m "not playwright and not integration" \
+              .venv/bin/pytest --postgres -q --timeout=300 -m "not playwright" \
                 --json-report --json-report-file=test-results/backend-postgres-report.json'
       - name: Upload backend test results (PostgreSQL)
         uses: actions/upload-artifact@v6
