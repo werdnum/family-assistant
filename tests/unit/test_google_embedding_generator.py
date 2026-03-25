@@ -10,18 +10,24 @@ from family_assistant.embeddings import EmbeddingGenerator, GoogleEmbeddingGener
 
 def test_protocol_compliance() -> None:
     """GoogleEmbeddingGenerator satisfies the EmbeddingGenerator protocol."""
-    generator = GoogleEmbeddingGenerator(model="gemini-embedding-001")
+    generator = GoogleEmbeddingGenerator(
+        model="gemini-embedding-001", api_key="fake-key"
+    )
     assert isinstance(generator, EmbeddingGenerator)
 
 
 def test_model_name_bare() -> None:
-    generator = GoogleEmbeddingGenerator(model="gemini-embedding-001")
+    generator = GoogleEmbeddingGenerator(
+        model="gemini-embedding-001", api_key="fake-key"
+    )
     assert generator.model_name == "gemini-embedding-001"
 
 
 def test_model_name_with_prefix() -> None:
     """model_name preserves the gemini/ prefix for storage compatibility."""
-    generator = GoogleEmbeddingGenerator(model="gemini/gemini-embedding-001")
+    generator = GoogleEmbeddingGenerator(
+        model="gemini/gemini-embedding-001", api_key="fake-key"
+    )
     assert generator.model_name == "gemini/gemini-embedding-001"
 
 
@@ -54,7 +60,9 @@ def test_bare_prefix_raises() -> None:
 @pytest.mark.no_db
 async def test_empty_input_returns_empty() -> None:
     """Empty input returns empty result without making an API call."""
-    generator = GoogleEmbeddingGenerator(model="gemini-embedding-001")
+    generator = GoogleEmbeddingGenerator(
+        model="gemini-embedding-001", api_key="fake-key"
+    )
     result = await generator.generate_embeddings([])
     assert result.embeddings == []
     assert result.model_name == "gemini-embedding-001"
