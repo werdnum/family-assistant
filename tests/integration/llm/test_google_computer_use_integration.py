@@ -74,6 +74,7 @@ async def browser_session(
     await close_browser_session(mock_exec_context)
 
 
+@pytest.mark.llm_integration
 @pytest.mark.asyncio
 async def test_computer_use_tool_injection(gemini_client: GoogleGenAIClient) -> None:
     """Test that the Computer Use tool is automatically injected for the correct model."""
@@ -172,6 +173,7 @@ async def test_computer_use_tool_injection(gemini_client: GoogleGenAIClient) -> 
         assert has_other_tool, "'other_tool' should be preserved"
 
 
+@pytest.mark.llm_integration
 @pytest.mark.asyncio
 async def test_computer_use_end_to_end_flow(gemini_client: GoogleGenAIClient) -> None:
     """Test the end-to-end flow of tool calling and response handling with Computer Use."""
