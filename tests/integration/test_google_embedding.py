@@ -47,7 +47,7 @@ def _make_generator(llm_record_mode: str, test_name: str) -> GoogleEmbeddingGene
         replay_id=f"integration.test_google_embedding/{test_name}/mldev",
         replays_directory=CASSETTE_DIR,
     )
-    api_key = os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY")
+    api_key = os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY") or "test-key"
     return GoogleEmbeddingGenerator(
         model=EMBEDDING_MODEL,
         dimensions=EMBEDDING_DIMENSIONS,
