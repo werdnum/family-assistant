@@ -11,9 +11,15 @@ def test_protocol_compliance() -> None:
     assert isinstance(generator, EmbeddingGenerator)
 
 
-def test_model_name() -> None:
+def test_model_name_bare() -> None:
     generator = GoogleEmbeddingGenerator(model="gemini-embedding-001")
     assert generator.model_name == "gemini-embedding-001"
+
+
+def test_model_name_with_prefix() -> None:
+    """model_name preserves the gemini/ prefix for storage compatibility."""
+    generator = GoogleEmbeddingGenerator(model="gemini/gemini-embedding-001")
+    assert generator.model_name == "gemini/gemini-embedding-001"
 
 
 def test_empty_model_raises() -> None:
