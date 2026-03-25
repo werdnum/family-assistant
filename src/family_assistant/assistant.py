@@ -413,6 +413,16 @@ class Assistant:
                 raise SystemExit(f"Local embedding model init failed: {e}") from e
         else:
             google_model_name = embedding_model_name.removeprefix("gemini/")
+            if not google_model_name.startswith((
+                "gemini-",
+                "text-embedding-",
+                "embedding-",
+            )):
+                raise ValueError(
+                    f"Unsupported embedding model: '{embedding_model_name}'. "
+                    f"Only Google Gemini embedding models are supported "
+                    f"(e.g., 'gemini-embedding-001')."
+                )
             self.embedding_generator = GoogleEmbeddingGenerator(
                 model=google_model_name,
                 dimensions=embedding_dimensions,
