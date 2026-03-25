@@ -415,6 +415,8 @@ class Assistant:
             canonical_name = embedding_model_name
             if not canonical_name.startswith("gemini/"):
                 canonical_name = f"gemini/{canonical_name}"
+            if canonical_name == "gemini/":
+                raise ValueError("Embedding model name cannot be just 'gemini/'.")
             self.embedding_generator = GoogleEmbeddingGenerator(
                 model=canonical_name,
                 dimensions=embedding_dimensions,
