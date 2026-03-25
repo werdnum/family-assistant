@@ -118,14 +118,24 @@ class GoogleEmbeddingGenerator:
             config=config,
         )
 
+        if not response.embeddings:
+            raise ValueError(
+                f"Google GenAI API returned no embeddings for {len(texts)} input texts."
+            )
+
         embeddings_list: list[list[float]] = []
-        if response.embeddings:
-            for embedding in response.embeddings:
-                if embedding.values is None:
-                    raise ValueError(
-                        "Google GenAI API returned an embedding with no values."
-                    )
-                embeddings_list.append(list(embedding.values))
+        for embedding in response.embeddings:
+            if embedding.values is None:
+                raise ValueError(
+                    "Google GenAI API returned an embedding with no values."
+                )
+            embeddings_list.append(list(embedding.values))
+
+        if len(embeddings_list) != len(texts):
+            raise ValueError(
+                f"Google GenAI API returned {len(embeddings_list)} embeddings "
+                f"for {len(texts)} input texts."
+            )
 
         logger.debug(
             f"Google embedding response received. Generated {len(embeddings_list)} embeddings."

@@ -91,9 +91,12 @@ async def test_batch_embedding(llm_record_mode: str) -> None:
 
 @pytest.mark.no_db
 @pytest.mark.llm_integration
-async def test_empty_input(llm_record_mode: str) -> None:
+async def test_empty_input() -> None:
     """Test that empty input returns empty result without API call."""
-    generator = _make_generator(llm_record_mode, "test_empty_input")
+    generator = GoogleEmbeddingGenerator(
+        model=EMBEDDING_MODEL,
+        dimensions=EMBEDDING_DIMENSIONS,
+    )
 
     result = await generator.generate_embeddings([])
 
