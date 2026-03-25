@@ -412,11 +412,10 @@ class Assistant:
                 )
                 raise SystemExit(f"Local embedding model init failed: {e}") from e
         else:
-            gemini_api_key = os.getenv("GEMINI_API_KEY")
+            google_model_name = embedding_model_name.removeprefix("gemini/")
             self.embedding_generator = GoogleEmbeddingGenerator(
-                model=embedding_model_name,
+                model=google_model_name,
                 dimensions=embedding_dimensions,
-                api_key=gemini_api_key,
             )
         logger.info(
             f"Using embedding generator: {type(self.embedding_generator).__name__} with model: {self.embedding_generator.model_name}"

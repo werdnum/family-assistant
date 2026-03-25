@@ -18,6 +18,7 @@ LLM_RECORD_MODE=auto GEMINI_API_KEY=xxx pytest tests/integration/test_google_emb
 """
 
 import os
+from pathlib import Path
 
 import pytest
 from google.genai.client import DebugConfig
@@ -29,7 +30,18 @@ EMBEDDING_DIMENSIONS = 256
 CASSETTE_DIR = "tests/cassettes/gemini"
 
 
+def _replay_file_exists(test_name: str) -> bool:
+    replay_path = (
+        Path(CASSETTE_DIR) / f"integration.test_google_embedding/{test_name}/mldev.json"
+    )
+    return replay_path.exists()
+
+
 def _make_generator(llm_record_mode: str, test_name: str) -> GoogleEmbeddingGenerator:
+    if llm_record_mode == "replay" and not _replay_file_exists(test_name):
+        pytest.skip(
+            f"Replay file missing for {test_name}. Record with LLM_RECORD_MODE=record."
+        )
     debug_config = DebugConfig(
         client_mode=llm_record_mode,
         replay_id=f"integration.test_google_embedding/{test_name}/mldev",
