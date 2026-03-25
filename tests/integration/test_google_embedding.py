@@ -38,20 +38,31 @@ def _replay_file_exists(test_name: str) -> bool:
 
 
 def _make_generator(llm_record_mode: str, test_name: str) -> GoogleEmbeddingGenerator:
-    if llm_record_mode == "replay" and not _replay_file_exists(test_name):
-        pytest.skip(
+    replay_exists = _replay_file_exists(test_name)
+    api_key = os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY")
+
+    if llm_record_mode == "replay" and not replay_exists:
+        pytest.fail(
             f"Replay file missing for {test_name}. Record with LLM_RECORD_MODE=record."
         )
+
+    if llm_record_mode == "record" and not api_key:
+        pytest.skip("Recording requires GEMINI_API_KEY or GOOGLE_API_KEY.")
+
+    if llm_record_mode == "auto" and not replay_exists and not api_key:
+        pytest.skip(
+            "Auto-recording missing replays requires GEMINI_API_KEY or GOOGLE_API_KEY."
+        )
+
     debug_config = DebugConfig(
         client_mode=llm_record_mode,
         replay_id=f"integration.test_google_embedding/{test_name}/mldev",
         replays_directory=CASSETTE_DIR,
     )
-    api_key = os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY") or "test-key"
     return GoogleEmbeddingGenerator(
         model=EMBEDDING_MODEL,
         dimensions=EMBEDDING_DIMENSIONS,
-        api_key=api_key,
+        api_key=api_key or "test-key",
         debug_config=debug_config,
     )
 
