@@ -411,21 +411,19 @@ class Assistant:
                     f"Failed to initialize local embedding model '{embedding_model_name}': {e}"
                 )
                 raise SystemExit(f"Local embedding model init failed: {e}") from e
-        else:
+        elif embedding_model_name.startswith("gemini/"):
             google_model_name = embedding_model_name.removeprefix("gemini/")
-            if not google_model_name.startswith((
-                "gemini-",
-                "text-embedding-",
-                "embedding-",
-            )):
-                raise ValueError(
-                    f"Unsupported embedding model: '{embedding_model_name}'. "
-                    f"Only Google Gemini embedding models are supported "
-                    f"(e.g., 'gemini-embedding-001')."
-                )
             self.embedding_generator = GoogleEmbeddingGenerator(
                 model=google_model_name,
                 dimensions=embedding_dimensions,
+            )
+        else:
+            raise ValueError(
+                f"Unsupported embedding model: '{embedding_model_name}'. "
+                f"Supported formats: 'gemini/<model>' for Google Gemini models "
+                f"(e.g., 'gemini/gemini-embedding-001'), "
+                f"'mock-deterministic-embedder' for testing, "
+                f"or a local model path starting with '/'."
             )
         logger.info(
             f"Using embedding generator: {type(self.embedding_generator).__name__} with model: {self.embedding_generator.model_name}"
