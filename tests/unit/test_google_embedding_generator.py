@@ -25,6 +25,22 @@ def test_model_name_with_prefix() -> None:
     assert generator.model_name == "gemini/gemini-embedding-001"
 
 
+@pytest.mark.no_db
+async def test_api_model_name_strips_prefix() -> None:
+    """embed_content receives the bare model name with gemini/ prefix stripped."""
+    generator = GoogleEmbeddingGenerator(
+        model="gemini/gemini-embedding-001", api_key="fake-key"
+    )
+    response = FakeEmbedResponse(embeddings=[FakeEmbedding(values=[1.0, 2.0, 3.0])])
+    mock_embed = AsyncMock(return_value=response)
+    with patch.object(generator._client.aio.models, "embed_content", mock_embed):
+        await generator.generate_embeddings(["hello"])
+
+    mock_embed.assert_called_once()
+    call_kwargs = mock_embed.call_args
+    assert call_kwargs.kwargs["model"] == "gemini-embedding-001"
+
+
 def test_empty_model_raises() -> None:
     with pytest.raises(ValueError, match="cannot be empty"):
         GoogleEmbeddingGenerator(model="")
