@@ -738,7 +738,7 @@ class AppConfig(BaseSettings):
 
     # Model configuration
     model: str = "gemini/gemini-2.5-pro"
-    embedding_model: str = "gemini/gemini-embedding-001"
+    embedding_model: str = "gemini-embedding-001"
     embedding_dimensions: int = 1536
 
     # Storage paths

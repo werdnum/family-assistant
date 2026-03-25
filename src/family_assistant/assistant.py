@@ -33,7 +33,7 @@ from family_assistant.context_providers import (
 )
 from family_assistant.embeddings import (
     EmbeddingGenerator,
-    LiteLLMEmbeddingGenerator,
+    GoogleEmbeddingGenerator,
 )
 from family_assistant.events.home_assistant_source import HomeAssistantSource
 from family_assistant.events.indexing_source import IndexingSource
@@ -412,8 +412,11 @@ class Assistant:
                 )
                 raise SystemExit(f"Local embedding model init failed: {e}") from e
         else:
-            self.embedding_generator = LiteLLMEmbeddingGenerator(
-                model=embedding_model_name, dimensions=embedding_dimensions
+            gemini_api_key = os.getenv("GEMINI_API_KEY")
+            self.embedding_generator = GoogleEmbeddingGenerator(
+                model=embedding_model_name,
+                dimensions=embedding_dimensions,
+                api_key=gemini_api_key,
             )
         logger.info(
             f"Using embedding generator: {type(self.embedding_generator).__name__} with model: {self.embedding_generator.model_name}"
