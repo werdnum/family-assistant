@@ -110,6 +110,7 @@ jobs:
             llm_integration:
               - 'src/family_assistant/llm/**/*.py'
               - 'tests/integration/llm/**/*.py'
+              - 'tests/integration/test_google_embedding.py'
               - 'tests/cassettes/llm/**'
               - 'tests/cassettes/gemini/**'
   build-ci-container:
