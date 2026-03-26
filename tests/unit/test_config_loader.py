@@ -38,6 +38,8 @@ from family_assistant.config_sources import (
     load_yaml_file,
 )
 from family_assistant.delegation_security import DelegationSecurityLevel
+from family_assistant.tools.metadata import ToolDescriptor
+from family_assistant.tools.policy import PolicyEngine, ToolPolicyDecision
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -1100,6 +1102,316 @@ class TestLoadConfig:
             )
 
         assert config.model == "env-model"
+
+    def test_operator_default_profile_tools_policy_extends_defaults(
+        self, tmp_path: Path
+    ) -> None:
+        """Operator tools_policy rules should extend, not erase, shipped defaults."""
+        defaults_file = tmp_path / "defaults.yaml"
+        defaults_file.write_text(
+            yaml.dump({
+                "default_profile_settings": {
+                    "tools_policy": {
+                        "default_decision": "deny",
+                        "rules": [
+                            {
+                                "match": {"names": ["spawn_worker"]},
+                                "decision": "allow",
+                                "priority": 10,
+                            }
+                        ],
+                    }
+                }
+            })
+        )
+        config_file = tmp_path / "config.yaml"
+        config_file.write_text(
+            yaml.dump({
+                "default_profile_settings": {
+                    "tools_policy": {
+                        "rules": [
+                            {
+                                "match": {"mcp_server_ids": ["code-execution"]},
+                                "decision": "allow",
+                                "priority": 10,
+                            }
+                        ]
+                    }
+                }
+            })
+        )
+        prompts_file = tmp_path / "nonexistent_prompts.yaml"
+
+        env_to_clear = [m.env_var for m in ENV_VAR_MAPPINGS]
+        env_to_clear.extend([
+            "CALDAV_USERNAME",
+            "CALDAV_PASSWORD",
+            "CALDAV_CALENDAR_URLS",
+            "ICAL_URLS",
+            "MCP_CONFIG_PATH",
+            "INDEXING_PIPELINE_CONFIG_JSON",
+        ])
+        clean_env = {k: v for k, v in os.environ.items() if k not in env_to_clear}
+
+        with mock.patch.dict(os.environ, clean_env, clear=True):
+            config = load_config(
+                defaults_file_path=str(defaults_file),
+                config_file_path=str(config_file),
+                prompts_file_path=str(prompts_file),
+                load_dotenv_file=False,
+            )
+
+        profile = config.service_profiles[0]
+        assert profile.tools_policy is not None
+        assert profile.operator_tools_policy is not None
+        engine = PolicyEngine.from_layers(
+            defaults=profile.tools_policy,
+            operator=profile.operator_tools_policy,
+        )
+
+        spawn_worker = ToolDescriptor(
+            name="spawn_worker",
+            definition={
+                "type": "function",
+                "function": {
+                    "name": "spawn_worker",
+                    "description": "Test tool",
+                    "parameters": {"type": "object", "properties": {}},
+                },
+            },
+            tags=frozenset(),
+            origin="local",
+        )
+        code_execution_tool = ToolDescriptor(
+            name="exec_python",
+            definition={
+                "type": "function",
+                "function": {
+                    "name": "exec_python",
+                    "description": "Test tool",
+                    "parameters": {"type": "object", "properties": {}},
+                },
+            },
+            tags=frozenset(),
+            origin="mcp",
+            mcp_server_id="code-execution",
+        )
+
+        assert (
+            engine.evaluate_for_advertisement(
+                spawn_worker,
+                can_confirm=True,
+            ).decision
+            is ToolPolicyDecision.ALLOW
+        )
+        assert engine.evaluate(code_execution_tool).decision is ToolPolicyDecision.ALLOW
+
+    def test_operator_default_profile_tools_policy_overrides_defaults(
+        self, tmp_path: Path
+    ) -> None:
+        """Operator tools_policy rules should still override shipped defaults."""
+        defaults_file = tmp_path / "defaults.yaml"
+        defaults_file.write_text(
+            yaml.dump({
+                "default_profile_settings": {
+                    "tools_policy": {
+                        "default_decision": "deny",
+                        "rules": [
+                            {
+                                "match": {"names": ["spawn_worker"]},
+                                "decision": "allow",
+                                "priority": 10,
+                            }
+                        ],
+                    }
+                }
+            })
+        )
+        config_file = tmp_path / "config.yaml"
+        config_file.write_text(
+            yaml.dump({
+                "default_profile_settings": {
+                    "tools_policy": {
+                        "rules": [
+                            {
+                                "match": {"names": ["spawn_worker"]},
+                                "decision": "deny",
+                                "priority": 10,
+                            }
+                        ]
+                    }
+                }
+            })
+        )
+        prompts_file = tmp_path / "nonexistent_prompts.yaml"
+
+        env_to_clear = [m.env_var for m in ENV_VAR_MAPPINGS]
+        env_to_clear.extend([
+            "CALDAV_USERNAME",
+            "CALDAV_PASSWORD",
+            "CALDAV_CALENDAR_URLS",
+            "ICAL_URLS",
+            "MCP_CONFIG_PATH",
+            "INDEXING_PIPELINE_CONFIG_JSON",
+        ])
+        clean_env = {k: v for k, v in os.environ.items() if k not in env_to_clear}
+
+        with mock.patch.dict(os.environ, clean_env, clear=True):
+            config = load_config(
+                defaults_file_path=str(defaults_file),
+                config_file_path=str(config_file),
+                prompts_file_path=str(prompts_file),
+                load_dotenv_file=False,
+            )
+
+        profile = config.service_profiles[0]
+        assert profile.tools_policy is not None
+        assert profile.operator_tools_policy is not None
+        engine = PolicyEngine.from_layers(
+            defaults=profile.tools_policy,
+            operator=profile.operator_tools_policy,
+        )
+        spawn_worker = ToolDescriptor(
+            name="spawn_worker",
+            definition={
+                "type": "function",
+                "function": {
+                    "name": "spawn_worker",
+                    "description": "Test tool",
+                    "parameters": {"type": "object", "properties": {}},
+                },
+            },
+            tags=frozenset(),
+            origin="local",
+        )
+
+        assert engine.evaluate(spawn_worker).decision is ToolPolicyDecision.DENY
+
+    def test_explicit_profile_tools_policy_does_not_inherit_default_operator_layer(
+        self, tmp_path: Path
+    ) -> None:
+        """Explicit profile tools_policy should clear inherited default operator layer."""
+        defaults_file = tmp_path / "defaults.yaml"
+        defaults_file.write_text(
+            yaml.dump({
+                "default_profile_settings": {
+                    "tools_policy": {
+                        "default_decision": "deny",
+                        "rules": [
+                            {
+                                "match": {"names": ["spawn_worker"]},
+                                "decision": "allow",
+                                "priority": 10,
+                            }
+                        ],
+                    }
+                }
+            })
+        )
+        config_file = tmp_path / "config.yaml"
+        config_file.write_text(
+            yaml.dump({
+                "default_profile_settings": {
+                    "tools_policy": {
+                        "rules": [
+                            {
+                                "match": {"mcp_server_ids": ["code-execution"]},
+                                "decision": "allow",
+                                "priority": 10,
+                            }
+                        ]
+                    }
+                },
+                "service_profiles": [
+                    {
+                        "id": "custom_profile",
+                        "tools_policy": {
+                            "default_decision": "deny",
+                            "rules": [
+                                {
+                                    "match": {"names": ["get_note"]},
+                                    "decision": "allow",
+                                    "priority": 10,
+                                }
+                            ],
+                        },
+                    }
+                ],
+            })
+        )
+        prompts_file = tmp_path / "nonexistent_prompts.yaml"
+
+        env_to_clear = [m.env_var for m in ENV_VAR_MAPPINGS]
+        env_to_clear.extend([
+            "CALDAV_USERNAME",
+            "CALDAV_PASSWORD",
+            "CALDAV_CALENDAR_URLS",
+            "ICAL_URLS",
+            "MCP_CONFIG_PATH",
+            "INDEXING_PIPELINE_CONFIG_JSON",
+        ])
+        clean_env = {k: v for k, v in os.environ.items() if k not in env_to_clear}
+
+        with mock.patch.dict(os.environ, clean_env, clear=True):
+            config = load_config(
+                defaults_file_path=str(defaults_file),
+                config_file_path=str(config_file),
+                prompts_file_path=str(prompts_file),
+                load_dotenv_file=False,
+            )
+
+        profile = config.service_profiles[0]
+        assert profile.id == "custom_profile"
+        assert profile.tools_policy is not None
+        assert profile.operator_tools_policy is None
+        engine = PolicyEngine.from_layers(
+            defaults=profile.tools_policy,
+            operator=profile.operator_tools_policy,
+        )
+        get_note = ToolDescriptor(
+            name="get_note",
+            definition={
+                "type": "function",
+                "function": {
+                    "name": "get_note",
+                    "description": "Test tool",
+                    "parameters": {"type": "object", "properties": {}},
+                },
+            },
+            tags=frozenset(),
+            origin="local",
+        )
+        spawn_worker = ToolDescriptor(
+            name="spawn_worker",
+            definition={
+                "type": "function",
+                "function": {
+                    "name": "spawn_worker",
+                    "description": "Test tool",
+                    "parameters": {"type": "object", "properties": {}},
+                },
+            },
+            tags=frozenset(),
+            origin="local",
+        )
+        code_execution_tool = ToolDescriptor(
+            name="exec_python",
+            definition={
+                "type": "function",
+                "function": {
+                    "name": "exec_python",
+                    "description": "Test tool",
+                    "parameters": {"type": "object", "properties": {}},
+                },
+            },
+            tags=frozenset(),
+            origin="mcp",
+            mcp_server_id="code-execution",
+        )
+
+        assert engine.evaluate(get_note).decision is ToolPolicyDecision.ALLOW
+        assert engine.evaluate(spawn_worker).decision is ToolPolicyDecision.DENY
+        assert engine.evaluate(code_execution_tool).decision is ToolPolicyDecision.DENY
 
     def test_service_profiles_resolved(self, tmp_path: Path) -> None:
         """Test that service profiles are properly resolved."""

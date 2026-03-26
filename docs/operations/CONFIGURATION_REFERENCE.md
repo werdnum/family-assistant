@@ -692,6 +692,14 @@ The main configuration file (`config.yaml`) supports:
 - **attachment_config**: Attachment handling settings
 - **event_system**: Event system configuration
 
+Operator merge note for tool policy:
+
+- `default_profile_settings.tools_policy.rules` in `config.yaml` are additive.
+- Shipped rules from `defaults.yaml` are preserved, and operator rules are layered on top with
+  higher precedence.
+- `default_profile_settings.tools_policy.default_decision` still overrides the shipped default when
+  explicitly set.
+
 ### mcp_config.json
 
 MCP server definitions with environment variable expansion using `${VAR}` syntax:

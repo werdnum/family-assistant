@@ -28,7 +28,7 @@ from dotenv import load_dotenv
 from pydantic import ValidationError
 
 from .config_models import AppConfig
-from .config_sources import deep_merge_dicts
+from .config_sources import deep_merge_dicts, load_yaml_file
 
 logger = logging.getLogger(__name__)
 
@@ -320,6 +320,38 @@ def _build_config_from_yaml(yaml_files: list[str]) -> AppConfig:
     """
     with AppConfig.yaml_source_context(yaml_files):
         return AppConfig()
+
+
+def _apply_default_profile_tools_policy_layers(
+    config_data: dict[str, Any],
+    default_policy_data: dict[str, Any] | None,
+    operator_config_data: dict[str, Any],
+) -> None:
+    """Preserve shipped and operator default-profile tool policies as layers.
+
+    Generic YAML deep-merge replaces lists wholesale, which makes operator
+    `default_profile_settings.tools_policy.rules` delete the shipped defaults.
+    Restore the shipped defaults as the inherited policy and keep the operator
+    override in a separate internal field so runtime evaluation can apply layer
+    precedence without changing the documented 0..99 priority range.
+    """
+
+    operator_default_settings = operator_config_data.get("default_profile_settings")
+    if not isinstance(operator_default_settings, dict):
+        return
+
+    operator_policy_data = operator_default_settings.get("tools_policy")
+    if not isinstance(operator_policy_data, dict):
+        return
+
+    if default_policy_data is not None:
+        config_data["default_profile_settings"]["tools_policy"] = copy.deepcopy(
+            default_policy_data
+        )
+
+    config_data["default_profile_settings"]["operator_tools_policy"] = copy.deepcopy(
+        operator_policy_data
+    )
 
 
 def apply_env_var_overrides(
@@ -618,6 +650,7 @@ def resolve_service_profile(
     # Replace tools_policy entirely if defined
     if "tools_policy" in profile_def:
         resolved["tools_policy"] = profile_def["tools_policy"]
+        resolved["operator_tools_policy"] = None
 
     # Merge chat_id_to_name_map
     if "chat_id_to_name_map" in profile_def and isinstance(
@@ -780,8 +813,21 @@ def load_config(
     base_config = _build_config_from_yaml(yaml_files)
     logger.info("Built config from field defaults + YAML files: %s", yaml_files)
 
+    defaults_only_config = _build_config_from_yaml([defaults_file_path])
+    operator_config_data = (
+        load_yaml_file(config_file_path) if os.path.exists(config_file_path) else {}
+    )
+
     # 2. Post-processing operates on dict, re-validates at end
     config_data = base_config.model_dump()
+    default_policy_data = defaults_only_config.model_dump()["default_profile_settings"][
+        "tools_policy"
+    ]
+    _apply_default_profile_tools_policy_layers(
+        config_data,
+        default_policy_data,
+        operator_config_data,
+    )
 
     # Use exclude_unset=True for service_profiles so resolve_service_profile()
     # can distinguish YAML-specified values from Pydantic defaults.
