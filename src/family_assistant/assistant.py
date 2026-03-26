@@ -33,7 +33,7 @@ from family_assistant.context_providers import (
 )
 from family_assistant.embeddings import (
     EmbeddingGenerator,
-    LiteLLMEmbeddingGenerator,
+    GoogleEmbeddingGenerator,
 )
 from family_assistant.events.home_assistant_source import HomeAssistantSource
 from family_assistant.events.indexing_source import IndexingSource
@@ -411,9 +411,23 @@ class Assistant:
                     f"Failed to initialize local embedding model '{embedding_model_name}': {e}"
                 )
                 raise SystemExit(f"Local embedding model init failed: {e}") from e
+        elif embedding_model_name.startswith(("gemini/", "gemini-")):
+            canonical_name = embedding_model_name
+            if not canonical_name.startswith("gemini/"):
+                canonical_name = f"gemini/{canonical_name}"
+            if canonical_name == "gemini/":
+                raise ValueError("Embedding model name cannot be just 'gemini/'.")
+            self.embedding_generator = GoogleEmbeddingGenerator(
+                model=canonical_name,
+                dimensions=embedding_dimensions,
+            )
         else:
-            self.embedding_generator = LiteLLMEmbeddingGenerator(
-                model=embedding_model_name, dimensions=embedding_dimensions
+            raise ValueError(
+                f"Unsupported embedding model: '{embedding_model_name}'. "
+                f"Supported formats: 'gemini/<model>' for Google Gemini models "
+                f"(e.g., 'gemini/gemini-embedding-001'), "
+                f"'mock-deterministic-embedder' for testing, "
+                f"or a local model path starting with '/'."
             )
         logger.info(
             f"Using embedding generator: {type(self.embedding_generator).__name__} with model: {self.embedding_generator.model_name}"

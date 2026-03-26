@@ -98,7 +98,7 @@ worker) and graceful shutdown.
 
 **Internal Dependencies:**
 
-- `family_assistant.embeddings` (EmbeddingGenerator, LiteLLMEmbeddingGenerator,
+- `family_assistant.embeddings` (EmbeddingGenerator, GoogleEmbeddingGenerator,
   MockEmbeddingGenerator, SentenceTransformerEmbeddingGenerator)
 - `family_assistant.storage` (init_db, init_vector_db, get_db_context)
 - `family_assistant.storage.context` (DatabaseContext)
@@ -183,7 +183,7 @@ Word).
 
 - `EmbeddingResult`: Dataclass for embedding generation results.
 - `EmbeddingGenerator` (Protocol): Interface for embedding generators.
-- `LiteLLMEmbeddingGenerator`: Uses LiteLLM for API-based embedding models.
+- `GoogleEmbeddingGenerator`: Uses native Google GenAI SDK for embedding models.
 - `HashingWordEmbeddingGenerator`: Generates simple hash-based word embeddings.
 - `SentenceTransformerEmbeddingGenerator`: Uses local `sentence-transformers` models.
 - `MockEmbeddingGenerator`: A mock implementation for testing.

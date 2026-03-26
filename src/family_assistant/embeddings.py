@@ -8,16 +8,11 @@ import logging
 import math
 import re
 from dataclasses import dataclass
-from typing import Any, Protocol, runtime_checkable
+from typing import Any, Protocol, cast, runtime_checkable
 
-from litellm import aembedding
-from litellm.exceptions import (
-    APIConnectionError,
-    APIError,
-    RateLimitError,
-    ServiceUnavailableError,
-    Timeout,
-)
+from google import genai
+from google.genai import types as genai_types
+from google.genai.client import DebugConfig
 
 # Declare module/class variables that will be conditionally populated
 
@@ -78,23 +73,29 @@ class EmbeddingGenerator(Protocol):
         ...
 
 
-class LiteLLMEmbeddingGenerator:
-    """Embedding generator implementation using the LiteLLM library."""
+class GoogleEmbeddingGenerator:
+    """Embedding generator using the native Google GenAI SDK."""
 
-    def __init__(self, model: str, **kwargs: object) -> None:
-        """
-        Initializes the LiteLLM embedding generator.
-
-        Args:
-            model: The identifier of the embedding model to use (e.g., "text-embedding-ada-002").
-            **kwargs: Additional keyword arguments to pass directly to litellm.aembedding.
-        """
+    def __init__(
+        self,
+        model: str,
+        dimensions: int | None = None,
+        task_type: str | None = None,
+        api_key: str | None = None,
+        debug_config: DebugConfig | None = None,
+    ) -> None:
         if not model:
             raise ValueError("Embedding model identifier cannot be empty.")
         self._model_name = model
-        self.embedding_kwargs = kwargs
+        self._api_model_name = model.removeprefix("gemini/")
+        if not self._api_model_name:
+            raise ValueError("Embedding model identifier cannot be just 'gemini/'.")
+        self._dimensions = dimensions
+        self._task_type = task_type
+        self._client = genai.Client(api_key=api_key, debug_config=debug_config)
         logger.info(
-            f"LiteLLMEmbeddingGenerator initialized for model: {self._model_name} with kwargs: {self.embedding_kwargs}"
+            f"GoogleEmbeddingGenerator initialized for model: {self._model_name}, "
+            f"dimensions: {self._dimensions}, task_type: {self._task_type}"
         )
 
     @property
@@ -102,59 +103,47 @@ class LiteLLMEmbeddingGenerator:
         return self._model_name
 
     async def generate_embeddings(self, texts: list[str]) -> EmbeddingResult:
-        """Generates embeddings using LiteLLM's aembedding."""
+        """Generates embeddings using the Google GenAI SDK."""
         if not texts:
             logger.warning("generate_embeddings called with empty list of texts.")
             return EmbeddingResult(embeddings=[], model_name=self.model_name)
 
         logger.debug(
-            f"Calling LiteLLM embedding model {self.model_name} for {len(texts)} texts."
+            f"Calling Google embedding model {self.model_name} for {len(texts)} texts."
         )
-        try:
-            # Combine fixed kwargs with per-call args
-            call_kwargs = {
-                **self.embedding_kwargs,
-                "model": self.model_name,
-                "input": texts,
-            }
-            response = await aembedding(**call_kwargs)
+        config = genai_types.EmbedContentConfig(
+            output_dimensionality=self._dimensions,
+            task_type=self._task_type,
+        )
+        response = await self._client.aio.models.embed_content(
+            model=self._api_model_name,
+            contents=cast("Any", texts),
+            config=config,
+        )
 
-            # Extract embeddings from the response
-            # LiteLLM's EmbeddingResponse structure has a 'data' field which is a list of Embedding objects
-            # Each Embedding object has an 'embedding' field.
-            embeddings_list = [item.embedding for item in response.data]
-
-            logger.debug(
-                f"LiteLLM embedding response received. Generated {len(embeddings_list)} embeddings."
-            )
-            return EmbeddingResult(
-                embeddings=embeddings_list, model_name=self.model_name
+        if not response.embeddings:
+            raise ValueError(
+                f"Google GenAI API returned no embeddings for {len(texts)} input texts."
             )
 
-        except (
-            APIConnectionError,
-            Timeout,
-            RateLimitError,
-            ServiceUnavailableError,
-            APIError,
-        ) as e:
-            logger.error(
-                f"LiteLLM API error during embedding generation for model {self.model_name}: {e}",
-                exc_info=True,
+        embeddings_list: list[list[float]] = []
+        for embedding in response.embeddings:
+            if embedding.values is None:
+                raise ValueError(
+                    "Google GenAI API returned an embedding with no values."
+                )
+            embeddings_list.append(list(embedding.values))
+
+        if len(embeddings_list) != len(texts):
+            raise ValueError(
+                f"Google GenAI API returned {len(embeddings_list)} embeddings "
+                f"for {len(texts)} input texts."
             )
-            raise  # Re-raise the specific LiteLLM exception
-        except Exception as e:
-            logger.error(
-                f"Unexpected error during LiteLLM embedding call for model {self.model_name}: {e}",
-                exc_info=True,
-            )
-            # Wrap unexpected errors in a generic APIError or a custom exception
-            raise APIError(
-                message=f"Unexpected error during embedding: {e}",
-                llm_provider="litellm",
-                model=self.model_name,
-                status_code=500,
-            ) from e
+
+        logger.debug(
+            f"Google embedding response received. Generated {len(embeddings_list)} embeddings."
+        )
+        return EmbeddingResult(embeddings=embeddings_list, model_name=self.model_name)
 
 
 class HashingWordEmbeddingGenerator:
@@ -520,7 +509,7 @@ class MockEmbeddingGenerator:
 __all__ = [
     "EmbeddingResult",
     "EmbeddingGenerator",
-    "LiteLLMEmbeddingGenerator",
+    "GoogleEmbeddingGenerator",
     "HashingWordEmbeddingGenerator",  # Added new class
     "SentenceTransformerEmbeddingGenerator",
     "MockEmbeddingGenerator",

@@ -27,6 +27,10 @@ from family_assistant.tools.types import ToolDefinition, ToolExecutionContext
 
 logger = logging.getLogger(__name__)
 
+# All tests in this module require either a valid GEMINI_API_KEY or a real
+# browser environment. Exclude from default CI backend runs.
+pytestmark = pytest.mark.llm_integration
+
 
 def _has_internet() -> bool:
     """Check if external network access is available."""
@@ -74,6 +78,7 @@ async def browser_session(
     await close_browser_session(mock_exec_context)
 
 
+@pytest.mark.llm_integration
 @pytest.mark.asyncio
 async def test_computer_use_tool_injection(gemini_client: GoogleGenAIClient) -> None:
     """Test that the Computer Use tool is automatically injected for the correct model."""
@@ -172,6 +177,7 @@ async def test_computer_use_tool_injection(gemini_client: GoogleGenAIClient) -> 
         assert has_other_tool, "'other_tool' should be preserved"
 
 
+@pytest.mark.llm_integration
 @pytest.mark.asyncio
 async def test_computer_use_end_to_end_flow(gemini_client: GoogleGenAIClient) -> None:
     """Test the end-to-end flow of tool calling and response handling with Computer Use."""
@@ -214,7 +220,7 @@ async def test_computer_use_end_to_end_flow(gemini_client: GoogleGenAIClient) ->
         assert tool_call.function.arguments == {"x": 500, "y": 300}
 
 
-@pytest.mark.integration
+@pytest.mark.llm_integration
 @pytest.mark.skipif(
     os.getenv("GEMINI_API_KEY") is None, reason="Requires GEMINI_API_KEY"
 )
@@ -359,7 +365,7 @@ class TestComputerUseTools:
         assert len(attachment.content) > 0
 
 
-@pytest.mark.integration
+@pytest.mark.llm_integration
 @pytest.mark.skipif(
     os.getenv("GEMINI_API_KEY") is None, reason="Requires GEMINI_API_KEY"
 )
@@ -535,7 +541,7 @@ async def test_computer_use_browser_navigation_e2e(db_engine: AsyncEngine) -> No
         await assistant.stop_services()
 
 
-@pytest.mark.integration
+@pytest.mark.llm_integration
 @pytest.mark.skipif(
     os.getenv("GEMINI_API_KEY") is None, reason="Requires GEMINI_API_KEY"
 )
