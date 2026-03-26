@@ -185,46 +185,9 @@ indexing_pipeline_config:
 
 # --- MCP (Model Context Protocol) Servers ---
 # Configuration for external MCP servers that provide additional tools.
+# Define your MCP server connections in config.yaml (operator-provided).
 mcp_config:
-  mcpServers:
-    time:
-      command: "uvx"
-      args: ["mcp-server-time", "--local-timezone=Australia/Sydney"]
-    browser:
-      command: "deno"
-      args:
-        - "run"
-        - "-A"
-        - "npm:@playwright/mcp@latest"
-        - "--headless"
-        - "--browser"
-        - "chromium"
-    brave:
-      command: "deno"
-      args:
-        - "run"
-        - "--allow-net"
-        - "--allow-env"
-        - "npm:@modelcontextprotocol/server-brave-search"
-      env:
-        BRAVE_API_KEY: "$BRAVE_API_KEY"
-    homeassistant:
-      transport: "sse"
-      url: "https://homeassistant.example.com/mcp_server/sse"
-      token: "$HOMEASSISTANT_API_KEY"
-    scrape:
-      command: "python"
-      args:
-        - "contrib/scrape_mcp.py"
-    google-maps:
-      command: "deno"
-      args:
-        - "run"
-        - "--allow-net"
-        - "--allow-env"
-        - "npm:@modelcontextprotocol/server-google-maps"
-      env:
-        GOOGLE_MAPS_API_KEY: "$GOOGLE_MAPS_API_KEY"
+  mcpServers: {}
 
 # --- Notes Configuration ---
 # Controls default visibility labels applied to new notes.
