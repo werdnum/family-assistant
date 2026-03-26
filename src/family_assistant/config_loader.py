@@ -650,6 +650,7 @@ def resolve_service_profile(
     # Replace tools_policy entirely if defined
     if "tools_policy" in profile_def:
         resolved["tools_policy"] = profile_def["tools_policy"]
+        resolved["operator_tools_policy"] = None
 
     # Merge chat_id_to_name_map
     if "chat_id_to_name_map" in profile_def and isinstance(
