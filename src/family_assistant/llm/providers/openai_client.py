@@ -87,7 +87,8 @@ class OpenAIClient(BaseLLMClient):
             model_parameters: Pattern-based parameters matching existing config format
             **kwargs: Default parameters for completions
         """
-        self.client = AsyncOpenAI(api_key=api_key)
+        base_url = kwargs.pop("base_url", None)
+        self.client = AsyncOpenAI(api_key=api_key, base_url=base_url)
         self.model = model
         self.model_parameters = model_parameters or {}
         self.default_kwargs = kwargs

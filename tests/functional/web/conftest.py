@@ -319,7 +319,6 @@ async def _create_web_assistant(
         "server_port": api_port,
         "document_storage_path": f"/tmp/test_docs{storage_suffix}",
         "chat_attachment_storage_path": f"/tmp/test_attachments{storage_suffix}",
-        "litellm_debug": False,
         "dev_mode": False,
         "oidc": {
             "client_id": "",

@@ -81,7 +81,6 @@ ENV_VAR_MAPPINGS: list[EnvVarMapping] = [
     EnvVarMapping("EMBEDDING_MODEL", "embedding_model"),
     EnvVarMapping("EMBEDDING_DIMENSIONS", "embedding_dimensions", int),
     # Debug flags
-    EnvVarMapping("LITELLM_DEBUG", "litellm_debug", bool),
     EnvVarMapping("DEBUG_LLM_MESSAGES", "debug_llm_messages", bool),
     # PWA configuration
     EnvVarMapping("VAPID_PUBLIC_KEY", "pwa_config.vapid_public_key"),

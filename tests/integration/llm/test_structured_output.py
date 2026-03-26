@@ -19,7 +19,6 @@ DIRECT_PROVIDER_MODELS = [
     ("google", "gemini-2.5-flash-lite"),
     ("anthropic", "claude-haiku-4-5-20251001"),
 ]
-LITELLM_MODEL = "gemini/gemini-2.5-flash-lite"
 
 # --- Test Models ---
 
@@ -455,56 +454,3 @@ async def test_basic_json_output(
     assert "2" in str(result["expression"])
     assert isinstance(result["explanation"], str)
     assert result["explanation"]
-
-
-@pytest.mark.no_db
-@pytest.mark.llm_integration
-@pytest.mark.no_vcr
-async def test_litellm_structured_output_with_gemini_backend(
-    llm_client_factory: Callable[[str, str, str | None], Awaitable[LLMInterface]],
-) -> None:
-    """Test LiteLLM structured output using a real Gemini-backed model."""
-    if os.getenv("CI") or not os.getenv("GEMINI_API_KEY"):
-        pytest.skip("Skipping LiteLLM structured-output test without API key")
-
-    client = await llm_client_factory("litellm", LITELLM_MODEL, None)
-    messages = [
-        create_user_message(
-            "What is 2 + 2? Provide the expression, result, and a brief explanation."
-        )
-    ]
-
-    result = await client.generate_structured(
-        messages=messages,
-        response_model=MathResult,
-    )
-
-    assert isinstance(result, MathResult)
-    assert result.result == 4
-    assert "2" in result.expression
-    assert result.explanation
-
-
-@pytest.mark.no_db
-@pytest.mark.llm_integration
-@pytest.mark.no_vcr
-async def test_litellm_json_output_with_gemini_backend(
-    llm_client_factory: Callable[[str, str, str | None], Awaitable[LLMInterface]],
-) -> None:
-    """Test LiteLLM JSON-object output using a real Gemini-backed model."""
-    if os.getenv("CI") or not os.getenv("GEMINI_API_KEY"):
-        pytest.skip("Skipping LiteLLM JSON-output test without API key")
-
-    client = await llm_client_factory("litellm", LITELLM_MODEL, None)
-    messages = [
-        create_user_message(
-            "Create a JSON object with keys 'name', 'age', and 'occupation' "
-            "for John, a 25-year-old software developer."
-        )
-    ]
-
-    result = await client.generate_json(messages=messages)
-
-    assert "john" in str(result["name"]).lower()
-    assert result["age"] == 25
-    assert isinstance(result["occupation"], str)

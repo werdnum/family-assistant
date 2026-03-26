@@ -276,9 +276,6 @@ class GeminiStreamingMocker:
         # Patch aiohttp.ClientSession
         self.mocker.patch("aiohttp.ClientSession", return_value=mock_session)
 
-        # Also patch any other common import patterns
-        self.mocker.patch("litellm.aiohttp.ClientSession", return_value=mock_session)
-
         logger.debug(
             f"Set up mock aiohttp session with {len(chunks)} chunks, status {status}"
         )

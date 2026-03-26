@@ -6,6 +6,10 @@ import pytest
 
 from family_assistant.assistant import Assistant
 from family_assistant.config_models import AppConfig
+from tests.mocks.mock_llm import (  # pylint: disable=no-name-in-module
+    LLMOutput,
+    RuleBasedMockLLMClient,
+)
 
 
 class TestEventSourceDeduplication:
@@ -69,8 +73,18 @@ class TestEventSourceDeduplication:
             mock_ha_client = MagicMock()
             mock_create_ha_client.return_value = mock_ha_client
 
-            # Create assistant with real dependencies
-            assistant = Assistant(AppConfig.model_validate(config))
+            # Create assistant with mock LLM to avoid needing real provider
+            mock_llm = RuleBasedMockLLMClient(
+                rules=[],
+                default_response=LLMOutput(content="mock"),
+            )
+            assistant = Assistant(
+                AppConfig.model_validate(config),
+                llm_client_overrides={
+                    "profile1": mock_llm,
+                    "profile2": mock_llm,
+                },
+            )
             await assistant.setup_dependencies()
 
             try:

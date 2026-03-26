@@ -233,12 +233,12 @@ ______________________________________________________________________
 
 OpenRouter API key for accessing multiple LLM providers.
 
-| Property  | Value                                   |
-| --------- | --------------------------------------- |
-| Required  | Yes (for OpenRouter models via LiteLLM) |
-| Default   | None                                    |
-| Sensitive | **Yes**                                 |
-| Example   | `sk-or-v1-...`                          |
+| Property  | Value                       |
+| --------- | --------------------------- |
+| Required  | Yes (for OpenRouter models) |
+| Default   | None                        |
+| Sensitive | **Yes**                     |
+| Example   | `sk-or-v1-...`              |
 
 Used when model names start with `openrouter/`.
 
@@ -297,19 +297,6 @@ Dimensionality of embedding vectors.
 | Example   | `768`, `3072` |
 
 Must match the dimensions produced by the configured embedding model.
-
-______________________________________________________________________
-
-### LITELLM_DEBUG
-
-Enable LiteLLM debug logging.
-
-| Property  | Value   |
-| --------- | ------- |
-| Required  | No      |
-| Default   | `false` |
-| Sensitive | No      |
-| Example   | `true`  |
 
 ______________________________________________________________________
 

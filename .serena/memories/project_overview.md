@@ -11,7 +11,7 @@ capabilities.
 - **Language**: Python 3.10+
 - **Framework**: FastAPI for web server, python-telegram-bot for Telegram interface
 - **Database**: SQLAlchemy with support for both SQLite (development) and PostgreSQL (production)
-- **LLM Integration**: litellm for multi-provider LLM support
+- **LLM Integration**: Native provider SDKs (OpenAI, Google GenAI, Anthropic)
 - **Task Queue**: Custom database-backed async task queue
 - **Deployment**: Kubernetes (namespace: ml-bot)
 - **Package Manager**: uv (modern Python package manager)

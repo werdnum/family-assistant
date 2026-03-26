@@ -36,7 +36,6 @@ class LLMClientFactory:
         "openai": "family_assistant.llm.providers.openai_client.OpenAIClient",
         "google": "family_assistant.llm.providers.google_genai_client.GoogleGenAIClient",
         "anthropic": "family_assistant.llm.providers.anthropic_client.AnthropicClient",
-        "litellm": "family_assistant.llm.LiteLLMClient",
     }
 
     @classmethod
@@ -48,14 +47,11 @@ class LLMClientFactory:
         """
         Create appropriate LLM client based on configuration.
 
-        This method accepts the same configuration format used in the existing
-        LLM configuration system, making it a drop-in replacement.
-
         Args:
             config: LLM configuration dict containing either:
                 Simple format:
                 - model: Model identifier (required)
-                - provider: Explicit provider name (optional, defaults to litellm)
+                - provider: Explicit provider name (optional, auto-detected from model)
                 - api_key: API key (optional, will use env var if not provided)
                 - api_base: API base URL (optional, for custom endpoints)
                 - model_parameters: Pattern-based parameters (optional)
@@ -108,7 +104,7 @@ class LLMClientFactory:
         if not model:
             raise ValueError("Model must be specified in config")
 
-        # Determine provider - explicit config takes precedence, defaults to litellm
+        # Determine provider - explicit config takes precedence
         provider = config.get("provider")
         if not provider:
             provider = cls._determine_provider(model)
@@ -128,10 +124,20 @@ class LLMClientFactory:
                 f"Available providers: {available_providers}"
             )
 
+        # Detect OpenRouter models and configure accordingly
+        is_openrouter = model.startswith("openrouter/")
+
         # Get API key
         api_key = config.get("api_key")
-        if not api_key and provider != "litellm":
-            api_key = cls._get_api_key_for_provider(provider)
+        if not api_key:
+            if is_openrouter:
+                api_key = os.getenv("OPENROUTER_API_KEY", "")
+                if not api_key:
+                    raise ValueError(
+                        "API key not found in environment: OPENROUTER_API_KEY"
+                    )
+            else:
+                api_key = cls._get_api_key_for_provider(provider)
 
         # Extract provider-specific parameters
         # Remove keys that are handled separately
@@ -140,6 +146,14 @@ class LLMClientFactory:
             for k, v in config.items()
             if k not in {"model", "provider", "api_key", "model_parameters"}
         }
+
+        # OpenRouter uses an OpenAI-compatible API at a custom base URL
+        if is_openrouter and "base_url" not in provider_params:
+            provider_params["base_url"] = "https://openrouter.ai/api/v1"
+
+        # Map api_base to base_url (api_base is a legacy LiteLLM convention)
+        if "api_base" in provider_params:
+            provider_params["base_url"] = provider_params.pop("api_base")
 
         # Get model_parameters from llm_parameters config
         model_parameters = config.get("model_parameters", {})
@@ -154,21 +168,12 @@ class LLMClientFactory:
 
         logger.info(f"Creating {class_name} for model: {model}")
 
-        if provider == "litellm":
-            # LiteLLMClient has a different constructor signature
-            return client_class(
-                model=model,
-                model_parameters=model_parameters,
-                **provider_params,
-            )
-        else:
-            # Direct provider clients (OpenAI, Google)
-            return client_class(
-                api_key=api_key,
-                model=model,
-                model_parameters=model_parameters,
-                **provider_params,
-            )
+        return client_class(
+            api_key=api_key,
+            model=model,
+            model_parameters=model_parameters,
+            **provider_params,
+        )
 
     @classmethod
     def _determine_provider(cls, model: str) -> str:
@@ -184,15 +189,16 @@ class LLMClientFactory:
             if provider in cls._provider_classes:
                 return provider
 
-        # Check for router-style prefixes (e.g., "openrouter/openai/gpt-4")
-        if model.count("/") >= 2:
-            parts = model.split("/")
-            # Try second part as provider
-            if parts[1] in cls._provider_classes:
-                return parts[1]
+        # OpenRouter models always use the OpenAI-compatible API
+        if model.startswith("openrouter/"):
+            return "openai"
 
-        # Default to litellm if no other provider can be determined
-        return "litellm"
+        raise ValueError(
+            f"Cannot determine provider for model: '{model}'. "
+            f"Please specify a 'provider' explicitly in the config. "
+            f"Known prefixes: {list(cls._provider_prefixes.keys())}. "
+            f"Known providers: {list(cls._provider_classes.keys())}."
+        )
 
     @classmethod
     def _get_api_key_for_provider(cls, provider: str) -> str:

@@ -493,10 +493,10 @@ class TestApplyEnvVarOverrides:
 
     def test_applies_bool_env_var(self) -> None:
         """Test applying a boolean environment variable."""
-        config: dict[str, Any] = {"litellm_debug": False}
-        with mock.patch.dict(os.environ, {"LITELLM_DEBUG": "true"}, clear=False):
+        config: dict[str, Any] = {"debug_llm_messages": False}
+        with mock.patch.dict(os.environ, {"DEBUG_LLM_MESSAGES": "true"}, clear=False):
             apply_env_var_overrides(config)
-        assert config["litellm_debug"] is True
+        assert config["debug_llm_messages"] is True
 
     def test_applies_list_env_var(self) -> None:
         """Test applying a list environment variable."""

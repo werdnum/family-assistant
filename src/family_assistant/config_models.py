@@ -118,7 +118,7 @@ class ProcessingConfig(BaseModel):
     web_max_history_messages: int | None = None
     web_history_max_age_hours: float | None = None
     llm_model: str | None = None
-    provider: str | None = None  # 'google', 'openai', 'litellm'
+    provider: str | None = None  # 'google', 'openai', 'anthropic'
     retry_config: RetryConfig | None = None
     delegation_security_level: DelegationSecurityLevel = DelegationSecurityLevel.CONFIRM
     home_assistant_api_url: str | None = None
@@ -758,7 +758,6 @@ class AppConfig(BaseSettings):
     willyweather_location_id: int | None = None
 
     # Debug flags
-    litellm_debug: bool = False
     debug_llm_messages: bool = False
     dev_mode: bool = False
 

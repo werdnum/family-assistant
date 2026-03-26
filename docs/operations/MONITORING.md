@@ -191,16 +191,15 @@ Example output:
 [{"role": "system", "content": "..."}, {"role": "user", "content": "What's the weather?"}]
 ```
 
-### LiteLLM Debug Mode
+### LLM Debug Mode
 
-For debugging LiteLLM provider issues:
+For debugging LLM provider issues:
 
 ```bash
-LITELLM_DEBUG=true
+DEBUG_LLM_MESSAGES=true
 ```
 
-This enables LiteLLM's internal debug logging for API calls to OpenAI, Anthropic, Google, and other
-providers.
+This enables debug logging for LLM API calls to OpenAI, Anthropic, Google, and other providers.
 
 ______________________________________________________________________
 
@@ -357,7 +356,7 @@ running, or use webhooks for multiple replicas.
 #### LLM API Errors
 
 ```
-ERROR - LiteLLM response structure unexpected or empty for model gemini/gemini-2.5-pro
+ERROR - LLM response structure unexpected or empty for model gemini/gemini-2.5-pro
 WARNING - LLM Request failed: API rate limit exceeded
 ```
 
