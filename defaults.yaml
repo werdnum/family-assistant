@@ -185,6 +185,7 @@ indexing_pipeline_config:
 
 # --- MCP (Model Context Protocol) Servers ---
 # Configuration for external MCP servers that provide additional tools.
+# Operator-specific servers (e.g. Home Assistant) should be added in config.yaml.
 mcp_config:
   mcpServers:
     time:
@@ -208,10 +209,6 @@ mcp_config:
         - "npm:@modelcontextprotocol/server-brave-search"
       env:
         BRAVE_API_KEY: "$BRAVE_API_KEY"
-    homeassistant:
-      transport: "sse"
-      url: "https://homeassistant.example.com/mcp_server/sse"
-      token: "$HOMEASSISTANT_API_KEY"
     scrape:
       command: "python"
       args:
