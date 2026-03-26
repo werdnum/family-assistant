@@ -135,6 +135,7 @@ def deep_merge_dicts(base_dict: dict, merge_dict: dict) -> dict:
 def _build_profile_policy_engine(
     profile_id: str,
     profile_tools_policy: ToolPolicyConfig | None,
+    operator_tools_policy: ToolPolicyConfig | None,
 ) -> PolicyEngine:
     """Build a policy engine for a profile from explicit policy config."""
     if profile_tools_policy is None:
@@ -143,7 +144,10 @@ def _build_profile_policy_engine(
             "Every runtime profile must define explicit tools_policy."
         )
         raise ValueError(msg)
-    return PolicyEngine.from_policy_config(profile_tools_policy)
+    return PolicyEngine.from_layers(
+        defaults=profile_tools_policy,
+        operator=operator_tools_policy,
+    )
 
 
 class NullChatInterface:
@@ -656,6 +660,7 @@ class Assistant:
             profile_proc_conf = profile_conf.processing_config
             profile_tools_conf = profile_conf.tools_config
             profile_tools_policy = profile_conf.tools_policy
+            profile_operator_tools_policy = profile_conf.operator_tools_policy
             profile_chat_id_map = profile_conf.chat_id_to_name_map
 
             profile_llm_model = profile_proc_conf.llm_model or self.config.model
@@ -725,6 +730,7 @@ class Assistant:
             policy_engine = _build_profile_policy_engine(
                 profile_id,
                 profile_tools_policy,
+                profile_operator_tools_policy,
             )
             # Get confirmation timeout from config, default to 3600 seconds (1 hour)
             confirmation_timeout = profile_tools_conf.confirmation_timeout_seconds

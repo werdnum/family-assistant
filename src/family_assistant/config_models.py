@@ -164,6 +164,7 @@ class ServiceProfile(BaseModel):
     processing_config: ProcessingConfig = Field(default_factory=ProcessingConfig)
     tools_config: ToolsConfig = Field(default_factory=ToolsConfig)
     tools_policy: ToolPolicyConfig | None = None
+    operator_tools_policy: ToolPolicyConfig | None = Field(default=None, exclude=True)
     chat_id_to_name_map: dict[int, str] = Field(default_factory=dict)
     slash_commands: list[str] = Field(default_factory=list)
     visibility_grants: list[str] = Field(default_factory=list)
@@ -177,6 +178,7 @@ class DefaultProfileSettings(BaseModel):
     processing_config: ProcessingConfig = Field(default_factory=ProcessingConfig)
     tools_config: ToolsConfig = Field(default_factory=ToolsConfig)
     tools_policy: ToolPolicyConfig | None = None
+    operator_tools_policy: ToolPolicyConfig | None = Field(default=None, exclude=True)
     chat_id_to_name_map: dict[int, str] = Field(default_factory=dict)
     slash_commands: list[str] = Field(default_factory=list)
     visibility_grants: list[str] = Field(default_factory=list)
