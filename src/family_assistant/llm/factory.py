@@ -124,10 +124,20 @@ class LLMClientFactory:
                 f"Available providers: {available_providers}"
             )
 
+        # Detect OpenRouter models and configure accordingly
+        is_openrouter = model.startswith("openrouter/")
+
         # Get API key
         api_key = config.get("api_key")
         if not api_key:
-            api_key = cls._get_api_key_for_provider(provider)
+            if is_openrouter:
+                api_key = os.getenv("OPENROUTER_API_KEY", "")
+                if not api_key:
+                    raise ValueError(
+                        "API key not found in environment: OPENROUTER_API_KEY"
+                    )
+            else:
+                api_key = cls._get_api_key_for_provider(provider)
 
         # Extract provider-specific parameters
         # Remove keys that are handled separately
@@ -136,6 +146,14 @@ class LLMClientFactory:
             for k, v in config.items()
             if k not in {"model", "provider", "api_key", "model_parameters"}
         }
+
+        # OpenRouter uses an OpenAI-compatible API at a custom base URL
+        if is_openrouter and "base_url" not in provider_params:
+            provider_params["base_url"] = "https://openrouter.ai/api/v1"
+
+        # Map api_base to base_url (api_base is a legacy LiteLLM convention)
+        if "api_base" in provider_params:
+            provider_params["base_url"] = provider_params.pop("api_base")
 
         # Get model_parameters from llm_parameters config
         model_parameters = config.get("model_parameters", {})
@@ -171,12 +189,9 @@ class LLMClientFactory:
             if provider in cls._provider_classes:
                 return provider
 
-        # Check for router-style prefixes (e.g., "openrouter/openai/gpt-4")
-        if model.count("/") >= 2:
-            parts = model.split("/")
-            # Try second part as provider
-            if parts[1] in cls._provider_classes:
-                return parts[1]
+        # OpenRouter models always use the OpenAI-compatible API
+        if model.startswith("openrouter/"):
+            return "openai"
 
         raise ValueError(
             f"Cannot determine provider for model: '{model}'. "

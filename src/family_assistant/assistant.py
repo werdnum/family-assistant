@@ -376,8 +376,7 @@ class Assistant:
         elif selected_model.startswith("openrouter/"):
             if not self.config.openrouter_api_key:
                 raise ValueError("OpenRouter API Key is missing.")
-            if self.config.openrouter_api_key:
-                os.environ["OPENROUTER_API_KEY"] = self.config.openrouter_api_key
+            os.environ["OPENROUTER_API_KEY"] = self.config.openrouter_api_key
             logger.info("OpenRouter model selected. OPENROUTER_API_KEY set.")
         else:
             logger.warning(
