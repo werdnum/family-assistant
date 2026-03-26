@@ -36,7 +36,6 @@ class LLMClientFactory:
         "openai": "family_assistant.llm.providers.openai_client.OpenAIClient",
         "google": "family_assistant.llm.providers.google_genai_client.GoogleGenAIClient",
         "anthropic": "family_assistant.llm.providers.anthropic_client.AnthropicClient",
-        "litellm": "family_assistant.llm.LiteLLMClient",
     }
 
     @classmethod
@@ -48,14 +47,11 @@ class LLMClientFactory:
         """
         Create appropriate LLM client based on configuration.
 
-        This method accepts the same configuration format used in the existing
-        LLM configuration system, making it a drop-in replacement.
-
         Args:
             config: LLM configuration dict containing either:
                 Simple format:
                 - model: Model identifier (required)
-                - provider: Explicit provider name (optional, defaults to litellm)
+                - provider: Explicit provider name (optional, auto-detected from model)
                 - api_key: API key (optional, will use env var if not provided)
                 - api_base: API base URL (optional, for custom endpoints)
                 - model_parameters: Pattern-based parameters (optional)
@@ -108,7 +104,7 @@ class LLMClientFactory:
         if not model:
             raise ValueError("Model must be specified in config")
 
-        # Determine provider - explicit config takes precedence, defaults to litellm
+        # Determine provider - explicit config takes precedence
         provider = config.get("provider")
         if not provider:
             provider = cls._determine_provider(model)
@@ -130,7 +126,7 @@ class LLMClientFactory:
 
         # Get API key
         api_key = config.get("api_key")
-        if not api_key and provider != "litellm":
+        if not api_key:
             api_key = cls._get_api_key_for_provider(provider)
 
         # Extract provider-specific parameters
@@ -154,21 +150,12 @@ class LLMClientFactory:
 
         logger.info(f"Creating {class_name} for model: {model}")
 
-        if provider == "litellm":
-            # LiteLLMClient has a different constructor signature
-            return client_class(
-                model=model,
-                model_parameters=model_parameters,
-                **provider_params,
-            )
-        else:
-            # Direct provider clients (OpenAI, Google)
-            return client_class(
-                api_key=api_key,
-                model=model,
-                model_parameters=model_parameters,
-                **provider_params,
-            )
+        return client_class(
+            api_key=api_key,
+            model=model,
+            model_parameters=model_parameters,
+            **provider_params,
+        )
 
     @classmethod
     def _determine_provider(cls, model: str) -> str:
@@ -191,8 +178,12 @@ class LLMClientFactory:
             if parts[1] in cls._provider_classes:
                 return parts[1]
 
-        # Default to litellm if no other provider can be determined
-        return "litellm"
+        raise ValueError(
+            f"Cannot determine provider for model: '{model}'. "
+            f"Please specify a 'provider' explicitly in the config. "
+            f"Known prefixes: {list(cls._provider_prefixes.keys())}. "
+            f"Known providers: {list(cls._provider_classes.keys())}."
+        )
 
     @classmethod
     def _get_api_key_for_provider(cls, provider: str) -> str:

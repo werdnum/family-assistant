@@ -533,51 +533,6 @@ async def test_streaming_content_accumulation(
     assert "quick brown fox" in accumulated_content.lower()
 
 
-@pytest.mark.no_db
-@pytest.mark.llm_integration
-@pytest.mark.no_vcr  # VCR mocks stream responses poorly for LiteLLM; use real streaming instead
-async def test_litellm_streaming_with_various_models(
-    llm_client_factory: Callable[[str, str, str | None], Awaitable[LLMInterface]],
-) -> None:
-    """Test LiteLLM streaming with various model configurations."""
-    # This test uses a mock provider to avoid API calls
-    # We'll test the LiteLLM client directly with streaming support
-
-    # Skip in CI without API keys or when no API key is available
-    if os.getenv("CI") or not os.getenv("OPENAI_API_KEY"):
-        pytest.skip("Skipping LiteLLM streaming test - requires API key")
-
-    # Test with a LiteLLM-supported model
-    client = await llm_client_factory("litellm", "gpt-4.1-nano", None)
-
-    messages = [create_user_message("Reply with exactly: 'LiteLLM streaming works!'")]
-
-    # Collect events
-    events = []
-    async for event in client.generate_response_stream(messages):
-        assert isinstance(event, LLMStreamEvent)
-        events.append(event)
-
-    # Verify we got events
-    assert len(events) > 0
-
-    # Find done event
-    done_events = [e for e in events if e.type == "done"]
-    assert len(done_events) == 1
-
-    # Accumulate content from events
-    accumulated_content = ""
-    for event in events:
-        if event.type == "content" and event.content:
-            accumulated_content += event.content
-
-    assert accumulated_content
-    assert (
-        "litellm" in accumulated_content.lower()
-        or "streaming" in accumulated_content.lower()
-    )
-
-
 # --- Google Gemini Streaming Tests (SDK Record/Replay) ---
 # These tests use Google GenAI SDK's built-in DebugConfig for record/replay,
 # which natively supports streaming without VCR.py compatibility issues.

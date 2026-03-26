@@ -1,5 +1,5 @@
 version = 1
-revision = 2
+revision = 3
 requires-python = "==3.13.*"
 resolution-markers = [
     "python_full_version >= '3.13.2' and platform_python_implementation == 'PyPy' and sys_platform != 'darwin'",
@@ -1655,7 +1655,6 @@ dependencies = [
     { name = "bcrypt", version = "4.3.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.13.2' and platform_python_implementation != 'PyPy'" },
     { name = "caldav" },
     { name = "cloudcoil-models-kubernetes" },
-    { name = "email-validator" },
     { name = "fastapi" },
     { name = "filetype" },
     { name = "genson" },
@@ -1670,7 +1669,6 @@ dependencies = [
     { name = "json-schema-for-humans" },
     { name = "kubernetes-asyncio" },
     { name = "linkify-it-py" },
-    { name = "litellm" },
     { name = "llm" },
     { name = "markdown-it-py" },
     { name = "markitdown", extra = ["all"] },
@@ -1772,8 +1770,8 @@ dev = [
 ]
 local-embeddings = [
     { name = "sentence-transformers" },
-    { name = "torch", version = "2.8.0", source = { registry = "https://download.pytorch.org/whl/cpu" }, marker = "sys_platform == 'darwin'" },
-    { name = "torch", version = "2.8.0+cpu", source = { registry = "https://download.pytorch.org/whl/cpu" }, marker = "sys_platform != 'darwin'" },
+    { name = "torch", version = "2.8.0", source = { registry = "https://download.pytorch.org/whl/cpu" }, marker = "platform_python_implementation != 'PyPy' and sys_platform == 'darwin'" },
+    { name = "torch", version = "2.8.0+cpu", source = { registry = "https://download.pytorch.org/whl/cpu" }, marker = "platform_python_implementation == 'PyPy' or sys_platform != 'darwin'" },
 ]
 pgserver = [
     { name = "pixeltable-pgserver" },
@@ -1797,7 +1795,6 @@ requires-dist = [
     { name = "bcrypt", specifier = ">=4.0.0,<5.0.0" },
     { name = "caldav", specifier = ">=1.2.0" },
     { name = "cloudcoil-models-kubernetes", specifier = ">=1.32" },
-    { name = "email-validator", specifier = ">=2.3.0" },
     { name = "fastapi", specifier = ">=0.111.0" },
     { name = "fastapi-sso", marker = "extra == 'dev'", specifier = ">=0.18.0" },
     { name = "filetype", specifier = ">=1.2.0" },
@@ -1815,7 +1812,6 @@ requires-dist = [
     { name = "json-schema-for-humans", specifier = ">=0.53.10" },
     { name = "kubernetes-asyncio", specifier = ">=35.0.0" },
     { name = "linkify-it-py", specifier = ">=2.0.0" },
-    { name = "litellm", specifier = ">=1.75.0" },
     { name = "llm", specifier = ">=0.27.1" },
     { name = "llm-fragments-github", marker = "extra == 'dev'", specifier = ">=0.4.0" },
     { name = "llm-fragments-reader", marker = "extra == 'dev'", specifier = ">=0.1" },
@@ -3123,30 +3119,6 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/2a/ae/bb56c6828e4797ba5a4821eec7c43b8bf40f69cda4d4f5f8c8a2810ec96a/linkify-it-py-2.0.3.tar.gz", hash = "sha256:68cda27e162e9215c17d786649d1da0021a451bdc436ef9e0fa0ba5234b9b048", size = 27946, upload-time = "2024-02-04T14:48:04.179Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/04/1e/b832de447dee8b582cac175871d2f6c3d5077cc56d5575cadba1fd1cccfa/linkify_it_py-2.0.3-py3-none-any.whl", hash = "sha256:6bcbc417b0ac14323382aef5c5192c0075bf8a9d6b41820a2b66371eac6b6d79", size = 19820, upload-time = "2024-02-04T14:48:02.496Z" },
-]
-
-[[package]]
-name = "litellm"
-version = "1.75.3"
-source = { registry = "https://pypi.org/simple" }
-dependencies = [
-    { name = "aiohttp", version = "3.11.16", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.13.2'" },
-    { name = "aiohttp", version = "3.12.13", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.13.2' and platform_python_implementation == 'PyPy'" },
-    { name = "aiohttp", version = "3.12.15", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.13.2' and platform_python_implementation != 'PyPy'" },
-    { name = "click" },
-    { name = "httpx" },
-    { name = "importlib-metadata" },
-    { name = "jinja2" },
-    { name = "jsonschema" },
-    { name = "openai" },
-    { name = "pydantic" },
-    { name = "python-dotenv" },
-    { name = "tiktoken" },
-    { name = "tokenizers" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/09/98/ea40c48fda5121af00e44c9c6d01a0cd8cb9987bb0ce91c6add917d9db9d/litellm-1.75.3.tar.gz", hash = "sha256:a6a0f33884f35a9391a9a4363043114d7f2513ab2e5c2e1fa54c56d695663764", size = 10104437, upload-time = "2025-08-08T14:58:09.423Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/dd/1e/8ef7e7ac7d33f900ae44e9e3a33d668783034e414aa4d7191ae3e4068ec5/litellm-1.75.3-py3-none-any.whl", hash = "sha256:0ff3752b1f1c07f8a4b9a364b1595e2147ae640f1e77cd8312e6f6a5ca0f34ec", size = 8870578, upload-time = "2025-08-08T14:58:06.766Z" },
 ]
 
 [[package]]
@@ -5871,8 +5843,8 @@ dependencies = [
     { name = "pillow", version = "11.3.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.13.2' and platform_python_implementation != 'PyPy'" },
     { name = "scikit-learn" },
     { name = "scipy" },
-    { name = "torch", version = "2.8.0", source = { registry = "https://download.pytorch.org/whl/cpu" }, marker = "sys_platform == 'darwin'" },
-    { name = "torch", version = "2.8.0+cpu", source = { registry = "https://download.pytorch.org/whl/cpu" }, marker = "sys_platform != 'darwin'" },
+    { name = "torch", version = "2.8.0", source = { registry = "https://download.pytorch.org/whl/cpu" }, marker = "platform_python_implementation != 'PyPy' and sys_platform == 'darwin'" },
+    { name = "torch", version = "2.8.0+cpu", source = { registry = "https://download.pytorch.org/whl/cpu" }, marker = "platform_python_implementation == 'PyPy' or sys_platform != 'darwin'" },
     { name = "tqdm" },
     { name = "transformers" },
     { name = "typing-extensions" },
@@ -6305,26 +6277,6 @@ wheels = [
 ]
 
 [[package]]
-name = "tiktoken"
-version = "0.9.0"
-source = { registry = "https://pypi.org/simple" }
-dependencies = [
-    { name = "regex" },
-    { name = "requests", version = "2.32.3", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.13.2'" },
-    { name = "requests", version = "2.32.4", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.13.2' and platform_python_implementation == 'PyPy'" },
-    { name = "requests", version = "2.32.5", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.13.2' and platform_python_implementation != 'PyPy'" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/ea/cf/756fedf6981e82897f2d570dd25fa597eb3f4459068ae0572d7e888cfd6f/tiktoken-0.9.0.tar.gz", hash = "sha256:d02a5ca6a938e0490e1ff957bc48c8b078c88cb83977be1625b1fd8aac792c5d", size = 35991, upload-time = "2025-02-14T06:03:01.003Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/7a/11/09d936d37f49f4f494ffe660af44acd2d99eb2429d60a57c71318af214e0/tiktoken-0.9.0-cp313-cp313-macosx_10_13_x86_64.whl", hash = "sha256:2b0e8e05a26eda1249e824156d537015480af7ae222ccb798e5234ae0285dbdb", size = 1064919, upload-time = "2025-02-14T06:02:37.494Z" },
-    { url = "https://files.pythonhosted.org/packages/80/0e/f38ba35713edb8d4197ae602e80837d574244ced7fb1b6070b31c29816e0/tiktoken-0.9.0-cp313-cp313-macosx_11_0_arm64.whl", hash = "sha256:27d457f096f87685195eea0165a1807fae87b97b2161fe8c9b1df5bd74ca6f63", size = 1007877, upload-time = "2025-02-14T06:02:39.516Z" },
-    { url = "https://files.pythonhosted.org/packages/fe/82/9197f77421e2a01373e27a79dd36efdd99e6b4115746ecc553318ecafbf0/tiktoken-0.9.0-cp313-cp313-manylinux_2_17_aarch64.manylinux2014_aarch64.whl", hash = "sha256:2cf8ded49cddf825390e36dd1ad35cd49589e8161fdcb52aa25f0583e90a3e01", size = 1140095, upload-time = "2025-02-14T06:02:41.791Z" },
-    { url = "https://files.pythonhosted.org/packages/f2/bb/4513da71cac187383541facd0291c4572b03ec23c561de5811781bbd988f/tiktoken-0.9.0-cp313-cp313-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:cc156cb314119a8bb9748257a2eaebd5cc0753b6cb491d26694ed42fc7cb3139", size = 1195649, upload-time = "2025-02-14T06:02:43Z" },
-    { url = "https://files.pythonhosted.org/packages/fa/5c/74e4c137530dd8504e97e3a41729b1103a4ac29036cbfd3250b11fd29451/tiktoken-0.9.0-cp313-cp313-musllinux_1_2_x86_64.whl", hash = "sha256:cd69372e8c9dd761f0ab873112aba55a0e3e506332dd9f7522ca466e817b1b7a", size = 1258465, upload-time = "2025-02-14T06:02:45.046Z" },
-    { url = "https://files.pythonhosted.org/packages/de/a8/8f499c179ec900783ffe133e9aab10044481679bb9aad78436d239eee716/tiktoken-0.9.0-cp313-cp313-win_amd64.whl", hash = "sha256:5ea0edb6f83dc56d794723286215918c1cde03712cbbafa0348b33448faf5b95", size = 894669, upload-time = "2025-02-14T06:02:47.341Z" },
-]
-
-[[package]]
 name = "tokenizers"
 version = "0.21.2"
 source = { registry = "https://pypi.org/simple" }
@@ -6372,19 +6324,17 @@ name = "torch"
 version = "2.8.0"
 source = { registry = "https://download.pytorch.org/whl/cpu" }
 resolution-markers = [
-    "python_full_version >= '3.13.2' and platform_python_implementation == 'PyPy' and sys_platform == 'darwin'",
     "python_full_version >= '3.13.2' and platform_python_implementation != 'PyPy' and sys_platform == 'darwin'",
-    "python_full_version < '3.13.2' and platform_python_implementation == 'PyPy' and sys_platform == 'darwin'",
     "python_full_version < '3.13.2' and platform_python_implementation != 'PyPy' and sys_platform == 'darwin'",
 ]
 dependencies = [
-    { name = "filelock", marker = "sys_platform == 'darwin'" },
-    { name = "fsspec", marker = "sys_platform == 'darwin'" },
-    { name = "jinja2", marker = "sys_platform == 'darwin'" },
-    { name = "networkx", marker = "sys_platform == 'darwin'" },
-    { name = "setuptools", marker = "sys_platform == 'darwin'" },
-    { name = "sympy", marker = "sys_platform == 'darwin'" },
-    { name = "typing-extensions", marker = "sys_platform == 'darwin'" },
+    { name = "filelock", marker = "platform_python_implementation != 'PyPy' and sys_platform == 'darwin'" },
+    { name = "fsspec", marker = "platform_python_implementation != 'PyPy' and sys_platform == 'darwin'" },
+    { name = "jinja2", marker = "platform_python_implementation != 'PyPy' and sys_platform == 'darwin'" },
+    { name = "networkx", marker = "platform_python_implementation != 'PyPy' and sys_platform == 'darwin'" },
+    { name = "setuptools", marker = "platform_python_implementation != 'PyPy' and sys_platform == 'darwin'" },
+    { name = "sympy", marker = "platform_python_implementation != 'PyPy' and sys_platform == 'darwin'" },
+    { name = "typing-extensions", marker = "platform_python_implementation != 'PyPy' and sys_platform == 'darwin'" },
 ]
 wheels = [
     { url = "https://download.pytorch.org/whl/cpu/torch-2.8.0-cp313-cp313t-macosx_14_0_arm64.whl", hash = "sha256:fbe2e149c5174ef90d29a5f84a554dfaf28e003cb4f61fa2c8c024c17ec7ca58" },
@@ -6397,18 +6347,20 @@ version = "2.8.0+cpu"
 source = { registry = "https://download.pytorch.org/whl/cpu" }
 resolution-markers = [
     "python_full_version >= '3.13.2' and platform_python_implementation == 'PyPy' and sys_platform != 'darwin'",
+    "python_full_version >= '3.13.2' and platform_python_implementation == 'PyPy' and sys_platform == 'darwin'",
     "python_full_version >= '3.13.2' and platform_python_implementation != 'PyPy' and sys_platform != 'darwin'",
     "python_full_version < '3.13.2' and platform_python_implementation == 'PyPy' and sys_platform != 'darwin'",
+    "python_full_version < '3.13.2' and platform_python_implementation == 'PyPy' and sys_platform == 'darwin'",
     "python_full_version < '3.13.2' and platform_python_implementation != 'PyPy' and sys_platform != 'darwin'",
 ]
 dependencies = [
-    { name = "filelock", marker = "sys_platform != 'darwin'" },
-    { name = "fsspec", marker = "sys_platform != 'darwin'" },
-    { name = "jinja2", marker = "sys_platform != 'darwin'" },
-    { name = "networkx", marker = "sys_platform != 'darwin'" },
-    { name = "setuptools", marker = "sys_platform != 'darwin'" },
-    { name = "sympy", marker = "sys_platform != 'darwin'" },
-    { name = "typing-extensions", marker = "sys_platform != 'darwin'" },
+    { name = "filelock", marker = "platform_python_implementation == 'PyPy' or sys_platform != 'darwin'" },
+    { name = "fsspec", marker = "platform_python_implementation == 'PyPy' or sys_platform != 'darwin'" },
+    { name = "jinja2", marker = "platform_python_implementation == 'PyPy' or sys_platform != 'darwin'" },
+    { name = "networkx", marker = "platform_python_implementation == 'PyPy' or sys_platform != 'darwin'" },
+    { name = "setuptools", marker = "platform_python_implementation == 'PyPy' or sys_platform != 'darwin'" },
+    { name = "sympy", marker = "platform_python_implementation == 'PyPy' or sys_platform != 'darwin'" },
+    { name = "typing-extensions", marker = "platform_python_implementation == 'PyPy' or sys_platform != 'darwin'" },
 ]
 wheels = [
     { url = "https://download.pytorch.org/whl/cpu/torch-2.8.0%2Bcpu-cp313-cp313-linux_s390x.whl", hash = "sha256:8b5882276633cf91fe3d2d7246c743b94d44a7e660b27f1308007fdb1bb89f7d" },

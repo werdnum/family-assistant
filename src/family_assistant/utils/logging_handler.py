@@ -16,14 +16,11 @@ from family_assistant.storage.error_logs import error_logs_table
 class SQLAlchemyErrorHandler(logging.Handler):
     """Async handler that writes ERROR and above to database.
 
-    Includes filtering for known noisy loggers (e.g., LiteLLM optional dependency errors).
+    Includes filtering for known noisy loggers.
     """
 
     # Logger name prefixes to filter out (these produce noise, not actionable errors)
-    FILTERED_LOGGER_PREFIXES = (
-        "LiteLLM",  # LiteLLM produces ModuleNotFoundError for optional deps
-        "litellm",
-    )
+    FILTERED_LOGGER_PREFIXES: tuple[str, ...] = ()
 
     # Message patterns to filter out (regex-free for performance)
     FILTERED_MESSAGE_PATTERNS = (

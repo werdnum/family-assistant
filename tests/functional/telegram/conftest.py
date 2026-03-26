@@ -147,7 +147,6 @@ async def telegram_handler_fixture(
         "gemini_api_key": None,
         "willyweather_api_key": None,
         "willyweather_location_id": None,
-        "litellm_debug": False,
     }
 
     # 3. Instantiate Assistant with LLM Override and Database Engine

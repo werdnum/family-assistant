@@ -5,22 +5,20 @@
 import json
 from collections.abc import AsyncIterator, Sequence
 from pathlib import Path
-from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from pydantic import BaseModel
 
 from family_assistant.llm import (
     BaseLLMClient,
-    LiteLLMClient,
     LLMMessage,
     LLMOutput,
     LLMStreamEvent,
     PlaybackLLMClient,
     StructuredOutputError,
     UserMessageDict,
+    message_to_json_dict,
 )
-from family_assistant.llm.messages import message_to_json_dict
 from family_assistant.tools.types import ToolDefinition
 from tests.factories.messages import (
     create_user_message,  # pylint: disable=no-name-in-module
@@ -105,30 +103,6 @@ class TestBaseLLMClientGenerateJSON:
             )
 
         assert "Failed to generate valid JSON output" in str(exc_info.value)
-
-    @pytest.mark.asyncio
-    async def test_litellm_generate_json_uses_native_json_mode(self) -> None:
-        """LiteLLM generate_json should request provider-native JSON-object mode."""
-        client = LiteLLMClient(model="openai/gpt-4.1-nano")
-        response = MagicMock()
-        response.choices = [MagicMock()]
-        response.choices[0].message = MagicMock(content='{"answer": "ok"}')
-        response.usage = None
-
-        with patch(
-            "family_assistant.llm.acompletion", new_callable=AsyncMock
-        ) as mock_acompletion:
-            mock_acompletion.return_value = response
-
-            result = await client.generate_json(
-                messages=[create_user_message("Return JSON")]
-            )
-
-        assert result == {"answer": "ok"}
-        assert mock_acompletion.await_args is not None
-        assert mock_acompletion.await_args.kwargs["response_format"] == {
-            "type": "json_object"
-        }
 
 
 @pytest.mark.no_db

@@ -1,10 +1,11 @@
 # Configuration for Family Assistant
 # LLM Provider Configuration
 # Each service profile can specify a 'provider' in its processing_config.
-# Available providers: 'litellm' (default), 'openai', 'google'
-# - 'litellm': Uses LiteLLM for all models (supports many providers)
+# Available providers: 'openai', 'google', 'anthropic'
+# Provider is auto-detected from the model name if not specified.
 # - 'openai': Uses direct OpenAI SDK (requires OPENAI_API_KEY)
 # - 'google': Uses direct Google GenAI SDK (requires GEMINI_API_KEY)
+# - 'anthropic': Uses direct Anthropic SDK (requires ANTHROPIC_API_KEY)
 #
 # Retry and Fallback Configuration (NEW):
 # Use 'retry_config' format for automatic retry and fallback:
@@ -31,7 +32,7 @@ event_system:
       # URL and token are shared with context provider
 # LLM provider-specific parameters
 # Keys can be full model names or prefixes (ending with '-')
-# Parameters defined here will be passed as keyword arguments to litellm.completion
+# Parameters defined here will be passed as keyword arguments to the LLM provider
 # for matching models.
 llm_parameters:
   # Example for Gemini models via OpenRouter
@@ -404,7 +405,8 @@ default_profile_settings:
 # Provider Configuration:
 # - 'google': Direct Google GenAI SDK integration (requires GEMINI_API_KEY)
 # - 'openai': Direct OpenAI SDK integration (requires OPENAI_API_KEY)
-# - 'litellm': LiteLLM for models not available via direct integration (default)
+# - 'anthropic': Direct Anthropic SDK integration (requires ANTHROPIC_API_KEY)
+# Provider is auto-detected from the model name if not specified.
 service_profiles:
   - id: "default_assistant"
     description: "Main assistant using default settings, without browser tools. Suitable for general tasks, note-taking, calendar management, and information retrieval from stored documents."
@@ -414,8 +416,6 @@ service_profiles:
   - id: "reminder"
     description: "Assistant profile for handling system reminders. Its sole purpose is to formulate the reminder message to be sent to the user."
     processing_config:
-      provider: "litellm"
-      # Inherit default model
       prompts:
         system_prompt: "You are a reminder delivery system. Your goal is to write the text of the reminder message that will be sent to the user.\n\nInstructions:\n1. Read the reminder context provided.\n2. You may use read-only tools (calendar, notes, docs) to gather context if the reminder is vague or refers to stored information.\n3. Write a clear, friendly reminder message addressed to {user_name}.\n4. Your final response must be ONLY the message content. Do NOT describe your actions.\n5. If the reminder context contains a task, simply state the task.\n\nExample:\nContext: 'Pick up milk'\nResponse: 'Hi {user_name}, this is your reminder to pick up milk.'\n\nCurrent time: {current_time}"
       delegation_security_level: "blocked"
@@ -1565,3 +1565,4 @@ otel:
 
 # Secrets (telegram_token, api_keys, database_url) are primarily from env.
 # Model, embedding_model, server_url, storage_paths are also top-level or env.
+

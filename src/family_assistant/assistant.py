@@ -378,9 +378,7 @@ class Assistant:
                 raise ValueError("OpenRouter API Key is missing.")
             if self.config.openrouter_api_key:
                 os.environ["OPENROUTER_API_KEY"] = self.config.openrouter_api_key
-            logger.info(
-                "OpenRouter model selected. OPENROUTER_API_KEY set for LiteLLM."
-            )
+            logger.info("OpenRouter model selected. OPENROUTER_API_KEY set.")
         else:
             logger.warning(
                 f"No specific API key validation for model: {selected_model}."
@@ -704,15 +702,21 @@ class Assistant:
                     )
                 else:
                     # Simple configuration without retry
-                    provider = profile_proc_conf.provider or "litellm"
+                    # ast-grep-ignore: no-dict-any - Temporary dict passed to LLMClientFactory
                     client_config = {
                         "model": profile_llm_model,
-                        "provider": provider,
                         "model_parameters": self.config.llm_parameters,
                     }
+                    if profile_proc_conf.provider:
+                        client_config["provider"] = profile_proc_conf.provider
 
                     logger.info(
-                        f"Creating LLM client for profile '{profile_id}' with provider='{provider}', model='{profile_llm_model}'"
+                        "Creating LLM client for profile '%s' with model='%s'%s",
+                        profile_id,
+                        profile_llm_model,
+                        f", provider='{profile_proc_conf.provider}'"
+                        if profile_proc_conf.provider
+                        else "",
                     )
 
                 llm_client_for_profile = LLMClientFactory.create_client(

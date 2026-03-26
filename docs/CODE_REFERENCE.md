@@ -8,7 +8,7 @@ of date. It should be updated when making significant changes to the codebase.
 The Family Assistant is an LLM-powered application designed to centralize family information and
 automate tasks. It is built with Python, FastAPI for the web interface, and `python-telegram-bot`
 for Telegram integration. It uses SQLAlchemy for database interactions (supporting SQLite and
-PostgreSQL) and LiteLLM for LLM communication.
+PostgreSQL) and native provider SDKs (OpenAI, Google GenAI, Anthropic) for LLM communication.
 
 The core architecture consists of:
 
@@ -105,7 +105,7 @@ worker) and graceful shutdown.
 - `family_assistant.indexing.document_indexer` (DocumentIndexer)
 - `family_assistant.indexing.email_indexer` (EmailIndexer)
 - `family_assistant.indexing.tasks` (handle_embed_and_store_batch)
-- `family_assistant.llm` (LiteLLMClient, LLMInterface)
+- `family_assistant.llm` (LLMInterface, LLMClientFactory)
 - `family_assistant.processing` (ProcessingService, ProcessingServiceConfig)
 - `family_assistant.task_worker` (TaskWorker, handle_llm_callback, new_task_event, shutdown_event,
   original_handle_log_message)
@@ -176,7 +176,7 @@ the LLM's system prompt.
 ### `src/family_assistant/embeddings.py`
 
 \*\*Description:\*\*Defines the `EmbeddingGenerator` protocol and provides implementations for
-generating text embeddings using various models (LiteLLM, Sentence Transformers, Mock, Hashing
+generating text embeddings using various models (Google GenAI, Sentence Transformers, Mock, Hashing
 Word).
 
 **Major Symbols:**
@@ -188,7 +188,7 @@ Word).
 - `SentenceTransformerEmbeddingGenerator`: Uses local `sentence-transformers` models.
 - `MockEmbeddingGenerator`: A mock implementation for testing.
 
-\*\*Internal Dependencies:\*\*None (only external libraries like `litellm`, `numpy`,
+\*\*Internal Dependencies:\*\*None (only external libraries like `google-genai`, `numpy`,
 `sentence_transformers`).
 
 ### `src/family_assistant/interfaces.py`
@@ -205,21 +205,21 @@ decoupled implementation of chat interactions.
 ### `src/family_assistant/llm.py`
 
 \*\*Description:\*\*Defines the `LLMInterface` protocol and provides implementations for interacting
-with Large Language Models, primarily using LiteLLM. Handles message formatting, tool calls, and
-response parsing.
+with Large Language Models via native provider SDKs (OpenAI, Google GenAI, Anthropic). Handles
+message formatting, tool calls, and response parsing.
 
 **Major Symbols:**
 
 - `ToolCallFunction`: Dataclass for a function call within a tool call.
 - `ToolCallItem`: Dataclass for a single tool call requested by the LLM.
 - `LLMOutput`: Dataclass for standardized LLM response.
-- `_sanitize_tools_for_litellm()`: Helper to remove unsupported fields from tool definitions.
 - `LLMInterface` (Protocol): Interface for LLM clients.
-- `LiteLLMClient`: Implements `LLMInterface` using LiteLLM.
+- `LLMClientFactory`: Factory for creating provider-specific LLM clients.
 - `RecordingLLMClient`: A wrapper that records LLM interactions.
 - `PlaybackLLMClient`: Plays back recorded LLM interactions for deterministic testing.
 
-\*\*Internal Dependencies:\*\*None (only external libraries like `litellm`).
+\*\*Internal Dependencies:\*\*None (only external provider SDKs: `openai`, `google-genai`,
+`anthropic`).
 
 ### `src/family_assistant/processing.py`
 

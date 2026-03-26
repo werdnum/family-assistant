@@ -1,7 +1,7 @@
 """
 LLM client that provides retry and fallback capabilities.
 
-This implementation mimics LiteLLM's simple retry strategy:
+Retry strategy:
 - Attempt 1: Primary model
 - Attempt 2: Retry primary model (if Attempt 1 was a retriable error)
 - Attempt 3: Fallback model (if configured and previous attempts failed)
@@ -48,7 +48,7 @@ class RetryingLLMClient:
     """
     LLM client that provides retry and fallback capabilities.
 
-    This wrapper mimics LiteLLM's simple retry logic:
+    Retry logic:
     - One retry on primary model for retriable errors
     - Fallback to alternative model if all primary attempts fail
     """
@@ -93,7 +93,7 @@ class RetryingLLMClient:
                 "llm.has_fallback": bool(self.fallback_client),
             },
         ) as span:
-            # Define retriable errors - matching LiteLLM's logic
+            # Define retriable errors
             retriable_errors = (
                 ProviderConnectionError,
                 ProviderTimeoutError,
