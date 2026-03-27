@@ -360,7 +360,7 @@ class GeminiLiveConfig(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    model: str = "gemini-3-flash-preview"
+    model: str = "gemini-3.1-flash-live-preview"
     voice: GeminiVoiceConfig = Field(default_factory=GeminiVoiceConfig)
     session: GeminiSessionConfig = Field(default_factory=GeminiSessionConfig)
     transcription: GeminiTranscriptionConfig = Field(

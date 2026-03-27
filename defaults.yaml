@@ -50,7 +50,7 @@ llm_parameters:
 # See: https://ai.google.dev/gemini-api/docs/live
 gemini_live_config:
   # Model to use for Gemini Live voice sessions
-  model: "gemini-3-flash-preview"
+  model: "gemini-3.1-flash-live-preview"
 
   # Voice configuration
   voice:
