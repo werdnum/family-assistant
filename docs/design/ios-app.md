@@ -10,20 +10,33 @@ a native auth flow. Later phases add a native chat interface and CallKit voice i
 ### Auth Flow (Web-Assisted Login)
 
 Instead of making the user copy-paste an API token, the app opens a special auth helper page in the
-web UI that handles the OIDC flow and hands back a token via URL scheme:
+web UI that handles the OIDC flow and hands back credentials securely via an authorization code
+exchange (PKCE-style):
 
-1. User launches app for the first time, enters server URL (e.g., `https://fa.example.com`)
-2. App opens `{serverURL}/app-auth` in an in-app browser (ASWebAuthenticationSession)
-3. User completes normal OIDC login on that page
-4. Backend generates an API token for the user automatically
-5. Page redirects to `familyassistant://auth-callback?token=<token>`
-6. `ASWebAuthenticationSession` catches this, app extracts the token
-7. App stores server URL + token in Keychain
-8. App calls `POST /api/auth/token-session` with the Bearer token to establish a session cookie
-9. WKWebView loads the web UI with the session cookie — everything just works
+01. User launches app for the first time, enters server URL (e.g., `https://fa.example.com`)
+02. App generates a random `code_verifier` and derives `code_challenge` (SHA-256)
+03. App opens `{serverURL}/app-auth?code_challenge=<hash>&code_challenge_method=S256` in an in-app
+    browser (`ASWebAuthenticationSession`)
+04. User completes normal OIDC login on that page
+05. Backend generates a short-lived authorization code (single-use, expires in 60 seconds), stores
+    it with the code challenge
+06. Page redirects to `familyassistant://auth-callback?code=<auth_code>` (no secrets in URL — the
+    code alone is useless without the verifier)
+07. `ASWebAuthenticationSession` catches this, app extracts the code
+08. App calls `POST /api/auth/exchange` with `{code, code_verifier}` server-side
+09. Backend verifies `SHA256(code_verifier) == stored code_challenge`, then returns an API token +
+    refresh token
+10. App stores both tokens in Keychain
+11. App calls `POST /api/auth/token-session` with the API token to establish a session cookie
+12. WKWebView loads the web UI with the session cookie — everything just works
 
-**On subsequent launches**: App calls `/api/auth/token-session` with stored token to refresh the
-session cookie, then loads the web view.
+**Token lifecycle**:
+
+- API tokens have a short expiry (e.g., 30 days)
+- Refresh tokens have a longer expiry (e.g., 90 days) and can be used to obtain new API tokens
+- On each launch, the app checks token expiry and refreshes if needed via `POST /api/auth/refresh`
+- If the refresh token is also expired, the user is prompted to re-authenticate
+- Tokens can be revoked server-side (e.g., via the web UI token management page)
 
 ### Backend Changes Required
 
@@ -32,18 +45,43 @@ session cookie, then loads the web view.
 A simple endpoint that:
 
 - Initiates the standard OIDC login flow
-- After successful login, auto-generates an API token (name: "iOS App", no expiry)
-- Renders a page that redirects to `familyassistant://auth-callback?token=<full_token>`
+- After successful login, generates a short-lived authorization code bound to the PKCE challenge
+- Renders a page that redirects to `familyassistant://auth-callback?code=<auth_code>`
 
 This can be a server-rendered page (no React needed) since it's a transient auth flow.
 
 Implementation: New router `src/family_assistant/web/routers/app_auth.py` with:
 
-- `GET /app-auth` — Redirects to OIDC provider (same as `/login` but with a
-  `redirect_to=app-auth-callback` param in session)
-- `GET /app-auth-callback` — After OIDC callback, generates token and renders redirect page
+- `GET /app-auth` — Accepts `code_challenge` and `code_challenge_method` params, stores them in
+  session, redirects to OIDC provider
+- `GET /app-auth-callback` — After OIDC callback, generates authorization code (single-use, 60s TTL)
+  bound to the code challenge, renders redirect page
 
-#### 2. Token Session Endpoint (`POST /api/auth/token-session`)
+#### 2. Code Exchange Endpoint (`POST /api/auth/exchange`)
+
+Exchanges an authorization code + PKCE verifier for API and refresh tokens:
+
+```python
+@router.post("/api/auth/exchange")
+async def exchange_code(request: ExchangeRequest, db=Depends(get_db)):
+    """PKCE-style code exchange. Returns API token + refresh token."""
+    # Verify: SHA256(code_verifier) == stored code_challenge
+    # Generate API token (30-day expiry) and refresh token (90-day expiry)
+    # Delete the authorization code (single-use)
+    return {"api_token": token, "refresh_token": refresh, "expires_in": 2592000}
+```
+
+#### 3. Token Refresh Endpoint (`POST /api/auth/refresh`)
+
+```python
+@router.post("/api/auth/refresh")
+async def refresh_token(request: RefreshRequest, db=Depends(get_db)):
+    """Exchange a valid refresh token for a new API token."""
+    # Validate refresh token, issue new API token
+    return {"api_token": new_token, "expires_in": 2592000}
+```
+
+#### 4. Token Session Endpoint (`POST /api/auth/token-session`)
 
 Exchanges a Bearer token for a session cookie:
 
@@ -96,11 +134,14 @@ ios/FamilyAssistant/
 **AuthManager.swift**:
 
 - `@Observable` class (iOS 17+) or `ObservableObject` (iOS 16+)
-- Properties: `serverURL`, `apiToken`, `isAuthenticated`, `isLoading`
-- `login()`: Opens `ASWebAuthenticationSession` to `{serverURL}/app-auth`
-- `handleCallback(url:)`: Extracts token from callback URL, stores in Keychain
+- Properties: `serverURL`, `apiToken`, `refreshToken`, `isAuthenticated`, `isLoading`
+- `login()`: Generates PKCE code verifier/challenge, opens `ASWebAuthenticationSession` to
+  `{serverURL}/app-auth?code_challenge=...&code_challenge_method=S256`
+- `handleCallback(url:)`: Extracts auth code from callback URL, calls `POST /api/auth/exchange` with
+  code + code verifier, stores API token + refresh token in Keychain
+- `refreshIfNeeded()`: Checks token expiry, calls `POST /api/auth/refresh` if needed
 - `establishSession()`: Calls `POST /api/auth/token-session` to get session cookie for WKWebView
-- `logout()`: Clears Keychain, clears WKWebView cookies
+- `logout()`: Clears Keychain, clears WKWebView cookies, revokes tokens server-side
 
 **KeychainHelper.swift**:
 
