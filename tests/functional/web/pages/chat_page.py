@@ -18,6 +18,7 @@ class ChatPage(BasePage):
 
     # Selectors - Updated for shadcn/ui components
     SIDEBAR_TOGGLE = "button[aria-label='Toggle sidebar']"
+    BACK_TO_CONVERSATIONS = "button[aria-label='Back to conversations']"
     CHAT_INPUT = '[data-testid="chat-input"]'
     SEND_BUTTON = '[data-testid="send-button"]'
     # Updated: Card components are used for conversation items with data-conversation-id
@@ -33,8 +34,6 @@ class ChatPage(BasePage):
     CONVERSATION_PREVIEW = ".conversation-preview"
     # Updated: Sidebar is now a div with specific classes
     SIDEBAR = "div.w-72.flex-shrink-0.border-r, div.h-full.w-72.flex-shrink-0.border-r"  # Desktop sidebar
-    SIDEBAR_SHEET = '[role="dialog"][data-state]'  # Mobile sheet
-    SIDEBAR_OVERLAY = ".fixed.inset-0.z-40"  # Mobile overlay
     CHAT_CONTAINER = ".flex.min-w-0.flex-1"  # Main content container
     LOADING_INDICATOR = ".animate-bounce"  # Loading dots animation
     # Updated for inline confirmation UI
@@ -60,9 +59,21 @@ class ChatPage(BasePage):
 
         # Wait for critical UI elements to be present and ready
         # This ensures the React app has fully initialized
-        await self.page.wait_for_selector(
-            self.SIDEBAR_TOGGLE, state="visible", timeout=15000
-        )
+        # On desktop, the sidebar toggle is in the header; on mobile, back button is shown instead
+        viewport_size = self.page.viewport_size
+        if viewport_size and viewport_size["width"] <= 768:
+            # Mobile: wait for back button (chat detail view) or conversation list
+            await self.page.wait_for_selector(
+                f"{self.BACK_TO_CONVERSATIONS}, {self.NEW_CHAT_BUTTON}",
+                state="visible",
+                timeout=15000,
+            )
+        else:
+            # Desktop: wait for sidebar toggle
+            await self.page.wait_for_selector(
+                self.SIDEBAR_TOGGLE, state="visible", timeout=15000
+            )
+
         await self.page.wait_for_selector(
             self.CHAT_INPUT, state="visible", timeout=15000
         )
@@ -275,73 +286,57 @@ class ChatPage(BasePage):
         return messages
 
     async def toggle_sidebar(self) -> None:
-        """Toggle the conversation sidebar."""
-        # Wait for the chat interface to be fully loaded before trying to find the toggle
-        await self.page.wait_for_selector(
-            self.CHAT_INPUT, state="visible", timeout=10000
-        )
+        """Toggle the conversation sidebar.
 
-        # Get current sidebar state before toggle
-        was_open = await self.is_sidebar_open()
-
-        # The toggle button is now always visible and has a specific aria-label
-        # Use locator API to avoid stale element references when React re-renders
-        toggle_button = self.page.locator(self.SIDEBAR_TOGGLE)
-        await toggle_button.click(timeout=10000)
-
-        # Handle mobile Sheet animations more robustly
+        On desktop: clicks the sidebar toggle button to show/hide the sidebar panel.
+        On mobile: uses back button to navigate to conversation list, or selects a
+        conversation to navigate to chat detail view.
+        """
         viewport_size = self.page.viewport_size
         if viewport_size and viewport_size["width"] <= 768:
-            if not was_open:
-                # Opening: wait for dialog to appear with open state
-                dialog = self.page.locator('[role="dialog"][data-state="open"]')
-                await dialog.wait_for(state="visible", timeout=3000)
+            # Mobile: list-detail navigation pattern
+            if await self.is_sidebar_open():
+                # Currently on conversation list - select first conversation to go to chat
+                items = await self.page.query_selector_all(self.CONVERSATION_ITEM)
+                if items:
+                    await items[0].click()
+                    await self.page.wait_for_selector(
+                        self.BACK_TO_CONVERSATIONS, state="visible", timeout=3000
+                    )
             else:
-                # Closing: wait for dialog to close or disappear
-                await self.page.wait_for_function(
-                    """() => {
-                        const dialog = document.querySelector('[role="dialog"]');
-                        return !dialog || dialog.getAttribute('data-state') === 'closed';
-                    }""",
-                    timeout=3000,
+                # Currently on chat detail - tap back to go to conversation list
+                back_button = self.page.locator(self.BACK_TO_CONVERSATIONS)
+                await back_button.click(timeout=10000)
+                await self.page.wait_for_selector(
+                    self.NEW_CHAT_BUTTON, state="visible", timeout=3000
                 )
         else:
-            # Desktop: sidebar is always visible, just wait a bit for any transitions
-            # Networkidle not critical for desktop sidebar, suppress if times out
+            # Desktop: toggle sidebar panel
+            await self.page.wait_for_selector(
+                self.CHAT_INPUT, state="visible", timeout=10000
+            )
+            toggle_button = self.page.locator(self.SIDEBAR_TOGGLE)
+            await toggle_button.click(timeout=10000)
+            # Wait for transition to complete
             with contextlib.suppress(Exception):
                 await self.page.wait_for_load_state("networkidle", timeout=500)
 
     async def is_sidebar_open(self) -> bool:
-        """Check if the sidebar is open."""
-        # Check viewport width to determine if we're in mobile or desktop mode
+        """Check if the sidebar/conversation list is visible.
+
+        On desktop: checks if the sidebar panel is not collapsed.
+        On mobile: checks if the conversation list view is currently showing.
+        """
         viewport_size = self.page.viewport_size
         if viewport_size and viewport_size["width"] <= 768:
-            # Mobile: Check for Sheet dialog state with more robust detection
-            # First check if there's an open dialog
-            sheet = await self.page.query_selector('[role="dialog"][data-state="open"]')
-            if sheet:
-                # Verify it's the sidebar sheet by checking for sidebar-specific content
-                sidebar_content = await sheet.query_selector(
-                    '[data-testid="new-chat-button"]'
-                )
-                return sidebar_content is not None
-
-            # Also check if the dialog exists but might still be animating
-            # In case data-state hasn't updated yet
-            sheet_any = await self.page.query_selector('[role="dialog"]')
-            if sheet_any:
-                state = await sheet_any.get_attribute("data-state")
-                if state == "open":
-                    # Double-check with sidebar content
-                    sidebar_content = await sheet_any.query_selector(
-                        '[data-testid="new-chat-button"]'
-                    )
-                    return sidebar_content is not None
-
+            # Mobile: conversation list is showing if new-chat-button is visible
+            # (it's part of the conversation list header)
+            new_chat = await self.page.query_selector(self.NEW_CHAT_BUTTON)
+            if new_chat:
+                return await new_chat.is_visible()
             return False
         else:
             # Desktop: Check if sidebar is visible by looking for its presence and checking the margin class
-            # Try multiple selectors for the sidebar
             sidebar = await self.page.query_selector("div.w-72.flex-shrink-0.border-r")
             if not sidebar:
                 sidebar = await self.page.query_selector(
@@ -349,10 +344,7 @@ class ChatPage(BasePage):
                 )
 
             if sidebar:
-                # Check the classes to see if it's visible (ml-0) or hidden (-ml-72)
                 classes = await sidebar.get_attribute("class") or ""
-                # If ml-0 is present, it's open. If -ml-72 is present, it's closed.
-                # If neither is present, assume it's open (default state)
                 return "-ml-72" not in classes
             return False
 

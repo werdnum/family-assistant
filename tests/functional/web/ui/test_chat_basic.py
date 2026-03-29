@@ -54,7 +54,7 @@ async def test_basic_chat_conversation(
     )
     await page.wait_for_selector(
         "button[aria-label='Toggle sidebar']", state="visible", timeout=10000
-    )
+    )  # Desktop: sidebar toggle is in the header
 
     # Create a new chat to ensure we start fresh
     await chat_page.create_new_chat()
@@ -276,10 +276,10 @@ async def test_empty_conversation_state(
 
 @pytest.mark.playwright
 @pytest.mark.asyncio
-async def test_responsive_sidebar_mobile(
+async def test_responsive_mobile_list_detail(
     web_test_fixture_readonly: WebTestFixture, mock_llm_client: RuleBasedMockLLMClient
 ) -> None:
-    """Test sidebar behavior on mobile viewport."""
+    """Test list-detail navigation pattern on mobile viewport."""
     page = web_test_fixture_readonly.page
     chat_page = ChatPage(page, web_test_fixture_readonly.base_url)
 
@@ -289,104 +289,47 @@ async def test_responsive_sidebar_mobile(
     # Navigate to chat
     await chat_page.navigate_to_chat()
 
-    # Wait for React app to fully initialize and adapt to mobile viewport
-    # Check that the toggle button is visible (indicates app is ready)
+    # On mobile, the app auto-creates a conversation, so we start in chat detail view
+    # The back button should be visible (not a sidebar toggle)
     await page.wait_for_selector(
-        "button[aria-label='Toggle sidebar']", state="visible", timeout=10000
+        "button[aria-label='Back to conversations']", state="visible", timeout=10000
     )
-    # Wait for the chat input to be ready
     await page.wait_for_selector(
         '[data-testid="chat-input"]', state="visible", timeout=10000
     )
 
-    # On mobile, sidebar should be closed by default
+    # Conversation list should NOT be visible (we're in chat detail view)
     assert not await chat_page.is_sidebar_open()
 
-    # Verify toggle button is available
-    await page.wait_for_selector("button[aria-label='Toggle sidebar']", state="visible")
+    # Tap back button to navigate to conversation list
+    await page.click("button[aria-label='Back to conversations']")
 
-    # Test opening sidebar on mobile
-    # Before toggling, make sure no dialog is already open
-    existing_dialog = await page.query_selector('[role="dialog"]')
-    if existing_dialog:
-        # If dialog exists, close it first by clicking outside or using toggle
-        try:
-            # Try clicking the toggle button to close it
-            await page.click("button[aria-label='Toggle sidebar']", timeout=2000)
-            # Wait for the dialog to close
-            await page.wait_for_function(
-                """() => {
-                    const dialog = document.querySelector('[role="dialog"]');
-                    return !dialog || dialog.getAttribute('data-state') === 'closed';
-                }""",
-                timeout=3000,
-            )
-        except Exception:
-            pass
-
-    # Ensure we start from a clean state
-    assert not await chat_page.is_sidebar_open(), (
-        "Sidebar should be closed initially on mobile"
-    )
-
-    # Now open the sidebar
-    await page.click("button[aria-label='Toggle sidebar']")
-
-    # Wait for Sheet component to fully open with proper animation
-    # The Sheet uses Radix UI Dialog with data-state="open" when fully opened
-    await page.wait_for_selector(
-        '[role="dialog"][data-state="open"]', state="visible", timeout=10000
-    )
-
-    # Wait for the new chat button to be visible, which indicates the sheet is fully open
+    # Wait for conversation list to appear
     await page.wait_for_selector(
         '[data-testid="new-chat-button"]', state="visible", timeout=5000
     )
 
-    # Verify sidebar is now open
+    # Verify conversation list is now showing
     assert await chat_page.is_sidebar_open()
 
-    # Verify sidebar content is accessible
+    # Chat input should NOT be visible (we're on the list view)
+    chat_input = await page.query_selector('[data-testid="chat-input"]')
+    assert chat_input is None or not await chat_input.is_visible(), (
+        "Chat input should not be visible on conversation list view"
+    )
+
+    # Create a new chat from the list view
+    await page.click('[data-testid="new-chat-button"]')
+
+    # Should navigate to chat detail view
     await page.wait_for_selector(
-        '[data-testid="new-chat-button"]', state="visible", timeout=5000
+        "button[aria-label='Back to conversations']", state="visible", timeout=5000
+    )
+    await page.wait_for_selector(
+        '[data-testid="chat-input"]', state="visible", timeout=5000
     )
 
-    # Test closing sidebar on mobile by clicking on the overlay
-    # The SheetOverlay has classes: fixed inset-0 z-50 bg-background/80 backdrop-blur-sm
-    overlay = await page.wait_for_selector(
-        ".fixed.inset-0.z-50", state="visible", timeout=5000
-    )
-
-    # Get the viewport dimensions to click in a safe area (far from the sheet content)
-    viewport = page.viewport_size
-    if viewport and overlay:
-        # Click on the far right side of the overlay (away from the left-side sheet)
-        click_x = viewport["width"] - 50  # 50px from right edge
-        click_y = viewport["height"] // 2  # Middle vertically
-        await overlay.click(position={"x": click_x, "y": click_y})
-    elif overlay:
-        # Fallback: click in a safe area
-        await overlay.click(position={"x": 300, "y": 300})
-
-    # Wait for Sheet to start closing (should show data-state="closed" or be removed)
-    await page.wait_for_function(
-        """() => {
-            const dialog = document.querySelector('[role="dialog"]');
-            return !dialog || dialog.getAttribute('data-state') === 'closed';
-        }""",
-        timeout=5000,
-    )
-
-    # Wait for the new chat button to be hidden/detached, which indicates closing is complete
-    await page.wait_for_function(
-        """() => {
-            const button = document.querySelector('[data-testid="new-chat-button"]');
-            return !button || !button.isConnected || !button.offsetParent;
-        }""",
-        timeout=3000,
-    )
-
-    # Verify sidebar is closed
+    # Verify we're back in chat detail view
     assert not await chat_page.is_sidebar_open()
 
     # Reset viewport
@@ -417,9 +360,9 @@ async def test_mobile_chat_input_visibility(
     await chat_page.navigate_to_chat()
 
     # Wait for React app to fully initialize on mobile
-    # Check that critical UI elements are ready
+    # On mobile, the app auto-creates a conversation so we see the chat detail view
     await page.wait_for_selector(
-        "button[aria-label='Toggle sidebar']", state="visible", timeout=10000
+        "button[aria-label='Back to conversations']", state="visible", timeout=10000
     )
     await page.wait_for_selector(
         '[data-testid="chat-input"]', state="visible", timeout=10000

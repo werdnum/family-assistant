@@ -95,11 +95,11 @@ describe('ConversationSidebar', () => {
     // Implementation depends on @assistant-ui/react's conversation management
   });
 
-  it('toggles sidebar open/closed', async () => {
+  it('toggles sidebar open/closed on desktop', async () => {
     const user = userEvent.setup();
     await renderChatApp({ waitForReady: true });
 
-    // Look for sidebar toggle button
+    // On desktop, the sidebar toggle button is present
     const toggleButton = screen.getByLabelText('Toggle sidebar');
 
     // Test toggling sidebar
@@ -107,7 +107,6 @@ describe('ConversationSidebar', () => {
 
     // Wait for sidebar state to update
     await waitFor(() => {
-      // The sidebar toggle should have changed ARIA attributes or classes
       expect(toggleButton).toBeInTheDocument();
     });
 
@@ -117,8 +116,6 @@ describe('ConversationSidebar', () => {
     await waitFor(() => {
       expect(toggleButton).toBeInTheDocument();
     });
-
-    // This tests the basic toggle functionality
   });
 
   it('creates new conversation from sidebar', async () => {
@@ -211,26 +208,44 @@ describe('ConversationSidebar', () => {
 
     await renderChatApp({ waitForReady: true });
 
-    // On mobile, the sidebar may be closed by default
-    // Check if we can access conversations through a menu button
-    const menuButton = screen.queryByLabelText('Toggle sidebar');
-    if (menuButton) {
-      // Try to open the sidebar on mobile
-      const user = userEvent.setup();
-      await user.click(menuButton);
-      // Wait for sidebar to open
-      await waitFor(() => {
-        expect(menuButton).toBeInTheDocument();
-      });
-    }
-
-    // Now check if conversations are accessible
-    // On mobile, conversations might be in a different location or structure
-
-    // If conversations header is not found, just verify the basic functionality
-    // The key is that the app works on mobile, even if UI structure differs
+    // On mobile, the app auto-creates a conversation on startup, so we see the chat detail view
+    // with a back button instead of a sidebar toggle
     expect(screen.getByText('Chat')).toBeInTheDocument();
     expect(screen.getByPlaceholderText('Message Family Assistant...')).toBeInTheDocument();
+
+    // The back button should be present to navigate to conversation list
+    expect(screen.getByLabelText('Back to conversations')).toBeInTheDocument();
+
+    // Reset viewport
+    Object.defineProperty(window, 'innerWidth', {
+      writable: true,
+      configurable: true,
+      value: 1024,
+    });
+  });
+
+  it('shows conversation list when navigating back on mobile', async () => {
+    // Set mobile viewport
+    Object.defineProperty(window, 'innerWidth', {
+      writable: true,
+      configurable: true,
+      value: 375,
+    });
+
+    window.dispatchEvent(new Event('resize'));
+
+    await renderChatApp({ waitForReady: true });
+
+    const user = userEvent.setup();
+
+    // Tap back button to go to conversation list
+    const backButton = screen.getByLabelText('Back to conversations');
+    await user.click(backButton);
+
+    // Should now see the conversation list
+    await waitFor(() => {
+      expect(screen.getByText('Conversations')).toBeInTheDocument();
+    });
 
     // Reset viewport
     Object.defineProperty(window, 'innerWidth', {
