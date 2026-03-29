@@ -156,6 +156,33 @@ async def app_auth_oidc_callback(request: Request) -> HTMLResponse:
             detail="No user info returned from OIDC provider.",
         )
 
+    # Enforce email allowlist (same check as the standard web login flow)
+    from family_assistant.web.auth import (  # noqa: PLC0415 - deferred to avoid circular import at module level
+        ALLOWED_OIDC_EMAILS,
+    )
+
+    if ALLOWED_OIDC_EMAILS:
+        email = user_info.get("email")
+        if not email:
+            logger.warning(
+                "App auth OIDC login attempt without email in userinfo (sub: %s)",
+                user_info.get("sub"),
+            )
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Authentication failed: No email provided by OIDC provider and email allowlist is enabled.",
+            )
+
+        allowed_emails = [e.strip().lower() for e in ALLOWED_OIDC_EMAILS.split(",")]
+        if email.lower() not in allowed_emails:
+            logger.warning(
+                "Unauthorized app auth OIDC login attempt for email: %s", email
+            )
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=f"Access denied: Email '{email}' is not in the allowlist.",
+            )
+
     # Retrieve PKCE challenge from session
     code_challenge = request.session.pop("app_auth_code_challenge", None)
     code_challenge_method = request.session.pop(

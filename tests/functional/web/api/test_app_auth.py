@@ -9,9 +9,11 @@ from typing import TYPE_CHECKING
 import pytest
 import pytest_asyncio
 from httpx import ASGITransport, AsyncClient
-from sqlalchemy import update
+from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncEngine
 from starlette.middleware.sessions import SessionMiddleware
+
+from family_assistant.storage import api_tokens as api_tokens_storage
 
 if TYPE_CHECKING:
     from fastapi import FastAPI
@@ -193,6 +195,38 @@ class TestRefreshToken:
                 .values(is_revoked=True)
             )
 
+        response = await api_test_client.post(
+            "/api/auth/refresh",
+            json={"refresh_token": token_pair["refresh_token"]},
+        )
+        assert response.status_code == 401
+
+    @pytest.mark.asyncio
+    async def test_revoking_api_token_cascades_to_refresh_token(
+        self,
+        api_test_client: AsyncClient,
+        token_pair: dict,
+        db_engine: AsyncEngine,
+    ) -> None:
+        """Revoking an API token should also revoke its child refresh token."""
+        api_prefix = token_pair["api_token"][:8]
+
+        # Find the API token ID and revoke it
+        async with get_db_context(db_engine) as db:
+            row = await db.fetch_one(
+                select(api_tokens_table.c.id).where(
+                    api_tokens_table.c.prefix == api_prefix
+                )
+            )
+            assert row is not None
+            api_token_id = row["id"]
+
+            success = await api_tokens_storage.revoke_api_token(
+                db, api_token_id, "testuser@example.com"
+            )
+            assert success
+
+        # Refresh token should now be rejected
         response = await api_test_client.post(
             "/api/auth/refresh",
             json={"refresh_token": token_pair["refresh_token"]},

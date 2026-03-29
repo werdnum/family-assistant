@@ -2,6 +2,7 @@
 CRUD operations for API tokens.
 """
 
+import asyncio
 import logging
 import secrets
 import string
@@ -288,8 +289,19 @@ async def revoke_api_token(
     updated_id = result.scalar_one_or_none()
 
     if updated_id is not None:
+        # Cascade: also revoke any child tokens (e.g., refresh tokens linked to this API token)
+        child_revoke_query = (
+            update(api_tokens_table)
+            .where(
+                api_tokens_table.c.parent_token_id == token_id,
+                api_tokens_table.c.is_revoked == False,  # noqa: E712 - SQLAlchemy requires == for column comparison
+            )
+            .values(is_revoked=True, last_used_at=datetime.now(UTC))
+        )
+        await db_context.execute_with_retry(child_revoke_query)
+
         logger.info(
-            "Successfully revoked API token ID %s for user %s.",
+            "Successfully revoked API token ID %s (and child tokens) for user %s.",
             token_id,
             user_identifier,
         )
@@ -329,7 +341,9 @@ async def validate_token_by_value(
         return None
 
     row_dict = dict(row)
-    if not pwd_context.verify(token_secret, row_dict["hashed_token"]):
+    if not await asyncio.to_thread(
+        pwd_context.verify, token_secret, row_dict["hashed_token"]
+    ):
         return None
 
     if row_dict["is_revoked"]:
