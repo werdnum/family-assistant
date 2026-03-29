@@ -20,8 +20,10 @@ exchange (PKCE-style):
 04. User completes normal OIDC login on that page
 05. Backend generates a short-lived authorization code (single-use, expires in 60 seconds), stores
     it with the code challenge
-06. Page redirects to `familyassistant://auth-callback?code=<auth_code>` (no secrets in URL — the
-    code alone is useless without the verifier)
+06. Page redirects to `https://{serverHost}/.well-known/app-auth-callback?code=<auth_code>` — this
+    is a Universal Link claimed by the app (no secrets in URL — the code alone is useless without
+    the verifier). Universal Links are verified via the server's
+    `/.well-known/apple-app-site-association` file, preventing scheme hijacking by other apps
 07. `ASWebAuthenticationSession` catches this, app extracts the code
 08. App calls `POST /api/auth/exchange` with `{code, code_verifier}` server-side
 09. Backend verifies `SHA256(code_verifier) == stored code_challenge`, then returns an API token +
@@ -46,7 +48,9 @@ A simple endpoint that:
 
 - Initiates the standard OIDC login flow
 - After successful login, generates a short-lived authorization code bound to the PKCE challenge
-- Renders a page that redirects to `familyassistant://auth-callback?code=<auth_code>`
+- Renders a page that redirects to
+  `https://{serverHost}/.well-known/app-auth-callback?code=<auth_code>` (Universal Link caught by
+  the app)
 
 This can be a server-rendered page (no React needed) since it's a transient auth flow.
 
@@ -56,6 +60,9 @@ Implementation: New router `src/family_assistant/web/routers/app_auth.py` with:
   session, redirects to OIDC provider
 - `GET /app-auth-callback` — After OIDC callback, generates authorization code (single-use, 60s TTL)
   bound to the code challenge, renders redirect page
+- `GET /.well-known/apple-app-site-association` — Serves the AASA file that claims the
+  `/.well-known/app-auth-callback` path for the iOS app (enables Universal Links, prevents scheme
+  hijacking). Requires the app's team ID and bundle ID.
 
 #### 2. Code Exchange Endpoint (`POST /api/auth/exchange`)
 
@@ -90,12 +97,19 @@ Exchanges a Bearer token for a session cookie:
 async def token_session(request: Request, user=Depends(get_current_user)):
     """Exchange a valid API Bearer token for a session cookie."""
     request.session["user"] = user
+    # Store the token ID so session validity is tied to token validity
+    request.session["api_token_id"] = user["token_id"]
     return {"ok": True}
 ```
 
-This lets the iOS app authenticate once with the token, then the WKWebView uses the session cookie
-for all requests (avoiding the complexity of intercepting every WKWebView request to inject auth
-headers).
+The session cookie is tied to the API token that created it: the `AuthMiddleware` checks that the
+referenced `api_token_id` is still valid (not revoked/expired) on each request. This ensures that
+revoking the API token also invalidates the session. The iOS app calls this endpoint on each launch
+(after refreshing the API token if needed), so session cookies are naturally short-lived.
+
+This lets the iOS app authenticate once per launch with the token, then the WKWebView uses the
+session cookie for all requests (avoiding the complexity of intercepting every WKWebView request to
+inject auth headers).
 
 ### iOS Project Structure
 
@@ -178,7 +192,7 @@ ios/FamilyAssistant/
 
 **Info.plist**:
 
-- `CFBundleURLTypes` registering `familyassistant` URL scheme
+- Associated Domains entitlement for Universal Links (`applinks:{serverHost}`)
 - `NSAppTransportSecurity` if needed for local dev (HTTP)
 
 ### Dependencies
