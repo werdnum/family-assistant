@@ -140,7 +140,9 @@ ios/FamilyAssistant/
 - `handleCallback(url:)`: Extracts auth code from callback URL, calls `POST /api/auth/exchange` with
   code + code verifier, stores API token + refresh token in Keychain
 - `refreshIfNeeded()`: Checks token expiry, calls `POST /api/auth/refresh` if needed
-- `establishSession()`: Calls `POST /api/auth/token-session` to get session cookie for WKWebView
+- `establishSession()`: Calls `POST /api/auth/token-session` via `URLSession`, extracts the
+  `Set-Cookie` from the response, then explicitly writes it into
+  `WKWebsiteDataStore.default().httpCookieStore` so the WKWebView shares the session
 - `logout()`: Clears Keychain, clears WKWebView cookies, revokes tokens server-side
 
 **KeychainHelper.swift**:
@@ -159,7 +161,10 @@ ios/FamilyAssistant/
 **WebViewContainer.swift**:
 
 - `UIViewRepresentable` wrapping `WKWebView`
-- Uses shared `WKWebsiteDataStore` (session cookie set by `establishSession()` is available)
+- Uses `WKWebsiteDataStore.default()` — session cookie is explicitly written there by
+  `AuthManager.establishSession()` before the web view loads (note: `URLSession` and `WKWebView`
+  have separate cookie jars, so the cookie must be bridged explicitly via
+  `httpCookieStore.setCookie`)
 - Loads `{serverURL}/chat`
 - `WKNavigationDelegate` for handling external links (open in Safari)
 - Pull-to-refresh via `UIRefreshControl`
