@@ -265,6 +265,31 @@ class ChatMessageResponse(BaseModel):
     tool_calls: list[ToolCallResponseItem] | None = None
 
 
+# --- App Auth / Token Exchange Models ---
+class CodeExchangeRequest(BaseModel):
+    code: str
+    code_verifier: str
+
+
+class CodeExchangeResponse(BaseModel):
+    api_token: str
+    refresh_token: str
+    expires_in: int  # seconds
+
+
+class RefreshTokenRequest(BaseModel):
+    refresh_token: str
+
+
+class RefreshTokenResponse(BaseModel):
+    api_token: str
+    expires_in: int  # seconds
+
+
+class TokenSessionResponse(BaseModel):
+    ok: bool
+
+
 class WebhookEventPayload(BaseModel):
     """Payload for generic webhook events."""
 

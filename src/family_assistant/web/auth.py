@@ -45,6 +45,8 @@ PUBLIC_PATHS = [
     re.compile(r"^/login$"),
     re.compile(r"^/logout$"),
     re.compile(r"^/auth$"),
+    re.compile(r"^/app-auth$"),
+    re.compile(r"^/app-auth-callback$"),
     re.compile(r"^/webhook(/.*)?$"),
     re.compile(r"^/api(/.*)?$"),
     re.compile(r"^/health$"),
@@ -150,7 +152,8 @@ class AuthService:
 
         async with get_db_context(self.database_engine) as db:
             query = select(api_tokens_table).where(
-                api_tokens_table.c.prefix == token_prefix
+                api_tokens_table.c.prefix == token_prefix,
+                api_tokens_table.c.token_type == "api",
             )
             token_row = await db.fetch_one(query)
 
@@ -321,6 +324,28 @@ class AuthMiddleware:
             # Session middleware not available, so no authentication is possible
             await self.app(scope, receive, send)
             return
+
+        # If session was created from an API token (e.g., iOS app),
+        # verify the token is still valid (not revoked/expired)
+        if user:
+            api_token_id = request.session.get("api_token_id")
+            if api_token_id and self.auth_service.database_engine:
+                from family_assistant.storage import (  # noqa: PLC0415 - deferred to avoid circular import at module level
+                    api_tokens as api_tokens_storage,
+                )
+                from family_assistant.storage.context import (  # noqa: PLC0415 - deferred to avoid circular import at module level
+                    get_db_context,
+                )
+
+                async with get_db_context(self.auth_service.database_engine) as db:
+                    if not await api_tokens_storage.is_token_valid(db, api_token_id):
+                        logger.warning(
+                            "Session invalidated: API token %s is no longer valid",
+                            api_token_id,
+                        )
+                        request.session.pop("user", None)
+                        request.session.pop("api_token_id", None)
+                        user = None
 
         # Attempt API token authentication if no session user
         if not user:

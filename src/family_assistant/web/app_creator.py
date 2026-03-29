@@ -38,6 +38,12 @@ from family_assistant.web.routers.api_documentation import (
 from family_assistant.web.routers.api_token_management import (
     router as api_token_management_router,
 )
+from family_assistant.web.routers.app_auth import (
+    page_router as app_auth_page_router,
+)
+from family_assistant.web.routers.app_auth import (
+    wellknown_router as app_auth_wellknown_router,
+)
 from family_assistant.web.routers.asterisk_live_api import asterisk_live_router
 from family_assistant.web.routers.client_config import router as client_config_router
 from family_assistant.web.routers.context_viewer import context_viewer_router
@@ -250,6 +256,10 @@ def create_app() -> FastAPI:
         )
 
     new_app.include_router(a2a_wellknown_router, tags=["A2A Discovery"])
+    new_app.include_router(
+        app_auth_wellknown_router, tags=["Apple App Site Association"]
+    )
+    new_app.include_router(app_auth_page_router, tags=["App Auth Pages"])
     new_app.include_router(webhooks_router, tags=["Webhooks"])
     new_app.include_router(context_viewer_router, tags=["Context Viewer UI"])
     new_app.include_router(health_router, tags=["Health Check"])

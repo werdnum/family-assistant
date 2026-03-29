@@ -55,6 +55,8 @@ async def add_api_token(
     prefix: str,
     created_at: datetime,
     expires_at: datetime | None = None,
+    token_type: str = "api",
+    parent_token_id: int | None = None,
 ) -> int:
     """
     Adds a new API token to the database.
@@ -83,7 +85,9 @@ async def add_api_token(
             prefix=prefix,
             created_at=created_at,
             expires_at=expires_at,
-            is_revoked=False,  # New tokens are not revoked by default
+            is_revoked=False,
+            token_type=token_type,
+            parent_token_id=parent_token_id,
         )
         .returning(api_tokens_table.c.id)
     )
@@ -115,6 +119,8 @@ async def create_and_store_api_token(
     user_identifier: str,
     name: str,
     expires_at: datetime | None = None,
+    token_type: str = "api",
+    parent_token_id: int | None = None,
 ) -> tuple[str, int, datetime]:
     """
     Generates a new API token, stores its hashed version, and returns the full token.
@@ -145,10 +151,12 @@ async def create_and_store_api_token(
         db_context=db_context,
         user_identifier=user_identifier,
         name=name,
-        hashed_token=hashed_secret,  # This is the hash of the 'secret' part
+        hashed_token=hashed_secret,
         prefix=prefix,
         created_at=created_at_utc,
         expires_at=expires_at,
+        token_type=token_type,
+        parent_token_id=parent_token_id,
     )
 
     logger.info(
@@ -179,13 +187,16 @@ async def get_api_tokens_for_user(
             api_tokens_table.c.id,
             api_tokens_table.c.name,
             api_tokens_table.c.prefix,
-            api_tokens_table.c.user_identifier,  # Keep for consistency, though it'll be the same
+            api_tokens_table.c.user_identifier,
             api_tokens_table.c.created_at,
             api_tokens_table.c.expires_at,
             api_tokens_table.c.last_used_at,
             api_tokens_table.c.is_revoked,
         )
-        .where(api_tokens_table.c.user_identifier == user_identifier)
+        .where(
+            api_tokens_table.c.user_identifier == user_identifier,
+            api_tokens_table.c.token_type == "api",
+        )
         .order_by(api_tokens_table.c.created_at.desc())
     )
     results = await db_context.fetch_all(query)
@@ -291,3 +302,63 @@ async def revoke_api_token(
         user_identifier,
     )
     return False
+
+
+async def validate_token_by_value(
+    db_context: DatabaseContext,
+    token_value: str,
+    expected_type: str = "refresh",
+) -> dict | None:
+    """Validate a token (API or refresh) by its raw value (prefix + secret).
+
+    Returns the token row as a dict if valid, None otherwise.
+    Does NOT update last_used_at (caller should do that if needed).
+    """
+    if len(token_value) <= TOKEN_PREFIX_LENGTH:
+        return None
+
+    token_prefix = token_value[:TOKEN_PREFIX_LENGTH]
+    token_secret = token_value[TOKEN_PREFIX_LENGTH:]
+
+    query = select(api_tokens_table).where(
+        api_tokens_table.c.prefix == token_prefix,
+        api_tokens_table.c.token_type == expected_type,
+    )
+    row = await db_context.fetch_one(query)
+    if not row:
+        return None
+
+    row_dict = dict(row)
+    if not pwd_context.verify(token_secret, row_dict["hashed_token"]):
+        return None
+
+    if row_dict["is_revoked"]:
+        return None
+
+    now = datetime.now(UTC)
+    expires_at = row_dict["expires_at"]
+    if expires_at:
+        if expires_at.tzinfo is None:
+            expires_at = expires_at.replace(tzinfo=UTC)
+        if expires_at < now:
+            return None
+
+    return row_dict
+
+
+async def is_token_valid(db_context: DatabaseContext, token_id: int) -> bool:
+    """Check if a token (by ID) is still valid (not revoked, not expired)."""
+    query = select(
+        api_tokens_table.c.is_revoked,
+        api_tokens_table.c.expires_at,
+    ).where(api_tokens_table.c.id == token_id)
+    row = await db_context.fetch_one(query)
+    if not row:
+        return False
+    if row["is_revoked"]:
+        return False
+    now = datetime.now(UTC)
+    expires_at = row["expires_at"]
+    if expires_at and expires_at.tzinfo is None:
+        expires_at = expires_at.replace(tzinfo=UTC)
+    return not (expires_at and expires_at < now)
