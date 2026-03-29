@@ -25,7 +25,11 @@ from family_assistant.processing import ProcessingService, ProcessingServiceConf
 from family_assistant.storage.context import get_db_context
 from family_assistant.storage.tasks import enqueue_task, tasks_table
 from family_assistant.storage.types import TaskDict
-from family_assistant.task_worker import TaskWorker, handle_script_execution
+from family_assistant.task_worker import (
+    TaskWorker,
+    handle_llm_callback,
+    handle_script_execution,
+)
 from family_assistant.tools import (
     AVAILABLE_FUNCTIONS as local_tool_implementations,
 )
@@ -103,19 +107,22 @@ async def _wait_for_notification_tasks(
 
 
 @pytest.mark.asyncio
-async def test_script_failure_enqueues_notification(
+async def test_script_failure_notification_is_processable(
     db_engine: AsyncEngine,
     task_worker_manager: Callable[..., tuple[TaskWorker, asyncio.Event, asyncio.Event]],
 ) -> None:
-    """After max retries, a failed script_execution task enqueues an llm_callback notification."""
+    """After max retries, a failed script_execution task enqueues an llm_callback notification
+    that can be successfully processed by handle_llm_callback end-to-end."""
     tools_provider = await _make_tools_provider()
     processing_service = _make_processing_service(tools_provider)
+    mock_chat = AsyncMock(spec=ChatInterface)
 
     worker, new_task_event, shutdown_event = task_worker_manager(
         processing_service,
-        AsyncMock(spec=ChatInterface),
+        mock_chat,
     )
     worker.register_task_handler("script_execution", handle_script_execution)
+    worker.register_task_handler("llm_callback", handle_llm_callback)
     # ast-grep-ignore: no-asyncio-sleep-in-tests - Waiting for task worker to start and register handler
     await asyncio.sleep(0.1)
 
@@ -154,15 +161,23 @@ async def test_script_failure_enqueues_notification(
 
     notif = notification_tasks[0]
     assert notif["max_retries"] == 1
-    payload = notif["payload"]
-    assert payload is not None
-    assert payload["conversation_id"] == "test_conv"
-    assert payload["interface_type"] == "telegram"
-    assert "scheduling_timestamp" in payload
-    assert "Broken Automation" in payload["callback_context"]
-    assert "automation 42" in payload["callback_context"]
-    assert "not valid python" in payload["callback_context"]
-    assert "Do NOT re-run the script" in payload["callback_context"]
+    notif_payload = notif["payload"]
+    assert notif_payload is not None
+    assert notif_payload["conversation_id"] == "test_conv"
+    assert notif_payload["interface_type"] == "telegram"
+    assert "scheduling_timestamp" in notif_payload
+    assert "Broken Automation" in notif_payload["callback_context"]
+    assert "automation 42" in notif_payload["callback_context"]
+    assert "not valid python" in notif_payload["callback_context"]
+    assert "Do NOT re-run the script" in notif_payload["callback_context"]
+
+    # Now let the worker process the llm_callback notification task.
+    # This is the key part: if the payload is malformed (e.g. missing
+    # scheduling_timestamp), handle_llm_callback will raise and the task will fail.
+    new_task_event.set()
+    await wait_for_tasks_to_complete(
+        db_engine, task_types={"llm_callback"}, timeout_seconds=15
+    )
 
 
 @pytest.mark.asyncio
