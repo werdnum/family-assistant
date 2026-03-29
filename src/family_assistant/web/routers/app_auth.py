@@ -23,8 +23,10 @@ from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi.responses import HTMLResponse, JSONResponse, Response
+from sqlalchemy import update as sa_update
 
 from family_assistant.storage import api_tokens as api_tokens_storage
+from family_assistant.storage.base import api_tokens_table
 from family_assistant.storage.context import DatabaseContext
 from family_assistant.web.dependencies import get_current_user, get_db
 from family_assistant.web.models import (
@@ -74,7 +76,7 @@ def _verify_pkce(code_verifier: str, code_challenge: str, method: str) -> bool:
     digest = hashlib.sha256(code_verifier.encode("ascii")).digest()
     try:
         # code_challenge is base64url-encoded (may or may not have padding)
-        padded = code_challenge + "=" * (4 - len(code_challenge) % 4)
+        padded = code_challenge + "=" * ((4 - len(code_challenge) % 4) % 4)
         decoded_challenge = urlsafe_b64decode(padded)
     except Exception:
         return False
@@ -215,14 +217,12 @@ async def app_auth_oidc_callback(request: Request) -> HTMLResponse:
         )
         else request.url.scheme
     )
-    host = request.url.hostname
-    port_suffix = (
-        f":{request.url.port}"
-        if request.url.port and request.url.port not in {80, 443}
-        else ""
-    )
-    redirect_url = (
-        f"{scheme}://{host}{port_suffix}/.well-known/app-auth-callback?code={auth_code}"
+    redirect_url = str(
+        request.url.replace(
+            scheme=scheme,
+            path="/.well-known/app-auth-callback",
+            query=f"code={auth_code}",
+        )
     )
 
     # Render a simple page that redirects to the Universal Link
@@ -340,6 +340,13 @@ async def refresh_token(
         name="iOS App",
         expires_at=api_token_expires,
         token_type="api",
+    )
+
+    # Re-link the refresh token to the new API token so cascade revocation works
+    await db_context.execute_with_retry(
+        sa_update(api_tokens_table)
+        .where(api_tokens_table.c.id == token_row["id"])
+        .values(parent_token_id=api_token_id)
     )
 
     logger.info(

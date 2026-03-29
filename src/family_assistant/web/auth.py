@@ -337,6 +337,8 @@ class AuthMiddleware:
             if api_token_id and self.auth_service.database_engine:
                 now = time.monotonic()
                 cache_key = api_token_id
+                if len(self._token_valid_cache) > 1000:
+                    self._token_valid_cache.clear()
                 cached = self._token_valid_cache.get(cache_key)
                 if cached and now - cached["checked_at"] < self.TOKEN_VALID_CACHE_TTL:
                     is_valid = cached["valid"]
