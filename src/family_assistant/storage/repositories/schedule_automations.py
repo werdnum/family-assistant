@@ -20,6 +20,7 @@ from family_assistant.storage.types import (
     ScheduleAutomationDict,
     ScheduleExecutionStatsDict,
 )
+from family_assistant.task_worker import LlmCallbackPayload, ScriptExecutionPayload
 
 # Sentinel to distinguish "not provided" from "explicitly None"
 _UNSET = object()
@@ -188,21 +189,27 @@ class ScheduleAutomationsRepository(BaseRepository):
             )
             task_id = f"sched_auto_{automation_id}_{uuid.uuid4().hex[:8]}"
 
-            # ast-grep-ignore: no-dict-any - task payload schema varies by action_type
-            payload: dict[str, Any] = {
-                "conversation_id": conversation_id,
-                "interface_type": interface_type,
-                "automation_id": str(automation_id),
-                "automation_type": "schedule",
-            }
-
-            # Add action-specific payload
             if action_type == "wake_llm":
-                payload["callback_context"] = action_config.get("context", "")
+                payload: LlmCallbackPayload | ScriptExecutionPayload = (
+                    LlmCallbackPayload(
+                        conversation_id=conversation_id,
+                        interface_type=interface_type,
+                        automation_id=str(automation_id),
+                        automation_type="schedule",
+                        callback_context=action_config.get("context", ""),
+                        scheduling_timestamp=datetime.now(UTC).isoformat(),
+                    )
+                )
             else:  # script
-                payload["script_code"] = action_config.get("script_code", "")
-                payload["task_name"] = action_config.get("task_name", name)
-                payload["config"] = action_config
+                payload = ScriptExecutionPayload(
+                    conversation_id=conversation_id,
+                    interface_type=interface_type,
+                    automation_id=str(automation_id),
+                    automation_type="schedule",
+                    script_code=action_config.get("script_code", ""),
+                    task_name=action_config.get("task_name", name),
+                    config=dict(action_config),
+                )
 
             # Note: We do NOT pass recurrence_rule here because recurrence
             # is managed manually via after_task_execution callback, not
@@ -421,28 +428,34 @@ class ScheduleAutomationsRepository(BaseRepository):
             )
             task_id = f"sched_auto_{automation_id}_{uuid.uuid4().hex[:8]}"
 
-            # ast-grep-ignore: no-dict-any - task payload schema varies by action_type
-            payload: dict[str, Any] = {
-                "conversation_id": conversation_id,
-                "interface_type": automation["interface_type"],
-                "automation_id": str(automation_id),
-                "automation_type": "schedule",
-            }
             action_config = automation["action_config"]
             if action_type == "wake_llm":
-                payload["callback_context"] = action_config.get("context", "")
-            else:
-                payload["script_code"] = action_config.get("script_code", "")
-                payload["task_name"] = action_config.get(
-                    "task_name", automation["name"]
+                enqueue_payload: LlmCallbackPayload | ScriptExecutionPayload = (
+                    LlmCallbackPayload(
+                        conversation_id=conversation_id,
+                        interface_type=automation["interface_type"],
+                        automation_id=str(automation_id),
+                        automation_type="schedule",
+                        callback_context=action_config.get("context", ""),
+                        scheduling_timestamp=datetime.now(UTC).isoformat(),
+                    )
                 )
-                payload["config"] = action_config
+            else:
+                enqueue_payload = ScriptExecutionPayload(
+                    conversation_id=conversation_id,
+                    interface_type=automation["interface_type"],
+                    automation_id=str(automation_id),
+                    automation_type="schedule",
+                    script_code=action_config.get("script_code", ""),
+                    task_name=action_config.get("task_name", automation["name"]),
+                    config=dict(action_config),
+                )
 
             await enqueue_task(
                 db_context=self._db,
                 task_id=task_id,
                 task_type=task_type,
-                payload=payload,
+                payload=enqueue_payload,
                 scheduled_at=next_scheduled_at,
             )
 
@@ -772,20 +785,25 @@ class ScheduleAutomationsRepository(BaseRepository):
         task_type = "llm_callback" if action_type == "wake_llm" else "script_execution"
         task_id = f"sched_auto_{automation_id}_{uuid.uuid4().hex[:8]}"
 
-        # ast-grep-ignore: no-dict-any - task payload has varying keys per action type
-        payload: dict[str, Any] = {
-            "conversation_id": automation["conversation_id"],
-            "interface_type": automation["interface_type"],
-            "automation_id": str(automation_id),
-            "automation_type": "schedule",
-        }
-
         if action_type == "wake_llm":
-            payload["callback_context"] = final_action_config.get("context", "")
+            payload: LlmCallbackPayload | ScriptExecutionPayload = LlmCallbackPayload(
+                conversation_id=automation["conversation_id"],
+                interface_type=automation["interface_type"],
+                automation_id=str(automation_id),
+                automation_type="schedule",
+                callback_context=final_action_config.get("context", ""),
+                scheduling_timestamp=datetime.now(UTC).isoformat(),
+            )
         else:  # script
-            payload["script_code"] = final_action_config.get("script_code", "")
-            payload["task_name"] = final_action_config.get("task_name", final_name)
-            payload["config"] = final_action_config
+            payload = ScriptExecutionPayload(
+                conversation_id=automation["conversation_id"],
+                interface_type=automation["interface_type"],
+                automation_id=str(automation_id),
+                automation_type="schedule",
+                script_code=final_action_config.get("script_code", ""),
+                task_name=final_action_config.get("task_name", final_name),
+                config=dict(final_action_config),
+            )
 
         await enqueue_task(
             db_context=self._db,
@@ -871,24 +889,28 @@ class ScheduleAutomationsRepository(BaseRepository):
             )
             task_id = f"sched_auto_{automation_id}_{uuid.uuid4().hex[:8]}"
 
-            # ast-grep-ignore: no-dict-any - task payload schema varies by action_type
-            payload: dict[str, Any] = {
-                "conversation_id": automation["conversation_id"],
-                "interface_type": automation["interface_type"],
-                "automation_id": str(automation_id),
-                "automation_type": "schedule",
-            }
-
-            # Add action-specific payload
             action_config = automation["action_config"]
             if action_type == "wake_llm":
-                payload["callback_context"] = action_config.get("context", "")
-            else:  # script
-                payload["script_code"] = action_config.get("script_code", "")
-                payload["task_name"] = action_config.get(
-                    "task_name", automation["name"]
+                recur_payload: LlmCallbackPayload | ScriptExecutionPayload = (
+                    LlmCallbackPayload(
+                        conversation_id=automation["conversation_id"],
+                        interface_type=automation["interface_type"],
+                        automation_id=str(automation_id),
+                        automation_type="schedule",
+                        callback_context=action_config.get("context", ""),
+                        scheduling_timestamp=datetime.now(UTC).isoformat(),
+                    )
                 )
-                payload["config"] = action_config
+            else:  # script
+                recur_payload = ScriptExecutionPayload(
+                    conversation_id=automation["conversation_id"],
+                    interface_type=automation["interface_type"],
+                    automation_id=str(automation_id),
+                    automation_type="schedule",
+                    script_code=action_config.get("script_code", ""),
+                    task_name=action_config.get("task_name", automation["name"]),
+                    config=dict(action_config),
+                )
 
             # Note: We do NOT pass recurrence_rule here because recurrence
             # is managed manually via after_task_execution callback, not
@@ -897,7 +919,7 @@ class ScheduleAutomationsRepository(BaseRepository):
                 db_context=self._db,
                 task_id=task_id,
                 task_type=task_type,
-                payload=payload,
+                payload=recur_payload,
                 scheduled_at=next_scheduled_at,
             )
 

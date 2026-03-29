@@ -22,6 +22,7 @@ from family_assistant.utils.clock import SystemClock
 if TYPE_CHECKING:
     from collections.abc import Mapping
 
+    from family_assistant.task_worker import LlmCallbackPayload
     from family_assistant.tools.types import ToolDefinition, ToolExecutionContext
 
 
@@ -438,7 +439,7 @@ async def schedule_reminder_tool(
 
         task_id = f"llm_callback_{uuid.uuid4()}"
         scheduling_time = clock.now()
-        payload = {
+        payload: LlmCallbackPayload = {
             "interface_type": interface_type,
             "conversation_id": conversation_id,
             "user_name": user_name,  # Save user_name in payload
@@ -556,7 +557,7 @@ async def schedule_recurring_task_tool(
 
         # Build the payload for llm_callback
         scheduling_time = clock.now()
-        payload = {
+        payload: LlmCallbackPayload = {
             "interface_type": interface_type,
             "conversation_id": conversation_id,
             "user_name": user_name,  # Save user_name in payload
@@ -628,12 +629,12 @@ async def schedule_future_callback_tool(
 
         task_id = f"llm_callback_{uuid.uuid4()}"
         scheduling_time = clock.now()  # Use the clock from context
-        payload = {
-            "interface_type": interface_type,  # Store interface type
-            "conversation_id": conversation_id,  # Store conversation ID
-            "user_name": user_name,  # Save user_name in payload
+        payload: LlmCallbackPayload = {
+            "interface_type": interface_type,
+            "conversation_id": conversation_id,
+            "user_name": user_name,
             "callback_context": context,
-            "scheduling_timestamp": scheduling_time.isoformat(),  # Add scheduling timestamp
+            "scheduling_timestamp": scheduling_time.isoformat(),
         }
 
         await db_context.tasks.enqueue(

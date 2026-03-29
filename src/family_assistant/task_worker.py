@@ -12,7 +12,7 @@ import uuid
 from collections.abc import Awaitable, Callable  # Import Union
 from datetime import UTC, datetime, timedelta  # Added Union
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, TypedDict
+from typing import TYPE_CHECKING, Any, Required, TypedDict
 from zoneinfo import ZoneInfo
 
 import aiofiles.os
@@ -63,13 +63,18 @@ class ReminderConfig(TypedDict, total=False):
 
 
 class LlmCallbackPayload(TypedDict, total=False):
-    """Payload for llm_callback tasks."""
+    """Payload for llm_callback tasks.
 
-    interface_type: str
-    conversation_id: str
+    Fields marked Required must be present in every llm_callback payload.
+    The type checker enforces this at construction sites annotated with this type.
+    """
+
+    interface_type: Required[str]
+    conversation_id: Required[str]
+    # ast-grep-ignore: no-dict-any - actions.py passes a dict with trigger context
+    callback_context: Required[str | dict[str, Any]]
+    scheduling_timestamp: Required[str]
     user_name: str
-    callback_context: str
-    scheduling_timestamp: str
     trigger_attachments: list[MessageAttachmentMetadata]
     reminder_config: ReminderConfig
     # ast-grep-ignore: no-dict-any - Arbitrary context metadata from script wake_llm calls
@@ -88,8 +93,10 @@ class ScriptExecutionPayload(TypedDict, total=False):
     config: dict[str, Any]
     listener_id: str
     conversation_id: str
+    interface_type: str
     automation_id: str | int
     automation_type: str
+    task_name: str
 
 
 class SystemEventCleanupPayload(TypedDict, total=False):
@@ -161,7 +168,8 @@ async def _handle_schedule_automation_recurrence(
 
 async def _schedule_reminder_follow_up(
     exec_context: ToolExecutionContext,
-    original_context: str,
+    # ast-grep-ignore: no-dict-any - callback_context from LlmCallbackPayload can be str or dict
+    original_context: str | dict[str, Any],
     follow_up_interval: str,
     current_attempt: int,
     max_follow_ups: int,
@@ -202,7 +210,7 @@ async def _schedule_reminder_follow_up(
     current_scheduling_timestamp = clock.now().isoformat()
 
     task_id = f"llm_callback_{uuid.uuid4()}"
-    payload = {
+    payload: LlmCallbackPayload = {
         "interface_type": exec_context.interface_type,
         "conversation_id": exec_context.conversation_id,
         "user_name": exec_context.user_name,  # Preserve user_name for follow-up
@@ -1044,11 +1052,12 @@ class TaskWorker:
                 db_context=db_context,
                 task_id=notification_task_id,
                 task_type="llm_callback",
-                payload={
-                    "conversation_id": conversation_id,
-                    "interface_type": interface_type,
-                    "callback_context": callback_context,
-                },
+                payload=LlmCallbackPayload(
+                    conversation_id=conversation_id,
+                    interface_type=interface_type,
+                    callback_context=callback_context,
+                    scheduling_timestamp=datetime.now(UTC).isoformat(),
+                ),
                 max_retries_override=1,
             )
             logger.info(
@@ -1483,7 +1492,7 @@ async def _process_script_wake_llm(
     scheduling_timestamp = datetime.now(UTC).isoformat()
 
     # Enqueue LLM callback task with attachment support
-    payload = {
+    payload: LlmCallbackPayload = {
         "interface_type": exec_context.interface_type,
         "conversation_id": exec_context.conversation_id,
         "user_name": exec_context.user_name,  # Preserve user_name

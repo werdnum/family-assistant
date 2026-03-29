@@ -3,6 +3,7 @@
 import asyncio
 import logging
 from asyncio import Event
+from collections.abc import Mapping
 from datetime import UTC, datetime, timedelta
 from typing import Any, cast
 
@@ -44,7 +45,7 @@ class TasksRepository(BaseRepository):
         task_id: str,
         task_type: str,
         # ast-grep-ignore: no-dict-any - task payload has varying keys per task type
-        payload: dict[str, Any] | None = None,
+        payload: Mapping[str, Any] | None = None,
         scheduled_at: datetime | None = None,
         max_retries_override: int | None = None,
         recurrence_rule: str | None = None,

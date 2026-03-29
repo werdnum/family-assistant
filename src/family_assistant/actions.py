@@ -6,10 +6,13 @@ import logging
 import time
 from datetime import UTC, datetime
 from enum import StrEnum
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from family_assistant.storage.context import DatabaseContext
 from family_assistant.storage.tasks import enqueue_task
+
+if TYPE_CHECKING:
+    from family_assistant.task_worker import LlmCallbackPayload
 
 logger = logging.getLogger(__name__)
 
@@ -64,7 +67,7 @@ async def execute_action(
 
         task_id = f"action_{int(time.time() * 1000)}"
 
-        payload = {
+        payload: LlmCallbackPayload = {
             "interface_type": interface_type,
             "conversation_id": conversation_id,
             "callback_context": callback_context,
@@ -85,20 +88,20 @@ async def execute_action(
     elif action_type == ActionType.SCRIPT:
         task_id = f"script_{int(time.time() * 1000)}"
 
-        payload = {
+        script_payload = {
             "script_code": action_config.get("script_code", ""),
             "config": action_config,
             "conversation_id": conversation_id,
             **context,
         }
         if user_name:
-            payload["user_name"] = user_name
+            script_payload["user_name"] = user_name
 
         await enqueue_task(
             db_context=db_ctx,
             task_id=task_id,
             task_type="script_execution",
-            payload=payload,
+            payload=script_payload,
             scheduled_at=scheduled_at,
             recurrence_rule=recurrence_rule,
         )
