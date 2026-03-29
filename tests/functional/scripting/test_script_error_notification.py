@@ -158,6 +158,7 @@ async def test_script_failure_enqueues_notification(
     assert payload is not None
     assert payload["conversation_id"] == "test_conv"
     assert payload["interface_type"] == "telegram"
+    assert "scheduling_timestamp" in payload
     assert "Broken Automation" in payload["callback_context"]
     assert "automation 42" in payload["callback_context"]
     assert "not valid python" in payload["callback_context"]

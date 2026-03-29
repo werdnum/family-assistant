@@ -1048,6 +1048,7 @@ class TaskWorker:
                     "conversation_id": conversation_id,
                     "interface_type": interface_type,
                     "callback_context": callback_context,
+                    "scheduling_timestamp": datetime.now(UTC).isoformat(),
                 },
                 max_retries_override=1,
             )
