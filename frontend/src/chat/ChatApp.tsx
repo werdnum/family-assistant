@@ -820,11 +820,12 @@ const ChatApp: React.FC<ChatAppProps> = ({ profileId = 'default_assistant' }) =>
 
   // On mobile, navigate back to conversation list
   const handleBackToList = useCallback(() => {
+    cancelStream();
     setConversationId(null);
     setMessages([]);
     localStorage.removeItem('lastConversationId');
     window.history.pushState({}, '', '/chat');
-  }, []);
+  }, [cancelStream]);
 
   // Handle profile changes
   const handleProfileChange = useCallback(
