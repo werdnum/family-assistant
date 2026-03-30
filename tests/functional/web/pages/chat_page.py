@@ -300,9 +300,12 @@ class ChatPage(BasePage):
                 items = await self.page.query_selector_all(self.CONVERSATION_ITEM)
                 if items:
                     await items[0].click()
-                    await self.page.wait_for_selector(
-                        self.BACK_TO_CONVERSATIONS, state="visible", timeout=3000
-                    )
+                else:
+                    new_chat = self.page.locator(self.NEW_CHAT_BUTTON)
+                    await new_chat.click()
+                await self.page.wait_for_selector(
+                    self.BACK_TO_CONVERSATIONS, state="visible", timeout=3000
+                )
             else:
                 # Currently on chat detail - tap back to go to conversation list
                 back_button = self.page.locator(self.BACK_TO_CONVERSATIONS)

@@ -75,6 +75,7 @@ const ChatApp: React.FC<ChatAppProps> = ({ profileId = 'default_assistant' }) =>
   const [conversationsLoading, setConversationsLoading] = useState<boolean>(true);
   const [profilesLoading, setProfilesLoading] = useState<boolean>(true);
   const [isMobile, setIsMobile] = useState<boolean>(window.innerWidth <= 768);
+  const [mobileShowList, setMobileShowList] = useState<boolean>(false);
   const [currentProfileId, setCurrentProfileId] = useState<string>(() => {
     // Load saved profile from localStorage, fallback to prop
     return localStorage.getItem('selectedProfileId') || profileId;
@@ -686,6 +687,7 @@ const ChatApp: React.FC<ChatAppProps> = ({ profileId = 'default_assistant' }) =>
       cancelStream();
 
       setConversationId(convId);
+      setMobileShowList(false);
       localStorage.setItem('lastConversationId', convId);
       window.history.pushState({}, '', `/chat?conversation_id=${convId}`);
       loadConversationMessages(convId);
@@ -813,6 +815,7 @@ const ChatApp: React.FC<ChatAppProps> = ({ profileId = 'default_assistant' }) =>
 
     const newConvId = `web_conv_${generateUUID()}`;
     setConversationId(newConvId);
+    setMobileShowList(false);
     setMessages([]);
     localStorage.setItem('lastConversationId', newConvId);
     window.history.pushState({}, '', `/chat?conversation_id=${newConvId}`);
@@ -821,10 +824,7 @@ const ChatApp: React.FC<ChatAppProps> = ({ profileId = 'default_assistant' }) =>
   // On mobile, navigate back to conversation list
   const handleBackToList = useCallback(() => {
     cancelStream();
-    setConversationId(null);
-    setMessages([]);
-    localStorage.removeItem('lastConversationId');
-    window.history.pushState({}, '', '/chat');
+    setMobileShowList(true);
   }, [cancelStream]);
 
   // Handle profile changes
@@ -1046,7 +1046,7 @@ const ChatApp: React.FC<ChatAppProps> = ({ profileId = 'default_assistant' }) =>
     <TooltipProvider>
       <div className="flex h-screen flex-col bg-background">
         {/* Mobile: conversation list view (shown when no conversation is active) */}
-        {isMobile && !conversationId && (
+        {isMobile && mobileShowList && (
           <div className="flex flex-1 flex-col min-h-0">
             <ConversationSidebar
               conversations={conversations}
@@ -1061,8 +1061,8 @@ const ChatApp: React.FC<ChatAppProps> = ({ profileId = 'default_assistant' }) =>
           </div>
         )}
 
-        {/* Mobile: chat detail view (shown when a conversation is active) */}
-        {isMobile && conversationId && (
+        {/* Mobile: chat detail view (shown when not on list) */}
+        {isMobile && !mobileShowList && (
           <div className="flex flex-1 flex-col min-h-0 overflow-hidden">
             {/* Header with back button */}
             <div className="flex-shrink-0 z-50 flex items-center gap-4 border-b bg-background/95 p-4 backdrop-blur supports-[backdrop-filter]:bg-background/60">
