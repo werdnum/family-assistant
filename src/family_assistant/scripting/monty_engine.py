@@ -208,15 +208,15 @@ class MontyEngine:
                         result = await fn(*progress.args, **progress.kwargs)
                     else:
                         result = fn(*progress.args, **progress.kwargs)
-
-                    progress = await loop.run_in_executor(
-                        None,
-                        partial(progress.resume, return_value=result),
-                    )
                 except Exception as e:
                     progress = await loop.run_in_executor(
                         None,
                         partial(progress.resume, exception=e),
+                    )
+                else:
+                    progress = await loop.run_in_executor(
+                        None,
+                        partial(progress.resume, return_value=result),
                     )
 
             self._pending_wake_contexts = self._wake_llm_contexts.copy()
