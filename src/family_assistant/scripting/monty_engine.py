@@ -203,25 +203,20 @@ class MontyEngine:
                     )
                     continue
 
-                fn_exception: Exception | None = None
-                fn_result: Any = None
                 try:
                     if asyncio.iscoroutinefunction(fn):
-                        fn_result = await fn(*progress.args, **progress.kwargs)
+                        result = await fn(*progress.args, **progress.kwargs)
                     else:
-                        fn_result = fn(*progress.args, **progress.kwargs)
+                        result = fn(*progress.args, **progress.kwargs)
                 except Exception as e:
-                    fn_exception = e
-
-                if fn_exception is not None:
                     progress = await loop.run_in_executor(
                         None,
-                        partial(progress.resume, exception=fn_exception),
+                        partial(progress.resume, exception=e),
                     )
                 else:
                     progress = await loop.run_in_executor(
                         None,
-                        partial(progress.resume, return_value=fn_result),
+                        partial(progress.resume, return_value=result),
                     )
 
             self._pending_wake_contexts = self._wake_llm_contexts.copy()
