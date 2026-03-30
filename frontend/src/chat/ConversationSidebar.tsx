@@ -1,5 +1,6 @@
-import { MessageSquarePlusIcon, SearchIcon } from 'lucide-react';
+import { HomeIcon, MessageSquarePlusIcon, SearchIcon } from 'lucide-react';
 import React, { useState } from 'react';
+import { Link } from 'react-router-dom';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { ScrollArea } from '@/components/ui/scroll-area';
@@ -49,6 +50,16 @@ const ConversationSidebar: React.FC<ConversationSidebarProps> = ({
   const SidebarContent = () => (
     <div className="flex h-full flex-col min-h-0">
       <div className="flex items-center gap-2 p-4 pb-3">
+        <Button
+          asChild
+          variant="ghost"
+          size="sm"
+          className="h-8 w-8 p-0 rounded-lg hover:bg-primary/10 hover:text-primary"
+        >
+          <Link to="/" aria-label="Home">
+            <HomeIcon size={18} />
+          </Link>
+        </Button>
         <h2 className="text-sm font-semibold text-muted-foreground uppercase tracking-wider flex-1">
           Conversations
         </h2>
@@ -133,20 +144,21 @@ const ConversationSidebar: React.FC<ConversationSidebarProps> = ({
     </div>
   );
 
-  // Handle both desktop and mobile rendering
-  // On mobile, the sidebar should be absolutely positioned as an overlay
+  // On mobile, render as a full-page view (parent controls visibility)
+  if (isMobile) {
+    return (
+      <div className="h-full w-full bg-background">
+        <SidebarContent />
+      </div>
+    );
+  }
+
+  // Desktop: collapsible sidebar panel
   return (
     <div
       className={`h-full w-72 flex-shrink-0 border-r border-border/50 bg-muted/30 transition-all duration-300 ${
         isOpen ? 'ml-0' : '-ml-72'
       }`}
-      style={{
-        // On mobile (handled by overlay), ensure sidebar appears above content
-        position: isMobile && isOpen ? 'absolute' : 'relative',
-        zIndex: isMobile && isOpen ? 45 : 'auto',
-        left: 0,
-        top: 0,
-      }}
     >
       <SidebarContent />
     </div>

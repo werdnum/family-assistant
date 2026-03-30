@@ -1,10 +1,9 @@
 import { AssistantRuntimeProvider, useExternalStoreRuntime } from '@assistant-ui/react';
-import { Menu } from 'lucide-react';
+import { ArrowLeft, Menu, PanelLeftClose, PanelLeftOpen } from 'lucide-react';
 import React, { Component, useCallback, useEffect, useRef, useState } from 'react';
 import type { ErrorInfo, ReactNode } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
-import { Sheet, SheetContent } from '@/components/ui/sheet';
 import { TooltipProvider } from '@/components/ui/tooltip';
 import NavigationSheet from '../shared/NavigationSheet';
 import { getDiagnosticsUrl } from '../utils/diagnosticsUrl';
@@ -77,6 +76,7 @@ const ChatApp: React.FC<ChatAppProps> = ({ profileId = 'default_assistant' }) =>
   const [conversationsLoading, setConversationsLoading] = useState<boolean>(true);
   const [profilesLoading, setProfilesLoading] = useState<boolean>(true);
   const [isMobile, setIsMobile] = useState<boolean>(window.innerWidth <= 768);
+  const [mobileShowList, setMobileShowList] = useState<boolean>(false);
   const [currentProfileId, setCurrentProfileId] = useState<string>(() => {
     // Load saved profile from localStorage, fallback to prop
     return localStorage.getItem('selectedProfileId') || profileId;
@@ -688,13 +688,10 @@ const ChatApp: React.FC<ChatAppProps> = ({ profileId = 'default_assistant' }) =>
       cancelStream();
 
       setConversationId(convId);
+      setMobileShowList(false);
       localStorage.setItem('lastConversationId', convId);
       window.history.pushState({}, '', `/chat?conversation_id=${convId}`);
       loadConversationMessages(convId);
-
-      if (window.innerWidth <= 768) {
-        setSidebarOpen(false);
-      }
     },
     [cancelStream, loadConversationMessages]
   );
@@ -819,13 +816,16 @@ const ChatApp: React.FC<ChatAppProps> = ({ profileId = 'default_assistant' }) =>
 
     const newConvId = `web_conv_${generateUUID()}`;
     setConversationId(newConvId);
+    setMobileShowList(false);
     setMessages([]);
     localStorage.setItem('lastConversationId', newConvId);
     window.history.pushState({}, '', `/chat?conversation_id=${newConvId}`);
+  }, [cancelStream]);
 
-    if (window.innerWidth <= 768) {
-      setSidebarOpen(false);
-    }
+  // On mobile, navigate back to conversation list
+  const handleBackToList = useCallback(() => {
+    cancelStream();
+    setMobileShowList(true);
   }, [cancelStream]);
 
   // Handle profile changes
@@ -1046,95 +1046,151 @@ const ChatApp: React.FC<ChatAppProps> = ({ profileId = 'default_assistant' }) =>
   return (
     <TooltipProvider>
       <div className="flex h-screen flex-col bg-background">
-        {/* Header */}
-        <div className="sticky top-0 z-50 flex items-center gap-4 border-b bg-background/95 p-4 backdrop-blur supports-[backdrop-filter]:bg-background/60">
-          <Button
-            variant="ghost"
-            size="sm"
-            onClick={() => setSidebarOpen(!sidebarOpen)}
-            aria-label="Toggle sidebar"
-          >
-            <Menu className="h-4 w-4" />
-          </Button>
-          <h2 className="text-xl font-semibold">Chat</h2>
-
-          {/* Profile Selector */}
-          <div className="flex items-center">
-            <ProfileSelector
-              selectedProfileId={currentProfileId}
-              onProfileChange={handleProfileChange}
-              disabled={isLoading}
-              onLoadingChange={setProfilesLoading}
-            />
-          </div>
-
-          {/* Notification Settings */}
-          <div className="flex items-center gap-2 ml-auto">
-            <NotificationSettings
-              enabled={notificationsEnabled}
-              onEnabledChange={handleNotificationEnabledChange}
-              permission={notificationPermission}
-              onRequestPermission={requestNotificationPermission}
-              isSupported={notificationsSupported}
-            />
-
-            <PushNotificationButton />
-
-            {/* Main Navigation Menu */}
-            <NavigationSheet currentPage="chat">
-              <Button variant="outline" size="sm">
-                <Menu className="h-4 w-4" />
-                <span className="sr-only">Open main menu</span>
-              </Button>
-            </NavigationSheet>
-          </div>
-        </div>
-
-        {/* Body */}
-        <div className="flex flex-1 overflow-hidden">
-          {/* Sidebar - Desktop */}
-          {!isMobile && (
+        {/* Mobile: conversation list view (shown when no conversation is active) */}
+        {isMobile && mobileShowList && (
+          <div className="flex flex-1 flex-col min-h-0">
             <ConversationSidebar
               conversations={conversations}
               conversationsLoading={conversationsLoading}
               currentConversationId={conversationId}
               onConversationSelect={handleConversationSelect}
               onNewChat={handleNewChat}
-              isOpen={sidebarOpen}
+              isOpen={true}
               onRefresh={fetchConversations}
               isMobile={isMobile}
             />
-          )}
+          </div>
+        )}
 
-          {/* Sidebar - Mobile Sheet (Portal-based overlay) */}
-          <Sheet open={sidebarOpen && isMobile} onOpenChange={setSidebarOpen}>
-            <SheetContent side="left" className="w-80 p-0">
+        {/* Mobile: chat detail view (shown when not on list) */}
+        {isMobile && !mobileShowList && (
+          <div className="flex flex-1 flex-col min-h-0 overflow-hidden">
+            {/* Header with back button */}
+            <div className="flex-shrink-0 z-50 flex items-center gap-4 border-b bg-background/95 p-4 backdrop-blur supports-[backdrop-filter]:bg-background/60">
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={handleBackToList}
+                aria-label="Back to conversations"
+              >
+                <ArrowLeft className="h-4 w-4" />
+              </Button>
+              <h2 className="text-xl font-semibold">Chat</h2>
+
+              <div className="flex items-center">
+                <ProfileSelector
+                  selectedProfileId={currentProfileId}
+                  onProfileChange={handleProfileChange}
+                  disabled={isLoading}
+                  onLoadingChange={setProfilesLoading}
+                />
+              </div>
+
+              <div className="flex items-center gap-2 ml-auto">
+                <NotificationSettings
+                  enabled={notificationsEnabled}
+                  onEnabledChange={handleNotificationEnabledChange}
+                  permission={notificationPermission}
+                  onRequestPermission={requestNotificationPermission}
+                  isSupported={notificationsSupported}
+                />
+                <PushNotificationButton />
+                <NavigationSheet currentPage="chat">
+                  <Button variant="ghost" size="sm" aria-label="Open navigation">
+                    <Menu className="h-4 w-4" />
+                  </Button>
+                </NavigationSheet>
+              </div>
+            </div>
+
+            <div className="flex min-w-0 min-h-0 flex-1 flex-col">
+              <main className="flex flex-1 flex-col min-h-0">
+                <AssistantRuntimeProvider runtime={runtime}>
+                  <ThreadErrorBoundary>
+                    <ToolConfirmationProvider value={{ pendingConfirmations, handleConfirmation }}>
+                      <Thread />
+                    </ToolConfirmationProvider>
+                  </ThreadErrorBoundary>
+                </AssistantRuntimeProvider>
+              </main>
+            </div>
+          </div>
+        )}
+
+        {/* Desktop: sidebar + chat side by side */}
+        {!isMobile && (
+          <>
+            {/* Header */}
+            <div className="sticky top-0 z-50 flex items-center gap-4 border-b bg-background/95 p-4 backdrop-blur supports-[backdrop-filter]:bg-background/60">
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => setSidebarOpen(!sidebarOpen)}
+                aria-label="Toggle sidebar"
+              >
+                {sidebarOpen ? (
+                  <PanelLeftClose className="h-4 w-4" />
+                ) : (
+                  <PanelLeftOpen className="h-4 w-4" />
+                )}
+              </Button>
+              <h2 className="text-xl font-semibold">Chat</h2>
+
+              <div className="flex items-center">
+                <ProfileSelector
+                  selectedProfileId={currentProfileId}
+                  onProfileChange={handleProfileChange}
+                  disabled={isLoading}
+                  onLoadingChange={setProfilesLoading}
+                />
+              </div>
+
+              <div className="flex items-center gap-2 ml-auto">
+                <NotificationSettings
+                  enabled={notificationsEnabled}
+                  onEnabledChange={handleNotificationEnabledChange}
+                  permission={notificationPermission}
+                  onRequestPermission={requestNotificationPermission}
+                  isSupported={notificationsSupported}
+                />
+                <PushNotificationButton />
+                <NavigationSheet currentPage="chat">
+                  <Button variant="ghost" size="sm" aria-label="Open navigation">
+                    <Menu className="h-4 w-4" />
+                  </Button>
+                </NavigationSheet>
+              </div>
+            </div>
+
+            {/* Body */}
+            <div className="flex flex-1 overflow-hidden">
               <ConversationSidebar
                 conversations={conversations}
                 conversationsLoading={conversationsLoading}
                 currentConversationId={conversationId}
                 onConversationSelect={handleConversationSelect}
                 onNewChat={handleNewChat}
-                isOpen={true}
+                isOpen={sidebarOpen}
                 onRefresh={fetchConversations}
                 isMobile={isMobile}
               />
-            </SheetContent>
-          </Sheet>
 
-          {/* Main content */}
-          <div className="flex min-w-0 flex-1 flex-col">
-            <main className="flex flex-1 flex-col min-h-0">
-              <AssistantRuntimeProvider runtime={runtime}>
-                <ThreadErrorBoundary>
-                  <ToolConfirmationProvider value={{ pendingConfirmations, handleConfirmation }}>
-                    <Thread />
-                  </ToolConfirmationProvider>
-                </ThreadErrorBoundary>
-              </AssistantRuntimeProvider>
-            </main>
-          </div>
-        </div>
+              <div className="flex min-w-0 flex-1 flex-col">
+                <main className="flex flex-1 flex-col min-h-0">
+                  <AssistantRuntimeProvider runtime={runtime}>
+                    <ThreadErrorBoundary>
+                      <ToolConfirmationProvider
+                        value={{ pendingConfirmations, handleConfirmation }}
+                      >
+                        <Thread />
+                      </ToolConfirmationProvider>
+                    </ThreadErrorBoundary>
+                  </AssistantRuntimeProvider>
+                </main>
+              </div>
+            </div>
+          </>
+        )}
       </div>
     </TooltipProvider>
   );
