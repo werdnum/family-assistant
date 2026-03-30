@@ -401,7 +401,10 @@ async def create_automation_tool(
                 tools_provider = exec_context.processing_service.tools_provider
             if tools_provider:
                 tool_definitions = await tools_provider.get_tool_definitions()
-            input_names = ["event"] if validated_type == "event" else None
+            # Runtime injects these globals (see task_worker.py handle_script_execution)
+            input_names = ["conversation_id", "listener_id", "listener_name"]
+            if validated_type == "event":
+                input_names.append("event")
             validator = ScriptValidator(tool_definitions=tool_definitions)
             validation = validator.validate(
                 action_config["script_code"], input_names=input_names

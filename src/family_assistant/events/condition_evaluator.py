@@ -165,9 +165,17 @@ class EventConditionValidator:
             return False, f"Script too large (max {self.size_limit} bytes)"
 
         # Static type checking (catches syntax and type errors without execution)
+        # Wrap the script the same way evaluate_condition() does, so that
+        # `return` statements are valid (they're inside a function body at runtime).
+        if "return" not in script:
+            wrapped = f"def _evaluate():\n    return {script}\n\n_evaluate()"
+        else:
+            indented = textwrap.indent(script, "    ")
+            wrapped = f"def _evaluate():\n{indented}\n\n_evaluate()"
+
         config = ScriptConfig(disable_apis=True, deny_all_tools=True)
         type_result = ScriptValidator(config=config).validate(
-            script, input_names=["event"], include_apis=False
+            wrapped, input_names=["event"], include_apis=False
         )
         if not type_result.is_valid:
             # Categorize as syntax or type error for consistent error messages
