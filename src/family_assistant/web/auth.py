@@ -1,6 +1,7 @@
 import contextlib
 import logging
 import re
+import time
 from datetime import UTC, datetime
 from typing import Any, NoReturn
 
@@ -45,6 +46,8 @@ PUBLIC_PATHS = [
     re.compile(r"^/login$"),
     re.compile(r"^/logout$"),
     re.compile(r"^/auth$"),
+    re.compile(r"^/app-auth$"),
+    re.compile(r"^/app-auth-callback$"),
     re.compile(r"^/webhook(/.*)?$"),
     re.compile(r"^/api(/.*)?$"),
     re.compile(r"^/health$"),
@@ -150,7 +153,8 @@ class AuthService:
 
         async with get_db_context(self.database_engine) as db:
             query = select(api_tokens_table).where(
-                api_tokens_table.c.prefix == token_prefix
+                api_tokens_table.c.prefix == token_prefix,
+                api_tokens_table.c.token_type == "api",
             )
             token_row = await db.fetch_one(query)
 
@@ -298,6 +302,9 @@ class AuthMiddleware:
         self.app = app
         self.auth_service = auth_service
         self.public_paths = public_paths or PUBLIC_PATHS
+        # Cache for api_token_id validity checks to avoid DB query per request
+        self._token_valid_cache: dict[int, dict[str, bool | float]] = {}
+        self.TOKEN_VALID_CACHE_TTL = 30  # seconds
         logger.info(
             f"AuthMiddleware initialized (auth_enabled={self.auth_service.auth_enabled})"
         )
@@ -321,6 +328,46 @@ class AuthMiddleware:
             # Session middleware not available, so no authentication is possible
             await self.app(scope, receive, send)
             return
+
+        # If session was created from an API token (e.g., iOS app),
+        # verify the token is still valid (not revoked/expired).
+        # Uses a short TTL cache to avoid a DB query on every request.
+        if user:
+            api_token_id = request.session.get("api_token_id")
+            if api_token_id and self.auth_service.database_engine:
+                now = time.monotonic()
+                cache_key = api_token_id
+                if len(self._token_valid_cache) > 1000:
+                    self._token_valid_cache.clear()
+                cached = self._token_valid_cache.get(cache_key)
+                if cached and now - cached["checked_at"] < self.TOKEN_VALID_CACHE_TTL:
+                    is_valid = cached["valid"]
+                else:
+                    from family_assistant.storage import (  # noqa: PLC0415 - deferred to avoid circular import at module level
+                        api_tokens as api_tokens_storage,
+                    )
+                    from family_assistant.storage.context import (  # noqa: PLC0415 - deferred to avoid circular import at module level
+                        get_db_context,
+                    )
+
+                    async with get_db_context(self.auth_service.database_engine) as db:
+                        is_valid = await api_tokens_storage.is_token_valid(
+                            db, api_token_id
+                        )
+                    self._token_valid_cache[cache_key] = {
+                        "valid": is_valid,
+                        "checked_at": now,
+                    }
+
+                if not is_valid:
+                    logger.warning(
+                        "Session invalidated: API token %s is no longer valid",
+                        api_token_id,
+                    )
+                    self._token_valid_cache.pop(cache_key, None)
+                    request.session.pop("user", None)
+                    request.session.pop("api_token_id", None)
+                    user = None
 
         # Attempt API token authentication if no session user
         if not user:
