@@ -172,6 +172,10 @@ from family_assistant.tools.policy import (
     ToolPolicyConfig,
     ToolPolicyDecision,
 )
+from family_assistant.tools.script_testing import (
+    SCRIPT_TESTING_TOOLS_DEFINITION,
+    test_script_with_simulated_tools_tool,
+)
 from family_assistant.tools.services import (
     SERVICE_TOOLS_DEFINITION,
     delegate_to_service_tool,
@@ -299,7 +303,9 @@ __all__ = [
     "scan_camera_frames_tool",
     "storage",
     "execute_script_tool",
+    "test_script_with_simulated_tools_tool",
     "SCRIPT_TOOLS_DEFINITION",
+    "SCRIPT_TESTING_TOOLS_DEFINITION",
     "get_camera_snapshot_tool",
     "ATTACHMENT_TOOLS_DEFINITION",
     "attach_to_response_tool",
@@ -405,6 +411,7 @@ _LOCAL_TOOL_DEFINITIONS: list[ToolDefinition] = (
     + CALENDAR_TOOLS_DEFINITION
     + COMMUNICATION_TOOLS_DEFINITION
     + SCRIPT_TOOLS_DEFINITION
+    + SCRIPT_TESTING_TOOLS_DEFINITION
     + ATTACHMENT_TOOLS_DEFINITION
     + IMAGE_TOOLS_DEFINITION
     + IMAGE_GENERATION_TOOLS_DEFINITION
@@ -460,6 +467,7 @@ _LOCAL_TOOL_IMPLEMENTATIONS: dict[str, ToolImplementation] = {
     "get_live_camera_snapshot": get_live_camera_snapshot_tool,
     "scan_camera_frames": scan_camera_frames_tool,
     "execute_script": execute_script_tool,
+    "test_script_with_simulated_tools": test_script_with_simulated_tools_tool,
     "attach_to_response": attach_to_response_tool,
     "read_text_attachment": read_text_attachment_tool,
     # Mock image processing tools (for testing)
@@ -804,6 +812,10 @@ LOCAL_TOOL_METADATA_BY_NAME: dict[str, LocalToolMetadata] = {
     "execute_script": _metadata(
         ToolTag.CODE_EXECUTION,
         ToolTag.STATE_CHANGING,
+        ToolTag.OUTPUT_UNSPECIFIED,
+    ),
+    "test_script_with_simulated_tools": _metadata(
+        ToolTag.CODE_EXECUTION,
         ToolTag.OUTPUT_UNSPECIFIED,
     ),
     "attach_to_response": _metadata(

@@ -3,13 +3,14 @@
 import json
 import logging
 from collections.abc import Mapping
-from dataclasses import asdict
+from dataclasses import asdict, dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Any, cast
 
 from sqlalchemy import insert, or_, select, update
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.sql import functions as func
+from sqlalchemy.sql.elements import ColumnElement
 
 from family_assistant.llm.google_types import GeminiProviderMetadata
 from family_assistant.llm.messages import (
@@ -33,6 +34,18 @@ from family_assistant.storage.repositories.base import BaseRepository
 from family_assistant.storage.types import ConversationSummaryRow, MessageHistoryRow
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True, slots=True)
+class ToolHistoryExample:
+    """Historical tool call example reconstructed from persisted message history."""
+
+    tool_name: str
+    # ast-grep-ignore: no-dict-any - Persisted tool arguments vary by tool and are reconstructed from JSON
+    arguments: dict[str, Any]
+    result_content: str
+    conversation_id: str
+    tool_call_id: str
 
 
 class MessageHistoryRepository(BaseRepository):
@@ -459,6 +472,161 @@ class MessageHistoryRepository(BaseRepository):
             )
             for row in rows
         ]
+
+    async def get_recent_tool_examples(
+        self,
+        *,
+        interface_type: str,
+        conversation_id: str,
+        tool_name: str,
+        limit: int,
+        user_id: str | None = None,
+    ) -> list[ToolHistoryExample]:
+        """Return recent successful tool examples from the same conversation or user."""
+        if limit <= 0:
+            return []
+
+        examples = await self._fetch_tool_examples_for_scope(
+            tool_name=tool_name,
+            limit=limit,
+            conditions=(
+                message_history_table.c.interface_type == interface_type,
+                message_history_table.c.conversation_id == conversation_id,
+            ),
+        )
+        if examples or user_id is None:
+            return examples
+
+        return await self._fetch_tool_examples_for_scope(
+            tool_name=tool_name,
+            limit=limit,
+            conditions=(message_history_table.c.user_id == user_id,),
+        )
+
+    async def _fetch_tool_examples_for_scope(
+        self,
+        *,
+        tool_name: str,
+        limit: int,
+        conditions: tuple[ColumnElement[bool], ...],
+    ) -> list[ToolHistoryExample]:
+        """Fetch reconstructed tool examples for a specific query scope."""
+        stmt = (
+            select(message_history_table)
+            .where(
+                message_history_table.c.role == "tool",
+                message_history_table.c.tool_name == tool_name,
+                message_history_table.c.error_traceback.is_(None),
+                *conditions,
+            )
+            .order_by(
+                message_history_table.c.timestamp.desc(),
+                message_history_table.c.internal_id.desc(),
+            )
+            .limit(limit * 4)
+        )
+        tool_rows = await self._db.fetch_all(stmt)
+
+        examples: list[ToolHistoryExample] = []
+        for tool_row in tool_rows:
+            tool_message = self._process_message_row_as_dict(tool_row)
+            if not self._is_tool_message_usable_for_example(tool_message):
+                continue
+
+            tool_call_id = tool_message.get("tool_call_id")
+            if not isinstance(tool_call_id, str) or not tool_call_id:
+                continue
+
+            assistant_stmt = (
+                select(message_history_table)
+                .where(
+                    message_history_table.c.role == "assistant",
+                    message_history_table.c.conversation_id
+                    == tool_message["conversation_id"],
+                    message_history_table.c.tool_calls.is_not(None),
+                )
+                .order_by(
+                    message_history_table.c.timestamp.desc(),
+                    message_history_table.c.internal_id.desc(),
+                )
+            )
+            assistant_rows = await self._db.fetch_all(assistant_stmt)
+
+            arguments = self._extract_tool_arguments_from_assistant_rows(
+                assistant_rows=tuple(dict(row) for row in assistant_rows),
+                tool_call_id=tool_call_id,
+                tool_name=tool_name,
+            )
+            if arguments is None:
+                continue
+
+            examples.append(
+                ToolHistoryExample(
+                    tool_name=tool_name,
+                    arguments=arguments,
+                    result_content=cast("str", tool_message["content"]),
+                    conversation_id=cast("str", tool_message["conversation_id"]),
+                    tool_call_id=tool_call_id,
+                )
+            )
+            if len(examples) >= limit:
+                break
+
+        return examples
+
+    @staticmethod
+    def _is_tool_message_usable_for_example(
+        tool_message: Mapping[str, Any],
+    ) -> bool:
+        """Return whether a persisted tool message is suitable for few-shot prompting."""
+        content = tool_message.get("content")
+        if not isinstance(content, str) or not content.strip():
+            return False
+        if content.startswith("Error:"):
+            return False
+
+        attachments = tool_message.get("attachments")
+        if isinstance(attachments, list) and attachments:
+            return False
+
+        return len(content) <= 4000
+
+    def _extract_tool_arguments_from_assistant_rows(
+        self,
+        *,
+        assistant_rows: tuple[Mapping[str, Any], ...],
+        tool_call_id: str,
+        tool_name: str,
+        # ast-grep-ignore: no-dict-any - Reconstructed tool arguments are dynamic JSON keyed by tool schema
+    ) -> dict[str, Any] | None:
+        """Find tool arguments for a persisted tool call by scanning assistant tool_calls."""
+        for assistant_row in assistant_rows:
+            assistant_message = self._process_message_row_as_dict(assistant_row)
+            tool_calls = assistant_message.get("tool_calls")
+            if not isinstance(tool_calls, list):
+                continue
+
+            for tool_call in tool_calls:
+                if not isinstance(tool_call, ToolCallItem):
+                    continue
+                if tool_call.id != tool_call_id or tool_call.function.name != tool_name:
+                    continue
+
+                raw_arguments = tool_call.function.arguments
+                if isinstance(raw_arguments, dict):
+                    return cast("dict[str, Any]", raw_arguments)
+                if not isinstance(raw_arguments, str):
+                    return None
+
+                try:
+                    parsed_arguments = json.loads(raw_arguments)
+                except json.JSONDecodeError:
+                    return None
+                if isinstance(parsed_arguments, dict):
+                    return cast("dict[str, Any]", parsed_arguments)
+                return None
+
+        return None
 
     async def get_by_interface_id(
         self,

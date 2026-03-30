@@ -103,6 +103,13 @@ You can ask the assistant a wide variety of things:
     prep notes for tomorrow's meetings" \*"Write and execute a script that searches for project
     updates and emails me a digest" \*See the [Scripting Guide](scripting.md) for more details on
     what scripts can do.
+  - **Test Scripts Safely Before Real Actions:** You can ask the assistant to test a script against
+    realistic tool behavior without actually running state-changing or external-communication tools:
+    \*"Test this script with simulated tool outputs before I run it for real" \*"Use the real
+    read-only tools, but simulate reminder scheduling and note writes" \*"Check whether this script
+    would survive real tool outputs" \*The test harness uses the real tool registry, keeps read-only
+    tools real by default, simulates action tools with realistic values, and returns a transcript of
+    which calls were real vs simulated.
 
 - **Remember Things (Notes):** \*Tell it to save information permanently: \*"Remember: The plumber's
   number is 555-1234." \*"Add a note titled 'Vacation Ideas' with the content 'Visit the Grand
@@ -232,7 +239,8 @@ You can ask the assistant a wide variety of things:
   repeatable behavior \*Perfect for logging, simple notifications, and data collection \*Managing
   script automations: \*"Show me the script for my temperature alert" \*"Test this script with a
   sample temperature event: [provide script code]" \*"Convert my garage door automation to use a
-  script instead"
+  script instead" \*If you want to validate a script before it touches live state, ask the assistant
+  to test it with simulated tools first.
 
 ## 4. Working with Attachments
 
