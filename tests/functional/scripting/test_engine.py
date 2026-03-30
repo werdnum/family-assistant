@@ -187,3 +187,48 @@ result
 
         result = await engine.evaluate_async('name = "World"\nf"Hello, {name}!"')
         assert result == "Hello, World!"
+
+    @pytest.mark.asyncio
+    async def test_no_double_resume_on_function_exception(self) -> None:
+        """Test that resume() is called exactly once when an external function raises."""
+        engine = MontyEngine()
+
+        def failing_fn() -> None:
+            raise ValueError("function error")
+
+        script = """
+try:
+    failing_fn()
+    result = "should not reach"
+except ValueError:
+    result = "caught"
+result
+"""
+        result = await engine.evaluate_async(script, {"failing_fn": failing_fn})
+        assert result == "caught"
+
+    @pytest.mark.asyncio
+    async def test_exception_in_function_does_not_corrupt_state(self) -> None:
+        """Test that script state remains consistent after function exceptions."""
+        engine = MontyEngine()
+        call_count = 0
+
+        def flaky_fn() -> str:
+            nonlocal call_count
+            call_count += 1
+            if call_count == 1:
+                raise RuntimeError("transient error")
+            return "success"
+
+        script = """
+results = []
+try:
+    results.append(flaky_fn())
+except RuntimeError:
+    results.append("error")
+results.append(flaky_fn())
+results
+"""
+        result = await engine.evaluate_async(script, {"flaky_fn": flaky_fn})
+        assert result == ["error", "success"]
+        assert call_count == 2
