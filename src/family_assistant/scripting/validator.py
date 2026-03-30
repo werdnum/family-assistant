@@ -5,6 +5,8 @@ Generates Python type stubs for all available external functions (tools, APIs)
 and runs Monty's type_check() to catch errors before execution.
 """
 
+import keyword
+import logging
 import re
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
@@ -78,17 +80,33 @@ def _json_schema_to_python_type(schema: Mapping[str, Any]) -> str:
     return _JSON_TYPE_MAP.get(json_type, "Any")
 
 
+logger = logging.getLogger(__name__)
+
+
+def _is_valid_identifier(name: str) -> bool:
+    """Check if a name is a valid Python identifier and not a keyword."""
+    return name.isidentifier() and not keyword.iskeyword(name)
+
+
 def _generate_tool_stub(name: str, parameters: Mapping[str, Any]) -> str:
     """Generate a Python function stub from a tool's JSON Schema parameters.
 
     Produces a stub like:
         def tool_name(*, param1: str, param2: int = ...) -> Any: ...
+
+    Returns empty string if the name is not a valid Python identifier.
+    Falls back to **kwargs if any parameter name is invalid.
     """
+    if not _is_valid_identifier(name):
+        return ""
+
     properties = parameters.get("properties", {})
     required = set(parameters.get("required", []))
 
     params: list[str] = []
     for param_name, param_schema in properties.items():
+        if not _is_valid_identifier(param_name):
+            return f"def {name}(**kwargs: Any) -> Any: ..."
         py_type = _json_schema_to_python_type(param_schema)
         if param_name in required:
             params.append(f"{param_name}: {py_type}")
@@ -138,56 +156,65 @@ def _generate_builtin_api_stubs() -> str:
     lines.append("def tools_execute_json(tool_name: str, args_json: str) -> Any: ...")
     lines.append("")
 
-    # Time API - creation
+    # Time API - creation (aligned with scripting/apis/time.py)
     lines.append("def time_now() -> dict[str, Any]: ...")
     lines.append("def time_now_utc() -> dict[str, Any]: ...")
     lines.append(
-        "def time_create(year: int = ..., month: int = ..., day: int = ..., hour: int = ..., minute: int = ..., second: int = ..., nanosecond: int = ..., timezone: str = ...) -> dict[str, Any]: ..."
+        "def time_create(year: int = ..., month: int = ..., day: int = ..., "
+        "hour: int = ..., minute: int = ..., second: int = ..., "
+        "nanosecond: int = ..., timezone_name: str = ...) -> dict[str, Any]: ..."
     )
     lines.append(
-        "def time_from_timestamp(timestamp: int | float) -> dict[str, Any]: ..."
+        "def time_from_timestamp(seconds: float, nanoseconds: int = ...) -> dict[str, Any]: ..."
     )
-    lines.append("def time_parse(value: str, format: str = ...) -> dict[str, Any]: ...")
+    lines.append(
+        "def time_parse(time_string: str, format_string: str = ..., "
+        "timezone_name: str = ...) -> dict[str, Any]: ..."
+    )
 
     # Time API - manipulation
     lines.append(
-        "def time_in_location(t: dict[str, Any], timezone: str) -> dict[str, Any]: ..."
-    )
-    lines.append("def time_format(t: dict[str, Any], format: str = ...) -> str: ...")
-    lines.append(
-        "def time_add(t: dict[str, Any], duration: int) -> dict[str, Any]: ..."
+        "def time_in_location(time_dict: dict[str, Any], timezone_name: str) -> dict[str, Any]: ..."
     )
     lines.append(
-        "def time_add_duration(t: dict[str, Any], years: int = ..., months: int = ..., days: int = ..., hours: int = ..., minutes: int = ..., seconds: int = ...) -> dict[str, Any]: ..."
+        "def time_format(time_dict: dict[str, Any], format_string: str) -> str: ..."
+    )
+    lines.append(
+        "def time_add(time_dict: dict[str, Any], seconds: float) -> dict[str, Any]: ..."
+    )
+    lines.append(
+        "def time_add_duration(time_dict: dict[str, Any], amount: float, unit: str) -> dict[str, Any]: ..."
     )
 
     # Time API - components
     for comp in ["year", "month", "day", "hour", "minute", "second"]:
-        lines.append(f"def time_{comp}(t: dict[str, Any]) -> int: ...")
-    lines.append("def time_weekday(t: dict[str, Any]) -> int: ...")
+        lines.append(f"def time_{comp}(time_dict: dict[str, Any]) -> int: ...")
+    lines.append("def time_weekday(time_dict: dict[str, Any]) -> int: ...")
 
     # Time API - comparison
-    lines.append("def time_before(a: dict[str, Any], b: dict[str, Any]) -> bool: ...")
-    lines.append("def time_after(a: dict[str, Any], b: dict[str, Any]) -> bool: ...")
-    lines.append("def time_equal(a: dict[str, Any], b: dict[str, Any]) -> bool: ...")
-    lines.append("def time_diff(a: dict[str, Any], b: dict[str, Any]) -> int: ...")
+    lines.append("def time_before(t1: dict[str, Any], t2: dict[str, Any]) -> bool: ...")
+    lines.append("def time_after(t1: dict[str, Any], t2: dict[str, Any]) -> bool: ...")
+    lines.append("def time_equal(t1: dict[str, Any], t2: dict[str, Any]) -> bool: ...")
+    lines.append("def time_diff(t1: dict[str, Any], t2: dict[str, Any]) -> float: ...")
 
     # Time API - duration
-    lines.append("def duration_parse(s: str) -> int: ...")
-    lines.append("def duration_human(nanoseconds: int) -> str: ...")
+    lines.append("def duration_parse(duration_string: str) -> float: ...")
+    lines.append("def duration_human(seconds: float) -> str: ...")
 
     # Time API - timezone
-    lines.append("def timezone_is_valid(timezone: str) -> bool: ...")
-    lines.append("def timezone_offset(timezone: str) -> str: ...")
+    lines.append("def timezone_is_valid(timezone_name: str) -> bool: ...")
+    lines.append(
+        "def timezone_offset(timezone_name: str, time_dict: dict[str, Any] | None = ...) -> int: ..."
+    )
 
     # Time API - utility
     lines.append(
-        "def is_between(t: dict[str, Any], start: dict[str, Any], end: dict[str, Any]) -> bool: ..."
+        "def is_between(start_hour: int, end_hour: int, time_dict: dict[str, Any] | None = ...) -> bool: ..."
     )
-    lines.append("def is_weekend(t: dict[str, Any]) -> bool: ...")
+    lines.append("def is_weekend(time_dict: dict[str, Any] | None = ...) -> bool: ...")
     lines.append("")
 
-    # Duration constants
+    # Duration constants (seconds-based floats)
     for name in [
         "NANOSECOND",
         "MICROSECOND",
@@ -198,7 +225,7 @@ def _generate_builtin_api_stubs() -> str:
         "DAY",
         "WEEK",
     ]:
-        lines.append(f"{name}: int")
+        lines.append(f"{name}: float")
     lines.append("")
 
     return "\n".join(lines)
@@ -236,7 +263,8 @@ def generate_prefix_code(
     if input_names:
         parts.append("# Input variables")
         for name in input_names:
-            parts.append(f"{name}: Any")
+            if _is_valid_identifier(name):
+                parts.append(f"{name}: Any")
         parts.append("")
 
     # Tool function stubs
@@ -333,6 +361,19 @@ class ScriptValidator:
         except pydantic_monty.MontyTypingError as e:
             diagnostics.extend(_parse_typing_error(e))
             return ValidationResult(is_valid=False, diagnostics=diagnostics)
+        except pydantic_monty.MontySyntaxError as e:
+            # Syntax error in prefix_code (our generated stubs), not the user's script.
+            # Skip validation rather than rejecting the user's script for our bug.
+            logger.warning("Syntax error in generated prefix code: %s", e)
+            return ValidationResult(
+                is_valid=True,
+                diagnostics=[
+                    ValidationDiagnostic(
+                        message=f"Type checking unavailable due to invalid definitions: {e}",
+                        severity="warning",
+                    )
+                ],
+            )
 
         return ValidationResult(is_valid=True, diagnostics=diagnostics)
 

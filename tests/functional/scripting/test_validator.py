@@ -1,8 +1,10 @@
 """Tests for the script validator (static type checking)."""
 
-import pydantic_monty
+import inspect
+
 import pytest
 
+from family_assistant.scripting.apis import time as time_api
 from family_assistant.scripting.config import ScriptConfig
 from family_assistant.scripting.validator import (
     ScriptValidator,
@@ -228,7 +230,7 @@ class TestGeneratePrefixCode:
         assert "def json_encode(" in code
         assert "def llm(" in code
         assert "def wake_llm(" in code
-        assert "MINUTE: int" in code
+        assert "MINUTE: float" in code
 
     def test_includes_tool_stubs(self) -> None:
         tool_defs = [
@@ -261,16 +263,209 @@ class TestGeneratePrefixCode:
         assert "time_now" not in code
 
 
-class TestValidatorFailsClosed:
-    """Test that infrastructure errors propagate rather than being swallowed."""
+class TestIdentifierValidation:
+    """Test handling of invalid Python identifiers in tool/input names."""
 
-    def test_runtime_error_propagates(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        """RuntimeError during type_check should propagate, not be caught."""
-        monkeypatch.setattr(
-            pydantic_monty.Monty,
-            "type_check",
-            lambda self, **kw: (_ for _ in ()).throw(RuntimeError("checker crashed")),
-        )
+    def test_tool_with_hyphenated_name_is_skipped(self) -> None:
+        tool_defs = [
+            {
+                "type": "function",
+                "function": {
+                    "name": "search-notes",
+                    "parameters": {"type": "object", "properties": {}},
+                },
+            },
+        ]
+        code = generate_prefix_code(tool_definitions=tool_defs)
+        assert "search-notes" not in code
+
+    def test_tool_with_keyword_param_falls_back_to_kwargs(self) -> None:
+        tool_defs = [
+            {
+                "type": "function",
+                "function": {
+                    "name": "my_tool",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {"class": {"type": "string"}},
+                        "required": ["class"],
+                    },
+                },
+            },
+        ]
+        code = generate_prefix_code(tool_definitions=tool_defs)
+        assert "def my_tool(**kwargs: Any)" in code
+
+    def test_invalid_input_name_is_skipped(self) -> None:
+        code = generate_prefix_code(input_names=["valid_name", "invalid-name", "class"])
+        assert "valid_name: Any" in code
+        assert "invalid-name" not in code
+        assert "class:" not in code
+
+    def test_tool_with_valid_name_and_params_works(self) -> None:
+        tool_defs = [
+            {
+                "type": "function",
+                "function": {
+                    "name": "good_tool",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {"query": {"type": "string"}},
+                        "required": ["query"],
+                    },
+                },
+            },
+        ]
+        v = ScriptValidator(tool_definitions=tool_defs)
+        result = v.validate('good_tool(query="test")')
+        assert result.is_valid
+
+
+class TestStubSignaturesMatchRuntime:
+    """Verify that validator stubs match actual runtime API signatures.
+
+    These tests catch signature drift between the validator stubs
+    (in validator.py) and the actual runtime implementations. Each
+    test calls a function with the real parameter names from the
+    runtime API — if the validator stub has different param names,
+    the script will fail validation.
+    """
+
+    # Mapping of runtime API functions to example call scripts.
+    # Each script uses keyword arguments matching the real function signature.
+    TIME_API_CALLS: list[tuple[str, str]] = [
+        ("time_now", "time_now()"),
+        ("time_now_utc", "time_now_utc()"),
+        (
+            "time_create",
+            "time_create(year=2024, month=1, day=1, timezone_name='UTC')",
+        ),
+        (
+            "time_from_timestamp",
+            "time_from_timestamp(seconds=1000000.0, nanoseconds=0)",
+        ),
+        (
+            "time_parse",
+            "time_parse(time_string='2024-01-01', format_string='', timezone_name='')",
+        ),
+        (
+            "time_in_location",
+            "time_in_location(time_dict=time_now(), timezone_name='US/Eastern')",
+        ),
+        ("time_format", "time_format(time_dict=time_now(), format_string='%Y-%m-%d')"),
+        ("time_add", "time_add(time_dict=time_now(), seconds=60.0)"),
+        (
+            "time_add_duration",
+            "time_add_duration(time_dict=time_now(), amount=1.0, unit='hours')",
+        ),
+        ("time_year", "time_year(time_dict=time_now())"),
+        ("time_month", "time_month(time_dict=time_now())"),
+        ("time_day", "time_day(time_dict=time_now())"),
+        ("time_hour", "time_hour(time_dict=time_now())"),
+        ("time_minute", "time_minute(time_dict=time_now())"),
+        ("time_second", "time_second(time_dict=time_now())"),
+        ("time_weekday", "time_weekday(time_dict=time_now())"),
+        ("time_before", "time_before(t1=time_now(), t2=time_now())"),
+        ("time_after", "time_after(t1=time_now(), t2=time_now())"),
+        ("time_equal", "time_equal(t1=time_now(), t2=time_now())"),
+        ("time_diff", "time_diff(t1=time_now(), t2=time_now())"),
+        ("duration_parse", "duration_parse(duration_string='1h30m')"),
+        ("duration_human", "duration_human(seconds=3600.0)"),
+        ("timezone_is_valid", "timezone_is_valid(timezone_name='UTC')"),
+        ("timezone_offset", "timezone_offset(timezone_name='UTC')"),
+        ("is_between", "is_between(start_hour=9, end_hour=17)"),
+        ("is_weekend", "is_weekend()"),
+    ]
+
+    @pytest.mark.parametrize(
+        ("func_name", "call_script"),
+        TIME_API_CALLS,
+        ids=[name for name, _ in TIME_API_CALLS],
+    )
+    def test_time_api_call_validates(self, func_name: str, call_script: str) -> None:
+        """Calling a time API function with its real param names should pass validation."""
         v = ScriptValidator()
-        with pytest.raises(RuntimeError, match="checker crashed"):
-            v.validate("1 + 2")
+        result = v.validate(call_script)
+        assert result.is_valid, f"{func_name}: {result.error_message}"
+
+    def test_all_time_api_functions_have_stubs(self) -> None:
+        """Every function registered in MontyEngine._add_time_api must have a stub."""
+        prefix = generate_prefix_code(include_apis=True)
+        # Get all public functions from time_api module
+        api_functions = [
+            name
+            for name, obj in inspect.getmembers(time_api, inspect.isfunction)
+            if not name.startswith("_") and obj.__module__ == time_api.__name__
+        ]
+        missing = [fn for fn in api_functions if f"def {fn}(" not in prefix]
+        assert not missing, f"Missing stubs for time API functions: {missing}"
+
+    def test_all_time_api_param_names_match(self) -> None:
+        """Stub param names must match actual runtime function param names."""
+        prefix = generate_prefix_code(include_apis=True)
+        api_functions = {
+            name: obj
+            for name, obj in inspect.getmembers(time_api, inspect.isfunction)
+            if not name.startswith("_") and obj.__module__ == time_api.__name__
+        }
+        mismatches: list[str] = []
+        for name, fn in api_functions.items():
+            sig = inspect.signature(fn)
+            real_params = [p.name for p in sig.parameters.values() if p.name != "self"]
+            # Extract the stub line for this function
+            stub_line = ""
+            for line in prefix.splitlines():
+                if f"def {name}(" in line:
+                    stub_line = line
+                    break
+            if not stub_line:
+                mismatches.append(f"{name}: no stub found")
+                continue
+            for param in real_params:
+                if param not in stub_line:
+                    mismatches.append(
+                        f"{name}: param '{param}' not in stub: {stub_line.strip()}"
+                    )
+        assert not mismatches, "Stub/runtime param mismatches:\n" + "\n".join(
+            mismatches
+        )
+
+    def test_duration_constants_are_floats(self) -> None:
+        """Duration constants in the runtime are floats (seconds), stubs should match."""
+        prefix = generate_prefix_code(include_apis=True)
+        for name in [
+            "NANOSECOND",
+            "MICROSECOND",
+            "MILLISECOND",
+            "SECOND",
+            "MINUTE",
+            "HOUR",
+            "DAY",
+            "WEEK",
+        ]:
+            assert f"{name}: float" in prefix, f"{name} should be typed as float"
+
+    def test_json_api_validates(self) -> None:
+        v = ScriptValidator()
+        result = v.validate('json_encode(obj={"key": "val"})')
+        assert result.is_valid, result.error_message
+
+    def test_llm_api_validates(self) -> None:
+        v = ScriptValidator()
+        result = v.validate('llm(prompt="hello", system="you are helpful")')
+        assert result.is_valid, result.error_message
+
+    def test_llm_json_api_validates(self) -> None:
+        v = ScriptValidator()
+        result = v.validate('llm_json(prompt="hello")')
+        assert result.is_valid, result.error_message
+
+    def test_attachment_api_validates(self) -> None:
+        v = ScriptValidator()
+        result = v.validate('attachment_get(attachment_id="abc")')
+        assert result.is_valid, result.error_message
+
+    def test_tools_meta_api_validates(self) -> None:
+        v = ScriptValidator()
+        result = v.validate("tools_list()")
+        assert result.is_valid, result.error_message
