@@ -164,6 +164,23 @@ async def execute_script_tool(
                 "This may happen when execute_script is called outside of normal processing flow."
             )
 
+        # Validate script before execution (lazy import to avoid circular dependency)
+        from family_assistant.scripting.validator import (  # noqa: PLC0415 - lazy import to break circular: scripting → tools → execute_script → scripting
+            ScriptValidator,
+        )
+
+        tool_definitions = None
+        if tools_provider:
+            tool_definitions = await tools_provider.get_tool_definitions()
+        input_names = list(globals.keys()) if globals else None
+        validation = ScriptValidator(tool_definitions=tool_definitions).validate(
+            script, input_names=input_names
+        )
+        if not validation.is_valid:
+            error_msg = f"Script validation failed: {validation.error_message}"
+            logger.error(error_msg)
+            return ToolResult(text=f"Error: {error_msg}")
+
         # Create the engine with the tools provider (may be None)
         engine = MontyEngine(
             tools_provider=tools_provider,

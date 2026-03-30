@@ -9,6 +9,7 @@ from typing import Any
 from family_assistant.scripting import ScriptExecutionError, ScriptSyntaxError
 from family_assistant.scripting.config import ScriptConfig
 from family_assistant.scripting.monty_engine import MontyEngine
+from family_assistant.scripting.validator import ScriptValidator
 from family_assistant.storage.types import EventConditionEvaluatorConfig
 
 logger = logging.getLogger(__name__)
@@ -163,5 +164,21 @@ class EventConditionValidator:
         if len(script.encode("utf-8")) > self.size_limit:
             return False, f"Script too large (max {self.size_limit} bytes)"
 
-        # Delegate to evaluator for actual validation
+        # Static type checking (catches syntax and type errors without execution)
+        config = ScriptConfig(disable_apis=True, deny_all_tools=True)
+        type_result = ScriptValidator(config=config).validate(
+            script, input_names=["event"], include_apis=False
+        )
+        if not type_result.is_valid:
+            # Categorize as syntax or type error for consistent error messages
+            has_syntax = any(
+                "pars" in d.message.lower()
+                or "syntax" in d.message.lower()
+                or "eof" in d.message.lower()
+                for d in type_result.diagnostics
+            )
+            prefix = "Syntax error" if has_syntax else "Type error"
+            return False, f"{prefix}: {type_result.error_message}"
+
+        # Delegate to evaluator for runtime validation with sample data
         return await self.evaluator.validate_script(script)
