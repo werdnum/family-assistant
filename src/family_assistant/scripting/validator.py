@@ -5,7 +5,6 @@ Generates Python type stubs for all available external functions (tools, APIs)
 and runs Monty's type_check() to catch errors before execution.
 """
 
-import logging
 import re
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
@@ -14,9 +13,6 @@ from typing import Any
 import pydantic_monty
 
 from .config import ScriptConfig
-
-logger = logging.getLogger(__name__)
-
 
 # JSON Schema type -> Python type annotation mapping
 _JSON_TYPE_MAP: dict[str, str] = {
@@ -331,25 +327,12 @@ class ScriptValidator:
             include_apis=effective_include_apis,
         )
 
-        # Run type checking
+        # Run type checking — let infrastructure errors (RuntimeError) propagate
         try:
             m.type_check(prefix_code=prefix_code)
         except pydantic_monty.MontyTypingError as e:
-            # Parse diagnostics from the error
             diagnostics.extend(_parse_typing_error(e))
             return ValidationResult(is_valid=False, diagnostics=diagnostics)
-        except RuntimeError as e:
-            # type_check infrastructure failure - log but don't block
-            logger.warning("Type check infrastructure error: %s", e)
-            return ValidationResult(
-                is_valid=True,
-                diagnostics=[
-                    ValidationDiagnostic(
-                        message=f"Type checking unavailable: {e}",
-                        severity="warning",
-                    )
-                ],
-            )
 
         return ValidationResult(is_valid=True, diagnostics=diagnostics)
 

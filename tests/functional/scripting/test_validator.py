@@ -1,5 +1,6 @@
 """Tests for the script validator (static type checking)."""
 
+import pydantic_monty
 import pytest
 
 from family_assistant.scripting.config import ScriptConfig
@@ -258,3 +259,18 @@ class TestGeneratePrefixCode:
     def test_no_apis_when_disabled(self) -> None:
         code = generate_prefix_code(include_apis=False)
         assert "time_now" not in code
+
+
+class TestValidatorFailsClosed:
+    """Test that infrastructure errors propagate rather than being swallowed."""
+
+    def test_runtime_error_propagates(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """RuntimeError during type_check should propagate, not be caught."""
+        monkeypatch.setattr(
+            pydantic_monty.Monty,
+            "type_check",
+            lambda self, **kw: (_ for _ in ()).throw(RuntimeError("checker crashed")),
+        )
+        v = ScriptValidator()
+        with pytest.raises(RuntimeError, match="checker crashed"):
+            v.validate("1 + 2")
