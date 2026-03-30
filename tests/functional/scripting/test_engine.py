@@ -190,22 +190,41 @@ result
 
     @pytest.mark.asyncio
     async def test_no_double_resume_on_function_exception(self) -> None:
-        """Test that resume() is called exactly once when an external function raises."""
-        engine = MontyEngine()
+        """Regression: each snapshot must resume exactly once.
 
-        def failing_fn() -> None:
+        The old code had both the function call and progress.resume() in
+        the same try block. If resume(return_value=result) raised, the
+        except handler would call resume(exception=e) a second time on
+        the same already-resumed snapshot.
+
+        With the fix (try/except/else), resume() is outside the try so
+        its exceptions propagate without triggering a second resume.
+        We verify by counting function invocations: the script calls the
+        function once inside try/except; if double-resume occurred, Monty
+        would re-enter the function call site and invoke it again.
+        """
+        engine = MontyEngine()
+        call_count = 0
+
+        def counting_fn() -> None:
+            nonlocal call_count
+            call_count += 1
             raise ValueError("function error")
 
         script = """
 try:
-    failing_fn()
+    counting_fn()
     result = "should not reach"
 except ValueError:
     result = "caught"
 result
 """
-        result = await engine.evaluate_async(script, {"failing_fn": failing_fn})
+        result = await engine.evaluate_async(script, {"counting_fn": counting_fn})
         assert result == "caught"
+        assert call_count == 1, (
+            f"Function was called {call_count} times; "
+            "expected exactly 1 (double-resume would invoke it again)"
+        )
 
     @pytest.mark.asyncio
     async def test_exception_in_function_does_not_corrupt_state(self) -> None:
@@ -231,4 +250,51 @@ results
 """
         result = await engine.evaluate_async(script, {"flaky_fn": flaky_fn})
         assert result == ["error", "success"]
+        assert call_count == 2
+
+    @pytest.mark.asyncio
+    async def test_async_function_exception_single_resume(self) -> None:
+        """Test that async external functions that raise also get a single resume."""
+        engine = MontyEngine()
+
+        async def async_failing_fn() -> None:
+            raise ValueError("async error")
+
+        script = """
+try:
+    async_failing_fn()
+    result = "should not reach"
+except ValueError:
+    result = "async caught"
+result
+"""
+        result = await engine.evaluate_async(
+            script, {"async_failing_fn": async_failing_fn}
+        )
+        assert result == "async caught"
+
+    @pytest.mark.asyncio
+    async def test_async_function_exception_state_consistency(self) -> None:
+        """Test state consistency with async functions that fail then succeed."""
+        engine = MontyEngine()
+        call_count = 0
+
+        async def async_flaky_fn() -> str:
+            nonlocal call_count
+            call_count += 1
+            if call_count == 1:
+                raise RuntimeError("async transient error")
+            return "async success"
+
+        script = """
+results = []
+try:
+    results.append(async_flaky_fn())
+except RuntimeError:
+    results.append("error")
+results.append(async_flaky_fn())
+results
+"""
+        result = await engine.evaluate_async(script, {"async_flaky_fn": async_flaky_fn})
+        assert result == ["error", "async success"]
         assert call_count == 2
