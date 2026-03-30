@@ -102,19 +102,23 @@ describe('ConversationSidebar', () => {
     // On desktop, the sidebar toggle button is present
     const toggleButton = screen.getByLabelText('Toggle sidebar');
 
-    // Test toggling sidebar
+    // Sidebar should be open by default on desktop (w-72 panel visible)
+    const sidebar = document.querySelector('.w-72.flex-shrink-0.border-r');
+    expect(sidebar).toBeInTheDocument();
+    expect(sidebar?.className).not.toContain('-ml-72');
+
+    // Click to close sidebar
     await user.click(toggleButton);
 
-    // Wait for sidebar state to update
     await waitFor(() => {
-      expect(toggleButton).toBeInTheDocument();
+      expect(sidebar?.className).toContain('-ml-72');
     });
 
-    // Click again to toggle back
+    // Click again to re-open
     await user.click(toggleButton);
 
     await waitFor(() => {
-      expect(toggleButton).toBeInTheDocument();
+      expect(sidebar?.className).not.toContain('-ml-72');
     });
   });
 

@@ -285,34 +285,67 @@ class ChatPage(BasePage):
 
         return messages
 
-    async def toggle_sidebar(self) -> None:
-        """Toggle the conversation sidebar.
+    async def go_to_conversation_list(self) -> None:
+        """Navigate from chat detail view to conversation list (mobile only).
 
-        On desktop: clicks the sidebar toggle button to show/hide the sidebar panel.
-        On mobile: uses back button to navigate to conversation list, or selects a
-        conversation to navigate to chat detail view.
+        Clicks the back button to return to the conversation list.
+        On desktop, this opens the sidebar if it's closed.
         """
         viewport_size = self.page.viewport_size
         if viewport_size and viewport_size["width"] <= 768:
-            # Mobile: list-detail navigation pattern
+            back_button = self.page.locator(self.BACK_TO_CONVERSATIONS)
+            await back_button.click(timeout=10000)
+            await self.page.wait_for_selector(
+                self.NEW_CHAT_BUTTON, state="visible", timeout=3000
+            )
+        elif not await self.is_sidebar_open():
+            await self.toggle_sidebar()
+
+    async def open_chat_detail(self, conversation_id: str | None = None) -> None:
+        """Navigate from conversation list to a chat detail view (mobile only).
+
+        Selects a specific conversation by ID, or the first available conversation.
+        On desktop, this selects the conversation in the sidebar.
+
+        Args:
+            conversation_id: Optional conversation ID to select. If None, selects the first.
+        """
+        if conversation_id:
+            selector = f'[data-conversation-id="{conversation_id}"]'
+            item = self.page.locator(selector)
+            await item.click(timeout=10000)
+        else:
+            items = await self.page.query_selector_all(self.CONVERSATION_ITEM)
+            if items:
+                await items[0].click()
+            else:
+                raise RuntimeError(
+                    "No conversations available to open. "
+                    "Use create_new_chat() to create one first."
+                )
+
+        viewport_size = self.page.viewport_size
+        if viewport_size and viewport_size["width"] <= 768:
+            await self.page.wait_for_selector(
+                self.BACK_TO_CONVERSATIONS, state="visible", timeout=3000
+            )
+
+    async def toggle_sidebar(self) -> None:
+        """Toggle the conversation sidebar visibility (desktop only).
+
+        On desktop: clicks the sidebar toggle button to show/hide the sidebar panel.
+        On mobile: use go_to_conversation_list() and open_chat_detail() instead.
+        """
+        viewport_size = self.page.viewport_size
+        if viewport_size and viewport_size["width"] <= 768:
+            # Mobile: delegate to explicit navigation methods
             if await self.is_sidebar_open():
-                # Currently on conversation list - select first conversation to go to chat
-                items = await self.page.query_selector_all(self.CONVERSATION_ITEM)
-                if items:
-                    await items[0].click()
-                else:
-                    new_chat = self.page.locator(self.NEW_CHAT_BUTTON)
-                    await new_chat.click()
-                await self.page.wait_for_selector(
-                    self.BACK_TO_CONVERSATIONS, state="visible", timeout=3000
+                raise RuntimeError(
+                    "toggle_sidebar() should not be used to close the conversation list on mobile. "
+                    "Use open_chat_detail() instead."
                 )
             else:
-                # Currently on chat detail - tap back to go to conversation list
-                back_button = self.page.locator(self.BACK_TO_CONVERSATIONS)
-                await back_button.click(timeout=10000)
-                await self.page.wait_for_selector(
-                    self.NEW_CHAT_BUTTON, state="visible", timeout=3000
-                )
+                await self.go_to_conversation_list()
         else:
             # Desktop: toggle sidebar panel
             await self.page.wait_for_selector(
