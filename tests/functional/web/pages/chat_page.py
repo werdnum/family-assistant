@@ -74,15 +74,19 @@ class ChatPage(BasePage):
                 self.SIDEBAR_TOGGLE, state="visible", timeout=15000
             )
 
-        await self.page.wait_for_selector(
-            self.CHAT_INPUT, state="visible", timeout=15000
-        )
+        # Only wait for chat input if we're in chat detail view (not conversation list)
+        viewport_size_check = self.page.viewport_size
+        is_mobile = viewport_size_check and viewport_size_check["width"] <= 768
+        if not is_mobile or await self.page.query_selector(self.BACK_TO_CONVERSATIONS):
+            await self.page.wait_for_selector(
+                self.CHAT_INPUT, state="visible", timeout=15000
+            )
 
-        # Wait for chat input to be enabled (not disabled)
-        chat_input = self.page.locator(self.CHAT_INPUT)
-        await chat_input.wait_for(state="visible", timeout=5000)
-        # Wait for it to be enabled by checking the disabled attribute
-        await expect(chat_input).to_be_enabled(timeout=5000)
+            # Wait for chat input to be enabled (not disabled)
+            chat_input = self.page.locator(self.CHAT_INPUT)
+            await chat_input.wait_for(state="visible", timeout=5000)
+            # Wait for it to be enabled by checking the disabled attribute
+            await expect(chat_input).to_be_enabled(timeout=5000)
 
     async def send_message(self, message: str) -> None:
         """Send a message in the chat.
@@ -338,12 +342,9 @@ class ChatPage(BasePage):
         """
         viewport_size = self.page.viewport_size
         if viewport_size and viewport_size["width"] <= 768:
-            # Mobile: delegate to explicit navigation methods
+            # Mobile: list-detail navigation
             if await self.is_sidebar_open():
-                raise RuntimeError(
-                    "toggle_sidebar() should not be used to close the conversation list on mobile. "
-                    "Use open_chat_detail() instead."
-                )
+                await self.open_chat_detail()
             else:
                 await self.go_to_conversation_list()
         else:

@@ -1,10 +1,11 @@
 import { AssistantRuntimeProvider, useExternalStoreRuntime } from '@assistant-ui/react';
-import { ArrowLeft, PanelLeftClose, PanelLeftOpen } from 'lucide-react';
+import { ArrowLeft, Menu, PanelLeftClose, PanelLeftOpen } from 'lucide-react';
 import React, { Component, useCallback, useEffect, useRef, useState } from 'react';
 import type { ErrorInfo, ReactNode } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
 import { TooltipProvider } from '@/components/ui/tooltip';
+import NavigationSheet from '../shared/NavigationSheet';
 import { getDiagnosticsUrl } from '../utils/diagnosticsUrl';
 import { parseToolArguments } from '../utils/toolUtils';
 import { generateUUID } from '../utils/uuid';
@@ -1094,6 +1095,11 @@ const ChatApp: React.FC<ChatAppProps> = ({ profileId = 'default_assistant' }) =>
                   isSupported={notificationsSupported}
                 />
                 <PushNotificationButton />
+                <NavigationSheet currentPage="chat">
+                  <Button variant="ghost" size="sm" aria-label="Open navigation">
+                    <Menu className="h-4 w-4" />
+                  </Button>
+                </NavigationSheet>
               </div>
             </div>
 
@@ -1148,6 +1154,11 @@ const ChatApp: React.FC<ChatAppProps> = ({ profileId = 'default_assistant' }) =>
                   isSupported={notificationsSupported}
                 />
                 <PushNotificationButton />
+                <NavigationSheet currentPage="chat">
+                  <Button variant="ghost" size="sm" aria-label="Open navigation">
+                    <Menu className="h-4 w-4" />
+                  </Button>
+                </NavigationSheet>
               </div>
             </div>
 
