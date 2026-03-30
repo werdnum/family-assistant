@@ -115,6 +115,20 @@ class TestScriptValidatorWithGlobals:
         )
         assert result.is_valid
 
+    def test_callable_globals_accepted_as_external_functions(self) -> None:
+        """Callable globals should be passed as extra_external_functions, not input_names."""
+        v = ScriptValidator()
+        result = v.validate(
+            "my_helper(42)",
+            extra_external_functions=["my_helper"],
+        )
+        assert result.is_valid
+
+    def test_callable_global_rejected_without_declaration(self) -> None:
+        v = ScriptValidator()
+        result = v.validate("my_helper(42)")
+        assert not result.is_valid
+
 
 class TestScriptValidatorWithTools:
     """Test validation with tool definitions."""

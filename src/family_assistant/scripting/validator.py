@@ -235,6 +235,7 @@ def generate_prefix_code(
     tool_definitions: Sequence[Mapping[str, Any]] | None = None,
     input_names: list[str] | None = None,
     include_apis: bool = True,
+    extra_external_functions: list[str] | None = None,
 ) -> str:
     """Generate prefix_code for Monty type_check().
 
@@ -242,6 +243,7 @@ def generate_prefix_code(
         tool_definitions: Tool definitions to generate stubs for.
         input_names: Names of input variables (typed as Any).
         include_apis: Whether to include built-in API stubs.
+        extra_external_functions: Additional callable names needing generic stubs.
 
     Returns:
         Python stub code declaring all available names.
@@ -283,6 +285,14 @@ def generate_prefix_code(
             parts.append(prefixed_stub)
         parts.append("")
 
+    # Extra callable names (e.g. callable globals injected at runtime)
+    if extra_external_functions:
+        parts.append("# Extra callable globals")
+        for name in extra_external_functions:
+            if _is_valid_identifier(name):
+                parts.append(f"def {name}(*args: Any, **kwargs: Any) -> Any: ...")
+        parts.append("")
+
     return "\n".join(parts)
 
 
@@ -306,6 +316,7 @@ class ScriptValidator:
         script: str,
         input_names: list[str] | None = None,
         include_apis: bool = True,
+        extra_external_functions: list[str] | None = None,
     ) -> ValidationResult:
         """Validate a script using static type checking.
 
@@ -313,6 +324,8 @@ class ScriptValidator:
             script: The script source code.
             input_names: Names of globals that will be injected at runtime.
             include_apis: Whether built-in APIs are available.
+            extra_external_functions: Additional callable names available at runtime
+                (e.g. callable globals injected by the caller).
 
         Returns:
             ValidationResult with any diagnostics found.
@@ -324,7 +337,7 @@ class ScriptValidator:
 
         # Collect all external function names for Monty
         ext_fn_names = self._collect_external_function_names(
-            input_names, effective_include_apis
+            input_names, effective_include_apis, extra_external_functions
         )
 
         # Build the Monty instance (catches syntax errors)
@@ -353,6 +366,7 @@ class ScriptValidator:
             tool_definitions=self.tool_definitions,
             input_names=input_names,
             include_apis=effective_include_apis,
+            extra_external_functions=extra_external_functions,
         )
 
         # Run type checking — let infrastructure errors (RuntimeError) propagate
@@ -363,14 +377,14 @@ class ScriptValidator:
             return ValidationResult(is_valid=False, diagnostics=diagnostics)
         except pydantic_monty.MontySyntaxError as e:
             # Syntax error in prefix_code (our generated stubs), not the user's script.
-            # Skip validation rather than rejecting the user's script for our bug.
-            logger.warning("Syntax error in generated prefix code: %s", e)
+            # Fail closed: a broken stub is a bug that should be surfaced.
+            logger.error("Syntax error in generated prefix code: %s", e)
             return ValidationResult(
-                is_valid=True,
+                is_valid=False,
                 diagnostics=[
                     ValidationDiagnostic(
-                        message=f"Type checking unavailable due to invalid definitions: {e}",
-                        severity="warning",
+                        message=f"Internal error: invalid type definitions: {e}",
+                        severity="error",
                     )
                 ],
             )
@@ -381,6 +395,7 @@ class ScriptValidator:
         self,
         input_names: list[str] | None,
         include_apis: bool,
+        extra_external_functions: list[str] | None = None,
     ) -> list[str]:
         """Collect all external function names that Monty should know about."""
         names: list[str] = []
@@ -436,6 +451,10 @@ class ScriptValidator:
                 if name:
                     names.append(name)
                     names.append(f"tool_{name}")
+
+        # Extra callable names provided by the caller (e.g. callable globals)
+        if extra_external_functions:
+            names.extend(extra_external_functions)
 
         # Filter out any input names (they're inputs, not functions)
         input_set = set(input_names or [])

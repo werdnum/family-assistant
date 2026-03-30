@@ -176,10 +176,14 @@ async def execute_script_tool(
         # MontyEngine exposes callable globals as external functions at runtime,
         # so validation must treat them as functions, not plain variables.
         input_names: list[str] | None = None
+        callable_names: list[str] | None = None
         if globals:
             input_names = [k for k, v in globals.items() if not callable(v)]
+            callable_names = [k for k, v in globals.items() if callable(v)]
         validation = ScriptValidator(tool_definitions=tool_definitions).validate(
-            script, input_names=input_names
+            script,
+            input_names=input_names,
+            extra_external_functions=callable_names,
         )
         if not validation.is_valid:
             error_msg = f"Script validation failed: {validation.error_message}"
