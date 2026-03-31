@@ -402,9 +402,7 @@ async def create_automation_tool(
             if tools_provider:
                 tool_definitions = await tools_provider.get_tool_definitions()
             # Runtime injects these globals (see task_worker.py handle_script_execution)
-            input_names = ["conversation_id", "listener_id", "listener_name"]
-            if validated_type == "event":
-                input_names.append("event")
+            input_names = ["event", "conversation_id", "listener_id", "listener_name"]
             validator = ScriptValidator(tool_definitions=tool_definitions)
             validation = validator.validate(
                 action_config["script_code"],

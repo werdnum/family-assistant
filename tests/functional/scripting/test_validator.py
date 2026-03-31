@@ -366,6 +366,24 @@ class TestIdentifierValidation:
         assert "invalid-name" not in code
         assert "class:" not in code
 
+    def test_json_schema_list_type(self) -> None:
+        tool_defs = [
+            {
+                "type": "function",
+                "function": {
+                    "name": "nullable_tool",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "value": {"type": ["string", "null"]},
+                        },
+                    },
+                },
+            },
+        ]
+        code = generate_prefix_code(tool_definitions=tool_defs)
+        assert "str | Any" in code
+
     def test_tool_with_valid_name_and_params_works(self) -> None:
         tool_defs = [
             {

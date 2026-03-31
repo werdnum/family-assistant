@@ -77,7 +77,11 @@ def _json_schema_to_python_type(schema: Mapping[str, Any]) -> str:
     if json_type == "object":
         return "dict[str, Any]"
 
-    return _JSON_TYPE_MAP.get(json_type, "Any")
+    if isinstance(json_type, list):
+        types = [_JSON_TYPE_MAP.get(t, "Any") for t in json_type if isinstance(t, str)]
+        return " | ".join(types) if types else "Any"
+
+    return _JSON_TYPE_MAP.get(json_type, "Any") if isinstance(json_type, str) else "Any"
 
 
 logger = logging.getLogger(__name__)
@@ -559,7 +563,7 @@ def _parse_typing_error(
     return diagnostics
 
 
-async def validate_script(
+def validate_script(
     script: str,
     tool_definitions: Sequence[Mapping[str, Any]] | None = None,
     input_names: list[str] | None = None,
