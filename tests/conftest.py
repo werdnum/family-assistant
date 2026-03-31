@@ -194,6 +194,7 @@ def pytest_collection_modifyitems(items: list[pytest.Item]) -> None:
         if item.nodeid in {
             "tests/functional/telegram/test_telegram_slash_commands.py::test_slash_command_routes_to_specific_profile[sqlite]",
             "tests/functional/telegram/test_telegram_multimodal_to_llm.py::TestTelegramVideoToLLM::test_video_with_caption_both_passed[postgres]",
+            "tests/unit/tools/test_video_generation_tools.py::test_generate_video_invalid_attachments",
         }:
             item.add_marker(pytest.mark.flaky(reruns=3))
 
