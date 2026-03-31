@@ -96,10 +96,12 @@ def _generate_tool_stub(name: str, parameters: Mapping[str, Any]) -> str:
     """Generate a Python function stub from a tool's JSON Schema parameters.
 
     Produces a stub like:
-        def tool_name(param1: str, param2: int = ...) -> Any: ...
+        def tool_name(req1: str, req2: int, *, opt1: str = ...) -> Any: ...
 
-    Required params are positional (matching runtime behavior where positional
-    args are mapped to required params in order). Optional params have defaults.
+    Required params are positional in the order specified by the JSON Schema
+    ``required`` list (matching runtime behavior where positional args are
+    mapped to required params in order). Optional params are keyword-only
+    (after ``*``) since runtime ignores extra positional args.
 
     Returns empty string if the name is not a valid Python identifier.
     Falls back to **kwargs if any parameter name is invalid.
@@ -108,20 +110,32 @@ def _generate_tool_stub(name: str, parameters: Mapping[str, Any]) -> str:
         return ""
 
     properties = parameters.get("properties", {})
-    required = set(parameters.get("required", []))
+    required_list: list[str] = parameters.get("required", [])
+    required_set = set(required_list)
 
-    required_params: list[str] = []
-    optional_params: list[str] = []
-    for param_name, param_schema in properties.items():
+    # Validate all identifiers first
+    for param_name in properties:
         if not _is_valid_identifier(param_name):
             return f"def {name}(**kwargs: Any) -> Any: ..."
-        py_type = _json_schema_to_python_type(param_schema)
-        if param_name in required:
+
+    # Required params in the order specified by the "required" list
+    required_params: list[str] = []
+    for param_name in required_list:
+        if param_name in properties:
+            py_type = _json_schema_to_python_type(properties[param_name])
             required_params.append(f"{param_name}: {py_type}")
-        else:
+
+    # Optional params are keyword-only (runtime only maps positional args to required)
+    optional_params: list[str] = []
+    for param_name, param_schema in properties.items():
+        if param_name not in required_set:
+            py_type = _json_schema_to_python_type(param_schema)
             optional_params.append(f"{param_name}: {py_type} = ...")
 
-    param_str = ", ".join(required_params + optional_params)
+    parts = required_params
+    if optional_params:
+        parts = required_params + ["*"] + optional_params
+    param_str = ", ".join(parts)
 
     return f"def {name}({param_str}) -> Any: ..."
 

@@ -384,7 +384,7 @@ class TestIdentifierValidation:
             },
         ]
         code = generate_prefix_code(tool_definitions=tool_defs)
-        assert "def my_tool(required_param: str, optional_first: str = ...)" in code
+        assert "def my_tool(required_param: str, *, optional_first: str = ...)" in code
 
     def test_json_schema_list_type(self) -> None:
         tool_defs = [
@@ -439,6 +439,51 @@ class TestIdentifierValidation:
         v = ScriptValidator(tool_definitions=tool_defs)
         result = v.validate('search_notes("TODO")')
         assert result.is_valid
+
+    def test_tool_optional_params_are_keyword_only(self) -> None:
+        tool_defs = [
+            {
+                "type": "function",
+                "function": {
+                    "name": "my_tool",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "required_arg": {"type": "string"},
+                            "optional_arg": {"type": "string"},
+                        },
+                        "required": ["required_arg"],
+                    },
+                },
+            },
+        ]
+        v = ScriptValidator(tool_definitions=tool_defs)
+        # Positional required arg works
+        result = v.validate('my_tool("hello")')
+        assert result.is_valid
+        # Optional arg as keyword works
+        result = v.validate('my_tool("hello", optional_arg="world")')
+        assert result.is_valid
+
+    def test_tool_required_params_ordered_by_required_list(self) -> None:
+        tool_defs = [
+            {
+                "type": "function",
+                "function": {
+                    "name": "ordered_tool",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "b_param": {"type": "string"},
+                            "a_param": {"type": "integer"},
+                        },
+                        "required": ["a_param", "b_param"],
+                    },
+                },
+            },
+        ]
+        code = generate_prefix_code(tool_definitions=tool_defs)
+        assert "def ordered_tool(a_param: int, b_param: str)" in code
 
 
 class TestStubSignaturesMatchRuntime:
