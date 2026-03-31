@@ -624,3 +624,38 @@ passthrough_snapshot()
     assert isinstance(result.data, dict)
     transcript = result.data["transcript"]
     assert transcript[0]["mode"] == "passthrough"
+
+
+@pytest.mark.asyncio
+async def test_script_testing_exposes_script_errors_in_structured_result(
+    db_engine: AsyncEngine,
+) -> None:
+    """Structured output should preserve script failures for machine consumers."""
+    async with DatabaseContext(engine=db_engine) as db:
+        tools_provider = _build_tools_provider("send_message_to_user")
+        exec_context = _build_exec_context(
+            db=db,
+            tools_provider=tools_provider,
+            conversation_id="conv-script-error",
+            user_id="user-1",
+        )
+
+        result = await test_script_with_simulated_tools_tool(
+            exec_context,
+            script="""
+if True
+    pass
+""",
+            scenario_description="This script should fail before any tool calls.",
+        )
+
+    assert result.text is not None
+    assert "Error: Syntax error in script" in result.text
+    assert isinstance(result.data, dict)
+    assert result.data["status"] == "error"
+    assert result.data["script_result_text"] is not None
+    assert "Syntax error in script" in result.data["script_result_text"]
+    assert result.data["error"] == result.data["script_result_text"]
+    assert isinstance(result.data["script_result"], str)
+    assert "Syntax error in script" in result.data["script_result"]
+    assert result.data["transcript"] == []

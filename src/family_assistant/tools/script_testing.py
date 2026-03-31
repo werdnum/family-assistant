@@ -429,8 +429,12 @@ async def test_script_with_simulated_tools_tool(
     )
 
     transcript = testing_provider.get_transcript()
+    script_error = _get_script_test_error(script_result)
     result_data = {
-        "script_result": script_result.data,
+        "status": "error" if script_error is not None else "success",
+        "script_result": script_result.get_data(),
+        "script_result_text": script_result.text,
+        "error": script_error,
         "transcript": transcript,
     }
     transcript_lines = [
@@ -571,3 +575,12 @@ def _collect_raw_tool_definitions(provider: ToolsProvider) -> list[ToolDefinitio
         return provider.get_raw_tool_definitions() or []
 
     return []
+
+
+def _get_script_test_error(script_result: ToolResult) -> str | None:
+    """Return the script error text when execute_script reported a failure."""
+    if script_result.text is None:
+        return None
+    if script_result.text.startswith("Error: "):
+        return script_result.text
+    return None
