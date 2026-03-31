@@ -434,7 +434,7 @@ async def test_script_with_simulated_tools_tool(
         "transcript": transcript,
     }
     transcript_lines = [
-        f"{entry['index']}. [{entry['mode']}] {entry['tool_name']} -> {json.dumps(entry['result'], ensure_ascii=False)}"
+        f"{entry['index']}. [{entry['mode']}] {entry['tool_name']} -> {_format_transcript_result_for_text(entry['result'])}"
         for entry in transcript
     ]
     transcript_block = (
@@ -525,6 +525,14 @@ def _get_tools_provider(exec_context: ToolExecutionContext) -> ToolsProvider | N
     ):
         return exec_context.processing_service.tools_provider
     return None
+
+
+def _format_transcript_result_for_text(result: object) -> str:
+    """Render transcript results defensively for the user-facing text block."""
+    try:
+        return json.dumps(result, ensure_ascii=False, default=str)
+    except (TypeError, ValueError):
+        return str(result)
 
 
 def _serialize_tool_result(result: str | ToolResult) -> tuple[Any, str | None]:

@@ -18,8 +18,12 @@ from family_assistant.tools.infrastructure import (
     CompositeToolsProvider,
     LocalToolsProvider,
 )
+from family_assistant.tools.metadata import (
+    ToolRegistration,
+    make_local_tool_metadata,
+)
 from family_assistant.tools.script_testing import test_script_with_simulated_tools_tool
-from family_assistant.tools.types import ToolExecutionContext
+from family_assistant.tools.types import ToolExecutionContext, ToolResult
 
 if TYPE_CHECKING:
     from pydantic import BaseModel
@@ -51,6 +55,14 @@ def _build_tools_provider(*tool_names: str) -> CompositeToolsProvider:
     }
     selected_registrations = [registrations_by_name[name] for name in tool_names]
     local_provider = LocalToolsProvider(registrations=selected_registrations)
+    return CompositeToolsProvider([local_provider])
+
+
+def _build_tools_provider_from_registrations(
+    *registrations: ToolRegistration,
+) -> CompositeToolsProvider:
+    """Create a provider from explicit test registrations."""
+    local_provider = LocalToolsProvider(registrations=list(registrations))
     return CompositeToolsProvider([local_provider])
 
 
@@ -552,3 +564,63 @@ send_message_to_user(
 
         assert result.text is not None
         assert "returned null" in result.text
+
+
+@pytest.mark.asyncio
+async def test_script_testing_formats_non_json_passthrough_results_in_transcript(
+    db_engine: AsyncEngine,
+) -> None:
+    """Transcript rendering should not fail on passthrough results with non-JSON-native data."""
+
+    async def passthrough_snapshot_tool(
+        exec_context: ToolExecutionContext,
+    ) -> ToolResult:
+        del exec_context
+        return ToolResult(
+            data={
+                "captured_at": datetime(2026, 1, 2, 3, 4, 5, tzinfo=UTC),
+            }
+        )
+
+    tools_provider = _build_tools_provider_from_registrations(
+        ToolRegistration(
+            definition={
+                "type": "function",
+                "function": {
+                    "name": "passthrough_snapshot",
+                    "description": "Return a snapshot timestamp.",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {},
+                        "additionalProperties": False,
+                    },
+                },
+            },
+            implementation=passthrough_snapshot_tool,
+            metadata=make_local_tool_metadata(["read_only"]),
+        )
+    )
+
+    async with DatabaseContext(engine=db_engine) as db:
+        exec_context = _build_exec_context(
+            db=db,
+            tools_provider=tools_provider,
+            conversation_id="conv-transcript",
+            user_id="user-1",
+        )
+
+        result = await test_script_with_simulated_tools_tool(
+            exec_context,
+            script="""
+passthrough_snapshot()
+"ok"
+""",
+            scenario_description="Run the read-only tool for real.",
+        )
+
+    assert result.text is not None
+    assert "[passthrough] passthrough_snapshot" in result.text
+    assert "2026-01-02" in result.text
+    assert isinstance(result.data, dict)
+    transcript = result.data["transcript"]
+    assert transcript[0]["mode"] == "passthrough"

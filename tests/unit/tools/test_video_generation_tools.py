@@ -1,6 +1,7 @@
 """Tests for video generation tools."""
 
 from collections.abc import Generator
+from dataclasses import dataclass
 from types import SimpleNamespace
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -16,6 +17,42 @@ from family_assistant.tools.types import (
 from family_assistant.tools.video_generation import (
     generate_video_tool,
 )
+
+
+@dataclass
+class _FakeImage:
+    image_bytes: bytes
+    mime_type: str
+
+
+@dataclass
+class _FakeGenerateVideosSource:
+    prompt: str
+    image: _FakeImage | None = None
+
+
+@dataclass
+class _FakeVideoGenerationReferenceImage:
+    image: _FakeImage
+
+
+@dataclass
+class _FakeGenerateVideosConfig:
+    negative_prompt: str | None = None
+    aspect_ratio: str | None = None
+    duration_seconds: int | None = None
+    last_frame: _FakeImage | None = None
+    reference_images: list[_FakeVideoGenerationReferenceImage] | None = None
+
+
+def _fake_genai_types() -> SimpleNamespace:
+    """Return lightweight stand-ins for google.genai.types."""
+    return SimpleNamespace(
+        Image=_FakeImage,
+        GenerateVideosConfig=_FakeGenerateVideosConfig,
+        GenerateVideosSource=_FakeGenerateVideosSource,
+        VideoGenerationReferenceImage=_FakeVideoGenerationReferenceImage,
+    )
 
 
 @pytest.fixture
@@ -72,12 +109,15 @@ async def test_generate_video_tool_success(
     mock_exec_context: MagicMock, mock_genai_client: MagicMock
 ) -> None:
     """Test successful video generation."""
-    # Lazy import to avoid xdist worker crashes from concurrent genai init
-    from google.genai import types  # noqa: PLC0415 - intentional lazy import
+    fake_genai_types = _fake_genai_types()
 
     with (
         patch.dict("os.environ", {"GEMINI_API_KEY": "test-key"}),
         patch("asyncio.sleep", AsyncMock()),
+        patch(
+            "family_assistant.tools.video_generation._lazy_import_genai_types",
+            return_value=fake_genai_types,
+        ),
     ):
         result = await generate_video_tool(
             mock_exec_context,
@@ -107,12 +147,12 @@ async def test_generate_video_tool_success(
 
         # Verify source uses real types
         assert "source" in kwargs
-        assert isinstance(kwargs["source"], types.GenerateVideosSource)
+        assert isinstance(kwargs["source"], _FakeGenerateVideosSource)
         assert kwargs["source"].prompt == "A video of a cat"
 
         # Verify config parameters
         config = kwargs["config"]
-        assert isinstance(config, types.GenerateVideosConfig)
+        assert isinstance(config, _FakeGenerateVideosConfig)
         assert config.duration_seconds == 8
 
         mock_genai_client.files.download.assert_called_once_with(file="file-ref")
@@ -123,12 +163,15 @@ async def test_generate_video_multimodal(
     mock_exec_context: MagicMock, mock_genai_client: MagicMock
 ) -> None:
     """Test video generation with reference images and first/last frame."""
-    # Lazy import to avoid xdist worker crashes from concurrent genai init
-    from google.genai import types  # noqa: PLC0415 - intentional lazy import
+    fake_genai_types = _fake_genai_types()
 
     with (
         patch.dict("os.environ", {"GEMINI_API_KEY": "test-key"}),
         patch("asyncio.sleep", AsyncMock()),
+        patch(
+            "family_assistant.tools.video_generation._lazy_import_genai_types",
+            return_value=fake_genai_types,
+        ),
     ):
         # Create mock ScriptAttachment objects
         ref_img1 = MagicMock(spec=ScriptAttachment)
@@ -168,24 +211,24 @@ async def test_generate_video_multimodal(
         config = kwargs["config"]
 
         # Verify real types are used
-        assert isinstance(source, types.GenerateVideosSource)
-        assert isinstance(config, types.GenerateVideosConfig)
+        assert isinstance(source, _FakeGenerateVideosSource)
+        assert isinstance(config, _FakeGenerateVideosConfig)
 
         # Check First Frame in Source
         assert source.image is not None
-        assert isinstance(source.image, types.Image)
+        assert isinstance(source.image, _FakeImage)
         assert source.image.image_bytes == b"first"
 
         # Check Last Frame in Config
         assert config.last_frame is not None
-        assert isinstance(config.last_frame, types.Image)
+        assert isinstance(config.last_frame, _FakeImage)
         assert config.last_frame.image_bytes == b"last"
 
         # Check Reference Images in Config
         assert config.reference_images is not None
         assert len(config.reference_images) == 1
         ref_image = config.reference_images[0]
-        assert isinstance(ref_image, types.VideoGenerationReferenceImage)
+        assert isinstance(ref_image, _FakeVideoGenerationReferenceImage)
         assert ref_image.image is not None
         assert ref_image.image.image_bytes == b"img1"
 
