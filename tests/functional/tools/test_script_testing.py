@@ -113,9 +113,10 @@ async def _store_tool_history_example(
     arguments: dict[str, object],
     result_content: str,
     subconversation_id: str | None = None,
+    timestamp: datetime | None = None,
 ) -> None:
     """Persist an assistant tool call and matching tool result for few-shot retrieval."""
-    timestamp = datetime.now(UTC)
+    timestamp = timestamp or datetime.now(UTC)
     tool_call_id = f"call-{conversation_id}-{subconversation_id or 'main'}-{tool_name}"
 
     await db.message_history.add_message(
@@ -655,7 +656,82 @@ if True
     assert result.data["status"] == "error"
     assert result.data["script_result_text"] is not None
     assert "Syntax error in script" in result.data["script_result_text"]
-    assert result.data["error"] == result.data["script_result_text"]
-    assert isinstance(result.data["script_result"], str)
-    assert "Syntax error in script" in result.data["script_result"]
+    assert result.data["error"] == result.data["script_result"]["error"]
+    assert result.data["script_result"]["status"] == "error"
+    assert result.data["script_result"]["error_type"] == "syntax_error"
+    assert "Syntax error in script" in result.data["script_result"]["error"]
     assert result.data["transcript"] == []
+
+
+@pytest.mark.asyncio
+async def test_script_testing_does_not_treat_error_like_return_strings_as_failures(
+    db_engine: AsyncEngine,
+) -> None:
+    """A successful script returning an 'Error: ...' string should still be success."""
+    async with DatabaseContext(engine=db_engine) as db:
+        tools_provider = _build_tools_provider("send_message_to_user")
+        exec_context = _build_exec_context(
+            db=db,
+            tools_provider=tools_provider,
+            conversation_id="conv-script-success-string",
+            user_id="user-1",
+        )
+
+        result = await test_script_with_simulated_tools_tool(
+            exec_context,
+            script='"Error: harmless value"',
+            scenario_description="Return a plain string that happens to start with Error.",
+        )
+
+    assert isinstance(result.data, dict)
+    assert result.data["status"] == "success"
+    assert result.data["error"] is None
+    assert result.data["script_result"] == "Error: harmless value"
+    assert result.data["script_result_text"] == "Script result: Error: harmless value"
+
+
+@pytest.mark.asyncio
+async def test_script_testing_history_examples_respect_internal_id_on_timestamp_ties(
+    db_engine: AsyncEngine,
+) -> None:
+    """History lookup should not use future assistant rows with the same timestamp."""
+    async with DatabaseContext(engine=db_engine) as db:
+        shared_timestamp = datetime(2026, 1, 2, 3, 4, 5, tzinfo=UTC)
+        await _store_tool_history_example(
+            db=db,
+            conversation_id="conv-timestamp-tie",
+            user_id="user-1",
+            tool_name="send_message_to_user",
+            arguments={
+                "target_chat_id": "first-chat",
+                "message_content": "First message",
+            },
+            result_content="Message sent successfully to first-chat.",
+            timestamp=shared_timestamp,
+        )
+        await _store_tool_history_example(
+            db=db,
+            conversation_id="conv-timestamp-tie",
+            user_id="user-1",
+            tool_name="send_message_to_user",
+            arguments={
+                "target_chat_id": "second-chat",
+                "message_content": "Second message",
+            },
+            result_content="Message sent successfully to second-chat.",
+            timestamp=shared_timestamp,
+        )
+
+        examples = await db.message_history.get_recent_tool_examples(
+            interface_type="test",
+            conversation_id="conv-timestamp-tie",
+            subconversation_id=None,
+            tool_name="send_message_to_user",
+            limit=2,
+            user_id="user-1",
+        )
+
+    assert [example.arguments["target_chat_id"] for example in examples] == [
+        "second-chat",
+        "first-chat",
+    ]

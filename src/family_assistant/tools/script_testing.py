@@ -579,8 +579,10 @@ def _collect_raw_tool_definitions(provider: ToolsProvider) -> list[ToolDefinitio
 
 def _get_script_test_error(script_result: ToolResult) -> str | None:
     """Return the script error text when execute_script reported a failure."""
-    if script_result.text is None:
+    if not isinstance(script_result.data, dict):
         return None
-    if script_result.text.startswith("Error: "):
-        return script_result.text
-    return None
+    status = script_result.data.get("status")
+    error = script_result.data.get("error")
+    if status != "error" or not isinstance(error, str):
+        return None
+    return error

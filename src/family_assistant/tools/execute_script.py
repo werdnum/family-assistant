@@ -285,21 +285,50 @@ async def execute_script_tool(
             error_msg += f" at line {e.line}"
         error_msg += f": {str(e)}"
         logger.error(error_msg)
-        return ToolResult(text=f"Error: {error_msg}")
+        return ToolResult(
+            text=f"Error: {error_msg}",
+            data={
+                "status": "error",
+                "error_type": "syntax_error",
+                "error": error_msg,
+            },
+        )
 
     except ScriptTimeoutError as e:
         error_msg = f"Script execution timed out after {e.timeout_seconds} seconds"
         logger.error(error_msg)
-        return ToolResult(text=f"Error: {error_msg}")
+        return ToolResult(
+            text=f"Error: {error_msg}",
+            data={
+                "status": "error",
+                "error_type": "timeout_error",
+                "error": error_msg,
+            },
+        )
 
     except ScriptExecutionError as e:
         error_msg = f"Script execution failed: {str(e)}"
         logger.error(error_msg)
-        return ToolResult(text=f"Error: {error_msg}")
+        return ToolResult(
+            text=f"Error: {error_msg}",
+            data={
+                "status": "error",
+                "error_type": "execution_error",
+                "error": error_msg,
+            },
+        )
 
     except Exception as e:
         logger.error(f"Unexpected error executing script: {e}", exc_info=True)
-        return ToolResult(text=f"Error: Unexpected error executing script: {e}")
+        error_msg = f"Unexpected error executing script: {e}"
+        return ToolResult(
+            text=f"Error: {error_msg}",
+            data={
+                "status": "error",
+                "error_type": "unexpected_error",
+                "error": error_msg,
+            },
+        )
 
 
 # Tool Definition

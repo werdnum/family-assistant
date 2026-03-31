@@ -562,6 +562,8 @@ class MessageHistoryRepository(BaseRepository):
             tool_call_id = tool_message.get("tool_call_id")
             if not isinstance(tool_call_id, str) or not tool_call_id:
                 continue
+            tool_message_internal_id = cast("int", tool_message["internal_id"])
+            tool_message_timestamp = cast("datetime", tool_message["timestamp"])
 
             assistant_conditions: list[ColumnElement[bool]] = [
                 message_history_table.c.role == "assistant",
@@ -570,7 +572,11 @@ class MessageHistoryRepository(BaseRepository):
                 message_history_table.c.conversation_id
                 == tool_message["conversation_id"],
                 message_history_table.c.tool_calls.is_not(None),
-                message_history_table.c.timestamp <= tool_message["timestamp"],
+                or_(
+                    message_history_table.c.timestamp < tool_message_timestamp,
+                    (message_history_table.c.timestamp == tool_message_timestamp)
+                    & (message_history_table.c.internal_id < tool_message_internal_id),
+                ),
             ]
             tool_message_subconversation_id = tool_message.get("subconversation_id")
             if tool_message_subconversation_id is None:
