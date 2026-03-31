@@ -110,17 +110,18 @@ def _generate_tool_stub(name: str, parameters: Mapping[str, Any]) -> str:
     properties = parameters.get("properties", {})
     required = set(parameters.get("required", []))
 
-    params: list[str] = []
+    required_params: list[str] = []
+    optional_params: list[str] = []
     for param_name, param_schema in properties.items():
         if not _is_valid_identifier(param_name):
             return f"def {name}(**kwargs: Any) -> Any: ..."
         py_type = _json_schema_to_python_type(param_schema)
         if param_name in required:
-            params.append(f"{param_name}: {py_type}")
+            required_params.append(f"{param_name}: {py_type}")
         else:
-            params.append(f"{param_name}: {py_type} = ...")
+            optional_params.append(f"{param_name}: {py_type} = ...")
 
-    param_str = ", ".join(params)
+    param_str = ", ".join(required_params + optional_params)
 
     return f"def {name}({param_str}) -> Any: ..."
 

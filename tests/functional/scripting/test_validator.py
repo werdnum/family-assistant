@@ -366,6 +366,26 @@ class TestIdentifierValidation:
         assert "invalid-name" not in code
         assert "class:" not in code
 
+    def test_tool_required_params_before_optional(self) -> None:
+        tool_defs = [
+            {
+                "type": "function",
+                "function": {
+                    "name": "my_tool",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "optional_first": {"type": "string"},
+                            "required_param": {"type": "string"},
+                        },
+                        "required": ["required_param"],
+                    },
+                },
+            },
+        ]
+        code = generate_prefix_code(tool_definitions=tool_defs)
+        assert "def my_tool(required_param: str, optional_first: str = ...)" in code
+
     def test_json_schema_list_type(self) -> None:
         tool_defs = [
             {
