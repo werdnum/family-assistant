@@ -60,6 +60,7 @@ def _build_exec_context(
     tools_provider: CompositeToolsProvider,
     conversation_id: str,
     user_id: str,
+    subconversation_id: str | None = None,
     chat_interface: AsyncMock | None = None,
 ) -> ToolExecutionContext:
     """Create a tool execution context with a real tools provider."""
@@ -87,6 +88,7 @@ def _build_exec_context(
         timezone=ZoneInfo("UTC"),
         chat_interface=typed_chat_interface,
         chat_interfaces=chat_interfaces,
+        subconversation_id=subconversation_id,
     )
 
 
@@ -98,10 +100,11 @@ async def _store_tool_history_example(
     tool_name: str,
     arguments: dict[str, object],
     result_content: str,
+    subconversation_id: str | None = None,
 ) -> None:
     """Persist an assistant tool call and matching tool result for few-shot retrieval."""
     timestamp = datetime.now(UTC)
-    tool_call_id = f"call-{conversation_id}-{tool_name}"
+    tool_call_id = f"call-{conversation_id}-{subconversation_id or 'main'}-{tool_name}"
 
     await db.message_history.add_message(
         AssistantMessage(
@@ -121,6 +124,7 @@ async def _store_tool_history_example(
         conversation_id=conversation_id,
         timestamp=timestamp,
         user_id=user_id,
+        subconversation_id=subconversation_id,
     )
     await db.message_history.add_message(
         ToolMessage(
@@ -132,6 +136,7 @@ async def _store_tool_history_example(
         conversation_id=conversation_id,
         timestamp=timestamp,
         user_id=user_id,
+        subconversation_id=subconversation_id,
     )
 
 
@@ -353,6 +358,78 @@ add_or_update_note(
             visibility_grants=None,
         )
         assert stored_note is None
+
+
+@pytest.mark.asyncio
+async def test_script_testing_keeps_subconversation_history_isolated(
+    db_engine: AsyncEngine,
+) -> None:
+    """Examples from other subconversations must not leak into the current run."""
+    async with DatabaseContext(engine=db_engine) as db:
+        await _store_tool_history_example(
+            db=db,
+            conversation_id="conv-shared",
+            user_id="user-1",
+            subconversation_id="worker-1",
+            tool_name="send_message_to_user",
+            arguments={
+                "target_chat_id": "delegate-chat",
+                "message_content": "Worker update",
+            },
+            result_content="Message sent successfully to delegate-chat.",
+        )
+        await _store_tool_history_example(
+            db=db,
+            conversation_id="conv-fallback",
+            user_id="user-1",
+            tool_name="send_message_to_user",
+            arguments={
+                "target_chat_id": "family-chat",
+                "message_content": "Dinner at 6",
+            },
+            result_content="Message sent successfully to family-chat.",
+        )
+
+        tools_provider = _build_tools_provider("send_message_to_user")
+        exec_context = _build_exec_context(
+            db=db,
+            tools_provider=tools_provider,
+            conversation_id="conv-shared",
+            user_id="user-1",
+        )
+
+        def handler(
+            prompt: str,
+            response_model: type[BaseModel],
+        ) -> BaseModel:
+            assert "Message sent successfully to family-chat." in prompt
+            assert "Message sent successfully to delegate-chat." not in prompt
+            return response_model(
+                return_value_json=json.dumps(
+                    "Message sent successfully to family-chat."
+                )
+            )
+
+        fake_client = FakeStructuredClient(handler)
+
+        with patch(
+            "family_assistant.llm.one_shot.LLMClientFactory.create_client",
+            return_value=fake_client,
+        ):
+            result = await test_script_with_simulated_tools_tool(
+                exec_context,
+                script="""
+send_message_to_user(
+    target_chat_id="family-chat",
+    message_content="Dinner at 6",
+)
+""",
+                scenario_description="Pretend the message send succeeded.",
+            )
+
+        assert isinstance(result.data, dict)
+        transcript = result.data["transcript"]
+        assert transcript[0]["historical_examples_used"] == 1
 
 
 @pytest.mark.asyncio

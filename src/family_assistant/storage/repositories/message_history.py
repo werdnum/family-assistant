@@ -35,6 +35,8 @@ from family_assistant.storage.types import ConversationSummaryRow, MessageHistor
 
 logger = logging.getLogger(__name__)
 
+_MAX_ASSISTANT_ROWS_PER_TOOL_EXAMPLE = 20
+
 
 @dataclass(frozen=True, slots=True)
 class ToolHistoryExample:
@@ -478,6 +480,7 @@ class MessageHistoryRepository(BaseRepository):
         *,
         interface_type: str,
         conversation_id: str,
+        subconversation_id: str | None,
         tool_name: str,
         limit: int,
         user_id: str | None = None,
@@ -486,21 +489,43 @@ class MessageHistoryRepository(BaseRepository):
         if limit <= 0:
             return []
 
+        same_conversation_conditions: list[ColumnElement[bool]] = [
+            message_history_table.c.interface_type == interface_type,
+            message_history_table.c.conversation_id == conversation_id,
+        ]
+        if subconversation_id is None:
+            same_conversation_conditions.append(
+                message_history_table.c.subconversation_id.is_(None)
+            )
+        else:
+            same_conversation_conditions.append(
+                message_history_table.c.subconversation_id == subconversation_id
+            )
+
         examples = await self._fetch_tool_examples_for_scope(
             tool_name=tool_name,
             limit=limit,
-            conditions=(
-                message_history_table.c.interface_type == interface_type,
-                message_history_table.c.conversation_id == conversation_id,
-            ),
+            conditions=tuple(same_conversation_conditions),
         )
         if examples or user_id is None:
             return examples
 
+        same_user_conditions: list[ColumnElement[bool]] = [
+            message_history_table.c.user_id == user_id
+        ]
+        if subconversation_id is None:
+            same_user_conditions.append(
+                message_history_table.c.subconversation_id.is_(None)
+            )
+        else:
+            same_user_conditions.append(
+                message_history_table.c.subconversation_id == subconversation_id
+            )
+
         return await self._fetch_tool_examples_for_scope(
             tool_name=tool_name,
             limit=limit,
-            conditions=(message_history_table.c.user_id == user_id,),
+            conditions=tuple(same_user_conditions),
         )
 
     async def _fetch_tool_examples_for_scope(
@@ -537,18 +562,34 @@ class MessageHistoryRepository(BaseRepository):
             if not isinstance(tool_call_id, str) or not tool_call_id:
                 continue
 
+            assistant_conditions: list[ColumnElement[bool]] = [
+                message_history_table.c.role == "assistant",
+                message_history_table.c.interface_type
+                == tool_message["interface_type"],
+                message_history_table.c.conversation_id
+                == tool_message["conversation_id"],
+                message_history_table.c.tool_calls.is_not(None),
+                message_history_table.c.timestamp <= tool_message["timestamp"],
+            ]
+            tool_message_subconversation_id = tool_message.get("subconversation_id")
+            if tool_message_subconversation_id is None:
+                assistant_conditions.append(
+                    message_history_table.c.subconversation_id.is_(None)
+                )
+            else:
+                assistant_conditions.append(
+                    message_history_table.c.subconversation_id
+                    == tool_message_subconversation_id
+                )
+
             assistant_stmt = (
                 select(message_history_table)
-                .where(
-                    message_history_table.c.role == "assistant",
-                    message_history_table.c.conversation_id
-                    == tool_message["conversation_id"],
-                    message_history_table.c.tool_calls.is_not(None),
-                )
+                .where(*assistant_conditions)
                 .order_by(
                     message_history_table.c.timestamp.desc(),
                     message_history_table.c.internal_id.desc(),
                 )
+                .limit(_MAX_ASSISTANT_ROWS_PER_TOOL_EXAMPLE)
             )
             assistant_rows = await self._db.fetch_all(assistant_stmt)
 

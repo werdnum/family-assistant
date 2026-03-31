@@ -45,6 +45,7 @@ if TYPE_CHECKING:
 
 
 GEMINI_REPLAY_DIR = "tests/cassettes/gemini"
+_REPLAY_EXCLUDED_TOOL_NAMES = {"test_script_with_simulated_tools"}
 
 
 def _replay_file_path(module_name: str, test_name: str) -> Path:
@@ -98,9 +99,19 @@ async def llm_integration_processing_service(
     )
 
     # Set up tools provider
+    replay_tool_definitions = [
+        definition
+        for definition in local_tools_definition
+        if definition["function"]["name"] not in _REPLAY_EXCLUDED_TOOL_NAMES
+    ]
+    replay_tool_implementations = {
+        name: implementation
+        for name, implementation in local_tool_implementations.items()
+        if name not in _REPLAY_EXCLUDED_TOOL_NAMES
+    }
     local_tools = LocalToolsProvider(
-        definitions=local_tools_definition,
-        implementations=local_tool_implementations,
+        definitions=replay_tool_definitions,
+        implementations=replay_tool_implementations,
         embedding_generator=None,
     )
     composite_tools = CompositeToolsProvider(providers=[local_tools])

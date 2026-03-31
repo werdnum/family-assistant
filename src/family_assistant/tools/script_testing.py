@@ -9,7 +9,6 @@ from typing import TYPE_CHECKING, Any, Literal, Protocol, runtime_checkable
 
 from pydantic import BaseModel, Field
 
-from family_assistant.llm.one_shot import one_shot_structured
 from family_assistant.tools.execute_script import execute_script_tool
 from family_assistant.tools.infrastructure import (
     CompositeToolsProvider,
@@ -133,6 +132,7 @@ class ScriptTestingToolsProvider(ToolsProvider):
         examples = await self._execution_context.db_context.message_history.get_recent_tool_examples(
             interface_type=self._execution_context.interface_type,
             conversation_id=self._execution_context.conversation_id,
+            subconversation_id=self._execution_context.subconversation_id,
             tool_name=name,
             limit=_MAX_EXAMPLES_PER_TOOL,
             user_id=self._execution_context.user_id,
@@ -168,6 +168,10 @@ class ScriptTestingToolsProvider(ToolsProvider):
 
     async def get_tool_descriptor(self, name: str) -> ToolDescriptor | None:
         """Return the wrapped provider's tool descriptor when available."""
+        if self._tool_descriptors_by_name is not None:
+            cached_descriptor = self._tool_descriptors_by_name.get(name)
+            if cached_descriptor is not None:
+                return cached_descriptor
         if not isinstance(self._wrapped_provider, ToolDescriptorProvider):
             return None
         descriptor = await self._wrapped_provider.get_tool_descriptor(name)
@@ -263,6 +267,11 @@ class ScriptTestingToolsProvider(ToolsProvider):
         examples: Sequence[ToolHistoryExample],
     ) -> ToolResult:
         """Use the default one-shot model to synthesize a realistic tool return value."""
+        # Local import avoids a startup circular import through family_assistant.llm.
+        from family_assistant.llm.one_shot import (  # noqa: PLC0415
+            one_shot_structured,
+        )
+
         tool_definition = await self._get_tool_definition(name)
         prompt = self._build_simulation_prompt(
             tool_name=name,

@@ -1,6 +1,7 @@
 """Tests for video generation tools."""
 
 from collections.abc import Generator
+from types import SimpleNamespace
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -197,12 +198,35 @@ async def test_generate_video_invalid_attachments(
     mock_exec_context: MagicMock, mock_genai_client: MagicMock
 ) -> None:
     """Test video generation with invalid attachments (should skip them)."""
-    # Lazy import to avoid xdist worker crashes from concurrent genai init
-    from google.genai import types  # noqa: PLC0415 - intentional lazy import
+
+    def fake_image(image_bytes: bytes, mime_type: str) -> SimpleNamespace:
+        return SimpleNamespace(image_bytes=image_bytes, mime_type=mime_type)
+
+    def fake_generate_videos_config(**kwargs: object) -> SimpleNamespace:
+        return SimpleNamespace(reference_images=kwargs.get("reference_images"))
+
+    def fake_generate_videos_source(
+        prompt: str, image: object | None = None
+    ) -> SimpleNamespace:
+        return SimpleNamespace(prompt=prompt, image=image)
+
+    def fake_video_generation_reference_image(image: object) -> SimpleNamespace:
+        return SimpleNamespace(image=image)
+
+    fake_genai_types = SimpleNamespace(
+        Image=fake_image,
+        GenerateVideosConfig=fake_generate_videos_config,
+        GenerateVideosSource=fake_generate_videos_source,
+        VideoGenerationReferenceImage=fake_video_generation_reference_image,
+    )
 
     with (
         patch.dict("os.environ", {"GEMINI_API_KEY": "test-key"}),
         patch("asyncio.sleep", AsyncMock()),
+        patch(
+            "family_assistant.tools.video_generation._lazy_import_genai_types",
+            return_value=fake_genai_types,
+        ),
     ):
         # Invalid object passed as attachment
         invalid_att = MagicMock()  # Not ScriptAttachment spec
@@ -228,10 +252,9 @@ async def test_generate_video_invalid_attachments(
         source = kwargs["source"]
         config = kwargs["config"]
 
-        assert isinstance(source, types.GenerateVideosSource)
-        assert isinstance(config, types.GenerateVideosConfig)
-
         # Should be None/Empty because inputs were invalid
+        assert hasattr(source, "image")
+        assert hasattr(config, "reference_images")
         assert source.image is None
         assert not config.reference_images
 
