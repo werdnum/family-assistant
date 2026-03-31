@@ -361,6 +361,66 @@ add_or_update_note(
 
 
 @pytest.mark.asyncio
+async def test_script_testing_does_not_fall_back_across_users(
+    db_engine: AsyncEngine,
+) -> None:
+    """Fallback retrieval must not use examples from a different user."""
+    async with DatabaseContext(engine=db_engine) as db:
+        await _store_tool_history_example(
+            db=db,
+            conversation_id="conv-other-user",
+            user_id="user-2",
+            tool_name="add_or_update_note",
+            arguments={
+                "title": "Weekly Plan",
+                "content": "Groceries and school pickup",
+            },
+            result_content="Note 'Weekly Plan' has been created successfully.",
+        )
+
+        tools_provider = _build_tools_provider("add_or_update_note")
+        exec_context = _build_exec_context(
+            db=db,
+            tools_provider=tools_provider,
+            conversation_id="conv-new",
+            user_id="user-1",
+        )
+
+        def handler(
+            prompt: str,
+            response_model: type[BaseModel],
+        ) -> BaseModel:
+            assert "Historical examples from persisted tool history:" in prompt
+            assert "Note 'Weekly Plan' has been created successfully." not in prompt
+            return response_model(
+                return_value_json=json.dumps(
+                    "Note 'Weekly Plan' has been created successfully."
+                )
+            )
+
+        fake_client = FakeStructuredClient(handler)
+
+        with patch(
+            "family_assistant.llm.one_shot.LLMClientFactory.create_client",
+            return_value=fake_client,
+        ):
+            result = await test_script_with_simulated_tools_tool(
+                exec_context,
+                script="""
+add_or_update_note(
+    title="Weekly Plan",
+    content="Groceries and school pickup",
+)
+""",
+                scenario_description="Simulate note writes without any history examples.",
+            )
+
+        assert isinstance(result.data, dict)
+        transcript = result.data["transcript"]
+        assert transcript[0]["historical_examples_used"] == 0
+
+
+@pytest.mark.asyncio
 async def test_script_testing_keeps_subconversation_history_isolated(
     db_engine: AsyncEngine,
 ) -> None:

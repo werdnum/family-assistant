@@ -511,7 +511,8 @@ class MessageHistoryRepository(BaseRepository):
             return examples
 
         same_user_conditions: list[ColumnElement[bool]] = [
-            message_history_table.c.user_id == user_id
+            message_history_table.c.interface_type == interface_type,
+            message_history_table.c.user_id == user_id,
         ]
         if subconversation_id is None:
             same_user_conditions.append(
