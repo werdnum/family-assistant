@@ -455,3 +455,40 @@ async def test_script_testing_rejects_action_tool_passthrough_override(
 
         assert result.text is not None
         assert "cannot be forced into passthrough mode" in result.text
+
+
+@pytest.mark.asyncio
+async def test_script_testing_rejects_null_simulated_results(
+    db_engine: AsyncEngine,
+) -> None:
+    """Null simulator outputs should fail fast with a clear error."""
+    async with DatabaseContext(engine=db_engine) as db:
+        tools_provider = _build_tools_provider("send_message_to_user")
+        exec_context = _build_exec_context(
+            db=db,
+            tools_provider=tools_provider,
+            conversation_id="conv-null",
+            user_id="user-1",
+        )
+
+        fake_client = FakeStructuredClient(
+            lambda prompt, response_model: response_model(return_value_json="null")
+        )
+
+        with patch(
+            "family_assistant.llm.one_shot.LLMClientFactory.create_client",
+            return_value=fake_client,
+        ):
+            result = await test_script_with_simulated_tools_tool(
+                exec_context,
+                script="""
+send_message_to_user(
+    target_chat_id="family-chat",
+    message_content="Dinner at 6",
+)
+""",
+                scenario_description="Pretend the message send returned null.",
+            )
+
+        assert result.text is not None
+        assert "returned null" in result.text

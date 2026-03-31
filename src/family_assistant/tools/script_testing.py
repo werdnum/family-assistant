@@ -11,10 +11,10 @@ from pydantic import BaseModel, Field
 
 from family_assistant.tools.execute_script import execute_script_tool
 from family_assistant.tools.infrastructure import (
-    CompositeToolsProvider,
-    LocalToolsProvider,
     ToolDescriptorProvider,
     ToolNotFoundError,
+    ToolProviderComposite,
+    ToolProviderWrapper,
     ToolsProvider,
 )
 from family_assistant.tools.metadata import ToolDescriptor, ToolTag
@@ -183,19 +183,7 @@ class ScriptTestingToolsProvider(ToolsProvider):
 
     def get_raw_tool_definitions(self) -> list[ToolDefinition]:
         """Expose raw tool definitions so Monty can preserve attachment semantics."""
-        if isinstance(self._wrapped_provider, LocalToolsProvider):
-            return self._wrapped_provider.get_raw_tool_definitions()
-        if isinstance(self._wrapped_provider, CompositeToolsProvider):
-            raw_definitions: list[ToolDefinition] = []
-            for provider in self._wrapped_provider.get_providers():
-                if isinstance(provider, LocalToolsProvider):
-                    raw_definitions.extend(provider.get_raw_tool_definitions())
-                elif isinstance(provider, RawToolDefinitionsProvider):
-                    raw_definitions.extend(provider.get_raw_tool_definitions() or [])
-            return raw_definitions
-        if isinstance(self._wrapped_provider, RawToolDefinitionsProvider):
-            return self._wrapped_provider.get_raw_tool_definitions() or []
-        return []
+        return _collect_raw_tool_definitions(self._wrapped_provider)
 
     # ast-grep-ignore: no-dict-any - Transcript entries are JSON-like dicts for tool output reporting
     def get_transcript(self) -> list[dict[str, Any]]:
@@ -300,7 +288,12 @@ class ScriptTestingToolsProvider(ToolsProvider):
             raise ValueError(msg) from exc
 
         if return_value is None:
-            return ToolResult(text="null")
+            msg = (
+                f"Simulation for tool '{name}' returned null, which this harness "
+                "cannot represent in Monty script results. Return a concrete JSON "
+                "value instead."
+            )
+            raise ValueError(msg)
         return ToolResult(data=return_value)
 
     async def _get_tool_definition(self, tool_name: str) -> ToolDefinition:
@@ -553,3 +546,20 @@ def _serialize_tool_result(result: str | ToolResult) -> tuple[Any, str | None]:
             ]
         return serialized, result.text
     return result, result
+
+
+def _collect_raw_tool_definitions(provider: ToolsProvider) -> list[ToolDefinition]:
+    """Collect raw tool definitions through wrapper and composite providers."""
+    if isinstance(provider, ToolProviderWrapper):
+        return _collect_raw_tool_definitions(provider.wrapped_provider)
+
+    if isinstance(provider, ToolProviderComposite):
+        raw_definitions: list[ToolDefinition] = []
+        for sub_provider in provider.get_providers():
+            raw_definitions.extend(_collect_raw_tool_definitions(sub_provider))
+        return raw_definitions
+
+    if isinstance(provider, RawToolDefinitionsProvider):
+        return provider.get_raw_tool_definitions() or []
+
+    return []
