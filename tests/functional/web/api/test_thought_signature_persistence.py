@@ -27,12 +27,7 @@ from family_assistant.processing import ProcessingService, ProcessingServiceConf
 from family_assistant.services.attachment_registry import AttachmentRegistry
 from family_assistant.storage.context import DatabaseContext, get_db_context
 from family_assistant.tools import (
-    AVAILABLE_FUNCTIONS as local_tool_implementations,
-)
-from family_assistant.tools import (
-    TOOLS_DEFINITION as local_tools_definition,
-)
-from family_assistant.tools import (
+    LOCAL_TOOL_REGISTRATIONS,
     CompositeToolsProvider,
     ConfirmingToolsProvider,
     LocalToolsProvider,
@@ -42,6 +37,13 @@ from family_assistant.web.web_chat_interface import WebChatInterface
 
 if TYPE_CHECKING:
     from fastapi import FastAPI
+
+# Stable tool set for replay-backed tests. Using an explicit allowlist prevents
+# cassette breakage when unrelated tools are added to the global registry.
+_REPLAY_TOOL_NAMES = frozenset({"execute_script"})
+_REPLAY_REGISTRATIONS = [
+    r for r in LOCAL_TOOL_REGISTRATIONS if r.name in _REPLAY_TOOL_NAMES
+]
 
 
 GEMINI_REPLAY_DIR = "tests/cassettes/gemini"
@@ -97,12 +99,9 @@ async def llm_integration_processing_service(
         debug_config=gemini_http_api_debug_config,
     )
 
-    # Set up tools provider
-    local_tools = LocalToolsProvider(
-        definitions=local_tools_definition,
-        implementations=local_tool_implementations,
-        embedding_generator=None,
-    )
+    # Use a stable, explicit tool set so replay cassettes don't break when
+    # unrelated tools are added to the global registry.
+    local_tools = LocalToolsProvider(registrations=_REPLAY_REGISTRATIONS)
     composite_tools = CompositeToolsProvider(providers=[local_tools])
     tools_provider = ConfirmingToolsProvider(
         wrapped_provider=composite_tools,
