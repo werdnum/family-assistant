@@ -180,10 +180,13 @@ async def execute_script_tool(
         if globals:
             input_names = [k for k, v in globals.items() if not callable(v)]
             callable_names = [k for k, v in globals.items() if callable(v)]
+        has_attachment_registry = bool(exec_context.attachment_registry)
         validation = ScriptValidator(tool_definitions=tool_definitions).validate(
             script,
             input_names=input_names,
             extra_external_functions=callable_names,
+            include_tools_api=tools_provider is not None,
+            include_attachment_api=has_attachment_registry,
         )
         if not validation.is_valid:
             error_msg = f"Script validation failed: {validation.error_message}"

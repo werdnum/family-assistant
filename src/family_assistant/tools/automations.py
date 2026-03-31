@@ -407,7 +407,9 @@ async def create_automation_tool(
                 input_names.append("event")
             validator = ScriptValidator(tool_definitions=tool_definitions)
             validation = validator.validate(
-                action_config["script_code"], input_names=input_names
+                action_config["script_code"],
+                input_names=input_names,
+                include_tools_api=tools_provider is not None,
             )
             if not validation.is_valid:
                 error_msg = f"Script validation failed: {validation.error_message}"

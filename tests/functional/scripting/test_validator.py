@@ -210,6 +210,35 @@ class TestScriptValidatorConfig:
         result = v.validate('wake_llm("hello")')
         assert result.is_valid
 
+    def test_exclude_tools_api(self) -> None:
+        v = ScriptValidator()
+        result = v.validate("tools_list()", include_tools_api=False)
+        assert not result.is_valid
+
+    def test_include_tools_api_by_default(self) -> None:
+        v = ScriptValidator()
+        result = v.validate("tools_list()")
+        assert result.is_valid
+
+    def test_exclude_attachment_api(self) -> None:
+        v = ScriptValidator()
+        result = v.validate('attachment_get("id")', include_attachment_api=False)
+        assert not result.is_valid
+
+    def test_include_attachment_api_by_default(self) -> None:
+        v = ScriptValidator()
+        result = v.validate('attachment_get("id")')
+        assert result.is_valid
+
+    def test_exclude_both_tools_and_attachment_api(self) -> None:
+        v = ScriptValidator()
+        result = v.validate(
+            "time_now()",
+            include_tools_api=False,
+            include_attachment_api=False,
+        )
+        assert result.is_valid
+
 
 class TestValidationResult:
     """Test ValidationResult structure."""
@@ -275,6 +304,27 @@ class TestGeneratePrefixCode:
     def test_no_apis_when_disabled(self) -> None:
         code = generate_prefix_code(include_apis=False)
         assert "time_now" not in code
+
+    def test_no_tools_api_when_excluded(self) -> None:
+        code = generate_prefix_code(include_tools_api=False)
+        assert "def tools_list(" not in code
+        assert "def tools_execute(" not in code
+        assert "def time_now(" in code
+
+    def test_no_attachment_api_when_excluded(self) -> None:
+        code = generate_prefix_code(include_attachment_api=False)
+        assert "def attachment_get(" not in code
+        assert "def attachment_create(" not in code
+        assert "def time_now(" in code
+
+    def test_both_apis_excluded_still_has_core(self) -> None:
+        code = generate_prefix_code(
+            include_tools_api=False, include_attachment_api=False
+        )
+        assert "def time_now(" in code
+        assert "def llm(" in code
+        assert "def tools_list(" not in code
+        assert "def attachment_get(" not in code
 
 
 class TestIdentifierValidation:

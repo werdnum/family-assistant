@@ -121,7 +121,10 @@ def _generate_tool_stub(name: str, parameters: Mapping[str, Any]) -> str:
     return f"def {name}({param_str}) -> Any: ..."
 
 
-def _generate_builtin_api_stubs() -> str:
+def _generate_builtin_api_stubs(
+    include_tools_api: bool = True,
+    include_attachment_api: bool = True,
+) -> str:
     """Generate type stubs for all built-in APIs (time, JSON, LLM, etc.)."""
     lines: list[str] = []
 
@@ -139,22 +142,28 @@ def _generate_builtin_api_stubs() -> str:
     )
     lines.append("")
 
-    # Attachment API
-    lines.append("def attachment_get(attachment_id: str) -> dict[str, Any] | None: ...")
-    lines.append("def attachment_read(attachment_id: str) -> str | None: ...")
-    lines.append(
-        "def attachment_create(content: bytes | str, filename: str, description: str = ..., mime_type: str = ...) -> dict[str, Any]: ..."
-    )
-    lines.append("")
+    # Attachment API (only when attachment registry is available at runtime)
+    if include_attachment_api:
+        lines.append(
+            "def attachment_get(attachment_id: str) -> dict[str, Any] | None: ..."
+        )
+        lines.append("def attachment_read(attachment_id: str) -> str | None: ...")
+        lines.append(
+            "def attachment_create(content: bytes | str, filename: str, description: str = ..., mime_type: str = ...) -> dict[str, Any]: ..."
+        )
+        lines.append("")
 
-    # Tools meta-API
-    lines.append("def tools_list() -> list[dict[str, Any]]: ...")
-    lines.append("def tools_get(tool_name: str) -> dict[str, Any] | None: ...")
-    lines.append(
-        "def tools_execute(tool_name: str, *args: Any, **kwargs: Any) -> Any: ..."
-    )
-    lines.append("def tools_execute_json(tool_name: str, args_json: str) -> Any: ...")
-    lines.append("")
+    # Tools meta-API (only when tools_provider is available at runtime)
+    if include_tools_api:
+        lines.append("def tools_list() -> list[dict[str, Any]]: ...")
+        lines.append("def tools_get(tool_name: str) -> dict[str, Any] | None: ...")
+        lines.append(
+            "def tools_execute(tool_name: str, *args: Any, **kwargs: Any) -> Any: ..."
+        )
+        lines.append(
+            "def tools_execute_json(tool_name: str, args_json: str) -> Any: ..."
+        )
+        lines.append("")
 
     # Time API - creation (aligned with scripting/apis/time.py)
     lines.append("def time_now() -> dict[str, Any]: ...")
@@ -236,6 +245,8 @@ def generate_prefix_code(
     input_names: list[str] | None = None,
     include_apis: bool = True,
     extra_external_functions: list[str] | None = None,
+    include_tools_api: bool = True,
+    include_attachment_api: bool = True,
 ) -> str:
     """Generate prefix_code for Monty type_check().
 
@@ -244,6 +255,8 @@ def generate_prefix_code(
         input_names: Names of input variables (typed as Any).
         include_apis: Whether to include built-in API stubs.
         extra_external_functions: Additional callable names needing generic stubs.
+        include_tools_api: Whether tools_* functions are available at runtime.
+        include_attachment_api: Whether attachment_* functions are available at runtime.
 
     Returns:
         Python stub code declaring all available names.
@@ -259,7 +272,12 @@ def generate_prefix_code(
     parts.append("")
 
     if include_apis:
-        parts.append(_generate_builtin_api_stubs())
+        parts.append(
+            _generate_builtin_api_stubs(
+                include_tools_api=include_tools_api,
+                include_attachment_api=include_attachment_api,
+            )
+        )
 
     # Input variables (globals injected at runtime)
     if input_names:
@@ -317,6 +335,8 @@ class ScriptValidator:
         input_names: list[str] | None = None,
         include_apis: bool = True,
         extra_external_functions: list[str] | None = None,
+        include_tools_api: bool = True,
+        include_attachment_api: bool = True,
     ) -> ValidationResult:
         """Validate a script using static type checking.
 
@@ -326,6 +346,8 @@ class ScriptValidator:
             include_apis: Whether built-in APIs are available.
             extra_external_functions: Additional callable names available at runtime
                 (e.g. callable globals injected by the caller).
+            include_tools_api: Whether tools_* functions are available at runtime.
+            include_attachment_api: Whether attachment_* functions are available at runtime.
 
         Returns:
             ValidationResult with any diagnostics found.
@@ -337,7 +359,11 @@ class ScriptValidator:
 
         # Collect all external function names for Monty
         ext_fn_names = self._collect_external_function_names(
-            input_names, effective_include_apis, extra_external_functions
+            input_names,
+            effective_include_apis,
+            extra_external_functions,
+            include_tools_api=include_tools_api,
+            include_attachment_api=include_attachment_api,
         )
 
         # Build the Monty instance (catches syntax errors)
@@ -367,6 +393,8 @@ class ScriptValidator:
             input_names=input_names,
             include_apis=effective_include_apis,
             extra_external_functions=extra_external_functions,
+            include_tools_api=include_tools_api,
+            include_attachment_api=include_attachment_api,
         )
 
         # Run type checking — let infrastructure errors (RuntimeError) propagate
@@ -396,6 +424,8 @@ class ScriptValidator:
         input_names: list[str] | None,
         include_apis: bool,
         extra_external_functions: list[str] | None = None,
+        include_tools_api: bool = True,
+        include_attachment_api: bool = True,
     ) -> list[str]:
         """Collect all external function names that Monty should know about."""
         names: list[str] = []
@@ -435,14 +465,20 @@ class ScriptValidator:
                 "timezone_offset",
                 "is_between",
                 "is_weekend",
-                "attachment_get",
-                "attachment_read",
-                "attachment_create",
-                "tools_list",
-                "tools_get",
-                "tools_execute",
-                "tools_execute_json",
             ])
+            if include_attachment_api:
+                names.extend([
+                    "attachment_get",
+                    "attachment_read",
+                    "attachment_create",
+                ])
+            if include_tools_api:
+                names.extend([
+                    "tools_list",
+                    "tools_get",
+                    "tools_execute",
+                    "tools_execute_json",
+                ])
 
         # Tool names (direct and tool_-prefixed)
         if self.tool_definitions:
