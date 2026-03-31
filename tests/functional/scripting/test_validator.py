@@ -402,6 +402,24 @@ class TestIdentifierValidation:
         result = v.validate('good_tool(query="test")')
         assert result.is_valid
 
+    def test_tool_positional_args_accepted(self) -> None:
+        tool_defs = [
+            {
+                "type": "function",
+                "function": {
+                    "name": "search_notes",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {"query": {"type": "string"}},
+                        "required": ["query"],
+                    },
+                },
+            },
+        ]
+        v = ScriptValidator(tool_definitions=tool_defs)
+        result = v.validate('search_notes("TODO")')
+        assert result.is_valid
+
 
 class TestStubSignaturesMatchRuntime:
     """Verify that validator stubs match actual runtime API signatures.

@@ -96,7 +96,10 @@ def _generate_tool_stub(name: str, parameters: Mapping[str, Any]) -> str:
     """Generate a Python function stub from a tool's JSON Schema parameters.
 
     Produces a stub like:
-        def tool_name(*, param1: str, param2: int = ...) -> Any: ...
+        def tool_name(param1: str, param2: int = ...) -> Any: ...
+
+    Required params are positional (matching runtime behavior where positional
+    args are mapped to required params in order). Optional params have defaults.
 
     Returns empty string if the name is not a valid Python identifier.
     Falls back to **kwargs if any parameter name is invalid.
@@ -117,10 +120,7 @@ def _generate_tool_stub(name: str, parameters: Mapping[str, Any]) -> str:
         else:
             params.append(f"{param_name}: {py_type} = ...")
 
-    # Use keyword-only args since tools are called with kwargs
     param_str = ", ".join(params)
-    if param_str:
-        param_str = "*, " + param_str
 
     return f"def {name}({param_str}) -> Any: ..."
 
