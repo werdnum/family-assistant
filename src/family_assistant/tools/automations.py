@@ -7,6 +7,7 @@ from datetime import UTC
 from typing import TYPE_CHECKING, Any, cast
 from zoneinfo import ZoneInfo
 
+from family_assistant.scripting.validator import ScriptValidator
 from family_assistant.tools.types import ToolDefinition, ToolResult
 
 if TYPE_CHECKING:
@@ -385,6 +386,32 @@ async def create_automation_tool(
     try:
         # Validate automation_type first
         validated_type = _validate_automation_type(automation_type)
+
+        # Validate script code if action_type is "script"
+        if action_type == "script" and action_config.get("script_code"):
+            tool_definitions = None
+            tools_provider = None
+            if hasattr(exec_context, "tools_provider") and exec_context.tools_provider:
+                tools_provider = exec_context.tools_provider
+            elif (
+                exec_context.processing_service
+                and hasattr(exec_context.processing_service, "tools_provider")
+                and exec_context.processing_service.tools_provider
+            ):
+                tools_provider = exec_context.processing_service.tools_provider
+            if tools_provider:
+                tool_definitions = await tools_provider.get_tool_definitions()
+            # Runtime injects these globals (see task_worker.py handle_script_execution)
+            input_names = ["event", "conversation_id", "listener_id", "listener_name"]
+            validator = ScriptValidator(tool_definitions=tool_definitions)
+            validation = validator.validate(
+                action_config["script_code"],
+                input_names=input_names,
+                include_tools_api=tools_provider is not None,
+            )
+            if not validation.is_valid:
+                error_msg = f"Script validation failed: {validation.error_message}"
+                return ToolResult(text=f"Error: {error_msg}", data={"error": error_msg})
 
         # Check name availability
         (
