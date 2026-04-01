@@ -30,7 +30,7 @@ jobs:
       final_message: '${{ steps.run_codex.outputs.final-message }}'
     steps:
       - name: 'Checkout repository'
-        uses: 'actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8' # ratchet:actions/checkout@v6
+        uses: 'actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd' # ratchet:actions/checkout@v6
         with:
           ref: 'refs/pull/${{ github.event.pull_request.number }}/merge'
           fetch-depth: 0
@@ -130,7 +130,7 @@ jobs:
         id: 'mint_identity_token'
         if: |-
           ${{ vars.APP_ID }}
-        uses: 'actions/create-github-app-token@29824e69f54612133e76f7eaac726eef6c875baf' # ratchet:actions/create-github-app-token@v2
+        uses: 'actions/create-github-app-token@f8d387b68d61c58ab83c6c016672934102569859' # ratchet:actions/create-github-app-token@v2
         with:
           app-id: '${{ vars.APP_ID }}'
           private-key: '${{ secrets.APP_PRIVATE_KEY }}'
@@ -138,7 +138,7 @@ jobs:
           permission-pull-requests: 'write'
 
       - name: 'Upsert Codex summary and publish inline comments'
-        uses: 'actions/github-script@60a0d83039c74a4aee543508d2ffcb1c3799cdea' # ratchet:actions/github-script@v7
+        uses: 'actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd' # ratchet:actions/github-script@v7
         env:
           CODEX_FINAL_MESSAGE: '${{ needs.review.outputs.final_message }}'
           PR_NUMBER: '${{ github.event.pull_request.number }}'
