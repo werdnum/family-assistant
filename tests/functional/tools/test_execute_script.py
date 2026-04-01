@@ -195,6 +195,10 @@ async def test_execute_script_syntax_error(db_engine: AsyncEngine) -> None:
 
         assert "Error:" in result.text
         assert "syntax" in result.text.lower() or "parse" in result.text.lower()
+        assert isinstance(result.data, dict)
+        assert result.data["status"] == "error"
+        assert result.data["error_type"] == "syntax_error"
+        assert "syntax" in result.data["error"].lower()
 
 
 @pytest.mark.asyncio

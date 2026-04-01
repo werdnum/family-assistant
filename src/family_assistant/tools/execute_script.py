@@ -189,9 +189,26 @@ async def execute_script_tool(
             include_attachment_api=has_attachment_registry,
         )
         if not validation.is_valid:
-            error_msg = f"Script validation failed: {validation.error_message}"
+            first_error = validation.errors[0] if validation.errors else None
+            if first_error and first_error.message.startswith("Syntax error"):
+                error_msg = "Syntax error in script"
+                if first_error.line:
+                    error_msg += f" at line {first_error.line}"
+                error_msg += f": {first_error.message}"
+                error_type = "syntax_error"
+            else:
+                error_msg = f"Script validation failed: {validation.error_message}"
+                error_type = "validation_error"
+
             logger.error(error_msg)
-            return ToolResult(text=f"Error: {error_msg}")
+            return ToolResult(
+                text=f"Error: {error_msg}",
+                data={
+                    "status": "error",
+                    "error_type": error_type,
+                    "error": error_msg,
+                },
+            )
 
         # Create the engine with the tools provider (may be None)
         engine = MontyEngine(
@@ -314,21 +331,50 @@ async def execute_script_tool(
             error_msg += f" at line {e.line}"
         error_msg += f": {str(e)}"
         logger.error(error_msg)
-        return ToolResult(text=f"Error: {error_msg}")
+        return ToolResult(
+            text=f"Error: {error_msg}",
+            data={
+                "status": "error",
+                "error_type": "syntax_error",
+                "error": error_msg,
+            },
+        )
 
     except ScriptTimeoutError as e:
         error_msg = f"Script execution timed out after {e.timeout_seconds} seconds"
         logger.error(error_msg)
-        return ToolResult(text=f"Error: {error_msg}")
+        return ToolResult(
+            text=f"Error: {error_msg}",
+            data={
+                "status": "error",
+                "error_type": "timeout_error",
+                "error": error_msg,
+            },
+        )
 
     except ScriptExecutionError as e:
         error_msg = f"Script execution failed: {str(e)}"
         logger.error(error_msg)
-        return ToolResult(text=f"Error: {error_msg}")
+        return ToolResult(
+            text=f"Error: {error_msg}",
+            data={
+                "status": "error",
+                "error_type": "execution_error",
+                "error": error_msg,
+            },
+        )
 
     except Exception as e:
         logger.error(f"Unexpected error executing script: {e}", exc_info=True)
-        return ToolResult(text=f"Error: Unexpected error executing script: {e}")
+        error_msg = f"Unexpected error executing script: {e}"
+        return ToolResult(
+            text=f"Error: {error_msg}",
+            data={
+                "status": "error",
+                "error_type": "unexpected_error",
+                "error": error_msg,
+            },
+        )
 
 
 # Tool Definition

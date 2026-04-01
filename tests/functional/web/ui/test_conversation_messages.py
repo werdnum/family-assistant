@@ -196,13 +196,14 @@ async def test_get_conversation_messages_pagination_default(
 
     mock_llm_client.rules = [(lambda kwargs: True, numbered_response)]
 
-    # Create 100 messages via API (50 sends = 50 user + 50 assistant = 100 messages)
+    # Create 60 messages via API (30 sends = 30 user + 30 assistant = 60 messages).
+    # We only need more than the default page size of 50 to verify pagination behavior.
     assert web_only_assistant.fastapi_app is not None
     transport = httpx.ASGITransport(app=web_only_assistant.fastapi_app)
     async with httpx.AsyncClient(
         transport=transport, base_url="http://testserver"
     ) as client:
-        for i in range(50):
+        for i in range(30):
             response = await client.post(
                 "/api/v1/chat/send_message",
                 json={
@@ -213,25 +214,25 @@ async def test_get_conversation_messages_pagination_default(
             )
             assert response.status_code == 200, f"Failed to send message {i}"
 
-        # Get messages via API - default limit is 50
-        # Wait for all 100 messages to be visible before checking pagination
+        # Get messages via API - default limit is 50.
+        # Wait for all 60 messages to be visible before checking pagination.
         result_data: dict = {}
 
-        async def get_all_hundred_messages() -> bool:
+        async def get_all_sixty_messages() -> bool:
             nonlocal result_data
             resp = await client.get(
                 f"/api/v1/chat/conversations/{conv_id}/messages?limit=0"
             )
             if resp.status_code == 200:
                 result_data = resp.json()
-                if result_data.get("total_messages", 0) == 100:
+                if result_data.get("total_messages", 0) == 60:
                     return True
             return False
 
         await wait_for_condition(
-            get_all_hundred_messages,
+            get_all_sixty_messages,
             timeout=30.0,
-            description="expected 100 total messages not visible",
+            description="expected 60 total messages not visible",
         )
 
         # Now test the default pagination behavior
@@ -242,7 +243,7 @@ async def test_get_conversation_messages_pagination_default(
         # Should get 50 most recent messages
         assert len(data["messages"]) == 50
         assert data["count"] == 50
-        assert data["total_messages"] == 100
+        assert data["total_messages"] == 60
         assert data["has_more_before"] is True  # More older messages available
         assert data["has_more_after"] is False  # These are the most recent
 
@@ -250,7 +251,7 @@ async def test_get_conversation_messages_pagination_default(
         messages = data["messages"]
         # The most recent 50 messages should include the last user and assistant messages
         assert messages[-1]["role"] == "assistant"
-        assert "Response 50" in messages[-1]["content"]
+        assert "Response 30" in messages[-1]["content"]
 
 
 @pytest.mark.asyncio
