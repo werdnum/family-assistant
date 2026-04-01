@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from dataclasses import replace
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any, Literal, cast
 from unittest.mock import AsyncMock, Mock, patch
@@ -838,6 +839,83 @@ if True
     assert result.data["script_result"]["error_type"] == "syntax_error"
     assert "Syntax error in script" in result.data["script_result"]["error"]
     assert result.data["transcript"] == []
+
+
+@pytest.mark.asyncio
+async def test_script_testing_returns_structured_error_when_tools_provider_missing(
+    db_engine: AsyncEngine,
+) -> None:
+    """Tool-level setup failures should still return the normal structured envelope."""
+    async with DatabaseContext(engine=db_engine) as db:
+        tools_provider = _build_tools_provider("send_message_to_user")
+        exec_context = _build_exec_context(
+            db=db,
+            tools_provider=tools_provider,
+            conversation_id="conv-missing-provider",
+            user_id="user-1",
+        )
+        exec_context = replace(
+            exec_context,
+            tools_provider=None,
+            processing_service=None,
+        )
+
+        result = await test_script_with_simulated_tools_tool(
+            exec_context,
+            script='{"ok": true}',
+            scenario_description="No tools provider is available in this context.",
+        )
+
+    assert result.text == (
+        "Error: test_script_with_simulated_tools requires an available tools provider."
+    )
+    assert isinstance(result.data, dict)
+    assert result.data == {
+        "status": "error",
+        "script_result": None,
+        "script_result_text": result.text,
+        "error": (
+            "test_script_with_simulated_tools requires an available tools provider."
+        ),
+        "transcript": [],
+    }
+
+
+@pytest.mark.asyncio
+async def test_script_testing_returns_structured_error_for_invalid_overrides(
+    db_engine: AsyncEngine,
+) -> None:
+    """Invalid passthrough/simulation override requests should be machine-readable."""
+    async with DatabaseContext(engine=db_engine) as db:
+        tools_provider = _build_tools_provider("send_message_to_user")
+        exec_context = _build_exec_context(
+            db=db,
+            tools_provider=tools_provider,
+            conversation_id="conv-invalid-override",
+            user_id="user-1",
+        )
+
+        result = await test_script_with_simulated_tools_tool(
+            exec_context,
+            script='{"ok": true}',
+            scenario_description="This run should fail before execution.",
+            simulated_tools=["send_message_to_user"],
+            passthrough_tools=["send_message_to_user"],
+        )
+
+    assert result.text == (
+        "Error: Tools cannot be both simulated and passthrough: send_message_to_user"
+    )
+    assert isinstance(result.data, dict)
+    assert result.data == {
+        "status": "error",
+        "script_result": None,
+        "script_result_text": result.text,
+        "error": (
+            "Tools cannot be both simulated and passthrough: send_message_to_user"
+        ),
+        "transcript": [],
+    }
 
 
 @pytest.mark.asyncio

@@ -407,11 +407,8 @@ async def test_script_with_simulated_tools_tool(
     """Run a script with selected tools simulated by an LLM."""
     real_tools_provider = _get_tools_provider(exec_context)
     if real_tools_provider is None:
-        return ToolResult(
-            text=(
-                "Error: test_script_with_simulated_tools requires an available tools provider."
-            )
-        )
+        error_text = "Error: test_script_with_simulated_tools requires an available tools provider."
+        return _build_script_test_error_result(error_text)
 
     testing_provider = ScriptTestingToolsProvider(
         wrapped_provider=real_tools_provider,
@@ -424,7 +421,7 @@ async def test_script_with_simulated_tools_tool(
     try:
         await testing_provider.validate_requested_overrides()
     except ValueError as exc:
-        return ToolResult(text=f"Error: {exc}")
+        return _build_script_test_error_result(f"Error: {exc}")
 
     script_exec_context = replace(exec_context, tools_provider=testing_provider)
     script_result = await execute_script_tool(
@@ -596,3 +593,17 @@ def _get_script_test_error(script_result: ToolResult) -> str | None:
     ):
         return None
     return error
+
+
+def _build_script_test_error_result(error_text: str) -> ToolResult:
+    """Return a structured error envelope for tool-level validation failures."""
+    return ToolResult(
+        text=error_text,
+        data={
+            "status": "error",
+            "script_result": None,
+            "script_result_text": error_text,
+            "error": error_text.removeprefix("Error: "),
+            "transcript": [],
+        },
+    )
