@@ -189,9 +189,26 @@ async def execute_script_tool(
             include_attachment_api=has_attachment_registry,
         )
         if not validation.is_valid:
-            error_msg = f"Script validation failed: {validation.error_message}"
+            first_error = validation.errors[0] if validation.errors else None
+            if first_error and first_error.message.startswith("Syntax error"):
+                error_msg = "Syntax error in script"
+                if first_error.line:
+                    error_msg += f" at line {first_error.line}"
+                error_msg += f": {first_error.message}"
+                error_type = "syntax_error"
+            else:
+                error_msg = f"Script validation failed: {validation.error_message}"
+                error_type = "validation_error"
+
             logger.error(error_msg)
-            return ToolResult(text=f"Error: {error_msg}")
+            return ToolResult(
+                text=f"Error: {error_msg}",
+                data={
+                    "status": "error",
+                    "error_type": error_type,
+                    "error": error_msg,
+                },
+            )
 
         # Create the engine with the tools provider (may be None)
         engine = MontyEngine(
