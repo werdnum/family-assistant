@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING, Any, Literal, cast
 from unittest.mock import AsyncMock, Mock, patch
 from zoneinfo import ZoneInfo
 
@@ -22,7 +22,10 @@ from family_assistant.tools.metadata import (
     ToolRegistration,
     make_local_tool_metadata,
 )
-from family_assistant.tools.script_testing import test_script_with_simulated_tools_tool
+from family_assistant.tools.script_testing import (
+    ScriptTestingToolsProvider,
+    test_script_with_simulated_tools_tool,
+)
 from family_assistant.tools.types import ToolExecutionContext, ToolResult
 
 if TYPE_CHECKING:
@@ -114,6 +117,7 @@ async def _store_tool_history_example(
     result_content: str,
     subconversation_id: str | None = None,
     timestamp: datetime | None = None,
+    interface_type: str = "test",
 ) -> None:
     """Persist an assistant tool call and matching tool result for few-shot retrieval."""
     timestamp = timestamp or datetime.now(UTC)
@@ -133,7 +137,7 @@ async def _store_tool_history_example(
                 )
             ],
         ),
-        interface_type="test",
+        interface_type=interface_type,
         conversation_id=conversation_id,
         timestamp=timestamp,
         user_id=user_id,
@@ -145,7 +149,7 @@ async def _store_tool_history_example(
             name=tool_name,
             content=result_content,
         ),
-        interface_type="test",
+        interface_type=interface_type,
         conversation_id=conversation_id,
         timestamp=timestamp,
         user_id=user_id,
@@ -434,6 +438,67 @@ add_or_update_note(
 
 
 @pytest.mark.asyncio
+async def test_script_testing_same_user_fallback_stays_on_same_interface(
+    db_engine: AsyncEngine,
+) -> None:
+    """Same-user history fallback must not cross interface types."""
+    async with DatabaseContext(engine=db_engine) as db:
+        await _store_tool_history_example(
+            db=db,
+            conversation_id="conv-telegram",
+            user_id="user-1",
+            tool_name="add_or_update_note",
+            arguments={
+                "title": "Weekly Plan",
+                "content": "Groceries and school pickup",
+            },
+            result_content="Note 'Weekly Plan' has been created successfully.",
+            interface_type="telegram",
+        )
+
+        tools_provider = _build_tools_provider("add_or_update_note")
+        exec_context = _build_exec_context(
+            db=db,
+            tools_provider=tools_provider,
+            conversation_id="conv-web",
+            user_id="user-1",
+        )
+
+        def handler(
+            prompt: str,
+            response_model: type[BaseModel],
+        ) -> BaseModel:
+            assert "Historical examples from persisted tool history:" in prompt
+            assert "Note 'Weekly Plan' has been created successfully." not in prompt
+            return response_model(
+                return_value_json=json.dumps(
+                    "Note 'Weekly Plan' has been created successfully."
+                )
+            )
+
+        fake_client = FakeStructuredClient(handler)
+
+        with patch(
+            "family_assistant.llm.one_shot.LLMClientFactory.create_client",
+            return_value=fake_client,
+        ):
+            result = await test_script_with_simulated_tools_tool(
+                exec_context,
+                script="""
+add_or_update_note(
+    title="Weekly Plan",
+    content="Groceries and school pickup",
+)
+""",
+                scenario_description="Simulate note writes without cross-interface history.",
+            )
+
+        assert isinstance(result.data, dict)
+        transcript = result.data["transcript"]
+        assert transcript[0]["historical_examples_used"] == 0
+
+
+@pytest.mark.asyncio
 async def test_script_testing_keeps_subconversation_history_isolated(
     db_engine: AsyncEngine,
 ) -> None:
@@ -628,6 +693,118 @@ passthrough_snapshot()
 
 
 @pytest.mark.asyncio
+async def test_script_testing_serializes_non_json_passthrough_results_in_simulation_prompt(
+    db_engine: AsyncEngine,
+) -> None:
+    """Simulation prompts should tolerate prior passthrough results with non-JSON data."""
+
+    async def passthrough_snapshot_tool(
+        exec_context: ToolExecutionContext,
+    ) -> ToolResult:
+        del exec_context
+        return ToolResult(data={"status": "ok"})
+
+    registrations_by_name = {
+        registration.name: registration for registration in LOCAL_TOOL_REGISTRATIONS
+    }
+    tools_provider = _build_tools_provider_from_registrations(
+        ToolRegistration(
+            definition={
+                "type": "function",
+                "function": {
+                    "name": "passthrough_snapshot",
+                    "description": "Return a snapshot timestamp.",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {},
+                        "additionalProperties": False,
+                    },
+                },
+            },
+            implementation=passthrough_snapshot_tool,
+            metadata=make_local_tool_metadata(["read_only"]),
+        ),
+        registrations_by_name["send_message_to_user"],
+    )
+
+    async with DatabaseContext(engine=db_engine) as db:
+        exec_context = _build_exec_context(
+            db=db,
+            tools_provider=tools_provider,
+            conversation_id="conv-transcript-prompt",
+            user_id="user-1",
+        )
+
+        def handler(
+            prompt: str,
+            response_model: type[BaseModel],
+        ) -> BaseModel:
+            assert '"captured_at": "2026-01-02 03:04:05+00:00"' in prompt
+            return response_model(
+                return_value_json=json.dumps("Message queued for sibling-chat.")
+            )
+
+        fake_client = FakeStructuredClient(handler)
+        original_append_transcript = ScriptTestingToolsProvider._append_transcript
+
+        def patched_append_transcript(
+            self: ScriptTestingToolsProvider,
+            *,
+            tool_name: str,
+            mode: Literal["passthrough", "simulated"],
+            arguments: object,
+            result: str | ToolResult,
+            classification_reason: str,
+            historical_examples_used: int,
+        ) -> None:
+            original_append_transcript(
+                self,
+                tool_name=tool_name,
+                mode=mode,
+                arguments=cast("dict[str, Any]", arguments),
+                result=result,
+                classification_reason=classification_reason,
+                historical_examples_used=historical_examples_used,
+            )
+            if (
+                mode == "passthrough"
+                and self._transcript[-1].tool_name == "passthrough_snapshot"
+            ):
+                self._transcript[-1].result = {
+                    "captured_at": datetime(2026, 1, 2, 3, 4, 5, tzinfo=UTC),
+                }
+
+        with (
+            patch(
+                "family_assistant.llm.one_shot.LLMClientFactory.create_client",
+                return_value=fake_client,
+            ),
+            patch.object(
+                ScriptTestingToolsProvider,
+                "_append_transcript",
+                patched_append_transcript,
+            ),
+        ):
+            result = await test_script_with_simulated_tools_tool(
+                exec_context,
+                script="""
+passthrough_snapshot()
+send_message_to_user(
+    target_chat_id="sibling-chat",
+    message_content="Dinner is ready",
+)
+""",
+                scenario_description=(
+                    "Run the snapshot tool for real, then simulate the outbound message."
+                ),
+            )
+
+    assert isinstance(result.data, dict)
+    transcript = result.data["transcript"]
+    assert [entry["mode"] for entry in transcript] == ["passthrough", "simulated"]
+
+
+@pytest.mark.asyncio
 async def test_script_testing_exposes_script_errors_in_structured_result(
     db_engine: AsyncEngine,
 ) -> None:
@@ -688,6 +865,37 @@ async def test_script_testing_does_not_treat_error_like_return_strings_as_failur
     assert result.data["error"] is None
     assert result.data["script_result"] == "Error: harmless value"
     assert result.data["script_result_text"] == "Script result: Error: harmless value"
+
+
+@pytest.mark.asyncio
+async def test_script_testing_does_not_treat_user_dict_error_shapes_as_failures(
+    db_engine: AsyncEngine,
+) -> None:
+    """A script can legitimately return an error-shaped dict as data."""
+    async with DatabaseContext(engine=db_engine) as db:
+        tools_provider = _build_tools_provider("send_message_to_user")
+        exec_context = _build_exec_context(
+            db=db,
+            tools_provider=tools_provider,
+            conversation_id="conv-script-success-dict",
+            user_id="user-1",
+        )
+
+        result = await test_script_with_simulated_tools_tool(
+            exec_context,
+            script='{"status": "error", "error": "harmless value"}',
+            scenario_description=(
+                "Return a plain dictionary that happens to look like an error payload."
+            ),
+        )
+
+    assert isinstance(result.data, dict)
+    assert result.data["status"] == "success"
+    assert result.data["error"] is None
+    assert result.data["script_result"] == {
+        "status": "error",
+        "error": "harmless value",
+    }
 
 
 @pytest.mark.asyncio

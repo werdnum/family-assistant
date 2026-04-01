@@ -350,7 +350,12 @@ class ScriptTestingToolsProvider(ToolsProvider):
             json.dumps(arguments, indent=2, ensure_ascii=False),
             "",
             "Prior tool transcript in this script run:",
-            json.dumps(transcript_summary, indent=2, ensure_ascii=False),
+            json.dumps(
+                transcript_summary,
+                indent=2,
+                ensure_ascii=False,
+                default=str,
+            ),
             "",
             "Historical examples from persisted tool history:",
             "\n".join(example_lines) if example_lines else "(none)",
@@ -582,7 +587,12 @@ def _get_script_test_error(script_result: ToolResult) -> str | None:
     if not isinstance(script_result.data, dict):
         return None
     status = script_result.data.get("status")
+    error_type = script_result.data.get("error_type")
     error = script_result.data.get("error")
-    if status != "error" or not isinstance(error, str):
+    if (
+        status != "error"
+        or not isinstance(error_type, str)
+        or not isinstance(error, str)
+    ):
         return None
     return error
