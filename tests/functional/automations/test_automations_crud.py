@@ -1002,3 +1002,195 @@ async def test_delete_automation_not_found(db_engine: AsyncEngine) -> None:
 
     assert "Error:" in result.get_text()
     assert "not found" in result.get_text().lower()
+
+
+@pytest.mark.asyncio
+async def test_create_event_automation_with_condition_script(
+    db_engine: AsyncEngine,
+) -> None:
+    """Test creating an event automation with a condition_script in trigger_config."""
+    async with DatabaseContext(engine=db_engine) as db_ctx:
+        exec_context = ToolExecutionContext(
+            interface_type="web",
+            conversation_id="cond_script_create_conv",
+            user_name="test_user",
+            turn_id="test_turn",
+            db_context=db_ctx,
+            processing_service=None,
+            clock=None,
+            home_assistant_client=None,
+            event_sources=None,
+            attachment_registry=None,
+            camera_backend=None,
+            timezone=ZoneInfo("UTC"),
+        )
+
+        result = await create_automation_tool(
+            exec_context=exec_context,
+            name="Condition Script Create Test",
+            automation_type="event",
+            trigger_config={
+                "event_source": "home_assistant",
+                "event_filter": {"entity_id": "person.test"},
+                "condition_script": "event.get('new_state', {}).get('state') == 'home'",
+            },
+            action_type="wake_llm",
+            action_config={"context": "Person arrived home"},
+        )
+
+        data = result.get_data()
+        assert isinstance(data, dict)
+        auto_id = int(data["id"])
+
+    async with DatabaseContext(engine=db_engine) as db_ctx:
+        exec_context.db_context = db_ctx
+        result = await get_automation_tool(
+            exec_context=exec_context,
+            automation_id=auto_id,
+            automation_type="event",
+        )
+
+    result_data = result.get_data()
+    assert isinstance(result_data, dict)
+    assert (
+        result_data["condition_script"]
+        == "event.get('new_state', {}).get('state') == 'home'"
+    )
+
+
+@pytest.mark.asyncio
+async def test_update_event_automation_condition_script(
+    db_engine: AsyncEngine,
+) -> None:
+    """Test updating an event automation to add a condition_script via trigger_config."""
+    async with DatabaseContext(engine=db_engine) as db_ctx:
+        exec_context = ToolExecutionContext(
+            interface_type="web",
+            conversation_id="cond_script_update_conv",
+            user_name="test_user",
+            turn_id="test_turn",
+            db_context=db_ctx,
+            processing_service=None,
+            clock=None,
+            home_assistant_client=None,
+            event_sources=None,
+            attachment_registry=None,
+            camera_backend=None,
+            timezone=ZoneInfo("UTC"),
+        )
+
+        # Create without condition_script
+        result = await create_automation_tool(
+            exec_context=exec_context,
+            name="Condition Script Update Test",
+            automation_type="event",
+            trigger_config={
+                "event_source": "home_assistant",
+                "event_filter": {"entity_id": "person.test"},
+            },
+            action_type="wake_llm",
+            action_config={"context": "Test"},
+        )
+
+        data = result.get_data()
+        assert isinstance(data, dict)
+        auto_id = int(data["id"])
+
+        # Update to add condition_script
+        result = await update_automation_tool(
+            exec_context=exec_context,
+            automation_id=auto_id,
+            automation_type="event",
+            trigger_config={
+                "condition_script": "int(render_home_assistant_template(template='{{ now().hour }}')) >= 12",
+            },
+        )
+
+    data = result.get_data()
+    assert isinstance(data, dict)
+    assert data.get("success") is True
+
+    # Verify the condition_script was persisted
+    async with DatabaseContext(engine=db_engine) as db_ctx:
+        exec_context.db_context = db_ctx
+        result = await get_automation_tool(
+            exec_context=exec_context,
+            automation_id=auto_id,
+            automation_type="event",
+        )
+
+    result_data = result.get_data()
+    assert isinstance(result_data, dict)
+    assert (
+        result_data["condition_script"]
+        == "int(render_home_assistant_template(template='{{ now().hour }}')) >= 12"
+    )
+
+
+@pytest.mark.asyncio
+async def test_update_event_automation_preserves_condition_script(
+    db_engine: AsyncEngine,
+) -> None:
+    """Test that updating other fields preserves an existing condition_script."""
+    async with DatabaseContext(engine=db_engine) as db_ctx:
+        exec_context = ToolExecutionContext(
+            interface_type="web",
+            conversation_id="cond_script_preserve_conv",
+            user_name="test_user",
+            turn_id="test_turn",
+            db_context=db_ctx,
+            processing_service=None,
+            clock=None,
+            home_assistant_client=None,
+            event_sources=None,
+            attachment_registry=None,
+            camera_backend=None,
+            timezone=ZoneInfo("UTC"),
+        )
+
+        # Create with condition_script
+        result = await create_automation_tool(
+            exec_context=exec_context,
+            name="Preserve Condition Script Test",
+            automation_type="event",
+            trigger_config={
+                "event_source": "home_assistant",
+                "event_filter": {"entity_id": "person.test"},
+                "condition_script": "event.get('old_state') != event.get('new_state')",
+            },
+            action_type="wake_llm",
+            action_config={"context": "Test"},
+        )
+
+        data = result.get_data()
+        assert isinstance(data, dict)
+        auto_id = int(data["id"])
+
+        # Update description only (no trigger_config)
+        result = await update_automation_tool(
+            exec_context=exec_context,
+            automation_id=auto_id,
+            automation_type="event",
+            description="Updated description",
+        )
+
+    data = result.get_data()
+    assert isinstance(data, dict)
+    assert data.get("success") is True
+
+    # Verify condition_script is preserved
+    async with DatabaseContext(engine=db_engine) as db_ctx:
+        exec_context.db_context = db_ctx
+        result = await get_automation_tool(
+            exec_context=exec_context,
+            automation_id=auto_id,
+            automation_type="event",
+        )
+
+    result_data = result.get_data()
+    assert isinstance(result_data, dict)
+    assert (
+        result_data["condition_script"]
+        == "event.get('old_state') != event.get('new_state')"
+    )
+    assert result_data["description"] == "Updated description"

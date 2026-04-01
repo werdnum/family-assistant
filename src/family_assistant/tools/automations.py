@@ -99,6 +99,7 @@ Examples:
 For event automations:
   - event_source: string (e.g., 'email_received', 'calendar_event')
   - event_filter: object with filtering criteria
+  - condition_script: optional Python expression evaluated before action runs. Must return truthy to proceed.
 
 For schedule automations:
   - recurrence_rule: RRULE string (e.g., 'FREQ=DAILY;BYHOUR=7;BYMINUTE=0'). Times are in the user's configured timezone.""",
@@ -196,7 +197,7 @@ For script:
                     },
                     "trigger_config": {
                         "type": "object",
-                        "description": "New trigger configuration (optional)",
+                        "description": "New trigger configuration (optional). For event automations: event_filter (object), condition_script (string or null). For schedule automations: recurrence_rule (string).",
                     },
                     "action_config": {
                         "type": "object",
@@ -435,6 +436,8 @@ async def create_automation_tool(
                 )
                 return ToolResult(text=f"Error: {error_msg}", data={"error": error_msg})
 
+            condition_script = trigger_config.get("condition_script")
+
             automation_id = await exec_context.db_context.events.create_event_listener(
                 name=name,
                 source_id=source_id,
@@ -444,6 +447,7 @@ async def create_automation_tool(
                 conversation_id=exec_context.conversation_id,
                 interface_type=exec_context.interface_type,
                 description=description,
+                condition_script=condition_script,
             )
 
             # Return structured data with human-readable text
@@ -634,6 +638,8 @@ async def get_automation_tool(
             lines.append(f"Event source: {automation.source_id}")
             if automation.match_conditions:
                 lines.append(f"Event filter: {automation.match_conditions}")
+            if automation.condition_script:
+                lines.append(f"Condition script: {automation.condition_script}")
         else:  # schedule
             lines.append(f"Recurrence rule: {automation.recurrence_rule}")
             next_scheduled = automation.next_scheduled_at
@@ -671,6 +677,7 @@ async def get_automation_tool(
             result_data["event_source"] = automation.source_id
             if automation.match_conditions:
                 result_data["event_filter"] = automation.match_conditions
+            result_data["condition_script"] = automation.condition_script
         else:  # schedule
             result_data["recurrence_rule"] = automation.recurrence_rule
             next_scheduled = automation.next_scheduled_at
@@ -748,6 +755,12 @@ async def update_automation_tool(
             if match_conditions is None:
                 match_conditions = {}
 
+            # Extract condition_script from trigger_config if provided
+            if trigger_config and "condition_script" in trigger_config:
+                condition_script = trigger_config["condition_script"]
+            else:
+                condition_script = existing.condition_script
+
             success = await exec_context.db_context.events.update_event_listener(
                 listener_id=automation_id,
                 conversation_id=existing.conversation_id,
@@ -764,6 +777,7 @@ async def update_automation_tool(
                 ),
                 one_time=existing.one_time or False,
                 enabled=existing.enabled,
+                condition_script=condition_script,
             )
 
         else:  # schedule
