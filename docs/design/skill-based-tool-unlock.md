@@ -375,6 +375,249 @@ turn on tool definitions alone.
 - Update user documentation and CLAUDE.md
 - Measure actual token savings
 
+## Alternative Designs
+
+### Alternative A: Tag-Based Skills (No Explicit Tool Lists)
+
+Instead of listing tool names per skill in YAML, skills match tools by their existing `ToolTag`
+metadata. Tools already have consistent categorical tags (`CAMERA`, `AUTOMATION`, `BROWSER`, etc.),
+so skills can reference those.
+
+**Configuration:**
+
+```yaml
+skills:
+  camera_investigation:
+    description: "Search and analyze security camera footage"
+    instructions: |
+      When investigating camera footage: ...
+    match:
+      tags_any: [CAMERA]
+
+  automation_management:
+    description: "Create, edit, and manage automated tasks"
+    instructions: |
+      Automations support two types: ...
+    match:
+      tags_any: [AUTOMATION]
+
+  data_analysis:
+    description: "Charts, data queries, and visualization"
+    instructions: |
+      ...
+    match:
+      tags_any: [DATA]
+```
+
+**Pros:**
+
+- No duplication: tools don't need to be listed in both `enable_local_tools` and `skills.tools`.
+  Adding a new camera tool with the `CAMERA` tag automatically puts it behind the camera skill.
+- Reuses existing `ToolMatcher` infrastructure (already supports `tags_any`, `tags_all`, `names`,
+  `mcp_server_ids` with glob patterns). No new matching logic needed.
+- Naturally stays in sync as tools are added/removed — if it's tagged `CAMERA`, it's in the camera
+  skill.
+- Can combine matchers for cross-cutting skills (e.g., `tags_any: [MEDIA]` captures both camera and
+  image tools).
+
+**Cons:**
+
+- Less explicit: you need to know the tagging conventions to understand what's in a skill. With
+  explicit tool lists, the config is self-documenting.
+- Tag granularity may not match desired skill boundaries. E.g., `search_camera_events` might be
+  tagged both `CAMERA` and `HOME_AUTOMATION` — which skill should it be in? (Answer: both, if using
+  `tags_any`.)
+- Harder to put a single tool into a skill that doesn't match its existing tags without adding a new
+  tag.
+
+**Hybrid option:** Support both `match` and `tools` in skill config. Use `match` as the primary
+mechanism, with `tools` as an explicit override/addition:
+
+```yaml
+skills:
+  camera_investigation:
+    description: "Search and analyze security camera footage"
+    instructions: ...
+    match:
+      tags_any: [CAMERA]
+    additional_tools:  # Explicit additions beyond tag match
+      - get_camera_snapshot  # HA tool also useful here
+```
+
+### Alternative B: Tool Metadata Declares Skill Membership
+
+Instead of configuring skills separately, each tool's metadata declares which skill it belongs to.
+The skill definitions (description + instructions) live in config, but the tool→skill mapping lives
+in code alongside the tool registration.
+
+**Code-side (in `__init__.py`):**
+
+```python
+LOCAL_TOOL_METADATA_BY_NAME: dict[str, LocalToolMetadata] = {
+    "list_cameras": _metadata(ToolTag.CAMERA, skill="camera_investigation"),
+    "search_camera_events": _metadata(ToolTag.CAMERA, skill="camera_investigation"),
+    "create_automation": _metadata(ToolTag.AUTOMATION, skill="automation_management"),
+    "add_or_update_note": _metadata(ToolTag.NOTES),  # No skill = always-on
+    ...
+}
+```
+
+**Config-side (in `defaults.yaml`):**
+
+```yaml
+skills:
+  camera_investigation:
+    description: "Search and analyze security camera footage"
+    instructions: |
+      When investigating camera footage: ...
+  automation_management:
+    description: "Create, edit, and manage automated tasks"
+    instructions: |
+      Automations support two types: ...
+```
+
+**Pros:**
+
+- Tool→skill mapping lives next to other tool metadata (tags, implementations). Single source of
+  truth for "what is this tool?"
+- Adding a new tool to a skill is done in the same place you register the tool — can't forget.
+- Config stays clean: only descriptions and instructions, no tool lists to maintain.
+- Type-safe: `skill` field on `LocalToolMetadata` can be validated against known skill IDs.
+
+**Cons:**
+
+- Splits skill definition across two files (code for membership, config for descriptions). You need
+  to look in both places to understand a skill fully.
+- Less flexible for per-profile skill customization. If profile A wants `search_camera_events` in
+  the camera skill but profile B wants it always-on, the code-side declaration doesn't support that.
+- Tighter coupling between code and config — changing skill boundaries requires code changes, not
+  just config changes.
+
+### Alternative C: Convention-Based (Tool Groups = Skills)
+
+Tools are already grouped into definition lists: `CAMERA_TOOLS_DEFINITION`,
+`AUTOMATIONS_TOOLS_DEFINITION`, etc. These groups could *automatically become skills* with minimal
+config.
+
+Each tool module exports a skill descriptor alongside its definitions:
+
+```python
+# In camera.py
+CAMERA_SKILL = SkillDescriptor(
+    id="camera",
+    description="Search and analyze security camera footage",
+    instructions="""
+    When investigating camera footage:
+    1. Start with search_camera_events...
+    """,
+)
+
+CAMERA_TOOLS_DEFINITION: list[ToolDefinition] = [...]
+```
+
+The `__init__.py` aggregation would then collect skills alongside tools:
+
+```python
+_LOCAL_SKILLS = [
+    camera.CAMERA_SKILL,
+    automations.AUTOMATIONS_SKILL,
+    # Modules without a SKILL export have always-on tools
+]
+```
+
+Config only needs to say which skills exist and whether they're gated:
+
+```yaml
+skill_gating:
+  camera: true          # Behind unlock
+  automation: true      # Behind unlock
+  notes: false          # Always-on (or just omit)
+```
+
+**Pros:**
+
+- Instructions live next to tool implementations — the people writing tools write the skill
+  instructions. No context switching to YAML.
+- Tool→skill mapping is implicit from the module structure. `CAMERA_TOOLS_DEFINITION` tools are in
+  the `camera` skill. Zero configuration for this mapping.
+- Minimal config surface: just "gate this skill or not."
+- Easy to understand: one module = one skill (or no skill).
+
+**Cons:**
+
+- One module = one skill is a rigid constraint. What if you want a skill that spans multiple modules
+  (e.g., a "media" skill combining camera + image generation + video generation)?
+- Instructions as Python strings are harder to edit and review than YAML. Multiline strings in
+  Python are awkward for long-form prose.
+- Loses the ability to have profile-specific skill customization without code changes.
+- Adds a new export convention that all tool modules need to follow.
+
+### Alternative D: Skills as Policy Rules (No New Provider)
+
+Instead of a new `SkillAwareToolsProvider`, implement skills entirely through the existing
+`PolicyEngine`. Unlocking a skill dynamically adds ALLOW rules for its tools.
+
+**How it works:**
+
+1. Skill-gated tools start with a `DENY` policy rule at a low priority.
+2. `unlock_skill` adds an `ALLOW` rule at higher priority for the skill's tools.
+3. The existing `PolicyEnforcingToolsProvider` handles the filtering — no new provider needed.
+
+```python
+# Initial state: camera tools denied
+PolicyRule(match=ToolMatcher(tags_any=[ToolTag.CAMERA]), decision="deny", priority=50)
+
+# After unlock_skill("camera_investigation"):
+PolicyRule(match=ToolMatcher(tags_any=[ToolTag.CAMERA]), decision="allow", priority=150)
+```
+
+**Pros:**
+
+- Reuses existing infrastructure entirely. No new provider class.
+- Policy engine already handles priority-based rule resolution, caching, advertisement filtering.
+- Consistent with existing security model — skills are just another policy layer.
+- Easy to reason about: "why can't I use this tool?" → check policy rules.
+
+**Cons:**
+
+- Mixes concerns: policy engine is about security (who can do what), skills are about UX
+  (progressive disclosure). Overloading policy with UX concerns may make both harder to reason
+  about.
+- Dynamic rule mutation is a new pattern for the policy engine, which currently uses static rules.
+  Need to handle cache invalidation carefully.
+- Still need *something* to hold skill descriptions, instructions, and the unlock_skill tool logic.
+  The policy engine doesn't have a concept of "instructions returned on unlock."
+- Debugging: policy evaluation logs would show skill-related rules mixed with security rules.
+
+### Comparison Matrix
+
+| Aspect                    | Original (YAML lists) | Alt A (Tag-based)    | Alt B (Metadata)  | Alt C (Convention) | Alt D (Policy)      |
+| ------------------------- | --------------------- | -------------------- | ----------------- | ------------------ | ------------------- |
+| Config surface            | Verbose               | Compact              | Split code/config | Minimal config     | Moderate            |
+| Tool→skill sync           | Manual                | Automatic (via tags) | Manual (in code)  | Automatic (module) | Manual or tag-based |
+| Per-profile customization | Easy (YAML)           | Easy (YAML)          | Hard (code)       | Limited            | Easy (policy rules) |
+| New provider needed       | Yes                   | Yes                  | Yes               | Yes                | No                  |
+| Reuses existing infra     | Partially             | ToolMatcher reuse    | Partially         | Partially          | Fully               |
+| Instructions location     | YAML                  | YAML                 | YAML              | Python code        | YAML + custom logic |
+| Cross-module skills       | Easy                  | Easy (tag matching)  | Easy (metadata)   | Hard               | Easy                |
+| Self-documenting config   | Yes (explicit lists)  | Moderate             | No (need both)    | No (need code)     | No (mixed concerns) |
+
+### Recommendation
+
+**Alt A (Tag-based) with hybrid override** is the strongest option:
+
+1. It eliminates the biggest pain point of the original design (manual tool lists that duplicate
+   `enable_local_tools` and go stale).
+2. It reuses the existing `ToolMatcher` — a battle-tested matching engine that already handles tags,
+   name patterns, and MCP server IDs.
+3. The hybrid option (`match` + `additional_tools`) handles edge cases where tag granularity doesn't
+   match skill boundaries.
+4. Instructions and descriptions stay in YAML where they're easy to review and edit.
+5. Per-profile customization remains straightforward.
+
+The one new piece of infrastructure is the `SkillAwareToolsProvider`, which is needed regardless of
+config approach (except Alt D, which trades provider complexity for policy engine complexity).
+
 ## Open Questions
 
 1. **Should skills persist across turns?** Current design resets per-turn. Could store in
