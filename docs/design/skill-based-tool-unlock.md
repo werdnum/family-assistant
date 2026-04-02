@@ -279,7 +279,7 @@ class SkillAwareToolsProvider(ToolsProvider):
         ]
 
         # Add the unlock_skill tool itself
-        filtered.append(UNLOCK_SKILL_DEFINITION)
+        filtered.extend(SKILL_TOOLS_DEFINITION)
 
         return filtered
 
@@ -311,8 +311,8 @@ In `llm_loop.py`, after tool execution, check if tools changed:
 
 ```python
 # After processing tool results
-if hasattr(self.tool_executor.tools_provider, 'tools_changed') and \
-   self.tool_executor.tools_provider.tools_changed:
+# Note: CompositeToolsProvider must propagate tools_changed from wrapped providers
+if getattr(self.tool_executor.tools_provider, 'tools_changed', False):
     tools_for_llm = await get_tool_definitions_for_advertisement(
         self.tool_executor.tools_provider,
         can_confirm=request_confirmation_callback is not None,
