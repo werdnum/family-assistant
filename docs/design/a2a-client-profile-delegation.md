@@ -48,6 +48,22 @@ A2A is JSON-RPC 2.0 over HTTP. Key concepts:
 - **Streaming**: SSE via `message/stream` method
 - **Python SDK**: `a2a-sdk` package provides `A2ACardResolver`, `BaseClient`, `ClientFactory`
 
+### Existing A2A Server in This Project
+
+This project already has a full A2A server implementation:
+
+- **`src/family_assistant/a2a/`** — Types (`types.py`) and bidirectional converters
+  (`converters.py`) between A2A parts and FA `ContentPartDict`
+- **`src/family_assistant/web/routers/a2a_api.py`** — JSON-RPC endpoint at `/api/a2a` implementing
+  `message/send`, `message/stream`, `tasks/get`, `tasks/cancel`; agent card at
+  `/.well-known/agent-card.json`
+- **`src/family_assistant/storage/repositories/a2a_tasks.py`** — Task persistence in the database
+- **`tests/functional/web/api/test_a2a_api.py`** — Comprehensive test coverage
+
+The existing converters (`content_parts_to_a2a_parts()`, `a2a_parts_to_content_parts()`,
+`chat_result_to_artifact()`) handle the FA \<-> A2A content translation that the client will also
+need. The client should reuse these rather than duplicating the logic.
+
 ## Design
 
 ### Core Idea
@@ -267,72 +283,50 @@ for profile_def in resolved_profiles:
 
 ### Content Part Mapping
 
-#### FA -> A2A (outbound)
+The existing `src/family_assistant/a2a/converters.py` already handles most of the conversion:
+
+- **Outbound (FA -> A2A)**: `content_parts_to_a2a_parts()` converts `ContentPartDict` lists to A2A
+  `Part` lists. The client adds a size guard for inline attachments
+  (`MAX_INLINE_ATTACHMENT_BYTES = 10 MB`) before calling this converter.
+- **Inbound (A2A -> FA)**: `a2a_parts_to_content_parts()` converts A2A parts back to FA format.
+
+The client adds one new function for extracting a `ChatInteractionResult` from a completed A2A task:
 
 ```python
-async def fa_content_to_a2a_parts(
-    content_parts: list[ContentPartDict],
-    attachment_registry: AttachmentRegistry,
-    db_context: DatabaseContext,
-) -> list[Part]:
-    parts = []
-    for part in content_parts:
-        if part["type"] == "text":
-            parts.append(TextPart(text=part["text"]))
-        elif part["type"] == "attachment":
-            attachment = await attachment_registry.get_attachment(db_context, part["attachment_id"])
-            data = attachment.data
-            if len(data) > MAX_INLINE_ATTACHMENT_BYTES:
-                raise ValueError(
-                    f"Attachment {part['attachment_id']} is {len(data)} bytes, "
-                    f"exceeds {MAX_INLINE_ATTACHMENT_BYTES} byte limit for A2A inline transfer"
-                )
-            parts.append(FilePart(
-                file=FileContent(
-                    bytes=base64.b64encode(data).decode(),
-                    mimeType=attachment.mime_type,
-                    name=attachment.filename,
-                ),
-            ))
-    return parts
-```
+async def a2a_task_to_chat_result(task: Task) -> ChatInteractionResult:
+    """Convert a completed A2A Task to a ChatInteractionResult.
 
-#### A2A -> FA (inbound)
-
-```python
-async def a2a_response_to_fa_result(
-    task: Task,
-    attachment_registry: AttachmentRegistry,
-    db_context: DatabaseContext,
-) -> ChatInteractionResult:
+    Extracts text from artifacts first, falling back to the terminal
+    agent message if no artifacts are present.
+    """
     text_parts = []
-    attachment_ids = []
 
     # Extract from artifacts (primary output)
     for artifact in task.artifacts or []:
         for part in artifact.parts:
-            if isinstance(part, TextPart):
-                text_parts.append(part.text)
-            elif isinstance(part, FilePart):
-                att_id = await attachment_registry.store_attachment(...)
-                attachment_ids.append(att_id)
-            elif isinstance(part, DataPart):
-                text_parts.append(json.dumps(part.data, indent=2))
+            inner = part.root
+            if isinstance(inner, TextPart):
+                text_parts.append(inner.text)
+            elif isinstance(inner, DataPart):
+                text_parts.append(json.dumps(inner.data, indent=2))
 
     # Fall back to the terminal agent message if no artifacts
     if not text_parts and task.history:
         for msg in reversed(task.history):
             if msg.role == Role.agent:
                 for part in msg.parts:
-                    if isinstance(part, TextPart):
-                        text_parts.append(part.text)
+                    inner = part.root
+                    if isinstance(inner, TextPart):
+                        text_parts.append(inner.text)
                 break
 
     return ChatInteractionResult.success(
         text_reply="\n\n".join(text_parts),
-        attachment_ids=attachment_ids or None,
     )
 ```
+
+Note: `FilePart` handling in artifacts (storing remote files as local attachments) is deferred to a
+future iteration. Text and structured data are the priority for initial implementation.
 
 ### Task Lifecycle Handling
 
@@ -371,11 +365,11 @@ For the initial implementation, use synchronous `message/send`. Streaming can be
 
 ### Milestone 1: Core A2A Client
 
-1. Add `a2a-sdk` dependency
-2. Create `src/family_assistant/a2a/` package with:
-   - `auth.py` — Auth config model
-   - `client.py` — `A2AClientWrapper` with OpenTelemetry spans for discovery and message calls
-   - `content_mapping.py` — FA \<-> A2A content conversion
+`a2a-sdk` is already a dependency. Add to the existing `src/family_assistant/a2a/` package:
+
+1. `auth.py` — Auth config model
+2. `client.py` — `A2AClientWrapper` with OpenTelemetry spans for discovery and message calls. Uses
+   existing `content_parts_to_a2a_parts()` from `converters.py` for outbound conversion.
 3. Unit tests with mocked HTTP responses covering:
    - Agent card discovery (success, unreachable, malformed)
    - `message/send` happy path (task -> completed with artifacts)
@@ -390,11 +384,14 @@ For the initial implementation, use synchronous `message/send`. Streaming can be
 3. Update registry type from `dict[str, ProcessingService]` to `dict[str, DelegatableService]`
 4. Update `delegate_to_service_tool` if needed (should be minimal since it already goes through the
    registry)
-5. Integration tests with a mock A2A server covering:
-   - Artifact-only responses (text, file, structured data)
-   - Message-only responses (agent that returns no artifacts)
-   - Mixed responses (artifacts + final message)
+5. Integration tests using the project's own A2A server (at `/api/a2a`) as the remote endpoint. Spin
+   up the FA app with a test profile, point `A2AClientWrapper` at it, and verify the full round-trip
+   through `delegate_to_service` -> `RemoteA2AService` -> A2A server -> `ProcessingService`. Test
+   scenarios:
+   - Text delegation and response round-trip
    - Delegation security levels (blocked, confirm, unrestricted)
+   - Error propagation (target service fails)
+   - Task cancellation
 
 ### Milestone 3: Configuration + Assembly
 
@@ -402,7 +399,8 @@ For the initial implementation, use synchronous `message/send`. Streaming can be
 2. Update config loader to parse `remote_a2a` profile sections
 3. Update `assistant.py::setup_dependencies()` to create `RemoteA2AService` instances
 4. Add config validation (agent URL reachable at startup, auth configured)
-5. End-to-end test with a real A2A sample server
+5. End-to-end test: configure a remote profile pointing at the local A2A server, verify delegation
+   works through the full config -> assembly -> delegation -> A2A -> response pipeline
 
 ### Milestone 4: Streaming + Multi-turn (Future)
 
@@ -446,5 +444,4 @@ calling LLM. URL-based file transfer can be added later if needed for larger pay
 
 ## Dependencies
 
-- `a2a-sdk` (PyPI) — Official Python SDK for A2A protocol
-- `httpx` — Already a transitive dependency via a2a-sdk; also used elsewhere in the project
+No new dependencies required. `a2a-sdk` and `httpx` are already in the project.
