@@ -272,7 +272,7 @@ for profile_def in resolved_profiles:
 ```python
 async def fa_content_to_a2a_parts(
     content_parts: list[ContentPartDict],
-    attachment_registry: AttachmentRegistry | None,
+    attachment_registry: AttachmentRegistry,
     db_context: DatabaseContext,
 ) -> list[Part]:
     parts = []
@@ -280,7 +280,6 @@ async def fa_content_to_a2a_parts(
         if part["type"] == "text":
             parts.append(TextPart(text=part["text"]))
         elif part["type"] == "attachment":
-            # Fetch attachment data, convert to FilePart
             attachment = await attachment_registry.get_attachment(db_context, part["attachment_id"])
             parts.append(FilePart(
                 file=FileContent(
@@ -295,25 +294,33 @@ async def fa_content_to_a2a_parts(
 #### A2A -> FA (inbound)
 
 ```python
-async def a2a_artifacts_to_fa_result(
+async def a2a_response_to_fa_result(
     task: Task,
-    attachment_registry: AttachmentRegistry | None,
+    attachment_registry: AttachmentRegistry,
     db_context: DatabaseContext,
 ) -> ChatInteractionResult:
     text_parts = []
     attachment_ids = []
 
+    # Extract from artifacts (primary output)
     for artifact in task.artifacts or []:
         for part in artifact.parts:
             if isinstance(part, TextPart):
                 text_parts.append(part.text)
             elif isinstance(part, FilePart):
-                # Store file as FA attachment, get ID
                 att_id = await attachment_registry.store_attachment(...)
                 attachment_ids.append(att_id)
             elif isinstance(part, DataPart):
-                # Serialize structured data as text
                 text_parts.append(json.dumps(part.data, indent=2))
+
+    # Fall back to the terminal agent message if no artifacts
+    if not text_parts and task.history:
+        for msg in reversed(task.history):
+            if msg.role == Role.agent:
+                for part in msg.parts:
+                    if isinstance(part, TextPart):
+                        text_parts.append(part.text)
+                break
 
     return ChatInteractionResult.success(
         text_reply="\n\n".join(text_parts),
@@ -407,7 +414,11 @@ For the initial implementation, use synchronous `message/send`. Streaming can be
 5. **Security**: Use the same security model as local delegation targets
    (`delegation_security_level` on the profile). The risks are not meaningfully different from local
    profiles — both execute arbitrary LLM-driven logic. The existing blocked/confirm/unrestricted
-   model is sufficient.
+   model is sufficient. Endpoint allowlisting is implicit: remote agent URLs are configured in
+   `config.yaml` by the operator, not discovered dynamically or specified by the LLM. The
+   `delegate_to_service` tool only accepts a `target_service_id` that maps to a pre-configured
+   profile — the LLM cannot redirect delegation to an arbitrary endpoint. This is the same trust
+   model as MCP server configurations.
 
 ## Open Questions
 
