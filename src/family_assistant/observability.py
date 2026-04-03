@@ -15,6 +15,7 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
+from urllib.parse import SplitResult, urlsplit, urlunsplit
 
 from opentelemetry import metrics, trace
 
@@ -27,6 +28,27 @@ if TYPE_CHECKING:
     from family_assistant.config_models import OTelConfig
 
 logger = logging.getLogger(__name__)
+
+
+def _normalize_otlp_http_endpoint(endpoint: str, signal_path: str) -> str:
+    """Append the OTLP signal path unless the endpoint already includes it."""
+    parsed_endpoint = urlsplit(endpoint)
+    signal_suffix = f"/{signal_path}"
+    normalized_path = parsed_endpoint.path.rstrip("/")
+    if normalized_path.endswith(signal_suffix):
+        return endpoint
+
+    path = f"{normalized_path}{signal_suffix}" if normalized_path else signal_suffix
+
+    return urlunsplit(
+        SplitResult(
+            scheme=parsed_endpoint.scheme,
+            netloc=parsed_endpoint.netloc,
+            path=path,
+            query=parsed_endpoint.query,
+            fragment=parsed_endpoint.fragment,
+        )
+    )
 
 
 @dataclass
@@ -76,6 +98,8 @@ def _create_trace_exporter(config: OTelConfig) -> SpanExporter | None:
         )
 
         endpoint = config.otlp_traces_endpoint or config.otlp_endpoint
+        if config.otlp_traces_endpoint is None:
+            endpoint = _normalize_otlp_http_endpoint(endpoint, "v1/traces")
         return HttpExporter(endpoint=endpoint)
 
     msg = f"Unknown traces exporter type: {exporter_type!r}. Use 'otlp-grpc', 'otlp-http', 'console', or 'none'."
@@ -116,6 +140,8 @@ def _create_meter_provider(
         )
 
         endpoint = config.otlp_metrics_endpoint or config.otlp_endpoint
+        if config.otlp_metrics_endpoint is None:
+            endpoint = _normalize_otlp_http_endpoint(endpoint, "v1/metrics")
         reader = PeriodicExportingMetricReader(HttpMetricExporter(endpoint=endpoint))
         return MeterProvider(resource=resource, metric_readers=[reader])
 
@@ -173,6 +199,11 @@ def setup_observability(
     meter_provider = _create_meter_provider(config, resource)
     if meter_provider is not None:
         metrics.set_meter_provider(meter_provider)
+    else:
+        logger.info(
+            "OpenTelemetry metrics exporter disabled; installing NoOp meter provider."
+        )
+        metrics.set_meter_provider(metrics.NoOpMeterProvider())
 
     # Auto-instrumentation
     from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
