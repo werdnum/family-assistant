@@ -532,16 +532,14 @@ async def test_attachment_response_error_handling(
             state="attached",
             timeout=30000,
         )
-        tool_call_rendered = (
-            await page.locator('[data-ui="tool-call-content"]').count() > 0
-        )
+        error_ui_rendered = True
     except PlaywrightTimeoutError:
         # If the tool doesn't render at all, that's also a valid error state
-        tool_call_rendered = False
+        error_ui_rendered = False
         print("Tool call failed to render - this is acceptable for error cases")
 
-    if tool_call_rendered:
-        # If tool rendered, verify it shows error state appropriately
+    if error_ui_rendered:
+        # If any error UI rendered, verify it shows an appropriate error state.
         tool_call_locator = page.locator('[data-ui="tool-call-content"]')
         tool_call_count = await tool_call_locator.count()
 
@@ -556,58 +554,58 @@ async def test_attachment_response_error_handling(
                 f"Tool call rendered with text: {tool_call_text[:100] if tool_call_text else 'None'}"
             )
 
-            # Check for error indication in the tool UI
-            tool_result_element = page.locator('[data-testid="tool-result"]')
-            tool_result_count = await tool_result_element.count()
+        # Check for error indication in the tool UI
+        tool_result_element = page.locator('[data-testid="tool-result"]')
+        tool_result_count = await tool_result_element.count()
 
-            error_found = False
-            if tool_result_count > 0:
-                # Check if tool result indicates an error
-                try:
-                    tool_result_text = await tool_result_element.first.text_content(
-                        timeout=2000
-                    )
-                except PlaywrightTimeoutError:
-                    # Tool result may disappear in fail-fast error paths; treat this
-                    # as "no tool result rendered" for the assertions below.
-                    tool_result_text = None
-                    tool_result_count = 0
-
-                error_found = tool_result_text is not None and (
-                    "error" in tool_result_text.lower()
-                    or "failed" in tool_result_text.lower()
-                    or "no valid attachments found" in tool_result_text.lower()
+        error_found = False
+        if tool_result_count > 0:
+            # Check if tool result indicates an error
+            try:
+                tool_result_text = await tool_result_element.first.text_content(
+                    timeout=2000
                 )
+            except PlaywrightTimeoutError:
+                # Tool result may disappear in fail-fast error paths; treat this
+                # as "no tool result rendered" for the assertions below.
+                tool_result_text = None
+                tool_result_count = 0
 
-            # Verify that no valid attachment preview is displayed for the error case
-            attachment_previews = page.locator('[data-testid="attachment-preview"]')
-            preview_count = await attachment_previews.count()
-
-            # Check if any attachment previews show error states
-            failed_to_load_found = False
-            if preview_count > 0:
-                for i in range(preview_count):
-                    preview = attachment_previews.nth(i)
-                    preview_text = await preview.text_content()
-                    if preview_text and "failed to load" in preview_text.lower():
-                        failed_to_load_found = True
-                        break
-
-            # For error cases, we should have either:
-            # 1. Error message in tool result OR
-            # 2. No attachment previews OR
-            # 3. "Failed to load" previews OR
-            # 4. No tool result at all (which indicates the tool failed)
-            assert (
-                error_found
-                or preview_count == 0
-                or failed_to_load_found
-                or tool_result_count == 0
-            ), (
-                f"Expected error handling: error_found={error_found}, "
-                f"preview_count={preview_count}, failed_to_load_found={failed_to_load_found}, "
-                f"tool_result_count={tool_result_count}"
+            error_found = tool_result_text is not None and (
+                "error" in tool_result_text.lower()
+                or "failed" in tool_result_text.lower()
+                or "no valid attachments found" in tool_result_text.lower()
             )
+
+        # Verify that no valid attachment preview is displayed for the error case
+        attachment_previews = page.locator('[data-testid="attachment-preview"]')
+        preview_count = await attachment_previews.count()
+
+        # Check if any attachment previews show error states
+        failed_to_load_found = False
+        if preview_count > 0:
+            for i in range(preview_count):
+                preview = attachment_previews.nth(i)
+                preview_text = await preview.text_content()
+                if preview_text and "failed to load" in preview_text.lower():
+                    failed_to_load_found = True
+                    break
+
+        # For error cases, we should have either:
+        # 1. Error message in tool result OR
+        # 2. No attachment previews OR
+        # 3. "Failed to load" previews OR
+        # 4. No tool result at all (which indicates the tool failed)
+        assert (
+            error_found
+            or preview_count == 0
+            or failed_to_load_found
+            or tool_result_count == 0
+        ), (
+            f"Expected error handling: error_found={error_found}, "
+            f"preview_count={preview_count}, failed_to_load_found={failed_to_load_found}, "
+            f"tool_result_count={tool_result_count}"
+        )
 
     print("Error handling test completed - invalid attachment handled appropriately")
 
