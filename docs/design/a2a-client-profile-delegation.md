@@ -281,9 +281,15 @@ async def fa_content_to_a2a_parts(
             parts.append(TextPart(text=part["text"]))
         elif part["type"] == "attachment":
             attachment = await attachment_registry.get_attachment(db_context, part["attachment_id"])
+            data = attachment.data
+            if len(data) > MAX_INLINE_ATTACHMENT_BYTES:
+                raise ValueError(
+                    f"Attachment {part['attachment_id']} is {len(data)} bytes, "
+                    f"exceeds {MAX_INLINE_ATTACHMENT_BYTES} byte limit for A2A inline transfer"
+                )
             parts.append(FilePart(
                 file=FileContent(
-                    bytes=base64.b64encode(attachment.data).decode(),
+                    bytes=base64.b64encode(data).decode(),
                     mimeType=attachment.mime_type,
                     name=attachment.filename,
                 ),
@@ -370,7 +376,12 @@ For the initial implementation, use synchronous `message/send`. Streaming can be
    - `auth.py` — Auth config model
    - `client.py` — `A2AClientWrapper` with OpenTelemetry spans for discovery and message calls
    - `content_mapping.py` — FA \<-> A2A content conversion
-3. Unit tests with mocked HTTP responses
+3. Unit tests with mocked HTTP responses covering:
+   - Agent card discovery (success, unreachable, malformed)
+   - `message/send` happy path (task -> completed with artifacts)
+   - Task states: `failed`, `input_required`, `auth_required`, `canceled`, `rejected`
+   - Timeout and network error handling
+   - Attachment size limit enforcement (under limit, at limit, over limit)
 
 ### Milestone 2: Remote Service + Registry Integration
 
@@ -379,7 +390,11 @@ For the initial implementation, use synchronous `message/send`. Streaming can be
 3. Update registry type from `dict[str, ProcessingService]` to `dict[str, DelegatableService]`
 4. Update `delegate_to_service_tool` if needed (should be minimal since it already goes through the
    registry)
-5. Integration tests with a mock A2A server
+5. Integration tests with a mock A2A server covering:
+   - Artifact-only responses (text, file, structured data)
+   - Message-only responses (agent that returns no artifacts)
+   - Mixed responses (artifacts + final message)
+   - Delegation security levels (blocked, confirm, unrestricted)
 
 ### Milestone 3: Configuration + Assembly
 
@@ -420,11 +435,14 @@ For the initial implementation, use synchronous `message/send`. Streaming can be
    profile — the LLM cannot redirect delegation to an arbitrary endpoint. This is the same trust
    model as MCP server configurations.
 
-## Open Questions
+## Design Decisions
 
-1. **Attachment size limits**: A2A uses inline base64 for file parts. Large attachments (images,
-   PDFs) could bloat the JSON-RPC payload. Should we enforce size limits or prefer URL-based file
-   references?
+### Attachment Size Limits
+
+A2A uses inline base64 for file parts, which bloats payload size by ~33%. To prevent memory spikes
+and oversized JSON-RPC requests, enforce a `MAX_INLINE_ATTACHMENT_BYTES` limit (default 10 MB) on
+outbound attachments. Attachments exceeding the limit are rejected with an error surfaced to the
+calling LLM. URL-based file transfer can be added later if needed for larger payloads.
 
 ## Dependencies
 
