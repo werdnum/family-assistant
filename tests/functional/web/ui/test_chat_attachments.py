@@ -8,7 +8,7 @@ import sys
 import uuid
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, TypedDict
 
 import pytest
 from PIL import Image
@@ -17,7 +17,15 @@ from family_assistant.llm import LLMOutput, ToolCallFunction, ToolCallItem
 from family_assistant.storage.base import attachment_metadata_table
 from tests.functional.web.conftest import WebTestFixture
 from tests.functional.web.pages.chat_page import ChatPage
+from tests.helpers import wait_for_condition
 from tests.mocks.mock_llm import RuleBasedMockLLMClient
+
+
+class ConversationHistoryMessage(TypedDict, total=False):
+    """Subset of conversation message fields used by this test."""
+
+    role: str
+    content: object
 
 
 def should_handle_attach_tool_follow_up(args: dict) -> bool:
@@ -525,9 +533,8 @@ async def test_attachment_response_error_handling(
     # Wait for the streaming interaction to finish before asserting the final DOM state.
     # Invalid attachments can fail in multiple legitimate ways here:
     # 1. A rendered tool error,
-    # 2. Rendered fallback previews marked "failed to load",
-    # 3. An assistant-level diagnostics error after tool execution, or
-    # 4. A fail-fast path where no tool UI renders at all.
+    # 2. Rendered fallback previews marked "failed to load", or
+    # 3. An explicit error surfaced outside the tool UI.
     await chat_page.wait_for_streaming_complete(timeout=30000)
 
     tool_call_locator = page.locator('[data-ui="tool-call-content"]')
@@ -578,21 +585,48 @@ async def test_attachment_response_error_handling(
     assistant_error_found = any(
         "encountered an error" in text for text in assistant_texts
     )
-    no_tool_ui_rendered = (
-        tool_call_count == 0 and tool_result_count == 0 and preview_count == 0
-    )
+
+    conversation_id = await chat_page.get_current_conversation_id()
+    assert conversation_id is not None, "Conversation ID should be available"
+
+    history_error_messages: list[ConversationHistoryMessage] = []
+    history_error_found = False
+
+    if not (error_found or previews_show_load_failure or assistant_error_found):
+
+        async def get_history_error_messages() -> list[ConversationHistoryMessage]:
+            response = await page.request.get(
+                f"{web_test_fixture.base_url}/api/v1/chat/conversations/{conversation_id}/messages?limit=0"
+            )
+            assert response.status == 200, (
+                f"Conversation messages API should succeed, got {response.status}"
+            )
+            data = await response.json()
+            return [
+                message
+                for message in data.get("messages", [])
+                if message.get("role") == "error"
+            ]
+
+        history_error_messages = await wait_for_condition(
+            get_history_error_messages,
+            timeout=5.0,
+            description="persisted conversation error message",
+        )
+        history_error_found = True
 
     assert (
         error_found
         or previews_show_load_failure
         or assistant_error_found
-        or no_tool_ui_rendered
+        or history_error_found
     ), (
         f"Expected invalid attachment UI state: error_found={error_found}, "
         f"previews_show_load_failure={previews_show_load_failure}, "
         f"assistant_error_found={assistant_error_found}, "
-        f"no_tool_ui_rendered={no_tool_ui_rendered}, preview_texts={preview_texts}, "
-        f"tool_result_texts={tool_result_texts}, assistant_texts={assistant_texts}"
+        f"history_error_found={history_error_found}, preview_texts={preview_texts}, "
+        f"tool_result_texts={tool_result_texts}, assistant_texts={assistant_texts}, "
+        f"history_error_messages={history_error_messages}"
     )
 
     print("Error handling test completed - invalid attachment handled appropriately")
