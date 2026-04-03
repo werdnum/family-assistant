@@ -27,18 +27,18 @@ python -m family_assistant
 
 ### Environment Variables
 
-| Variable                              | Default                 | Description                                                   |
-| ------------------------------------- | ----------------------- | ------------------------------------------------------------- |
-| `OTEL_ENABLED`                        | `false`                 | Master switch — must be `true` to enable OTel                 |
-| `OTEL_SERVICE_NAME`                   | `family-assistant`      | Service name in traces                                        |
-| `OTEL_TRACES_EXPORTER`                | `otlp-grpc`             | `otlp-grpc`, `otlp-http`, `console`, or `none`                |
-| `OTEL_METRICS_EXPORTER`               | `otlp-grpc`             | `otlp-grpc`, `otlp-http`, `console`, or `none`                |
-| `OTEL_EXPORTER_OTLP_ENDPOINT`         | `http://localhost:4317` | Shared OTLP endpoint (gRPC port; use `:4318` for `otlp-http`) |
-| `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT`  | _(uses shared)_         | Override endpoint for traces only                             |
-| `OTEL_EXPORTER_OTLP_METRICS_ENDPOINT` | _(uses shared)_         | Override endpoint for metrics only                            |
-| `OTEL_LOG_CORRELATION`                | `true`                  | Inject trace/span IDs into Python log records                 |
-| `OTEL_TRACES_SAMPLE_RATE`             | `1.0`                   | Sampling rate (0.0–1.0)                                       |
-| `OTEL_DEBUG_CONSOLE_EXPORTER`         | `false`                 | Also print spans to console (for debugging)                   |
+| Variable                              | Default                 | Description                                                                                     |
+| ------------------------------------- | ----------------------- | ----------------------------------------------------------------------------------------------- |
+| `OTEL_ENABLED`                        | `false`                 | Master switch — must be `true` to enable OTel                                                   |
+| `OTEL_SERVICE_NAME`                   | `family-assistant`      | Service name in traces                                                                          |
+| `OTEL_TRACES_EXPORTER`                | `otlp-grpc`             | `otlp-grpc`, `otlp-http`, `console`, or `none`                                                  |
+| `OTEL_METRICS_EXPORTER`               | `otlp-grpc`             | `otlp-grpc`, `otlp-http`, `console`, or `none`                                                  |
+| `OTEL_EXPORTER_OTLP_ENDPOINT`         | `http://localhost:4317` | Shared OTLP endpoint (gRPC port; for `otlp-http` the app appends `/v1/traces` or `/v1/metrics`) |
+| `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT`  | _(uses shared)_         | Override endpoint for traces only                                                               |
+| `OTEL_EXPORTER_OTLP_METRICS_ENDPOINT` | _(uses shared)_         | Override endpoint for metrics only                                                              |
+| `OTEL_LOG_CORRELATION`                | `true`                  | Inject trace/span IDs into Python log records                                                   |
+| `OTEL_TRACES_SAMPLE_RATE`             | `1.0`                   | Sampling rate (0.0–1.0)                                                                         |
+| `OTEL_DEBUG_CONSOLE_EXPORTER`         | `false`                 | Also print spans to console (for debugging)                                                     |
 
 ### When disabled
 
@@ -57,6 +57,11 @@ export OTEL_ENABLED=true
 export OTEL_TRACES_EXPORTER=console   # Print spans to stdout
 export OTEL_METRICS_EXPORTER=none     # Disable metrics export
 ```
+
+When `OTEL_TRACES_EXPORTER=otlp-http`, a shared base endpoint like `http://jaeger:4318` is valid.
+Family Assistant normalizes the shared OTLP endpoint to the correct signal path automatically.
+Signal-specific endpoints are used exactly as configured. When `OTEL_METRICS_EXPORTER=none`, the app
+installs a no-op meter provider so instrumentations do not fall back to a separate metrics pipeline.
 
 ### Docker Compose with Jaeger
 
