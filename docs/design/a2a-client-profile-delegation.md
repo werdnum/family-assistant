@@ -198,15 +198,15 @@ class RemoteA2AService:
 
 Key translation logic:
 
-| FA Concept                              | A2A Concept                                       |
-| --------------------------------------- | ------------------------------------------------- |
-| `trigger_content_parts` (text)          | `TextPart` in A2A `Message`                       |
-| `trigger_content_parts` (attachment)    | `FilePart` in A2A `Message`                       |
-| `conversation_id`                       | A2A `contextId`                                   |
-| `subconversation_id`                    | A2A `taskId` (new task per delegation)            |
-| `ChatInteractionResult.text_reply`      | Text from A2A `Artifact` or final agent `Message` |
-| `ChatInteractionResult.attachment_ids`  | `FilePart`s from A2A Artifacts (stored locally)   |
-| `ChatInteractionResult.error_traceback` | A2A task state `failed` + error info              |
+| FA Concept                              | A2A Concept                                              |
+| --------------------------------------- | -------------------------------------------------------- |
+| `trigger_content_parts` (text)          | `TextPart` in A2A `Message`                              |
+| `trigger_content_parts` (attachment)    | `FilePart` in A2A `Message`                              |
+| `conversation_id`                       | A2A `contextId`                                          |
+| `subconversation_id`                    | (not mapped — `taskId` omitted, server assigns it)       |
+| `ChatInteractionResult.text_reply`      | Text from A2A `Artifact` or final agent `Message`        |
+| `ChatInteractionResult.attachment_ids`  | Not supported in MVP (file artifacts logged and skipped) |
+| `ChatInteractionResult.error_traceback` | A2A task state `failed` + error info                     |
 
 #### 4. Configuration
 
@@ -309,6 +309,8 @@ async def a2a_task_to_chat_result(task: Task) -> ChatInteractionResult:
                 text_parts.append(inner.text)
             elif isinstance(inner, DataPart):
                 text_parts.append(json.dumps(inner.data, indent=2))
+            elif isinstance(inner, FilePart):
+                logger.warning("FilePart in artifact ignored (not yet supported)")
 
     # Fall back to the terminal agent message if no artifacts
     if not text_parts and task.history:
@@ -318,6 +320,10 @@ async def a2a_task_to_chat_result(task: Task) -> ChatInteractionResult:
                     inner = part.root
                     if isinstance(inner, TextPart):
                         text_parts.append(inner.text)
+                    elif isinstance(inner, DataPart):
+                        text_parts.append(json.dumps(inner.data, indent=2))
+                    elif isinstance(inner, FilePart):
+                        logger.warning("FilePart in agent message ignored (not yet supported)")
                 break
 
     return ChatInteractionResult.success(
