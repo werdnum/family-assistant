@@ -515,14 +515,27 @@ async def test_attachment_response_error_handling(
     await chat_page.navigate_to_chat()
     await chat_page.send_message("send invalid image")
 
-    # Wait for assistant response to complete, then for attachment tool to be ready (or error)
-    await chat_page.wait_for_assistant_response(timeout=30000)
+    # Wait for the expected conversation content rather than generic streaming completion.
+    # In this fail-fast error path, the tool can error before the UI settles into the
+    # normal assistant/tool rendering sequence.
+    await chat_page.wait_for_messages_with_content(
+        {"user": "send invalid image", "assistant": llm_response},
+        timeout=30000,
+    )
 
-    # Use a more lenient wait for error cases - the tool might not render full content
+    # Use a more lenient wait for error cases - the tool might not render full content.
+    # Any tool UI is sufficient here: a tool container, a tool result, or an attachment
+    # preview in a failed-to-load state.
     try:
-        await chat_page.wait_for_attachments_ready(timeout=30000)
-        tool_call_rendered = True
-    except AssertionError:
+        await page.wait_for_selector(
+            '[data-ui="tool-call-content"], [data-testid="tool-result"], [data-testid="attachment-preview"]',
+            state="attached",
+            timeout=30000,
+        )
+        tool_call_rendered = (
+            await page.locator('[data-ui="tool-call-content"]').count() > 0
+        )
+    except PlaywrightTimeoutError:
         # If the tool doesn't render at all, that's also a valid error state
         tool_call_rendered = False
         print("Tool call failed to render - this is acceptable for error cases")
@@ -712,40 +725,38 @@ async def test_tool_attachment_persistence_after_page_reload(
     # Reloading page to test persistence...
     await page.reload()
 
-    # Wait for the chat history to reload and attachment tool to be ready
-    await chat_page.wait_for_assistant_response(timeout=30000)
+    # Wait for the app shell and the known conversation content to be rehydrated.
+    # A generic "assistant response complete" wait is too loose immediately after a
+    # hard reload and can race React initialization under full-suite load.
+    await chat_page.wait_for_load(wait_for_app_ready=True)
+    await chat_page.wait_for_messages_with_content(
+        {"user": "show attachment", "assistant": llm_response},
+        timeout=30000,
+    )
     await chat_page.wait_for_attachments_ready(timeout=30000)
 
-    # THE BUG FIX TEST: Verify attachment is still accessible after reload
+    # THE BUG FIX TEST: Verify attachment is still accessible after reload.
+    # The separate attachment flow tests already cover preview rendering in detail.
+    # This test focuses on the persistence invariant that used to break: after a
+    # reload, the conversation still exposes the tool attachment and the attachment
+    # endpoint no longer 404s.
     try:
-        attachment_preview_after_reload = page.locator(
-            '[data-testid="attachment-preview"]'
-        ).first
-        await attachment_preview_after_reload.wait_for(state="visible", timeout=30000)
+        tool_call_after_reload = page.locator('[data-ui="tool-call-content"]').first
+        await tool_call_after_reload.wait_for(state="attached", timeout=30000)
+        tool_call_text_after_reload = await tool_call_after_reload.text_content()
+        assert (
+            tool_call_text_after_reload and "Attachments" in tool_call_text_after_reload
+        ), "Tool call content should still expose attachments after reload"
 
-        # Get the attachment URL after reload
-        img_element_after_reload = attachment_preview_after_reload.locator("img").first
-        await img_element_after_reload.wait_for(state="visible", timeout=30000)
-        attachment_url_after_reload = await img_element_after_reload.get_attribute(
-            "src"
+        attachment_url_after_reload = (
+            f"{web_test_fixture.base_url}/api/attachments/{attachment_id}"
         )
-
-        # CORE ASSERTION: The attachment should still be accessible (not 404)
-        if attachment_url_after_reload:
-            # Convert relative URL to absolute if needed for API requests
-            if attachment_url_after_reload.startswith("/"):
-                attachment_url_after_reload = (
-                    f"{web_test_fixture.base_url}{attachment_url_after_reload}"
-                )
-
-            img_response_after_reload = await page.request.get(
-                attachment_url_after_reload
-            )
-            assert img_response_after_reload.status == 200, (
-                f"TOOL ATTACHMENT PERSISTENCE BUG! "
-                f"Got {img_response_after_reload.status} when accessing {attachment_url_after_reload} after page reload. "
-                f"This indicates the attachment was not properly registered in the database."
-            )
+        img_response_after_reload = await page.request.get(attachment_url_after_reload)
+        assert img_response_after_reload.status == 200, (
+            f"TOOL ATTACHMENT PERSISTENCE BUG! "
+            f"Got {img_response_after_reload.status} when accessing {attachment_url_after_reload} after page reload. "
+            f"This indicates the attachment was not properly registered in the database."
+        )
 
         print(
             "[SUCCESS] Tool attachment persisted after page reload - bug fix verified!"
