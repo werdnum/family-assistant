@@ -8,17 +8,24 @@ import sys
 import uuid
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, TypedDict
 
 import pytest
 from PIL import Image
-from playwright.async_api import TimeoutError as PlaywrightTimeoutError
 
 from family_assistant.llm import LLMOutput, ToolCallFunction, ToolCallItem
 from family_assistant.storage.base import attachment_metadata_table
 from tests.functional.web.conftest import WebTestFixture
 from tests.functional.web.pages.chat_page import ChatPage
+from tests.helpers import wait_for_condition
 from tests.mocks.mock_llm import RuleBasedMockLLMClient
+
+
+class ConversationHistoryMessage(TypedDict, total=False):
+    """Subset of conversation message fields used by this test."""
+
+    role: str
+    content: object
 
 
 def should_handle_attach_tool_follow_up(args: dict) -> bool:
@@ -515,86 +522,112 @@ async def test_attachment_response_error_handling(
     await chat_page.navigate_to_chat()
     await chat_page.send_message("send invalid image")
 
-    # Wait for assistant response to complete, then for attachment tool to be ready (or error)
-    await chat_page.wait_for_assistant_response(timeout=30000)
+    # Wait for the expected conversation content rather than generic streaming completion.
+    # In this fail-fast error path, the tool can error before the UI settles into the
+    # normal assistant/tool rendering sequence.
+    await chat_page.wait_for_messages_with_content(
+        {"user": "send invalid image", "assistant": llm_response},
+        timeout=30000,
+    )
 
-    # Use a more lenient wait for error cases - the tool might not render full content
-    try:
-        await chat_page.wait_for_attachments_ready(timeout=30000)
-        tool_call_rendered = True
-    except AssertionError:
-        # If the tool doesn't render at all, that's also a valid error state
-        tool_call_rendered = False
-        print("Tool call failed to render - this is acceptable for error cases")
+    # Wait for the streaming interaction to finish before asserting the final DOM state.
+    # Invalid attachments can fail in multiple legitimate ways here:
+    # 1. A rendered tool error,
+    # 2. Rendered fallback previews marked "failed to load", or
+    # 3. An explicit error surfaced outside the tool UI.
+    await chat_page.wait_for_streaming_complete(timeout=30000)
 
-    if tool_call_rendered:
-        # If tool rendered, verify it shows error state appropriately
-        tool_call_locator = page.locator('[data-ui="tool-call-content"]')
-        tool_call_count = await tool_call_locator.count()
+    tool_call_locator = page.locator('[data-ui="tool-call-content"]')
+    tool_call_count = await tool_call_locator.count()
+    tool_call_text = None
+    if tool_call_count > 0:
+        tool_call_element = tool_call_locator.first
+        await tool_call_element.wait_for(state="attached", timeout=5000)
+        tool_call_text = await tool_call_element.text_content(timeout=2000)
+        print(
+            f"Tool call rendered with text: {tool_call_text[:100] if tool_call_text else 'None'}"
+        )
+        assert tool_call_text is not None and "Attachments" in tool_call_text
 
-        if tool_call_count > 0:
-            tool_call_element = tool_call_locator.first
-            try:
-                await tool_call_element.wait_for(state="attached", timeout=5000)
-                tool_call_text = await tool_call_element.text_content(timeout=2000)
-            except PlaywrightTimeoutError:
-                tool_call_text = None
-            print(
-                f"Tool call rendered with text: {tool_call_text[:100] if tool_call_text else 'None'}"
+    tool_result_element = page.locator('[data-testid="tool-result"]')
+    tool_result_count = await tool_result_element.count()
+    tool_result_texts = []
+    for i in range(tool_result_count):
+        tool_result_text = await tool_result_element.nth(i).text_content(timeout=2000)
+        if tool_result_text:
+            tool_result_texts.append(tool_result_text.lower())
+
+    error_found = any(
+        "error" in text or "failed" in text or "no valid attachments found" in text
+        for text in tool_result_texts
+    )
+
+    attachment_previews = page.locator('[data-testid="attachment-preview"]')
+    preview_count = await attachment_previews.count()
+    preview_texts = []
+    for i in range(preview_count):
+        preview_text = await attachment_previews.nth(i).text_content()
+        preview_texts.append((preview_text or "").lower())
+
+    previews_show_load_failure = preview_count > 0 and all(
+        "failed to load" in text for text in preview_texts
+    )
+
+    assistant_message_elements = page.locator(
+        '[data-testid="assistant-message-content"]'
+    )
+    assistant_message_count = await assistant_message_elements.count()
+    assistant_texts = []
+    for i in range(assistant_message_count):
+        assistant_text = await assistant_message_elements.nth(i).text_content()
+        assistant_texts.append((assistant_text or "").lower())
+
+    assistant_error_found = any(
+        "encountered an error" in text for text in assistant_texts
+    )
+
+    conversation_id = await chat_page.get_current_conversation_id()
+    assert conversation_id is not None, "Conversation ID should be available"
+
+    history_error_messages: list[ConversationHistoryMessage] = []
+    history_error_found = False
+
+    if not (error_found or previews_show_load_failure or assistant_error_found):
+
+        async def get_history_error_messages() -> list[ConversationHistoryMessage]:
+            response = await page.request.get(
+                f"{web_test_fixture.base_url}/api/v1/chat/conversations/{conversation_id}/messages?limit=0"
             )
-
-            # Check for error indication in the tool UI
-            tool_result_element = page.locator('[data-testid="tool-result"]')
-            tool_result_count = await tool_result_element.count()
-
-            error_found = False
-            if tool_result_count > 0:
-                # Check if tool result indicates an error
-                try:
-                    tool_result_text = await tool_result_element.first.text_content(
-                        timeout=2000
-                    )
-                except PlaywrightTimeoutError:
-                    # Tool result may disappear in fail-fast error paths; treat this
-                    # as "no tool result rendered" for the assertions below.
-                    tool_result_text = None
-                    tool_result_count = 0
-
-                error_found = tool_result_text is not None and (
-                    "error" in tool_result_text.lower()
-                    or "failed" in tool_result_text.lower()
-                    or "no valid attachments found" in tool_result_text.lower()
-                )
-
-            # Verify that no valid attachment preview is displayed for the error case
-            attachment_previews = page.locator('[data-testid="attachment-preview"]')
-            preview_count = await attachment_previews.count()
-
-            # Check if any attachment previews show error states
-            failed_to_load_found = False
-            if preview_count > 0:
-                for i in range(preview_count):
-                    preview = attachment_previews.nth(i)
-                    preview_text = await preview.text_content()
-                    if preview_text and "failed to load" in preview_text.lower():
-                        failed_to_load_found = True
-                        break
-
-            # For error cases, we should have either:
-            # 1. Error message in tool result OR
-            # 2. No attachment previews OR
-            # 3. "Failed to load" previews OR
-            # 4. No tool result at all (which indicates the tool failed)
-            assert (
-                error_found
-                or preview_count == 0
-                or failed_to_load_found
-                or tool_result_count == 0
-            ), (
-                f"Expected error handling: error_found={error_found}, "
-                f"preview_count={preview_count}, failed_to_load_found={failed_to_load_found}, "
-                f"tool_result_count={tool_result_count}"
+            assert response.status == 200, (
+                f"Conversation messages API should succeed, got {response.status}"
             )
+            data = await response.json()
+            return [
+                message
+                for message in data.get("messages", [])
+                if message.get("role") == "error"
+            ]
+
+        history_error_messages = await wait_for_condition(
+            get_history_error_messages,
+            timeout=5.0,
+            description="persisted conversation error message",
+        )
+        history_error_found = True
+
+    assert (
+        error_found
+        or previews_show_load_failure
+        or assistant_error_found
+        or history_error_found
+    ), (
+        f"Expected invalid attachment UI state: error_found={error_found}, "
+        f"previews_show_load_failure={previews_show_load_failure}, "
+        f"assistant_error_found={assistant_error_found}, "
+        f"history_error_found={history_error_found}, preview_texts={preview_texts}, "
+        f"tool_result_texts={tool_result_texts}, assistant_texts={assistant_texts}, "
+        f"history_error_messages={history_error_messages}"
+    )
 
     print("Error handling test completed - invalid attachment handled appropriately")
 
@@ -712,40 +745,38 @@ async def test_tool_attachment_persistence_after_page_reload(
     # Reloading page to test persistence...
     await page.reload()
 
-    # Wait for the chat history to reload and attachment tool to be ready
-    await chat_page.wait_for_assistant_response(timeout=30000)
+    # Wait for the app shell and the known conversation content to be rehydrated.
+    # A generic "assistant response complete" wait is too loose immediately after a
+    # hard reload and can race React initialization under full-suite load.
+    await chat_page.wait_for_load(wait_for_app_ready=True)
+    await chat_page.wait_for_messages_with_content(
+        {"user": "show attachment", "assistant": llm_response},
+        timeout=30000,
+    )
     await chat_page.wait_for_attachments_ready(timeout=30000)
 
-    # THE BUG FIX TEST: Verify attachment is still accessible after reload
+    # THE BUG FIX TEST: Verify attachment is still accessible after reload.
+    # The separate attachment flow tests already cover preview rendering in detail.
+    # This test focuses on the persistence invariant that used to break: after a
+    # reload, the conversation still exposes the tool attachment and the attachment
+    # endpoint no longer 404s.
     try:
-        attachment_preview_after_reload = page.locator(
-            '[data-testid="attachment-preview"]'
-        ).first
-        await attachment_preview_after_reload.wait_for(state="visible", timeout=30000)
+        tool_call_after_reload = page.locator('[data-ui="tool-call-content"]').first
+        await tool_call_after_reload.wait_for(state="attached", timeout=30000)
+        tool_call_text_after_reload = await tool_call_after_reload.text_content()
+        assert (
+            tool_call_text_after_reload and "Attachments" in tool_call_text_after_reload
+        ), "Tool call content should still expose attachments after reload"
 
-        # Get the attachment URL after reload
-        img_element_after_reload = attachment_preview_after_reload.locator("img").first
-        await img_element_after_reload.wait_for(state="visible", timeout=30000)
-        attachment_url_after_reload = await img_element_after_reload.get_attribute(
-            "src"
+        attachment_url_after_reload = (
+            f"{web_test_fixture.base_url}/api/attachments/{attachment_id}"
         )
-
-        # CORE ASSERTION: The attachment should still be accessible (not 404)
-        if attachment_url_after_reload:
-            # Convert relative URL to absolute if needed for API requests
-            if attachment_url_after_reload.startswith("/"):
-                attachment_url_after_reload = (
-                    f"{web_test_fixture.base_url}{attachment_url_after_reload}"
-                )
-
-            img_response_after_reload = await page.request.get(
-                attachment_url_after_reload
-            )
-            assert img_response_after_reload.status == 200, (
-                f"TOOL ATTACHMENT PERSISTENCE BUG! "
-                f"Got {img_response_after_reload.status} when accessing {attachment_url_after_reload} after page reload. "
-                f"This indicates the attachment was not properly registered in the database."
-            )
+        img_response_after_reload = await page.request.get(attachment_url_after_reload)
+        assert img_response_after_reload.status == 200, (
+            f"TOOL ATTACHMENT PERSISTENCE BUG! "
+            f"Got {img_response_after_reload.status} when accessing {attachment_url_after_reload} after page reload. "
+            f"This indicates the attachment was not properly registered in the database."
+        )
 
         print(
             "[SUCCESS] Tool attachment persisted after page reload - bug fix verified!"

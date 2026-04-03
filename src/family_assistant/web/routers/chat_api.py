@@ -779,7 +779,6 @@ async def api_chat_send_message_stream(
     default_processing_service: Annotated[
         ProcessingService, Depends(get_processing_service)
     ],
-    db_context: Annotated[DatabaseContext, Depends(get_db)],
     web_chat_interface: Annotated["WebChatInterface", Depends(get_web_chat_interface)],
 ) -> StreamingResponse:
     """
@@ -834,13 +833,17 @@ async def api_chat_send_message_stream(
     if payload.attachments:
         # Only get attachment registry when we actually have attachments
         attachment_registry = await get_attachment_registry(request)
-        trigger_content_parts, attachment_metadata = await _process_user_attachments(
-            payload,
-            conversation_id,
-            attachment_registry,
-            db_context,
-            current_user["user_identifier"],
-        )
+        async with get_db_context(request.app.state.database_engine) as db_context:
+            (
+                trigger_content_parts,
+                attachment_metadata,
+            ) = await _process_user_attachments(
+                payload,
+                conversation_id,
+                attachment_registry,
+                db_context,
+                current_user["user_identifier"],
+            )
 
     interface_type = payload.interface_type or "api"
     user_name_for_api = "API User"
