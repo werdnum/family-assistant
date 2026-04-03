@@ -198,15 +198,20 @@ class RemoteA2AService:
 
 Key translation logic:
 
-| FA Concept                              | A2A Concept                                              |
-| --------------------------------------- | -------------------------------------------------------- |
-| `trigger_content_parts` (text)          | `TextPart` in A2A `Message`                              |
-| `trigger_content_parts` (attachment)    | `FilePart` in A2A `Message`                              |
-| `conversation_id`                       | A2A `contextId`                                          |
-| `subconversation_id`                    | (not mapped — `taskId` omitted, server assigns it)       |
-| `ChatInteractionResult.text_reply`      | Text from A2A `Artifact` or final agent `Message`        |
-| `ChatInteractionResult.attachment_ids`  | Not supported in MVP (file artifacts logged and skipped) |
-| `ChatInteractionResult.error_traceback` | A2A task state `failed` + error info                     |
+| FA Concept                              | A2A Concept                                                     |
+| --------------------------------------- | --------------------------------------------------------------- |
+| `trigger_content_parts` (text)          | `TextPart` in A2A `Message`                                     |
+| `trigger_content_parts` (attachment)    | `FilePart` in A2A `Message`                                     |
+| `conversation_id`                       | A2A `contextId`                                                 |
+| `subconversation_id`                    | `taskId` omitted on first send; server-assigned ID persisted    |
+| `ChatInteractionResult.text_reply`      | Text from A2A `Artifact` or final agent `Message`               |
+| `ChatInteractionResult.attachment_ids`  | `FilePart`s from A2A Artifacts (stored via attachment registry) |
+| `ChatInteractionResult.error_traceback` | A2A task state `failed` + error info                            |
+
+The client omits `taskId` on the first `message/send` and lets the remote server assign one. The
+returned `taskId` is persisted for cancellation correlation and potential follow-up messages. The
+`contextId` is derived from the FA `conversation_id` to maintain conversational continuity across
+multiple delegations in the same FA conversation.
 
 #### 4. Configuration
 
@@ -293,46 +298,54 @@ The existing `src/family_assistant/a2a/converters.py` already handles most of th
 The client adds one new function for extracting a `ChatInteractionResult` from a completed A2A task:
 
 ```python
-async def a2a_task_to_chat_result(task: Task) -> ChatInteractionResult:
+async def a2a_task_to_chat_result(
+    task: Task,
+    attachment_registry: AttachmentRegistry,
+    db_context: DatabaseContext,
+) -> ChatInteractionResult:
     """Convert a completed A2A Task to a ChatInteractionResult.
 
-    Extracts text from artifacts first, falling back to the terminal
-    agent message if no artifacts are present.
+    Extracts text and files from artifacts first, falling back to the
+    terminal agent message if no artifacts are present.
     """
-    text_parts = []
+    text_parts: list[str] = []
+    attachment_ids: list[str] = []
 
-    # Extract from artifacts (primary output)
-    for artifact in task.artifacts or []:
-        for part in artifact.parts:
+    async def extract_parts(parts: list[Part]) -> None:
+        for part in parts:
             inner = part.root
             if isinstance(inner, TextPart):
                 text_parts.append(inner.text)
             elif isinstance(inner, DataPart):
                 text_parts.append(json.dumps(inner.data, indent=2))
             elif isinstance(inner, FilePart):
-                logger.warning("FilePart in artifact ignored (not yet supported)")
+                att_id = await store_a2a_file_as_attachment(
+                    inner, attachment_registry, db_context
+                )
+                attachment_ids.append(att_id)
+
+    # Extract from artifacts (primary output)
+    for artifact in task.artifacts or []:
+        await extract_parts(artifact.parts)
 
     # Fall back to the terminal agent message if no artifacts
-    if not text_parts and task.history:
+    if not text_parts and not attachment_ids and task.history:
         for msg in reversed(task.history):
             if msg.role == Role.agent:
-                for part in msg.parts:
-                    inner = part.root
-                    if isinstance(inner, TextPart):
-                        text_parts.append(inner.text)
-                    elif isinstance(inner, DataPart):
-                        text_parts.append(json.dumps(inner.data, indent=2))
-                    elif isinstance(inner, FilePart):
-                        logger.warning("FilePart in agent message ignored (not yet supported)")
+                await extract_parts(msg.parts)
                 break
+
+    if not text_parts and not attachment_ids:
+        return ChatInteractionResult.error(
+            text_reply="Remote agent completed but produced no output.",
+            error_traceback="A2A task completed with no text, data, or file parts",
+        )
 
     return ChatInteractionResult.success(
         text_reply="\n\n".join(text_parts),
+        attachment_ids=attachment_ids or None,
     )
 ```
-
-Note: `FilePart` handling in artifacts (storing remote files as local attachments) is deferred to a
-future iteration. Text and structured data are the priority for initial implementation.
 
 ### Task Lifecycle Handling
 
@@ -363,8 +376,10 @@ For the initial implementation, use synchronous `message/send`. Streaming can be
 - **Network errors** (connection refused, timeout): Return `ChatInteractionResult.error()` with
   descriptive message. The delegation tool already handles this and reports to the LLM.
 - **Auth errors** (401/403): Return error suggesting configuration issue. Log details.
-- **Agent card fetch failure**: Fail at startup during assembly, not at delegation time. This
-  ensures misconfigured remote profiles are caught early.
+- **Agent card fetch failure**: Validate config shape at startup (URL format, auth config present),
+  but perform actual agent card discovery lazily at first delegation time with retry/backoff. This
+  avoids making app startup depend on remote agent reachability — a transient network issue
+  shouldn't prevent the app from booting.
 - **Task timeout**: Configurable per-profile. Default 300s. Cancel the A2A task on timeout.
 
 ## Implementation Plan
