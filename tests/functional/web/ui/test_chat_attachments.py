@@ -12,7 +12,6 @@ from typing import Any
 
 import pytest
 from PIL import Image
-from playwright.async_api import TimeoutError as PlaywrightTimeoutError
 
 from family_assistant.llm import LLMOutput, ToolCallFunction, ToolCallItem
 from family_assistant.storage.base import attachment_metadata_table
@@ -523,89 +522,69 @@ async def test_attachment_response_error_handling(
         timeout=30000,
     )
 
-    # Use a more lenient wait for error cases - the tool might not render full content.
-    # Any tool UI is sufficient here: a tool container, a tool result, or an attachment
-    # preview in a failed-to-load state.
-    try:
-        await page.wait_for_selector(
-            '[data-ui="tool-call-content"], [data-testid="tool-result"], [data-testid="attachment-preview"]',
-            state="attached",
-            timeout=30000,
-        )
-        error_ui_rendered = True
-    except PlaywrightTimeoutError:
-        # If the tool doesn't render at all, that's also a valid error state
-        error_ui_rendered = False
-        print("Tool call failed to render - this is acceptable for error cases")
+    # Wait for a terminal invalid-attachment UI state. The AttachToResponse tool can
+    # surface this in two stable ways:
+    # 1. An explicit error tool result, or
+    # 2. Attachment previews whose fallback label says they failed to load.
+    await page.wait_for_function(
+        """() => {
+            const errorNeedles = ['error', 'failed', 'no valid attachments found'];
+            const toolResultTexts = Array.from(
+              document.querySelectorAll('[data-testid="tool-result"]')
+            ).map((element) => (element.textContent || '').toLowerCase());
+            const previewTexts = Array.from(
+              document.querySelectorAll('[data-testid="attachment-preview"]')
+            ).map((element) => (element.textContent || '').toLowerCase());
 
-    if error_ui_rendered:
-        # If any error UI rendered, verify it shows an appropriate error state.
-        tool_call_locator = page.locator('[data-ui="tool-call-content"]')
-        tool_call_count = await tool_call_locator.count()
+            const hasExplicitErrorResult = toolResultTexts.some((text) =>
+              errorNeedles.some((needle) => text.includes(needle))
+            );
+            const previewsShowLoadFailure =
+              previewTexts.length > 0 &&
+              previewTexts.every((text) => text.includes('failed to load'));
 
-        if tool_call_count > 0:
-            tool_call_element = tool_call_locator.first
-            try:
-                await tool_call_element.wait_for(state="attached", timeout=5000)
-                tool_call_text = await tool_call_element.text_content(timeout=2000)
-            except PlaywrightTimeoutError:
-                tool_call_text = None
-            print(
-                f"Tool call rendered with text: {tool_call_text[:100] if tool_call_text else 'None'}"
-            )
+            return hasExplicitErrorResult || previewsShowLoadFailure;
+        }""",
+        timeout=30000,
+    )
 
-        # Check for error indication in the tool UI
-        tool_result_element = page.locator('[data-testid="tool-result"]')
-        tool_result_count = await tool_result_element.count()
+    tool_call_element = page.locator('[data-ui="tool-call-content"]').first
+    await tool_call_element.wait_for(state="attached", timeout=5000)
+    tool_call_text = await tool_call_element.text_content(timeout=2000)
+    print(
+        f"Tool call rendered with text: {tool_call_text[:100] if tool_call_text else 'None'}"
+    )
+    assert tool_call_text is not None and "Attachments" in tool_call_text
 
-        error_found = False
-        if tool_result_count > 0:
-            # Check if tool result indicates an error
-            try:
-                tool_result_text = await tool_result_element.first.text_content(
-                    timeout=2000
-                )
-            except PlaywrightTimeoutError:
-                # Tool result may disappear in fail-fast error paths; treat this
-                # as "no tool result rendered" for the assertions below.
-                tool_result_text = None
-                tool_result_count = 0
+    tool_result_element = page.locator('[data-testid="tool-result"]')
+    tool_result_count = await tool_result_element.count()
+    tool_result_texts = []
+    for i in range(tool_result_count):
+        tool_result_text = await tool_result_element.nth(i).text_content(timeout=2000)
+        if tool_result_text:
+            tool_result_texts.append(tool_result_text.lower())
 
-            error_found = tool_result_text is not None and (
-                "error" in tool_result_text.lower()
-                or "failed" in tool_result_text.lower()
-                or "no valid attachments found" in tool_result_text.lower()
-            )
+    error_found = any(
+        "error" in text or "failed" in text or "no valid attachments found" in text
+        for text in tool_result_texts
+    )
 
-        # Verify that no valid attachment preview is displayed for the error case
-        attachment_previews = page.locator('[data-testid="attachment-preview"]')
-        preview_count = await attachment_previews.count()
+    attachment_previews = page.locator('[data-testid="attachment-preview"]')
+    preview_count = await attachment_previews.count()
+    preview_texts = []
+    for i in range(preview_count):
+        preview_text = await attachment_previews.nth(i).text_content()
+        if preview_text:
+            preview_texts.append(preview_text.lower())
 
-        # Check if any attachment previews show error states
-        failed_to_load_found = False
-        if preview_count > 0:
-            for i in range(preview_count):
-                preview = attachment_previews.nth(i)
-                preview_text = await preview.text_content()
-                if preview_text and "failed to load" in preview_text.lower():
-                    failed_to_load_found = True
-                    break
+    previews_show_load_failure = preview_count > 0 and all(
+        "failed to load" in text for text in preview_texts
+    )
 
-        # For error cases, we should have either:
-        # 1. Error message in tool result OR
-        # 2. No attachment previews OR
-        # 3. "Failed to load" previews OR
-        # 4. No tool result at all (which indicates the tool failed)
-        assert (
-            error_found
-            or preview_count == 0
-            or failed_to_load_found
-            or tool_result_count == 0
-        ), (
-            f"Expected error handling: error_found={error_found}, "
-            f"preview_count={preview_count}, failed_to_load_found={failed_to_load_found}, "
-            f"tool_result_count={tool_result_count}"
-        )
+    assert error_found or previews_show_load_failure, (
+        f"Expected invalid attachment UI state: error_found={error_found}, "
+        f"preview_texts={preview_texts}, tool_result_texts={tool_result_texts}"
+    )
 
     print("Error handling test completed - invalid attachment handled appropriately")
 
