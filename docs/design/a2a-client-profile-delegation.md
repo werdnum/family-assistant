@@ -270,7 +270,7 @@ for profile_def in resolved_profiles:
 #### FA -> A2A (outbound)
 
 ```python
-def fa_content_to_a2a_parts(
+async def fa_content_to_a2a_parts(
     content_parts: list[ContentPartDict],
     attachment_registry: AttachmentRegistry | None,
     db_context: DatabaseContext,
@@ -295,7 +295,7 @@ def fa_content_to_a2a_parts(
 #### A2A -> FA (inbound)
 
 ```python
-def a2a_artifacts_to_fa_result(
+async def a2a_artifacts_to_fa_result(
     task: Task,
     attachment_registry: AttachmentRegistry | None,
     db_context: DatabaseContext,
@@ -361,7 +361,7 @@ For the initial implementation, use synchronous `message/send`. Streaming can be
 1. Add `a2a-sdk` dependency
 2. Create `src/family_assistant/a2a/` package with:
    - `auth.py` — Auth config model
-   - `client.py` — `A2AClientWrapper`
+   - `client.py` — `A2AClientWrapper` with OpenTelemetry spans for discovery and message calls
    - `content_mapping.py` — FA \<-> A2A content conversion
 3. Unit tests with mocked HTTP responses
 
@@ -388,36 +388,32 @@ For the initial implementation, use synchronous `message/send`. Streaming can be
 2. Handle `input_required` state with multi-turn A2A conversations
 3. Push notification support for long-running tasks
 
+## Resolved Questions
+
+1. **Agent card caching**: Load at startup, with a simple TTL cache for refresh. No need for
+   anything more sophisticated.
+
+2. **Multi-turn delegation**: Out of scope for this design. When an A2A task returns
+   `input_required`, return an error to the calling LLM so it can reformulate and re-delegate.
+   Multi-turn A2A delegation will be designed alongside multi-turn local profile delegation as a
+   separate effort.
+
+3. **Observability**: Yes — add OpenTelemetry spans for A2A calls (discovery, message/send, task
+   polling). Remote calls have meaningful latency worth tracking.
+
+4. **Fallback**: No fallback. If a remote agent is unreachable, report the error. The delegation
+   tool already handles errors gracefully and reports them to the LLM.
+
+5. **Security**: Use the same security model as local delegation targets
+   (`delegation_security_level` on the profile). The risks are not meaningfully different from local
+   profiles — both execute arbitrary LLM-driven logic. The existing blocked/confirm/unrestricted
+   model is sufficient.
+
 ## Open Questions
 
-1. **Agent card caching**: How aggressively should we cache agent cards? On startup only, or
-   periodically refresh? Cards may change (new skills, updated auth requirements).
-
-2. **Multi-turn delegation**: When an A2A task returns `input_required`, should we:
-
-   - (a) Return an error and let the calling LLM reformulate + re-delegate?
-   - (b) Support transparent multi-turn conversation with the remote agent?
-   - Option (a) is simpler and consistent with current single-turn delegation semantics.
-
-3. **Attachment size limits**: A2A uses inline base64 for file parts. Large attachments (images,
+1. **Attachment size limits**: A2A uses inline base64 for file parts. Large attachments (images,
    PDFs) could bloat the JSON-RPC payload. Should we enforce size limits or prefer URL-based file
    references?
-
-4. **Observability**: Should we create OpenTelemetry spans for A2A calls? The existing delegation
-   tool doesn't instrument the target service call, but remote calls have latency worth tracking.
-
-5. **Fallback**: If a remote agent is unreachable, should we have a fallback local profile? Or just
-   report the error?
-
-6. **Security / Rule of Two**: Remote A2A agents operate outside our trust boundary. A remote agent
-   could:
-
-   - Return prompt injection attempts in its response text
-   - Exfiltrate data sent to it in the delegation request We should consider whether remote profiles
-     should be restricted to the Untrusted-Readonly [AB] processing profile pattern — i.e., we
-     either don't send sensitive data to them, or we don't act on their responses without user
-     confirmation. At minimum, `delegation_security_level: confirm` should be the default for remote
-     profiles.
 
 ## Dependencies
 
