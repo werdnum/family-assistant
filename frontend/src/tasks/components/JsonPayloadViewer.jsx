@@ -99,6 +99,8 @@ const JsonPayloadViewer = ({ data, taskId: _taskId }) => {
     borderRadius: '3px',
     backgroundColor: isDarkMode ? '#1f2937' : '#f8f9fa',
     marginTop: '0.5rem',
+    minWidth: 0,
+    overflow: 'hidden',
   };
 
   const headerStyle = {
