@@ -139,7 +139,7 @@ async def test_index_pdf_document(db_context, mock_pipeline_embedding_generator)
         document = await db.documents.index_document(
             file_path=doc_path,
             title="Sample PDF",
-            embedding_generator=mock_pipeline_embedding_generator
+            embedding_generator=mock_pipeline_embedding_generator,
         )
 
     # Verify document is indexed
@@ -165,7 +165,7 @@ async def test_vector_search(db_context, mock_pipeline_embedding_generator):
         results = await db.documents.search(
             query="sunshine and temperatures",
             limit=3,
-            embedding_generator=mock_pipeline_embedding_generator
+            embedding_generator=mock_pipeline_embedding_generator,
         )
 
     # Verify weather document ranks highest
@@ -182,9 +182,9 @@ async def test_email_extraction(db_context):
             "From": "sender@example.com",
             "To": "recipient@example.com",
             "Subject": "Important Update",
-            "Date": "2025-01-15T10:30:00Z"
+            "Date": "2025-01-15T10:30:00Z",
         },
-        "body": "This is the email body..."
+        "body": "This is the email body...",
     }
 
     # Index email
@@ -203,11 +203,8 @@ async def test_email_extraction(db_context):
 async def test_pdf_processor_chain(db_context):
     # Create processor chain
     processor = PDFProcessorChain(
-        processors=[
-            PDFExtractor(),
-            TextCleaner(),
-            StructuredDataExtractor()
-    ])
+        processors=[PDFExtractor(), TextCleaner(), StructuredDataExtractor()]
+    )
 
     # Process PDF
     pdf_path = Path("tests/data/sample.pdf")

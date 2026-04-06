@@ -109,9 +109,7 @@ async def test_caldav_sync(radicale_server, db_context):
     # Create local event
     async with db_context() as db:
         event = await db.calendar_events.create_event(
-            title="Test Event",
-            start_time=tomorrow_at_2pm,
-            calendar_id=calendar_id
+            title="Test Event", start_time=tomorrow_at_2pm, calendar_id=calendar_id
         )
 
     # Verify event appears on CalDAV server
@@ -128,9 +126,7 @@ async def test_event_reminder(task_worker_manager, db_context):
     # Create event with reminder
     async with db_context() as db:
         event = await db.calendar_events.create_event(
-            title="Important Meeting",
-            start_time=tomorrow_at_2pm,
-            reminder_minutes=15
+            title="Important Meeting", start_time=tomorrow_at_2pm, reminder_minutes=15
         )
 
     # Register reminder handler
@@ -154,7 +150,7 @@ async def test_recurring_event_timezone(db_context):
             title="Daily Standup",
             start_time="14:00",  # 2pm in Pacific Time
             timezone="America/Los_Angeles",
-            recurrence_rule="FREQ=DAILY;BYDAY=MO,TU,WE,TH,FR"
+            recurrence_rule="FREQ=DAILY;BYDAY=MO,TU,WE,TH,FR",
         )
 
     # Verify instances are generated correctly

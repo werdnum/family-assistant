@@ -79,6 +79,7 @@ SOMETHING_TOOLS_DEFINITION: list[ToolDefinition] = [
     },
 ]
 
+
 # Tool Implementation
 async def tool_name_tool(
     exec_context: ToolExecutionContext,
@@ -133,7 +134,7 @@ AVAILABLE_FUNCTIONS: dict[str, Callable] = {
 # Add to TOOLS_DEFINITION list
 TOOLS_DEFINITION: list[ToolDefinition] = (
     # ... existing definitions ...
-    + SOMETHING_TOOLS_DEFINITION
+    +SOMETHING_TOOLS_DEFINITION
     # ... rest ...
 )
 ```
@@ -233,7 +234,10 @@ Use when structured data tells the complete story:
 ```python
 from family_assistant.tools.types import ToolResult
 
-async def enable_something_tool(exec_context: ToolExecutionContext, item_id: int) -> ToolResult:
+
+async def enable_something_tool(
+    exec_context: ToolExecutionContext, item_id: int
+) -> ToolResult:
     success = await perform_operation(item_id)
     if success:
         return ToolResult(data={"id": item_id, "enabled": True})
@@ -249,20 +253,14 @@ Use when explanation or formatting enhances understanding:
 
 ```python
 async def create_something_tool(
-    exec_context: ToolExecutionContext,
-    name: str,
-    config: dict
+    exec_context: ToolExecutionContext, name: str, config: dict
 ) -> ToolResult:
     item_id = await create_item(name, config)
     next_run = calculate_next_run(config)
 
     return ToolResult(
         text=f"Created item '{name}' (ID: {item_id}). Next run: {format_datetime(next_run)}",
-        data={
-            "id": item_id,
-            "name": name,
-            "next_run": next_run.isoformat()
-        }
+        data={"id": item_id, "name": name, "next_run": next_run.isoformat()},
     )
 ```
 
@@ -294,7 +292,7 @@ result.get_text()  # Returns '{\n  "x": 1,\n  "y": 2\n}'
 result = ToolResult(text='{"x": 1}')
 result.get_data()  # Returns {"x": 1}
 
-result = ToolResult(text='Error message')
+result = ToolResult(text="Error message")
 result.get_data()  # Returns "Error message" (string, not dict)
 ```
 
@@ -546,6 +544,7 @@ def _load_and_parse_json() -> Any:  # noqa: ANN401
     content = file_path.read_bytes()
     return json.loads(content.decode("utf-8"))
 
+
 json_data = await asyncio.to_thread(_load_and_parse_json)
 ```
 
@@ -557,6 +556,7 @@ def _render_chart() -> bytes:
         return vlc.vegalite_to_png(vl_spec=spec_dict, scale=scale)
     else:
         return vlc.vega_to_png(vg_spec=spec_dict, scale=scale)
+
 
 png_data = await asyncio.to_thread(_render_chart)
 ```

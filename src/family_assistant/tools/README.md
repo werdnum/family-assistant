@@ -60,6 +60,7 @@ SOMETHING_TOOLS_DEFINITION: list[ToolDefinition] = [
     },
 ]
 
+
 # Tool Implementation
 async def tool_name_tool(
     exec_context: ToolExecutionContext,
@@ -85,7 +86,6 @@ async def tool_name_tool(
     # Send messages: exec_context.chat_interface
 
     return "Success message or result"
-
 ```
 
 ### 2. Export the Tool in `__init__.py`
@@ -93,7 +93,6 @@ async def tool_name_tool(
 Add imports and exports to `src/family_assistant/tools/__init__.py`:
 
 ```python
-
 # Add import
 from family_assistant.tools.something import (
     SOMETHING_TOOLS_DEFINITION,
@@ -115,11 +114,9 @@ AVAILABLE_FUNCTIONS: dict[str, Callable] = {
 # Add to TOOLS_DEFINITION list
 TOOLS_DEFINITION: list[ToolDefinition] = (
     # ... existing definitions ...
-
-    + SOMETHING_TOOLS_DEFINITION
+    +SOMETHING_TOOLS_DEFINITION
     # ... rest ...
 )
-
 ```
 
 ### 3. Enable the Tool in Configuration
