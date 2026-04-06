@@ -1,7 +1,7 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Button } from '@/components/ui/button';
 
-const LARGE_PAYLOAD_THRESHOLD = 10240; // 10KB
+export const LARGE_PAYLOAD_THRESHOLD = 10240; // 10KB
 
 const JsonPayloadViewer = ({ data, taskId: _taskId }) => {
   const containerRef = useRef(null);
@@ -12,8 +12,10 @@ const JsonPayloadViewer = ({ data, taskId: _taskId }) => {
   const [useEditor, setUseEditor] = useState(false);
   const [isDarkMode, setIsDarkMode] = useState(false);
 
-  const jsonString = JSON.stringify(data, null, 2);
-  const isLargePayload = jsonString.length > LARGE_PAYLOAD_THRESHOLD;
+  const isLargePayload = useMemo(
+    () => JSON.stringify(data).length > LARGE_PAYLOAD_THRESHOLD,
+    [data]
+  );
 
   // Detect dark mode
   useEffect(() => {
@@ -118,7 +120,7 @@ const JsonPayloadViewer = ({ data, taskId: _taskId }) => {
     }
 
     try {
-      await window.navigator.clipboard.writeText(jsonString);
+      await window.navigator.clipboard.writeText(JSON.stringify(data, null, 2));
       setCopyStatus('Copied!');
       copyTimeoutRef.current = window.setTimeout(() => setCopyStatus(''), 2000);
     } catch (err) {
@@ -205,7 +207,7 @@ const JsonPayloadViewer = ({ data, taskId: _taskId }) => {
                   Load Rich Editor
                 </Button>
               </div>
-              <pre style={preStyle}>{jsonString}</pre>
+              <pre style={preStyle}>{JSON.stringify(data, null, 2)}</pre>
             </div>
           ) : (
             <div ref={containerRef} style={editorContainerStyle} />
