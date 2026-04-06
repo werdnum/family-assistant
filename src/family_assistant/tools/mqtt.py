@@ -26,11 +26,10 @@ MQTT_TOOLS_DEFINITION: list[ToolDefinition] = [
         "function": {
             "name": "mqtt_publish",
             "description": (
-                "Publish a message to an MQTT topic. Use this to push structured data "
+                "Publish a JSON object to an MQTT topic. Use this to push structured data "
                 "to external devices and services (e-ink displays, ESPHome devices, "
-                "dashboards, Home Assistant, etc.). The payload can be any JSON-serializable "
-                "value. Messages are retained by default so devices get the latest value "
-                "on reconnect."
+                "dashboards, Home Assistant, etc.). Messages are retained by default so "
+                "devices get the latest value on reconnect."
             ),
             "parameters": {
                 "type": "object",

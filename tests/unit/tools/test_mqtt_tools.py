@@ -94,6 +94,7 @@ async def test_mqtt_publish(exec_context: ToolExecutionContext) -> None:
     call_args = mock_client.publish.call_args
     assert call_args.args[0] == "family/eink/display"
     assert call_args.kwargs["retain"] is True
+    assert call_args.kwargs["payload"] == b'{"temperature": 22, "tasks": ["groceries"]}'
 
 
 @pytest.mark.asyncio

@@ -105,8 +105,8 @@ ENV_VAR_MAPPINGS: list[EnvVarMapping] = [
     # MQTT broker configuration
     EnvVarMapping("MQTT_BROKER_HOST", "mqtt_config.broker_host"),
     EnvVarMapping("MQTT_BROKER_PORT", "mqtt_config.broker_port", int),
-    EnvVarMapping("MQTT_USERNAME", "mqtt_config.username"),
-    EnvVarMapping("MQTT_PASSWORD", "mqtt_config.password"),
+    EnvVarMapping("MQTT_BROKER_USERNAME", "mqtt_config.username"),
+    EnvVarMapping("MQTT_BROKER_PASSWORD", "mqtt_config.password"),
     # User access control (list types)
     EnvVarMapping("ALLOWED_USER_IDS", "allowed_user_ids", list),
     EnvVarMapping("DEVELOPER_CHAT_ID", "developer_chat_id", int),
