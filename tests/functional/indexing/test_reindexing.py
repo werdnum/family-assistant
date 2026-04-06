@@ -112,17 +112,17 @@ async def http_client(
     if original_config:
         fastapi_app.state.config = original_config
     else:
-        delattr(fastapi_app.state, "config")
+        del fastapi_app.state.config
 
     if original_database_engine is not None:
         fastapi_app.state.database_engine = original_database_engine
     elif hasattr(fastapi_app.state, "database_engine"):
-        delattr(fastapi_app.state, "database_engine")
+        del fastapi_app.state.database_engine
 
     if original_embedding_generator is not None:
         fastapi_app.state.embedding_generator = original_embedding_generator
     elif hasattr(fastapi_app.state, "embedding_generator"):
-        delattr(fastapi_app.state, "embedding_generator")
+        del fastapi_app.state.embedding_generator
 
 
 async def _helper_handle_embed_and_store_batch(

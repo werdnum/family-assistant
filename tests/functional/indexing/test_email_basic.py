@@ -196,20 +196,20 @@ async def http_client(
     if original_app_state_config_present:
         fastapi_app.state.config = original_app_state_config_value
     elif hasattr(fastapi_app.state, "config"):
-        delattr(fastapi_app.state, "config")
+        del fastapi_app.state.config
     logger.info("Test http_client: Restored original app.state.config.")
 
     if original_embedding_generator is not None:
         fastapi_app.state.embedding_generator = original_embedding_generator
     elif hasattr(fastapi_app.state, "embedding_generator"):
-        delattr(fastapi_app.state, "embedding_generator")
+        del fastapi_app.state.embedding_generator
     logger.info("Test http_client: Restored original app.state.embedding_generator.")
 
     # Restore database engine
     if original_database_engine is not None:
         fastapi_app.state.database_engine = original_database_engine
     elif hasattr(fastapi_app.state, "database_engine"):
-        delattr(fastapi_app.state, "database_engine")
+        del fastapi_app.state.database_engine
     logger.info("Test http_client: Restored original app.state.database_engine.")
 
 

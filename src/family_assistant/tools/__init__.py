@@ -153,6 +153,10 @@ from family_assistant.tools.mock_image_tools import (
     annotate_image_tool,
     mock_camera_snapshot_tool,
 )
+from family_assistant.tools.mqtt import (
+    MQTT_TOOLS_DEFINITION,
+    mqtt_publish_tool,
+)
 from family_assistant.tools.notes import (
     NOTE_TOOLS_DEFINITION,
     add_or_update_note_tool,
@@ -328,6 +332,9 @@ __all__ = [
     "generate_video_tool",
     "MEDIA_DOWNLOAD_TOOLS_DEFINITION",
     "download_media_tool",
+    # MQTT tools
+    "MQTT_TOOLS_DEFINITION",
+    "mqtt_publish_tool",
     "COMPUTER_USE_TOOLS_DEFINITION",
     "computer_use_click_at",
     "computer_use_drag_and_drop",
@@ -424,6 +431,7 @@ _LOCAL_TOOL_DEFINITIONS: list[ToolDefinition] = (
     + WORKSPACE_TOOLS_DEFINITION
     + WORKER_TOOLS_DEFINITION
     + ENGINEERING_TOOLS_DEFINITION
+    + MQTT_TOOLS_DEFINITION
 )
 
 _LOCAL_TOOL_IMPLEMENTATIONS: dict[str, ToolImplementation] = {
@@ -529,6 +537,8 @@ _LOCAL_TOOL_IMPLEMENTATIONS: dict[str, ToolImplementation] = {
     "read_error_logs": read_error_logs,
     "create_github_issue": create_github_issue,
     "get_llm_request_history": get_llm_request_history,
+    # MQTT tools
+    "mqtt_publish": mqtt_publish_tool,
 }
 
 LOCAL_TOOL_METADATA_BY_NAME: dict[str, LocalToolMetadata] = {
@@ -1065,6 +1075,12 @@ LOCAL_TOOL_METADATA_BY_NAME: dict[str, LocalToolMetadata] = {
     "create_github_issue": _metadata(
         ToolTag.EXTERNAL_COMM,
         ToolTag.STATE_CHANGING,
+        ToolTag.OUTPUT_TRUSTED,
+    ),
+    # MQTT tools
+    "mqtt_publish": _metadata(
+        ToolTag.EXTERNAL_COMM,
+        ToolTag.HOME_AUTOMATION,
         ToolTag.OUTPUT_TRUSTED,
     ),
 }

@@ -32,7 +32,7 @@ async def test_client_config_returns_vapid_key(
         if original_config is not None:
             fastapi_app.state.config = original_config
         else:
-            delattr(fastapi_app.state, "config")
+            del fastapi_app.state.config
 
 
 @pytest.mark.asyncio
@@ -55,7 +55,7 @@ async def test_client_config_when_no_vapid_key(
         if original_config is not None:
             fastapi_app.state.config = original_config
         else:
-            delattr(fastapi_app.state, "config")
+            del fastapi_app.state.config
 
 
 @pytest.mark.asyncio

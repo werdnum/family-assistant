@@ -226,20 +226,20 @@ async def http_client(
     if original_app_state_config_present:
         fastapi_app.state.config = original_app_state_config_value
     elif hasattr(fastapi_app.state, "config"):
-        delattr(fastapi_app.state, "config")
+        del fastapi_app.state.config
     logger.info("Test http_client: Restored original app.state.config.")
 
     if original_embedding_generator is not None:
         fastapi_app.state.embedding_generator = original_embedding_generator
     elif hasattr(fastapi_app.state, "embedding_generator"):
-        delattr(fastapi_app.state, "embedding_generator")
+        del fastapi_app.state.embedding_generator
     logger.info("Test http_client: Restored original app.state.embedding_generator.")
 
     # Restore database engine
     if original_database_engine is not None:
         fastapi_app.state.database_engine = original_database_engine
     elif hasattr(fastapi_app.state, "database_engine"):
-        delattr(fastapi_app.state, "database_engine")
+        del fastapi_app.state.database_engine
     logger.info("Test http_client: Restored original app.state.database_engine.")
 
 
@@ -862,7 +862,7 @@ async def test_email_indexing_with_llm_summary_e2e(
             if original_llm_client:
                 fastapi_app.state.llm_client = original_llm_client
             else:
-                delattr(fastapi_app.state, "llm_client")
+                del fastapi_app.state.llm_client
 
         test_shutdown_event.set()
         try:
@@ -1143,10 +1143,10 @@ async def test_email_indexing_with_primary_link_extraction_e2e(
             if original_llm_client:
                 fastapi_app.state.llm_client = original_llm_client
             else:
-                delattr(fastapi_app.state, "llm_client")
+                del fastapi_app.state.llm_client
 
         if hasattr(fastapi_app.state, "scraper"):  # Restore scraper
-            delattr(fastapi_app.state, "scraper")
+            del fastapi_app.state.scraper
 
         test_shutdown_event.set()
         try:

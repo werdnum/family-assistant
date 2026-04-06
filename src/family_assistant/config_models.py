@@ -651,6 +651,17 @@ class AIWorkerConfig(BaseModel):
     docker: DockerBackendConfig | None = Field(default_factory=DockerBackendConfig)
 
 
+class MQTTConfig(BaseModel):
+    """MQTT broker configuration for publishing messages to external devices."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    broker_host: str | None = None
+    broker_port: int = 1883
+    username: str | None = None
+    password: str | None = None
+
+
 class OIDCConfig(BaseModel):
     """OpenID Connect authentication configuration."""
 
@@ -787,6 +798,7 @@ class AppConfig(BaseSettings):
     ai_worker_config: AIWorkerConfig = Field(default_factory=AIWorkerConfig)
     notes_config: NotesConfig = Field(default_factory=NotesConfig)
     skills_config: SkillsConfig = Field(default_factory=SkillsConfig)
+    mqtt_config: MQTTConfig = Field(default_factory=MQTTConfig)
 
     # LLM parameters (pattern -> parameters mapping)
     # ast-grep-ignore: no-dict-any - LLM params are provider-specific and genuinely arbitrary

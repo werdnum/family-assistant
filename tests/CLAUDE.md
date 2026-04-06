@@ -324,10 +324,12 @@ The project includes `tests/mocks/mock_llm.py` with:
   ```python
   mock_llm = RuleBasedMockLLMClient(
       rules=[
-          (lambda args: "weather" in args["messages"][0]["content"],
-           LLMOutput(content="It's sunny today!")),
+          (
+              lambda args: "weather" in args["messages"][0]["content"],
+              LLMOutput(content="It's sunny today!"),
+          ),
       ],
-      default_response=LLMOutput(content="Default response")
+      default_response=LLMOutput(content="Default response"),
   )
   ```
 

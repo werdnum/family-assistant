@@ -154,7 +154,7 @@ async def test_automation_triggered_by_event(task_worker_manager, db_context):
             name="Email Notifier",
             trigger_type="event",
             trigger_event="email_received",
-            action="send_notification"
+            action="send_notification",
         )
 
     # Register handler
@@ -167,7 +167,7 @@ async def test_automation_triggered_by_event(task_worker_manager, db_context):
     # Publish event that triggers automation
     await publish_event(
         event_type="email_received",
-        payload={"subject": "Important", "from": "boss@company.com"}
+        payload={"subject": "Important", "from": "boss@company.com"},
     )
 
     # Wait for automation to execute
@@ -188,7 +188,7 @@ async def test_event_filtering(db_context):
             trigger_type="event",
             trigger_event="email_received",
             trigger_condition='event.subject.contains("urgent")',
-            action="create_task"
+            action="create_task",
         )
 
     # Publish matching event
@@ -215,7 +215,7 @@ async def test_task_delegation_workflow(task_worker_manager, db_context):
             trigger_type="event",
             trigger_event="large_task_created",
             action_type="delegate_to_team",
-            action_params={"team": "engineering"}
+            action_params={"team": "engineering"},
         )
 
     # Register delegation handler
@@ -227,8 +227,7 @@ async def test_task_delegation_workflow(task_worker_manager, db_context):
 
     # Create large task
     await publish_event(
-        event_type="large_task_created",
-        payload={"task": "Build new feature"}
+        event_type="large_task_created", payload={"task": "Build new feature"}
     )
 
     # Wait for delegation
@@ -247,7 +246,7 @@ async def test_scheduled_automation(db_context):
             name="Daily Report",
             trigger_type="schedule",
             trigger_schedule="0 9 * * MON-FRI",  # 9am weekdays
-            action="send_daily_report"
+            action="send_daily_report",
         )
 
     # Verify schedule is parsed correctly
@@ -418,11 +417,8 @@ Automations are used throughout the system:
 event_type = "custom_business_event"
 event = {
     "type": event_type,
-    "data": {
-        "key1": "value1",
-        "key2": "value2"
-    },
-    "timestamp": datetime.now()
+    "data": {"key1": "value1", "key2": "value2"},
+    "timestamp": datetime.now(),
 }
 await publish_event(event_type, event)
 ```
@@ -435,7 +431,7 @@ automation = await db.automations.create(
     name="Dynamic Notification",
     trigger_event="event_occurred",
     action="send_notification",
-    action_template="Received: {{event.data.message}}"
+    action_template="Received: {{event.data.message}}",
 )
 
 # Publish event that fills template
@@ -452,9 +448,13 @@ automation = await db.automations.create(
     trigger_event="large_task_created",
     actions=[
         {"type": "log", "message": "Task received"},
-        {"type": "delegate_if", "condition": "task.priority == 'high'", "target": "cto"},
-        {"type": "notify", "channels": ["email", "slack"]}
-    ]
+        {
+            "type": "delegate_if",
+            "condition": "task.priority == 'high'",
+            "target": "cto",
+        },
+        {"type": "notify", "channels": ["email", "slack"]},
+    ],
 )
 ```
 

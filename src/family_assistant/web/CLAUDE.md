@@ -130,6 +130,7 @@ Use FastAPI dependencies for shared resources:
 ```python
 from family_assistant.web.dependencies import get_db, get_processing_service
 
+
 @router.get("/my-endpoint")
 async def my_endpoint(
     db: DatabaseContext = Depends(get_db),

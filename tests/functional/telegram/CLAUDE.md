@@ -56,23 +56,17 @@ The test client supports sending various media types:
 ```python
 # Send a photo
 result = await fixture.telegram_client.send_photo(
-    photo_content=photo_bytes,
-    filename="image.png",
-    caption="What's in this photo?"
+    photo_content=photo_bytes, filename="image.png", caption="What's in this photo?"
 )
 
 # Send a video
 result = await fixture.telegram_client.send_video(
-    video_content=video_bytes,
-    filename="video.mp4",
-    caption="Describe this video"
+    video_content=video_bytes, filename="video.mp4", caption="Describe this video"
 )
 
 # Send an audio file
 result = await fixture.telegram_client.send_audio(
-    audio_content=audio_bytes,
-    filename="audio.mp3",
-    caption="What song is this?"
+    audio_content=audio_bytes, filename="audio.mp3", caption="What song is this?"
 )
 
 # Send a document
@@ -80,7 +74,7 @@ result = await fixture.telegram_client.send_document(
     document_content=pdf_bytes,
     filename="document.pdf",
     mime_type="application/pdf",
-    caption="Summarize this document"
+    caption="Summarize this document",
 )
 ```
 
@@ -94,11 +88,9 @@ specific outputs:
 def matcher_func(args):
     return "weather" in args["messages"][0]["content"]
 
+
 # Add rule to fixture
-fixture.mock_llm.rules.append((
-    matcher_func,
-    LLMOutput(content="It's sunny today!")
-))
+fixture.mock_llm.rules.append((matcher_func, LLMOutput(content="It's sunny today!")))
 ```
 
 ## Testing Bot Commands
@@ -129,7 +121,7 @@ async def test_message_handler(telegram_handler_fixture):
     # Set up LLM response
     fixture.mock_llm.rules.append((
         lambda args: True,  # Match all
-        LLMOutput(content="I understand your message")
+        LLMOutput(content="I understand your message"),
     ))
 
     # Send a message via the test client

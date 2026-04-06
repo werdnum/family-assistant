@@ -569,7 +569,7 @@ def llm_request_matcher(r1, r2) -> bool:
 For complex HTTP interactions, use custom matchers to handle non-trivial variations:
 
 ```python
-@pytest.mark.vcr(match_on=['method', 'scheme', 'host', 'path'])
+@pytest.mark.vcr(match_on=["method", "scheme", "host", "path"])
 async def test_with_custom_matching():
     """Custom matcher ignores query parameter order and body variations."""
     pass
@@ -583,7 +583,7 @@ Inspect cassettes to understand what was recorded:
 import vcr
 
 # Load cassette directly
-with vcr.VCR().use_cassette('tests/cassettes/llm/test_something.yaml') as cassette:
+with vcr.VCR().use_cassette("tests/cassettes/llm/test_something.yaml") as cassette:
     print(f"Number of interactions: {len(cassette)}")
     for i, interaction in enumerate(cassette):
         print(f"Interaction {i}:")
