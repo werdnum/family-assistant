@@ -1,13 +1,19 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { Button } from '@/components/ui/button';
 
+const LARGE_PAYLOAD_THRESHOLD = 10240; // 10KB
+
 const JsonPayloadViewer = ({ data, taskId: _taskId }) => {
   const containerRef = useRef(null);
   const editorRef = useRef(null);
   const copyTimeoutRef = useRef(null);
   const [copyStatus, setCopyStatus] = useState('');
   const [isExpanded, setIsExpanded] = useState(false);
+  const [useEditor, setUseEditor] = useState(false);
   const [isDarkMode, setIsDarkMode] = useState(false);
+
+  const jsonString = JSON.stringify(data, null, 2);
+  const isLargePayload = jsonString.length > LARGE_PAYLOAD_THRESHOLD;
 
   // Detect dark mode
   useEffect(() => {
@@ -29,9 +35,11 @@ const JsonPayloadViewer = ({ data, taskId: _taskId }) => {
     }
   }, []);
 
-  // Initialize editor when expanded
+  const showEditor = isExpanded && (useEditor || !isLargePayload);
+
+  // Initialize editor when expanded and editor mode is active
   useEffect(() => {
-    if (!containerRef.current || !isExpanded) {
+    if (!containerRef.current || !showEditor) {
       return;
     }
 
@@ -41,11 +49,13 @@ const JsonPayloadViewer = ({ data, taskId: _taskId }) => {
 
     containerRef.current.innerHTML = '';
 
+    let isCancelled = false;
+
     const initEditor = async () => {
       try {
         const { JSONEditor } = await import('vanilla-jsoneditor');
 
-        if (editorRef.current) {
+        if (isCancelled || editorRef.current || !containerRef.current) {
           return;
         }
 
@@ -71,6 +81,7 @@ const JsonPayloadViewer = ({ data, taskId: _taskId }) => {
     initEditor();
 
     return () => {
+      isCancelled = true;
       if (editorRef.current) {
         editorRef.current.destroy();
         editorRef.current = null;
@@ -79,18 +90,18 @@ const JsonPayloadViewer = ({ data, taskId: _taskId }) => {
         containerRef.current.innerHTML = '';
       }
     };
-  }, [isExpanded]);
+  }, [data, showEditor]);
 
   // Update editor content when data changes
   useEffect(() => {
-    if (editorRef.current && isExpanded) {
+    if (editorRef.current && showEditor) {
       try {
         editorRef.current.update({ json: data });
       } catch (error) {
         console.error('Failed to update JSON editor:', error);
       }
     }
-  }, [data, isExpanded]);
+  }, [data, showEditor]);
 
   // Cleanup copy timeout on unmount
   useEffect(() => {
@@ -107,7 +118,6 @@ const JsonPayloadViewer = ({ data, taskId: _taskId }) => {
     }
 
     try {
-      const jsonString = JSON.stringify(data, null, 2);
       await window.navigator.clipboard.writeText(jsonString);
       setCopyStatus('Copied!');
       copyTimeoutRef.current = window.setTimeout(() => setCopyStatus(''), 2000);
@@ -141,6 +151,19 @@ const JsonPayloadViewer = ({ data, taskId: _taskId }) => {
     color: isDarkMode ? '#f9fafb' : '#374151',
   };
 
+  const preStyle = {
+    fontSize: '0.8rem',
+    fontFamily: 'monospace',
+    backgroundColor: isDarkMode ? '#0f172a' : '#fff',
+    color: isDarkMode ? '#e2e8f0' : '#1f2937',
+    padding: '0.5rem',
+    border: `1px solid ${isDarkMode ? '#374151' : '#ddd'}`,
+    borderRadius: '3px',
+    overflow: 'auto',
+    maxHeight: '300px',
+    margin: 0,
+  };
+
   const editorContainerStyle = {
     minHeight: '200px',
     maxHeight: '400px',
@@ -170,7 +193,23 @@ const JsonPayloadViewer = ({ data, taskId: _taskId }) => {
 
       {isExpanded && (
         <div style={{ padding: '0.5rem' }}>
-          <div ref={containerRef} style={editorContainerStyle} />
+          {isLargePayload && !useEditor ? (
+            <div>
+              <div style={{ marginBottom: '0.5rem' }}>
+                <Button
+                  onClick={() => setUseEditor(true)}
+                  variant="secondary"
+                  size="sm"
+                  title="Load rich editor (large payload)"
+                >
+                  Load Rich Editor
+                </Button>
+              </div>
+              <pre style={preStyle}>{jsonString}</pre>
+            </div>
+          ) : (
+            <div ref={containerRef} style={editorContainerStyle} />
+          )}
         </div>
       )}
     </div>
