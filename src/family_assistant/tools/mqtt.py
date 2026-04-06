@@ -7,6 +7,7 @@ devices, or any MQTT-connected system.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 from typing import TYPE_CHECKING
@@ -107,13 +108,21 @@ async def mqtt_publish_tool(
         len(payload_bytes),
     )
 
-    async with aiomqtt.Client(
-        hostname=host,
-        port=port,
-        username=username,
-        password=password,
-    ) as client:
-        await client.publish(topic, payload=payload_bytes, retain=retain)
+    try:
+        async with asyncio.timeout(10):
+            async with aiomqtt.Client(
+                hostname=host,
+                port=port,
+                username=username,
+                password=password,
+            ) as client:
+                await client.publish(topic, payload=payload_bytes, retain=retain)
+    except TimeoutError:
+        msg = f"Timed out connecting to MQTT broker {host}:{port}"
+        raise ValueError(msg) from None
+    except aiomqtt.MqttError as e:
+        msg = f"MQTT error publishing to {topic}: {e}"
+        raise ValueError(msg) from e
 
     return ToolResult(
         data={

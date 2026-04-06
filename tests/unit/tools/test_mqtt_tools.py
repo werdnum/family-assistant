@@ -4,6 +4,7 @@ from typing import Any, cast
 from unittest.mock import AsyncMock, MagicMock, patch
 from zoneinfo import ZoneInfo
 
+import aiomqtt
 import pytest
 
 from family_assistant.config_models import AppConfig, MQTTConfig
@@ -188,3 +189,33 @@ async def test_mqtt_publish_no_processing_service() -> None:
             topic="test/topic",
             payload={"key": "value"},
         )
+
+
+@pytest.mark.asyncio
+async def test_mqtt_publish_broker_connection_error(
+    exec_context: ToolExecutionContext,
+) -> None:
+    with patch("family_assistant.tools.mqtt.aiomqtt.Client") as mock_client_cls:
+        mock_client_cls.return_value.__aenter__.side_effect = aiomqtt.MqttError(
+            "Connection refused"
+        )
+
+        with pytest.raises(ValueError, match="MQTT error publishing to"):
+            await mqtt_publish_tool(
+                exec_context=exec_context,
+                topic="test/topic",
+                payload={"key": "value"},
+            )
+
+
+@pytest.mark.asyncio
+async def test_mqtt_publish_timeout(exec_context: ToolExecutionContext) -> None:
+    with patch("family_assistant.tools.mqtt.aiomqtt.Client") as mock_client_cls:
+        mock_client_cls.return_value.__aenter__.side_effect = TimeoutError
+
+        with pytest.raises(ValueError, match="Timed out connecting to MQTT broker"):
+            await mqtt_publish_tool(
+                exec_context=exec_context,
+                topic="test/topic",
+                payload={"key": "value"},
+            )
