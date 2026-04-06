@@ -119,6 +119,42 @@ async def test_mqtt_publish_no_retain(exec_context: ToolExecutionContext) -> Non
 
 
 @pytest.mark.asyncio
+async def test_mqtt_publish_string_payload(exec_context: ToolExecutionContext) -> None:
+    mock_client = AsyncMock()
+    with patch("family_assistant.tools.mqtt.aiomqtt.Client") as mock_client_cls:
+        mock_client_cls.return_value.__aenter__.return_value = mock_client
+
+        result = await mqtt_publish_tool(
+            exec_context=exec_context,
+            topic="home/switch/command",
+            payload="ON",
+        )
+
+    data = result.get_data()
+    assert isinstance(data, dict)
+    assert data["payload_size"] == 4  # "ON" with quotes
+
+    call_args = mock_client.publish.call_args
+    assert call_args.kwargs["payload"] == b'"ON"'
+
+
+@pytest.mark.asyncio
+async def test_mqtt_publish_list_payload(exec_context: ToolExecutionContext) -> None:
+    mock_client = AsyncMock()
+    with patch("family_assistant.tools.mqtt.aiomqtt.Client") as mock_client_cls:
+        mock_client_cls.return_value.__aenter__.return_value = mock_client
+
+        await mqtt_publish_tool(
+            exec_context=exec_context,
+            topic="home/items",
+            payload=["milk", "eggs"],
+        )
+
+    call_args = mock_client.publish.call_args
+    assert call_args.kwargs["payload"] == b'["milk", "eggs"]'
+
+
+@pytest.mark.asyncio
 async def test_mqtt_publish_not_configured(
     exec_context_no_mqtt: ToolExecutionContext,
 ) -> None:

@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import json
 import logging
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 import aiomqtt
 
@@ -26,10 +26,11 @@ MQTT_TOOLS_DEFINITION: list[ToolDefinition] = [
         "function": {
             "name": "mqtt_publish",
             "description": (
-                "Publish a JSON object to an MQTT topic. Use this to push structured data "
-                "to external devices and services (e-ink displays, ESPHome devices, "
-                "dashboards, Home Assistant, etc.). Messages are retained by default so "
-                "devices get the latest value on reconnect."
+                "Publish a message to an MQTT topic. Use this to push data to external "
+                "devices and services (e-ink displays, ESPHome devices, dashboards, "
+                "Home Assistant, etc.). The payload can be any JSON value: an object, "
+                "array, string, number, or boolean. Messages are retained by default "
+                "so devices get the latest value on reconnect."
             ),
             "parameters": {
                 "type": "object",
@@ -42,9 +43,7 @@ MQTT_TOOLS_DEFINITION: list[ToolDefinition] = [
                         ),
                     },
                     "payload": {
-                        "type": "object",
-                        "description": "The JSON payload to publish.",
-                        "additionalProperties": True,
+                        "description": "The payload to publish. Any JSON value (object, array, string, number, boolean).",
                     },
                     "retain": {
                         "type": "boolean",
@@ -93,8 +92,7 @@ def _get_mqtt_config(
 async def mqtt_publish_tool(
     exec_context: ToolExecutionContext,
     topic: str,
-    # ast-grep-ignore: no-dict-any - MQTT payload is user-defined arbitrary JSON
-    payload: dict[str, Any],
+    payload: dict[str, object] | list[object] | str | int | float | bool,
     retain: bool = True,
 ) -> ToolResult:
     """Publish a JSON message to an MQTT topic."""
