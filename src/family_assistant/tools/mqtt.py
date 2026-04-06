@@ -98,7 +98,7 @@ async def mqtt_publish_tool(
     """Publish a JSON message to an MQTT topic."""
     host, port, username, password = _get_mqtt_config(exec_context)
 
-    payload_bytes = json.dumps(payload, default=str).encode()
+    payload_bytes = json.dumps(payload).encode()
 
     logger.info(
         "Publishing to MQTT topic %s (retain=%s, %d bytes)",
