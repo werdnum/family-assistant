@@ -600,6 +600,8 @@ service_profiles:
         - "search_calendar_events"
         # Event system query only (no listener creation/modification)
         - "query_recent_events"
+        # MQTT publishing for automation integration
+        - "mqtt_publish"
       enable_mcp_server_ids:
         # Home Assistant read-only access
         - "homeassistant" # Configured to only allow get_entity_state and get_all_entities
@@ -616,6 +618,7 @@ service_profiles:
               - "send_message_to_user"
               - "search_calendar_events"
               - "query_recent_events"
+              - "mqtt_publish"
           decision: "allow"
           priority: 10
         - match:
