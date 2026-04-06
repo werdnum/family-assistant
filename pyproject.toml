@@ -123,6 +123,7 @@ dependencies = [
     "opentelemetry-instrumentation-httpx>=0.46b0",
     "opentelemetry-instrumentation-sqlalchemy>=0.46b0",
     "opentelemetry-instrumentation-logging>=0.46b0",
+    "aiomqtt>=2.5.1",
 ]
 
 [project.optional-dependencies]

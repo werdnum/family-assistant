@@ -102,6 +102,11 @@ ENV_VAR_MAPPINGS: list[EnvVarMapping] = [
         "default_profile_settings.tools_config.mcp_initialization_timeout_seconds",
         int,
     ),
+    # MQTT broker configuration
+    EnvVarMapping("MQTT_BROKER_HOST", "mqtt_config.broker_host"),
+    EnvVarMapping("MQTT_BROKER_PORT", "mqtt_config.broker_port", int),
+    EnvVarMapping("MQTT_USERNAME", "mqtt_config.username"),
+    EnvVarMapping("MQTT_PASSWORD", "mqtt_config.password"),
     # User access control (list types)
     EnvVarMapping("ALLOWED_USER_IDS", "allowed_user_ids", list),
     EnvVarMapping("DEVELOPER_CHAT_ID", "developer_chat_id", int),
