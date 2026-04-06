@@ -1,13 +1,21 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Button } from '@/components/ui/button';
+
+export const LARGE_PAYLOAD_THRESHOLD = 10240; // 10KB
 
 const JsonPayloadViewer = ({ data, taskId: _taskId }) => {
   const containerRef = useRef(null);
   const editorRef = useRef(null);
+  const copyTimeoutRef = useRef(null);
   const [copyStatus, setCopyStatus] = useState('');
   const [isExpanded, setIsExpanded] = useState(false);
   const [useEditor, setUseEditor] = useState(false);
   const [isDarkMode, setIsDarkMode] = useState(false);
+
+  const isLargePayload = useMemo(
+    () => JSON.stringify(data).length > LARGE_PAYLOAD_THRESHOLD,
+    [data]
+  );
 
   // Detect dark mode
   useEffect(() => {
@@ -24,27 +32,41 @@ const JsonPayloadViewer = ({ data, taskId: _taskId }) => {
       mediaQuery.addEventListener('change', handleChange);
       return () => mediaQuery.removeEventListener('change', handleChange);
     } else {
-      // Fallback for older browsers
       mediaQuery.addListener(handleChange);
       return () => mediaQuery.removeListener(handleChange);
     }
   }, []);
 
+  const showEditor = isExpanded && (useEditor || !isLargePayload);
+
+  // Initialize editor when expanded and editor mode is active
   useEffect(() => {
-    if (!containerRef.current || !isExpanded || !useEditor) {
+    if (!containerRef.current || !showEditor) {
       return;
     }
 
-    // Dynamically import and initialize the JSON editor
+    if (editorRef.current) {
+      return;
+    }
+
+    containerRef.current.innerHTML = '';
+
+    let isCancelled = false;
+
     const initEditor = async () => {
       try {
         const { JSONEditor } = await import('vanilla-jsoneditor');
+
+        if (isCancelled || editorRef.current || !containerRef.current) {
+          return;
+        }
+
         editorRef.current = new JSONEditor({
           target: containerRef.current,
           props: {
             content: { json: data },
             readOnly: true,
-            mode: 'text',
+            mode: 'tree',
             mainMenuBar: false,
             navigationBar: false,
             statusBar: false,
@@ -60,45 +82,65 @@ const JsonPayloadViewer = ({ data, taskId: _taskId }) => {
 
     initEditor();
 
-    // Cleanup function
     return () => {
+      isCancelled = true;
       if (editorRef.current) {
         editorRef.current.destroy();
         editorRef.current = null;
       }
+      if (containerRef.current) {
+        containerRef.current.innerHTML = '';
+      }
     };
-  }, [data, isExpanded, useEditor]);
+  }, [data, showEditor]);
 
-  // Handle copy to clipboard
+  // Update editor content when data changes
+  useEffect(() => {
+    if (editorRef.current && showEditor) {
+      try {
+        editorRef.current.update({ json: data });
+      } catch (error) {
+        console.error('Failed to update JSON editor:', error);
+      }
+    }
+  }, [data, showEditor]);
+
+  // Cleanup copy timeout on unmount
+  useEffect(() => {
+    return () => {
+      if (copyTimeoutRef.current) {
+        window.clearTimeout(copyTimeoutRef.current);
+      }
+    };
+  }, []);
+
   const handleCopy = async () => {
+    if (copyTimeoutRef.current) {
+      window.clearTimeout(copyTimeoutRef.current);
+    }
+
     try {
-      const jsonString = JSON.stringify(data, null, 2);
-      await window.navigator.clipboard.writeText(jsonString);
+      await window.navigator.clipboard.writeText(JSON.stringify(data, null, 2));
       setCopyStatus('Copied!');
-      window.setTimeout(() => setCopyStatus(''), 2000);
+      copyTimeoutRef.current = window.setTimeout(() => setCopyStatus(''), 2000);
     } catch (err) {
       console.error('Failed to copy to clipboard:', err);
       setCopyStatus('Copy failed');
-      window.setTimeout(() => setCopyStatus(''), 2000);
+      copyTimeoutRef.current = window.setTimeout(() => setCopyStatus(''), 2000);
     }
   };
 
-  // Handle expanding the JSON viewer
   const handleToggleExpand = () => {
     setIsExpanded(!isExpanded);
   };
 
-  // Handle switching to rich editor
-  const handleUseEditor = () => {
-    setUseEditor(true);
-  };
-
-  // Dynamic styles based on dark mode
   const containerStyle = {
     border: `1px solid ${isDarkMode ? '#374151' : '#ddd'}`,
     borderRadius: '3px',
     backgroundColor: isDarkMode ? '#1f2937' : '#f8f9fa',
     marginTop: '0.5rem',
+    minWidth: 0,
+    overflow: 'hidden',
   };
 
   const headerStyle = {
@@ -134,7 +176,6 @@ const JsonPayloadViewer = ({ data, taskId: _taskId }) => {
 
   return (
     <div style={containerStyle}>
-      {/* Control buttons */}
       <div style={headerStyle}>
         <div style={{ fontSize: '0.9rem', fontWeight: 'bold' }}>Task Payload</div>
         <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
@@ -152,18 +193,16 @@ const JsonPayloadViewer = ({ data, taskId: _taskId }) => {
         </div>
       </div>
 
-      {/* JSON content - only render when expanded */}
       {isExpanded && (
         <div style={{ padding: '0.5rem' }}>
-          {!useEditor ? (
-            // Simple text view by default
+          {isLargePayload && !useEditor ? (
             <div>
               <div style={{ marginBottom: '0.5rem' }}>
                 <Button
-                  onClick={handleUseEditor}
+                  onClick={() => setUseEditor(true)}
                   variant="secondary"
                   size="sm"
-                  title="Load rich editor"
+                  title="Load rich editor (large payload)"
                 >
                   Load Rich Editor
                 </Button>
@@ -171,7 +210,6 @@ const JsonPayloadViewer = ({ data, taskId: _taskId }) => {
               <pre style={preStyle}>{JSON.stringify(data, null, 2)}</pre>
             </div>
           ) : (
-            // Rich editor container
             <div ref={containerRef} style={editorContainerStyle} />
           )}
         </div>
