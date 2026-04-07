@@ -3,6 +3,12 @@
 Provides the ``OnDemandAwareToolsProvider`` wrapper that splits tools into
 eager (always-loaded) and on-demand (catalog-only until activated) sets, plus
 the ``activate_tools`` meta-tool definition handled by the LLM loop.
+
+Activation state is *not* stored on the provider. The provider is long-lived
+per profile and shared across concurrent conversations, so mutable activation
+state would race between turns. Callers (the LLM loop) keep a turn-local
+``activated`` set and pass it in to every method that needs to know which
+tools are currently unlocked.
 """
 
 from __future__ import annotations
@@ -19,6 +25,8 @@ from family_assistant.tools.infrastructure import (
 from family_assistant.tools.metadata import ToolDescriptor, extract_tool_summary
 
 if TYPE_CHECKING:
+    from collections.abc import Iterable
+
     from family_assistant.tools.types import (
         ToolDefinition,
         ToolExecutionContext,
@@ -26,6 +34,9 @@ if TYPE_CHECKING:
     )
 
 logger = logging.getLogger(__name__)
+
+
+_EMPTY_ACTIVATED: frozenset[str] = frozenset()
 
 
 # ---------------------------------------------------------------------------
@@ -62,6 +73,14 @@ class OnDemandToolCatalog:
         for entry in self.entries:
             lines.append(f"- **{entry.name}**: {entry.summary}")
         return "\n".join(lines)
+
+
+@dataclass(frozen=True)
+class OnDemandActivationResult:
+    """Result of activating on-demand tools for a single turn."""
+
+    newly_activated: frozenset[str]
+    definitions: list[ToolDefinition]
 
 
 # ---------------------------------------------------------------------------
@@ -110,6 +129,10 @@ class OnDemandAwareToolsProvider:
     whether their full JSON schema is included in the LLM tool list. This keeps
     context usage low while allowing the agent to activate tools when needed.
 
+    The provider itself holds no activation state. The LLM loop keeps a
+    turn-local ``activated`` set and threads it through every call; that way
+    concurrent turns on a shared provider do not race on a common mutable set.
+
     This provider implements ``ToolDescriptorProvider`` so it can be wrapped by
     ``PolicyEnforcingToolsProvider``.
     """
@@ -130,7 +153,6 @@ class OnDemandAwareToolsProvider:
         self._descriptor_provider = wrapped_provider
         self._on_demand_tool_names = on_demand_tool_names
         self._on_demand_mcp_server_ids = on_demand_mcp_server_ids or set()
-        self._activated_tool_names: set[str] = set()
         self._all_descriptors: list[ToolDescriptor] | None = None
 
     @property
@@ -171,9 +193,11 @@ class OnDemandAwareToolsProvider:
             return await cast("Any", method)(can_confirm=can_confirm)
         return await method()
 
-    def _is_on_demand(self, descriptor: ToolDescriptor) -> bool:
-        """Check if a descriptor is on-demand (and not yet activated)."""
-        if descriptor.name in self._activated_tool_names:
+    def _is_on_demand(
+        self, descriptor: ToolDescriptor, activated: frozenset[str]
+    ) -> bool:
+        """Check if a descriptor is on-demand and not yet activated for this turn."""
+        if descriptor.name in activated:
             return False
         if descriptor.name in self._on_demand_tool_names:
             return True
@@ -182,36 +206,65 @@ class OnDemandAwareToolsProvider:
             and descriptor.mcp_server_id in self._on_demand_mcp_server_ids
         )
 
+    def _freeze_activated(self, activated: Iterable[str] | None) -> frozenset[str]:
+        if activated is None:
+            return _EMPTY_ACTIVATED
+        if isinstance(activated, frozenset):
+            return activated
+        return frozenset(activated)
+
     # --- ToolsProvider interface ---
 
     async def get_tool_definitions(
         self,
         *,
         can_confirm: bool = True,
+        activated: Iterable[str] | None = None,
     ) -> list[ToolDefinition]:
         """Return eager + activated definitions, plus ``activate_tools`` if needed.
 
-        ``can_confirm`` is forwarded to the wrapped provider when it accepts it
-        (e.g. ``PolicyEnforcingToolsProvider``) so policy filtering below us
-        still sees the right interaction context.
+        ``can_confirm`` is forwarded to the wrapped provider. ``activated``
+        lists the on-demand tool names already unlocked for this turn. The
+        synthetic ``activate_tools`` meta-tool is only included when there is
+        at least one on-demand tool the model could still usefully activate in
+        this interaction (after policy filtering).
         """
+        activated_frozen = self._freeze_activated(activated)
         descriptors = await self._ensure_descriptors()
         wrapped_defs = await self._fetch_wrapped_definitions(can_confirm=can_confirm)
 
-        on_demand_names = {d.name for d in descriptors if self._is_on_demand(d)}
+        on_demand_hidden_names = {
+            d.name for d in descriptors if self._is_on_demand(d, activated_frozen)
+        }
         eager_and_activated = [
             defn
             for defn in wrapped_defs
-            if defn.get("function", {}).get("name") not in on_demand_names
+            if defn.get("function", {}).get("name") not in on_demand_hidden_names
         ]
-        if on_demand_names:
+
+        # Only expose the activate_tools meta-tool if there is at least one
+        # on-demand tool the wrapped provider would still advertise for this
+        # interaction. Otherwise the model could call a meta-tool that can
+        # only ever return "nothing to activate".
+        advertisable_hidden = on_demand_hidden_names & {
+            name
+            for defn in wrapped_defs
+            if (name := defn.get("function", {}).get("name")) is not None
+        }
+        if advertisable_hidden:
             return [*eager_and_activated, ACTIVATE_TOOLS_DEFINITION]
         return eager_and_activated
 
     async def get_system_prompt_addition(
         self, *, can_confirm: bool = True
     ) -> str | None:
-        """Return the on-demand catalog rendered for system prompt injection."""
+        """Return the on-demand catalog rendered for system prompt injection.
+
+        This implements the ``SystemPromptContributingProvider`` protocol, so
+        it does not know about per-turn activation state. Callers that have
+        already activated tools should go through ``get_on_demand_catalog``
+        directly with their turn-local ``activated`` set.
+        """
         if not self.has_on_demand_tools():
             return None
         catalog = await self.get_on_demand_catalog(can_confirm=can_confirm)
@@ -249,14 +302,18 @@ class OnDemandAwareToolsProvider:
     # --- On-demand specific ---
 
     async def get_on_demand_catalog(
-        self, *, can_confirm: bool = True
+        self,
+        *,
+        can_confirm: bool = True,
+        activated: Iterable[str] | None = None,
     ) -> OnDemandToolCatalog:
-        """Return catalog of on-demand tools (not yet activated) for system prompt.
+        """Return catalog of on-demand tools not yet activated for this turn.
 
         Only tools that the wrapped policy provider would actually advertise for
         the current ``can_confirm`` value are surfaced; otherwise the catalog
         could include tools the model cannot activate or use in this turn.
         """
+        activated_frozen = self._freeze_activated(activated)
         descriptors = await self._ensure_descriptors()
         advertisable_names = await self._advertisable_names(can_confirm=can_confirm)
         entries = [
@@ -266,7 +323,8 @@ class OnDemandAwareToolsProvider:
                 or extract_tool_summary(descriptor.definition),
             )
             for descriptor in descriptors
-            if self._is_on_demand(descriptor) and descriptor.name in advertisable_names
+            if self._is_on_demand(descriptor, activated_frozen)
+            and descriptor.name in advertisable_names
         ]
         return OnDemandToolCatalog(entries=entries)
 
@@ -285,22 +343,27 @@ class OnDemandAwareToolsProvider:
         names: list[str] | None = None,
         search: str | None = None,
         can_confirm: bool = True,
-    ) -> list[ToolDefinition]:
+        activated: Iterable[str] | None = None,
+    ) -> OnDemandActivationResult:
         """Activate on-demand tools by name or search keyword.
 
-        Returns the full definitions of newly activated tools. Only descriptors
-        that are currently on-demand AND that the wrapped policy provider would
-        actually advertise for ``can_confirm`` are eligible. This avoids
-        marking a tool as activated when policy filtering would still hide it
-        from the LLM in this interaction.
+        Returns the set of newly activated names and the corresponding tool
+        definitions, without mutating provider state. Only descriptors that
+        are currently on-demand (relative to the caller's ``activated`` set)
+        AND that the wrapped policy provider would actually advertise for
+        ``can_confirm`` are eligible. This avoids marking a tool as activated
+        when policy filtering would still hide it from the LLM in this turn.
         """
+        activated_frozen = self._freeze_activated(activated)
         descriptors = await self._ensure_descriptors()
         candidates: set[str] = set()
 
         if names:
             for name in names:
                 matching = [
-                    d for d in descriptors if d.name == name and self._is_on_demand(d)
+                    d
+                    for d in descriptors
+                    if d.name == name and self._is_on_demand(d, activated_frozen)
                 ]
                 if matching:
                     candidates.add(name)
@@ -312,7 +375,7 @@ class OnDemandAwareToolsProvider:
         if search:
             search_lower = search.lower()
             for descriptor in descriptors:
-                if not self._is_on_demand(descriptor):
+                if not self._is_on_demand(descriptor, activated_frozen):
                     continue
                 summary = descriptor.summary or ""
                 if (
@@ -332,17 +395,19 @@ class OnDemandAwareToolsProvider:
         for descriptor in descriptors:
             if (
                 descriptor.mcp_server_id in mcp_servers_to_activate
-                and self._is_on_demand(descriptor)
+                and self._is_on_demand(descriptor, activated_frozen)
             ):
                 candidates.add(descriptor.name)
 
         if not candidates:
-            return []
+            return OnDemandActivationResult(
+                newly_activated=_EMPTY_ACTIVATED, definitions=[]
+            )
 
         # Intersect with what the wrapped provider will actually advertise for
         # this interaction. Confirm-required tools in a non-confirmable context,
-        # for example, must not be marked active because they would never appear
-        # in the advertised tool list.
+        # for example, must not be reported as active because they would never
+        # appear in the advertised tool list.
         wrapped_defs = await self._fetch_wrapped_definitions(can_confirm=can_confirm)
         returned_by_name: dict[str, ToolDefinition] = {
             name: defn
@@ -350,14 +415,13 @@ class OnDemandAwareToolsProvider:
             if (name := defn.get("function", {}).get("name")) is not None
         }
         actually_activatable = candidates & returned_by_name.keys()
-        newly_activated = actually_activatable - self._activated_tool_names
-        self._activated_tool_names.update(newly_activated)
+        if not actually_activatable:
+            return OnDemandActivationResult(
+                newly_activated=_EMPTY_ACTIVATED, definitions=[]
+            )
 
-        if newly_activated:
-            logger.info("Activated on-demand tools: %s", sorted(newly_activated))
-
-        return [returned_by_name[name] for name in newly_activated]
-
-    def reset_activations(self) -> None:
-        """Reset all activations (for new conversation turns)."""
-        self._activated_tool_names.clear()
+        logger.info("Activated on-demand tools: %s", sorted(actually_activatable))
+        return OnDemandActivationResult(
+            newly_activated=frozenset(actually_activatable),
+            definitions=[returned_by_name[name] for name in actually_activatable],
+        )

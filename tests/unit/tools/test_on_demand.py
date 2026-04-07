@@ -188,18 +188,19 @@ class TestOnDemandAwareToolsProvider:
             on_demand_tool_names={"lazy_b", "lazy_c"},
         )
 
-        activated = await on_demand.activate_tools(names=["lazy_b"])
-        assert len(activated) == 1
-        assert activated[0]["function"]["name"] == "lazy_b"
+        result = await on_demand.activate_tools(names=["lazy_b"])
+        assert result.newly_activated == frozenset({"lazy_b"})
+        assert len(result.definitions) == 1
+        assert result.definitions[0]["function"]["name"] == "lazy_b"
 
-        # Now lazy_b should be in eager definitions; activate_tools remains
-        # because lazy_c is still on-demand.
-        definitions = await on_demand.get_tool_definitions()
+        # Thread the turn-local activated set through subsequent calls.
+        activated = result.newly_activated
+        definitions = await on_demand.get_tool_definitions(activated=activated)
         names = {d["function"]["name"] for d in definitions}
         assert names == {"eager_a", "lazy_b", "activate_tools"}
 
         # And catalog should only have lazy_c
-        catalog = await on_demand.get_on_demand_catalog()
+        catalog = await on_demand.get_on_demand_catalog(activated=activated)
         assert len(catalog.entries) == 1
         assert catalog.entries[0].name == "lazy_c"
 
@@ -211,9 +212,10 @@ class TestOnDemandAwareToolsProvider:
             on_demand_tool_names={"camera_tool", "automation_tool"},
         )
 
-        activated = await on_demand.activate_tools(search="camera")
-        assert len(activated) == 1
-        assert activated[0]["function"]["name"] == "camera_tool"
+        result = await on_demand.activate_tools(search="camera")
+        assert result.newly_activated == frozenset({"camera_tool"})
+        assert len(result.definitions) == 1
+        assert result.definitions[0]["function"]["name"] == "camera_tool"
 
     @pytest.mark.asyncio
     async def test_on_demand_tools_still_executable(self) -> None:
@@ -272,19 +274,27 @@ class TestOnDemandAwareToolsProvider:
         assert names == {"eager_a", "lazy_b"}
 
     @pytest.mark.asyncio
-    async def test_reset_activations(self) -> None:
+    async def test_activation_state_is_turn_local(self) -> None:
+        """Provider holds no activation state; callers pass activated per turn."""
         provider = _make_provider(["eager_a", "lazy_b"])
         on_demand = OnDemandAwareToolsProvider(
             wrapped_provider=provider,
             on_demand_tool_names={"lazy_b"},
         )
 
-        await on_demand.activate_tools(names=["lazy_b"])
-        definitions = await on_demand.get_tool_definitions()
-        # eager_a + lazy_b (no on-demand left, so no activate_tools)
-        assert len(definitions) == 2
+        result = await on_demand.activate_tools(names=["lazy_b"])
+        assert result.newly_activated == frozenset({"lazy_b"})
 
-        on_demand.reset_activations()
-        definitions = await on_demand.get_tool_definitions()
-        # eager_a + activate_tools (lazy_b back to on-demand)
-        assert len(definitions) == 2
+        # Turn A sees the activated tool when it passes its turn-local set.
+        turn_a_defs = await on_demand.get_tool_definitions(
+            activated=result.newly_activated
+        )
+        assert {d["function"]["name"] for d in turn_a_defs} == {"eager_a", "lazy_b"}
+
+        # Turn B (no activated set) still sees lazy_b as on-demand; the
+        # provider state was not mutated by turn A.
+        turn_b_defs = await on_demand.get_tool_definitions()
+        assert {d["function"]["name"] for d in turn_b_defs} == {
+            "eager_a",
+            "activate_tools",
+        }
