@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 from typing import TYPE_CHECKING
 
@@ -50,6 +51,27 @@ if TYPE_CHECKING:
     )
 
 logger = logging.getLogger(__name__)
+
+
+def _extract_activate_tools_from_result(tool_msg: ToolMessage) -> list[str]:
+    """Extract activate_tools names from a tool result, if present.
+
+    Skills loaded via get_note can declare tools in their frontmatter.
+    Returns a list of tool names to activate, or empty list.
+    """
+    content = tool_msg.content
+    if not isinstance(content, str) or "activate_tools" not in content:
+        return []
+    try:
+        data = json.loads(content)
+    except (ValueError, TypeError):
+        return []
+    if not isinstance(data, dict):
+        return []
+    tool_names = data.get("activate_tools")
+    if not isinstance(tool_names, list):
+        return []
+    return [n for n in tool_names if isinstance(n, str)]
 
 
 class LLMStreamingLoop:
@@ -631,6 +653,25 @@ class LLMStreamingLoop:
                         task.cancel()
                 if tool_execution_tasks:
                     await asyncio.gather(*tool_execution_tasks, return_exceptions=True)
+
+            # Auto-activate tools from skill results (e.g., get_note returning a skill
+            # with activate_tools in its frontmatter)
+            if on_demand_provider:
+                for tool_msg in tool_response_messages_for_llm:
+                    auto_names = _extract_activate_tools_from_result(tool_msg)
+                    if auto_names:
+                        activated_defs = await on_demand_provider.activate_tools(
+                            names=auto_names
+                        )
+                        if activated_defs:
+                            tools_for_llm = [*tools_for_llm, *activated_defs]
+                            logger.info(
+                                "Auto-activated tools from skill: %s",
+                                [
+                                    d.get("function", {}).get("name")
+                                    for d in activated_defs
+                                ],
+                            )
 
             # Add tool responses to messages for next iteration
             messages.extend(tool_response_messages_for_llm)

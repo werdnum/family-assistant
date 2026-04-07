@@ -42,6 +42,9 @@ def load_skills_from_directory(directory: Path) -> list[ParsedSkill]:
             frozenset(raw_labels) if isinstance(raw_labels, list) else frozenset()
         )
 
+        raw_activate = frontmatter.get("activate_tools", [])
+        activate_tools = tuple(raw_activate) if isinstance(raw_activate, list) else ()
+
         skills.append(
             ParsedSkill(
                 name=name,
@@ -49,6 +52,7 @@ def load_skills_from_directory(directory: Path) -> list[ParsedSkill]:
                 content=body,
                 source_path=md_file,
                 visibility_labels=visibility_labels,
+                activate_tools=activate_tools,
             )
         )
         logger.debug("Loaded skill '%s' from %s", name, md_file)
