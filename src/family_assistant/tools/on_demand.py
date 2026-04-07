@@ -7,9 +7,10 @@ the ``activate_tools`` meta-tool definition handled by the LLM loop.
 
 from __future__ import annotations
 
+import inspect
 import logging
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 from family_assistant.tools.infrastructure import (
     ToolDescriptorProvider,
@@ -130,10 +131,7 @@ class OnDemandAwareToolsProvider:
         self._on_demand_tool_names = on_demand_tool_names
         self._on_demand_mcp_server_ids = on_demand_mcp_server_ids or set()
         self._activated_tool_names: set[str] = set()
-        # Caches (populated on first access)
         self._all_descriptors: list[ToolDescriptor] | None = None
-        self._all_definitions: list[ToolDefinition] | None = None
-        self._catalog: OnDemandToolCatalog | None = None
 
     @property
     def wrapped_provider(self) -> ToolsProvider:
@@ -146,12 +144,32 @@ class OnDemandAwareToolsProvider:
 
     # --- Internal helpers ---
 
-    async def _ensure_caches(self) -> None:
-        """Populate caches from the wrapped provider on first access."""
-        if self._all_descriptors is not None:
-            return
-        self._all_descriptors = await self._descriptor_provider.get_tool_descriptors()
-        self._all_definitions = await self._wrapped_provider.get_tool_definitions()
+    async def _ensure_descriptors(self) -> list[ToolDescriptor]:
+        """Populate the descriptor cache from the wrapped provider on first access."""
+        if self._all_descriptors is None:
+            self._all_descriptors = (
+                await self._descriptor_provider.get_tool_descriptors()
+            )
+        return self._all_descriptors
+
+    async def _fetch_wrapped_definitions(
+        self, *, can_confirm: bool
+    ) -> list[ToolDefinition]:
+        """Fetch definitions from the wrapped provider, forwarding ``can_confirm``.
+
+        ``PolicyEnforcingToolsProvider`` accepts ``can_confirm``; other providers
+        do not. We branch on the parameter list rather than using ``**kwargs``
+        because typed signatures play nicer with the linter.
+        """
+        method = self._wrapped_provider.get_tool_definitions
+        accepts_can_confirm = any(
+            parameter.name == "can_confirm"
+            or parameter.kind is inspect.Parameter.VAR_KEYWORD
+            for parameter in inspect.signature(method).parameters.values()
+        )
+        if accepts_can_confirm:
+            return await cast("Any", method)(can_confirm=can_confirm)
+        return await method()
 
     def _is_on_demand(self, descriptor: ToolDescriptor) -> bool:
         """Check if a descriptor is on-demand (and not yet activated)."""
@@ -164,29 +182,26 @@ class OnDemandAwareToolsProvider:
             and descriptor.mcp_server_id in self._on_demand_mcp_server_ids
         )
 
-    def _is_on_demand_by_name(self, name: str) -> bool:
-        """Check if a tool name is on-demand (without requiring a descriptor)."""
-        return (
-            name in self._on_demand_tool_names
-            and name not in self._activated_tool_names
-        )
-
     # --- ToolsProvider interface ---
 
-    async def get_tool_definitions(self) -> list[ToolDefinition]:
-        """Return eager + activated definitions, plus ``activate_tools`` if needed."""
-        await self._ensure_caches()
-        assert self._all_definitions is not None
-        assert self._all_descriptors is not None
+    async def get_tool_definitions(
+        self,
+        *,
+        can_confirm: bool = True,
+    ) -> list[ToolDefinition]:
+        """Return eager + activated definitions, plus ``activate_tools`` if needed.
 
-        # Build set of on-demand (not yet activated) names
-        on_demand_names = {
-            d.name for d in self._all_descriptors if self._is_on_demand(d)
-        }
+        ``can_confirm`` is forwarded to the wrapped provider when it accepts it
+        (e.g. ``PolicyEnforcingToolsProvider``) so policy filtering below us
+        still sees the right interaction context.
+        """
+        descriptors = await self._ensure_descriptors()
+        wrapped_defs = await self._fetch_wrapped_definitions(can_confirm=can_confirm)
 
+        on_demand_names = {d.name for d in descriptors if self._is_on_demand(d)}
         eager_and_activated = [
             defn
-            for defn in self._all_definitions
+            for defn in wrapped_defs
             if defn.get("function", {}).get("name") not in on_demand_names
         ]
         if on_demand_names:
@@ -223,9 +238,7 @@ class OnDemandAwareToolsProvider:
 
     async def get_tool_descriptors(self) -> list[ToolDescriptor]:
         """Return ALL tool descriptors (eager + on-demand). Policy layer uses these."""
-        await self._ensure_caches()
-        assert self._all_descriptors is not None
-        return self._all_descriptors
+        return await self._ensure_descriptors()
 
     async def get_tool_descriptor(self, name: str) -> ToolDescriptor | None:
         """Return descriptor by name."""
@@ -235,16 +248,14 @@ class OnDemandAwareToolsProvider:
 
     async def get_on_demand_catalog(self) -> OnDemandToolCatalog:
         """Return catalog of on-demand tools (not yet activated) for system prompt."""
-        await self._ensure_caches()
-        assert self._all_descriptors is not None
-
+        descriptors = await self._ensure_descriptors()
         entries = [
             OnDemandCatalogEntry(
                 name=descriptor.name,
                 summary=descriptor.summary
                 or extract_tool_summary(descriptor.definition),
             )
-            for descriptor in self._all_descriptors
+            for descriptor in descriptors
             if self._is_on_demand(descriptor)
         ]
         return OnDemandToolCatalog(entries=entries)
@@ -257,30 +268,30 @@ class OnDemandAwareToolsProvider:
     ) -> list[ToolDefinition]:
         """Activate on-demand tools by name or search keyword.
 
-        Returns the full definitions of newly activated tools.
+        Returns the full definitions of newly activated tools. Only descriptors
+        that are currently on-demand are eligible — names referring to eager or
+        already-activated tools are ignored to avoid duplicate definitions in
+        the LLM tool list.
         """
-        await self._ensure_caches()
-        assert self._all_descriptors is not None
-        assert self._all_definitions is not None
-
+        descriptors = await self._ensure_descriptors()
         to_activate: set[str] = set()
 
         if names:
             for name in names:
-                # Check it exists in our on-demand set
-                matching = [d for d in self._all_descriptors if d.name == name]
+                matching = [
+                    d for d in descriptors if d.name == name and self._is_on_demand(d)
+                ]
                 if matching:
                     to_activate.add(name)
                 else:
-                    logger.warning("activate_tools: unknown tool %r", name)
+                    logger.warning(
+                        "activate_tools: unknown or non-on-demand tool %r", name
+                    )
 
         if search:
             search_lower = search.lower()
-            for descriptor in self._all_descriptors:
-                if (
-                    not self._is_on_demand(descriptor)
-                    and descriptor.name not in to_activate
-                ):
+            for descriptor in descriptors:
+                if not self._is_on_demand(descriptor):
                     continue
                 summary = descriptor.summary or ""
                 if (
@@ -289,35 +300,38 @@ class OnDemandAwareToolsProvider:
                 ):
                     to_activate.add(descriptor.name)
 
-        # Mark as activated
         newly_activated = to_activate - self._activated_tool_names
         self._activated_tool_names.update(newly_activated)
 
         if newly_activated:
             logger.info("Activated on-demand tools: %s", sorted(newly_activated))
 
-        # Also activate all tools from the same MCP server
+        # Also activate any other on-demand tools from the same MCP server, so
+        # the LLM gets the whole server in one shot. Eager tools on the same
+        # server stay where they are.
         mcp_servers_to_activate: set[str] = set()
-        for descriptor in self._all_descriptors:
+        for descriptor in descriptors:
             if descriptor.name in newly_activated and descriptor.mcp_server_id:
                 mcp_servers_to_activate.add(descriptor.mcp_server_id)
         if mcp_servers_to_activate:
-            for descriptor in self._all_descriptors:
+            for descriptor in descriptors:
                 if (
                     descriptor.mcp_server_id in mcp_servers_to_activate
-                    and descriptor.name not in self._activated_tool_names
+                    and self._is_on_demand(descriptor)
                 ):
                     self._activated_tool_names.add(descriptor.name)
                     newly_activated.add(descriptor.name)
 
-        # Return definitions for newly activated tools
+        if not newly_activated:
+            return []
+
+        wrapped_defs = await self._fetch_wrapped_definitions(can_confirm=True)
         return [
             defn
-            for defn in self._all_definitions
+            for defn in wrapped_defs
             if defn.get("function", {}).get("name") in newly_activated
         ]
 
     def reset_activations(self) -> None:
         """Reset all activations (for new conversation turns)."""
         self._activated_tool_names.clear()
-        self._catalog = None
