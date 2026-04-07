@@ -222,7 +222,9 @@ class LLMStreamingLoop:
         # Collect any system prompt additions contributed by providers in the
         # chain (e.g. an on-demand tool catalog). The loop stays agnostic of
         # which provider contributes; it just injects the text below.
-        system_prompt_addition = await collect_system_prompt_addition(tools_provider)
+        system_prompt_addition = await collect_system_prompt_addition(
+            tools_provider, can_confirm=can_confirm
+        )
 
         # The activate_tools meta-tool dispatch is the one place where the loop
         # still needs a typed handle on the on-demand provider, so we look it up
@@ -238,7 +240,7 @@ class LLMStreamingLoop:
                 can_confirm=can_confirm,
             )
             system_prompt_addition = await collect_system_prompt_addition(
-                tools_provider
+                tools_provider, can_confirm=can_confirm
             )
 
         logger.debug(
@@ -595,7 +597,7 @@ class LLMStreamingLoop:
                     # Refresh the system prompt addition (catalog shrinks as tools
                     # are activated). The loop stays agnostic of how it is rendered.
                     system_prompt_addition = await collect_system_prompt_addition(
-                        tools_provider
+                        tools_provider, can_confirm=can_confirm
                     )
                     # Drop activate_tools from the local list once nothing remains
                     # to activate, so the LLM does not see a useless meta-tool.
@@ -683,7 +685,9 @@ class LLMStreamingLoop:
                         if activated_defs:
                             tools_for_llm = [*tools_for_llm, *activated_defs]
                             system_prompt_addition = (
-                                await collect_system_prompt_addition(tools_provider)
+                                await collect_system_prompt_addition(
+                                    tools_provider, can_confirm=can_confirm
+                                )
                             )
                             logger.info(
                                 "Auto-activated tools from skill: %s",

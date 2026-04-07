@@ -208,11 +208,13 @@ class OnDemandAwareToolsProvider:
             return [*eager_and_activated, ACTIVATE_TOOLS_DEFINITION]
         return eager_and_activated
 
-    async def get_system_prompt_addition(self) -> str | None:
+    async def get_system_prompt_addition(
+        self, *, can_confirm: bool = True
+    ) -> str | None:
         """Return the on-demand catalog rendered for system prompt injection."""
         if not self.has_on_demand_tools():
             return None
-        catalog = await self.get_on_demand_catalog()
+        catalog = await self.get_on_demand_catalog(can_confirm=can_confirm)
         if not catalog.entries:
             return None
         return catalog.render_for_system_prompt()
@@ -246,9 +248,17 @@ class OnDemandAwareToolsProvider:
 
     # --- On-demand specific ---
 
-    async def get_on_demand_catalog(self) -> OnDemandToolCatalog:
-        """Return catalog of on-demand tools (not yet activated) for system prompt."""
+    async def get_on_demand_catalog(
+        self, *, can_confirm: bool = True
+    ) -> OnDemandToolCatalog:
+        """Return catalog of on-demand tools (not yet activated) for system prompt.
+
+        Only tools that the wrapped policy provider would actually advertise for
+        the current ``can_confirm`` value are surfaced; otherwise the catalog
+        could include tools the model cannot activate or use in this turn.
+        """
         descriptors = await self._ensure_descriptors()
+        advertisable_names = await self._advertisable_names(can_confirm=can_confirm)
         entries = [
             OnDemandCatalogEntry(
                 name=descriptor.name,
@@ -256,9 +266,18 @@ class OnDemandAwareToolsProvider:
                 or extract_tool_summary(descriptor.definition),
             )
             for descriptor in descriptors
-            if self._is_on_demand(descriptor)
+            if self._is_on_demand(descriptor) and descriptor.name in advertisable_names
         ]
         return OnDemandToolCatalog(entries=entries)
+
+    async def _advertisable_names(self, *, can_confirm: bool) -> set[str]:
+        """Names the wrapped provider would advertise for ``can_confirm``."""
+        wrapped_defs = await self._fetch_wrapped_definitions(can_confirm=can_confirm)
+        return {
+            name
+            for defn in wrapped_defs
+            if (name := defn.get("function", {}).get("name")) is not None
+        }
 
     async def activate_tools(
         self,
@@ -270,12 +289,13 @@ class OnDemandAwareToolsProvider:
         """Activate on-demand tools by name or search keyword.
 
         Returns the full definitions of newly activated tools. Only descriptors
-        that are currently on-demand are eligible — names referring to eager or
-        already-activated tools are ignored to avoid duplicate definitions in
-        the LLM tool list.
+        that are currently on-demand AND that the wrapped policy provider would
+        actually advertise for ``can_confirm`` are eligible. This avoids
+        marking a tool as activated when policy filtering would still hide it
+        from the LLM in this interaction.
         """
         descriptors = await self._ensure_descriptors()
-        to_activate: set[str] = set()
+        candidates: set[str] = set()
 
         if names:
             for name in names:
@@ -283,7 +303,7 @@ class OnDemandAwareToolsProvider:
                     d for d in descriptors if d.name == name and self._is_on_demand(d)
                 ]
                 if matching:
-                    to_activate.add(name)
+                    candidates.add(name)
                 else:
                     logger.warning(
                         "activate_tools: unknown or non-on-demand tool %r", name
@@ -299,39 +319,44 @@ class OnDemandAwareToolsProvider:
                     search_lower in descriptor.name.lower()
                     or search_lower in summary.lower()
                 ):
-                    to_activate.add(descriptor.name)
+                    candidates.add(descriptor.name)
 
-        newly_activated = to_activate - self._activated_tool_names
+        # Expand to other on-demand tools on the same MCP server so the LLM
+        # gets the whole server in one shot. Eager tools on the same server
+        # stay where they are.
+        mcp_servers_to_activate: set[str] = {
+            d.mcp_server_id
+            for d in descriptors
+            if d.name in candidates and d.mcp_server_id
+        }
+        for descriptor in descriptors:
+            if (
+                descriptor.mcp_server_id in mcp_servers_to_activate
+                and self._is_on_demand(descriptor)
+            ):
+                candidates.add(descriptor.name)
+
+        if not candidates:
+            return []
+
+        # Intersect with what the wrapped provider will actually advertise for
+        # this interaction. Confirm-required tools in a non-confirmable context,
+        # for example, must not be marked active because they would never appear
+        # in the advertised tool list.
+        wrapped_defs = await self._fetch_wrapped_definitions(can_confirm=can_confirm)
+        returned_by_name: dict[str, ToolDefinition] = {
+            name: defn
+            for defn in wrapped_defs
+            if (name := defn.get("function", {}).get("name")) is not None
+        }
+        actually_activatable = candidates & returned_by_name.keys()
+        newly_activated = actually_activatable - self._activated_tool_names
         self._activated_tool_names.update(newly_activated)
 
         if newly_activated:
             logger.info("Activated on-demand tools: %s", sorted(newly_activated))
 
-        # Also activate any other on-demand tools from the same MCP server, so
-        # the LLM gets the whole server in one shot. Eager tools on the same
-        # server stay where they are.
-        mcp_servers_to_activate: set[str] = set()
-        for descriptor in descriptors:
-            if descriptor.name in newly_activated and descriptor.mcp_server_id:
-                mcp_servers_to_activate.add(descriptor.mcp_server_id)
-        if mcp_servers_to_activate:
-            for descriptor in descriptors:
-                if (
-                    descriptor.mcp_server_id in mcp_servers_to_activate
-                    and self._is_on_demand(descriptor)
-                ):
-                    self._activated_tool_names.add(descriptor.name)
-                    newly_activated.add(descriptor.name)
-
-        if not newly_activated:
-            return []
-
-        wrapped_defs = await self._fetch_wrapped_definitions(can_confirm=can_confirm)
-        return [
-            defn
-            for defn in wrapped_defs
-            if defn.get("function", {}).get("name") in newly_activated
-        ]
+        return [returned_by_name[name] for name in newly_activated]
 
     def reset_activations(self) -> None:
         """Reset all activations (for new conversation turns)."""

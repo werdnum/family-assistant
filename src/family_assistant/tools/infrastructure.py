@@ -178,19 +178,26 @@ class SystemPromptContributingProvider(Protocol):
     without the LLM loop having to know about their concrete type.
     """
 
-    async def get_system_prompt_addition(self) -> str | None: ...
+    async def get_system_prompt_addition(
+        self, *, can_confirm: bool = True
+    ) -> str | None: ...
 
 
-async def collect_system_prompt_addition(provider: ToolsProvider) -> str | None:
+async def collect_system_prompt_addition(
+    provider: ToolsProvider, *, can_confirm: bool = True
+) -> str | None:
     """Walk the provider chain and join system prompt additions from contributors.
 
-    Returns ``None`` when no provider in the chain contributes anything.
+    ``can_confirm`` is forwarded to contributors so the catalog they emit
+    matches the policy filtering applied to the advertised tool list for this
+    interaction. Returns ``None`` when no provider in the chain contributes
+    anything.
     """
     additions: list[str] = []
 
     async def _walk(current: ToolsProvider) -> None:
         if isinstance(current, SystemPromptContributingProvider):
-            text = await current.get_system_prompt_addition()
+            text = await current.get_system_prompt_addition(can_confirm=can_confirm)
             if text:
                 additions.append(text)
         if isinstance(current, ToolProviderWrapper):
