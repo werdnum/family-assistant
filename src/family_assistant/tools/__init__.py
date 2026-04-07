@@ -401,9 +401,9 @@ except ImportError:
 # Note: If enable_local_tools is not specified for a profile, ALL tools are enabled by default.
 
 
-def _metadata(*tags: ToolTag) -> LocalToolMetadata:
+def _metadata(*tags: ToolTag, summary: str | None = None) -> LocalToolMetadata:
     """Create validated metadata for a local tool registration."""
-    return make_local_tool_metadata(list(tags))
+    return make_local_tool_metadata(list(tags), summary=summary)
 
 
 _LOCAL_TOOL_DEFINITIONS: list[ToolDefinition] = (
