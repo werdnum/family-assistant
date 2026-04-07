@@ -317,6 +317,7 @@ default_profile_settings:
       - "read_task_result" # Read results from a completed worker task
       - "list_worker_tasks" # List worker tasks for a conversation
       - "cancel_worker_task" # Cancel a stuck or unwanted worker task
+      - "mqtt_publish" # Publish messages to MQTT topics for automation integration
     enable_mcp_server_ids: # Explicitly define MCP servers for the default profile
       - "time"
       - "brave"
@@ -379,6 +380,7 @@ default_profile_settings:
             - "read_task_result"
             - "list_worker_tasks"
             - "cancel_worker_task"
+            - "mqtt_publish"
         decision: "allow"
         priority: 10
       - match:
