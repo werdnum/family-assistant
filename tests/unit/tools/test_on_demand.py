@@ -16,6 +16,7 @@ from family_assistant.config_models import (
 from family_assistant.storage.context import DatabaseContext
 from family_assistant.tools.infrastructure import LocalToolsProvider
 from family_assistant.tools.metadata import (
+    ToolDescriptor,
     ToolRegistration,
     ToolTag,
     extract_tool_summary,
@@ -298,3 +299,117 @@ class TestOnDemandAwareToolsProvider:
             "eager_a",
             "activate_tools",
         }
+
+
+class _StubMCPDescriptorProvider:
+    """Minimal ToolsProvider whose descriptors carry mcp_server_id values.
+
+    Used to exercise the OnDemandAwareToolsProvider's MCP server expansion
+    behavior, which the LocalToolsProvider helper does not cover because
+    LocalToolsProvider produces local-origin descriptors with no server id.
+    """
+
+    def __init__(self, descriptors: list[ToolDescriptor]) -> None:
+        self._descriptors = descriptors
+        self._definitions = [descriptor.definition for descriptor in descriptors]
+
+    async def get_tool_definitions(self) -> list[ToolDefinition]:
+        return list(self._definitions)
+
+    async def get_tool_descriptors(self) -> list[ToolDescriptor]:
+        return list(self._descriptors)
+
+    async def get_tool_descriptor(self, name: str) -> ToolDescriptor | None:
+        for descriptor in self._descriptors:
+            if descriptor.name == name:
+                return descriptor
+        return None
+
+    async def execute_tool(
+        self,
+        name: str,
+        # ast-grep-ignore: no-dict-any - Tool arguments are dynamic JSON from LLM
+        arguments: dict[str, Any],
+        context: ToolExecutionContext,
+        call_id: str | None = None,
+    ) -> str:
+        del arguments, context, call_id
+        return f"executed {name}"
+
+    async def close(self) -> None:
+        return None
+
+
+def _make_mcp_descriptor(name: str, server_id: str | None) -> ToolDescriptor:
+    definition = _make_tool_def(name, f"Description of {name}.")
+    return ToolDescriptor(
+        name=name,
+        definition=definition,
+        tags=frozenset(),
+        origin="mcp",
+        mcp_server_id=server_id,
+        summary=name,
+    )
+
+
+class TestOnDemandMCPServerExpansion:
+    """MCP-server expansion when activating an on-demand MCP tool."""
+
+    @pytest.mark.asyncio
+    async def test_activating_one_unlocks_other_on_demand_tools_on_same_server(
+        self,
+    ) -> None:
+        descriptors = [
+            _make_mcp_descriptor("ha_call_service", "homeassistant"),
+            _make_mcp_descriptor("ha_get_state", "homeassistant"),
+            _make_mcp_descriptor("ha_get_history", "homeassistant"),
+            _make_mcp_descriptor("brave_search", "brave"),
+        ]
+        wrapped = _StubMCPDescriptorProvider(descriptors)
+        on_demand = OnDemandAwareToolsProvider(
+            wrapped_provider=wrapped,
+            on_demand_tool_names=set(),
+            on_demand_mcp_server_ids={"homeassistant"},
+        )
+
+        result = await on_demand.activate_tools(names=["ha_call_service"])
+
+        # All three on-demand tools from the homeassistant server are unlocked
+        # in a single activation, even though only one was requested by name.
+        assert result.newly_activated == frozenset({
+            "ha_call_service",
+            "ha_get_state",
+            "ha_get_history",
+        })
+        # The brave server is unrelated and stays untouched.
+        assert "brave_search" not in result.newly_activated
+
+    @pytest.mark.asyncio
+    async def test_eager_tools_on_same_server_are_not_re_activated(self) -> None:
+        """Eager tools on the same server must not be reported as newly activated.
+
+        Eager tools were never on-demand to begin with, so reporting them in
+        the activation result would lead to duplicate definitions in the LLM
+        tool list.
+        """
+        descriptors = [
+            _make_mcp_descriptor("ha_lazy_one", "homeassistant"),
+            _make_mcp_descriptor("ha_lazy_two", "homeassistant"),
+            _make_mcp_descriptor("ha_eager", "homeassistant"),
+        ]
+        wrapped = _StubMCPDescriptorProvider(descriptors)
+        on_demand = OnDemandAwareToolsProvider(
+            wrapped_provider=wrapped,
+            # Only ha_lazy_one and ha_lazy_two are on-demand. ha_eager lives on
+            # the same MCP server but is eager — server-id-based on-demand is
+            # NOT configured for homeassistant.
+            on_demand_tool_names={"ha_lazy_one", "ha_lazy_two"},
+        )
+
+        result = await on_demand.activate_tools(names=["ha_lazy_one"])
+
+        assert result.newly_activated == frozenset({"ha_lazy_one", "ha_lazy_two"})
+        assert "ha_eager" not in result.newly_activated
+        # The eager tool's definition is not duplicated in the activation result.
+        returned_names = {d["function"]["name"] for d in result.definitions}
+        assert "ha_eager" not in returned_names
