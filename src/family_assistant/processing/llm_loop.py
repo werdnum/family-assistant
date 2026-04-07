@@ -579,10 +579,24 @@ class LLMStreamingLoop:
                     if tc.function.name != "activate_tools"
                 ]
                 for activate_call in activate_calls:
-                    args = activate_call.function.parsed_arguments or {}
+                    raw_args = activate_call.function.arguments
+                    if isinstance(raw_args, str):
+                        try:
+                            parsed_args = json.loads(raw_args) if raw_args else {}
+                        except json.JSONDecodeError:
+                            parsed_args = {}
+                    else:
+                        parsed_args = raw_args
+                    args = parsed_args if isinstance(parsed_args, dict) else {}
+                    requested_names = args.get("tool_names")
+                    requested_search = args.get("search")
                     activation = await on_demand_provider.activate_tools(
-                        names=args.get("tool_names"),
-                        search=args.get("search"),
+                        names=requested_names
+                        if isinstance(requested_names, list)
+                        else None,
+                        search=requested_search
+                        if isinstance(requested_search, str)
+                        else None,
                         can_confirm=can_confirm,
                         activated=activated_on_demand,
                     )
