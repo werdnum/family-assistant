@@ -154,6 +154,17 @@ class OnDemandAwareToolsProvider:
         self._on_demand_tool_names = on_demand_tool_names
         self._on_demand_mcp_server_ids = on_demand_mcp_server_ids or set()
         self._all_descriptors: list[ToolDescriptor] | None = None
+        # Cache whether the wrapped provider's get_tool_definitions accepts
+        # ``can_confirm``. The wrapped provider does not change for the lifetime
+        # of this object, so doing the inspect.signature reflection once in
+        # __init__ avoids paying the cost on every fetch.
+        self._wrapped_accepts_can_confirm = any(
+            parameter.name == "can_confirm"
+            or parameter.kind is inspect.Parameter.VAR_KEYWORD
+            for parameter in inspect.signature(
+                wrapped_provider.get_tool_definitions
+            ).parameters.values()
+        )
 
     @property
     def wrapped_provider(self) -> ToolsProvider:
@@ -180,16 +191,11 @@ class OnDemandAwareToolsProvider:
         """Fetch definitions from the wrapped provider, forwarding ``can_confirm``.
 
         ``PolicyEnforcingToolsProvider`` accepts ``can_confirm``; other providers
-        do not. We branch on the parameter list rather than using ``**kwargs``
-        because typed signatures play nicer with the linter.
+        do not. The decision is cached in ``__init__`` so this hot path does not
+        repeat the ``inspect.signature`` reflection on every call.
         """
         method = self._wrapped_provider.get_tool_definitions
-        accepts_can_confirm = any(
-            parameter.name == "can_confirm"
-            or parameter.kind is inspect.Parameter.VAR_KEYWORD
-            for parameter in inspect.signature(method).parameters.values()
-        )
-        if accepts_can_confirm:
+        if self._wrapped_accepts_can_confirm:
             return await cast("Any", method)(can_confirm=can_confirm)
         return await method()
 

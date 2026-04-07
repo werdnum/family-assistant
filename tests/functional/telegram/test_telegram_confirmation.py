@@ -54,8 +54,8 @@ def _require_confirmation_for_test_tool(
         provider, "_tool_definitions_by_confirmation"
     ):
         provider_impl = cast("Any", provider)
-        enabled_tool_names = (
-            processing_service.service_config.tools_config.enable_local_tools or []
+        enabled_tool_names = sorted(
+            processing_service.service_config.tools_config.get_all_tool_names() or []
         )
         provider_impl._policy_engine = PolicyEngine.from_policy_config(
             ToolPolicyConfig.model_validate({

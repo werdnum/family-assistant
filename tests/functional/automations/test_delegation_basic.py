@@ -298,12 +298,12 @@ async def mock_confirmation_callback() -> AsyncMock:
 
 def create_tools_provider(profile_tools_config: ToolsConfig) -> ToolsProvider:
     """Helper to create a ToolsProvider stack for a profile."""
-    enabled_local_tool_names = set(profile_tools_config.enable_local_tools or [])
+    enabled_local_tool_names = profile_tools_config.get_all_tool_names() or set()
 
     # If empty, enable all known local tools for simplicity in test setup,
     # or be specific if the test requires it. For delegation, primary needs delegate_to_service.
     if not enabled_local_tool_names and "delegate_to_service" in (
-        profile_tools_config.enable_local_tools or []
+        enabled_local_tool_names
     ):
         enabled_local_tool_names = {"delegate_to_service"}  # Ensure primary has it
     elif (
