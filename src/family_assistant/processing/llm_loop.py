@@ -54,11 +54,16 @@ logger = logging.getLogger(__name__)
 
 
 def _extract_activate_tools_from_result(tool_msg: ToolMessage) -> list[str]:
-    """Extract activate_tools names from a tool result, if present.
+    """Extract activate_tools names from a trusted skill-loading tool result.
 
-    Skills loaded via get_note can declare tools in their frontmatter.
-    Returns a list of tool names to activate, or empty list.
+    Skills loaded via ``get_note`` can declare tools in their frontmatter, and
+    that frontmatter is propagated through the tool result as an
+    ``activate_tools`` key. Restrict parsing to ``get_note`` results so
+    arbitrary tools cannot expand the active tool surface by emitting that key
+    in their output.
     """
+    if tool_msg.name != "get_note":
+        return []
     content = tool_msg.content
     if not isinstance(content, str) or "activate_tools" not in content:
         return []
@@ -203,13 +208,15 @@ class LLMStreamingLoop:
         ] = []  # Track attachment IDs from attach_to_response calls
         original_system_content: str | None = None  # Store original system prompt
 
+        can_confirm = request_confirmation_callback is not None
+
         # Get tool definitions. Providers that split tools into eager/on-demand
         # sets (e.g. OnDemandAwareToolsProvider) handle that internally and also
         # surface the activate_tools meta-tool through this call.
         tools_provider = self.tool_executor.tools_provider
         tools_for_llm = await get_tool_definitions_for_advertisement(
             tools_provider,
-            can_confirm=request_confirmation_callback is not None,
+            can_confirm=can_confirm,
         )
 
         # Collect any system prompt additions contributed by providers in the
@@ -219,10 +226,20 @@ class LLMStreamingLoop:
 
         # The activate_tools meta-tool dispatch is the one place where the loop
         # still needs a typed handle on the on-demand provider, so we look it up
-        # once and reuse it.
+        # once and reuse it. Reset activations so on-demand state does not leak
+        # across turns on a long-lived per-profile provider instance.
         on_demand_provider = find_provider_by_type(
             tools_provider, OnDemandAwareToolsProvider
         )
+        if on_demand_provider is not None:
+            on_demand_provider.reset_activations()
+            tools_for_llm = await get_tool_definitions_for_advertisement(
+                tools_provider,
+                can_confirm=can_confirm,
+            )
+            system_prompt_addition = await collect_system_prompt_addition(
+                tools_provider
+            )
 
         logger.debug(
             f"Total available tools for this interaction: {len(tools_for_llm)}"
@@ -565,6 +582,7 @@ class LLMStreamingLoop:
                     activated_defs = await on_demand_provider.activate_tools(
                         names=args.get("tool_names"),
                         search=args.get("search"),
+                        can_confirm=can_confirm,
                     )
                     activated_names = [
                         d.get("function", {}).get("name", "?") for d in activated_defs
@@ -659,7 +677,8 @@ class LLMStreamingLoop:
                     auto_names = _extract_activate_tools_from_result(tool_msg)
                     if auto_names:
                         activated_defs = await on_demand_provider.activate_tools(
-                            names=auto_names
+                            names=auto_names,
+                            can_confirm=can_confirm,
                         )
                         if activated_defs:
                             tools_for_llm = [*tools_for_llm, *activated_defs]

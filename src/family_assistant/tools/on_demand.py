@@ -265,6 +265,7 @@ class OnDemandAwareToolsProvider:
         *,
         names: list[str] | None = None,
         search: str | None = None,
+        can_confirm: bool = True,
     ) -> list[ToolDefinition]:
         """Activate on-demand tools by name or search keyword.
 
@@ -325,7 +326,7 @@ class OnDemandAwareToolsProvider:
         if not newly_activated:
             return []
 
-        wrapped_defs = await self._fetch_wrapped_definitions(can_confirm=True)
+        wrapped_defs = await self._fetch_wrapped_definitions(can_confirm=can_confirm)
         return [
             defn
             for defn in wrapped_defs
