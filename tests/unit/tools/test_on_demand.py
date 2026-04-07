@@ -166,7 +166,7 @@ class TestOnDemandAwareToolsProvider:
 
         definitions = await on_demand.get_tool_definitions()
         names = {d["function"]["name"] for d in definitions}
-        assert names == {"eager_a", "eager_b"}
+        assert names == {"eager_a", "eager_b", "activate_tools"}
 
     @pytest.mark.asyncio
     async def test_on_demand_catalog_contains_only_on_demand(self) -> None:
@@ -192,10 +192,11 @@ class TestOnDemandAwareToolsProvider:
         assert len(activated) == 1
         assert activated[0]["function"]["name"] == "lazy_b"
 
-        # Now lazy_b should be in eager definitions
+        # Now lazy_b should be in eager definitions; activate_tools remains
+        # because lazy_c is still on-demand.
         definitions = await on_demand.get_tool_definitions()
         names = {d["function"]["name"] for d in definitions}
-        assert names == {"eager_a", "lazy_b"}
+        assert names == {"eager_a", "lazy_b", "activate_tools"}
 
         # And catalog should only have lazy_c
         catalog = await on_demand.get_on_demand_catalog()
@@ -280,8 +281,10 @@ class TestOnDemandAwareToolsProvider:
 
         await on_demand.activate_tools(names=["lazy_b"])
         definitions = await on_demand.get_tool_definitions()
+        # eager_a + lazy_b (no on-demand left, so no activate_tools)
         assert len(definitions) == 2
 
         on_demand.reset_activations()
         definitions = await on_demand.get_tool_definitions()
-        assert len(definitions) == 1
+        # eager_a + activate_tools (lazy_b back to on-demand)
+        assert len(definitions) == 2

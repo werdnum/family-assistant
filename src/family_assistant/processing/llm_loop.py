@@ -17,8 +17,8 @@ from family_assistant.llm.messages import (
     UserMessage,
 )
 from family_assistant.tools import (
-    ACTIVATE_TOOLS_DEFINITION,
     OnDemandAwareToolsProvider,
+    collect_system_prompt_addition,
     find_provider_by_type,
     get_tool_definitions_for_advertisement,
 )
@@ -203,27 +203,26 @@ class LLMStreamingLoop:
         ] = []  # Track attachment IDs from attach_to_response calls
         original_system_content: str | None = None  # Store original system prompt
 
-        # Get tool definitions (eager tools only if on-demand is configured)
+        # Get tool definitions. Providers that split tools into eager/on-demand
+        # sets (e.g. OnDemandAwareToolsProvider) handle that internally and also
+        # surface the activate_tools meta-tool through this call.
+        tools_provider = self.tool_executor.tools_provider
         tools_for_llm = await get_tool_definitions_for_advertisement(
-            self.tool_executor.tools_provider,
+            tools_provider,
             can_confirm=request_confirmation_callback is not None,
         )
 
-        # Detect on-demand tools support in the provider chain
+        # Collect any system prompt additions contributed by providers in the
+        # chain (e.g. an on-demand tool catalog). The loop stays agnostic of
+        # which provider contributes; it just injects the text below.
+        system_prompt_addition = await collect_system_prompt_addition(tools_provider)
+
+        # The activate_tools meta-tool dispatch is the one place where the loop
+        # still needs a typed handle on the on-demand provider, so we look it up
+        # once and reuse it.
         on_demand_provider = find_provider_by_type(
-            self.tool_executor.tools_provider, OnDemandAwareToolsProvider
+            tools_provider, OnDemandAwareToolsProvider
         )
-        on_demand_catalog_text: str | None = None
-        if on_demand_provider and on_demand_provider.has_on_demand_tools():
-            catalog = await on_demand_provider.get_on_demand_catalog()
-            if catalog.entries:
-                on_demand_catalog_text = catalog.render_for_system_prompt()
-                tools_for_llm = [*tools_for_llm, ACTIVATE_TOOLS_DEFINITION]
-                logger.info(
-                    "On-demand tools: %d eager, %d on-demand (catalog injected)",
-                    len(tools_for_llm) - 1,
-                    len(catalog.entries),
-                )
 
         logger.debug(
             f"Total available tools for this interaction: {len(tools_for_llm)}"
@@ -260,10 +259,10 @@ class LLMStreamingLoop:
                 if is_final_iteration:
                     iteration_suffix += "\nIMPORTANT: This is the final iteration. You MUST provide your final response now without requesting additional tools."
 
-                # Build system prompt: original + on-demand catalog + iteration suffix
+                # Build system prompt: original + provider additions + iteration suffix
                 system_content = original_system_content
-                if on_demand_catalog_text:
-                    system_content += "\n\n" + on_demand_catalog_text
+                if system_prompt_addition:
+                    system_content += "\n\n" + system_prompt_addition
                 system_content += iteration_suffix
 
                 # Create new message with modified content (Pydantic models are immutable)
@@ -575,15 +574,14 @@ class LLMStreamingLoop:
                         result_text = f"Activated tools: {', '.join(activated_names)}. You can now use them."
                     else:
                         result_text = "No matching tools found. Check the on-demand catalog for available tool names."
-                    # Update the catalog text for subsequent system prompt injections
-                    updated_catalog = await on_demand_provider.get_on_demand_catalog()
-                    on_demand_catalog_text = (
-                        updated_catalog.render_for_system_prompt()
-                        if updated_catalog.entries
-                        else None
+                    # Refresh the system prompt addition (catalog shrinks as tools
+                    # are activated). The loop stays agnostic of how it is rendered.
+                    system_prompt_addition = await collect_system_prompt_addition(
+                        tools_provider
                     )
-                    # Remove activate_tools from tool list if no more on-demand tools
-                    if not updated_catalog.entries:
+                    # Drop activate_tools from the local list once nothing remains
+                    # to activate, so the LLM does not see a useless meta-tool.
+                    if not system_prompt_addition:
                         tools_for_llm = [
                             t
                             for t in tools_for_llm
@@ -665,6 +663,9 @@ class LLMStreamingLoop:
                         )
                         if activated_defs:
                             tools_for_llm = [*tools_for_llm, *activated_defs]
+                            system_prompt_addition = (
+                                await collect_system_prompt_addition(tools_provider)
+                            )
                             logger.info(
                                 "Auto-activated tools from skill: %s",
                                 [

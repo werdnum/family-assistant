@@ -174,7 +174,7 @@ class OnDemandAwareToolsProvider:
     # --- ToolsProvider interface ---
 
     async def get_tool_definitions(self) -> list[ToolDefinition]:
-        """Return only eager + activated tool definitions (not on-demand)."""
+        """Return eager + activated definitions, plus ``activate_tools`` if needed."""
         await self._ensure_caches()
         assert self._all_definitions is not None
         assert self._all_descriptors is not None
@@ -184,11 +184,23 @@ class OnDemandAwareToolsProvider:
             d.name for d in self._all_descriptors if self._is_on_demand(d)
         }
 
-        return [
+        eager_and_activated = [
             defn
             for defn in self._all_definitions
             if defn.get("function", {}).get("name") not in on_demand_names
         ]
+        if on_demand_names:
+            return [*eager_and_activated, ACTIVATE_TOOLS_DEFINITION]
+        return eager_and_activated
+
+    async def get_system_prompt_addition(self) -> str | None:
+        """Return the on-demand catalog rendered for system prompt injection."""
+        if not self.has_on_demand_tools():
+            return None
+        catalog = await self.get_on_demand_catalog()
+        if not catalog.entries:
+            return None
+        return catalog.render_for_system_prompt()
 
     async def execute_tool(
         self,

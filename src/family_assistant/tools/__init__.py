@@ -131,6 +131,7 @@ from family_assistant.tools.infrastructure import (
     ToolConfirmationRequired,
     ToolNotFoundError,
     ToolsProvider,
+    collect_system_prompt_addition,
     find_provider_by_type,
     get_tool_definitions_for_advertisement,
 )
@@ -241,6 +242,7 @@ __all__ = [
     "FilteredToolsProvider",
     "PolicyEnforcingToolsProvider",
     "MCPServerConfig",
+    "collect_system_prompt_addition",
     "find_provider_by_type",
     "get_tool_definitions_for_advertisement",
     "ToolNotFoundError",
