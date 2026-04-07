@@ -164,6 +164,12 @@ from family_assistant.tools.notes import (
     get_note_tool,
     list_notes_tool,
 )
+from family_assistant.tools.on_demand import (
+    ACTIVATE_TOOLS_DEFINITION,
+    OnDemandAwareToolsProvider,
+    OnDemandCatalogEntry,
+    OnDemandToolCatalog,
+)
 from family_assistant.tools.policy import (
     DEFAULT_POLICY_PRIORITY_OFFSET,
     OPERATOR_POLICY_PRIORITY_OFFSET,
@@ -372,6 +378,11 @@ __all__ = [
     "read_error_logs",
     "create_github_issue",
     "get_llm_request_history",
+    # On-demand tool activation
+    "ACTIVATE_TOOLS_DEFINITION",
+    "OnDemandAwareToolsProvider",
+    "OnDemandCatalogEntry",
+    "OnDemandToolCatalog",
 ]
 
 
