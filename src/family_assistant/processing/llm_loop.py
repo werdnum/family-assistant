@@ -15,7 +15,12 @@ from family_assistant.llm.messages import (
     ToolMessage,
     UserMessage,
 )
-from family_assistant.tools import get_tool_definitions_for_advertisement
+from family_assistant.tools import (
+    ACTIVATE_TOOLS_DEFINITION,
+    OnDemandAwareToolsProvider,
+    find_provider_by_type,
+    get_tool_definitions_for_advertisement,
+)
 
 from .attachments import AttachmentSelectionError
 from .utils import (
@@ -176,11 +181,28 @@ class LLMStreamingLoop:
         ] = []  # Track attachment IDs from attach_to_response calls
         original_system_content: str | None = None  # Store original system prompt
 
-        # Get tool definitions
+        # Get tool definitions (eager tools only if on-demand is configured)
         tools_for_llm = await get_tool_definitions_for_advertisement(
             self.tool_executor.tools_provider,
             can_confirm=request_confirmation_callback is not None,
         )
+
+        # Detect on-demand tools support in the provider chain
+        on_demand_provider = find_provider_by_type(
+            self.tool_executor.tools_provider, OnDemandAwareToolsProvider
+        )
+        on_demand_catalog_text: str | None = None
+        if on_demand_provider and on_demand_provider.has_on_demand_tools():
+            catalog = await on_demand_provider.get_on_demand_catalog()
+            if catalog.entries:
+                on_demand_catalog_text = catalog.render_for_system_prompt()
+                tools_for_llm = [*tools_for_llm, ACTIVATE_TOOLS_DEFINITION]
+                logger.info(
+                    "On-demand tools: %d eager, %d on-demand (catalog injected)",
+                    len(tools_for_llm) - 1,
+                    len(catalog.entries),
+                )
+
         logger.debug(
             f"Total available tools for this interaction: {len(tools_for_llm)}"
         )
@@ -216,10 +238,14 @@ class LLMStreamingLoop:
                 if is_final_iteration:
                     iteration_suffix += "\nIMPORTANT: This is the final iteration. You MUST provide your final response now without requesting additional tools."
 
+                # Build system prompt: original + on-demand catalog + iteration suffix
+                system_content = original_system_content
+                if on_demand_catalog_text:
+                    system_content += "\n\n" + on_demand_catalog_text
+                system_content += iteration_suffix
+
                 # Create new message with modified content (Pydantic models are immutable)
-                messages[0] = SystemMessage(
-                    content=original_system_content + iteration_suffix
-                )
+                messages[0] = SystemMessage(content=system_content)
             elif is_final_iteration and has_thought_signatures:
                 # Add final iteration instruction as a user message rather than modifying
                 # the system prompt. This approach works reliably regardless of whether
@@ -500,6 +526,61 @@ class LLMStreamingLoop:
                     yield (tool_result_event, tool_result_message)
                 break
 
+            # Handle activate_tools meta-tool calls before regular execution
+            regular_tool_calls = tool_calls_from_stream
+            if on_demand_provider:
+                activate_calls = [
+                    tc
+                    for tc in tool_calls_from_stream
+                    if tc.function.name == "activate_tools"
+                ]
+                regular_tool_calls = [
+                    tc
+                    for tc in tool_calls_from_stream
+                    if tc.function.name != "activate_tools"
+                ]
+                for activate_call in activate_calls:
+                    args = activate_call.function.parsed_arguments or {}
+                    activated_defs = await on_demand_provider.activate_tools(
+                        names=args.get("tool_names"),
+                        search=args.get("search"),
+                    )
+                    activated_names = [
+                        d.get("function", {}).get("name", "?") for d in activated_defs
+                    ]
+                    if activated_names:
+                        tools_for_llm = [*tools_for_llm, *activated_defs]
+                        result_text = f"Activated tools: {', '.join(activated_names)}. You can now use them."
+                    else:
+                        result_text = "No matching tools found. Check the on-demand catalog for available tool names."
+                    # Update the catalog text for subsequent system prompt injections
+                    updated_catalog = await on_demand_provider.get_on_demand_catalog()
+                    on_demand_catalog_text = (
+                        updated_catalog.render_for_system_prompt()
+                        if updated_catalog.entries
+                        else None
+                    )
+                    # Remove activate_tools from tool list if no more on-demand tools
+                    if not updated_catalog.entries:
+                        tools_for_llm = [
+                            t
+                            for t in tools_for_llm
+                            if t.get("function", {}).get("name") != "activate_tools"
+                        ]
+                    # Emit result event and message
+                    activate_event = LLMStreamEvent(
+                        type="tool_result",
+                        tool_call_id=activate_call.id,
+                        tool_result=result_text,
+                    )
+                    activate_message = ToolMessage(
+                        tool_call_id=activate_call.id,
+                        content=result_text,
+                        name="activate_tools",
+                    )
+                    yield (activate_event, activate_message)
+                    messages.append(activate_message)
+
             # Execute tool calls in parallel
             tool_response_messages_for_llm = []
 
@@ -526,7 +607,7 @@ class LLMStreamingLoop:
 
             tool_execution_tasks = [
                 asyncio.create_task(_execute_tool_call(tool_call))
-                for tool_call in tool_calls_from_stream
+                for tool_call in regular_tool_calls
             ]
 
             try:
