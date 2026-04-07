@@ -84,6 +84,7 @@ from family_assistant.tools import (
     LocalToolsProvider,
     MCPServerConfig,
     MCPToolsProvider,
+    OnDemandAwareToolsProvider,
     PolicyEnforcingToolsProvider,
     PolicyEngine,
     ToolPolicyConfig,
@@ -737,8 +738,22 @@ class Assistant:
             )
             # Get confirmation timeout from config, default to 3600 seconds (1 hour)
             confirmation_timeout = profile_tools_conf.confirmation_timeout_seconds
+
+            # Build provider chain: Policy → OnDemand (optional) → root
+            on_demand_tool_names = profile_tools_conf.get_on_demand_tool_names()
+            on_demand_mcp_ids = set(profile_tools_conf.get_on_demand_mcp_server_ids())
+            if on_demand_tool_names or on_demand_mcp_ids:
+                on_demand_provider = OnDemandAwareToolsProvider(
+                    wrapped_provider=self.root_tools_provider,
+                    on_demand_tool_names=on_demand_tool_names,
+                    on_demand_mcp_server_ids=on_demand_mcp_ids,
+                )
+                policy_wrapped = on_demand_provider
+            else:
+                policy_wrapped = self.root_tools_provider
+
             profile_tools_provider = PolicyEnforcingToolsProvider(
-                wrapped_provider=self.root_tools_provider,
+                wrapped_provider=policy_wrapped,
                 policy_engine=policy_engine,
                 confirmation_timeout=confirmation_timeout,
             )
