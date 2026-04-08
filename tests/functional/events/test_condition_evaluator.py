@@ -162,6 +162,22 @@ class TestEventConditionEvaluator:
         assert result is True
 
     @pytest.mark.asyncio
+    async def test_json_api_available(self, evaluator: EventConditionEvaluator) -> None:
+        """JSON API functions (json_encode/json_decode) are usable in conditions.
+
+        Parity with test_time_api_available: this PR is about enabling both
+        `time` and `json` APIs for event conditions, so both need runtime
+        coverage to guard against regression if `enable_json_api` were ever
+        flipped off for the event profile.
+        """
+        script = (
+            "json_decode(json_encode(event.get('payload'))) == event.get('payload')"
+        )
+        event_data = {"payload": {"temperature": 22, "unit": "C"}}
+        result = await evaluator.evaluate_condition(script, event_data)
+        assert result is True
+
+    @pytest.mark.asyncio
     async def test_time_api_in_realistic_condition(
         self, evaluator: EventConditionEvaluator
     ) -> None:
@@ -282,6 +298,18 @@ class TestEventConditionValidator:
         runtime to be rejected at validation time (or vice versa).
         """
         script = "time_hour(time_now()) >= 12"
+        is_valid, error = await validator.validate_script(script)
+        assert is_valid is True, f"Validation failed: {error}"
+
+    @pytest.mark.asyncio
+    async def test_json_api_validates(self, validator: EventConditionValidator) -> None:
+        """Validator accepts conditions that call JSON API functions.
+
+        Parity with test_time_api_validates: both time and json APIs are
+        enabled for event conditions, so static validation must recognize
+        json_encode/json_decode the same way it recognizes time_*.
+        """
+        script = "json_decode(json_encode(event)) == event"
         is_valid, error = await validator.validate_script(script)
         assert is_valid is True, f"Validation failed: {error}"
 
