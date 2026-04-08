@@ -236,22 +236,25 @@ class RemoteA2AService:
 
 Key translation logic:
 
-| FA Concept                              | A2A Concept                                                     |
-| --------------------------------------- | --------------------------------------------------------------- |
-| `trigger_content_parts` (text)          | `TextPart` in A2A `Message`                                     |
-| `trigger_content_parts` (attachment)    | `FilePart` in A2A `Message`                                     |
-| `conversation_id` + `target_service_id` | A2A `contextId` (namespaced to avoid cross-service collisions)  |
-| `subconversation_id`                    | `taskId` omitted on first send; server-assigned ID persisted    |
-| `ChatInteractionResult.text_reply`      | Text from A2A `Artifact` or final agent `Message`               |
-| `ChatInteractionResult.attachment_ids`  | `FilePart`s from A2A Artifacts (stored via attachment registry) |
-| `ChatInteractionResult.error_traceback` | A2A task state `failed` + error info                            |
+| FA Concept                                 | A2A Concept                                                          |
+| ------------------------------------------ | -------------------------------------------------------------------- |
+| `trigger_content_parts` (text)             | `TextPart` in A2A `Message`                                          |
+| `trigger_content_parts` (attachment)       | `FilePart` in A2A `Message`                                          |
+| `subconversation_id` + `target_service_id` | A2A `contextId` (per-delegation isolation, matching local semantics) |
+| (none)                                     | `taskId` omitted on first send; server-assigned ID persisted         |
+| `ChatInteractionResult.text_reply`         | Text from A2A `Artifact` or final agent `Message`                    |
+| `ChatInteractionResult.attachment_ids`     | `FilePart`s from A2A Artifacts (stored via attachment registry)      |
+| `ChatInteractionResult.error_traceback`    | A2A task state `failed` + error info                                 |
 
 The client omits `taskId` on the first `message/send` and lets the remote server assign one. The
-returned `taskId` is persisted for cancellation correlation and potential follow-up messages. The
-`contextId` is derived from `(conversation_id, target_service_id)` (e.g.,
-`f"{conversation_id}:{target_service_id}"`) so that multiple delegations in the same FA conversation
-maintain continuity per remote service, while delegations to different remote services on the same
-endpoint do not collide.
+returned `taskId` is persisted for cancellation correlation.
+
+The `contextId` is derived from `(subconversation_id, target_service_id)` (e.g.,
+`f"{subconversation_id}:{target_service_id}"`). This matches local delegation semantics, where
+`delegate_to_service_tool` generates a fresh `subconversation_id = uuid4()` per delegation so each
+delegation is isolated from prior history. Including `target_service_id` also prevents collisions
+when multiple remote profiles share an endpoint. Opt-in continuity (reusing a prior `contextId`
+across delegations) can be added later if needed.
 
 #### 4. Configuration
 
