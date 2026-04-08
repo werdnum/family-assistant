@@ -29,14 +29,15 @@ class EventConditionEvaluator:
         # Restricted config for event conditions
         # Note: We intentionally create a new MontyEngine instance here rather than
         # using dependency injection to ensure complete isolation and security.
-        # This engine is configured with maximum restrictions and no access to tools.
+        # Tool access is denied; built-in APIs (json, time) are available so
+        # conditions can do simple things like check the current time.
         timeout_ms = (config or {}).get("script_execution_timeout_ms", 100)
         self.config = ScriptConfig(
             max_execution_time=timeout_ms / 1000.0,  # Convert to seconds
             enable_print=False,
             enable_debug=False,
             deny_all_tools=True,
-            disable_apis=True,  # No JSON, time, or other APIs for security
+            disable_apis=False,
         )
         self.engine = MontyEngine(tools_provider=None, config=self.config)
 
@@ -164,18 +165,19 @@ class EventConditionValidator:
         if len(script.encode("utf-8")) > self.size_limit:
             return False, f"Script too large (max {self.size_limit} bytes)"
 
-        # Static type checking (catches syntax and type errors without execution)
+        # Static type checking (catches syntax and type errors without execution).
         # Wrap the script the same way evaluate_condition() does, so that
         # `return` statements are valid (they're inside a function body at runtime).
+        # Use the evaluator's ScriptConfig so validation runs in the same
+        # environment as execution (same APIs available, same tool restrictions).
         if "return" not in script:
             wrapped = f"def _evaluate():\n    return {script}\n\n_evaluate()"
         else:
             indented = textwrap.indent(script, "    ")
             wrapped = f"def _evaluate():\n{indented}\n\n_evaluate()"
 
-        config = ScriptConfig(disable_apis=True, deny_all_tools=True)
-        type_result = ScriptValidator(config=config).validate(
-            wrapped, input_names=["event"], include_apis=False
+        type_result = ScriptValidator(config=self.evaluator.config).validate(
+            wrapped, input_names=["event"], include_apis=True
         )
         if not type_result.is_valid:
             # Categorize as syntax or type error for consistent error messages

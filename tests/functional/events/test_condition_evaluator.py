@@ -154,6 +154,29 @@ class TestEventConditionEvaluator:
         with pytest.raises(ScriptExecutionError):
             await evaluator.evaluate_condition(script, {})
 
+    @pytest.mark.asyncio
+    async def test_time_api_available(self, evaluator: EventConditionEvaluator) -> None:
+        """Time API functions like time_now/time_hour are usable in conditions."""
+        script = "0 <= time_hour(time_now()) <= 23"
+        result = await evaluator.evaluate_condition(script, {})
+        assert result is True
+
+    @pytest.mark.asyncio
+    async def test_time_api_in_realistic_condition(
+        self, evaluator: EventConditionEvaluator
+    ) -> None:
+        """Realistic afternoon-arrival condition combining state + time."""
+        script = (
+            "event.get('old_state', {}).get('state') != 'Barangaroo Metro' "
+            "and time_hour(time_now()) >= 0"
+        )
+        event_data = {
+            "old_state": {"state": "Wynyard"},
+            "new_state": {"state": "Barangaroo Metro"},
+        }
+        result = await evaluator.evaluate_condition(script, event_data)
+        assert result is True
+
 
 class TestEventConditionValidator:
     """Test event condition validator."""
@@ -208,3 +231,25 @@ class TestEventConditionValidator:
         is_valid, error = await validator.validate_script(script)
         assert is_valid is False
         assert error is not None and "max 100 bytes" in error
+
+    @pytest.mark.asyncio
+    async def test_time_api_validates(self, validator: EventConditionValidator) -> None:
+        """Validator accepts conditions that call time API functions.
+
+        This guards against the regression where the validator's environment
+        diverged from the runtime environment, causing scripts that work at
+        runtime to be rejected at validation time (or vice versa).
+        """
+        script = "time_hour(time_now()) >= 12"
+        is_valid, error = await validator.validate_script(script)
+        assert is_valid is True, f"Validation failed: {error}"
+
+    @pytest.mark.asyncio
+    async def test_undefined_function_rejected_by_validator(
+        self, validator: EventConditionValidator
+    ) -> None:
+        """Validator rejects calls to functions that don't exist at runtime."""
+        script = "definitely_not_a_real_function() and True"
+        is_valid, error = await validator.validate_script(script)
+        assert is_valid is False
+        assert error is not None
