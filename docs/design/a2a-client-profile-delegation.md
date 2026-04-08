@@ -103,6 +103,8 @@ Extract a protocol from `ProcessingService` that both local and remote services 
 class DelegatableService(Protocol):
     """A service that can receive delegated requests."""
 
+    kind: Literal["local", "remote"]
+
     @property
     def service_config(self) -> ProcessingServiceConfig | RemoteServiceConfig: ...
 
@@ -123,6 +125,42 @@ class DelegatableService(Protocol):
 ```
 
 The registry type changes from `dict[str, ProcessingService]` to `dict[str, DelegatableService]`.
+
+##### Registry compatibility with other consumers
+
+The `processing_services_registry` is used beyond `delegate_to_service`. Current consumers that
+access richer fields:
+
+- `src/family_assistant/web/routers/chat_api.py` — routes chat interactions to a selected profile
+  and (in one path) iterates all services to list profiles with their full configs in the UI
+- `src/family_assistant/web/routers/context_viewer.py` — iterates all services and reads
+  `service.service_config` fields for a debug/context view
+- `src/family_assistant/web/routers/gemini_live_api.py` — routes live voice interactions to a
+  selected profile
+- `src/family_assistant/telegram/handler.py` — routes slash commands and replies to a targeted
+  profile
+- `src/family_assistant/task_worker.py` — looks up the `reminder` profile for scheduled tasks
+
+Remote A2A profiles cannot be used as the target of interactive chat/voice sessions in the initial
+implementation (the remote agent doesn't share our conversation state, streaming loop, or tool
+policy layer). They are **delegation-only targets**. To avoid runtime errors in interactive
+consumers:
+
+1. **Add `kind: Literal["local", "remote"]`** to the `DelegatableService` protocol so consumers can
+   branch defensively.
+2. **Interactive routes** (chat_api, gemini_live_api, telegram slash commands) filter the registry
+   to `kind == "local"` when selecting a target. Requesting a remote profile as a conversation
+   target returns a 400-equivalent error ("profile is delegation-only").
+3. **Profile listing endpoints** (chat_api profile list, context_viewer) either (a) skip remote
+   profiles entirely, or (b) include them with a minimal shape flagged as `remote: true` and no
+   `tools_config` / `prompts` fields. Preferred: include them in listings so users can see that they
+   exist, but mark them as delegation-only.
+4. **`task_worker.py`** only looks up the `reminder` profile by id; remote profiles can never hold
+   that id, so no change needed.
+
+This keeps delegation transparent (the LLM can still call `delegate_to_service` with a remote
+target_service_id) while preventing the shared registry from being a footgun for interactive
+consumers.
 
 #### 2. `A2AClientWrapper`
 
@@ -269,7 +307,10 @@ Auth credentials are always read from environment variables, never stored in con
 Remote profiles do not need most fields of `ProcessingServiceConfig` (LLM model, tools, prompts,
 iteration limits, etc.) since the remote agent owns its own configuration. Rather than splitting
 `ProcessingServiceConfig` or making fields conditional, introduce a smaller `RemoteServiceConfig`
-that holds only the fields the registry and `delegate_to_service` actually use:
+that holds only the fields `delegate_to_service` actually reads. This is safe because interactive
+consumers (chat_api, context_viewer, gemini_live_api) filter the registry to `kind == "local"`
+before accessing fields like `tools_provider`, `prompts`, or `timezone` — see the "Registry
+compatibility" section above.
 
 ```python
 @dataclass
