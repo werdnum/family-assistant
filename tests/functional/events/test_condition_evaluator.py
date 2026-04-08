@@ -154,6 +154,86 @@ class TestEventConditionEvaluator:
         with pytest.raises(ScriptExecutionError):
             await evaluator.evaluate_condition(script, {})
 
+    @pytest.mark.asyncio
+    async def test_time_api_available(self, evaluator: EventConditionEvaluator) -> None:
+        """Time API functions like time_now/time_hour are usable in conditions."""
+        script = "0 <= time_hour(time_now()) <= 23"
+        result = await evaluator.evaluate_condition(script, {})
+        assert result is True
+
+    @pytest.mark.asyncio
+    async def test_json_api_available(self, evaluator: EventConditionEvaluator) -> None:
+        """JSON API functions (json_encode/json_decode) are usable in conditions.
+
+        Parity with test_time_api_available: this PR is about enabling both
+        `time` and `json` APIs for event conditions, so both need runtime
+        coverage to guard against regression if `enable_json_api` were ever
+        flipped off for the event profile.
+        """
+        script = (
+            "json_decode(json_encode(event.get('payload'))) == event.get('payload')"
+        )
+        event_data = {"payload": {"temperature": 22, "unit": "C"}}
+        result = await evaluator.evaluate_condition(script, event_data)
+        assert result is True
+
+    @pytest.mark.asyncio
+    async def test_time_api_in_realistic_condition(
+        self, evaluator: EventConditionEvaluator
+    ) -> None:
+        """Realistic afternoon-arrival condition combining state + time."""
+        script = (
+            "event.get('old_state', {}).get('state') != 'Barangaroo Metro' "
+            "and time_hour(time_now()) >= 0"
+        )
+        event_data = {
+            "old_state": {"state": "Wynyard"},
+            "new_state": {"state": "Barangaroo Metro"},
+        }
+        result = await evaluator.evaluate_condition(script, event_data)
+        assert result is True
+
+    @pytest.mark.asyncio
+    async def test_llm_api_not_available(
+        self, evaluator: EventConditionEvaluator
+    ) -> None:
+        """LLM API is not exposed to event conditions.
+
+        Event conditions run on every incoming event under a tight timeout;
+        exposing llm() would create an exfiltration vector and an unbounded
+        cost path, so it must be unreachable at runtime regardless of the
+        rest of the API surface.
+        """
+        with pytest.raises(ScriptExecutionError):
+            await evaluator.evaluate_condition("llm('hi') == 'x'", {})
+
+    @pytest.mark.asyncio
+    async def test_tools_api_not_available(
+        self, evaluator: EventConditionEvaluator
+    ) -> None:
+        """tools_* helpers are not exposed to event conditions.
+
+        EventConditionEvaluator constructs MontyEngine with tools_provider=None,
+        so no tools_* names are ever registered at runtime. Scripts that try to
+        call them must fail at runtime, matching what the validator rejects
+        at save-time.
+        """
+        with pytest.raises(ScriptExecutionError):
+            await evaluator.evaluate_condition("tools_list() == []", {})
+
+    @pytest.mark.asyncio
+    async def test_attachment_api_not_available(
+        self, evaluator: EventConditionEvaluator
+    ) -> None:
+        """attachment_* helpers are not exposed to event conditions.
+
+        EventConditionEvaluator passes no execution_context, so the attachment
+        registry is never wired up and attachment_* names are never registered
+        at runtime.
+        """
+        with pytest.raises(ScriptExecutionError):
+            await evaluator.evaluate_condition("attachment_get('x') is not None", {})
+
 
 class TestEventConditionValidator:
     """Test event condition validator."""
@@ -208,3 +288,92 @@ class TestEventConditionValidator:
         is_valid, error = await validator.validate_script(script)
         assert is_valid is False
         assert error is not None and "max 100 bytes" in error
+
+    @pytest.mark.asyncio
+    async def test_time_api_validates(self, validator: EventConditionValidator) -> None:
+        """Validator accepts conditions that call time API functions.
+
+        This guards against the regression where the validator's environment
+        diverged from the runtime environment, causing scripts that work at
+        runtime to be rejected at validation time (or vice versa).
+        """
+        script = "time_hour(time_now()) >= 12"
+        is_valid, error = await validator.validate_script(script)
+        assert is_valid is True, f"Validation failed: {error}"
+
+    @pytest.mark.asyncio
+    async def test_json_api_validates(self, validator: EventConditionValidator) -> None:
+        """Validator accepts conditions that call JSON API functions.
+
+        Parity with test_time_api_validates: both time and json APIs are
+        enabled for event conditions, so static validation must recognize
+        json_encode/json_decode the same way it recognizes time_*.
+        """
+        script = "json_decode(json_encode(event)) == event"
+        is_valid, error = await validator.validate_script(script)
+        assert is_valid is True, f"Validation failed: {error}"
+
+    @pytest.mark.asyncio
+    async def test_undefined_function_rejected_by_validator(
+        self, validator: EventConditionValidator
+    ) -> None:
+        """Validator rejects calls to functions that don't exist at runtime."""
+        script = "definitely_not_a_real_function() and True"
+        is_valid, error = await validator.validate_script(script)
+        assert is_valid is False
+        assert error is not None
+
+    @pytest.mark.asyncio
+    async def test_validator_rejects_llm_call(
+        self, validator: EventConditionValidator
+    ) -> None:
+        """Validator rejects llm() because it's not exposed at runtime either.
+
+        This is the parity guard for the LLM API: the runtime denies it, so
+        validation must reject it at save-time rather than letting users
+        commit a script that will only fail when the event fires.
+        """
+        is_valid, error = await validator.validate_script("llm('x') == 'y'")
+        assert is_valid is False
+        assert error is not None
+
+    @pytest.mark.asyncio
+    async def test_validator_rejects_tools_execute(
+        self, validator: EventConditionValidator
+    ) -> None:
+        """Validator rejects tools_execute() because event-condition runtime
+        has no tools_provider, so the call would fail with NameError every
+        time the event fired.
+        """
+        is_valid, error = await validator.validate_script(
+            "tools_execute('send_telegram', 'hi') == 'ok'"
+        )
+        assert is_valid is False
+        assert error is not None
+
+    @pytest.mark.asyncio
+    async def test_validator_rejects_tools_list(
+        self, validator: EventConditionValidator
+    ) -> None:
+        """Validator rejects tools_list() for the same reason as tools_execute.
+
+        The ScriptValidator defaults include_tools_api=True, so this test
+        guards against regressions where the event-condition validator
+        forgets to pass include_tools_api=False.
+        """
+        is_valid, error = await validator.validate_script("tools_list() == []")
+        assert is_valid is False
+        assert error is not None
+
+    @pytest.mark.asyncio
+    async def test_validator_rejects_attachment_get(
+        self, validator: EventConditionValidator
+    ) -> None:
+        """Validator rejects attachment_get() because event conditions have
+        no attachment registry at runtime.
+        """
+        is_valid, error = await validator.validate_script(
+            "attachment_get('x') is not None"
+        )
+        assert is_valid is False
+        assert error is not None

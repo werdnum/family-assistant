@@ -168,9 +168,11 @@ async def test_llm_json_available_in_engine(mock_llm_client: AsyncMock) -> None:
 
 
 @pytest.mark.no_db
-async def test_llm_not_available_when_apis_disabled(mock_llm_client: AsyncMock) -> None:
-    """Test that llm() is not available when APIs are disabled."""
+async def test_llm_not_available_when_llm_api_disabled(
+    mock_llm_client: AsyncMock,
+) -> None:
+    """Test that llm() is not available when the LLM API is disabled."""
     with patch(PATCH_TARGET, return_value=mock_llm_client):
-        engine = MontyEngine(config=ScriptConfig(disable_apis=True))
+        engine = MontyEngine(config=ScriptConfig(enable_llm_api=False))
         with pytest.raises(Exception, match="llm"):
             await engine.evaluate_async("llm('test')")

@@ -16,4 +16,6 @@ class ScriptConfig:
         None  # If specified, only these tools can be executed
     )
     deny_all_tools: bool = False  # If True, no tools can be executed
-    disable_apis: bool = False  # If True, no APIs (json, time, etc.) are loaded
+    enable_json_api: bool = True  # Whether json_encode/json_decode are loaded
+    enable_time_api: bool = True  # Whether time_* and duration_* helpers are loaded
+    enable_llm_api: bool = True  # Whether llm()/llm_json() are loaded

@@ -280,9 +280,11 @@ class MontyEngine:
         ext_fn_names.append("wake_llm")
         ext_fn_impls["wake_llm"] = wake_fn
 
-        if not self.config.disable_apis:
+        if self.config.enable_json_api:
             self._add_json_api(ext_fn_names, ext_fn_impls)
+        if self.config.enable_time_api:
             self._add_time_api(ext_fn_names, ext_fn_impls, inputs)
+        if self.config.enable_llm_api:
             self._add_llm_api(ext_fn_names, ext_fn_impls)
 
         if execution_context and execution_context.attachment_registry:
