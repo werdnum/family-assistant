@@ -29,13 +29,19 @@ from family_assistant.tools import (
     AVAILABLE_FUNCTIONS as local_tool_implementations_map,
 )
 from family_assistant.tools import (
-    TOOLS_DEFINITION as local_tools_definition_list,
+    LOCAL_TOOL_REGISTRATIONS as local_tool_registrations,
 )
 from family_assistant.tools import (
     CompositeToolsProvider,
     ConfirmingToolsProvider,
     LocalToolsProvider,
     MCPToolsProvider,
+    PolicyEnforcingToolsProvider,
+    PolicyEngine,
+    PolicyRule,
+    ToolMatcher,
+    ToolPolicyConfig,
+    ToolPolicyDecision,
     ToolsProvider,
 )
 from tests.mocks.mock_llm import (
@@ -296,7 +302,12 @@ async def mock_confirmation_callback() -> AsyncMock:
     return AsyncMock(spec=Callable[..., Awaitable[bool]])
 
 
-def create_tools_provider(profile_tools_config: ToolsConfig) -> ToolsProvider:
+def create_tools_provider(
+    profile_tools_config: ToolsConfig,
+    delegation_security_by_target_profile_id: (
+        dict[str, DelegationSecurityLevel] | None
+    ) = None,
+) -> ToolsProvider:
     """Helper to create a ToolsProvider stack for a profile."""
     enabled_local_tool_names = profile_tools_config.get_all_tool_names() or set()
 
@@ -311,31 +322,26 @@ def create_tools_provider(profile_tools_config: ToolsConfig) -> ToolsProvider:
     ):  # For specialized, if empty, means no local tools
         pass
 
-    profile_local_definitions = [
-        td
-        for td in local_tools_definition_list
-        if td.get("function", {}).get("name") in enabled_local_tool_names
+    profile_local_registrations = [
+        registration
+        for registration in local_tool_registrations
+        if registration.name in enabled_local_tool_names
     ]
-    profile_local_implementations = {
-        name: func
-        for name, func in local_tool_implementations_map.items()
-        if name in enabled_local_tool_names
-    }
 
     logger.info(f"create_tools_provider: profile_tools_config={profile_tools_config}")
     logger.info(
         f"create_tools_provider: enabled_local_tool_names={enabled_local_tool_names}"
     )
     logger.info(
-        f"create_tools_provider: profile_local_definitions names={[d.get('function', {}).get('name') for d in profile_local_definitions]}"
+        f"create_tools_provider: profile_local_registrations names={[registration.name for registration in profile_local_registrations]}"
     )
     logger.info(
-        f"create_tools_provider: profile_local_implementations keys={list(profile_local_implementations.keys())}"
+        "create_tools_provider: profile_local_implementations keys=%s",
+        list(local_tool_implementations_map.keys()),
     )
 
     local_provider = LocalToolsProvider(
-        definitions=profile_local_definitions,
-        implementations=profile_local_implementations,
+        registrations=profile_local_registrations,
     )
     mcp_provider = MCPToolsProvider(mcp_server_configs={})  # Mocked
 
@@ -343,12 +349,50 @@ def create_tools_provider(profile_tools_config: ToolsConfig) -> ToolsProvider:
         providers=[local_provider, mcp_provider]
     )
 
+    provider_for_confirmation: ToolsProvider = composite_provider
+
+    if delegation_security_by_target_profile_id:
+        delegation_rules: list[PolicyRule] = []
+        for (
+            target_profile_id,
+            delegation_security,
+        ) in delegation_security_by_target_profile_id.items():
+            decision: ToolPolicyDecision | None = None
+            if delegation_security == DelegationSecurityLevel.BLOCKED:
+                decision = ToolPolicyDecision.DENY
+            elif delegation_security == DelegationSecurityLevel.CONFIRM:
+                decision = ToolPolicyDecision.CONFIRM
+
+            if decision is None:
+                continue
+
+            delegation_rules.append(
+                PolicyRule(
+                    match=ToolMatcher(
+                        names=["delegate_to_service"],
+                        argument_equals={"target_service_id": target_profile_id},
+                    ),
+                    decision=decision,
+                    priority=99,
+                )
+            )
+
+        if delegation_rules:
+            provider_for_confirmation = PolicyEnforcingToolsProvider(
+                wrapped_provider=composite_provider,
+                policy_engine=PolicyEngine.from_policy_config(
+                    ToolPolicyConfig(
+                        default_decision=ToolPolicyDecision.ALLOW,
+                        rules=delegation_rules,
+                    )
+                ),
+            )
+
     confirm_tools_set = set(profile_tools_config.confirm_tools)
-    confirming_provider = ConfirmingToolsProvider(
-        wrapped_provider=composite_provider,
+    return ConfirmingToolsProvider(
+        wrapped_provider=provider_for_confirmation,
         tools_requiring_confirmation=confirm_tools_set,
     )
-    return confirming_provider
 
 
 @pytest_asyncio.fixture
@@ -564,6 +608,14 @@ async def test_delegation_confirm_target_granted(
     target_service = await awaited_specialized_processing_service_factory(
         DelegationSecurityLevel.CONFIRM
     )
+    awaited_primary_service.tools_provider = create_tools_provider(
+        awaited_primary_service.service_config.tools_config,
+        {SPECIALIZED_PROFILE_ID: DelegationSecurityLevel.CONFIRM},
+    )
+    await awaited_primary_service.tools_provider.get_tool_definitions()
+    awaited_primary_service.tool_executor.tools_provider = (
+        awaited_primary_service.tools_provider
+    )
 
     registry = {
         PRIMARY_PROFILE_ID: awaited_primary_service,
@@ -627,6 +679,14 @@ async def test_delegation_confirm_target_denied(
     target_service = await awaited_specialized_processing_service_factory(
         DelegationSecurityLevel.CONFIRM
     )
+    awaited_primary_service.tools_provider = create_tools_provider(
+        awaited_primary_service.service_config.tools_config,
+        {SPECIALIZED_PROFILE_ID: DelegationSecurityLevel.CONFIRM},
+    )
+    await awaited_primary_service.tools_provider.get_tool_definitions()
+    awaited_primary_service.tool_executor.tools_provider = (
+        awaited_primary_service.tools_provider
+    )
 
     registry = {
         PRIMARY_PROFILE_ID: awaited_primary_service,
@@ -681,6 +741,14 @@ async def test_delegation_blocked_target(
 
     target_service = await awaited_specialized_processing_service_factory(
         DelegationSecurityLevel.BLOCKED
+    )
+    awaited_primary_service.tools_provider = create_tools_provider(
+        awaited_primary_service.service_config.tools_config,
+        {SPECIALIZED_PROFILE_ID: DelegationSecurityLevel.BLOCKED},
+    )
+    await awaited_primary_service.tools_provider.get_tool_definitions()
+    awaited_primary_service.tool_executor.tools_provider = (
+        awaited_primary_service.tools_provider
     )
 
     registry = {
