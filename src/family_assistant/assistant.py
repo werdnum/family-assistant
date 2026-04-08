@@ -31,6 +31,7 @@ from family_assistant.context_providers import (
     NotesContextProvider,
     WeatherContextProvider,
 )
+from family_assistant.delegation_security import DelegationSecurityLevel
 from family_assistant.embeddings import (
     EmbeddingGenerator,
     GoogleEmbeddingGenerator,
@@ -87,7 +88,10 @@ from family_assistant.tools import (
     OnDemandAwareToolsProvider,
     PolicyEnforcingToolsProvider,
     PolicyEngine,
+    PolicyRule,
+    ToolMatcher,
     ToolPolicyConfig,
+    ToolPolicyDecision,
     _scan_user_docs,
     build_local_tool_registrations,
 )
@@ -148,6 +152,55 @@ def _build_profile_policy_engine(
     return PolicyEngine.from_layers(
         defaults=profile_tools_policy,
         operator=operator_tools_policy,
+    )
+
+
+def _build_delegation_compat_operator_policy(
+    profile_id_to_delegation_security: dict[str, DelegationSecurityLevel],
+    existing_operator_policy: ToolPolicyConfig | None,
+) -> ToolPolicyConfig | None:
+    """Build synthetic operator rules preserving legacy delegation behavior.
+
+    The legacy `processing_config.delegation_security_level` was enforced at runtime in
+    `delegate_to_service_tool` based on the *target* profile. To preserve zero behavior diff
+    while moving enforcement into the policy engine, we synthesize execution-time rules that
+    match `delegate_to_service` calls by `target_service_id`.
+    """
+    synthesized_rules: list[PolicyRule] = []
+    for target_profile_id, security_level in profile_id_to_delegation_security.items():
+        decision: ToolPolicyDecision | None = None
+        if str(security_level) == DelegationSecurityLevel.BLOCKED.value:
+            decision = ToolPolicyDecision.DENY
+        elif str(security_level) == DelegationSecurityLevel.CONFIRM.value:
+            decision = ToolPolicyDecision.CONFIRM
+
+        if decision is None:
+            continue
+
+        synthesized_rules.append(
+            PolicyRule(
+                match=ToolMatcher(
+                    names=["delegate_to_service"],
+                    argument_equals={"target_service_id": target_profile_id},
+                ),
+                decision=decision,
+                priority=99,
+                description=(
+                    "legacy delegation_security_level compatibility for "
+                    f"target profile '{target_profile_id}'"
+                ),
+            )
+        )
+
+    if not synthesized_rules and existing_operator_policy is None:
+        return None
+
+    if existing_operator_policy is None:
+        return ToolPolicyConfig(rules=synthesized_rules)
+
+    return ToolPolicyConfig(
+        rules=[*synthesized_rules, *existing_operator_policy.rules],
+        default_decision=existing_operator_policy.default_decision,
     )
 
 
@@ -649,6 +702,10 @@ class Assistant:
         if user_dir:
             all_skills.extend(load_skills_from_directory(user_dir))
         note_registry = NoteRegistry(all_skills) if all_skills else None
+        delegation_security_by_profile_id = {
+            profile.id: profile.processing_config.delegation_security_level
+            for profile in resolved_profiles
+        }
 
         for profile_conf in resolved_profiles:
             profile_id = profile_conf.id
@@ -658,7 +715,10 @@ class Assistant:
             profile_proc_conf = profile_conf.processing_config
             profile_tools_conf = profile_conf.tools_config
             profile_tools_policy = profile_conf.tools_policy
-            profile_operator_tools_policy = profile_conf.operator_tools_policy
+            profile_operator_tools_policy = _build_delegation_compat_operator_policy(
+                delegation_security_by_profile_id,
+                profile_conf.operator_tools_policy,
+            )
             profile_chat_id_map = profile_conf.chat_id_to_name_map
 
             profile_llm_model = profile_proc_conf.llm_model or self.config.model
