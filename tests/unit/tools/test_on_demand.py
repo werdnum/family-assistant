@@ -434,3 +434,27 @@ class TestOnDemandMCPServerExpansion:
         # The eager tool's definition is not duplicated in the activation result.
         returned_names = {d["function"]["name"] for d in result.definitions}
         assert "ha_eager" not in returned_names
+
+
+class TestOnDemandActivateToolsCollision:
+    """The synthetic activate_tools name must be reserved by the provider."""
+
+    @pytest.mark.asyncio
+    async def test_wrapped_provider_with_real_activate_tools_raises(self) -> None:
+        """A real tool named ``activate_tools`` would be shadowed by the meta-tool.
+
+        Refuse to wrap such a provider so the collision surfaces at setup
+        rather than silently hiding the real tool at runtime.
+        """
+        descriptors = [
+            _make_mcp_descriptor("activate_tools", "homeassistant"),
+        ]
+        wrapped = _StubMCPDescriptorProvider(descriptors)
+        on_demand = OnDemandAwareToolsProvider(
+            wrapped_provider=wrapped,
+            on_demand_tool_names=set(),
+            on_demand_mcp_server_ids={"homeassistant"},
+        )
+
+        with pytest.raises(ValueError, match="reserved for the on-demand meta-tool"):
+            await on_demand.get_tool_definitions()

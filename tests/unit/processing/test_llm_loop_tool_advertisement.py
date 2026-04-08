@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-# pylint: disable=no-name-in-module
 import json
 from typing import TYPE_CHECKING, Any, cast
 from zoneinfo import ZoneInfo
@@ -10,8 +9,12 @@ import pytest
 from family_assistant.config_models import AppConfig, ToolsConfig
 from family_assistant.delegation_security import DelegationSecurityLevel
 from family_assistant.llm import LLMOutput
+from family_assistant.llm.messages import ToolMessage
 from family_assistant.llm.tool_call import ToolCallFunction, ToolCallItem
 from family_assistant.processing import ProcessingService, ProcessingServiceConfig
+from family_assistant.processing.llm_loop import (
+    _extract_activate_tools_from_result,  # noqa: PLC2701 - note: reach into private helper to unit-test its trust gate directly; public re-export is not warranted
+)
 from family_assistant.storage.context import get_db_context
 from family_assistant.tools.infrastructure import LocalToolsProvider
 from family_assistant.tools.metadata import (
@@ -22,7 +25,10 @@ from family_assistant.tools.metadata import (
 )
 from family_assistant.tools.on_demand import OnDemandAwareToolsProvider
 from family_assistant.tools.types import ToolResult
-from tests.mocks.mock_llm import MatcherArgs, RuleBasedMockLLMClient
+from tests.mocks.mock_llm import (  # pylint: disable=no-name-in-module - note: pylint cannot resolve the implicit `tests` namespace package
+    MatcherArgs,
+    RuleBasedMockLLMClient,
+)
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncEngine
@@ -443,3 +449,59 @@ async def test_llm_loop_ignores_activate_tools_key_from_non_get_note_tools(
     # was ignored. The on-demand meta-tool is still offered.
     assert "lazy_b" not in second_call_tool_names
     assert "activate_tools" in second_call_tool_names
+
+
+def test_extract_activate_tools_prefers_structured_tool_result() -> None:
+    """Auto-activation must read from tool_result.data when available.
+
+    The LLM-facing ``tool_msg.content`` string can be rewritten (e.g. by the
+    large-tool-result attachment handling path) so it is no longer valid JSON.
+    Reading the structured ``tool_result.data`` payload avoids that fragility.
+    """
+    tool_msg = ToolMessage(
+        tool_call_id="call_1",
+        name="get_note",
+        # Content is an attachment-rewritten string, not raw JSON.
+        content=(
+            "[Large result stored as attachment 'abc123'. "
+            "See data for structured payload.]"
+        ),
+        tool_result=ToolResult(
+            data={
+                "title": "skill_note",
+                "content": "...",
+                "activate_tools": ["lazy_b", "lazy_c"],
+            }
+        ),
+    )
+
+    assert _extract_activate_tools_from_result(tool_msg) == ["lazy_b", "lazy_c"]
+
+
+def test_extract_activate_tools_falls_back_to_content_json() -> None:
+    """When tool_result is not populated, fall back to JSON-decoding content.
+
+    Older tools that don't return structured ToolResult must still work.
+    """
+    tool_msg = ToolMessage(
+        tool_call_id="call_1",
+        name="get_note",
+        content=json.dumps({"activate_tools": ["lazy_b"]}),
+        tool_result=None,
+    )
+
+    assert _extract_activate_tools_from_result(tool_msg) == ["lazy_b"]
+
+
+def test_extract_activate_tools_ignores_non_get_note_even_with_structured_data() -> (
+    None
+):
+    """The trust gate applies even when tool_result.data is used."""
+    tool_msg = ToolMessage(
+        tool_call_id="call_1",
+        name="some_other_tool",
+        content="",
+        tool_result=ToolResult(data={"activate_tools": ["lazy_b"]}),
+    )
+
+    assert _extract_activate_tools_from_result(tool_msg) == []

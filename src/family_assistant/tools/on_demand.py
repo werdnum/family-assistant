@@ -178,11 +178,24 @@ class OnDemandAwareToolsProvider:
     # --- Internal helpers ---
 
     async def _ensure_descriptors(self) -> list[ToolDescriptor]:
-        """Populate the descriptor cache from the wrapped provider on first access."""
+        """Populate the descriptor cache from the wrapped provider on first access.
+
+        The LLM loop intercepts any tool call named ``activate_tools`` as the
+        meta-tool. If the wrapped provider already exposes a real tool with
+        that name it would be silently shadowed, so refuse to wrap such a
+        provider and fail loudly instead.
+        """
         if self._all_descriptors is None:
-            self._all_descriptors = (
-                await self._descriptor_provider.get_tool_descriptors()
-            )
+            descriptors = await self._descriptor_provider.get_tool_descriptors()
+            collisions = [d for d in descriptors if d.name == "activate_tools"]
+            if collisions:
+                msg = (
+                    "OnDemandAwareToolsProvider cannot wrap a provider that "
+                    "already exposes a tool named 'activate_tools'; this name "
+                    "is reserved for the on-demand meta-tool."
+                )
+                raise ValueError(msg)
+            self._all_descriptors = descriptors
         return self._all_descriptors
 
     async def _fetch_wrapped_definitions(

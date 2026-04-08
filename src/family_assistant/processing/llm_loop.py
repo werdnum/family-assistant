@@ -61,16 +61,28 @@ def _extract_activate_tools_from_result(tool_msg: ToolMessage) -> list[str]:
     ``activate_tools`` key. Restrict parsing to ``get_note`` results so
     arbitrary tools cannot expand the active tool surface by emitting that key
     in their output.
+
+    Prefer reading the structured ``tool_result.data`` payload when it is
+    available: ``tool_msg.content`` is the LLM-facing string, which the
+    large-result handling path can rewrite with attachment hints, at which
+    point it is no longer parseable JSON. Fall back to JSON-decoding the
+    content only for tool results that never set ``tool_result``.
     """
     if tool_msg.name != "get_note":
         return []
-    content = tool_msg.content
-    if not isinstance(content, str) or "activate_tools" not in content:
-        return []
-    try:
-        data = json.loads(content)
-    except (ValueError, TypeError):
-        return []
+
+    data: object = None
+    if tool_msg.tool_result is not None and tool_msg.tool_result.data is not None:
+        data = tool_msg.tool_result.data
+    else:
+        content = tool_msg.content
+        if not isinstance(content, str) or "activate_tools" not in content:
+            return []
+        try:
+            data = json.loads(content)
+        except (ValueError, TypeError):
+            return []
+
     if not isinstance(data, dict):
         return []
     tool_names = data.get("activate_tools")
