@@ -174,7 +174,9 @@ class EventConditionValidator:
         # Wrap the script the same way evaluate_condition() does, so that
         # `return` statements are valid (they're inside a function body at runtime).
         # Use the evaluator's ScriptConfig so validation runs in the same
-        # environment as execution (same APIs available, same tool restrictions).
+        # environment as execution: same built-in APIs (time/json enabled, llm
+        # disabled) and no tools_*/attachment_* surface, since event conditions
+        # run with tools_provider=None and no attachment registry.
         if "return" not in script:
             wrapped = f"def _evaluate():\n    return {script}\n\n_evaluate()"
         else:
@@ -182,7 +184,10 @@ class EventConditionValidator:
             wrapped = f"def _evaluate():\n{indented}\n\n_evaluate()"
 
         type_result = ScriptValidator(config=self.evaluator.config).validate(
-            wrapped, input_names=["event"]
+            wrapped,
+            input_names=["event"],
+            include_tools_api=False,
+            include_attachment_api=False,
         )
         if not type_result.is_valid:
             # Categorize as syntax or type error for consistent error messages

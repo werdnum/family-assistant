@@ -191,6 +191,33 @@ class TestEventConditionEvaluator:
         with pytest.raises(ScriptExecutionError):
             await evaluator.evaluate_condition("llm('hi') == 'x'", {})
 
+    @pytest.mark.asyncio
+    async def test_tools_api_not_available(
+        self, evaluator: EventConditionEvaluator
+    ) -> None:
+        """tools_* helpers are not exposed to event conditions.
+
+        EventConditionEvaluator constructs MontyEngine with tools_provider=None,
+        so no tools_* names are ever registered at runtime. Scripts that try to
+        call them must fail at runtime, matching what the validator rejects
+        at save-time.
+        """
+        with pytest.raises(ScriptExecutionError):
+            await evaluator.evaluate_condition("tools_list() == []", {})
+
+    @pytest.mark.asyncio
+    async def test_attachment_api_not_available(
+        self, evaluator: EventConditionEvaluator
+    ) -> None:
+        """attachment_* helpers are not exposed to event conditions.
+
+        EventConditionEvaluator passes no execution_context, so the attachment
+        registry is never wired up and attachment_* names are never registered
+        at runtime.
+        """
+        with pytest.raises(ScriptExecutionError):
+            await evaluator.evaluate_condition("attachment_get('x') is not None", {})
+
 
 class TestEventConditionValidator:
     """Test event condition validator."""
@@ -279,5 +306,46 @@ class TestEventConditionValidator:
         commit a script that will only fail when the event fires.
         """
         is_valid, error = await validator.validate_script("llm('x') == 'y'")
+        assert is_valid is False
+        assert error is not None
+
+    @pytest.mark.asyncio
+    async def test_validator_rejects_tools_execute(
+        self, validator: EventConditionValidator
+    ) -> None:
+        """Validator rejects tools_execute() because event-condition runtime
+        has no tools_provider, so the call would fail with NameError every
+        time the event fired.
+        """
+        is_valid, error = await validator.validate_script(
+            "tools_execute('send_telegram', 'hi') == 'ok'"
+        )
+        assert is_valid is False
+        assert error is not None
+
+    @pytest.mark.asyncio
+    async def test_validator_rejects_tools_list(
+        self, validator: EventConditionValidator
+    ) -> None:
+        """Validator rejects tools_list() for the same reason as tools_execute.
+
+        The ScriptValidator defaults include_tools_api=True, so this test
+        guards against regressions where the event-condition validator
+        forgets to pass include_tools_api=False.
+        """
+        is_valid, error = await validator.validate_script("tools_list() == []")
+        assert is_valid is False
+        assert error is not None
+
+    @pytest.mark.asyncio
+    async def test_validator_rejects_attachment_get(
+        self, validator: EventConditionValidator
+    ) -> None:
+        """Validator rejects attachment_get() because event conditions have
+        no attachment registry at runtime.
+        """
+        is_valid, error = await validator.validate_script(
+            "attachment_get('x') is not None"
+        )
         assert is_valid is False
         assert error is not None
