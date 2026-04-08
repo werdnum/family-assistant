@@ -406,6 +406,41 @@ default_profile_settings:
         priority: 10
       - match:
           names:
+            - "delegate_to_service"
+          argument_equals:
+            target_service_id: "reminder"
+        decision: "deny"
+        priority: 99
+      - match:
+          names:
+            - "delegate_to_service"
+          argument_equals:
+            target_service_id: "event_handler"
+        decision: "deny"
+        priority: 99
+      - match:
+          names:
+            - "delegate_to_service"
+          argument_equals:
+            target_service_id: "telephone_external"
+        decision: "deny"
+        priority: 99
+      - match:
+          names:
+            - "delegate_to_service"
+          argument_equals:
+            target_service_id: "engineer"
+        decision: "deny"
+        priority: 99
+      - match:
+          names:
+            - "delegate_to_service"
+          argument_equals:
+            target_service_id: "default_assistant"
+        decision: "confirm"
+        priority: 99
+      - match:
+          names:
             - "delete_calendar_event"
             - "modify_calendar_event"
         decision: "confirm"
@@ -1187,6 +1222,41 @@ service_profiles:
               - "google-maps"
           decision: "allow"
           priority: 10
+        - match:
+            names:
+              - "delegate_to_service"
+            argument_equals:
+              target_service_id: "reminder"
+          decision: "deny"
+          priority: 99
+        - match:
+            names:
+              - "delegate_to_service"
+            argument_equals:
+              target_service_id: "event_handler"
+          decision: "deny"
+          priority: 99
+        - match:
+            names:
+              - "delegate_to_service"
+            argument_equals:
+              target_service_id: "telephone_external"
+          decision: "deny"
+          priority: 99
+        - match:
+            names:
+              - "delegate_to_service"
+            argument_equals:
+              target_service_id: "engineer"
+          decision: "deny"
+          priority: 99
+        - match:
+            names:
+              - "delegate_to_service"
+            argument_equals:
+              target_service_id: "default_assistant"
+          decision: "confirm"
+          priority: 99
     slash_commands: []
   - id: "telephone_external"
     description: "Restricted profile for external callers. Takes messages and notifies family."
@@ -1427,8 +1497,43 @@ service_profiles:
           priority: 10
         - match:
             names:
-              - "delete_calendar_event"
-              - "modify_calendar_event"
+              - "delegate_to_service"
+            argument_equals:
+              target_service_id: "reminder"
+          decision: "deny"
+          priority: 99
+        - match:
+            names:
+              - "delegate_to_service"
+            argument_equals:
+              target_service_id: "event_handler"
+          decision: "deny"
+          priority: 99
+        - match:
+            names:
+              - "delegate_to_service"
+            argument_equals:
+              target_service_id: "telephone_external"
+          decision: "deny"
+          priority: 99
+        - match:
+            names:
+              - "delegate_to_service"
+            argument_equals:
+              target_service_id: "engineer"
+          decision: "deny"
+          priority: 99
+        - match:
+            names:
+              - "delegate_to_service"
+            argument_equals:
+              target_service_id: "default_assistant"
+          decision: "confirm"
+          priority: 99
+        - match:
+          names:
+            - "delete_calendar_event"
+            - "modify_calendar_event"
           decision: "confirm"
           priority: 20
     slash_commands:
@@ -1599,4 +1704,3 @@ otel:
 
 # Secrets (telegram_token, api_keys, database_url) are primarily from env.
 # Model, embedding_model, server_url, storage_paths are also top-level or env.
-
