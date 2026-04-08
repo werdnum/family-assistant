@@ -131,6 +131,7 @@ from family_assistant.tools.infrastructure import (
     ToolConfirmationRequired,
     ToolNotFoundError,
     ToolsProvider,
+    collect_system_prompt_addition,
     find_provider_by_type,
     get_tool_definitions_for_advertisement,
 )
@@ -163,6 +164,12 @@ from family_assistant.tools.notes import (
     delete_note_tool,
     get_note_tool,
     list_notes_tool,
+)
+from family_assistant.tools.on_demand import (
+    ACTIVATE_TOOLS_DEFINITION,
+    OnDemandAwareToolsProvider,
+    OnDemandCatalogEntry,
+    OnDemandToolCatalog,
 )
 from family_assistant.tools.policy import (
     DEFAULT_POLICY_PRIORITY_OFFSET,
@@ -235,6 +242,7 @@ __all__ = [
     "FilteredToolsProvider",
     "PolicyEnforcingToolsProvider",
     "MCPServerConfig",
+    "collect_system_prompt_addition",
     "find_provider_by_type",
     "get_tool_definitions_for_advertisement",
     "ToolNotFoundError",
@@ -372,6 +380,11 @@ __all__ = [
     "read_error_logs",
     "create_github_issue",
     "get_llm_request_history",
+    # On-demand tool activation
+    "ACTIVATE_TOOLS_DEFINITION",
+    "OnDemandAwareToolsProvider",
+    "OnDemandCatalogEntry",
+    "OnDemandToolCatalog",
 ]
 
 
@@ -401,9 +414,9 @@ except ImportError:
 # Note: If enable_local_tools is not specified for a profile, ALL tools are enabled by default.
 
 
-def _metadata(*tags: ToolTag) -> LocalToolMetadata:
+def _metadata(*tags: ToolTag, summary: str | None = None) -> LocalToolMetadata:
     """Create validated metadata for a local tool registration."""
-    return make_local_tool_metadata(list(tags))
+    return make_local_tool_metadata(list(tags), summary=summary)
 
 
 _LOCAL_TOOL_DEFINITIONS: list[ToolDefinition] = (

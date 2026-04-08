@@ -134,7 +134,7 @@ AVAILABLE_FUNCTIONS: dict[str, Callable] = {
 # Add to TOOLS_DEFINITION list
 TOOLS_DEFINITION: list[ToolDefinition] = (
     # ... existing definitions ...
-    + SOMETHING_TOOLS_DEFINITION
+    +SOMETHING_TOOLS_DEFINITION
     # ... rest ...
 )
 ```

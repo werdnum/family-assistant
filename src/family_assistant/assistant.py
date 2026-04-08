@@ -84,6 +84,7 @@ from family_assistant.tools import (
     LocalToolsProvider,
     MCPServerConfig,
     MCPToolsProvider,
+    OnDemandAwareToolsProvider,
     PolicyEnforcingToolsProvider,
     PolicyEngine,
     ToolPolicyConfig,
@@ -737,11 +738,26 @@ class Assistant:
             )
             # Get confirmation timeout from config, default to 3600 seconds (1 hour)
             confirmation_timeout = profile_tools_conf.confirmation_timeout_seconds
-            profile_tools_provider = PolicyEnforcingToolsProvider(
+
+            # Build provider chain: OnDemand (optional) → Policy → root.
+            # OnDemand wraps Policy so that the synthetic ``activate_tools``
+            # meta-tool it injects is not filtered out by policy descriptor
+            # filtering (which only sees real wrapped descriptors).
+            policy_provider = PolicyEnforcingToolsProvider(
                 wrapped_provider=self.root_tools_provider,
                 policy_engine=policy_engine,
                 confirmation_timeout=confirmation_timeout,
             )
+            on_demand_tool_names = profile_tools_conf.get_on_demand_tool_names()
+            on_demand_mcp_ids = set(profile_tools_conf.get_on_demand_mcp_server_ids())
+            if on_demand_tool_names or on_demand_mcp_ids:
+                profile_tools_provider = OnDemandAwareToolsProvider(
+                    wrapped_provider=policy_provider,
+                    on_demand_tool_names=on_demand_tool_names,
+                    on_demand_mcp_server_ids=on_demand_mcp_ids,
+                )
+            else:
+                profile_tools_provider = policy_provider
             await profile_tools_provider.get_tool_definitions()
 
             profile_grants = (

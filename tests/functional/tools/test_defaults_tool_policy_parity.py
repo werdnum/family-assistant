@@ -81,14 +81,11 @@ def _legacy_decision(
     can_confirm: bool,
 ) -> ToolPolicyDecision:
     if descriptor.origin == "local":
-        enabled = tools_config.enable_local_tools is None or descriptor.name in set(
-            tools_config.enable_local_tools
-        )
+        all_local = tools_config.get_all_tool_names()
+        enabled = all_local is None or descriptor.name in all_local
     else:
-        enabled = (
-            tools_config.enable_mcp_server_ids is None
-            or descriptor.mcp_server_id in set(tools_config.enable_mcp_server_ids)
-        )
+        all_mcp = tools_config.get_all_mcp_server_ids()
+        enabled = all_mcp is None or descriptor.mcp_server_id in set(all_mcp)
 
     if not enabled:
         return ToolPolicyDecision.DENY

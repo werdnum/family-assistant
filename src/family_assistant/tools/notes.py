@@ -255,16 +255,17 @@ async def get_note_tool(
                 title, visibility_grants=exec_context.visibility_grants
             )
             if skill:
-                return ToolResult(
-                    data={
-                        "exists": True,
-                        "title": skill.name,
-                        "content": skill.content,
-                        "include_in_prompt": False,
-                        "attachment_count": 0,
-                        "source": "file",
-                    }
-                )
+                result_data = {
+                    "exists": True,
+                    "title": skill.name,
+                    "content": skill.content,
+                    "include_in_prompt": False,
+                    "attachment_count": 0,
+                    "source": "file",
+                }
+                if skill.activate_tools:
+                    result_data["activate_tools"] = list(skill.activate_tools)
+                return ToolResult(data=result_data)
 
         return ToolResult(
             data={

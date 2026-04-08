@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 from typing import TYPE_CHECKING
 
@@ -15,7 +16,12 @@ from family_assistant.llm.messages import (
     ToolMessage,
     UserMessage,
 )
-from family_assistant.tools import get_tool_definitions_for_advertisement
+from family_assistant.tools import (
+    OnDemandAwareToolsProvider,
+    collect_system_prompt_addition,
+    find_provider_by_type,
+    get_tool_definitions_for_advertisement,
+)
 
 from .attachments import AttachmentSelectionError
 from .utils import (
@@ -33,7 +39,7 @@ if TYPE_CHECKING:
     from family_assistant.interfaces import ChatInterface
     from family_assistant.llm.tool_call import ToolCallItem
     from family_assistant.storage.context import DatabaseContext
-    from family_assistant.tools.types import EventSourcesById
+    from family_assistant.tools.types import EventSourcesById, ToolDefinition
 
     from .attachments import AttachmentProcessor
     from .service import ProcessingService
@@ -45,6 +51,44 @@ if TYPE_CHECKING:
     )
 
 logger = logging.getLogger(__name__)
+
+
+def _extract_activate_tools_from_result(tool_msg: ToolMessage) -> list[str]:
+    """Extract activate_tools names from a trusted skill-loading tool result.
+
+    Skills loaded via ``get_note`` can declare tools in their frontmatter, and
+    that frontmatter is propagated through the tool result as an
+    ``activate_tools`` key. Restrict parsing to ``get_note`` results so
+    arbitrary tools cannot expand the active tool surface by emitting that key
+    in their output.
+
+    Prefer reading the structured ``tool_result.data`` payload when it is
+    available: ``tool_msg.content`` is the LLM-facing string, which the
+    large-result handling path can rewrite with attachment hints, at which
+    point it is no longer parseable JSON. Fall back to JSON-decoding the
+    content only for tool results that never set ``tool_result``.
+    """
+    if tool_msg.name != "get_note":
+        return []
+
+    data: object = None
+    if tool_msg.tool_result is not None and tool_msg.tool_result.data is not None:
+        data = tool_msg.tool_result.data
+    else:
+        content = tool_msg.content
+        if not isinstance(content, str) or "activate_tools" not in content:
+            return []
+        try:
+            data = json.loads(content)
+        except (ValueError, TypeError):
+            return []
+
+    if not isinstance(data, dict):
+        return []
+    tool_names = data.get("activate_tools")
+    if not isinstance(tool_names, list):
+        return []
+    return [n for n in tool_names if isinstance(n, str)]
 
 
 class LLMStreamingLoop:
@@ -176,11 +220,44 @@ class LLMStreamingLoop:
         ] = []  # Track attachment IDs from attach_to_response calls
         original_system_content: str | None = None  # Store original system prompt
 
-        # Get tool definitions
-        tools_for_llm = await get_tool_definitions_for_advertisement(
-            self.tool_executor.tools_provider,
-            can_confirm=request_confirmation_callback is not None,
+        can_confirm = request_confirmation_callback is not None
+
+        # The on-demand provider is long-lived per profile and shared across
+        # concurrent turns, so all activation state is kept turn-local here.
+        tools_provider = self.tool_executor.tools_provider
+        on_demand_provider = find_provider_by_type(
+            tools_provider, OnDemandAwareToolsProvider
         )
+        activated_on_demand: frozenset[str] = frozenset()
+
+        async def refresh_on_demand_tools() -> tuple[list[ToolDefinition], str | None]:
+            """Re-compute the tool list and system prompt addition for this turn.
+
+            On-demand tool definitions are sourced directly from the on-demand
+            provider (when present) so the activate_tools meta-tool and the
+            turn-local activation set are honored. The system prompt addition
+            always goes through the generic ``collect_system_prompt_addition``
+            walker so contributions from any other ``SystemPromptContributingProvider``
+            in the chain are preserved alongside the on-demand catalog.
+            """
+            if on_demand_provider is not None:
+                defs = await on_demand_provider.get_tool_definitions(
+                    can_confirm=can_confirm, activated=activated_on_demand
+                )
+            else:
+                defs = await get_tool_definitions_for_advertisement(
+                    tools_provider,
+                    can_confirm=can_confirm,
+                )
+            addition = await collect_system_prompt_addition(
+                tools_provider,
+                can_confirm=can_confirm,
+                activated=activated_on_demand,
+            )
+            return defs, addition
+
+        tools_for_llm, system_prompt_addition = await refresh_on_demand_tools()
+
         logger.debug(
             f"Total available tools for this interaction: {len(tools_for_llm)}"
         )
@@ -216,10 +293,14 @@ class LLMStreamingLoop:
                 if is_final_iteration:
                     iteration_suffix += "\nIMPORTANT: This is the final iteration. You MUST provide your final response now without requesting additional tools."
 
+                # Build system prompt: original + provider additions + iteration suffix
+                system_content = original_system_content
+                if system_prompt_addition:
+                    system_content += "\n\n" + system_prompt_addition
+                system_content += iteration_suffix
+
                 # Create new message with modified content (Pydantic models are immutable)
-                messages[0] = SystemMessage(
-                    content=original_system_content + iteration_suffix
-                )
+                messages[0] = SystemMessage(content=system_content)
             elif is_final_iteration and has_thought_signatures:
                 # Add final iteration instruction as a user message rather than modifying
                 # the system prompt. This approach works reliably regardless of whether
@@ -500,6 +581,67 @@ class LLMStreamingLoop:
                     yield (tool_result_event, tool_result_message)
                 break
 
+            # Handle activate_tools meta-tool calls before regular execution
+            regular_tool_calls = tool_calls_from_stream
+            if on_demand_provider:
+                activate_calls = [
+                    tc
+                    for tc in tool_calls_from_stream
+                    if tc.function.name == "activate_tools"
+                ]
+                regular_tool_calls = [
+                    tc
+                    for tc in tool_calls_from_stream
+                    if tc.function.name != "activate_tools"
+                ]
+                for activate_call in activate_calls:
+                    raw_args = activate_call.function.arguments
+                    if isinstance(raw_args, str):
+                        try:
+                            parsed_args = json.loads(raw_args) if raw_args else {}
+                        except json.JSONDecodeError:
+                            parsed_args = {}
+                    else:
+                        parsed_args = raw_args
+                    args = parsed_args if isinstance(parsed_args, dict) else {}
+                    requested_names = args.get("tool_names")
+                    requested_search = args.get("search")
+                    activation = await on_demand_provider.activate_tools(
+                        names=requested_names
+                        if isinstance(requested_names, list)
+                        else None,
+                        search=requested_search
+                        if isinstance(requested_search, str)
+                        else None,
+                        can_confirm=can_confirm,
+                        activated=activated_on_demand,
+                    )
+                    if activation.newly_activated:
+                        activated_on_demand |= activation.newly_activated
+                        activated_names = sorted(activation.newly_activated)
+                        result_text = f"Activated tools: {', '.join(activated_names)}. You can now use them."
+                    else:
+                        result_text = "No matching tools found. Check the on-demand catalog for available tool names."
+                    # Refresh the local tool list and system prompt addition so
+                    # the catalog/meta-tool reflect the new activation set.
+                    (
+                        tools_for_llm,
+                        system_prompt_addition,
+                    ) = await refresh_on_demand_tools()
+                    # Emit result event and message
+                    activate_event = LLMStreamEvent(
+                        type="tool_result",
+                        tool_call_id=activate_call.id,
+                        tool_result=result_text,
+                    )
+                    activate_message = ToolMessage(
+                        tool_call_id=activate_call.id,
+                        content=result_text,
+                        name="activate_tools",
+                    )
+                    yield (activate_event, activate_message)
+                    messages.append(activate_message)
+
             # Execute tool calls in parallel
             tool_response_messages_for_llm = []
 
@@ -526,7 +668,7 @@ class LLMStreamingLoop:
 
             tool_execution_tasks = [
                 asyncio.create_task(_execute_tool_call(tool_call))
-                for tool_call in tool_calls_from_stream
+                for tool_call in regular_tool_calls
             ]
 
             try:
@@ -550,6 +692,29 @@ class LLMStreamingLoop:
                         task.cancel()
                 if tool_execution_tasks:
                     await asyncio.gather(*tool_execution_tasks, return_exceptions=True)
+
+            # Auto-activate tools from skill results (e.g., get_note returning a skill
+            # with activate_tools in its frontmatter)
+            if on_demand_provider:
+                for tool_msg in tool_response_messages_for_llm:
+                    auto_names = _extract_activate_tools_from_result(tool_msg)
+                    if not auto_names:
+                        continue
+                    activation = await on_demand_provider.activate_tools(
+                        names=auto_names,
+                        can_confirm=can_confirm,
+                        activated=activated_on_demand,
+                    )
+                    if activation.newly_activated:
+                        activated_on_demand |= activation.newly_activated
+                        (
+                            tools_for_llm,
+                            system_prompt_addition,
+                        ) = await refresh_on_demand_tools()
+                        logger.info(
+                            "Auto-activated tools from skill: %s",
+                            sorted(activation.newly_activated),
+                        )
 
             # Add tool responses to messages for next iteration
             messages.extend(tool_response_messages_for_llm)

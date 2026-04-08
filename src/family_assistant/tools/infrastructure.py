@@ -38,7 +38,7 @@ from family_assistant.tools.types import (
 )
 
 if TYPE_CHECKING:
-    from collections.abc import Sequence
+    from collections.abc import Iterable, Sequence
 
     from family_assistant.embeddings import EmbeddingGenerator
     from family_assistant.tools.types import CalendarEvent
@@ -168,6 +168,63 @@ class ToolDescriptorProvider(Protocol):
     async def get_tool_descriptors(self) -> list[ToolDescriptor]: ...
 
     async def get_tool_descriptor(self, name: str) -> ToolDescriptor | None: ...
+
+
+@runtime_checkable
+class SystemPromptContributingProvider(Protocol):
+    """Protocol for providers that contribute text to the LLM system prompt.
+
+    Used by providers that need to inject context (e.g. an on-demand tool catalog)
+    without the LLM loop having to know about their concrete type.
+
+    ``activated`` carries any turn-local activation state the caller wants to
+    convey to contributors that need it (currently the on-demand provider).
+    Contributors that do not care about activation may simply ignore it.
+    """
+
+    async def get_system_prompt_addition(
+        self,
+        *,
+        can_confirm: bool = True,
+        activated: Iterable[str] | None = None,
+    ) -> str | None: ...
+
+
+async def collect_system_prompt_addition(
+    provider: ToolsProvider,
+    *,
+    can_confirm: bool = True,
+    activated: Iterable[str] | None = None,
+) -> str | None:
+    """Walk the provider chain and join system prompt additions from contributors.
+
+    ``can_confirm`` and ``activated`` are forwarded to contributors so the
+    catalog they emit matches the policy filtering and turn-local activation
+    state of the current interaction. Returns ``None`` when no provider in the
+    chain contributes anything.
+    """
+    additions: list[str] = []
+    activated_frozen: frozenset[str] | None = (
+        None if activated is None else frozenset(activated)
+    )
+
+    async def _walk(current: ToolsProvider) -> None:
+        if isinstance(current, SystemPromptContributingProvider):
+            text = await current.get_system_prompt_addition(
+                can_confirm=can_confirm, activated=activated_frozen
+            )
+            if text:
+                additions.append(text)
+        if isinstance(current, ToolProviderWrapper):
+            await _walk(current.wrapped_provider)
+        elif isinstance(current, ToolProviderComposite):
+            for sub_provider in current.get_providers():
+                await _walk(sub_provider)
+
+    await _walk(provider)
+    if not additions:
+        return None
+    return "\n\n".join(additions)
 
 
 class ToolsProvider(Protocol):

@@ -13,3 +13,4 @@ class ParsedSkill:
     content: str
     source_path: Path
     visibility_labels: frozenset[str] = frozenset()
+    activate_tools: tuple[str, ...] = ()

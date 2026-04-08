@@ -267,6 +267,7 @@ default_profile_settings:
     # `enable_local_tools` are not explicitly listed here for the default profile.
     # The application currently enables all available local tools.
     enable_local_tools:
+      # Core tools (eager - always loaded with full schema)
       - "add_or_update_note"
       - "get_note"
       - "list_notes"
@@ -285,8 +286,6 @@ default_profile_settings:
       - "get_message_history"
       - "get_user_documentation_content"
       - "ingest_document_from_url"
-      - "execute_script"
-      - "test_script_with_simulated_tools"
       - "send_message_to_user"
       - "attach_to_response"
       - "add_calendar_event"
@@ -297,27 +296,41 @@ default_profile_settings:
       - "query_recent_events" # Event system tool
       - "render_home_assistant_template" # Home Assistant template rendering
       - "get_camera_snapshot" # Get camera snapshots from Home Assistant
-      - "download_state_history" # Download Home Assistant state history as JSON
-      - "list_home_assistant_entities" # Search and list Home Assistant entities
-      # Read-only automation tools (creation/editing requires automation_creation profile)
-      - "list_automations" # List all automations
-      - "get_automation" # Get automation details
-      - "get_automation_stats" # Get automation execution statistics
-      # Image generation tools
-      - "generate_image" # Generate images from text using AI
-      - "transform_image" # Transform existing images based on instructions
-      # Video generation tools
-      - "generate_video" # Generate videos from text using AI
-      # Media download tools
-      - "download_media" # Download video/audio from URLs using yt-dlp
-      # Image manipulation tools
-      - "highlight_image" # Highlight or annotate areas in images
-      # AI Worker tools (for delegating complex coding tasks to isolated agents)
-      - "spawn_worker" # Spawn an AI coding agent for complex tasks
-      - "read_task_result" # Read results from a completed worker task
-      - "list_worker_tasks" # List worker tasks for a conversation
-      - "cancel_worker_task" # Cancel a stuck or unwanted worker task
-      - "mqtt_publish" # Publish messages to MQTT topics for automation integration
+      # On-demand tools (catalog only until activated - saves context tokens)
+      - name: "execute_script"
+        loading: "on_demand"
+      - name: "test_script_with_simulated_tools"
+        loading: "on_demand"
+      - name: "download_state_history"
+        loading: "on_demand"
+      - name: "list_home_assistant_entities"
+        loading: "on_demand"
+      - name: "list_automations"
+        loading: "on_demand"
+      - name: "get_automation"
+        loading: "on_demand"
+      - name: "get_automation_stats"
+        loading: "on_demand"
+      - name: "generate_image"
+        loading: "on_demand"
+      - name: "transform_image"
+        loading: "on_demand"
+      - name: "generate_video"
+        loading: "on_demand"
+      - name: "download_media"
+        loading: "on_demand"
+      - name: "highlight_image"
+        loading: "on_demand"
+      - name: "spawn_worker"
+        loading: "on_demand"
+      - name: "read_task_result"
+        loading: "on_demand"
+      - name: "list_worker_tasks"
+        loading: "on_demand"
+      - name: "cancel_worker_task"
+        loading: "on_demand"
+      - name: "mqtt_publish"
+        loading: "on_demand"
     enable_mcp_server_ids: # Explicitly define MCP servers for the default profile
       - "time"
       - "brave"

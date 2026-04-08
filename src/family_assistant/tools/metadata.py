@@ -56,6 +56,7 @@ class LocalToolMetadata:
     """Static metadata for a locally registered tool."""
 
     tags: frozenset[ToolTag]
+    summary: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -86,6 +87,7 @@ class ToolDescriptor:
     tags: frozenset[ToolTag]
     origin: ToolOrigin
     mcp_server_id: str | None = None
+    summary: str | None = None
 
 
 def normalize_tool_tags(
@@ -104,9 +106,11 @@ def normalize_tool_tags(
 
 def make_local_tool_metadata(
     tags: list[str | ToolTag] | tuple[str | ToolTag, ...],
+    *,
+    summary: str | None = None,
 ) -> LocalToolMetadata:
     """Create validated local tool metadata."""
-    return LocalToolMetadata(tags=normalize_tool_tags(tags))
+    return LocalToolMetadata(tags=normalize_tool_tags(tags), summary=summary)
 
 
 def get_tool_name(definition: ToolDefinition) -> str:
@@ -118,12 +122,27 @@ def get_tool_name(definition: ToolDefinition) -> str:
     return cast("str", tool_name)
 
 
+def extract_tool_summary(definition: ToolDefinition) -> str:
+    """Extract a short summary from a tool definition's description.
+
+    Uses the first sentence of the description, truncated to 120 characters.
+    """
+    description = definition.get("function", {}).get("description", "")
+    if not description:
+        return get_tool_name(definition)
+    first_sentence = description.split(". ")[0].split(".\n")[0]
+    if len(first_sentence) > 120:
+        first_sentence = first_sentence[:117] + "..."
+    return first_sentence
+
+
 def build_tool_descriptor(
     definition: ToolDefinition,
     tags: frozenset[ToolTag],
     *,
     origin: ToolOrigin,
     mcp_server_id: str | None = None,
+    summary: str | None = None,
 ) -> ToolDescriptor:
     """Build a tool descriptor from a definition and tag set."""
     return ToolDescriptor(
@@ -132,6 +151,7 @@ def build_tool_descriptor(
         tags=tags,
         origin=origin,
         mcp_server_id=mcp_server_id,
+        summary=summary or extract_tool_summary(definition),
     )
 
 
@@ -194,6 +214,7 @@ def build_local_tool_descriptors(
             registration.definition,
             registration.tags,
             origin="local",
+            summary=registration.metadata.summary,
         )
         for registration in registrations
     ]

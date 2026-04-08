@@ -134,20 +134,114 @@ class ProcessingConfig(BaseModel):
     default_note_visibility_labels: list[str] | None = None
 
 
+class ToolLoadingEntry(BaseModel):
+    """Tool with explicit loading mode.
+
+    Used in ``enable_local_tools`` to mark individual tools as on-demand::
+
+        enable_local_tools:
+          - "always_loaded_tool"                          # string → eager
+          - { name: "lazy_tool", loading: "on_demand" }   # dict → on-demand
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    name: str
+    loading: Literal["eager", "on_demand"] = "eager"
+
+
+class MCPServerLoadingEntry(BaseModel):
+    """MCP server with explicit loading mode.
+
+    Used in ``enable_mcp_server_ids`` to mark entire MCP servers as on-demand::
+
+        enable_mcp_server_ids:
+          - "time"                                          # string → eager
+          - { id: "homeassistant", loading: "on_demand" }   # dict → on-demand
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    id: str
+    loading: Literal["eager", "on_demand"] = "eager"
+
+
 class ToolsConfig(BaseModel):
     """Configuration for tool availability and behavior.
 
     Controls which tools are enabled, which require confirmation,
     and MCP server settings.
+
+    Items in ``enable_local_tools`` and ``enable_mcp_server_ids`` can be plain
+    strings (eager by default) or dicts with a ``loading`` field set to
+    ``"on_demand"`` to defer full schema loading until the agent activates them.
     """
 
     model_config = ConfigDict(extra="forbid")
 
-    enable_local_tools: list[str] | None = None
-    enable_mcp_server_ids: list[str] | None = None
+    enable_local_tools: list[str | ToolLoadingEntry] | None = None
+    enable_mcp_server_ids: list[str | MCPServerLoadingEntry] | None = None
     confirm_tools: list[str] = Field(default_factory=list)
     mcp_initialization_timeout_seconds: int = 60
     confirmation_timeout_seconds: float = 3600.0
+
+    def get_all_tool_names(self) -> set[str] | None:
+        """Return all enabled tool names (eager + on-demand), or None if unfiltered."""
+        if self.enable_local_tools is None:
+            return None
+        return {
+            entry if isinstance(entry, str) else entry.name
+            for entry in self.enable_local_tools
+        }
+
+    def get_eager_tool_names(self) -> set[str] | None:
+        """Return tool names that should be eagerly loaded, or None if unfiltered."""
+        if self.enable_local_tools is None:
+            return None
+        return {
+            entry if isinstance(entry, str) else entry.name
+            for entry in self.enable_local_tools
+            if isinstance(entry, str) or entry.loading == "eager"
+        }
+
+    def get_on_demand_tool_names(self) -> set[str]:
+        """Return tool names configured for on-demand loading."""
+        if self.enable_local_tools is None:
+            return set()
+        return {
+            entry.name
+            for entry in self.enable_local_tools
+            if isinstance(entry, ToolLoadingEntry) and entry.loading == "on_demand"
+        }
+
+    def get_all_mcp_server_ids(self) -> list[str] | None:
+        """Return all enabled MCP server IDs (eager + on-demand), or None if unfiltered."""
+        if self.enable_mcp_server_ids is None:
+            return None
+        return [
+            entry if isinstance(entry, str) else entry.id
+            for entry in self.enable_mcp_server_ids
+        ]
+
+    def get_eager_mcp_server_ids(self) -> list[str] | None:
+        """Return MCP server IDs that should be eagerly loaded, or None if unfiltered."""
+        if self.enable_mcp_server_ids is None:
+            return None
+        return [
+            entry if isinstance(entry, str) else entry.id
+            for entry in self.enable_mcp_server_ids
+            if isinstance(entry, str) or entry.loading == "eager"
+        ]
+
+    def get_on_demand_mcp_server_ids(self) -> list[str]:
+        """Return MCP server IDs configured for on-demand loading."""
+        if self.enable_mcp_server_ids is None:
+            return []
+        return [
+            entry.id
+            for entry in self.enable_mcp_server_ids
+            if isinstance(entry, MCPServerLoadingEntry) and entry.loading == "on_demand"
+        ]
 
 
 class ServiceProfile(BaseModel):
