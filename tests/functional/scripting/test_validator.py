@@ -198,14 +198,37 @@ add_or_update_note(title="Summary", content="Found notes")
 class TestScriptValidatorConfig:
     """Test configuration options."""
 
-    def test_disable_apis(self) -> None:
-        config = ScriptConfig(disable_apis=True)
+    def test_disable_time_api(self) -> None:
+        config = ScriptConfig(enable_time_api=False)
         v = ScriptValidator(config=config)
         result = v.validate("time_now()")
         assert not result.is_valid
 
-    def test_disable_apis_still_has_wake_llm(self) -> None:
-        config = ScriptConfig(disable_apis=True)
+    def test_disable_llm_api(self) -> None:
+        config = ScriptConfig(enable_llm_api=False)
+        v = ScriptValidator(config=config)
+        result = v.validate('llm("hi")')
+        assert not result.is_valid
+
+    def test_disable_json_api(self) -> None:
+        config = ScriptConfig(enable_json_api=False)
+        v = ScriptValidator(config=config)
+        result = v.validate('json_encode({"a": 1})')
+        assert not result.is_valid
+
+    def test_apis_independent(self) -> None:
+        """Disabling one API does not disable the others."""
+        config = ScriptConfig(enable_llm_api=False)
+        v = ScriptValidator(config=config)
+        assert v.validate("time_now()").is_valid
+        assert v.validate('json_encode({"a": 1})').is_valid
+
+    def test_all_apis_disabled_still_has_wake_llm(self) -> None:
+        config = ScriptConfig(
+            enable_json_api=False,
+            enable_time_api=False,
+            enable_llm_api=False,
+        )
         v = ScriptValidator(config=config)
         result = v.validate('wake_llm("hello")')
         assert result.is_valid
@@ -268,7 +291,7 @@ class TestGeneratePrefixCode:
     """Test stub generation."""
 
     def test_includes_api_stubs(self) -> None:
-        code = generate_prefix_code(include_apis=True)
+        code = generate_prefix_code()
         assert "def time_now()" in code
         assert "def json_encode(" in code
         assert "def llm(" in code
@@ -301,9 +324,26 @@ class TestGeneratePrefixCode:
         assert "x: Any" in code
         assert "y: Any" in code
 
-    def test_no_apis_when_disabled(self) -> None:
-        code = generate_prefix_code(include_apis=False)
+    def test_no_time_api_when_disabled(self) -> None:
+        code = generate_prefix_code(include_time_api=False)
         assert "time_now" not in code
+        assert "MINUTE: float" not in code
+
+    def test_no_llm_api_when_disabled(self) -> None:
+        code = generate_prefix_code(include_llm_api=False)
+        assert "def llm(" not in code
+        assert "def llm_json(" not in code
+        # Time/JSON still present
+        assert "def time_now(" in code
+        assert "def json_encode(" in code
+
+    def test_no_json_api_when_disabled(self) -> None:
+        code = generate_prefix_code(include_json_api=False)
+        assert "def json_encode(" not in code
+        assert "def json_decode(" not in code
+        # Time/LLM still present
+        assert "def time_now(" in code
+        assert "def llm(" in code
 
     def test_no_tools_api_when_excluded(self) -> None:
         code = generate_prefix_code(include_tools_api=False)
@@ -555,7 +595,7 @@ class TestStubSignaturesMatchRuntime:
 
     def test_all_time_api_functions_have_stubs(self) -> None:
         """Every function registered in MontyEngine._add_time_api must have a stub."""
-        prefix = generate_prefix_code(include_apis=True)
+        prefix = generate_prefix_code()
         # Get all public functions from time_api module
         api_functions = [
             name
@@ -567,7 +607,7 @@ class TestStubSignaturesMatchRuntime:
 
     def test_all_time_api_param_names_match(self) -> None:
         """Stub param names must match actual runtime function param names."""
-        prefix = generate_prefix_code(include_apis=True)
+        prefix = generate_prefix_code()
         api_functions = {
             name: obj
             for name, obj in inspect.getmembers(time_api, inspect.isfunction)
@@ -597,7 +637,7 @@ class TestStubSignaturesMatchRuntime:
 
     def test_duration_constants_are_floats(self) -> None:
         """Duration constants in the runtime are floats (seconds), stubs should match."""
-        prefix = generate_prefix_code(include_apis=True)
+        prefix = generate_prefix_code()
         for name in [
             "NANOSECOND",
             "MICROSECOND",

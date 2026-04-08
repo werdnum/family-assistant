@@ -177,6 +177,20 @@ class TestEventConditionEvaluator:
         result = await evaluator.evaluate_condition(script, event_data)
         assert result is True
 
+    @pytest.mark.asyncio
+    async def test_llm_api_not_available(
+        self, evaluator: EventConditionEvaluator
+    ) -> None:
+        """LLM API is not exposed to event conditions.
+
+        Event conditions run on every incoming event under a tight timeout;
+        exposing llm() would create an exfiltration vector and an unbounded
+        cost path, so it must be unreachable at runtime regardless of the
+        rest of the API surface.
+        """
+        with pytest.raises(ScriptExecutionError):
+            await evaluator.evaluate_condition("llm('hi') == 'x'", {})
+
 
 class TestEventConditionValidator:
     """Test event condition validator."""
@@ -251,5 +265,19 @@ class TestEventConditionValidator:
         """Validator rejects calls to functions that don't exist at runtime."""
         script = "definitely_not_a_real_function() and True"
         is_valid, error = await validator.validate_script(script)
+        assert is_valid is False
+        assert error is not None
+
+    @pytest.mark.asyncio
+    async def test_validator_rejects_llm_call(
+        self, validator: EventConditionValidator
+    ) -> None:
+        """Validator rejects llm() because it's not exposed at runtime either.
+
+        This is the parity guard for the LLM API: the runtime denies it, so
+        validation must reject it at save-time rather than letting users
+        commit a script that will only fail when the event fires.
+        """
+        is_valid, error = await validator.validate_script("llm('x') == 'y'")
         assert is_valid is False
         assert error is not None

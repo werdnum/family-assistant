@@ -246,17 +246,19 @@ invocations and returns them alongside the script result.
 
 ### Configuration Mapping
 
-| StarlarkConfig       | MontyEngine equivalent                        |
-| -------------------- | --------------------------------------------- |
-| `max_execution_time` | `ResourceLimits.max_duration_secs`            |
-| `enable_print`       | `print_callback` parameter                    |
-| `enable_debug`       | Same, via print_callback                      |
-| `allowed_tools`      | Filter `external_functions` dict              |
-| `deny_all_tools`     | Omit tool functions from `external_functions` |
-| `disable_apis`       | Omit API functions from `external_functions`  |
-| *(new)*              | `ResourceLimits.max_memory`                   |
-| *(new)*              | `ResourceLimits.max_allocations`              |
-| *(new)*              | `ResourceLimits.max_recursion_depth`          |
+| StarlarkConfig       | MontyEngine equivalent                                |
+| -------------------- | ----------------------------------------------------- |
+| `max_execution_time` | `ResourceLimits.max_duration_secs`                    |
+| `enable_print`       | `print_callback` parameter                            |
+| `enable_debug`       | Same, via print_callback                              |
+| `allowed_tools`      | Filter `external_functions` dict                      |
+| `deny_all_tools`     | Omit tool functions from `external_functions`         |
+| `enable_json_api`    | Include `json_*` functions in `external_functions`    |
+| `enable_time_api`    | Include `time_*`/`duration_*` in `external_functions` |
+| `enable_llm_api`     | Include `llm`/`llm_json` in `external_functions`      |
+| *(new)*              | `ResourceLimits.max_memory`                           |
+| *(new)*              | `ResourceLimits.max_allocations`                      |
+| *(new)*              | `ResourceLimits.max_recursion_depth`                  |
 
 ## Concerns and Risks
 

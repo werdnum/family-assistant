@@ -26,18 +26,23 @@ class EventConditionEvaluator:
             config: Optional configuration dictionary with settings like
                    script_execution_timeout_ms and script_size_limit_bytes
         """
-        # Restricted config for event conditions
+        # Restricted config for event conditions.
         # Note: We intentionally create a new MontyEngine instance here rather than
         # using dependency injection to ensure complete isolation and security.
-        # Tool access is denied; built-in APIs (json, time) are available so
-        # conditions can do simple things like check the current time.
+        # Tool access is denied. The cheap pure-Python helpers (json, time) are
+        # exposed so conditions can do simple things like check the current time,
+        # but the LLM API is not — event conditions are evaluated on every
+        # incoming event, must run within a tight (~100ms) timeout, and an LLM
+        # call would be both impractical and an exfiltration vector.
         timeout_ms = (config or {}).get("script_execution_timeout_ms", 100)
         self.config = ScriptConfig(
             max_execution_time=timeout_ms / 1000.0,  # Convert to seconds
             enable_print=False,
             enable_debug=False,
             deny_all_tools=True,
-            disable_apis=False,
+            enable_json_api=True,
+            enable_time_api=True,
+            enable_llm_api=False,
         )
         self.engine = MontyEngine(tools_provider=None, config=self.config)
 
@@ -177,7 +182,7 @@ class EventConditionValidator:
             wrapped = f"def _evaluate():\n{indented}\n\n_evaluate()"
 
         type_result = ScriptValidator(config=self.evaluator.config).validate(
-            wrapped, input_names=["event"], include_apis=True
+            wrapped, input_names=["event"]
         )
         if not type_result.is_valid:
             # Categorize as syntax or type error for consistent error messages
