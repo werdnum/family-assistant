@@ -202,7 +202,7 @@ Key translation logic:
 | --------------------------------------- | --------------------------------------------------------------- |
 | `trigger_content_parts` (text)          | `TextPart` in A2A `Message`                                     |
 | `trigger_content_parts` (attachment)    | `FilePart` in A2A `Message`                                     |
-| `conversation_id`                       | A2A `contextId`                                                 |
+| `conversation_id` + `target_service_id` | A2A `contextId` (namespaced to avoid cross-service collisions)  |
 | `subconversation_id`                    | `taskId` omitted on first send; server-assigned ID persisted    |
 | `ChatInteractionResult.text_reply`      | Text from A2A `Artifact` or final agent `Message`               |
 | `ChatInteractionResult.attachment_ids`  | `FilePart`s from A2A Artifacts (stored via attachment registry) |
@@ -210,8 +210,10 @@ Key translation logic:
 
 The client omits `taskId` on the first `message/send` and lets the remote server assign one. The
 returned `taskId` is persisted for cancellation correlation and potential follow-up messages. The
-`contextId` is derived from the FA `conversation_id` to maintain conversational continuity across
-multiple delegations in the same FA conversation.
+`contextId` is derived from `(conversation_id, target_service_id)` (e.g.,
+`f"{conversation_id}:{target_service_id}"`) so that multiple delegations in the same FA conversation
+maintain continuity per remote service, while delegations to different remote services on the same
+endpoint do not collide.
 
 #### 4. Configuration
 
@@ -264,12 +266,34 @@ Auth credentials are always read from environment variables, never stored in con
 
 #### 6. Assembly Changes
 
+Remote profiles do not need most fields of `ProcessingServiceConfig` (LLM model, tools, prompts,
+iteration limits, etc.) since the remote agent owns its own configuration. Rather than splitting
+`ProcessingServiceConfig` or making fields conditional, introduce a smaller `RemoteServiceConfig`
+that holds only the fields the registry and `delegate_to_service` actually use:
+
+```python
+@dataclass
+class RemoteServiceConfig:
+    """Minimal config for a remote A2A profile.
+
+    Mirrors the surface area of ProcessingServiceConfig that
+    delegate_to_service and the registry depend on.
+    """
+    id: str
+    description: str
+    delegation_security_level: DelegationSecurityLevel
+    tools_config: ToolsConfig  # only confirmation_timeout_seconds is used
+```
+
+The `DelegatableService` protocol's `service_config` property returns a union of
+`ProcessingServiceConfig | RemoteServiceConfig`, and `delegate_to_service` only reads fields that
+exist on both.
+
 In `assistant.py::setup_dependencies()`, after building local profiles:
 
 ```python
 for profile_def in resolved_profiles:
     if profile_def.remote_a2a:
-        # Build remote service
         auth_config = A2AAuthConfig(**profile_def.remote_a2a.auth) if profile_def.remote_a2a.auth else None
         client = A2AClientWrapper(
             agent_url=profile_def.remote_a2a.agent_url,
@@ -277,7 +301,7 @@ for profile_def in resolved_profiles:
             timeout=profile_def.remote_a2a.timeout_seconds,
         )
         service = RemoteA2AService(
-            service_config=build_service_config(profile_def),
+            service_config=build_remote_service_config(profile_def),
             client=client,
         )
         processing_services_registry[profile_def.id] = service
@@ -419,7 +443,8 @@ For the initial implementation, use synchronous `message/send`. Streaming can be
 1. Add `RemoteA2AConfig` to config models
 2. Update config loader to parse `remote_a2a` profile sections
 3. Update `assistant.py::setup_dependencies()` to create `RemoteA2AService` instances
-4. Add config validation (agent URL reachable at startup, auth configured)
+4. Add config validation: validate URL format and auth env vars at startup; do NOT verify remote
+   reachability at startup (see Error Handling for lazy discovery)
 5. End-to-end test: configure a remote profile pointing at the local A2A server, verify delegation
    works through the full config -> assembly -> delegation -> A2A -> response pipeline
 
@@ -431,8 +456,9 @@ For the initial implementation, use synchronous `message/send`. Streaming can be
 
 ## Resolved Questions
 
-1. **Agent card caching**: Load at startup, with a simple TTL cache for refresh. No need for
-   anything more sophisticated.
+1. **Agent card caching**: Lazy discovery on first delegation with retry/backoff (see Error
+   Handling), then cached in memory with a simple TTL for refresh. Startup only validates config
+   shape, not remote reachability, to avoid making app boot depend on remote agents.
 
 2. **Multi-turn delegation**: Out of scope for this design. When an A2A task returns
    `input_required`, return an error to the calling LLM so it can reformulate and re-delegate.
