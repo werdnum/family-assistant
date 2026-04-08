@@ -52,14 +52,20 @@ class ToolMatcher(BaseModel):
     tags_all: list[ToolTag] | None = None
     tags_any: list[ToolTag] | None = None
     mcp_server_ids: list[str] | None = None
+    argument_equals: dict[str, str | bool | int | float | None] | None = None
 
-    def matches(self, descriptor: ToolDescriptor) -> bool:
+    def matches(
+        self,
+        descriptor: ToolDescriptor,
+        arguments: dict[str, object] | None = None,
+    ) -> bool:
         """Return whether this matcher applies to the given descriptor."""
         if not any((
             self.names,
             self.tags_all,
             self.tags_any,
             self.mcp_server_ids,
+            self.argument_equals,
         )):
             return False
 
@@ -81,6 +87,13 @@ class ToolMatcher(BaseModel):
                 descriptor.mcp_server_id not in self.mcp_server_ids
             ):
                 return False
+
+        if self.argument_equals:
+            if arguments is None:
+                return False
+            for key, expected_value in self.argument_equals.items():
+                if arguments.get(key) != expected_value:
+                    return False
 
         return True
 
@@ -203,10 +216,15 @@ class PolicyEngine:
         """Return the resolved default decision."""
         return self._policy.default_decision
 
-    def evaluate(self, descriptor: ToolDescriptor) -> PolicyEvaluation:
+    def evaluate(
+        self,
+        descriptor: ToolDescriptor,
+        *,
+        arguments: dict[str, object] | None = None,
+    ) -> PolicyEvaluation:
         """Return the raw policy result for a descriptor."""
         for resolved_rule in self._policy.rules:
-            if resolved_rule.match.matches(descriptor):
+            if resolved_rule.match.matches(descriptor, arguments):
                 reason = resolved_rule.description or (
                     f"matched {resolved_rule.layer} rule"
                 )
@@ -229,7 +247,7 @@ class PolicyEngine:
     ) -> PolicyEvaluation:
         """Return the policy result for tool advertisement."""
         return self._apply_confirmation_capability(
-            self.evaluate(descriptor),
+            self.evaluate(descriptor, arguments=None),
             can_confirm=can_confirm,
             context="advertisement",
         )
@@ -238,18 +256,19 @@ class PolicyEngine:
         self,
         descriptor: ToolDescriptor,
         *,
+        arguments: dict[str, object] | None = None,
         can_confirm: bool = True,
     ) -> PolicyEvaluation:
         """Return the policy result for tool execution."""
         return self._apply_confirmation_capability(
-            self.evaluate(descriptor),
+            self.evaluate(descriptor, arguments=arguments),
             can_confirm=can_confirm,
             context="execution",
         )
 
     def explain(self, descriptor: ToolDescriptor) -> PolicyEvaluation:
         """Return the raw evaluation result for diagnostics and tests."""
-        return self.evaluate(descriptor)
+        return self.evaluate(descriptor, arguments=None)
 
     @staticmethod
     def _apply_confirmation_capability(

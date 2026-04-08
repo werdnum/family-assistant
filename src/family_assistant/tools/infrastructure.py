@@ -1047,6 +1047,7 @@ class PolicyEnforcingToolsProvider(ToolsProvider):
 
         evaluation = self._policy_engine.evaluate_for_execution(
             descriptor,
+            arguments=arguments,
             can_confirm=context.request_confirmation_callback is not None,
         )
         if evaluation.decision is ToolPolicyDecision.DENY:

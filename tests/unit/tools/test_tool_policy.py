@@ -89,6 +89,41 @@ def test_matcher_supports_mcp_server_ids_and_wildcard() -> None:
     assert ToolMatcher(mcp_server_ids=["*"]).matches(local_descriptor) is False
 
 
+def test_matcher_supports_argument_equals() -> None:
+    descriptor = make_descriptor(
+        name="delegate_to_service",
+        tags={ToolTag.DELEGATION},
+    )
+
+    assert (
+        ToolMatcher(
+            names=["delegate_to_service"],
+            argument_equals={"target_service_id": "engineer_profile"},
+        ).matches(
+            descriptor,
+            {"target_service_id": "engineer_profile"},
+        )
+        is True
+    )
+    assert (
+        ToolMatcher(
+            names=["delegate_to_service"],
+            argument_equals={"target_service_id": "engineer_profile"},
+        ).matches(
+            descriptor,
+            {"target_service_id": "default_assistant"},
+        )
+        is False
+    )
+    assert (
+        ToolMatcher(argument_equals={"target_service_id": "engineer_profile"}).matches(
+            descriptor,
+            None,
+        )
+        is False
+    )
+
+
 def test_profile_rules_override_defaults_via_priority_offset() -> None:
     descriptor = make_descriptor(
         name="delete_note",
@@ -348,3 +383,42 @@ def test_policy_rule_priority_is_bounded_to_documented_range() -> None:
             decision=ToolPolicyDecision.ALLOW,
             priority=-1,
         )
+
+
+def test_execution_policy_can_filter_by_tool_arguments() -> None:
+    descriptor = make_descriptor(
+        name="delegate_to_service",
+        tags={ToolTag.DELEGATION},
+    )
+    engine = PolicyEngine.from_policy_config(
+        ToolPolicyConfig(
+            default_decision=ToolPolicyDecision.ALLOW,
+            rules=[
+                PolicyRule(
+                    match=ToolMatcher(
+                        names=["delegate_to_service"],
+                        argument_equals={"target_service_id": "engineer_profile"},
+                    ),
+                    decision=ToolPolicyDecision.DENY,
+                    description="block delegating to engineer profile",
+                )
+            ],
+        )
+    )
+
+    blocked = engine.evaluate_for_execution(
+        descriptor,
+        arguments={"target_service_id": "engineer_profile"},
+        can_confirm=True,
+    )
+    allowed = engine.evaluate_for_execution(
+        descriptor,
+        arguments={"target_service_id": "default_assistant"},
+        can_confirm=True,
+    )
+    advertised = engine.evaluate_for_advertisement(descriptor, can_confirm=True)
+
+    assert blocked.decision is ToolPolicyDecision.DENY
+    assert blocked.reason == "block delegating to engineer profile"
+    assert allowed.decision is ToolPolicyDecision.ALLOW
+    assert advertised.decision is ToolPolicyDecision.ALLOW
