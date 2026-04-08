@@ -104,7 +104,7 @@ class DelegatableService(Protocol):
     """A service that can receive delegated requests."""
 
     @property
-    def service_config(self) -> ProcessingServiceConfig: ...
+    def service_config(self) -> ProcessingServiceConfig | RemoteServiceConfig: ...
 
     async def handle_chat_interaction(
         self,
@@ -183,7 +183,7 @@ class RemoteA2AService:
 
     def __init__(
         self,
-        service_config: ProcessingServiceConfig,
+        service_config: RemoteServiceConfig,
         client: A2AClientWrapper,
     ) -> None: ...
 
