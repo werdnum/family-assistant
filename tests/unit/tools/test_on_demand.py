@@ -91,13 +91,19 @@ class TestToolsConfig:
         assert tc.get_on_demand_tool_names() == set()
 
     def test_from_dict_yaml_format(self) -> None:
-        """Test that YAML-style dicts are parsed correctly by Pydantic."""
-        tc = ToolsConfig(
-            enable_local_tools=[
+        """Test that raw YAML-style dicts are parsed correctly by Pydantic.
+
+        ``defaults.yaml`` produces dict entries (e.g. ``{"name": "tool_b",
+        "loading": "on_demand"}``) for on-demand tools, so the config loader
+        path must accept that shape — not just pre-built ``ToolLoadingEntry``
+        instances.
+        """
+        tc = ToolsConfig.model_validate({
+            "enable_local_tools": [
                 "tool_a",
-                ToolLoadingEntry(name="tool_b", loading="on_demand"),
+                {"name": "tool_b", "loading": "on_demand"},
             ]
-        )
+        })
         assert tc.get_eager_tool_names() == {"tool_a"}
         assert tc.get_on_demand_tool_names() == {"tool_b"}
 
@@ -108,6 +114,21 @@ class TestToolsConfig:
                 MCPServerLoadingEntry(id="homeassistant", loading="on_demand"),
             ]
         )
+        assert tc.get_all_mcp_server_ids() == ["time", "homeassistant"]
+        assert tc.get_eager_mcp_server_ids() == ["time"]
+
+    def test_mcp_server_ids_from_yaml_dicts(self) -> None:
+        """``defaults.yaml`` may use dict entries for on-demand MCP servers.
+
+        Verify Pydantic accepts the raw dict shape for ``enable_mcp_server_ids``
+        the same way it does for ``enable_local_tools``.
+        """
+        tc = ToolsConfig.model_validate({
+            "enable_mcp_server_ids": [
+                "time",
+                {"id": "homeassistant", "loading": "on_demand"},
+            ]
+        })
         assert tc.get_all_mcp_server_ids() == ["time", "homeassistant"]
         assert tc.get_eager_mcp_server_ids() == ["time"]
         assert tc.get_on_demand_mcp_server_ids() == ["homeassistant"]

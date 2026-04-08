@@ -219,24 +219,28 @@ class LLMStreamingLoop:
         activated_on_demand: frozenset[str] = frozenset()
 
         async def refresh_on_demand_tools() -> tuple[list[ToolDefinition], str | None]:
-            """Re-compute the tool list and system prompt addition for this turn."""
+            """Re-compute the tool list and system prompt addition for this turn.
+
+            On-demand tool definitions are sourced directly from the on-demand
+            provider (when present) so the activate_tools meta-tool and the
+            turn-local activation set are honored. The system prompt addition
+            always goes through the generic ``collect_system_prompt_addition``
+            walker so contributions from any other ``SystemPromptContributingProvider``
+            in the chain are preserved alongside the on-demand catalog.
+            """
             if on_demand_provider is not None:
                 defs = await on_demand_provider.get_tool_definitions(
                     can_confirm=can_confirm, activated=activated_on_demand
                 )
-                catalog = await on_demand_provider.get_on_demand_catalog(
-                    can_confirm=can_confirm, activated=activated_on_demand
+            else:
+                defs = await get_tool_definitions_for_advertisement(
+                    tools_provider,
+                    can_confirm=can_confirm,
                 )
-                addition = (
-                    catalog.render_for_system_prompt() if catalog.entries else None
-                )
-                return defs, addition
-            defs = await get_tool_definitions_for_advertisement(
+            addition = await collect_system_prompt_addition(
                 tools_provider,
                 can_confirm=can_confirm,
-            )
-            addition = await collect_system_prompt_addition(
-                tools_provider, can_confirm=can_confirm
+                activated=activated_on_demand,
             )
             return defs, addition
 

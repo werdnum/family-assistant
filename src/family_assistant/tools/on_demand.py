@@ -262,18 +262,22 @@ class OnDemandAwareToolsProvider:
         return eager_and_activated
 
     async def get_system_prompt_addition(
-        self, *, can_confirm: bool = True
+        self,
+        *,
+        can_confirm: bool = True,
+        activated: Iterable[str] | None = None,
     ) -> str | None:
         """Return the on-demand catalog rendered for system prompt injection.
 
-        This implements the ``SystemPromptContributingProvider`` protocol, so
-        it does not know about per-turn activation state. Callers that have
-        already activated tools should go through ``get_on_demand_catalog``
-        directly with their turn-local ``activated`` set.
+        ``activated`` is the caller's turn-local activation set. Tools the
+        caller has already activated this turn are removed from the catalog so
+        they do not appear as still-on-demand.
         """
         if not self.has_on_demand_tools():
             return None
-        catalog = await self.get_on_demand_catalog(can_confirm=can_confirm)
+        catalog = await self.get_on_demand_catalog(
+            can_confirm=can_confirm, activated=activated
+        )
         if not catalog.entries:
             return None
         return catalog.render_for_system_prompt()
