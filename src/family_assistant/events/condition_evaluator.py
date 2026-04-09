@@ -4,6 +4,7 @@ Event condition evaluator for script-based conditions.
 
 import logging
 import textwrap
+from datetime import tzinfo
 from typing import Any
 
 from family_assistant.scripting import ScriptExecutionError, ScriptSyntaxError
@@ -18,13 +19,20 @@ logger = logging.getLogger(__name__)
 class EventConditionEvaluator:
     """Evaluates condition scripts for event matching."""
 
-    def __init__(self, config: EventConditionEvaluatorConfig | None = None) -> None:
+    def __init__(
+        self,
+        config: EventConditionEvaluatorConfig | None = None,
+        timezone: tzinfo | None = None,
+    ) -> None:
         """
         Initialize the event condition evaluator.
 
         Args:
             config: Optional configuration dictionary with settings like
                    script_execution_timeout_ms and script_size_limit_bytes
+            timezone: Timezone for time API functions in condition scripts.
+                     Required so that time_now() returns local wall-clock time
+                     rather than silently falling back to UTC.
         """
         # Restricted config for event conditions.
         # Note: We intentionally create a new MontyEngine instance here rather than
@@ -44,7 +52,9 @@ class EventConditionEvaluator:
             enable_time_api=True,
             enable_llm_api=False,
         )
-        self.engine = MontyEngine(tools_provider=None, config=self.config)
+        self.engine = MontyEngine(
+            tools_provider=None, config=self.config, default_timezone=timezone
+        )
 
     # ast-grep-ignore: no-dict-any - event_data is arbitrary JSON from external sources (Home Assistant, webhooks) with no fixed schema
     async def evaluate_condition(self, script: str, event_data: dict[str, Any]) -> bool:
@@ -144,6 +154,7 @@ class EventConditionValidator:
         self,
         evaluator: EventConditionEvaluator | None = None,
         config: EventConditionEvaluatorConfig | None = None,
+        timezone: tzinfo | None = None,
     ) -> None:
         """
         Initialize the validator.
@@ -151,9 +162,10 @@ class EventConditionValidator:
         Args:
             evaluator: Optional evaluator instance to use
             config: Optional configuration dictionary
+            timezone: Timezone for time API functions in condition scripts.
         """
         # Use provided evaluator or create one
-        self.evaluator = evaluator or EventConditionEvaluator(config)
+        self.evaluator = evaluator or EventConditionEvaluator(config, timezone=timezone)
         self.size_limit = (config or {}).get("script_size_limit_bytes", 10240)
 
     async def validate_script(self, script: str) -> tuple[bool, str | None]:

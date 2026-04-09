@@ -198,7 +198,9 @@ async def test_end_to_end_event_listener_wakes_llm(
         sources={},
         sample_interval_hours=1.0,
         get_db_context_func=lambda: get_db_context(db_engine),
+        timezone=ZoneInfo("Australia/Sydney"),
     )
+
     processor._running = True
     await processor._refresh_listener_cache()
 
@@ -403,7 +405,9 @@ async def test_one_time_listener_disables_after_trigger(
         sources={},
         sample_interval_hours=1.0,
         get_db_context_func=lambda: get_db_context(db_engine),
+        timezone=ZoneInfo("Australia/Sydney"),
     )
+
     processor._running = True
     await processor._refresh_listener_cache()
 

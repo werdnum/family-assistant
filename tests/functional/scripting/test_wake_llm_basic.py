@@ -81,7 +81,9 @@ if temp > 25.0:
         sources={},
         sample_interval_hours=1.0,
         get_db_context_func=lambda: get_db_context(db_engine),
+        timezone=ZoneInfo("Australia/Sydney"),
     )
+
     processor._running = True
     await processor._refresh_listener_cache()
 
@@ -268,7 +270,9 @@ if air_quality < 50:
         sources={},
         sample_interval_hours=1.0,
         get_db_context_func=lambda: get_db_context(db_engine),
+        timezone=ZoneInfo("Australia/Sydney"),
     )
+
     processor._running = True
     await processor._refresh_listener_cache()
 
@@ -448,7 +452,9 @@ if temp > 30 or temp < 10:
         sources={},
         sample_interval_hours=1.0,
         get_db_context_func=lambda: get_db_context(db_engine),
+        timezone=ZoneInfo("Australia/Sydney"),
     )
+
     processor._running = True
     await processor._refresh_listener_cache()
 

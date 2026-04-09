@@ -127,7 +127,9 @@ async def test_home_assistant_event_processing(db_engine: AsyncEngine) -> None:
         sources={"ha_test": ha_source},
         sample_interval_hours=1.0,
         get_db_context_func=lambda: get_db_context(db_engine),
+        timezone=ZoneInfo("Australia/Sydney"),
     )
+
     # Set processor as running (normally done by start())
     processor._running = True
 
@@ -226,7 +228,9 @@ async def test_event_listener_matching(db_engine: AsyncEngine) -> None:
         sources={},
         sample_interval_hours=1.0,
         get_db_context_func=lambda: get_db_context(db_engine),
+        timezone=ZoneInfo("Australia/Sydney"),
     )
+
     await processor._refresh_listener_cache()
 
     # Test matching

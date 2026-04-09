@@ -211,7 +211,7 @@ def time_parse(
     format_string: str = "",
     timezone_name: str = "",
     *,
-    _default_tz: ZoneInfo | None = None,
+    _default_tz: tzinfo | None = None,
 ) -> TimeDict:
     """
     Parse a time string into a time object.

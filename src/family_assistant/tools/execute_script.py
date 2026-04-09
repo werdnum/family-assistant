@@ -214,6 +214,7 @@ async def execute_script_tool(
         engine = MontyEngine(
             tools_provider=tools_provider,
             config=config,
+            default_timezone=exec_context.timezone,
         )
 
         # Execute the script asynchronously

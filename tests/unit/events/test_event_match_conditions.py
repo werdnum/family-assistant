@@ -3,6 +3,7 @@ Unit tests for event matching logic.
 """
 
 from unittest.mock import AsyncMock
+from zoneinfo import ZoneInfo
 
 import pytest
 
@@ -169,7 +170,7 @@ def test_get_event_structure() -> None:
 @pytest.fixture()
 def event_processor() -> EventProcessor:
     """Create an EventProcessor with a mocked condition evaluator."""
-    processor = EventProcessor(sources={})
+    processor = EventProcessor(sources={}, timezone=ZoneInfo("Australia/Sydney"))
     processor.condition_evaluator = AsyncMock()
     return processor
 

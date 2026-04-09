@@ -43,7 +43,11 @@ async def test_deny_all_tools(db_engine: AsyncEngine) -> None:
         )
 
         # Create engine with security config
-        engine = MontyEngine(tools_provider=tools_provider, config=config)
+        engine = MontyEngine(
+            tools_provider=tools_provider,
+            config=config,
+            default_timezone=ZoneInfo("Australia/Sydney"),
+        )
 
         # Test that list returns empty
         script = """
@@ -95,7 +99,11 @@ async def test_allowed_tools_filter(db_engine: AsyncEngine) -> None:
         )
 
         # Create engine with security config
-        engine = MontyEngine(tools_provider=tools_provider, config=config)
+        engine = MontyEngine(
+            tools_provider=tools_provider,
+            config=config,
+            default_timezone=ZoneInfo("Australia/Sydney"),
+        )
 
         # Test that list only shows allowed tools
         script = """
@@ -164,7 +172,11 @@ async def test_no_restrictions_by_default(db_engine: AsyncEngine) -> None:
         )
 
         # Create engine with default config
-        engine = MontyEngine(tools_provider=tools_provider, config=config)
+        engine = MontyEngine(
+            tools_provider=tools_provider,
+            config=config,
+            default_timezone=ZoneInfo("Australia/Sydney"),
+        )
 
         # Test that all tools are listed
         script = """
@@ -211,7 +223,11 @@ async def test_empty_allowed_tools_denies_all(db_engine: AsyncEngine) -> None:
         )
 
         # Create engine with security config
-        engine = MontyEngine(tools_provider=tools_provider, config=config)
+        engine = MontyEngine(
+            tools_provider=tools_provider,
+            config=config,
+            default_timezone=ZoneInfo("Australia/Sydney"),
+        )
 
         # Test that list returns empty
         script = """
@@ -256,7 +272,11 @@ async def test_denied_tool_raises_error(db_engine: AsyncEngine) -> None:
         )
 
         # Create engine with security config
-        engine = MontyEngine(tools_provider=tools_provider, config=config)
+        engine = MontyEngine(
+            tools_provider=tools_provider,
+            config=config,
+            default_timezone=ZoneInfo("Australia/Sydney"),
+        )
 
         # Try to execute a denied tool (this should fail)
         script = """
@@ -299,7 +319,11 @@ async def test_multiple_allowed_tools(db_engine: AsyncEngine) -> None:
         )
 
         # Create engine with security config
-        engine = MontyEngine(tools_provider=tools_provider, config=config)
+        engine = MontyEngine(
+            tools_provider=tools_provider,
+            config=config,
+            default_timezone=ZoneInfo("Australia/Sydney"),
+        )
 
         # Test that both tools are available
         script = """
@@ -347,7 +371,11 @@ async def test_deny_all_overrides_allowed_tools(db_engine: AsyncEngine) -> None:
         )
 
         # Create engine with security config
-        engine = MontyEngine(tools_provider=tools_provider, config=config)
+        engine = MontyEngine(
+            tools_provider=tools_provider,
+            config=config,
+            default_timezone=ZoneInfo("Australia/Sydney"),
+        )
 
         # Test that no tools are available (deny_all wins)
         script = """

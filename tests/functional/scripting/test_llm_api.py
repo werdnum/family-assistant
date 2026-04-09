@@ -1,6 +1,7 @@
 """Tests for the scripting LLM API."""
 
 from unittest.mock import AsyncMock, patch
+from zoneinfo import ZoneInfo
 
 import pytest
 
@@ -151,7 +152,7 @@ async def test_llm_call_async_no_content(mock_llm_client: AsyncMock) -> None:
 async def test_llm_available_in_engine(mock_llm_client: AsyncMock) -> None:
     """Test that llm() is available in MontyEngine scripts."""
     with patch(PATCH_TARGET, return_value=mock_llm_client):
-        engine = MontyEngine()
+        engine = MontyEngine(default_timezone=ZoneInfo("Australia/Sydney"))
         result = await engine.evaluate_async("llm('Summarise this')")
         assert result == "Test LLM response"
 
@@ -162,7 +163,7 @@ async def test_llm_json_available_in_engine(mock_llm_client: AsyncMock) -> None:
     mock_llm_client.generate_json = AsyncMock(return_value={"summary": "short"})
 
     with patch(PATCH_TARGET, return_value=mock_llm_client):
-        engine = MontyEngine()
+        engine = MontyEngine(default_timezone=ZoneInfo("Australia/Sydney"))
         result = await engine.evaluate_async("llm_json('Extract info')")
         assert result == {"summary": "short"}
 
@@ -173,6 +174,9 @@ async def test_llm_not_available_when_llm_api_disabled(
 ) -> None:
     """Test that llm() is not available when the LLM API is disabled."""
     with patch(PATCH_TARGET, return_value=mock_llm_client):
-        engine = MontyEngine(config=ScriptConfig(enable_llm_api=False))
+        engine = MontyEngine(
+            config=ScriptConfig(enable_llm_api=False),
+            default_timezone=ZoneInfo("Australia/Sydney"),
+        )
         with pytest.raises(Exception, match="llm"):
             await engine.evaluate_async("llm('test')")

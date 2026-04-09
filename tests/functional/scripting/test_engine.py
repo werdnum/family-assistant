@@ -7,6 +7,7 @@ the scripting interface correctly.
 
 import asyncio
 from typing import Any
+from zoneinfo import ZoneInfo
 
 import pytest
 
@@ -168,7 +169,7 @@ class TestMontyEngineSpecific:
     @pytest.mark.asyncio
     async def test_try_except(self) -> None:
         """Test that Monty supports try/except."""
-        engine = MontyEngine()
+        engine = MontyEngine(default_timezone=ZoneInfo("Australia/Sydney"))
 
         script = """
 try:
@@ -183,7 +184,7 @@ result
     @pytest.mark.asyncio
     async def test_f_strings(self) -> None:
         """Test that Monty supports f-strings natively."""
-        engine = MontyEngine()
+        engine = MontyEngine(default_timezone=ZoneInfo("Australia/Sydney"))
 
         result = await engine.evaluate_async('name = "World"\nf"Hello, {name}!"')
         assert result == "Hello, World!"
@@ -203,7 +204,7 @@ result
         function once inside try/except; if double-resume occurred, Monty
         would re-enter the function call site and invoke it again.
         """
-        engine = MontyEngine()
+        engine = MontyEngine(default_timezone=ZoneInfo("Australia/Sydney"))
         call_count = 0
 
         def counting_fn() -> None:
@@ -229,7 +230,7 @@ result
     @pytest.mark.asyncio
     async def test_exception_in_function_does_not_corrupt_state(self) -> None:
         """Test that script state remains consistent after function exceptions."""
-        engine = MontyEngine()
+        engine = MontyEngine(default_timezone=ZoneInfo("Australia/Sydney"))
         call_count = 0
 
         def flaky_fn() -> str:
@@ -255,7 +256,7 @@ results
     @pytest.mark.asyncio
     async def test_async_function_exception_single_resume(self) -> None:
         """Test that async external functions that raise also get a single resume."""
-        engine = MontyEngine()
+        engine = MontyEngine(default_timezone=ZoneInfo("Australia/Sydney"))
 
         async def async_failing_fn() -> None:
             raise ValueError("async error")
@@ -276,7 +277,7 @@ result
     @pytest.mark.asyncio
     async def test_async_function_exception_state_consistency(self) -> None:
         """Test state consistency with async functions that fail then succeed."""
-        engine = MontyEngine()
+        engine = MontyEngine(default_timezone=ZoneInfo("Australia/Sydney"))
         call_count = 0
 
         async def async_flaky_fn() -> str:
