@@ -284,13 +284,17 @@ class ToolNotFoundError(Exception):
         super().__init__(message)
 
 
-class ToolPolicyDeniedError(Exception):
-    """Raised when a tool execution is denied by the policy engine."""
+class ToolPolicyDeniedError(ToolNotFoundError):
+    """Raised when a tool execution is denied by the policy engine.
+
+    Subclasses ToolNotFoundError so existing callers that catch ToolNotFoundError
+    (e.g., CompositeToolsProvider fallthrough, tools API routes) handle denials
+    gracefully. Callers that need to distinguish can catch this type specifically.
+    """
 
     def __init__(self, tool_name: str, reason: str) -> None:
-        self.tool_name = tool_name
+        super().__init__(tool_name)
         self.reason = reason
-        super().__init__(f"Tool '{tool_name}' denied by policy: {reason}")
 
 
 async def get_tool_definitions_for_advertisement(
