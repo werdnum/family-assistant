@@ -13,6 +13,7 @@ from family_assistant.storage.context import DatabaseContext
 from family_assistant.tools import (
     ToolExecutionContext,
     ToolNotFoundError,
+    ToolPolicyDeniedError,
     ToolsProvider,
 )
 from family_assistant.tools.types import ToolResult
@@ -135,6 +136,11 @@ async def execute_tool_api(
         return JSONResponse(
             content={"success": True, "result": final_result}, status_code=200
         )
+    except ToolPolicyDeniedError as e:
+        logger.warning("Tool '%s' denied by policy: %s", tool_name, e.reason)
+        raise HTTPException(
+            status_code=403, detail=f"Tool '{tool_name}' denied by policy: {e.reason}"
+        ) from None
     except ToolNotFoundError:
         logger.warning(f"Tool '{tool_name}' not found for execution request.")
         raise HTTPException(

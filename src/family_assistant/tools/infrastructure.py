@@ -284,6 +284,20 @@ class ToolNotFoundError(Exception):
         super().__init__(message)
 
 
+class ToolPolicyDeniedError(Exception):
+    """Raised when a tool execution is denied by the policy engine.
+
+    Deliberately NOT a subclass of ToolNotFoundError: CompositeToolsProvider
+    catches ToolNotFoundError to fall through to the next provider, so a denial
+    must not be silently retried on another provider.
+    """
+
+    def __init__(self, tool_name: str, reason: str) -> None:
+        self.tool_name = tool_name
+        self.reason = reason
+        super().__init__(f"Tool '{tool_name}' denied by policy: {reason}")
+
+
 async def get_tool_definitions_for_advertisement(
     provider: ToolsProvider,
     *,
@@ -1048,6 +1062,7 @@ class PolicyEnforcingToolsProvider(ToolsProvider):
 
         evaluation = self._policy_engine.evaluate_for_execution(
             descriptor,
+            arguments=arguments,
             can_confirm=context.request_confirmation_callback is not None,
         )
         if evaluation.decision is ToolPolicyDecision.DENY:
@@ -1056,7 +1071,7 @@ class PolicyEnforcingToolsProvider(ToolsProvider):
                 name,
                 evaluation.reason,
             )
-            raise ToolNotFoundError(name, type(self).__name__)
+            raise ToolPolicyDeniedError(name, evaluation.reason or "denied by policy")
 
         if evaluation.decision is ToolPolicyDecision.CONFIRM:
             logger.info("Tool '%s' requires policy confirmation.", name)

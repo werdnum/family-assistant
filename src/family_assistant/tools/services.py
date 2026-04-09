@@ -10,7 +10,6 @@ import logging
 import uuid
 from typing import TYPE_CHECKING
 
-from family_assistant.delegation_security import DelegationSecurityLevel
 from family_assistant.llm.content_parts import text_content
 from family_assistant.tools.types import ToolAttachment, ToolDefinition, ToolResult
 
@@ -31,15 +30,15 @@ SERVICE_TOOLS_DEFINITION: list[ToolDefinition] = [
                 "Delegates a specific user request to another specialized assistant profile (service) "
                 "that might have different tools or capabilities. Use this if the main assistant "
                 "cannot handle a request directly or if a specialized profile is more appropriate "
-                "for the task. The target profile's 'delegation_security_level' (blocked, confirm, "
-                "unrestricted) can override the 'confirm_delegation' parameter.\n\n"
+                "for the task. Profile-to-profile delegation controls are enforced by the "
+                "tool policy engine.\n\n"
                 "Available service profiles:\n{available_service_profiles_with_descriptions}\n\n"
                 "Returns: A string containing the delegated service's response or an error message. "
                 "On successful delegation, returns the text response from the target service. "
                 "If service returns no text, returns 'Service [id] processed the request but provided no textual response.'. "
                 "If service registry unavailable, returns 'Error: Service registry is not available to delegate the task.'. "
                 "If target service not found, returns 'Error: Target service profile [id] not found.'. "
-                "If delegation blocked by security policy, returns 'Error: Delegation to service profile [id] is not allowed.'. "
+                "If delegation blocked by security policy, returns 'Error: Tool \\'delegate_to_service\\' is not allowed. [reason]'. "
                 "If confirmation required but unavailable, returns 'Error: Confirmation required to delegate to [id], but no confirmation mechanism is available.'. "
                 "If user cancels confirmation, returns 'OK. Delegation to service [id] cancelled by user.'. "
                 "If confirmation times out, returns 'Error: Confirmation timed out for delegating to [id].'. "
@@ -58,7 +57,7 @@ SERVICE_TOOLS_DEFINITION: list[ToolDefinition] = [
                     },
                     "confirm_delegation": {
                         "type": "boolean",
-                        "description": "Optional. If true, explicitly ask the user for confirmation before delegating the task. Defaults to false. This may be overridden if the target profile's security level is 'confirm' (always confirm) or 'blocked' (never delegate). If the 'delegate_to_service' tool itself is configured to require confirmation for the current profile, user confirmation will also be sought.",
+                        "description": "Optional. If true, explicitly ask the user for confirmation before delegating the task. Defaults to false. Policy-level confirmation requirements may also apply.",
                         "default": False,
                     },
                     "attachment_ids": {
@@ -123,28 +122,13 @@ async def delegate_to_service_tool(
             attachments=None,
         )
 
-    target_security_level = target_service.service_config.delegation_security_level
     confirmation_timeout_seconds = exec_context.processing_service.service_config.tools_config.confirmation_timeout_seconds
-
-    if target_security_level == DelegationSecurityLevel.BLOCKED:
-        logger.warning(
-            f"Delegation to service '{target_service_id}' is blocked by its security policy."
-        )
-        return ToolResult(
-            text=f"Error: Delegation to service profile '{target_service_id}' is not allowed.",
-            attachments=None,
-        )
-
-    # Determine if confirmation is needed based on target's policy and tool's argument
-    needs_confirmation_due_to_policy = (
-        target_security_level == DelegationSecurityLevel.CONFIRM
-    )
-    actual_confirm_delegation = confirm_delegation or needs_confirmation_due_to_policy
+    actual_confirm_delegation = confirm_delegation
 
     if actual_confirm_delegation:
         if not exec_context.request_confirmation_callback:
             logger.error(
-                f"Confirmation required for delegating to '{target_service_id}' (policy: {target_security_level}, arg: {confirm_delegation}), but no confirmation callback is available. Aborting delegation."
+                f"Confirmation required for delegating to '{target_service_id}', but no confirmation callback is available. Aborting delegation."
             )
             return ToolResult(
                 text=f"Error: Confirmation required to delegate to '{target_service_id}', but no confirmation mechanism is available.",

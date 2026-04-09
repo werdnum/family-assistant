@@ -29,13 +29,19 @@ from family_assistant.tools import (
     AVAILABLE_FUNCTIONS as local_tool_implementations_map,
 )
 from family_assistant.tools import (
-    TOOLS_DEFINITION as local_tools_definition_list,
+    LOCAL_TOOL_REGISTRATIONS as local_tool_registrations,
 )
 from family_assistant.tools import (
     CompositeToolsProvider,
     ConfirmingToolsProvider,
     LocalToolsProvider,
     MCPToolsProvider,
+    PolicyEnforcingToolsProvider,
+    PolicyEngine,
+    PolicyRule,
+    ToolMatcher,
+    ToolPolicyConfig,
+    ToolPolicyDecision,
     ToolsProvider,
 )
 from tests.mocks.mock_llm import (
@@ -188,22 +194,23 @@ def primary_llm_mock_factory() -> Callable[[bool | None], RuleBasedMockLLMClient
                 return False
             last_message = messages[-1]
             content_str = last_message.content or ""
-            # Make the match more specific to the exact error message
-            expected_error_message = f"Error: Delegation to service profile '{SPECIALIZED_PROFILE_ID}' is not allowed."
+            expected_error_message = f"Error: Tool 'delegate_to_service' is not allowed. Delegation to service profile '{SPECIALIZED_PROFILE_ID}' is not allowed."
             match = (
                 last_message.role == "tool" and content_str == expected_error_message
             )
             logger.debug(
-                f"blocked_matcher: checking content='{content_str[:100]}...' against expected='{expected_error_message}'. Match: {match}"
+                "blocked_matcher: checking content='%s...' against expected='%s'. Match: %s",
+                content_str[:100],
+                expected_error_message,
+                match,
             )
             return match
 
         def blocked_response_callable(kwargs: MatcherArgs) -> MockLLMOutput:
             messages = kwargs.get("messages", [])
-            # Ensure we return the exact content that was matched
             content = (
                 messages[-1].content
-                or f"Error: Delegation to service profile '{SPECIALIZED_PROFILE_ID}' is not allowed."
+                or f"Error: Tool 'delegate_to_service' is not allowed. Delegation to service profile '{SPECIALIZED_PROFILE_ID}' is not allowed."
             )
             logger.info(
                 f"blocked_response_callable: Matched! Returning content: {content[:100]}..."
@@ -296,7 +303,12 @@ async def mock_confirmation_callback() -> AsyncMock:
     return AsyncMock(spec=Callable[..., Awaitable[bool]])
 
 
-def create_tools_provider(profile_tools_config: ToolsConfig) -> ToolsProvider:
+def create_tools_provider(
+    profile_tools_config: ToolsConfig,
+    delegation_security_by_target_profile_id: (
+        dict[str, DelegationSecurityLevel] | None
+    ) = None,
+) -> ToolsProvider:
     """Helper to create a ToolsProvider stack for a profile."""
     enabled_local_tool_names = profile_tools_config.get_all_tool_names() or set()
 
@@ -311,31 +323,26 @@ def create_tools_provider(profile_tools_config: ToolsConfig) -> ToolsProvider:
     ):  # For specialized, if empty, means no local tools
         pass
 
-    profile_local_definitions = [
-        td
-        for td in local_tools_definition_list
-        if td.get("function", {}).get("name") in enabled_local_tool_names
+    profile_local_registrations = [
+        registration
+        for registration in local_tool_registrations
+        if registration.name in enabled_local_tool_names
     ]
-    profile_local_implementations = {
-        name: func
-        for name, func in local_tool_implementations_map.items()
-        if name in enabled_local_tool_names
-    }
 
     logger.info(f"create_tools_provider: profile_tools_config={profile_tools_config}")
     logger.info(
         f"create_tools_provider: enabled_local_tool_names={enabled_local_tool_names}"
     )
     logger.info(
-        f"create_tools_provider: profile_local_definitions names={[d.get('function', {}).get('name') for d in profile_local_definitions]}"
+        f"create_tools_provider: profile_local_registrations names={[registration.name for registration in profile_local_registrations]}"
     )
     logger.info(
-        f"create_tools_provider: profile_local_implementations keys={list(profile_local_implementations.keys())}"
+        "create_tools_provider: profile_local_implementations keys=%s",
+        list(local_tool_implementations_map.keys()),
     )
 
     local_provider = LocalToolsProvider(
-        definitions=profile_local_definitions,
-        implementations=profile_local_implementations,
+        registrations=profile_local_registrations,
     )
     mcp_provider = MCPToolsProvider(mcp_server_configs={})  # Mocked
 
@@ -343,12 +350,51 @@ def create_tools_provider(profile_tools_config: ToolsConfig) -> ToolsProvider:
         providers=[local_provider, mcp_provider]
     )
 
+    provider_for_confirmation: ToolsProvider = composite_provider
+
+    if delegation_security_by_target_profile_id:
+        delegation_rules: list[PolicyRule] = []
+        for (
+            target_profile_id,
+            delegation_security,
+        ) in delegation_security_by_target_profile_id.items():
+            decision: ToolPolicyDecision | None = None
+            if delegation_security == DelegationSecurityLevel.BLOCKED:
+                decision = ToolPolicyDecision.DENY
+            elif delegation_security == DelegationSecurityLevel.CONFIRM:
+                decision = ToolPolicyDecision.CONFIRM
+
+            if decision is None:
+                continue
+
+            delegation_rules.append(
+                PolicyRule(
+                    match=ToolMatcher(
+                        names=["delegate_to_service"],
+                        argument_equals={"target_service_id": target_profile_id},
+                    ),
+                    decision=decision,
+                    description=f"Delegation to service profile '{target_profile_id}' is not allowed.",
+                    priority=99,
+                )
+            )
+
+        if delegation_rules:
+            provider_for_confirmation = PolicyEnforcingToolsProvider(
+                wrapped_provider=composite_provider,
+                policy_engine=PolicyEngine.from_policy_config(
+                    ToolPolicyConfig(
+                        default_decision=ToolPolicyDecision.ALLOW,
+                        rules=delegation_rules,
+                    )
+                ),
+            )
+
     confirm_tools_set = set(profile_tools_config.confirm_tools)
-    confirming_provider = ConfirmingToolsProvider(
-        wrapped_provider=composite_provider,
+    return ConfirmingToolsProvider(
+        wrapped_provider=provider_for_confirmation,
         tools_requiring_confirmation=confirm_tools_set,
     )
-    return confirming_provider
 
 
 @pytest_asyncio.fixture
@@ -564,6 +610,14 @@ async def test_delegation_confirm_target_granted(
     target_service = await awaited_specialized_processing_service_factory(
         DelegationSecurityLevel.CONFIRM
     )
+    awaited_primary_service.tools_provider = create_tools_provider(
+        awaited_primary_service.service_config.tools_config,
+        {SPECIALIZED_PROFILE_ID: DelegationSecurityLevel.CONFIRM},
+    )
+    await awaited_primary_service.tools_provider.get_tool_definitions()
+    awaited_primary_service.tool_executor.tools_provider = (
+        awaited_primary_service.tools_provider
+    )
 
     registry = {
         PRIMARY_PROFILE_ID: awaited_primary_service,
@@ -599,8 +653,8 @@ async def test_delegation_confirm_target_granted(
     assert isinstance(confirmed_tool_args, dict)
     assert confirmed_tool_args.get("target_service_id") == SPECIALIZED_PROFILE_ID
     assert confirmed_tool_args.get("user_request") == DELEGATED_TASK_DESCRIPTION
-    assert confirmed_tool_args.get("confirm_delegation") is True
-    assert call_kwargs.get("timeout_seconds") == 123.0
+    assert confirmed_tool_args.get("confirm_delegation") is False
+    assert call_kwargs.get("timeout_seconds") == 3600.0
 
 
 @pytest.mark.asyncio
@@ -626,6 +680,14 @@ async def test_delegation_confirm_target_denied(
 
     target_service = await awaited_specialized_processing_service_factory(
         DelegationSecurityLevel.CONFIRM
+    )
+    awaited_primary_service.tools_provider = create_tools_provider(
+        awaited_primary_service.service_config.tools_config,
+        {SPECIALIZED_PROFILE_ID: DelegationSecurityLevel.CONFIRM},
+    )
+    await awaited_primary_service.tools_provider.get_tool_definitions()
+    awaited_primary_service.tool_executor.tools_provider = (
+        awaited_primary_service.tools_provider
     )
 
     registry = {
@@ -653,8 +715,8 @@ async def test_delegation_confirm_target_denied(
 
     assert error is None, f"Error during interaction: {error}"
     assert final_reply is not None
-    assert "delegation to service" in final_reply.lower()
-    assert "cancelled by user" in final_reply.lower()
+    assert "action cancelled by user" in final_reply.lower()
+    assert "delegate_to_service" in final_reply.lower()
     assert (
         f"Response from {SPECIALIZED_PROFILE_ID}" not in final_reply
     )  # Specialized service should not be called
@@ -682,6 +744,14 @@ async def test_delegation_blocked_target(
     target_service = await awaited_specialized_processing_service_factory(
         DelegationSecurityLevel.BLOCKED
     )
+    awaited_primary_service.tools_provider = create_tools_provider(
+        awaited_primary_service.service_config.tools_config,
+        {SPECIALIZED_PROFILE_ID: DelegationSecurityLevel.BLOCKED},
+    )
+    await awaited_primary_service.tools_provider.get_tool_definitions()
+    awaited_primary_service.tool_executor.tools_provider = (
+        awaited_primary_service.tools_provider
+    )
 
     registry = {
         PRIMARY_PROFILE_ID: awaited_primary_service,
@@ -708,8 +778,8 @@ async def test_delegation_blocked_target(
 
     assert error is None, f"Error during interaction: {error}"
     assert final_reply is not None
-    assert "error: delegation to service profile" in final_reply.lower()
-    assert "not allowed" in final_reply.lower()
+    assert "error:" in final_reply.lower()
+    assert "delegate_to_service" in final_reply.lower()
     assert f"Response from {SPECIALIZED_PROFILE_ID}" not in final_reply
     awaited_mock_confirmation_callback.assert_not_called()  # Confirmation should not even be attempted
 

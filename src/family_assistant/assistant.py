@@ -649,7 +649,6 @@ class Assistant:
         if user_dir:
             all_skills.extend(load_skills_from_directory(user_dir))
         note_registry = NoteRegistry(all_skills) if all_skills else None
-
         for profile_conf in resolved_profiles:
             profile_id = profile_conf.id
             logger.info(
