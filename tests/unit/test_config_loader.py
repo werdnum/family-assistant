@@ -526,15 +526,15 @@ class TestApplyEnvVarOverrides:
     def test_applies_otel_enabled_env_var(self) -> None:
         """Test applying OTEL_ENABLED boolean env var."""
         config: dict[str, Any] = {"otel": {}}
-        with mock.patch.dict(os.environ, {"OTEL_ENABLED": "true"}, clear=False):
+        with mock.patch.dict(os.environ, {"_FA_OTEL_ENABLED": "true"}, clear=False):
             apply_env_var_overrides(config)
         assert config["otel"]["enabled"] is True
 
     def test_applies_otel_sample_rate_env_var(self) -> None:
-        """Test applying OTEL_TRACES_SAMPLE_RATE float env var."""
+        """Test applying _FA_OTEL_TRACES_SAMPLE_RATE float env var."""
         config: dict[str, Any] = {"otel": {}}
         with mock.patch.dict(
-            os.environ, {"OTEL_TRACES_SAMPLE_RATE": "0.25"}, clear=False
+            os.environ, {"_FA_OTEL_TRACES_SAMPLE_RATE": "0.25"}, clear=False
         ):
             apply_env_var_overrides(config)
         assert config["otel"]["traces_sample_rate"] == 0.25

@@ -134,17 +134,24 @@ ENV_VAR_MAPPINGS: list[EnvVarMapping] = [
     ),
     EnvVarMapping("AI_WORKER_K8S_NAMESPACE", "ai_worker_config.kubernetes.namespace"),
     EnvVarMapping("AI_WORKER_K8S_IMAGE", "ai_worker_config.kubernetes.ai_coder_image"),
-    # OpenTelemetry
-    EnvVarMapping("OTEL_ENABLED", "otel.enabled", bool),
-    EnvVarMapping("OTEL_SERVICE_NAME", "otel.service_name"),
-    EnvVarMapping("OTEL_TRACES_EXPORTER", "otel.traces_exporter"),
-    EnvVarMapping("OTEL_METRICS_EXPORTER", "otel.metrics_exporter"),
-    EnvVarMapping("OTEL_EXPORTER_OTLP_ENDPOINT", "otel.otlp_endpoint"),
-    EnvVarMapping("OTEL_EXPORTER_OTLP_TRACES_ENDPOINT", "otel.otlp_traces_endpoint"),
-    EnvVarMapping("OTEL_EXPORTER_OTLP_METRICS_ENDPOINT", "otel.otlp_metrics_endpoint"),
-    EnvVarMapping("OTEL_LOG_CORRELATION", "otel.log_correlation", bool),
-    EnvVarMapping("OTEL_TRACES_SAMPLE_RATE", "otel.traces_sample_rate", float),
-    EnvVarMapping("OTEL_DEBUG_CONSOLE_EXPORTER", "otel.debug_console_exporter", bool),
+    # OpenTelemetry — env vars are renamed to _FA_OTEL_* at startup
+    # (in __init__.py) to prevent the OTEL SDK from auto-configuring.
+    EnvVarMapping("_FA_OTEL_ENABLED", "otel.enabled", bool),
+    EnvVarMapping("_FA_OTEL_SERVICE_NAME", "otel.service_name"),
+    EnvVarMapping("_FA_OTEL_TRACES_EXPORTER", "otel.traces_exporter"),
+    EnvVarMapping("_FA_OTEL_METRICS_EXPORTER", "otel.metrics_exporter"),
+    EnvVarMapping("_FA_OTEL_EXPORTER_OTLP_ENDPOINT", "otel.otlp_endpoint"),
+    EnvVarMapping(
+        "_FA_OTEL_EXPORTER_OTLP_TRACES_ENDPOINT", "otel.otlp_traces_endpoint"
+    ),
+    EnvVarMapping(
+        "_FA_OTEL_EXPORTER_OTLP_METRICS_ENDPOINT", "otel.otlp_metrics_endpoint"
+    ),
+    EnvVarMapping("_FA_OTEL_LOG_CORRELATION", "otel.log_correlation", bool),
+    EnvVarMapping("_FA_OTEL_TRACES_SAMPLE_RATE", "otel.traces_sample_rate", float),
+    EnvVarMapping(
+        "_FA_OTEL_DEBUG_CONSOLE_EXPORTER", "otel.debug_console_exporter", bool
+    ),
 ]
 
 
