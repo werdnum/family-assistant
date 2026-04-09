@@ -665,7 +665,7 @@ async def get_automation_tool(
             if action_type == "wake_llm" and config.get("context"):
                 lines.append(f"Context: {config['context']}")
             elif action_type == "script" and config.get("script_code"):
-                lines.append(f"Script: {config['script_code'][:100]}...")
+                lines.append(f"Script:\n{config['script_code']}")
 
         # Build structured data
         result_data = {
