@@ -133,10 +133,10 @@ async def test_mqtt_publish_string_payload(exec_context: ToolExecutionContext) -
 
     data = result.get_data()
     assert isinstance(data, dict)
-    assert data["payload_size"] == 4  # "ON" with quotes
+    assert data["payload_size"] == 2  # "ON" without JSON quotes
 
     call_args = mock_client.publish.call_args
-    assert call_args.kwargs["payload"] == b'"ON"'
+    assert call_args.kwargs["payload"] == b"ON"
 
 
 @pytest.mark.asyncio
