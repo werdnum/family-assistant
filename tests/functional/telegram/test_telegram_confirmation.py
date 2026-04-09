@@ -7,10 +7,16 @@ from typing import Any, cast
 import pytest
 import telegramify_markdown  # type: ignore[import-untyped]  # No type stubs available
 from assertpy import assert_that, soft_assertions
+from telegram import Update
 
 # Import mock LLM helpers
 from family_assistant.llm import ToolCallFunction, ToolCallItem
 from family_assistant.tools import PolicyEngine, ToolPolicyConfig, ToolPolicyDecision
+from family_assistant.tools.infrastructure import (
+    PolicyEnforcingToolsProvider,
+    find_provider_by_type,
+)
+from family_assistant.tools.policy import PolicyEvaluation
 from tests.functional.telegram.test_telegram_handler import (
     create_context,
     create_mock_update,
@@ -27,7 +33,11 @@ from tests.mocks.mock_llm import (
 
 # Import the test fixture and helper functions
 from .conftest import TelegramHandlerTestFixture
-from .helpers import wait_for_bot_response
+from .helpers import (
+    assert_bot_sent_message_with_keyboard,
+    extract_callback_data_from_keyboard,
+    wait_for_bot_response,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -434,3 +444,135 @@ async def test_confirmation_timed_out(
     assert_that(bot_message_text).described_as("Final bot message text").is_equal_to(
         expected_timeout_escaped_text
     )
+
+
+@pytest.mark.asyncio
+async def test_confirmation_via_inline_keyboard_does_not_deadlock(
+    telegram_handler_fixture: TelegramHandlerTestFixture,
+) -> None:
+    """Inline keyboard confirmation must not deadlock the update pipeline.
+
+    Regression test: python-telegram-bot defaults to sequential update
+    processing (concurrent_updates=False). When a tool requires confirmation
+    the message handler awaits a future that can only be resolved by the
+    callback-query handler. With sequential processing the callback query is
+    queued behind the message handler, causing a deadlock.
+
+    This test exercises the full Application.process_update() pipeline
+    (unlike other tests that call handlers directly) so the
+    concurrent_updates setting is actually in effect.
+    """
+    fix = telegram_handler_fixture
+
+    # --- 1. Restore the REAL confirmation manager (fixture mocks it) ---
+    real_mgr = fix.assistant.telegram_service.confirmation_manager  # type: ignore[union-attr]
+    real_method = type(real_mgr).request_confirmation
+    # Re-bind on both references that conftest patched
+    real_mgr.request_confirmation = real_method.__get__(real_mgr, type(real_mgr))
+    fix.handler.confirmation_manager.request_confirmation = real_method.__get__(
+        fix.handler.confirmation_manager, type(fix.handler.confirmation_manager)
+    )
+
+    # --- 2. Make add_or_update_note require confirmation via policy ---
+    policy_provider = find_provider_by_type(
+        fix.tools_provider, PolicyEnforcingToolsProvider
+    )
+    assert policy_provider is not None
+    original_eval = policy_provider._policy_engine.evaluate_for_execution
+
+    def _patched_eval(
+        descriptor: Any,  # noqa: ANN401
+        # ast-grep-ignore: no-dict-any - policy engine signature uses object values
+        arguments: dict[str, Any] | None = None,
+        can_confirm: bool = True,
+    ) -> PolicyEvaluation:
+        if descriptor.name == TOOL_NAME_SENSITIVE and can_confirm:
+            return PolicyEvaluation(
+                decision=ToolPolicyDecision.CONFIRM,
+                reason="test: requires confirmation",
+            )
+        return original_eval(descriptor, arguments=arguments, can_confirm=can_confirm)
+
+    policy_provider._policy_engine.evaluate_for_execution = _patched_eval  # type: ignore[assignment]
+
+    # --- 3. Mock LLM: first call returns a tool call, second returns text ---
+    tool_call_id = f"call_keyboard_{uuid.uuid4()}"
+    cast("RuleBasedMockLLMClient", fix.mock_llm).rules = [
+        (
+            lambda kwargs: (
+                not any(msg.role == "tool" for msg in kwargs.get("messages", []))
+            ),
+            MockLLMOutput(
+                content="I'll add that note.",
+                tool_calls=[
+                    ToolCallItem(
+                        id=tool_call_id,
+                        type="function",
+                        function=ToolCallFunction(
+                            name=TOOL_NAME_SENSITIVE,
+                            arguments=json.dumps({
+                                "title": "Deadlock Test",
+                                "content": "content",
+                            }),
+                        ),
+                    )
+                ],
+            ),
+        ),
+        (
+            lambda kwargs: any(
+                msg.role == "tool" for msg in kwargs.get("messages", [])
+            ),
+            MockLLMOutput(content="Note added."),
+        ),
+    ]
+
+    # --- 4. Initialise Application for process_update() ---
+    app = fix.application
+    await app.initialize()
+
+    try:
+        # --- 5. Send user message and push through Application pipeline ---
+        send_result = await fix.telegram_client.send_message("Add a note please")
+        user_update = Update.de_json(send_result.get("result", {}), fix.bot)
+        assert user_update is not None
+
+        # This task will block on the confirmation future
+        message_task = asyncio.create_task(app.process_update(user_update))
+
+        # --- 6. Wait for the confirmation inline keyboard to arrive ---
+        keyboard_msg = await assert_bot_sent_message_with_keyboard(
+            fix.telegram_client, timeout=15.0
+        )
+        confirm_data = extract_callback_data_from_keyboard(keyboard_msg, button_index=0)
+        msg_id = keyboard_msg.get("message", {}).get("message_id")
+
+        # --- 7. Simulate user pressing "Confirm" ---
+        cb_result = await fix.telegram_client.send_callback(
+            callback_data=confirm_data, message_id=msg_id
+        )
+        cb_update = Update.de_json(cb_result.get("result", {}), fix.bot)
+        assert cb_update is not None
+
+        # With concurrent_updates=True the callback handler runs immediately;
+        # with False this would deadlock.
+        callback_task = asyncio.create_task(app.process_update(cb_update))
+
+        # --- 8. Both tasks must complete (timeout = deadlock detector) ---
+        await asyncio.wait_for(
+            asyncio.gather(message_task, callback_task),
+            timeout=30.0,
+        )
+
+        # --- 9. Verify final response was sent ---
+        all_updates = await wait_for_bot_response(
+            fix.telegram_client, timeout=5.0, min_messages=2
+        )
+        texts = [u.get("message", {}).get("text", "") for u in all_updates]
+        assert any("added" in t.lower() or "note" in t.lower() for t in texts), (
+            f"Expected final response after confirmation, got: {texts}"
+        )
+
+    finally:
+        policy_provider._policy_engine.evaluate_for_execution = original_eval  # type: ignore[assignment]
+        await app.shutdown()
