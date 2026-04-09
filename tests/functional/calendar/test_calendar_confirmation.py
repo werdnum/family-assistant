@@ -188,6 +188,7 @@ async def test_modify_calendar_event_confirmation_shows_event_details(
         uid=event_uid,
         calendar_url=test_calendar_url,
         calendar_config=test_calendar_config,
+        timezone=ZoneInfo("UTC"),
     )
 
     # Verify we can fetch the event
@@ -292,6 +293,7 @@ async def test_delete_calendar_event_confirmation_shows_event_details(
         uid=event_uid,
         calendar_url=test_calendar_url,
         calendar_config=test_calendar_config,
+        timezone=ZoneInfo("UTC"),
     )
 
     assert fetched_details is not None

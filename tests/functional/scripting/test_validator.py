@@ -292,7 +292,7 @@ class TestGeneratePrefixCode:
 
     def test_includes_api_stubs(self) -> None:
         code = generate_prefix_code()
-        assert "def time_now()" in code
+        assert "def time_now(" in code
         assert "def json_encode(" in code
         assert "def llm(" in code
         assert "def wake_llm(" in code

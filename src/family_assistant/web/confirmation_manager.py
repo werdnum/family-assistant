@@ -12,7 +12,7 @@ import contextlib
 import logging
 import uuid
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Any, TypedDict
 
 logger = logging.getLogger(__name__)
@@ -81,7 +81,7 @@ class WebConfirmationManager:
             try:
                 await asyncio.sleep(10)  # Check every 10 seconds
 
-                now = datetime.now()
+                now = datetime.now(UTC)
                 expired_ids = []
 
                 for request_id, confirmation in self.pending_confirmations.items():
@@ -136,7 +136,7 @@ class WebConfirmationManager:
             tool_args=tool_args,
             confirmation_prompt=confirmation_prompt,
             future=future,
-            created_at=datetime.now(),
+            created_at=datetime.now(UTC),
             timeout_seconds=timeout_seconds,
             conversation_id=conversation_id,
             interface_type=interface_type,

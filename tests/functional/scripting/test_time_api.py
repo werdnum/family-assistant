@@ -11,7 +11,7 @@ class TestTimeCreation:
     """Test time creation functions."""
 
     def test_time_now(self) -> None:
-        """Test getting current time."""
+        """Test getting current time defaults to UTC."""
         result = time_api.time_now()
 
         # Check structure
@@ -27,8 +27,24 @@ class TestTimeCreation:
         assert "unix_nano" in result
         assert "timezone" in result
 
-        # Verify it's roughly current time
-        now = datetime.now()
+        # time_now() defaults to UTC when no timezone is provided so that
+        # callers without an explicit timezone never pick up the process's
+        # local time by accident.
+        assert result["timezone"] == "UTC"
+        now = datetime.now(UTC)
+        assert result["year"] == now.year
+        assert result["month"] == now.month
+        assert result["day"] == now.day
+
+    def test_time_now_with_timezone(self) -> None:
+        """time_now accepts an explicit ZoneInfo override."""
+        from zoneinfo import ZoneInfo  # noqa: PLC0415
+
+        tz = ZoneInfo("America/New_York")
+        result = time_api.time_now(tz)
+
+        assert "America/New_York" in result["timezone"]
+        now = datetime.now(tz)
         assert result["year"] == now.year
         assert result["month"] == now.month
         assert result["day"] == now.day

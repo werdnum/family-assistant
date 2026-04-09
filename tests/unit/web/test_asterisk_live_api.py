@@ -6,6 +6,7 @@ from array import array
 from collections.abc import AsyncGenerator
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
+from zoneinfo import ZoneInfo
 
 import pytest
 from google.genai.types import Blob, Part
@@ -383,6 +384,7 @@ class TestCallTranscriptSaving:
 
         mock_service = MagicMock()
         mock_service.service_config.default_note_visibility_labels = ["telephone_logs"]
+        mock_service.service_config.timezone = ZoneInfo("UTC")
         handler.processing_service = mock_service
 
         await handler._save_call_transcript()

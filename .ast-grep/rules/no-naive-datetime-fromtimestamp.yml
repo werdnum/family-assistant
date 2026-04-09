@@ -1,0 +1,34 @@
+id: no-naive-datetime-fromtimestamp
+language: python
+severity: error
+message: "Pass tz= to datetime.fromtimestamp() - naive conversions use local process time"
+note: |
+  datetime.fromtimestamp(ts) without a tz argument uses the local process
+  timezone to convert a unix timestamp into wall-clock components. That's
+  almost never what you want:
+
+  - In containerised deployments the process timezone is often UTC, but tests
+    on developer machines run in local time, producing off-by-hours bugs that
+    only surface in CI or production.
+  - Values stored into DateTime(timezone=True) columns get mislabelled.
+  - Scripts that show a user-facing time should use exec_context.timezone.
+
+  Always pass an explicit tzinfo:
+
+    # Bad
+    dt = datetime.fromtimestamp(ts)
+
+    # Good - storing/comparing as an absolute instant:
+    from datetime import UTC
+    dt = datetime.fromtimestamp(ts, tz=UTC)
+
+    # Good - displaying to a user in their configured zone:
+    dt = datetime.fromtimestamp(ts, tz=exec_context.timezone)
+
+  For exemptions:
+    # ast-grep-ignore: no-naive-datetime-fromtimestamp - legacy API returns naive
+    dt = datetime.fromtimestamp(ts)
+rule:
+  any:
+    - pattern: datetime.fromtimestamp($TS)
+    - pattern: datetime.datetime.fromtimestamp($TS)

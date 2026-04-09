@@ -869,6 +869,7 @@ class ConfirmingToolsProvider(ToolsProvider):
                             uid=uid,
                             calendar_url=calendar_url,
                             calendar_config=cast("CalendarConfig", calendar_config),
+                            timezone=context.timezone,
                         )
                         return event_details
                     except Exception as e:

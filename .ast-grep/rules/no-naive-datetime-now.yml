@@ -1,0 +1,40 @@
+id: no-naive-datetime-now
+language: python
+severity: error
+message: "Avoid naive datetime.now() - pass an explicit tzinfo (UTC, ZoneInfo, or exec_context.timezone)"
+note: |
+  Calling datetime.now() without a tzinfo argument returns a naive datetime in
+  the local process timezone. Naive datetimes are a silent correctness hazard:
+
+  - Comparisons with timezone-aware datetimes from the database raise TypeError
+    at runtime (PostgreSQL) or silently compare as if both were local (SQLite).
+  - datetime.timestamp() interprets naive datetimes as local time, producing
+    wrong unix timestamps that drift across deployments.
+  - Values stored in DateTime(timezone=True) columns get mislabelled.
+  - Scripts and tools that want the *user's* local time must use
+    exec_context.timezone, not the server's local time.
+
+  Pass an explicit tzinfo:
+
+    # Bad
+    now = datetime.now()
+    cutoff = datetime.now() - timedelta(days=7)
+
+    # Good - absolute instants (for storage, comparisons, cutoffs):
+    from datetime import UTC
+    now = datetime.now(UTC)
+    cutoff = datetime.now(UTC) - timedelta(days=7)
+
+    # Good - wall-clock time in the user's configured zone:
+    now = datetime.now(exec_context.timezone)
+    now = datetime.now(ZoneInfo("Australia/Sydney"))
+
+  The same applies to datetime.fromtimestamp() - always pass tz=.
+
+  For the rare legitimate use of a naive datetime, add an exemption:
+    # ast-grep-ignore: no-naive-datetime-now - interfacing with naive 3rd-party API
+    naive = datetime.now()
+rule:
+  any:
+    - pattern: datetime.now()
+    - pattern: datetime.datetime.now()

@@ -147,6 +147,7 @@ async def render_delete_calendar_event_confirmation(
                     uid=uid,
                     calendar_url=calendar_url,
                     calendar_config=calendar_config,
+                    timezone=context.timezone,
                 )
             )
 
@@ -192,6 +193,7 @@ async def render_modify_calendar_event_confirmation(
                     uid=uid,
                     calendar_url=calendar_url,
                     calendar_config=calendar_config,
+                    timezone=context.timezone,
                 )
             )
 

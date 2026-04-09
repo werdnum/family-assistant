@@ -1,8 +1,13 @@
 """Integration tests for time API in scripting engines."""
 
-from datetime import datetime
+from datetime import UTC, datetime
+from zoneinfo import ZoneInfo
 
 import pytest
+
+from family_assistant.scripting.monty_engine import MontyEngine
+from family_assistant.storage.context import DatabaseContext
+from family_assistant.tools.types import ToolExecutionContext
 
 
 class TestTimeAPIIntegration:
@@ -36,7 +41,7 @@ result
 """
         result = await engine.evaluate_async(script)
 
-        assert result["now_year"] == datetime.now().year
+        assert result["now_year"] == datetime.now(UTC).year
         assert result["utc_tz"] == "UTC"
         assert result["xmas_formatted"] == "2024-12-25 15:30:00"
         assert result["xmas_year"] == 2024
@@ -277,3 +282,64 @@ diff
 """
         result = await engine.evaluate_async(script)
         assert result == 86400
+
+
+class TestTimeAPIHonorsContextTimezone:
+    """Verify that time_now / time_from_timestamp use the configured timezone.
+
+    Regression test for the bug where ``time_now()`` returned naive local
+    machine time mislabelled as UTC, ignoring the assistant's configured
+    ``processing_config.timezone``.
+    """
+
+    @pytest.mark.asyncio
+    async def test_time_now_uses_context_timezone(self, db_engine: object) -> None:
+        script = """
+now = time_now()
+ts = time_from_timestamp(1704067200)
+result = {
+    "now_tz": now["timezone"],
+    "ts_tz": ts["timezone"],
+    "ts_hour": time_hour(ts),
+    "ts_unix": ts["unix"],
+}
+result
+"""
+        async with DatabaseContext(engine=db_engine) as db:  # type: ignore[arg-type]
+            context = ToolExecutionContext(
+                interface_type="test",
+                conversation_id="tz-test",
+                user_name="tester",
+                turn_id="turn-tz",
+                db_context=db,
+                processing_service=None,
+                clock=None,
+                home_assistant_client=None,
+                event_sources=None,
+                attachment_registry=None,
+                camera_backend=None,
+                timezone=ZoneInfo("America/New_York"),
+            )
+
+            engine = MontyEngine()
+            result = await engine.evaluate_async(script, execution_context=context)
+
+        assert "America/New_York" in result["now_tz"]
+        assert "America/New_York" in result["ts_tz"]
+        # 2024-01-01 00:00:00 UTC is 2023-12-31 19:00:00 EST (UTC-5)
+        assert result["ts_hour"] == 19
+        # Unix timestamp is an absolute instant and remains unchanged
+        assert result["ts_unix"] == 1704067200
+
+    @pytest.mark.asyncio
+    async def test_time_now_defaults_to_utc_without_context(
+        self, engine_class: type
+    ) -> None:
+        """Without an exec context, time_now should fall back to UTC."""
+        engine = engine_class()
+        script = """
+now = time_now()
+now["timezone"]
+"""
+        result = await engine.evaluate_async(script)
+        assert result == "UTC"

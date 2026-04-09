@@ -5,13 +5,13 @@ from __future__ import annotations
 import logging
 from datetime import UTC
 from typing import TYPE_CHECKING, Any, cast
-from zoneinfo import ZoneInfo
 
 from family_assistant.scripting.validator import ScriptValidator
 from family_assistant.tools.types import ToolDefinition, ToolResult
 
 if TYPE_CHECKING:
     from datetime import datetime
+    from zoneinfo import ZoneInfo
 
     from family_assistant.storage.context import DatabaseContext
     from family_assistant.storage.models import Automation
@@ -21,18 +21,18 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-_UTC_ZONE = ZoneInfo("UTC")
 
-
-def format_automation_datetime(
-    dt: datetime | None, timezone: ZoneInfo = _UTC_ZONE
-) -> str:
+def format_automation_datetime(dt: datetime | None, timezone: ZoneInfo) -> str:
     """
     Format a datetime object to human-readable format in the given timezone.
 
+    The ``timezone`` must be the user's configured timezone (typically
+    ``exec_context.timezone``): values exposed to the user or LLM must never
+    be rendered in UTC.
+
     Args:
         dt: Datetime object or None
-        timezone: ZoneInfo object for the target timezone
+        timezone: ZoneInfo object for the target (user-facing) timezone
 
     Returns:
         Formatted datetime string or "Never" if input was None
@@ -45,13 +45,17 @@ def format_automation_datetime(
     return local_dt.strftime("%Y-%m-%d %H:%M %Z")
 
 
-def _to_isoformat(dt: datetime | None, timezone: ZoneInfo = _UTC_ZONE) -> str | None:
+def _to_isoformat(dt: datetime | None, timezone: ZoneInfo) -> str | None:
     """
     Convert a datetime object to ISO format in the given timezone.
 
+    The ``timezone`` must be the user's configured timezone (typically
+    ``exec_context.timezone``): values exposed to the user or LLM must never
+    be rendered in UTC.
+
     Args:
         dt: Datetime object or None
-        timezone: ZoneInfo object for the target timezone
+        timezone: ZoneInfo object for the target (user-facing) timezone
 
     Returns:
         ISO format string in local timezone or None if input was None
