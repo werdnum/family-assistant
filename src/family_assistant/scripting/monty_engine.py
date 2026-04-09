@@ -707,7 +707,7 @@ class MontyEngine:
                 time_string,
                 format_string,
                 timezone_name,
-                default_tz=default_tz,
+                _default_tz=default_tz,
             )
 
         time_functions: list[tuple[str, Callable[..., Any]]] = [

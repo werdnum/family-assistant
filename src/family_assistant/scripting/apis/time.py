@@ -185,7 +185,8 @@ def time_parse(
     time_string: str,
     format_string: str = "",
     timezone_name: str = "",
-    default_tz: ZoneInfo | None = None,
+    *,
+    _default_tz: ZoneInfo | None = None,
 ) -> TimeDict:
     """
     Parse a time string into a time object.
@@ -194,12 +195,12 @@ def time_parse(
         time_string: The time string to parse
         format_string: The format string (strftime format). If empty, tries common formats
         timezone_name: An explicit timezone name to apply to the parsed time.
-            Takes precedence over ``default_tz``.
-        default_tz: Timezone to assume for naive (tzinfo-free) parsed
-            datetimes when no ``timezone_name`` is given. MontyEngine binds
-            this to the assistant's configured timezone so naive strings like
-            ``"2024-12-25 15:30:45"`` are interpreted as the user's local
-            time, not UTC. Falls back to UTC if unset.
+            Takes precedence over the engine-supplied default.
+        _default_tz: Internal parameter used by MontyEngine to bind the
+            assistant's configured timezone for naive parses. Scripts should
+            not set this directly - use ``timezone_name`` instead. Leading
+            underscore marks it as private to the runtime wiring: it is
+            keyword-only and deliberately not exposed in the script stub.
 
     Returns:
         A time dictionary
@@ -255,7 +256,7 @@ def time_parse(
     elif dt.tzinfo is None:
         # Naive datetimes get localised to the caller-supplied default
         # (usually the assistant's configured timezone) rather than UTC.
-        dt = dt.replace(tzinfo=default_tz or UTC)
+        dt = dt.replace(tzinfo=_default_tz or UTC)
 
     return _datetime_to_dict(dt)
 

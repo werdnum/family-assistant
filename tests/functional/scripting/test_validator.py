@@ -606,7 +606,12 @@ class TestStubSignaturesMatchRuntime:
         assert not missing, f"Missing stubs for time API functions: {missing}"
 
     def test_all_time_api_param_names_match(self) -> None:
-        """Stub param names must match actual runtime function param names."""
+        """Stub param names must match actual runtime function param names.
+
+        Underscore-prefixed parameters (e.g. ``_default_tz``) are treated as
+        runtime-internal wiring - MontyEngine binds them before scripts see
+        the function, so they are intentionally absent from the stub.
+        """
         prefix = generate_prefix_code()
         api_functions = {
             name: obj
@@ -616,7 +621,11 @@ class TestStubSignaturesMatchRuntime:
         mismatches: list[str] = []
         for name, fn in api_functions.items():
             sig = inspect.signature(fn)
-            real_params = [p.name for p in sig.parameters.values() if p.name != "self"]
+            real_params = [
+                p.name
+                for p in sig.parameters.values()
+                if p.name != "self" and not p.name.startswith("_")
+            ]
             # Extract the stub line for this function
             stub_line = ""
             for line in prefix.splitlines():

@@ -204,8 +204,7 @@ def _generate_builtin_api_stubs(
         )
         lines.append(
             "def time_parse(time_string: str, format_string: str = ..., "
-            "timezone_name: str = ..., default_tz: Any = ...) "
-            "-> dict[str, Any]: ..."
+            "timezone_name: str = ...) -> dict[str, Any]: ..."
         )
 
         # Time API - manipulation
