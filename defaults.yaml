@@ -1531,9 +1531,9 @@ service_profiles:
           decision: "confirm"
           priority: 99
         - match:
-          names:
-            - "delete_calendar_event"
-            - "modify_calendar_event"
+            names:
+              - "delete_calendar_event"
+              - "modify_calendar_event"
           decision: "confirm"
           priority: 20
     slash_commands:

@@ -92,7 +92,7 @@ class ToolMatcher(BaseModel):
             if arguments is None:
                 return False
             for key, expected_value in self.argument_equals.items():
-                if arguments.get(key) != expected_value:
+                if key not in arguments or arguments[key] != expected_value:
                     return False
 
         return True
@@ -266,9 +266,14 @@ class PolicyEngine:
             context="execution",
         )
 
-    def explain(self, descriptor: ToolDescriptor) -> PolicyEvaluation:
+    def explain(
+        self,
+        descriptor: ToolDescriptor,
+        *,
+        arguments: dict[str, object] | None = None,
+    ) -> PolicyEvaluation:
         """Return the raw evaluation result for diagnostics and tests."""
-        return self.evaluate(descriptor, arguments=None)
+        return self.evaluate(descriptor, arguments=arguments)
 
     @staticmethod
     def _apply_confirmation_capability(

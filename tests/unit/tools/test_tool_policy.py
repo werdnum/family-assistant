@@ -422,3 +422,18 @@ def test_execution_policy_can_filter_by_tool_arguments() -> None:
     assert blocked.reason == "block delegating to engineer profile"
     assert allowed.decision is ToolPolicyDecision.ALLOW
     assert advertised.decision is ToolPolicyDecision.ALLOW
+
+
+def test_argument_equals_missing_key_does_not_match() -> None:
+    """A rule with argument_equals must not match when the key is absent from arguments."""
+    descriptor = make_descriptor(name="delegate_to_service", tags={ToolTag.DELEGATION})
+    matcher = ToolMatcher(
+        names=["delegate_to_service"],
+        argument_equals={"target_service_id": None},
+    )
+    # Key absent — should NOT match even though expected value is None
+    assert not matcher.matches(descriptor, arguments={})
+    # Key present with None — should match
+    assert matcher.matches(descriptor, arguments={"target_service_id": None})
+    # Key present with different value — should not match
+    assert not matcher.matches(descriptor, arguments={"target_service_id": "foo"})
