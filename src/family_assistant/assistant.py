@@ -87,7 +87,10 @@ from family_assistant.tools import (
     OnDemandAwareToolsProvider,
     PolicyEnforcingToolsProvider,
     PolicyEngine,
+    PolicyRule,
+    ToolMatcher,
     ToolPolicyConfig,
+    ToolPolicyDecision,
     _scan_user_docs,
     build_local_tool_registrations,
 )
@@ -138,15 +141,36 @@ def _build_profile_policy_engine(
     profile_tools_policy: ToolPolicyConfig | None,
     operator_tools_policy: ToolPolicyConfig | None,
 ) -> PolicyEngine:
-    """Build a policy engine for a profile from explicit policy config."""
+    """Build a policy engine for a profile from explicit policy config.
+
+    Automatically injects a synthetic self-delegation allow rule at the
+    ``profile`` layer so that every profile can delegate to itself without
+    confirmation.  Self-delegation is never a privilege escalation.
+    """
     if profile_tools_policy is None:
         msg = (
             f"Profile '{profile_id}' is missing tools_policy. "
             "Every runtime profile must define explicit tools_policy."
         )
         raise ValueError(msg)
+
+    self_delegation_policy = ToolPolicyConfig(
+        rules=[
+            PolicyRule(
+                match=ToolMatcher(
+                    names=["delegate_to_service"],
+                    argument_equals={"target_service_id": profile_id},
+                ),
+                decision=ToolPolicyDecision.ALLOW,
+                priority=50,
+                description=f"Allow self-delegation for profile '{profile_id}'",
+            ),
+        ],
+    )
+
     return PolicyEngine.from_layers(
         defaults=profile_tools_policy,
+        profile=self_delegation_policy,
         operator=operator_tools_policy,
     )
 
