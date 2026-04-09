@@ -15,7 +15,6 @@ import uuid
 from collections.abc import Callable
 from functools import partial
 from typing import TYPE_CHECKING, Any, TypedDict
-from zoneinfo import ZoneInfo
 
 import pydantic_monty
 
@@ -35,6 +34,8 @@ from .config import ScriptConfig
 from .errors import ScriptExecutionError, ScriptSyntaxError, ScriptTimeoutError
 
 if TYPE_CHECKING:
+    from datetime import tzinfo
+
     from family_assistant.tools import ToolsProvider
     from family_assistant.tools.types import ToolDefinition, ToolExecutionContext
 
@@ -680,17 +681,19 @@ class MontyEngine:
         scripts (and, by extension, the LLM and user) must never see UTC
         wall-clock times. Explicit ``tz=`` overrides are respected.
         """
-        default_tz: ZoneInfo | None = (
+        default_tz = (
             execution_context.timezone if execution_context is not None else None
         )
 
-        def time_now_bound(tz: ZoneInfo | None = None) -> time_api.TimeDict:
+        def time_now_bound(
+            tz: "tzinfo | str | None" = None,
+        ) -> time_api.TimeDict:
             return time_api.time_now(tz if tz is not None else default_tz)
 
         def time_from_timestamp_bound(
             seconds: float,
             nanoseconds: int = 0,
-            tz: ZoneInfo | None = None,
+            tz: "tzinfo | str | None" = None,
         ) -> time_api.TimeDict:
             return time_api.time_from_timestamp(
                 seconds,

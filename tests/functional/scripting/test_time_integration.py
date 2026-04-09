@@ -343,3 +343,32 @@ now["timezone"]
 """
         result = await engine.evaluate_async(script)
         assert result == "UTC"
+
+    @pytest.mark.asyncio
+    async def test_script_can_override_with_timezone_string(
+        self, engine_class: type
+    ) -> None:
+        """Scripts must be able to override tz with a timezone NAME string.
+
+        Scripts run inside the Monty sandbox and cannot construct ZoneInfo
+        objects, so time_now(tz=...) and time_from_timestamp(tz=...) must
+        accept the same kind of name strings the rest of the time API
+        already takes (e.g. ``"Europe/London"``). Regression guard for the
+        Codex review comment on PR #749 which flagged that passing a string
+        would previously crash with TypeError.
+        """
+        engine = engine_class()
+        script = """
+now = time_now("Europe/London")
+ts = time_from_timestamp(1704067200, tz="Asia/Tokyo")
+{
+    "now_tz": now["timezone"],
+    "ts_tz": ts["timezone"],
+    "ts_hour": time_hour(ts),
+}
+"""
+        result = await engine.evaluate_async(script)
+        assert "Europe/London" in result["now_tz"]
+        assert "Asia/Tokyo" in result["ts_tz"]
+        # 2024-01-01 00:00:00 UTC is 2024-01-01 09:00:00 JST (UTC+9)
+        assert result["ts_hour"] == 9

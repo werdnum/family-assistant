@@ -191,7 +191,7 @@ def _generate_builtin_api_stubs(
 
     # Time API - creation (aligned with scripting/apis/time.py)
     if include_time_api:
-        lines.append("def time_now(tz: Any = ...) -> dict[str, Any]: ...")
+        lines.append("def time_now(tz: str = ...) -> dict[str, Any]: ...")
         lines.append("def time_now_utc() -> dict[str, Any]: ...")
         lines.append(
             "def time_create(year: int = ..., month: int = ..., day: int = ..., "
@@ -200,7 +200,7 @@ def _generate_builtin_api_stubs(
         )
         lines.append(
             "def time_from_timestamp(seconds: float, nanoseconds: int = ..., "
-            "tz: Any = ...) -> dict[str, Any]: ..."
+            "tz: str = ...) -> dict[str, Any]: ..."
         )
         lines.append(
             "def time_parse(time_string: str, format_string: str = ..., "

@@ -1,6 +1,7 @@
 """Tests for the scripting time API."""
 
 from datetime import UTC, datetime
+from zoneinfo import ZoneInfo
 
 import pytest
 
@@ -38,8 +39,6 @@ class TestTimeCreation:
 
     def test_time_now_with_timezone(self) -> None:
         """time_now accepts an explicit ZoneInfo override."""
-        from zoneinfo import ZoneInfo  # noqa: PLC0415
-
         tz = ZoneInfo("America/New_York")
         result = time_api.time_now(tz)
 
@@ -48,6 +47,27 @@ class TestTimeCreation:
         assert result["year"] == now.year
         assert result["month"] == now.month
         assert result["day"] == now.day
+
+    def test_time_now_accepts_timezone_name_string(self) -> None:
+        """time_now accepts a timezone name string (scripts can't build ZoneInfo).
+
+        Scripts running inside MontyEngine don't have access to ZoneInfo, so
+        the ``tz`` parameter must also accept timezone name strings like
+        ``"America/New_York"`` - the same way time_create, time_in_location
+        and time_parse already do.
+        """
+        result = time_api.time_now("Europe/London")
+
+        assert "Europe/London" in result["timezone"]
+        now = datetime.now(ZoneInfo("Europe/London"))
+        assert result["year"] == now.year
+        assert result["month"] == now.month
+        assert result["day"] == now.day
+
+    def test_time_now_rejects_invalid_timezone_string(self) -> None:
+        """time_now raises ValueError for invalid timezone strings."""
+        with pytest.raises(ValueError, match="Invalid timezone"):
+            time_api.time_now("Not/A/Real/Zone")
 
     def test_time_now_utc(self) -> None:
         """Test getting current UTC time."""
