@@ -70,6 +70,7 @@ class TelegramService:
         builder = (
             ApplicationBuilder()
             .token(telegram_token)
+            .concurrent_updates(True)
             .connect_timeout(TELEGRAM_API_REQUEST_TIMEOUT_SECONDS)
             .read_timeout(TELEGRAM_API_REQUEST_TIMEOUT_SECONDS)
             .write_timeout(TELEGRAM_API_REQUEST_TIMEOUT_SECONDS)
