@@ -737,13 +737,6 @@ class GoogleGenAIClient(BaseLLMClient):
                         # Only include thought_signature if we actually have one
                         # (per Google docs: pass it back exactly as received, or omit if not received)
                         if thought_signature_bytes:
-                            # DEBUG LOGGING
-                            sig_len = len(thought_signature_bytes)
-                            sig_preview = thought_signature_bytes[:10]
-                            logger.warning(
-                                f"DEBUG: Sending thought_signature to SDK. Len: {sig_len}, Preview: {sig_preview!r}"
-                            )
-
                             assistant_parts.append(
                                 types.Part(
                                     function_call=types.FunctionCall(
@@ -1860,15 +1853,6 @@ class GoogleGenAIClient(BaseLLMClient):
                                                 hasattr(part, "thought_signature")
                                                 and part.thought_signature
                                             ):
-                                                # DEBUG LOGGING
-                                                sig_len = len(part.thought_signature)
-                                                sig_preview = part.thought_signature[
-                                                    :10
-                                                ]
-                                                logger.warning(
-                                                    f"DEBUG: Received thought_signature from SDK. Len: {sig_len}, Preview: {sig_preview!r}"
-                                                )
-
                                                 # Wrap in opaque GeminiThoughtSignature - no processing
                                                 thought_sig = GeminiThoughtSignature(
                                                     part.thought_signature
