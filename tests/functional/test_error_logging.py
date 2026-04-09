@@ -1,7 +1,7 @@
 """Integration test for error logging functionality."""
 
 import logging
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 
 import pytest
 from sqlalchemy import delete, insert, select
@@ -135,7 +135,7 @@ async def test_error_log_cleanup(db_engine: AsyncEngine) -> None:
     """Test that old error logs are cleaned up correctly."""
     async with DatabaseContext(engine=db_engine) as db_context:
         # Insert error logs with different ages
-        now = datetime.now()
+        now = datetime.now(UTC)
 
         # Old error (40 days ago)
         stmt1 = insert(error_logs_table).values(

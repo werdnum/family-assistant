@@ -5,7 +5,7 @@ Tests the _select_attachments_for_response method and related threshold logic.
 """
 
 import json
-from datetime import datetime
+from datetime import UTC, datetime
 from unittest.mock import AsyncMock, MagicMock
 from zoneinfo import ZoneInfo
 
@@ -90,7 +90,7 @@ class TestAttachmentSelectionThreshold:
                 mime_type="image/jpeg",
                 description=f"Test attachment {att_id}",
                 size=1024,
-                created_at=datetime.now(),
+                created_at=datetime.now(UTC),
             )
         )
         processing_service.llm_client.generate_response = AsyncMock(  # type: ignore[attr-defined]
@@ -141,7 +141,7 @@ class TestAttachmentSelectionThreshold:
                 mime_type="image/jpeg",
                 description=f"Test attachment {att_id}",
                 size=1024,
-                created_at=datetime.now(),
+                created_at=datetime.now(UTC),
             )
         )
 
@@ -232,7 +232,7 @@ class TestSelectAttachmentsForResponse:
             mime_type="image/jpeg",
             description=description or f"Test attachment {attachment_id}",
             size=1024,
-            created_at=datetime.now(),
+            created_at=datetime.now(UTC),
         )
 
     @pytest.mark.asyncio

@@ -1,7 +1,7 @@
 """API endpoints for error logs."""
 
 import logging
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -104,7 +104,7 @@ async def get_errors(
     days: Annotated[int, Query(ge=1, le=90)] = 7,
 ) -> ErrorLogsListResponse:
     """Get paginated list of error logs."""
-    cutoff_date = datetime.now() - timedelta(days=days)
+    cutoff_date = datetime.now(UTC) - timedelta(days=days)
     offset = (page - 1) * limit
 
     errors = await db_context.error_logs.get_all(

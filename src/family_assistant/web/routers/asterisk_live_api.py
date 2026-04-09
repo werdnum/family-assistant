@@ -1363,7 +1363,12 @@ class AsteriskLiveHandler:
             return
 
         try:
-            call_time = datetime.fromtimestamp(self._call_start_time)
+            tz = (
+                self.processing_service.service_config.timezone
+                if self.processing_service
+                else ZoneInfo("UTC")
+            )
+            call_time = datetime.fromtimestamp(self._call_start_time, tz=tz)
             iso_datetime = call_time.strftime("%Y-%m-%d %H:%M")
             ext_label = self.extension or "unknown"
             title = f"Call Transcript: {ext_label} - {iso_datetime}"

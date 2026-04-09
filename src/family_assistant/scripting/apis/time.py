@@ -7,7 +7,7 @@ following patterns from starlark-go's time module API design.
 
 import logging
 import re
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime, timedelta, tzinfo
 from typing import TypedDict
 from zoneinfo import ZoneInfo
 
@@ -40,8 +40,38 @@ DAY = 86400
 WEEK = 604800
 
 
+def _coerce_tz(tz: "tzinfo | str | None") -> tzinfo | None:
+    """Normalise a caller-supplied timezone argument to a tzinfo.
+
+    Scripts invoke the time API by name and only have access to strings
+    (``"America/New_York"``), never live ``ZoneInfo`` objects, so every
+    public function that accepts a timezone must accept a string too.
+    ``None`` is passed through so callers can still signal "use the
+    default" explicitly.
+    """
+    if tz is None or isinstance(tz, tzinfo):
+        return tz
+    if tz == "UTC":
+        return UTC
+    try:
+        return ZoneInfo(tz)
+    except Exception as e:
+        raise ValueError(f"Invalid timezone: {tz}") from e
+
+
 def _datetime_to_dict(dt: datetime) -> TimeDict:
-    """Convert a datetime object to a dictionary representation."""
+    """Convert a datetime object to a dictionary representation.
+
+    The datetime must be timezone-aware: naive datetimes cannot be safely
+    serialised because ``datetime.timestamp()`` interprets them in the local
+    process timezone, which silently produces wrong unix timestamps.
+    """
+    if dt.tzinfo is None:
+        raise ValueError(
+            "_datetime_to_dict requires a timezone-aware datetime; "
+            "got a naive datetime which would produce an ambiguous "
+            "unix timestamp."
+        )
     return TimeDict(
         year=dt.year,
         month=dt.month,
@@ -52,7 +82,7 @@ def _datetime_to_dict(dt: datetime) -> TimeDict:
         nanosecond=dt.microsecond * 1000,
         unix=int(dt.timestamp()),
         unix_nano=int(dt.timestamp() * 1_000_000_000),
-        timezone=str(dt.tzinfo) if dt.tzinfo else "UTC",
+        timezone=str(dt.tzinfo),
     )
 
 
@@ -83,9 +113,19 @@ def _dict_to_datetime(time_dict: TimeDict) -> datetime:
 # Time Creation Functions
 
 
-def time_now() -> TimeDict:
-    """Get the current time in the local timezone."""
-    return _datetime_to_dict(datetime.now())
+def time_now(tz: "tzinfo | str | None" = None) -> TimeDict:
+    """Get the current time.
+
+    Args:
+        tz: Timezone to use. Accepts either a timezone name string
+            (``"America/New_York"``) or a ``tzinfo`` instance (used
+            internally by MontyEngine to forward the configured assistant
+            timezone). Defaults to UTC when not specified; MontyEngine
+            binds this to the assistant's configured timezone so scripts
+            calling ``time_now()`` without arguments receive local
+            wall-clock time.
+    """
+    return _datetime_to_dict(datetime.now(_coerce_tz(tz) or UTC))
 
 
 def time_now_utc() -> TimeDict:
@@ -141,19 +181,28 @@ def time_create(
     return _datetime_to_dict(dt)
 
 
-def time_from_timestamp(seconds: float, nanoseconds: int = 0) -> TimeDict:
+def time_from_timestamp(
+    seconds: float,
+    nanoseconds: int = 0,
+    tz: "tzinfo | str | None" = None,
+) -> TimeDict:
     """
     Create a time object from a Unix timestamp.
 
     Args:
         seconds: Unix timestamp in seconds
         nanoseconds: Additional nanoseconds (optional)
+        tz: Timezone to express the result in. Accepts either a timezone
+            name string (``"America/New_York"``) or a ``tzinfo`` instance.
+            Defaults to UTC when not specified. MontyEngine binds this to
+            the configured assistant timezone so scripts receive local
+            wall-clock components.
 
     Returns:
-        A time dictionary in UTC
+        A time dictionary
     """
     total_seconds = seconds + (nanoseconds / 1_000_000_000)
-    dt = datetime.fromtimestamp(total_seconds, tz=UTC)
+    dt = datetime.fromtimestamp(total_seconds, tz=_coerce_tz(tz) or UTC)
     return _datetime_to_dict(dt)
 
 
@@ -161,6 +210,8 @@ def time_parse(
     time_string: str,
     format_string: str = "",
     timezone_name: str = "",
+    *,
+    _default_tz: ZoneInfo | None = None,
 ) -> TimeDict:
     """
     Parse a time string into a time object.
@@ -168,7 +219,13 @@ def time_parse(
     Args:
         time_string: The time string to parse
         format_string: The format string (strftime format). If empty, tries common formats
-        timezone_name: The timezone to use. If empty, uses UTC for naive times
+        timezone_name: An explicit timezone name to apply to the parsed time.
+            Takes precedence over the engine-supplied default.
+        _default_tz: Internal parameter used by MontyEngine to bind the
+            assistant's configured timezone for naive parses. Scripts should
+            not set this directly - use ``timezone_name`` instead. Leading
+            underscore marks it as private to the runtime wiring: it is
+            keyword-only and deliberately not exposed in the script stub.
 
     Returns:
         A time dictionary
@@ -222,8 +279,9 @@ def time_parse(
                 tz = UTC
         dt = dt.replace(tzinfo=tz)
     elif dt.tzinfo is None:
-        # Default to UTC for naive datetimes
-        dt = dt.replace(tzinfo=UTC)
+        # Naive datetimes get localised to the caller-supplied default
+        # (usually the assistant's configured timezone) rather than UTC.
+        dt = dt.replace(tzinfo=_default_tz or UTC)
 
     return _datetime_to_dict(dt)
 

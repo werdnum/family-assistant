@@ -743,6 +743,7 @@ async def fetch_event_details_for_confirmation(
     uid: str,
     calendar_url: str,
     calendar_config: "CalendarConfig",
+    timezone: ZoneInfo,
 ) -> "CalendarEvent | None":
     """Fetches calendar event details by UID for use in confirmation prompts.
 
@@ -750,6 +751,10 @@ async def fetch_event_details_for_confirmation(
         uid: The UID of the calendar event to fetch
         calendar_url: The full URL of the calendar collection
         calendar_config: Calendar configuration containing CalDAV settings
+        timezone: The user's configured timezone. Naive datetimes in the
+            iCalendar data (e.g. floating all-day events) are localised to
+            this zone so the confirmation prompt shown to the user never
+            displays UTC wall-clock times.
 
     Returns:
         Dict containing event details (summary, start, end, all_day, uid) or None if not found
@@ -820,8 +825,7 @@ async def fetch_event_details_for_confirmation(
                 )  # type: ignore
 
                 event_data_str: str = event_resource.data  # type: ignore
-                # Use UTC as default timezone for confirmation display
-                parsed_event = parse_event(event_data_str, timezone=ZoneInfo("UTC"))
+                parsed_event = parse_event(event_data_str, timezone=timezone)
 
                 if parsed_event:
                     logger.info(

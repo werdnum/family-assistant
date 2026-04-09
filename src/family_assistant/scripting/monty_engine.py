@@ -34,6 +34,8 @@ from .config import ScriptConfig
 from .errors import ScriptExecutionError, ScriptSyntaxError, ScriptTimeoutError
 
 if TYPE_CHECKING:
+    from datetime import tzinfo
+
     from family_assistant.tools import ToolsProvider
     from family_assistant.tools.types import ToolDefinition, ToolExecutionContext
 
@@ -283,7 +285,7 @@ class MontyEngine:
         if self.config.enable_json_api:
             self._add_json_api(ext_fn_names, ext_fn_impls)
         if self.config.enable_time_api:
-            self._add_time_api(ext_fn_names, ext_fn_impls, inputs)
+            self._add_time_api(ext_fn_names, ext_fn_impls, inputs, execution_context)
         if self.config.enable_llm_api:
             self._add_llm_api(ext_fn_names, ext_fn_impls)
 
@@ -668,15 +670,56 @@ class MontyEngine:
         impls: dict[str, Callable[..., Any]],
         # ast-grep-ignore: no-dict-any - Inputs carry user-provided Python values keyed by name
         inputs: dict[str, Any],
+        execution_context: "ToolExecutionContext | None" = None,
     ) -> None:
-        """Add time API functions and constants."""
+        """Add time API functions and constants.
+
+        When ``execution_context`` is supplied, ``time_now``,
+        ``time_from_timestamp`` and ``time_parse`` are bound to the
+        assistant's configured timezone so scripts calling them without
+        arguments see wall-clock time in that zone rather than UTC -
+        scripts (and, by extension, the LLM and user) must never see UTC
+        wall-clock times. Explicit ``tz=`` overrides are respected.
+        """
+        default_tz = (
+            execution_context.timezone if execution_context is not None else None
+        )
+
+        def time_now_bound(
+            tz: "tzinfo | str | None" = None,
+        ) -> time_api.TimeDict:
+            return time_api.time_now(tz if tz is not None else default_tz)
+
+        def time_from_timestamp_bound(
+            seconds: float,
+            nanoseconds: int = 0,
+            tz: "tzinfo | str | None" = None,
+        ) -> time_api.TimeDict:
+            return time_api.time_from_timestamp(
+                seconds,
+                nanoseconds,
+                tz if tz is not None else default_tz,
+            )
+
+        def time_parse_bound(
+            time_string: str,
+            format_string: str = "",
+            timezone_name: str = "",
+        ) -> time_api.TimeDict:
+            return time_api.time_parse(
+                time_string,
+                format_string,
+                timezone_name,
+                _default_tz=default_tz,
+            )
+
         time_functions: list[tuple[str, Callable[..., Any]]] = [
             # Time creation
-            ("time_now", time_api.time_now),
+            ("time_now", time_now_bound),
             ("time_now_utc", time_api.time_now_utc),
             ("time_create", time_api.time_create),
-            ("time_from_timestamp", time_api.time_from_timestamp),
-            ("time_parse", time_api.time_parse),
+            ("time_from_timestamp", time_from_timestamp_bound),
+            ("time_parse", time_parse_bound),
             # Time manipulation
             ("time_in_location", time_api.time_in_location),
             ("time_format", time_api.time_format),

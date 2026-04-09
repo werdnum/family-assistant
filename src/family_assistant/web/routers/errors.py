@@ -23,7 +23,7 @@ async def error_list(
 ) -> HTMLResponse:
     """List recent errors with filtering."""
     templates = request.app.state.templates
-    cutoff_date = datetime.now() - timedelta(days=days)
+    cutoff_date = datetime.now(UTC) - timedelta(days=days)
 
     # Get errors with pagination
     limit = 50

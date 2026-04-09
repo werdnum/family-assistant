@@ -4,7 +4,7 @@ import asyncio
 import logging
 import sys
 import traceback
-from datetime import datetime
+from datetime import UTC, datetime
 
 from sqlalchemy import insert
 from sqlalchemy.ext.asyncio import AsyncEngine
@@ -114,7 +114,7 @@ class SQLAlchemyErrorHandler(logging.Handler):
             tb_text = "".join(traceback.format_exception(*exc_info))
 
         return {
-            "timestamp": datetime.fromtimestamp(record.created),
+            "timestamp": datetime.fromtimestamp(record.created, tz=UTC),
             "logger_name": record.name,
             "level": record.levelname,
             "message": record.getMessage(),

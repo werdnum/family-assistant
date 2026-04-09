@@ -1,6 +1,7 @@
 """Tests for the scripting time API."""
 
 from datetime import UTC, datetime
+from zoneinfo import ZoneInfo
 
 import pytest
 
@@ -11,7 +12,7 @@ class TestTimeCreation:
     """Test time creation functions."""
 
     def test_time_now(self) -> None:
-        """Test getting current time."""
+        """Test getting current time defaults to UTC."""
         result = time_api.time_now()
 
         # Check structure
@@ -27,11 +28,46 @@ class TestTimeCreation:
         assert "unix_nano" in result
         assert "timezone" in result
 
-        # Verify it's roughly current time
-        now = datetime.now()
+        # time_now() defaults to UTC when no timezone is provided so that
+        # callers without an explicit timezone never pick up the process's
+        # local time by accident.
+        assert result["timezone"] == "UTC"
+        now = datetime.now(UTC)
         assert result["year"] == now.year
         assert result["month"] == now.month
         assert result["day"] == now.day
+
+    def test_time_now_with_timezone(self) -> None:
+        """time_now accepts an explicit ZoneInfo override."""
+        tz = ZoneInfo("America/New_York")
+        result = time_api.time_now(tz)
+
+        assert "America/New_York" in result["timezone"]
+        now = datetime.now(tz)
+        assert result["year"] == now.year
+        assert result["month"] == now.month
+        assert result["day"] == now.day
+
+    def test_time_now_accepts_timezone_name_string(self) -> None:
+        """time_now accepts a timezone name string (scripts can't build ZoneInfo).
+
+        Scripts running inside MontyEngine don't have access to ZoneInfo, so
+        the ``tz`` parameter must also accept timezone name strings like
+        ``"America/New_York"`` - the same way time_create, time_in_location
+        and time_parse already do.
+        """
+        result = time_api.time_now("Europe/London")
+
+        assert "Europe/London" in result["timezone"]
+        now = datetime.now(ZoneInfo("Europe/London"))
+        assert result["year"] == now.year
+        assert result["month"] == now.month
+        assert result["day"] == now.day
+
+    def test_time_now_rejects_invalid_timezone_string(self) -> None:
+        """time_now raises ValueError for invalid timezone strings."""
+        with pytest.raises(ValueError, match="Invalid timezone"):
+            time_api.time_now("Not/A/Real/Zone")
 
     def test_time_now_utc(self) -> None:
         """Test getting current UTC time."""
