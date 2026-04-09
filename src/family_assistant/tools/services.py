@@ -38,7 +38,7 @@ SERVICE_TOOLS_DEFINITION: list[ToolDefinition] = [
                 "If service returns no text, returns 'Service [id] processed the request but provided no textual response.'. "
                 "If service registry unavailable, returns 'Error: Service registry is not available to delegate the task.'. "
                 "If target service not found, returns 'Error: Target service profile [id] not found.'. "
-                "If delegation blocked by security policy, returns 'Error: Delegation to service profile [id] is not allowed.'. "
+                "If delegation blocked by security policy, returns 'Error: Tool \\'delegate_to_service\\' is not allowed. [reason]'. "
                 "If confirmation required but unavailable, returns 'Error: Confirmation required to delegate to [id], but no confirmation mechanism is available.'. "
                 "If user cancels confirmation, returns 'OK. Delegation to service [id] cancelled by user.'. "
                 "If confirmation times out, returns 'Error: Confirmation timed out for delegating to [id].'. "

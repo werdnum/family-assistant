@@ -437,3 +437,22 @@ def test_argument_equals_missing_key_does_not_match() -> None:
     assert matcher.matches(descriptor, arguments={"target_service_id": None})
     # Key present with different value — should not match
     assert not matcher.matches(descriptor, arguments={"target_service_id": "foo"})
+
+
+def test_argument_equals_type_strict_comparison() -> None:
+    """argument_equals must be type-strict: True != 1 and False != 0."""
+    descriptor = make_descriptor(name="my_tool", tags={ToolTag.DELEGATION})
+    bool_matcher = ToolMatcher(
+        names=["my_tool"],
+        argument_equals={"flag": True},
+    )
+    int_matcher = ToolMatcher(
+        names=["my_tool"],
+        argument_equals={"flag": 1},
+    )
+    # True should not match 1
+    assert bool_matcher.matches(descriptor, arguments={"flag": True})
+    assert not bool_matcher.matches(descriptor, arguments={"flag": 1})
+    # 1 should not match True
+    assert int_matcher.matches(descriptor, arguments={"flag": 1})
+    assert not int_matcher.matches(descriptor, arguments={"flag": True})

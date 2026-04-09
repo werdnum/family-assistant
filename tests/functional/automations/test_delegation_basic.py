@@ -194,17 +194,14 @@ def primary_llm_mock_factory() -> Callable[[bool | None], RuleBasedMockLLMClient
                 return False
             last_message = messages[-1]
             content_str = last_message.content or ""
-            expected_error_messages = {
-                f"Error: Delegation to service profile '{SPECIALIZED_PROFILE_ID}' is not allowed.",
-                "Error: Tool 'delegate_to_service' not found.",
-            }
+            expected_error_message = f"Error: Tool 'delegate_to_service' is not allowed. Delegation to service profile '{SPECIALIZED_PROFILE_ID}' is not allowed."
             match = (
-                last_message.role == "tool" and content_str in expected_error_messages
+                last_message.role == "tool" and content_str == expected_error_message
             )
             logger.debug(
-                "blocked_matcher: checking content='%s...' against expected=%s. Match: %s",
+                "blocked_matcher: checking content='%s...' against expected='%s'. Match: %s",
                 content_str[:100],
-                expected_error_messages,
+                expected_error_message,
                 match,
             )
             return match
@@ -213,7 +210,7 @@ def primary_llm_mock_factory() -> Callable[[bool | None], RuleBasedMockLLMClient
             messages = kwargs.get("messages", [])
             content = (
                 messages[-1].content
-                or f"Error: Delegation to service profile '{SPECIALIZED_PROFILE_ID}' is not allowed."
+                or f"Error: Tool 'delegate_to_service' is not allowed. Delegation to service profile '{SPECIALIZED_PROFILE_ID}' is not allowed."
             )
             logger.info(
                 f"blocked_response_callable: Matched! Returning content: {content[:100]}..."
@@ -377,6 +374,7 @@ def create_tools_provider(
                         argument_equals={"target_service_id": target_profile_id},
                     ),
                     decision=decision,
+                    description=f"Delegation to service profile '{target_profile_id}' is not allowed.",
                     priority=99,
                 )
             )

@@ -92,7 +92,10 @@ class ToolMatcher(BaseModel):
             if arguments is None:
                 return False
             for key, expected_value in self.argument_equals.items():
-                if key not in arguments or arguments[key] != expected_value:
+                if key not in arguments:
+                    return False
+                actual = arguments[key]
+                if type(actual) is not type(expected_value) or actual != expected_value:
                     return False
 
         return True

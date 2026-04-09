@@ -18,6 +18,7 @@ from family_assistant.llm.messages import (
 from family_assistant.tools import (
     ToolExecutionContext,
     ToolNotFoundError,
+    ToolPolicyDeniedError,
     ToolsProvider,
 )
 from family_assistant.tools.types import ToolAttachment, ToolResult
@@ -225,6 +226,18 @@ class ToolExecutor:
             )
             logger.info("Tool '%s' executed successfully.", function_name)
             return result
+        except ToolPolicyDeniedError as e:
+            logger.warning("Tool '%s' denied by policy: %s", function_name, e.reason)
+            error_content = f"Error: Tool '{function_name}' is not allowed. {e.reason}"
+            error_traceback = traceback.format_exc()
+            span.set_status(StatusCode.ERROR, error_content)
+            span.set_attribute("tool.status", "error")
+            return self._build_error_result(
+                call_id=call_id,
+                function_name=function_name,
+                error_content=error_content,
+                error_traceback=error_traceback,
+            )
         except ToolNotFoundError:
             logger.error("Tool '%s' not found.", function_name)
             error_content = f"Error: Tool '{function_name}' not found."

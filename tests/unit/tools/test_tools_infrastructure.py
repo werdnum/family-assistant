@@ -16,7 +16,7 @@ from family_assistant.tools.infrastructure import (
     ConfirmingToolsProvider,
     LocalToolsProvider,
     PolicyEnforcingToolsProvider,
-    ToolNotFoundError,
+    ToolPolicyDeniedError,
 )
 from family_assistant.tools.metadata import ToolDescriptor, ToolTag
 from family_assistant.tools.policy import (
@@ -1091,7 +1091,7 @@ class TestPolicyEnforcingToolsProvider:
             ),
         )
 
-        with pytest.raises(ToolNotFoundError):
+        with pytest.raises(ToolPolicyDeniedError):
             await provider.execute_tool(
                 "delete_note",
                 {"title": "hello"},
