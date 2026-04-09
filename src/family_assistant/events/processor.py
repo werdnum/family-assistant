@@ -7,6 +7,7 @@ import json
 import logging
 import time
 from collections.abc import Callable
+from datetime import tzinfo
 from typing import Any, TypedDict, cast
 
 from sqlalchemy import select, text
@@ -69,6 +70,7 @@ class EventProcessor:
         sample_interval_hours: float = 1.0,
         config: EventConditionEvaluatorConfig | None = None,
         get_db_context_func: Callable[[], DatabaseContext] | None = None,
+        timezone: tzinfo | None = None,
     ) -> None:
         """
         Initialize event processor.
@@ -79,6 +81,7 @@ class EventProcessor:
             sample_interval_hours: Hours between storing event samples
             config: Optional configuration for script execution
             get_db_context_func: Function to get database context with engine
+            timezone: Timezone for condition script time API functions.
         """
         self.sources = sources
         self.event_storage = EventStorage(
@@ -93,7 +96,7 @@ class EventProcessor:
         # Lock to prevent concurrent database operations
         self._process_lock = asyncio.Lock()
         # Initialize condition evaluator for script execution
-        self.condition_evaluator = EventConditionEvaluator(config)
+        self.condition_evaluator = EventConditionEvaluator(config, timezone=timezone)
 
     async def start(self) -> None:
         """Start all event sources."""

@@ -2,6 +2,8 @@
 Tests for event condition evaluator.
 """
 
+from zoneinfo import ZoneInfo
+
 import pytest
 
 from family_assistant.events.condition_evaluator import (
@@ -10,6 +12,8 @@ from family_assistant.events.condition_evaluator import (
 )
 from family_assistant.scripting import ScriptExecutionError, ScriptSyntaxError
 
+TEST_TZ = ZoneInfo("Australia/Sydney")
+
 
 class TestEventConditionEvaluator:
     """Test event condition evaluator."""
@@ -17,7 +21,7 @@ class TestEventConditionEvaluator:
     @pytest.fixture
     def evaluator(self) -> EventConditionEvaluator:
         """Create evaluator instance."""
-        return EventConditionEvaluator()
+        return EventConditionEvaluator(timezone=TEST_TZ)
 
     @pytest.mark.asyncio
     async def test_simple_boolean_condition(
@@ -178,6 +182,22 @@ class TestEventConditionEvaluator:
         assert result is True
 
     @pytest.mark.asyncio
+    async def test_time_now_uses_configured_timezone(
+        self, evaluator: EventConditionEvaluator
+    ) -> None:
+        """time_now() returns the configured timezone, not UTC."""
+        script = "time_now()['timezone'] == 'Australia/Sydney'"
+        result = await evaluator.evaluate_condition(script, {})
+        assert result is True
+
+    @pytest.mark.asyncio
+    async def test_no_timezone_raises_error(self) -> None:
+        """Creating an evaluator without timezone raises when time API is used."""
+        evaluator = EventConditionEvaluator(timezone=None)
+        with pytest.raises(ScriptExecutionError, match="no timezone was provided"):
+            await evaluator.evaluate_condition("time_hour(time_now()) >= 0", {})
+
+    @pytest.mark.asyncio
     async def test_time_api_in_realistic_condition(
         self, evaluator: EventConditionEvaluator
     ) -> None:
@@ -241,7 +261,7 @@ class TestEventConditionValidator:
     @pytest.fixture
     def validator(self) -> EventConditionValidator:
         """Create validator instance."""
-        return EventConditionValidator()
+        return EventConditionValidator(timezone=TEST_TZ)
 
     @pytest.mark.asyncio
     async def test_valid_script(self, validator: EventConditionValidator) -> None:
@@ -283,7 +303,9 @@ class TestEventConditionValidator:
     @pytest.mark.asyncio
     async def test_custom_size_limit(self) -> None:
         """Test custom size limit configuration."""
-        validator = EventConditionValidator(config={"script_size_limit_bytes": 100})
+        validator = EventConditionValidator(
+            config={"script_size_limit_bytes": 100}, timezone=TEST_TZ
+        )
         script = "# " + "x" * 100 + "\nTrue"
         is_valid, error = await validator.validate_script(script)
         assert is_valid is False

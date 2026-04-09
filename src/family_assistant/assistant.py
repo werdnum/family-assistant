@@ -1080,6 +1080,9 @@ class Assistant:
                         event_config.model_dump(),
                     ),
                     get_db_context_func=self._get_db_context_for_events,
+                    timezone=ZoneInfo(
+                        self.config.default_profile_settings.processing_config.timezone
+                    ),
                 )
                 logger.info(
                     f"Event processor initialized with {len(event_sources)} sources"

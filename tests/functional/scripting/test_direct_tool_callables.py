@@ -206,7 +206,9 @@ async def test_direct_tool_callable(db_engine: AsyncEngine) -> None:
         )
 
         # Create engine
-        engine = MontyEngine(tools_provider=tools_provider)
+        engine = MontyEngine(
+            tools_provider=tools_provider, default_timezone=ZoneInfo("Australia/Sydney")
+        )
 
         # Test script that calls tools directly
         script = """
@@ -259,7 +261,9 @@ async def test_tool_prefix_fallback(db_engine: AsyncEngine) -> None:
         )
 
         # Create engine
-        engine = MontyEngine(tools_provider=tools_provider)
+        engine = MontyEngine(
+            tools_provider=tools_provider, default_timezone=ZoneInfo("Australia/Sydney")
+        )
 
         # Test script that calls tools with tool_ prefix
         script = """
@@ -312,7 +316,11 @@ async def test_direct_callable_with_security(db_engine: AsyncEngine) -> None:
 
         # Create engine with only echo allowed
         config = ScriptConfig(allowed_tools={"echo"})
-        engine = MontyEngine(tools_provider=tools_provider, config=config)
+        engine = MontyEngine(
+            tools_provider=tools_provider,
+            config=config,
+            default_timezone=ZoneInfo("Australia/Sydney"),
+        )
 
         # Test script that tries to call allowed and disallowed tools
         script = """
@@ -391,7 +399,9 @@ async def test_direct_callable_validates_parameters(db_engine: AsyncEngine) -> N
         )
 
         # Create engine
-        engine = MontyEngine(tools_provider=tools_provider)
+        engine = MontyEngine(
+            tools_provider=tools_provider, default_timezone=ZoneInfo("Australia/Sydney")
+        )
 
         # Test script that checks parameter validation
         script = """
@@ -436,7 +446,9 @@ async def test_tools_api_still_works(db_engine: AsyncEngine) -> None:
         )
 
         # Create engine
-        engine = MontyEngine(tools_provider=tools_provider)
+        engine = MontyEngine(
+            tools_provider=tools_provider, default_timezone=ZoneInfo("Australia/Sydney")
+        )
 
         # Test script that uses both old and new APIs
         script = """
@@ -496,7 +508,11 @@ async def test_no_tools_when_denied(db_engine: AsyncEngine) -> None:
 
         # Create engine with all tools denied
         config = ScriptConfig(deny_all_tools=True)
-        engine = MontyEngine(tools_provider=tools_provider, config=config)
+        engine = MontyEngine(
+            tools_provider=tools_provider,
+            config=config,
+            default_timezone=ZoneInfo("Australia/Sydney"),
+        )
 
         # Test script that checks if tools exist
         script = """

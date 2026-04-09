@@ -468,7 +468,9 @@ class TestScriptIntegration:
             )
 
             config = ScriptConfig(enable_print=True)
-            engine = MontyEngine(config=config)
+            engine = MontyEngine(
+                config=config, default_timezone=ZoneInfo("Australia/Sydney")
+            )
 
             # Simple script that doesn't use attachment functions
             script = """
@@ -519,7 +521,11 @@ print("Hello world")
             await tools_provider.get_tool_definitions()
 
             config = ScriptConfig(enable_print=True)
-            engine = MontyEngine(tools_provider=tools_provider, config=config)
+            engine = MontyEngine(
+                tools_provider=tools_provider,
+                config=config,
+                default_timezone=ZoneInfo("Australia/Sydney"),
+            )
 
             # Test script that uses attachment functions
             # Note: attachment_list is not available for security, so we test with known attachment ID
@@ -573,7 +579,9 @@ result
             )
 
             config = ScriptConfig(enable_print=True)
-            engine = MontyEngine(config=config)
+            engine = MontyEngine(
+                config=config, default_timezone=ZoneInfo("Australia/Sydney")
+            )
 
             # Script that tries to get non-existent attachment
             script = """
@@ -613,7 +621,9 @@ result == None
             )
 
             config = ScriptConfig(enable_print=True)
-            engine = MontyEngine(config=config)
+            engine = MontyEngine(
+                config=config, default_timezone=ZoneInfo("Australia/Sydney")
+            )
 
             # Script that tries to call attachment_list (should fail)
             script = """
@@ -653,7 +663,9 @@ attachment_list()
             )
 
             config = ScriptConfig(enable_print=True)
-            engine = MontyEngine(config=config)
+            engine = MontyEngine(
+                config=config, default_timezone=ZoneInfo("Australia/Sydney")
+            )
 
             # Script that creates a text attachment
             script = """
@@ -725,7 +737,9 @@ attachment_id
             )
 
             config = ScriptConfig(enable_print=True)
-            engine = MontyEngine(config=config)
+            engine = MontyEngine(
+                config=config, default_timezone=ZoneInfo("Australia/Sydney")
+            )
 
             # Script that creates a JSON attachment (stored as text/plain)
             script = """
@@ -800,7 +814,9 @@ attachment_id
             )
 
             config = ScriptConfig(enable_print=True)
-            engine = MontyEngine(config=config)
+            engine = MontyEngine(
+                config=config, default_timezone=ZoneInfo("Australia/Sydney")
+            )
 
             # Script that creates an attachment and retrieves it
             script = """

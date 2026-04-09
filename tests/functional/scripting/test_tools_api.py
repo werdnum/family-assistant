@@ -152,7 +152,9 @@ async def test_tools_api_list(db_engine: AsyncEngine) -> None:
         )
 
         # Create engine
-        engine = MontyEngine(tools_provider=tools_provider)
+        engine = MontyEngine(
+            tools_provider=tools_provider, default_timezone=ZoneInfo("Australia/Sydney")
+        )
 
         # Test script that lists tools
         script = """
@@ -189,7 +191,9 @@ async def test_tools_api_get(db_engine: AsyncEngine) -> None:
             timezone=ZoneInfo("UTC"),
         )
 
-        engine = MontyEngine(tools_provider=tools_provider)
+        engine = MontyEngine(
+            tools_provider=tools_provider, default_timezone=ZoneInfo("Australia/Sydney")
+        )
 
         # Test script that gets a specific tool
         script = """
@@ -231,7 +235,9 @@ async def test_tools_api_execute(db_engine: AsyncEngine) -> None:
             timezone=ZoneInfo("UTC"),
         )
 
-        engine = MontyEngine(tools_provider=tools_provider)
+        engine = MontyEngine(
+            tools_provider=tools_provider, default_timezone=ZoneInfo("Australia/Sydney")
+        )
 
         # Test executing echo tool
         script = """
@@ -273,7 +279,9 @@ async def test_tools_api_execute_json(db_engine: AsyncEngine) -> None:
             timezone=ZoneInfo("UTC"),
         )
 
-        engine = MontyEngine(tools_provider=tools_provider)
+        engine = MontyEngine(
+            tools_provider=tools_provider, default_timezone=ZoneInfo("Australia/Sydney")
+        )
 
         # Test executing with JSON arguments
         script = """
@@ -290,7 +298,9 @@ result
 async def test_tools_api_not_available_without_context(db_engine: AsyncEngine) -> None:
     """Test that tools API is not available without execution context."""
     tools_provider = MockToolsProvider()
-    engine = MontyEngine(tools_provider=tools_provider)
+    engine = MontyEngine(
+        tools_provider=tools_provider, default_timezone=ZoneInfo("Australia/Sydney")
+    )
 
     # Script that tries to use tools - should fail without context
     script = """
@@ -336,7 +346,9 @@ async def test_tools_api_invalid_tool(db_engine: AsyncEngine) -> None:
             timezone=ZoneInfo("UTC"),
         )
 
-        engine = MontyEngine(tools_provider=tools_provider)
+        engine = MontyEngine(
+            tools_provider=tools_provider, default_timezone=ZoneInfo("Australia/Sydney")
+        )
 
         # Test executing non-existent tool - should raise an error
         script = """

@@ -6,6 +6,7 @@ import asyncio
 import contextlib
 import time
 from unittest.mock import MagicMock, patch
+from zoneinfo import ZoneInfo
 
 import pytest
 
@@ -219,7 +220,7 @@ async def test_event_processor_health_status() -> None:
     sources = {"home_assistant": mock_ha_source}
 
     # Create processor
-    processor = EventProcessor(sources)  # type: ignore[arg-type]
+    processor = EventProcessor(sources, timezone=ZoneInfo("Australia/Sydney"))  # type: ignore[arg-type]
     processor._running = True
     processor._listener_cache = {"home_assistant": [{}, {}]}  # type: ignore[dict-item]  # minimal stubs; test only checks count
 

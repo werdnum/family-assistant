@@ -5,6 +5,7 @@ from zoneinfo import ZoneInfo
 
 import pytest
 
+from family_assistant.scripting.errors import ScriptExecutionError
 from family_assistant.scripting.monty_engine import MontyEngine
 from family_assistant.storage.context import DatabaseContext
 from family_assistant.tools.types import ToolExecutionContext
@@ -321,7 +322,7 @@ result
                 timezone=ZoneInfo("America/New_York"),
             )
 
-            engine = MontyEngine()
+            engine = MontyEngine(default_timezone=ZoneInfo("Australia/Sydney"))
             result = await engine.evaluate_async(script, execution_context=context)
 
         assert "America/New_York" in result["now_tz"]
@@ -332,17 +333,22 @@ result
         assert result["ts_unix"] == 1704067200
 
     @pytest.mark.asyncio
-    async def test_time_now_defaults_to_utc_without_context(
-        self, engine_class: type
-    ) -> None:
-        """Without an exec context, time_now should fall back to UTC."""
+    async def test_time_now_uses_default_timezone(self, engine_class: type) -> None:
+        """Without an exec context, time_now uses the engine's default timezone."""
         engine = engine_class()
         script = """
 now = time_now()
 now["timezone"]
 """
         result = await engine.evaluate_async(script)
-        assert result == "UTC"
+        assert result == "Australia/Sydney"
+
+    @pytest.mark.asyncio
+    async def test_no_timezone_raises_error(self) -> None:
+        """Without any timezone, time API raises an error instead of silently using UTC."""
+        engine = MontyEngine()
+        with pytest.raises(ScriptExecutionError, match="no timezone was provided"):
+            await engine.evaluate_async("time_now()")
 
     @pytest.mark.asyncio
     async def test_script_can_override_with_timezone_string(

@@ -131,7 +131,9 @@ async def main() -> None:
         )
 
         # Create engine
-        engine = MontyEngine(tools_provider=tools_provider)
+        engine = MontyEngine(
+            tools_provider=tools_provider, default_timezone=ZoneInfo("Australia/Sydney")
+        )
 
         # Example 1: Direct tool calls
         print("\n=== Example 1: Direct Tool Calls ===")

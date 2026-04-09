@@ -1594,6 +1594,7 @@ async def handle_script_execution(
     engine = MontyEngine(
         tools_provider=tools_provider,
         config=engine_config,
+        default_timezone=exec_context.timezone,
     )
 
     # Prepare global variables for the script

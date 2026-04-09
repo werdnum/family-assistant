@@ -136,6 +136,7 @@ async def test_document_ready_event_emitted(db_engine: AsyncEngine) -> None:
         sources={"indexing": indexing_source},
         sample_interval_hours=0.1,  # Short interval for testing
         get_db_context_func=lambda: get_db_context(engine=db_engine),
+        timezone=ZoneInfo("Australia/Sydney"),
     )
 
     # Create event listener that captures events
@@ -505,6 +506,7 @@ async def test_indexing_event_listener_integration(db_engine: AsyncEngine) -> No
             sources={"indexing": indexing_source},
             sample_interval_hours=0.1,
             get_db_context_func=lambda: get_db_context(engine=db_engine),
+            timezone=ZoneInfo("Australia/Sydney"),
         )
 
         # Mock processing service for wake_llm action
@@ -551,6 +553,7 @@ async def test_document_ready_event_includes_rich_metadata(
         sources={"indexing": indexing_source},
         sample_interval_hours=0.1,
         get_db_context_func=lambda: get_db_context(engine=db_engine),
+        timezone=ZoneInfo("Australia/Sydney"),
     )
 
     # Create a document with rich metadata
@@ -687,6 +690,7 @@ async def test_document_ready_event_handles_none_metadata(
         sources={"indexing": indexing_source},
         sample_interval_hours=0.1,  # Short interval for testing
         get_db_context_func=lambda: get_db_context(engine=db_engine),
+        timezone=ZoneInfo("Australia/Sydney"),
     )
 
     # Create a document with None metadata

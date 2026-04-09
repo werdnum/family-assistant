@@ -13,6 +13,7 @@ import mimetypes
 import re
 import uuid
 from collections.abc import Callable
+from datetime import tzinfo
 from functools import partial
 from typing import TYPE_CHECKING, Any, TypedDict
 
@@ -34,8 +35,6 @@ from .config import ScriptConfig
 from .errors import ScriptExecutionError, ScriptSyntaxError, ScriptTimeoutError
 
 if TYPE_CHECKING:
-    from datetime import tzinfo
-
     from family_assistant.tools import ToolsProvider
     from family_assistant.tools.types import ToolDefinition, ToolExecutionContext
 
@@ -102,9 +101,11 @@ class MontyEngine:
         self,
         tools_provider: "ToolsProvider | None" = None,
         config: ScriptConfig | None = None,
+        default_timezone: tzinfo | None = None,
     ) -> None:
         self.tools_provider = tools_provider
         self.config = config or ScriptConfig()
+        self.default_timezone = default_timezone
         self._wake_llm_contexts: list[WakeRequest] = []
         self._pending_wake_contexts: list[WakeRequest] = []
         # ast-grep-ignore: no-dict-any - Script globals are user-provided Python values keyed by name
@@ -674,16 +675,29 @@ class MontyEngine:
     ) -> None:
         """Add time API functions and constants.
 
-        When ``execution_context`` is supplied, ``time_now``,
-        ``time_from_timestamp`` and ``time_parse`` are bound to the
-        assistant's configured timezone so scripts calling them without
-        arguments see wall-clock time in that zone rather than UTC -
-        scripts (and, by extension, the LLM and user) must never see UTC
-        wall-clock times. Explicit ``tz=`` overrides are respected.
+        ``time_now``, ``time_from_timestamp`` and ``time_parse`` are bound
+        to the configured timezone so scripts calling them without arguments
+        see wall-clock time in that zone rather than UTC — scripts (and, by
+        extension, the LLM and user) must never see UTC wall-clock times.
+        Explicit ``tz=`` overrides are respected.
+
+        The timezone is resolved from (in order):
+        1. ``execution_context.timezone`` (per-call context), or
+        2. ``self.default_timezone`` (engine-level default, e.g. for event conditions).
+
+        If neither is available, a ``ValueError`` is raised to prevent
+        silent fallback to UTC.
         """
         default_tz = (
             execution_context.timezone if execution_context is not None else None
-        )
+        ) or self.default_timezone
+
+        if default_tz is None:
+            raise ValueError(
+                "Time API is enabled but no timezone was provided. "
+                "Pass a timezone via execution_context.timezone or "
+                "MontyEngine(default_timezone=...)."
+            )
 
         def time_now_bound(
             tz: "tzinfo | str | None" = None,
@@ -712,6 +726,22 @@ class MontyEngine:
                 timezone_name,
                 _default_tz=default_tz,
             )
+
+        def is_between_bound(
+            start_hour: int,
+            end_hour: int,
+            time_dict: time_api.TimeDict | None = None,
+        ) -> bool:
+            if time_dict is None:
+                time_dict = time_now_bound()
+            return time_api.is_between(start_hour, end_hour, time_dict)
+
+        def is_weekend_bound(
+            time_dict: time_api.TimeDict | None = None,
+        ) -> bool:
+            if time_dict is None:
+                time_dict = time_now_bound()
+            return time_api.is_weekend(time_dict)
 
         time_functions: list[tuple[str, Callable[..., Any]]] = [
             # Time creation
@@ -745,8 +775,8 @@ class MontyEngine:
             ("timezone_is_valid", time_api.timezone_is_valid),
             ("timezone_offset", time_api.timezone_offset),
             # Utility
-            ("is_between", time_api.is_between),
-            ("is_weekend", time_api.is_weekend),
+            ("is_between", is_between_bound),
+            ("is_weekend", is_weekend_bound),
         ]
 
         for name, fn in time_functions:

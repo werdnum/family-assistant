@@ -469,7 +469,9 @@ else:
             sources={},
             sample_interval_hours=1.0,
             get_db_context_func=lambda: get_db_context(db_engine),
+            timezone=ZoneInfo("Australia/Sydney"),
         )
+
         processor._running = True
         await processor._refresh_listener_cache()
 
