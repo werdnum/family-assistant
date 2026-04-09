@@ -688,11 +688,9 @@ class MontyEngine:
         If neither is available, a ``ValueError`` is raised to prevent
         silent fallback to UTC.
         """
-        default_tz: tzinfo | None = None
-        if execution_context is not None:
-            default_tz = execution_context.timezone
-        elif self.default_timezone is not None:
-            default_tz = self.default_timezone
+        default_tz = (
+            execution_context.timezone if execution_context is not None else None
+        ) or self.default_timezone
 
         if default_tz is None:
             raise ValueError(
