@@ -396,6 +396,9 @@ async def create_automation_tool(
 
         # Validate script action_config
         if action_type == "script":
+            if action_config.get("script_name") and action_config.get("script_code"):
+                error_msg = "Provide either 'script_code' or 'script_name', not both"
+                return ToolResult(text=f"Error: {error_msg}", data={"error": error_msg})
             if action_config.get("script_name"):
                 # Validate that the stored script exists
                 stored = await exec_context.db_context.scripts.get_by_name(
