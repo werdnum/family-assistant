@@ -154,11 +154,12 @@ async def execute_script_tool(
                 )
             script = stored_script.script_code
 
-            # Validate parameters against schema if both are present
-            if stored_script.parameters_schema and parameters:
+            # Validate parameters against schema
+            if stored_script.parameters_schema:
+                params = parameters or {}
                 required = stored_script.parameters_schema.get("required", [])
                 for req in required:
-                    if req not in parameters:
+                    if req not in params:
                         error_msg = f"Missing required parameter: {req}"
                         return ToolResult(
                             text=f"Error: {error_msg}",

@@ -54,7 +54,7 @@ async def save_script_tool(
     validation = ScriptValidator(tool_definitions=tool_definitions).validate(
         code,
         input_names=list(parameters_schema["properties"].keys())
-        if parameters_schema and "properties" in parameters_schema
+        if parameters_schema and isinstance(parameters_schema.get("properties"), dict)
         else None,
         include_tools_api=tools_provider is not None,
         include_attachment_api=bool(exec_context.attachment_registry),

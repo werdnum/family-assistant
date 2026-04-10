@@ -29,6 +29,31 @@ _UNSET = object()
 VALID_ACTION_TYPES = {"wake_llm", "script"}
 
 
+def _build_script_payload(
+    action_config: ActionConfig,
+    conversation_id: str,
+    interface_type: str,
+    automation_id: str,
+    task_name: str,
+) -> ScriptExecutionPayload:
+    """Build a ScriptExecutionPayload from action_config, supporting both inline and stored scripts."""
+    payload = ScriptExecutionPayload(
+        conversation_id=conversation_id,
+        interface_type=interface_type,
+        automation_id=automation_id,
+        automation_type="schedule",
+        task_name=action_config.get("task_name", task_name),
+        config=dict(action_config),
+    )
+    if "script_name" in action_config:
+        payload["script_name"] = action_config["script_name"]
+        if "parameters" in action_config:
+            payload["script_parameters"] = action_config["parameters"]
+    else:
+        payload["script_code"] = action_config.get("script_code", "")
+    return payload
+
+
 class ScheduleAutomationsRepository(BaseRepository):
     """Repository for managing schedule-based automations."""
 
@@ -201,14 +226,12 @@ class ScheduleAutomationsRepository(BaseRepository):
                     )
                 )
             else:  # script
-                payload = ScriptExecutionPayload(
+                payload = _build_script_payload(
+                    action_config=action_config,
                     conversation_id=conversation_id,
                     interface_type=interface_type,
                     automation_id=str(automation_id),
-                    automation_type="schedule",
-                    script_code=action_config.get("script_code", ""),
-                    task_name=action_config.get("task_name", name),
-                    config=dict(action_config),
+                    task_name=name,
                 )
 
             # Note: We do NOT pass recurrence_rule here because recurrence
@@ -441,14 +464,12 @@ class ScheduleAutomationsRepository(BaseRepository):
                     )
                 )
             else:
-                enqueue_payload = ScriptExecutionPayload(
+                enqueue_payload = _build_script_payload(
+                    action_config=action_config,
                     conversation_id=conversation_id,
                     interface_type=automation["interface_type"],
                     automation_id=str(automation_id),
-                    automation_type="schedule",
-                    script_code=action_config.get("script_code", ""),
-                    task_name=action_config.get("task_name", automation["name"]),
-                    config=dict(action_config),
+                    task_name=automation["name"],
                 )
 
             await enqueue_task(
@@ -795,14 +816,12 @@ class ScheduleAutomationsRepository(BaseRepository):
                 scheduling_timestamp=datetime.now(UTC).isoformat(),
             )
         else:  # script
-            payload = ScriptExecutionPayload(
+            payload = _build_script_payload(
+                action_config=final_action_config,
                 conversation_id=automation["conversation_id"],
                 interface_type=automation["interface_type"],
                 automation_id=str(automation_id),
-                automation_type="schedule",
-                script_code=final_action_config.get("script_code", ""),
-                task_name=final_action_config.get("task_name", final_name),
-                config=dict(final_action_config),
+                task_name=final_name,
             )
 
         await enqueue_task(
@@ -902,14 +921,12 @@ class ScheduleAutomationsRepository(BaseRepository):
                     )
                 )
             else:  # script
-                recur_payload = ScriptExecutionPayload(
+                recur_payload = _build_script_payload(
+                    action_config=action_config,
                     conversation_id=automation["conversation_id"],
                     interface_type=automation["interface_type"],
                     automation_id=str(automation_id),
-                    automation_type="schedule",
-                    script_code=action_config.get("script_code", ""),
-                    task_name=action_config.get("task_name", automation["name"]),
-                    config=dict(action_config),
+                    task_name=automation["name"],
                 )
 
             # Note: We do NOT pass recurrence_rule here because recurrence

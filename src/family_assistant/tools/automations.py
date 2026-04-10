@@ -408,6 +408,17 @@ async def create_automation_tool(
                     return ToolResult(
                         text=f"Error: {error_msg}", data={"error": error_msg}
                     )
+                # Validate parameters against stored script schema
+                if stored.parameters_schema:
+                    params = action_config.get("parameters", {})
+                    required = stored.parameters_schema.get("required", [])
+                    for req in required:
+                        if req not in params:
+                            error_msg = f"Stored script '{action_config['script_name']}' requires parameter '{req}'"
+                            return ToolResult(
+                                text=f"Error: {error_msg}",
+                                data={"error": error_msg},
+                            )
             elif action_config.get("script_code"):
                 # Validate inline script code
                 tool_definitions = None

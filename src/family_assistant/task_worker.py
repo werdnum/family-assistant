@@ -87,6 +87,9 @@ class ScriptExecutionPayload(TypedDict, total=False):
     """Payload for script_execution tasks."""
 
     script_code: str
+    script_name: str
+    # ast-grep-ignore: no-dict-any - User-defined parameters passed as script globals
+    script_parameters: dict[str, Any]
     # ast-grep-ignore: no-dict-any - Event data from external sources (Home Assistant, webhooks) with arbitrary structure
     event_data: dict[str, Any]
     # ast-grep-ignore: no-dict-any - User-defined script configuration with arbitrary keys (timeout, allowed_tools, etc.)
@@ -1616,10 +1619,12 @@ async def handle_script_execution(
         "listener_id": listener_id,
         "listener_name": config.get("listener_name", ""),
     }
-    # Merge script_parameters from stored script references
+    # Merge script_parameters, but don't overwrite built-in context variables
     script_parameters = payload.get("script_parameters")
     if isinstance(script_parameters, dict):
-        script_globals.update(script_parameters)
+        for k, v in script_parameters.items():
+            if k not in script_globals:
+                script_globals[k] = v
 
     # Execute the script
     try:
