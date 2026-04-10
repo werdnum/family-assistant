@@ -51,16 +51,11 @@ async def save_script_tool(
     if tools_provider:
         tool_definitions = await tools_provider.get_tool_definitions()
 
-    # Build input_names from schema properties + automation runtime globals.
-    # Scripts may be used in automations where event/conversation_id/etc. are injected.
-    input_names: list[str] = [
-        "event",
-        "conversation_id",
-        "listener_id",
-        "listener_name",
-    ]
+    # Build input_names from schema properties only.
+    # Scripts that need automation globals (event, etc.) should declare them in parameters_schema.
+    input_names: list[str] | None = None
     if parameters_schema and isinstance(parameters_schema.get("properties"), dict):
-        input_names.extend(parameters_schema["properties"].keys())
+        input_names = list(parameters_schema["properties"].keys())
 
     validation = ScriptValidator(tool_definitions=tool_definitions).validate(
         code,
