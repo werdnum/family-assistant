@@ -459,6 +459,9 @@ async def create_automation_tool(
                     return ToolResult(
                         text=f"Error: {error_msg}", data={"error": error_msg}
                     )
+            else:
+                error_msg = "Script automation requires either 'script_code' or 'script_name' in action_config"
+                return ToolResult(text=f"Error: {error_msg}", data={"error": error_msg})
 
         # Check name availability
         (

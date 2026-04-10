@@ -24,8 +24,12 @@ class ActionConfig(TypedDict, total=False):
     # wake_llm fields
     context: str
     include_event_data: bool
-    # script fields
+    # script fields (inline)
     script_code: str
+    # script fields (stored script reference)
+    script_name: str
+    # ast-grep-ignore: no-dict-any - arbitrary user-defined parameters for stored scripts
+    parameters: dict[str, Any]
     timeout: int
     task_name: str
 

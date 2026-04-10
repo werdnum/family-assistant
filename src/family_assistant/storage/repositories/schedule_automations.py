@@ -45,10 +45,12 @@ def _build_script_payload(
         task_name=action_config.get("task_name", task_name),
         config=dict(action_config),
     )
-    if "script_name" in action_config:
-        payload["script_name"] = action_config["script_name"]
-        if "parameters" in action_config:
-            payload["script_parameters"] = action_config["parameters"]
+    script_name = action_config.get("script_name")
+    if script_name:
+        payload["script_name"] = script_name
+        params = action_config.get("parameters")
+        if params:
+            payload["script_parameters"] = params
     else:
         payload["script_code"] = action_config.get("script_code", "")
     return payload

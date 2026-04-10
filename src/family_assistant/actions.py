@@ -93,11 +93,11 @@ async def execute_action(
             "conversation_id": conversation_id,
             **context,
         }
-        if "script_code" in action_config:
+        if action_config.get("script_code"):
             script_payload["script_code"] = action_config["script_code"]
-        elif "script_name" in action_config:
+        elif action_config.get("script_name"):
             script_payload["script_name"] = action_config["script_name"]
-            if "parameters" in action_config:
+            if action_config.get("parameters"):
                 script_payload["script_parameters"] = action_config["parameters"]
         if user_name:
             script_payload["user_name"] = user_name
