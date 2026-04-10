@@ -408,9 +408,15 @@ async def create_automation_tool(
                     return ToolResult(
                         text=f"Error: {error_msg}", data={"error": error_msg}
                     )
-                # Validate parameters against stored script schema
+                # Validate parameters type and schema
+                raw_params = action_config.get("parameters")
+                if raw_params is not None and not isinstance(raw_params, dict):
+                    error_msg = "Automation parameters must be a dict"
+                    return ToolResult(
+                        text=f"Error: {error_msg}", data={"error": error_msg}
+                    )
                 if stored.parameters_schema:
-                    params = action_config.get("parameters", {})
+                    params = raw_params or {}
                     required = stored.parameters_schema.get("required", [])
                     for req in required:
                         if req not in params:

@@ -139,6 +139,18 @@ async def execute_script_tool(
         ToolResult with text and any attachments returned by the script
     """
     try:
+        # Reject ambiguous calls with both script and name
+        if name and script:
+            error_msg = "Provide either 'script' (inline) or 'name' (stored), not both"
+            return ToolResult(
+                text=f"Error: {error_msg}",
+                data={
+                    "status": "error",
+                    "error_type": "validation_error",
+                    "error": error_msg,
+                },
+            )
+
         # Resolve stored script by name
         if name and not script:
             db = exec_context.db_context
