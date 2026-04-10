@@ -1546,17 +1546,29 @@ async def handle_script_execution(
 
     # Extract required fields from payload
     script_code = payload.get("script_code")
+    script_name = payload.get("script_name")
     event_data = payload.get("event_data", {})
     config = payload.get("config", {})
     listener_id = payload.get("listener_id")
     conversation_id = payload.get("conversation_id")
 
+    # Resolve script_name to script_code from the scripts repository
+    if not script_code and script_name:
+        db = exec_context.db_context
+        stored_script = await db.scripts.get_by_name(script_name)
+        if stored_script is None:
+            raise ValueError(f"Stored script '{script_name}' not found")
+        script_code = stored_script.script_code
+        logger.info(f"Resolved script_name '{script_name}' to stored script code")
+
     # Validate required fields
     if not script_code:
         logger.error(
-            f"Invalid payload for script_execution task (missing script_code): {payload}"
+            f"Invalid payload for script_execution task (missing script_code and script_name): {payload}"
         )
-        raise ValueError("Missing required field in payload: script_code")
+        raise ValueError(
+            "Missing required field in payload: script_code or script_name"
+        )
 
     if listener_id:
         logger.info(
@@ -1602,9 +1614,12 @@ async def handle_script_execution(
         "event": event_data,
         "conversation_id": conversation_id,
         "listener_id": listener_id,
-        "listener_name": config.get("listener_name", ""),  # Optional listener name
-        # Note: trigger_count would need to be retrieved from DB if needed
+        "listener_name": config.get("listener_name", ""),
     }
+    # Merge script_parameters from stored script references
+    script_parameters = payload.get("script_parameters")
+    if isinstance(script_parameters, dict):
+        script_globals.update(script_parameters)
 
     # Execute the script
     try:

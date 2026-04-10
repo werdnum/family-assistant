@@ -10,6 +10,7 @@ from .message_history import MessageHistoryRepository
 from .notes import NotesRepository
 from .push_subscription import PushSubscriptionRepository
 from .schedule_automations import ScheduleAutomationsRepository
+from .scripts import ScriptsRepository
 from .tasks import TasksRepository
 from .vector import VectorRepository
 from .worker_tasks import WorkerTasksRepository
@@ -25,6 +26,7 @@ __all__ = [
     "NotesRepository",
     "PushSubscriptionRepository",
     "ScheduleAutomationsRepository",
+    "ScriptsRepository",
     "TasksRepository",
     "VectorRepository",
     "WorkerTasksRepository",

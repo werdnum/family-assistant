@@ -103,6 +103,10 @@ You can ask the assistant a wide variety of things:
     prep notes for tomorrow's meetings" \*"Write and execute a script that searches for project
     updates and emails me a digest" \*See the [Scripting Guide](scripting.md) for more details on
     what scripts can do.
+  - **Script Library:** Save reusable scripts by name and run them later without rewriting: \*"Save
+    this script as 'daily-digest'" \*"Run the 'daily-digest' script" \*"List my saved scripts"
+    \*Stored scripts can accept parameters and can be referenced by automations, so you can create a
+    script once and trigger it on a schedule or in response to events.
   - **Test Scripts Safely Before Real Actions:** You can ask the assistant to test a script against
     realistic tool behavior without actually running state-changing or external-communication tools:
     \*"Test this script with simulated tool outputs before I run it for real" \*"Use the real

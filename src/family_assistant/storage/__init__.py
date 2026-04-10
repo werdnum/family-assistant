@@ -42,6 +42,7 @@ from family_assistant.storage.message_history import message_history_table
 from family_assistant.storage.notes import notes_table
 from family_assistant.storage.push_subscription import push_subscriptions_table
 from family_assistant.storage.schedule_automations import schedule_automations_table
+from family_assistant.storage.scripts import scripts_table
 from family_assistant.storage.tasks import tasks_table
 
 logger = logging.getLogger(__name__)
@@ -326,6 +327,7 @@ __all__ = [
     "recent_events_table",
     "schedule_automations_table",
     "push_subscriptions_table",
+    "scripts_table",
     "metadata",
     "DatabaseContext",  # Export the new context manager
     "get_db_context",

@@ -88,12 +88,17 @@ async def execute_action(
     elif action_type == ActionType.SCRIPT:
         task_id = f"script_{int(time.time() * 1000)}"
 
-        script_payload = {
-            "script_code": action_config.get("script_code", ""),
+        script_payload: dict[str, object] = {
             "config": action_config,
             "conversation_id": conversation_id,
             **context,
         }
+        if "script_code" in action_config:
+            script_payload["script_code"] = action_config["script_code"]
+        elif "script_name" in action_config:
+            script_payload["script_name"] = action_config["script_name"]
+            if "parameters" in action_config:
+                script_payload["script_parameters"] = action_config["parameters"]
         if user_name:
             script_payload["user_name"] = user_name
 

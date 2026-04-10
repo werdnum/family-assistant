@@ -192,6 +192,14 @@ from family_assistant.tools.services import (
     SERVICE_TOOLS_DEFINITION,
     delegate_to_service_tool,
 )
+from family_assistant.tools.stored_scripts import (
+    STORED_SCRIPTS_TOOLS_DEFINITION,
+    delete_script_tool,
+    get_script_tool,
+    list_scripts_tool,
+    run_script_tool,
+    save_script_tool,
+)
 from family_assistant.tools.tasks import (
     TASK_TOOLS_DEFINITION,
     cancel_pending_callback_tool,
@@ -387,6 +395,13 @@ __all__ = [
     "OnDemandAwareToolsProvider",
     "OnDemandCatalogEntry",
     "OnDemandToolCatalog",
+    # Stored scripts
+    "STORED_SCRIPTS_TOOLS_DEFINITION",
+    "save_script_tool",
+    "run_script_tool",
+    "list_scripts_tool",
+    "get_script_tool",
+    "delete_script_tool",
 ]
 
 
@@ -433,6 +448,7 @@ _LOCAL_TOOL_DEFINITIONS: list[ToolDefinition] = (
     + CALENDAR_TOOLS_DEFINITION
     + COMMUNICATION_TOOLS_DEFINITION
     + SCRIPT_TOOLS_DEFINITION
+    + STORED_SCRIPTS_TOOLS_DEFINITION
     + SCRIPT_TESTING_TOOLS_DEFINITION
     + ATTACHMENT_TOOLS_DEFINITION
     + IMAGE_TOOLS_DEFINITION
@@ -490,6 +506,12 @@ _LOCAL_TOOL_IMPLEMENTATIONS: dict[str, ToolImplementation] = {
     "get_live_camera_snapshot": get_live_camera_snapshot_tool,
     "scan_camera_frames": scan_camera_frames_tool,
     "execute_script": execute_script_tool,
+    # Stored scripts
+    "save_script": save_script_tool,
+    "run_script": run_script_tool,
+    "list_scripts": list_scripts_tool,
+    "get_script": get_script_tool,
+    "delete_script": delete_script_tool,
     "test_script_with_simulated_tools": test_script_with_simulated_tools_tool,
     "attach_to_response": attach_to_response_tool,
     "read_text_attachment": read_text_attachment_tool,
@@ -838,6 +860,31 @@ LOCAL_TOOL_METADATA_BY_NAME: dict[str, LocalToolMetadata] = {
         ToolTag.CODE_EXECUTION,
         ToolTag.STATE_CHANGING,
         ToolTag.OUTPUT_UNSPECIFIED,
+    ),
+    "save_script": _metadata(
+        ToolTag.CODE_EXECUTION,
+        ToolTag.STATE_CHANGING,
+        ToolTag.STATE_PERSISTING,
+        ToolTag.OUTPUT_TRUSTED,
+    ),
+    "run_script": _metadata(
+        ToolTag.CODE_EXECUTION,
+        ToolTag.STATE_CHANGING,
+        ToolTag.OUTPUT_UNSPECIFIED,
+    ),
+    "list_scripts": _metadata(
+        ToolTag.READ_ONLY,
+        ToolTag.OUTPUT_TRUSTED,
+    ),
+    "get_script": _metadata(
+        ToolTag.READ_ONLY,
+        ToolTag.OUTPUT_TRUSTED,
+    ),
+    "delete_script": _metadata(
+        ToolTag.DESTRUCTIVE,
+        ToolTag.STATE_CHANGING,
+        ToolTag.STATE_PERSISTING,
+        ToolTag.OUTPUT_TRUSTED,
     ),
     "test_script_with_simulated_tools": _metadata(
         ToolTag.CODE_EXECUTION,
