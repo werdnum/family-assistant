@@ -170,6 +170,8 @@ async def execute_script_tool(
             if stored_script.parameters_schema:
                 params = parameters or {}
                 required = stored_script.parameters_schema.get("required", [])
+                if not isinstance(required, list):
+                    required = []
                 for req in required:
                     if req not in params:
                         error_msg = f"Missing required parameter: {req}"

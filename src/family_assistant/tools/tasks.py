@@ -934,8 +934,12 @@ async def schedule_action_tool(
     # Validate action config based on type
     if action_type_enum == ActionType.WAKE_LLM and "context" not in action_config:
         return "Error: wake_llm action requires 'context' in action_config"
-    elif action_type_enum == ActionType.SCRIPT and "script_code" not in action_config:
-        return "Error: script action requires 'script_code' in action_config"
+    elif (
+        action_type_enum == ActionType.SCRIPT
+        and not action_config.get("script_code")
+        and not action_config.get("script_name")
+    ):
+        return "Error: script action requires 'script_code' or 'script_name' in action_config"
 
     # Parse and validate time
     clock = exec_context.clock or SystemClock()
@@ -1005,8 +1009,12 @@ async def schedule_recurring_action_tool(
     # Validate action config based on type
     if action_type_enum == ActionType.WAKE_LLM and "context" not in action_config:
         return "Error: wake_llm action requires 'context' in action_config"
-    elif action_type_enum == ActionType.SCRIPT and "script_code" not in action_config:
-        return "Error: script action requires 'script_code' in action_config"
+    elif (
+        action_type_enum == ActionType.SCRIPT
+        and not action_config.get("script_code")
+        and not action_config.get("script_name")
+    ):
+        return "Error: script action requires 'script_code' or 'script_name' in action_config"
 
     # Parse and validate start time
     clock = exec_context.clock or SystemClock()

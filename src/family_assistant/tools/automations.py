@@ -421,6 +421,8 @@ async def create_automation_tool(
                 if stored.parameters_schema:
                     params = raw_params or {}
                     required = stored.parameters_schema.get("required", [])
+                    if not isinstance(required, list):
+                        required = []
                     for req in required:
                         if req not in params:
                             error_msg = f"Stored script '{action_config['script_name']}' requires parameter '{req}'"
