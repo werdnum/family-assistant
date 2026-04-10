@@ -65,7 +65,9 @@ class ScriptsRepository(BaseRepository):
             SQLAlchemyError: If database operation fails
         """
         now = datetime.now(UTC)
-        schema_json = json.dumps(parameters_schema) if parameters_schema else None
+        schema_json = (
+            json.dumps(parameters_schema) if parameters_schema is not None else None
+        )
 
         if self._db.engine.dialect.name == "postgresql":
             stmt = pg_insert(scripts_table).values(
