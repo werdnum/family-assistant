@@ -2,7 +2,7 @@
 
 Tests the CRUD operations and execution of stored scripts including:
 - save_script_tool: Save/update scripts with validation
-- run_script_tool: Execute stored scripts by name
+- execute_script_tool with name: Execute stored scripts by name
 - list_scripts_tool: List all stored scripts
 - get_script_tool: Retrieve full script details
 - delete_script_tool: Delete scripts
@@ -14,11 +14,11 @@ import pytest
 from sqlalchemy.ext.asyncio import AsyncEngine
 
 from family_assistant.storage.context import DatabaseContext
+from family_assistant.tools.execute_script import execute_script_tool
 from family_assistant.tools.stored_scripts import (
     delete_script_tool,
     get_script_tool,
     list_scripts_tool,
-    run_script_tool,
     save_script_tool,
 )
 from family_assistant.tools.types import ToolExecutionContext
@@ -142,7 +142,7 @@ async def test_save_and_run_script(db_engine: AsyncEngine) -> None:
         )
 
         # Run the script
-        run_result = await run_script_tool(context, name="simple-add")
+        run_result = await execute_script_tool(context, name="simple-add")
         assert run_result.data is not None
         assert isinstance(run_result.data, int)
         assert run_result.data == 2
@@ -185,7 +185,7 @@ async def test_run_script_with_parameters(db_engine: AsyncEngine) -> None:
         )
 
         # Run with parameters
-        run_result = await run_script_tool(
+        run_result = await execute_script_tool(
             context, name="multiply", parameters={"x": 5}
         )
         assert run_result.data is not None
@@ -213,7 +213,7 @@ async def test_run_script_not_found(db_engine: AsyncEngine) -> None:
         )
 
         # Try to run a non-existent script
-        run_result = await run_script_tool(context, name="nonexistent")
+        run_result = await execute_script_tool(context, name="nonexistent")
         assert run_result.data is not None
         assert isinstance(run_result.data, dict)
         assert "error" in run_result.data

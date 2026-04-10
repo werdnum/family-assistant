@@ -116,22 +116,74 @@ def _extract_attachment_ids_from_result(result: Any) -> list[str]:  # noqa: ANN4
 
 async def execute_script_tool(
     exec_context: ToolExecutionContext,
-    script: str,
+    script: str | None = None,
     # ast-grep-ignore: no-dict-any - arbitrary globals injected into script execution namespace
     globals: dict[str, Any] | None = None,
+    name: str | None = None,
+    # ast-grep-ignore: no-dict-any - arbitrary parameters passed as script globals
+    parameters: dict[str, Any] | None = None,
 ) -> ToolResult:
     """
     Execute a Python script in a sandboxed environment.
 
+    Provide either `script` (inline code) or `name` (stored script lookup).
+
     Args:
         exec_context: The execution context
-        script: The Python script code to execute
+        script: The Python script code to execute (inline mode)
         globals: Optional dictionary of global variables to inject into the script
+        name: Name of a stored script to execute (stored script mode)
+        parameters: Parameters to pass to a stored script as global variables
 
     Returns:
         ToolResult with text and any attachments returned by the script
     """
     try:
+        # Resolve stored script by name
+        if name and not script:
+            db = exec_context.db_context
+            stored_script = await db.scripts.get_by_name(name)
+            if stored_script is None:
+                return ToolResult(
+                    text=f"Error: Script '{name}' not found",
+                    data={
+                        "status": "error",
+                        "error_type": "not_found",
+                        "error": f"Script '{name}' not found",
+                    },
+                )
+            script = stored_script.script_code
+
+            # Validate parameters against schema if both are present
+            if stored_script.parameters_schema and parameters:
+                required = stored_script.parameters_schema.get("required", [])
+                for req in required:
+                    if req not in parameters:
+                        error_msg = f"Missing required parameter: {req}"
+                        return ToolResult(
+                            text=f"Error: {error_msg}",
+                            data={
+                                "status": "error",
+                                "error_type": "validation_error",
+                                "error": error_msg,
+                            },
+                        )
+
+            # Merge parameters into globals
+            if parameters:
+                globals = dict(globals or {})
+                globals.update(parameters)
+
+        if not script:
+            error_msg = "Either 'script' (inline code) or 'name' (stored script) must be provided"
+            return ToolResult(
+                text=f"Error: {error_msg}",
+                data={
+                    "status": "error",
+                    "error_type": "validation_error",
+                    "error": error_msg,
+                },
+            )
         # Create a configuration with reasonable defaults
         config = ScriptConfig(
             max_execution_time=600.0,  # 10 minute timeout for scripts that may make external calls
@@ -386,6 +438,9 @@ SCRIPT_TOOLS_DEFINITION: list[ToolDefinition] = [
             "name": "execute_script",
             "description": (
                 "Execute a Python script in a sandboxed environment for automation and complex operations.\n\n"
+                "**Two modes:**\n"
+                "• **Inline**: Pass code via `script` parameter\n"
+                "• **Stored**: Pass `name` to run a saved script from the library (see list_scripts)\n\n"
                 "**IMPORTANT: Before writing scripts, please read the scripting documentation first!**\n"
                 "Use the command: `get_user_documentation_content filename='scripting.md'`\n\n"
                 "**Tool Documentation:**\n"
@@ -576,7 +631,8 @@ SCRIPT_TOOLS_DEFINITION: list[ToolDefinition] = [
                     "script": {
                         "type": "string",
                         "description": (
-                            "The Python script code to execute. Must be valid Python syntax.\n\n"
+                            "The Python script code to execute (inline mode). "
+                            "Omit this and use 'name' instead to run a stored script.\n\n"
                             "The script can:\n"
                             "• Define variables and functions\n"
                             "• Use control flow (if/else, for loops)\n"
@@ -615,8 +671,23 @@ SCRIPT_TOOLS_DEFINITION: list[ToolDefinition] = [
                         ),
                         "additionalProperties": True,
                     },
+                    "name": {
+                        "type": "string",
+                        "description": (
+                            "Name of a stored script to execute (alternative to inline 'script').\n"
+                            "Use list_scripts to see available stored scripts. When using 'name',\n"
+                            "pass arguments via 'parameters' instead of 'globals'."
+                        ),
+                    },
+                    "parameters": {
+                        "type": "object",
+                        "description": (
+                            "Parameters to pass to a stored script as global variables.\n"
+                            "Only used with 'name'. Validated against the script's parameter schema if defined."
+                        ),
+                        "additionalProperties": True,
+                    },
                 },
-                "required": ["script"],
             },
         },
     },

@@ -197,7 +197,6 @@ from family_assistant.tools.stored_scripts import (
     delete_script_tool,
     get_script_tool,
     list_scripts_tool,
-    run_script_tool,
     save_script_tool,
 )
 from family_assistant.tools.tasks import (
@@ -398,7 +397,6 @@ __all__ = [
     # Stored scripts
     "STORED_SCRIPTS_TOOLS_DEFINITION",
     "save_script_tool",
-    "run_script_tool",
     "list_scripts_tool",
     "get_script_tool",
     "delete_script_tool",
@@ -508,7 +506,6 @@ _LOCAL_TOOL_IMPLEMENTATIONS: dict[str, ToolImplementation] = {
     "execute_script": execute_script_tool,
     # Stored scripts
     "save_script": save_script_tool,
-    "run_script": run_script_tool,
     "list_scripts": list_scripts_tool,
     "get_script": get_script_tool,
     "delete_script": delete_script_tool,
@@ -866,11 +863,6 @@ LOCAL_TOOL_METADATA_BY_NAME: dict[str, LocalToolMetadata] = {
         ToolTag.STATE_CHANGING,
         ToolTag.STATE_PERSISTING,
         ToolTag.OUTPUT_TRUSTED,
-    ),
-    "run_script": _metadata(
-        ToolTag.CODE_EXECUTION,
-        ToolTag.STATE_CHANGING,
-        ToolTag.OUTPUT_UNSPECIFIED,
     ),
     "list_scripts": _metadata(
         ToolTag.READ_ONLY,

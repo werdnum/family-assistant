@@ -301,7 +301,7 @@ default_profile_settings:
       - name: "test_script_with_simulated_tools"
         loading: "on_demand"
       - "save_script"
-      - "run_script"
+
       - "list_scripts"
       - "get_script"
       - "delete_script"
@@ -373,7 +373,7 @@ default_profile_settings:
             - "ingest_document_from_url"
             - "execute_script"
             - "save_script"
-            - "run_script"
+
             - "list_scripts"
             - "get_script"
             - "delete_script"
@@ -584,7 +584,7 @@ service_profiles:
         - "render_home_assistant_template"
         - "execute_script"
         - "save_script"
-        - "run_script"
+
         - "list_scripts"
         - "get_script"
         - "delete_script"
@@ -612,7 +612,7 @@ service_profiles:
               - "render_home_assistant_template"
               - "execute_script"
               - "save_script"
-              - "run_script"
+
               - "list_scripts"
               - "get_script"
               - "delete_script"
@@ -974,7 +974,7 @@ service_profiles:
         # Script execution for testing
         - "execute_script"
         - "save_script"
-        - "run_script"
+
         - "list_scripts"
         - "get_script"
         - "delete_script"
@@ -1023,7 +1023,7 @@ service_profiles:
               - "test_event_listener"
               - "execute_script"
               - "save_script"
-              - "run_script"
+
               - "list_scripts"
               - "get_script"
               - "delete_script"
@@ -1105,7 +1105,7 @@ service_profiles:
         - "attach_to_response"
         - "execute_script"
         - "save_script"
-        - "run_script"
+
         - "list_scripts"
         - "get_script"
         - "delete_script"
@@ -1128,7 +1128,7 @@ service_profiles:
               - "attach_to_response"
               - "execute_script"
               - "save_script"
-              - "run_script"
+
               - "list_scripts"
               - "get_script"
               - "delete_script"
@@ -1175,7 +1175,7 @@ service_profiles:
         - "ingest_document_from_url"
         - "execute_script"
         - "save_script"
-        - "run_script"
+
         - "list_scripts"
         - "get_script"
         - "delete_script"
@@ -1226,7 +1226,7 @@ service_profiles:
               - "ingest_document_from_url"
               - "execute_script"
               - "save_script"
-              - "run_script"
+
               - "list_scripts"
               - "get_script"
               - "delete_script"
@@ -1426,7 +1426,7 @@ service_profiles:
         - "ingest_document_from_url"
         - "execute_script"
         - "save_script"
-        - "run_script"
+
         - "list_scripts"
         - "get_script"
         - "delete_script"
@@ -1489,7 +1489,7 @@ service_profiles:
               - "ingest_document_from_url"
               - "execute_script"
               - "save_script"
-              - "run_script"
+
               - "list_scripts"
               - "get_script"
               - "delete_script"
