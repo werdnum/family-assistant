@@ -1007,6 +1007,9 @@ class TaskWorker:
 
         # Build informative error context for the LLM
         script_code = payload_dict.get("script_code") or ""
+        script_name = payload_dict.get("script_name") or ""
+        if not script_code and script_name:
+            script_code = f"(stored script: {script_name})"
         script_lines = script_code.strip().splitlines()
         if len(script_lines) > 100:
             script_code = "\n".join(script_lines[:100]) + "\n... (truncated)"
