@@ -941,6 +941,14 @@ async def schedule_action_tool(
     ):
         return "Error: script action requires 'script_code' or 'script_name' in action_config"
 
+    # Validate stored script exists
+    if action_type_enum == ActionType.SCRIPT and action_config.get("script_name"):
+        stored = await exec_context.db_context.scripts.get_by_name(
+            action_config["script_name"]
+        )
+        if stored is None:
+            return f"Error: Stored script '{action_config['script_name']}' not found"
+
     # Parse and validate time
     clock = exec_context.clock or SystemClock()
     try:
@@ -1015,6 +1023,14 @@ async def schedule_recurring_action_tool(
         and not action_config.get("script_name")
     ):
         return "Error: script action requires 'script_code' or 'script_name' in action_config"
+
+    # Validate stored script exists
+    if action_type_enum == ActionType.SCRIPT and action_config.get("script_name"):
+        stored = await exec_context.db_context.scripts.get_by_name(
+            action_config["script_name"]
+        )
+        if stored is None:
+            return f"Error: Stored script '{action_config['script_name']}' not found"
 
     # Parse and validate start time
     clock = exec_context.clock or SystemClock()
