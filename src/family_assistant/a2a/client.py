@@ -30,7 +30,9 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-MAX_INLINE_ATTACHMENT_BYTES = 10 * 1024 * 1024  # 10 MB
+# Limit on base64-encoded size in the JSON-RPC payload (not decoded file size).
+# Base64 inflates by ~33%, so this allows ~7.5 MB raw files.
+MAX_INLINE_ATTACHMENT_BYTES = 10 * 1024 * 1024
 
 
 class A2AClientError(Exception):

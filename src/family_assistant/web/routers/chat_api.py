@@ -366,6 +366,10 @@ class ServiceProfile(BaseModel):
     enabled_mcp_servers: list[str] = Field(
         default_factory=list, description="Enabled MCP servers"
     )
+    delegation_only: bool = Field(
+        default=False,
+        description="If true, this profile is a remote delegation target and cannot be used for direct chat",
+    )
 
 
 class ProfilesResponse(BaseModel):
@@ -1464,6 +1468,7 @@ async def get_available_profiles(
                     llm_model=None,
                     available_tools=[],
                     enabled_mcp_servers=[],
+                    delegation_only=True,
                 )
             )
             continue
