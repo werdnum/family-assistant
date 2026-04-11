@@ -89,6 +89,8 @@ async def validate_script_action_config(
     name = action_config.get("script_name")
     if not name:
         return None
+    if not isinstance(name, str):
+        return "'script_name' must be a string"
     stored = await db_context.scripts.get_by_name(name)
     if stored is None:
         return f"Stored script '{name}' not found"
