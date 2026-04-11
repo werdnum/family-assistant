@@ -343,7 +343,7 @@ async def handle_llm_callback(
         reminder_service = processing_service.processing_services_registry.get(
             "reminder"
         )
-        if reminder_service:
+        if isinstance(reminder_service, ProcessingService):
             logger.info("Switching to 'reminder' profile for reminder task execution.")
             processing_service = reminder_service
 

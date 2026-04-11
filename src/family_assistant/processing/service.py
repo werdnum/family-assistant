@@ -40,7 +40,7 @@ from .utils import (
 )
 
 if TYPE_CHECKING:
-    from collections.abc import AsyncIterator
+    from collections.abc import AsyncIterator, Mapping
     from datetime import datetime
 
     from family_assistant.camera.protocol import CameraBackend
@@ -48,6 +48,7 @@ if TYPE_CHECKING:
     from family_assistant.context_providers import ContextProvider
     from family_assistant.home_assistant_wrapper import HomeAssistantClientWrapper
     from family_assistant.interfaces import ChatInterface
+    from family_assistant.processing.protocol import DelegatableService
     from family_assistant.services.attachment_registry import AttachmentRegistry
     from family_assistant.storage.context import DatabaseContext
     from family_assistant.tools import ToolsProvider
@@ -77,7 +78,7 @@ class ProcessingService:
         clock: Clock | None = None,
         attachment_registry: AttachmentRegistry | None = None,
         event_sources: EventSourcesById | None = None,
-        processing_services_registry: dict[str, ProcessingService] | None = None,
+        processing_services_registry: Mapping[str, DelegatableService] | None = None,
         home_assistant_client: HomeAssistantClientWrapper | None = None,
         camera_backend: CameraBackend | None = None,
     ) -> None:

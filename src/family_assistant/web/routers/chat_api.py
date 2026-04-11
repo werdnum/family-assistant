@@ -23,7 +23,7 @@ from family_assistant.llm.messages import (
     image_url_content,
     text_content,
 )
-from family_assistant.processing import ProcessingService
+from family_assistant.processing import DelegatableService, ProcessingService
 from family_assistant.storage.context import DatabaseContext, get_db_context
 from family_assistant.tools import MCPToolsProvider, find_provider_by_type
 from family_assistant.tools.infrastructure import ToolDescriptorProvider
@@ -1447,7 +1447,7 @@ async def get_available_profiles(
     LLM model, and available tools/capabilities.
     """
     # Get processing services registry from app state
-    processing_services_registry: dict[str, ProcessingService] = (
+    processing_services_registry: dict[str, DelegatableService] = (
         request.app.state.processing_services
         if hasattr(request.app.state, "processing_services")
         else {}
@@ -1473,7 +1473,7 @@ async def get_available_profiles(
             )
             continue
 
-        # Get service configuration
+        assert isinstance(service, ProcessingService)  # remote profiles handled above
         service_config = service.service_config
 
         # Extract available tools from tools provider

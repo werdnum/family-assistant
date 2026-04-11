@@ -46,7 +46,11 @@ from family_assistant.indexing.notes_indexer import NotesIndexer
 from family_assistant.indexing.tasks import handle_embed_and_store_batch
 from family_assistant.llm.factory import LLMClientFactory
 from family_assistant.paths import PACKAGE_ROOT
-from family_assistant.processing import ProcessingService, ProcessingServiceConfig
+from family_assistant.processing import (
+    DelegatableService,
+    ProcessingService,
+    ProcessingServiceConfig,
+)
 from family_assistant.services.push_notification import PushNotificationService
 from family_assistant.services.worker_backend import get_worker_backend
 from family_assistant.skills import NoteRegistry, load_skills_from_directory
@@ -245,7 +249,7 @@ class Assistant:
         self.fastapi_app: FastAPI | None = None
         self.shared_httpx_client: httpx.AsyncClient | None = None
         self.embedding_generator: EmbeddingGenerator | None = None
-        self.processing_services_registry: dict[str, ProcessingService] = {}
+        self.processing_services_registry: dict[str, DelegatableService] = {}
         self.a2a_cancel_events: dict[str, asyncio.Event] = {}
         self.default_processing_service: ProcessingService | None = None
         self.scraper_instance: PlaywrightScraper | None = None
@@ -982,22 +986,25 @@ class Assistant:
         self.fastapi_app.state.a2a_cancel_events = self.a2a_cancel_events
 
         candidate = self.processing_services_registry.get(default_service_profile_id)
-        if candidate and not isinstance(candidate, ProcessingService):
+        if candidate is not None and not isinstance(candidate, ProcessingService):
             raise SystemExit(
                 f"Default service profile '{default_service_profile_id}' is a remote A2A profile. "
                 f"The default profile must be a local ProcessingService."
             )
         self.default_processing_service = candidate
-        if not self.default_processing_service:
+        if self.default_processing_service is None:
             logger.warning(
                 f"Default service profile ID '{default_service_profile_id}' not found. Falling back to first available."
             )
-            default_service_profile_id = next(
-                iter(self.processing_services_registry.keys())
-            )
-            self.default_processing_service = self.processing_services_registry[
-                default_service_profile_id
-            ]
+            for pid, svc in self.processing_services_registry.items():
+                if isinstance(svc, ProcessingService):
+                    default_service_profile_id = pid
+                    self.default_processing_service = svc
+                    break
+            if self.default_processing_service is None:
+                raise SystemExit(
+                    "No local ProcessingService profiles available for default."
+                )
 
         self.fastapi_app.state.processing_service = self.default_processing_service
         self.fastapi_app.state.llm_client = self.default_processing_service.llm_client
@@ -1172,7 +1179,7 @@ class Assistant:
             client=client,
         )
 
-        self.processing_services_registry[profile_conf.id] = service  # type: ignore[assignment]  # Registry holds both ProcessingService and RemoteA2AService; full typing migration is a separate effort
+        self.processing_services_registry[profile_conf.id] = service
         logger.info(
             "Registered remote A2A profile '%s' -> %s",
             profile_conf.id,
