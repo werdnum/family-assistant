@@ -7,6 +7,7 @@ from datetime import UTC
 from typing import TYPE_CHECKING, Any, cast
 
 from family_assistant.scripting.validator import ScriptValidator
+from family_assistant.tools.stored_scripts import validate_script_action_config
 from family_assistant.tools.types import ToolDefinition, ToolResult
 
 if TYPE_CHECKING:
@@ -396,41 +397,14 @@ async def create_automation_tool(
 
         # Validate script action_config
         if action_type == "script":
-            if action_config.get("script_name") and action_config.get("script_code"):
-                error_msg = "Provide either 'script_code' or 'script_name', not both"
-                return ToolResult(text=f"Error: {error_msg}", data={"error": error_msg})
-            if action_config.get("script_name"):
-                # Validate that the stored script exists
-                stored = await exec_context.db_context.scripts.get_by_name(
-                    action_config["script_name"]
+            script_error = await validate_script_action_config(
+                exec_context.db_context, action_config
+            )
+            if script_error:
+                return ToolResult(
+                    text=f"Error: {script_error}", data={"error": script_error}
                 )
-                if stored is None:
-                    error_msg = (
-                        f"Stored script '{action_config['script_name']}' not found"
-                    )
-                    return ToolResult(
-                        text=f"Error: {error_msg}", data={"error": error_msg}
-                    )
-                # Validate parameters type and schema
-                raw_params = action_config.get("parameters")
-                if raw_params is not None and not isinstance(raw_params, dict):
-                    error_msg = "Automation parameters must be a dict"
-                    return ToolResult(
-                        text=f"Error: {error_msg}", data={"error": error_msg}
-                    )
-                if stored.parameters_schema:
-                    params = raw_params or {}
-                    required = stored.parameters_schema.get("required", [])
-                    if not isinstance(required, list):
-                        required = []
-                    for req in required:
-                        if req not in params:
-                            error_msg = f"Stored script '{action_config['script_name']}' requires parameter '{req}'"
-                            return ToolResult(
-                                text=f"Error: {error_msg}",
-                                data={"error": error_msg},
-                            )
-            elif action_config.get("script_code"):
+            if action_config.get("script_code"):
                 # Validate inline script code
                 tool_definitions = None
                 tools_provider = None

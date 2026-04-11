@@ -11,9 +11,58 @@ from typing import TYPE_CHECKING, Any
 from family_assistant.tools.types import ToolDefinition, ToolResult
 
 if TYPE_CHECKING:
+    from family_assistant.storage.context import DatabaseContext
+    from family_assistant.storage.types import ActionConfig
     from family_assistant.tools.types import ToolExecutionContext
 
 logger = logging.getLogger(__name__)
+
+
+async def validate_script_action_config(
+    db_context: DatabaseContext,
+    # ast-grep-ignore: no-dict-any - action_config comes from LLM tool args as plain dict
+    action_config: ActionConfig | dict[str, Any],
+) -> str | None:
+    """Validate a script action_config.
+
+    Checks:
+    - Exactly one of script_code or script_name is provided
+    - If script_name: the stored script exists
+    - If parameters: it is a dict
+    - If stored script has parameters_schema with required fields: all required keys are present
+
+    Returns an error message string on failure, or None if valid.
+    """
+    has_code = bool(action_config.get("script_code"))
+    has_name = bool(action_config.get("script_name"))
+    if has_code and has_name:
+        return "Provide either 'script_code' or 'script_name', not both"
+    if not has_code and not has_name:
+        return "script action requires 'script_code' or 'script_name' in action_config"
+    if not has_name:
+        return None
+
+    name = action_config.get("script_name")
+    if not name:
+        return None
+    stored = await db_context.scripts.get_by_name(name)
+    if stored is None:
+        return f"Stored script '{name}' not found"
+
+    raw_params = action_config.get("parameters")
+    if raw_params is not None and not isinstance(raw_params, dict):
+        return "Script 'parameters' must be a dict"
+
+    if stored.parameters_schema:
+        params = raw_params or {}
+        required = stored.parameters_schema.get("required", [])
+        if not isinstance(required, list):
+            required = []
+        for req in required:
+            if req not in params:
+                return f"Stored script '{name}' requires parameter '{req}'"
+
+    return None
 
 
 # ---------------------------------------------------------------------------

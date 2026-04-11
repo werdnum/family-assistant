@@ -17,6 +17,7 @@ from sqlalchemy import select, update
 
 from family_assistant import storage
 from family_assistant.actions import ActionType, execute_action
+from family_assistant.tools.stored_scripts import validate_script_action_config
 from family_assistant.utils.clock import SystemClock
 
 if TYPE_CHECKING:
@@ -935,20 +936,11 @@ async def schedule_action_tool(
     if action_type_enum == ActionType.WAKE_LLM and "context" not in action_config:
         return "Error: wake_llm action requires 'context' in action_config"
     elif action_type_enum == ActionType.SCRIPT:
-        has_code = bool(action_config.get("script_code"))
-        has_name = bool(action_config.get("script_name"))
-        if has_code and has_name:
-            return "Error: Provide either 'script_code' or 'script_name', not both"
-        if not has_code and not has_name:
-            return "Error: script action requires 'script_code' or 'script_name' in action_config"
-        if has_name:
-            stored = await exec_context.db_context.scripts.get_by_name(
-                action_config["script_name"]
-            )
-            if stored is None:
-                return (
-                    f"Error: Stored script '{action_config['script_name']}' not found"
-                )
+        script_error = await validate_script_action_config(
+            exec_context.db_context, action_config
+        )
+        if script_error:
+            return f"Error: {script_error}"
 
     # Parse and validate time
     clock = exec_context.clock or SystemClock()
@@ -1019,20 +1011,11 @@ async def schedule_recurring_action_tool(
     if action_type_enum == ActionType.WAKE_LLM and "context" not in action_config:
         return "Error: wake_llm action requires 'context' in action_config"
     elif action_type_enum == ActionType.SCRIPT:
-        has_code = bool(action_config.get("script_code"))
-        has_name = bool(action_config.get("script_name"))
-        if has_code and has_name:
-            return "Error: Provide either 'script_code' or 'script_name', not both"
-        if not has_code and not has_name:
-            return "Error: script action requires 'script_code' or 'script_name' in action_config"
-        if has_name:
-            stored = await exec_context.db_context.scripts.get_by_name(
-                action_config["script_name"]
-            )
-            if stored is None:
-                return (
-                    f"Error: Stored script '{action_config['script_name']}' not found"
-                )
+        script_error = await validate_script_action_config(
+            exec_context.db_context, action_config
+        )
+        if script_error:
+            return f"Error: {script_error}"
 
     # Parse and validate start time
     clock = exec_context.clock or SystemClock()
