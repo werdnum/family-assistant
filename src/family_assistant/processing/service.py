@@ -5,7 +5,7 @@ import re
 import traceback
 import uuid
 from string import Formatter
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Literal
 
 from opentelemetry import trace
 from opentelemetry.trace import StatusCode
@@ -64,6 +64,7 @@ class ProcessingService:
     """
 
     _USE_ISOLATED_HISTORY_WRITES = True
+    kind: Literal["local"] = "local"
 
     def __init__(
         self,

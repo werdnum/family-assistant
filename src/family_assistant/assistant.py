@@ -108,6 +108,7 @@ if TYPE_CHECKING:
     from fastapi import FastAPI
     from sqlalchemy.ext.asyncio import AsyncEngine
 
+    from family_assistant.config_models import ServiceProfile
     from family_assistant.llm import LLMInterface
     from family_assistant.services.attachment_registry import AttachmentRegistry
     from family_assistant.storage.types import EventConditionEvaluatorConfig
@@ -675,6 +676,11 @@ class Assistant:
         note_registry = NoteRegistry(all_skills) if all_skills else None
         for profile_conf in resolved_profiles:
             profile_id = profile_conf.id
+
+            if profile_conf.remote_a2a:
+                self._setup_remote_a2a_profile(profile_conf)
+                continue
+
             logger.info(
                 f"Initializing ProcessingService for profile ID: '{profile_id}'"
             )
@@ -1112,6 +1118,62 @@ class Assistant:
                 )
             else:
                 logger.info("Event system enabled but no event sources configured")
+
+    def _setup_remote_a2a_profile(self, profile_conf: ServiceProfile) -> None:
+        """Create a RemoteA2AService for a remote A2A profile."""
+        from family_assistant.a2a.auth import A2AAuthConfig  # noqa: PLC0415
+        from family_assistant.a2a.client import A2AClientWrapper  # noqa: PLC0415
+        from family_assistant.a2a.remote_service import (  # noqa: PLC0415
+            RemoteA2AService,
+        )
+        from family_assistant.processing.types import (  # noqa: PLC0415
+            RemoteServiceConfig,
+        )
+
+        remote_config = profile_conf.remote_a2a
+        assert remote_config is not None  # caller checked
+
+        auth_config = A2AAuthConfig(
+            type=remote_config.auth.type,
+            token_env=remote_config.auth.token_env,
+            header_name=remote_config.auth.header_name,
+        )
+
+        # Validate auth env vars at startup
+        auth_errors = auth_config.validate_env_vars()
+        if auth_errors:
+            logger.warning(
+                "Remote A2A profile '%s' has auth config issues: %s",
+                profile_conf.id,
+                "; ".join(auth_errors),
+            )
+
+        client = A2AClientWrapper(
+            agent_url=remote_config.agent_url,
+            auth_config=auth_config,
+            timeout=remote_config.timeout_seconds,
+        )
+
+        service_config = RemoteServiceConfig(
+            id=profile_conf.id,
+            description=profile_conf.description
+            or remote_config.skills_description
+            or f"Remote A2A agent at {remote_config.agent_url}",
+            delegation_security_level=profile_conf.processing_config.delegation_security_level,
+            confirmation_timeout_seconds=profile_conf.tools_config.confirmation_timeout_seconds,
+        )
+
+        service = RemoteA2AService(
+            service_config=service_config,
+            client=client,
+        )
+
+        self.processing_services_registry[profile_conf.id] = service  # type: ignore[assignment]  # Registry holds both ProcessingService and RemoteA2AService; full typing migration is a separate effort
+        logger.info(
+            "Registered remote A2A profile '%s' -> %s",
+            profile_conf.id,
+            remote_config.agent_url,
+        )
 
     async def start_services(self) -> None:
         """Starts all long-running services and waits for shutdown."""
