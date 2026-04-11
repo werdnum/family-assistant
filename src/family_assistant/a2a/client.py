@@ -13,6 +13,7 @@ from typing import TYPE_CHECKING
 import a2a.types as a2a_types
 import httpx
 from a2a.client import A2ACardResolver
+from a2a.client.errors import A2AClientHTTPError as SdkHTTPError
 
 from family_assistant.a2a.converters import content_parts_to_a2a_parts
 from family_assistant.a2a.types import (
@@ -74,7 +75,12 @@ class A2AClientWrapper:
 
         client = self._get_httpx_client()
         resolver = A2ACardResolver(httpx_client=client, base_url=self._agent_url)
-        self._agent_card = await resolver.get_agent_card()
+        try:
+            self._agent_card = await resolver.get_agent_card()
+        except SdkHTTPError as exc:
+            raise A2AClientError(
+                f"Failed to discover agent at {self._agent_url}: {exc}"
+            ) from exc
         logger.info(
             "Discovered A2A agent '%s' at %s with %d skills",
             self._agent_card.name,
@@ -122,7 +128,7 @@ class A2AClientWrapper:
             "jsonrpc": "2.0",
             "id": str(uuid.uuid4()),
             "method": "message/send",
-            "params": message.model_dump(exclude_none=True),
+            "params": {"message": message.model_dump(exclude_none=True)},
         }
 
         client = self._get_httpx_client()

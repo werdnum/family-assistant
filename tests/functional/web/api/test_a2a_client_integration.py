@@ -1,0 +1,278 @@
+"""Integration tests for A2A client remote delegation.
+
+Tests the full round-trip: A2AClientWrapper -> FA A2A server -> ProcessingService.
+Uses the project's own A2A server as the remote endpoint via ASGITransport
+(no real HTTP, everything in-process).
+"""
+
+from __future__ import annotations
+
+import uuid
+from typing import TYPE_CHECKING
+from unittest.mock import AsyncMock
+
+import pytest
+import pytest_asyncio
+from httpx import ASGITransport, AsyncClient
+
+from family_assistant.a2a.client import A2AClientError, A2AClientWrapper
+from family_assistant.a2a.remote_service import RemoteA2AService
+from family_assistant.a2a.result_converter import a2a_task_to_chat_result
+from family_assistant.delegation_security import DelegationSecurityLevel
+from family_assistant.llm.content_parts import text_content
+from family_assistant.processing.types import RemoteServiceConfig
+from tests.mocks.mock_llm import LLMOutput as MockLLMOutput
+
+if TYPE_CHECKING:
+    from collections.abc import AsyncGenerator
+
+    from fastapi import FastAPI
+
+    from family_assistant.processing import ProcessingService
+    from family_assistant.storage.context import DatabaseContext
+    from tests.mocks.mock_llm import RuleBasedMockLLMClient
+
+
+@pytest_asyncio.fixture
+async def a2a_test_server(
+    app_fixture: FastAPI,
+    api_test_processing_service: ProcessingService,
+) -> AsyncGenerator[AsyncClient]:
+    """HTTPX client pointing at the FA A2A server for integration tests."""
+    profile_id = api_test_processing_service.service_config.id
+    app_fixture.state.processing_services = {
+        profile_id: api_test_processing_service,
+    }
+    app_fixture.state.a2a_cancel_events = {}
+    transport = ASGITransport(app=app_fixture)
+    async with AsyncClient(transport=transport, base_url="http://testserver") as client:
+        yield client
+
+
+@pytest_asyncio.fixture
+async def a2a_client_wrapper(
+    a2a_test_server: AsyncClient,
+) -> AsyncGenerator[A2AClientWrapper]:
+    """A2AClientWrapper pointed at the in-process FA A2A server.
+
+    Injects the test httpx client to bypass real HTTP.
+    """
+    wrapper = A2AClientWrapper(agent_url="http://testserver")
+    # Inject the test client so requests go through ASGITransport
+    wrapper._httpx_client = a2a_test_server
+    yield wrapper
+    # Don't close — the a2a_test_server fixture owns the client lifecycle
+
+
+@pytest_asyncio.fixture
+async def remote_service(
+    a2a_client_wrapper: A2AClientWrapper,
+) -> RemoteA2AService:
+    """RemoteA2AService backed by the in-process FA A2A server."""
+    config = RemoteServiceConfig(
+        id="remote_test_profile",
+        description="Test remote A2A profile",
+        delegation_security_level=DelegationSecurityLevel.UNRESTRICTED,
+    )
+    return RemoteA2AService(service_config=config, client=a2a_client_wrapper)
+
+
+class TestA2AClientIntegration:
+    """Test A2AClientWrapper against the real FA A2A server."""
+
+    @pytest.mark.asyncio
+    async def test_discover_agent_card(
+        self, a2a_client_wrapper: A2AClientWrapper
+    ) -> None:
+        """Client discovers the agent card from the A2A server."""
+        card = await a2a_client_wrapper.discover()
+        assert card.name.startswith("Family Assistant")
+        assert card.url == "http://testserver/api/a2a"
+
+    @pytest.mark.asyncio
+    async def test_send_message_round_trip(
+        self,
+        a2a_client_wrapper: A2AClientWrapper,
+        api_mock_llm_client: RuleBasedMockLLMClient,
+    ) -> None:
+        """Send a message through the client and get a completed task back."""
+        api_mock_llm_client.default_response = MockLLMOutput(
+            content="Hello from the remote agent!"
+        )
+
+        task = await a2a_client_wrapper.send_message(
+            [text_content("What is 2+2?")],
+            context_id="integration-test-ctx",
+        )
+
+        assert task.status.state.value == "completed"
+        assert task.artifacts is not None
+        assert len(task.artifacts) >= 1
+
+    @pytest.mark.asyncio
+    async def test_send_message_and_convert_result(
+        self,
+        a2a_client_wrapper: A2AClientWrapper,
+        api_mock_llm_client: RuleBasedMockLLMClient,
+    ) -> None:
+        """Full pipeline: send message, convert to ChatInteractionResult."""
+        api_mock_llm_client.default_response = MockLLMOutput(
+            content="The answer is 42."
+        )
+
+        task = await a2a_client_wrapper.send_message([
+            text_content("What is the meaning of life?")
+        ])
+        result = a2a_task_to_chat_result(task)
+
+        assert not result.has_error
+        assert "42" in result.text_reply
+
+    @pytest.mark.asyncio
+    async def test_context_id_isolation(
+        self,
+        a2a_client_wrapper: A2AClientWrapper,
+        api_mock_llm_client: RuleBasedMockLLMClient,
+    ) -> None:
+        """Different context IDs create separate conversations."""
+        api_mock_llm_client.default_response = MockLLMOutput(content="Response")
+
+        task1 = await a2a_client_wrapper.send_message(
+            [text_content("Hello 1")], context_id="ctx-alpha"
+        )
+        task2 = await a2a_client_wrapper.send_message(
+            [text_content("Hello 2")], context_id="ctx-beta"
+        )
+
+        assert task1.context_id == "ctx-alpha"
+        assert task2.context_id == "ctx-beta"
+        assert task1.id != task2.id
+
+
+class TestRemoteA2AServiceIntegration:
+    """Test RemoteA2AService handle_chat_interaction against the real A2A server."""
+
+    @pytest.mark.asyncio
+    async def test_handle_chat_interaction_success(
+        self,
+        remote_service: RemoteA2AService,
+        api_mock_llm_client: RuleBasedMockLLMClient,
+        api_db_context: DatabaseContext,
+    ) -> None:
+        """RemoteA2AService produces a successful ChatInteractionResult."""
+        api_mock_llm_client.default_response = MockLLMOutput(
+            content="Remote delegation worked!"
+        )
+
+        result = await remote_service.handle_chat_interaction(
+            db_context=api_db_context,
+            interface_type="test",
+            conversation_id="test-conv-1",
+            trigger_content_parts=[text_content("Please help me")],
+            trigger_interface_message_id=None,
+            user_name="test_user",
+            subconversation_id=str(uuid.uuid4()),
+        )
+
+        assert not result.has_error
+        assert "Remote delegation worked!" in result.text_reply
+
+    @pytest.mark.asyncio
+    async def test_handle_chat_interaction_with_subconversation_id(
+        self,
+        remote_service: RemoteA2AService,
+        api_mock_llm_client: RuleBasedMockLLMClient,
+        api_db_context: DatabaseContext,
+    ) -> None:
+        """Subconversation ID is used in the A2A context_id for isolation."""
+        api_mock_llm_client.default_response = MockLLMOutput(content="OK")
+
+        sub_id = str(uuid.uuid4())
+        result = await remote_service.handle_chat_interaction(
+            db_context=api_db_context,
+            interface_type="test",
+            conversation_id="conv-123",
+            trigger_content_parts=[text_content("Test isolation")],
+            trigger_interface_message_id=None,
+            user_name="test_user",
+            subconversation_id=sub_id,
+        )
+
+        assert not result.has_error
+
+    @pytest.mark.asyncio
+    async def test_handle_chat_interaction_without_subconversation(
+        self,
+        remote_service: RemoteA2AService,
+        api_mock_llm_client: RuleBasedMockLLMClient,
+        api_db_context: DatabaseContext,
+    ) -> None:
+        """When no subconversation_id, conversation_id is used for context."""
+        api_mock_llm_client.default_response = MockLLMOutput(content="No sub")
+
+        result = await remote_service.handle_chat_interaction(
+            db_context=api_db_context,
+            interface_type="test",
+            conversation_id="direct-conv-456",
+            trigger_content_parts=[text_content("Direct call")],
+            trigger_interface_message_id=None,
+            user_name="test_user",
+        )
+
+        assert not result.has_error
+        assert "No sub" in result.text_reply
+
+    @pytest.mark.asyncio
+    async def test_remote_service_kind_is_remote(
+        self, remote_service: RemoteA2AService
+    ) -> None:
+        """RemoteA2AService.kind is 'remote'."""
+        assert remote_service.kind == "remote"
+
+    @pytest.mark.asyncio
+    async def test_remote_service_config_accessible(
+        self, remote_service: RemoteA2AService
+    ) -> None:
+        """RemoteA2AService exposes its config."""
+        config = remote_service.service_config
+        assert config.id == "remote_test_profile"
+        assert config.delegation_security_level == DelegationSecurityLevel.UNRESTRICTED
+
+
+class TestA2AClientConnectionErrors:
+    """Test error handling when the remote agent is unreachable."""
+
+    @pytest.mark.asyncio
+    async def test_connection_refused(self) -> None:
+        """Client raises A2AClientError when agent is unreachable."""
+        wrapper = A2AClientWrapper(agent_url="http://localhost:1", timeout=1.0)
+        with pytest.raises(A2AClientError):
+            await wrapper.discover()
+        await wrapper.close()
+
+    @pytest.mark.asyncio
+    async def test_remote_service_handles_connection_error(
+        self,
+    ) -> None:
+        """RemoteA2AService returns error result on connection failure."""
+        wrapper = A2AClientWrapper(agent_url="http://localhost:1", timeout=1.0)
+        config = RemoteServiceConfig(
+            id="unreachable_agent",
+            description="Should fail",
+            delegation_security_level=DelegationSecurityLevel.UNRESTRICTED,
+        )
+        service = RemoteA2AService(service_config=config, client=wrapper)
+
+        mock_db = AsyncMock()
+        result = await service.handle_chat_interaction(
+            db_context=mock_db,
+            interface_type="test",
+            conversation_id="err-conv",
+            trigger_content_parts=[text_content("Hello")],
+            trigger_interface_message_id=None,
+            user_name="test_user",
+        )
+
+        assert result.has_error
+        assert "unreachable_agent" in result.text_reply
+        await wrapper.close()
