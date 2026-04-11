@@ -28,6 +28,8 @@ from family_assistant.tools import (
     CompositeToolsProvider,
     LocalToolsProvider,
 )
+from family_assistant.tools.stored_scripts import save_script_tool
+from family_assistant.tools.types import ToolExecutionContext
 from tests.helpers import wait_for_tasks_to_complete
 from tests.mocks.mock_llm import LLMOutput, RuleBasedMockLLMClient
 
@@ -154,19 +156,55 @@ async def test_script_execution_by_stored_name(
     test_run_id = uuid.uuid4()
     logger.info(f"\n--- Running Stored Script Execution Test ({test_run_id}) ---")
 
-    # Step 1: Save a script to the library and create automation referencing it by name
+    # Set up tools provider for save_script_tool validation
+    save_local_provider = LocalToolsProvider(
+        definitions=NOTE_TOOLS_DEFINITION,
+        implementations={
+            "add_or_update_note": local_tool_implementations["add_or_update_note"]
+        },
+    )
+    save_tools_provider = CompositeToolsProvider(providers=[save_local_provider])
+    await save_tools_provider.get_tool_definitions()
+
+    # Step 1: Save a script via save_script_tool (declares 'event' in schema so
+    # validation accepts the runtime global) and create automation referencing it by name
     async with DatabaseContext(engine=db_engine) as db_ctx:
-        await db_ctx.scripts.save(
+        tool_context = ToolExecutionContext(
+            interface_type="test",
+            conversation_id="test_conv",
+            user_name="Test User",
+            turn_id="turn-1",
+            db_context=db_ctx,
+            processing_service=None,
+            clock=None,
+            home_assistant_client=None,
+            event_sources=None,
+            attachment_registry=None,
+            camera_backend=None,
+            timezone=ZoneInfo("UTC"),
+            tools_provider=save_tools_provider,
+        )
+        save_result = await save_script_tool(
+            tool_context,
             name=f"log_temp_{test_run_id}",
             description="Log temperature to a note",
-            script_code=(
+            code=(
                 'temp = float(event["new_state"]["state"])\n'
                 "add_or_update_note(\n"
                 '    title="Stored Temp Log",\n'
                 '    content="Stored: " + str(temp) + "°C"\n'
                 ")\n"
             ),
+            parameters_schema={
+                "type": "object",
+                "properties": {"event": {"type": "object"}},
+            },
         )
+        assert isinstance(save_result.data, dict)
+        assert "error" not in save_result.data, (
+            f"save_script failed: {save_result.data}"
+        )
+
         await db_ctx.events.create_event_listener(
             name=f"Stored Temperature Logger {test_run_id}",
             source_id=EventSourceType.home_assistant,
