@@ -919,6 +919,17 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
         targeted_processing_service = (
             self.telegram_service.processing_services_registry.get(profile_id)
         )
+        if (
+            targeted_processing_service is not None
+            and targeted_processing_service.kind == "remote"
+        ):
+            logger.error(
+                f"Profile '{profile_id}' is a remote profile, cannot use for slash commands."
+            )
+            await update.message.reply_text(
+                f"Error: Profile '{profile_id}' is a remote delegation-only profile."
+            )
+            return
         if not targeted_processing_service:
             logger.error(
                 f"ProcessingService for profile_id '{profile_id}' (command '{command_with_slash}') not found in registry."
