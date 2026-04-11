@@ -46,6 +46,7 @@ from family_assistant.storage.message_history import message_history_table
 from family_assistant.storage.tasks import enqueue_task, get_task_event
 from family_assistant.storage.types import TaskDict
 from family_assistant.tools import ToolExecutionContext
+from family_assistant.tools.stored_scripts import AUTOMATION_RUNTIME_GLOBALS
 from family_assistant.utils.clock import Clock, SystemClock
 
 logger = logging.getLogger(__name__)
@@ -1566,7 +1567,9 @@ async def handle_script_execution(
             raise ValueError(f"Stored script '{script_name}' not found")
         script_code = stored_script.script_code
 
-        # Validate parameters against stored script schema
+        # Validate parameters against stored script schema.
+        # Runtime globals (event, conversation_id, etc.) are injected below into
+        # script_globals, so they count as satisfied even if not in script_parameters.
         script_parameters = payload.get("script_parameters")
         if stored_script.parameters_schema:
             params = script_parameters or {}
@@ -1574,6 +1577,8 @@ async def handle_script_execution(
             if not isinstance(required, list):
                 required = []
             for req in required:
+                if req in AUTOMATION_RUNTIME_GLOBALS:
+                    continue
                 if req not in params:
                     raise ValueError(
                         f"Stored script '{script_name}' requires parameter '{req}'"

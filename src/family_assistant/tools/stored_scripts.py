@@ -17,6 +17,16 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+# Globals automatically injected by handle_script_execution when running scripts
+# from automations. If a stored script's parameters_schema marks any of these as
+# required, they count as implicitly satisfied during automation validation.
+AUTOMATION_RUNTIME_GLOBALS = frozenset({
+    "event",
+    "conversation_id",
+    "listener_id",
+    "listener_name",
+})
+
 
 def _validate_parameters_schema_shape(
     # ast-grep-ignore: no-dict-any - JSON Schema is genuinely arbitrary structure
@@ -93,6 +103,10 @@ async def validate_script_action_config(
         if not isinstance(required, list):
             required = []
         for req in required:
+            # Automation runtime globals are injected by handle_script_execution,
+            # so they don't need to be supplied via action_config parameters.
+            if req in AUTOMATION_RUNTIME_GLOBALS:
+                continue
             if req not in params:
                 return f"Stored script '{name}' requires parameter '{req}'"
 
