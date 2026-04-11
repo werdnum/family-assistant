@@ -7,6 +7,9 @@ schedule automations.
 
 import pytest
 from httpx import AsyncClient
+from sqlalchemy.ext.asyncio import AsyncEngine
+
+from family_assistant.storage.context import DatabaseContext
 
 
 @pytest.mark.asyncio
@@ -128,6 +131,40 @@ class TestEventAutomationsAPI:
 
         assert response.status_code == 400
         assert "script_code" in response.json()["detail"]
+
+    async def test_create_event_automation_with_stored_script_name(
+        self,
+        api_test_client: AsyncClient,
+        db_engine: AsyncEngine,
+    ) -> None:
+        """Test creating an event automation that references a stored script by name."""
+        # First save a stored script that the automation can reference.
+        # Use a fresh DatabaseContext so the transaction commits before the API call.
+        async with DatabaseContext(engine=db_engine) as db:
+            await db.scripts.save(
+                name="api_stored_script",
+                description="A stored script for API testing",
+                script_code='print("hello")',
+            )
+
+        automation_data = {
+            "name": "Stored Script Event Automation",
+            "source_id": "webhook",
+            "action_type": "script",
+            "match_conditions": {"event_type": "push"},
+            "action_config": {"script_name": "api_stored_script"},
+            "conversation_id": "test_api",
+        }
+
+        response = await api_test_client.post(
+            "/api/automations/event", json=automation_data
+        )
+
+        assert response.status_code == 200, response.text
+        data = response.json()
+        assert data["name"] == "Stored Script Event Automation"
+        assert data["action_type"] == "script"
+        assert data["action_config"]["script_name"] == "api_stored_script"
 
     async def test_get_event_automation_includes_condition_script(
         self, api_test_client: AsyncClient
@@ -347,6 +384,38 @@ class TestScheduleAutomationsAPI:
 
         assert response.status_code == 400
         assert "script_code" in response.json()["detail"]
+
+    async def test_create_schedule_automation_with_stored_script_name(
+        self,
+        api_test_client: AsyncClient,
+        db_engine: AsyncEngine,
+    ) -> None:
+        """Test creating a schedule automation that references a stored script by name."""
+        # Save the stored script in a fresh context so the transaction commits.
+        async with DatabaseContext(engine=db_engine) as db:
+            await db.scripts.save(
+                name="daily_log_script",
+                description="Daily logging script",
+                script_code='print("daily")',
+            )
+
+        automation_data = {
+            "name": "Stored Script Schedule",
+            "recurrence_rule": "FREQ=DAILY;BYHOUR=9;BYMINUTE=0",
+            "action_type": "script",
+            "action_config": {"script_name": "daily_log_script"},
+            "conversation_id": "test_api",
+        }
+
+        response = await api_test_client.post(
+            "/api/automations/schedule", json=automation_data
+        )
+
+        assert response.status_code == 200, response.text
+        data = response.json()
+        assert data["name"] == "Stored Script Schedule"
+        assert data["action_type"] == "script"
+        assert data["action_config"]["script_name"] == "daily_log_script"
 
     async def test_get_schedule_automation(self, api_test_client: AsyncClient) -> None:
         """Test that GET endpoint returns schedule automation details."""
