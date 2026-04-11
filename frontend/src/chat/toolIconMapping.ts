@@ -25,7 +25,6 @@ import {
   Paperclip,
   Play,
   Plus,
-  Repeat,
   Search,
   Send,
   Settings,
@@ -95,12 +94,10 @@ export const toolIconMapping: Record<string, ToolIconInfo> = {
   ingest_document_from_url: { icon: Download, category: 'documents', label: 'Ingest Document' },
   get_user_documentation_content: { icon: FileText, category: 'documents', label: 'Get Docs' },
 
-  // Task & Scheduling tools (8)
+  // Task & Scheduling tools (6)
   schedule_reminder: { icon: Bell, category: 'tasks', label: 'Schedule Reminder' },
   schedule_future_callback: { icon: Timer, category: 'tasks', label: 'Schedule Callback' },
-  schedule_recurring_task: { icon: Repeat, category: 'tasks', label: 'Recurring Task' },
   schedule_action: { icon: Clock, category: 'tasks', label: 'Schedule Action' },
-  schedule_recurring_action: { icon: Repeat, category: 'tasks', label: 'Recurring Action' },
   list_pending_callbacks: { icon: List, category: 'tasks', label: 'List Callbacks' },
   modify_pending_callback: { icon: Edit, category: 'tasks', label: 'Modify Callback' },
   cancel_pending_callback: { icon: Trash2, category: 'tasks', label: 'Cancel Callback' },

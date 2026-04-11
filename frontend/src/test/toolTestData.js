@@ -1302,46 +1302,6 @@ export const toolTestCases = {
       timestamp: '2025-06-19T10:30:10.473834+00:00',
     },
   ],
-  schedule_recurring_action: [
-    {
-      tool_call: {
-        id: 'call_3906e0fa-972a-44eb-afe2-6e7ba2a79b6b',
-        type: 'function',
-        function: {
-          name: 'schedule_recurring_action',
-          arguments:
-            '{"action_type": "script", "task_name": "daily_brief_runner", "action_config": {"script_code": "# Title of the note containing the daily brief instructions\\ninstructions_note_title = \\"Daily Brief Instructions\\"\\n\\n# Retrieve the note content\\n# The get_note tool returns a JSON string representing the note object\\nnote_json_str = get_note(title=instructions_note_title)\\n\\n# Decode the JSON string to a Python dictionary\\n# Add a check for empty or invalid JSON string to avoid errors\\nif note_json_str and note_json_str != \\"null\\":\\n    note_data = json_decode(note_json_str)\\n    instructions = note_data.get(\\"content\\")\\n\\n    if instructions:\\n        # If instructions are found, call wake_llm to trigger the LLM\\n        # with these instructions as context.\\n        print(\\"Daily brief instructions found. Waking LLM.\\")\\n        wake_llm(context={\\"daily_brief_script_instructions\\": instructions})\\n    else:\\n        # Log if instructions are missing in the note content\\n        print(\\"Error: \'content\' field is missing in the \'Daily Brief Instructions\' note.\\")\\nelse:\\n    # Log if the note itself could not be retrieved or is empty\\n    print(\\"Error: Could not retrieve or decode the \'Daily Brief Instructions\' note. Note JSON: \\" + str(note_json_str))"}, "start_time": "2025-06-23T06:00:00+10:00", "recurrence_rule": "FREQ=DAILY;BYHOUR=6;BYMINUTE=0"}',
-        },
-      },
-      tool_response: {
-        tool_call_id: 'call_3906e0fa-972a-44eb-afe2-6e7ba2a79b6b',
-        content:
-          "OK. Recurring script action ('daily_brief_runner') scheduled starting 2025-06-23T06:00:00+10:00",
-        timestamp: '2025-06-22T12:20:38.9812+00:00',
-        error_traceback: null,
-      },
-      timestamp: '2025-06-22T12:20:38.967149+00:00',
-    },
-    {
-      tool_call: {
-        id: 'call_bada4d41-de8b-42fd-9fa3-b75d29f08e91',
-        type: 'function',
-        function: {
-          name: 'schedule_recurring_action',
-          arguments:
-            '{"task_name": "scripted_daily_brief_6am", "start_time": "2025-06-21T06:00:00+10:00", "action_type": "script", "recurrence_rule": "FREQ=DAILY;BYHOUR=6;BYMINUTE=0", "action_config": {"script_code": "# Python script for daily brief\\nnote_title = \\"Daily Brief Instructions\\"\\nprint(\\"Daily Brief Script: Starting. Attempting to fetch note: \'\\" + note_title + \\"\'.\\")\\n\\nnote_info = get_note(title=note_title)\\n\\nif not note_info or not \'content\' in note_info or not note_info[\'content\']:\\n    error_msg = \\"Daily Brief Script: Failed to get valid content from note \'\\" + note_title + \\"\'. \\"\\n    if not note_info:\\n        error_msg += \\"Note not found or get_note call failed.\\"\\n    elif not \'content\' in note_info:\\n        error_msg += \\"Note found, but \'content\' field is missing.\\"\\n    else: # not note_info[\'content\']\\n        error_msg += \\"Note found, but \'content\' field is empty.\\"\\n    print(error_msg)\\n    fail(error_msg) # Stop script execution with an error\\n\\ninstructions = note_info[\'content\']\\nprint(\\"Daily Brief Script: Note content fetched successfully. Calling wake_llm().\\")\\n\\n# Assuming wake_llm(context=\\"...\\") is available in this environment\\nwake_llm(context=instructions)\\n\\nprint(\\"Daily Brief Script: wake_llm() called. Script finished.\\")\\n\\"Daily brief script executed and wake_llm called.\\""}}',
-        },
-      },
-      tool_response: {
-        tool_call_id: 'call_bada4d41-de8b-42fd-9fa3-b75d29f08e91',
-        content:
-          "OK. Recurring script action ('scripted_daily_brief_6am') scheduled starting 2025-06-21T06:00:00+10:00",
-        timestamp: '2025-06-20T14:13:21.560569+00:00',
-        error_traceback: null,
-      },
-      timestamp: '2025-06-20T14:13:21.55012+00:00',
-    },
-  ],
   execute_script: [
     {
       tool_call: {
@@ -1458,65 +1418,6 @@ export const toolTestCases = {
         error_traceback: null,
       },
       timestamp: '2025-06-17T14:31:33.362679+00:00',
-    },
-  ],
-  schedule_recurring_task: [
-    {
-      tool_call: {
-        id: 'call_7c3dff51-209d-47b6-aea3-898ef03c1b57',
-        type: 'function',
-        function: {
-          name: 'schedule_recurring_task',
-          arguments:
-            '{"initial_schedule_time": "2025-06-22T08:00:00+10:00", "recurrence_rule": "FREQ=DAILY;INTERVAL=1;BYHOUR=8;BYMINUTE=0", "callback_context": "Send a message to Taylor (Chat ID: 100000002) to remind her to take her medication.", "description": "taylor_medication_reminder"}',
-        },
-      },
-      tool_response: {
-        tool_call_id: 'call_7c3dff51-209d-47b6-aea3-898ef03c1b57',
-        content:
-          "OK. Recurring callback 'recurring_llm_callback_taylor_medication_reminder_c538ca9d-e177-4370-8409-0a526005e55e' scheduled starting 2025-06-22T08:00:00+10:00 with rule 'FREQ=DAILY;INTERVAL=1;BYHOUR=8;BYMINUTE=0'.",
-        timestamp: '2025-06-20T23:02:14.174189+00:00',
-        error_traceback: null,
-      },
-      timestamp: '2025-06-20T23:02:14.162905+00:00',
-    },
-    {
-      tool_call: {
-        id: 'call_95c09108-5ff5-49c9-9fbf-4f721e4bec88',
-        type: 'function',
-        function: {
-          name: 'schedule_recurring_task',
-          arguments:
-            '{"callback_context": "Look up the \'Daily Brief Instructions\' note and send the daily brief.", "initial_schedule_time": "2025-06-19T06:00:00+10:00", "description": "daily_brief_6am_sydney", "recurrence_rule": "FREQ=DAILY;BYHOUR=6;BYMINUTE=0"}',
-        },
-      },
-      tool_response: {
-        tool_call_id: 'call_95c09108-5ff5-49c9-9fbf-4f721e4bec88',
-        content:
-          "OK. Recurring callback 'recurring_llm_callback_daily_brief_6am_sydney_db9ee433-c847-44e6-b4e0-080794673dae' scheduled starting 2025-06-19T06:00:00+10:00 with rule 'FREQ=DAILY;BYHOUR=6;BYMINUTE=0'.",
-        timestamp: '2025-06-17T14:31:33.384989+00:00',
-        error_traceback: null,
-      },
-      timestamp: '2025-06-17T14:31:33.379119+00:00',
-    },
-    {
-      tool_call: {
-        id: 'call_fc678921-119a-4a92-9b49-624feba56ddf',
-        type: 'function',
-        function: {
-          name: 'schedule_recurring_task',
-          arguments:
-            '{"callback_context": "Look up the \'Daily Brief Instructions\' note and send the daily brief.", "description": "daily_brief_6am_aest", "recurrence_rule": "FREQ=DAILY;BYHOUR=6;BYMINUTE=0", "initial_schedule_time": "2025-06-17T06:00:00+10:00"}',
-        },
-      },
-      tool_response: {
-        tool_call_id: 'call_fc678921-119a-4a92-9b49-624feba56ddf',
-        content:
-          "OK. Recurring callback 'recurring_llm_callback_daily_brief_6am_aest_488b0741-b438-4661-9f82-d319eecd2237' scheduled starting 2025-06-17T06:00:00+10:00 with rule 'FREQ=DAILY;BYHOUR=6;BYMINUTE=0'.",
-        timestamp: '2025-06-16T06:12:45.909643+00:00',
-        error_traceback: null,
-      },
-      timestamp: '2025-06-16T06:12:45.905233+00:00',
     },
   ],
   HassClimateSetTemperature: [
