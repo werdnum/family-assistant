@@ -300,6 +300,11 @@ default_profile_settings:
         loading: "on_demand"
       - name: "test_script_with_simulated_tools"
         loading: "on_demand"
+      - "save_script"
+
+      - "list_scripts"
+      - "get_script"
+      - "delete_script"
       - name: "download_state_history"
         loading: "on_demand"
       - name: "list_home_assistant_entities"
@@ -367,6 +372,11 @@ default_profile_settings:
             - "get_user_documentation_content"
             - "ingest_document_from_url"
             - "execute_script"
+            - "save_script"
+
+            - "list_scripts"
+            - "get_script"
+            - "delete_script"
             - "test_script_with_simulated_tools"
             - "send_message_to_user"
             - "attach_to_response"
@@ -573,6 +583,11 @@ service_profiles:
         - "list_home_assistant_entities"
         - "render_home_assistant_template"
         - "execute_script"
+        - "save_script"
+
+        - "list_scripts"
+        - "get_script"
+        - "delete_script"
         - "test_script_with_simulated_tools"
         # AI Worker tools (for complex data processing tasks)
         - "spawn_worker"
@@ -596,6 +611,11 @@ service_profiles:
               - "list_home_assistant_entities"
               - "render_home_assistant_template"
               - "execute_script"
+              - "save_script"
+
+              - "list_scripts"
+              - "get_script"
+              - "delete_script"
               - "test_script_with_simulated_tools"
               - "spawn_worker"
               - "read_task_result"
@@ -953,6 +973,11 @@ service_profiles:
         - "test_event_listener"
         # Script execution for testing
         - "execute_script"
+        - "save_script"
+
+        - "list_scripts"
+        - "get_script"
+        - "delete_script"
         - "test_script_with_simulated_tools"
         # Calendar and notes for context
         - "search_calendar_events"
@@ -997,6 +1022,11 @@ service_profiles:
               - "query_recent_events"
               - "test_event_listener"
               - "execute_script"
+              - "save_script"
+
+              - "list_scripts"
+              - "get_script"
+              - "delete_script"
               - "test_script_with_simulated_tools"
               - "search_calendar_events"
               - "get_calendar_events"
@@ -1074,6 +1104,11 @@ service_profiles:
         - "get_attachment_info"
         - "attach_to_response"
         - "execute_script"
+        - "save_script"
+
+        - "list_scripts"
+        - "get_script"
+        - "delete_script"
         - "test_script_with_simulated_tools"
         - "send_message_to_user"
         - "get_message_history"
@@ -1092,6 +1127,11 @@ service_profiles:
               - "get_attachment_info"
               - "attach_to_response"
               - "execute_script"
+              - "save_script"
+
+              - "list_scripts"
+              - "get_script"
+              - "delete_script"
               - "test_script_with_simulated_tools"
               - "send_message_to_user"
               - "get_message_history"
@@ -1134,6 +1174,11 @@ service_profiles:
         - "get_user_documentation_content"
         - "ingest_document_from_url"
         - "execute_script"
+        - "save_script"
+
+        - "list_scripts"
+        - "get_script"
+        - "delete_script"
         - "test_script_with_simulated_tools"
         - "send_message_to_user"
         - "add_calendar_event"
@@ -1180,6 +1225,11 @@ service_profiles:
               - "get_user_documentation_content"
               - "ingest_document_from_url"
               - "execute_script"
+              - "save_script"
+
+              - "list_scripts"
+              - "get_script"
+              - "delete_script"
               - "test_script_with_simulated_tools"
               - "send_message_to_user"
               - "add_calendar_event"
@@ -1375,6 +1425,11 @@ service_profiles:
         - "get_user_documentation_content"
         - "ingest_document_from_url"
         - "execute_script"
+        - "save_script"
+
+        - "list_scripts"
+        - "get_script"
+        - "delete_script"
         - "test_script_with_simulated_tools"
         - "send_message_to_user"
         - "attach_to_response"
@@ -1433,6 +1488,11 @@ service_profiles:
               - "get_user_documentation_content"
               - "ingest_document_from_url"
               - "execute_script"
+              - "save_script"
+
+              - "list_scripts"
+              - "get_script"
+              - "delete_script"
               - "test_script_with_simulated_tools"
               - "send_message_to_user"
               - "attach_to_response"
@@ -1670,3 +1730,4 @@ otel:
 
 # Secrets (telegram_token, api_keys, database_url) are primarily from env.
 # Model, embedding_model, server_url, storage_paths are also top-level or env.
+

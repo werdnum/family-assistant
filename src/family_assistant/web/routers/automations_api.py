@@ -14,6 +14,7 @@ from family_assistant.storage.types import (
     ListenerExecutionStatsDict,
     ScheduleExecutionStatsDict,
 )
+from family_assistant.tools.stored_scripts import validate_script_action_config
 from family_assistant.web.dependencies import get_db, get_processing_service
 
 if TYPE_CHECKING:
@@ -258,11 +259,10 @@ async def create_event_automation(
         )
 
     # Validate script requirements
-    if request.action_type == "script" and not request.action_config.get("script_code"):
-        raise HTTPException(
-            status_code=400,
-            detail="script_code is required in action_config when action_type is 'script'",
-        )
+    if request.action_type == "script":
+        script_error = await validate_script_action_config(db, request.action_config)
+        if script_error:
+            raise HTTPException(status_code=400, detail=script_error)
 
     # Check name uniqueness
     is_available, error_msg = await db.automations.check_name_available(
@@ -328,11 +328,10 @@ async def create_schedule_automation(
         )
 
     # Validate script requirements
-    if request.action_type == "script" and not request.action_config.get("script_code"):
-        raise HTTPException(
-            status_code=400,
-            detail="script_code is required in action_config when action_type is 'script'",
-        )
+    if request.action_type == "script":
+        script_error = await validate_script_action_config(db, request.action_config)
+        if script_error:
+            raise HTTPException(status_code=400, detail=script_error)
 
     # Check name uniqueness
     is_available, error_msg = await db.automations.check_name_available(

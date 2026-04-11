@@ -7,6 +7,7 @@ from datetime import UTC
 from typing import TYPE_CHECKING, Any, cast
 
 from family_assistant.scripting.validator import ScriptValidator
+from family_assistant.tools.stored_scripts import validate_script_action_config
 from family_assistant.tools.types import ToolDefinition, ToolResult
 
 if TYPE_CHECKING:
@@ -120,7 +121,9 @@ For wake_llm:
   - context: string with optional context for the LLM
 
 For script:
-  - script_code: Python code to execute
+  - script_code: Python code to execute (inline), OR
+  - script_name: name of a stored script from the script library (use list_scripts to see available)
+  - parameters: optional dict of parameters to pass to the stored script
   - task_name: optional name for the script execution""",
                     },
                     "description": {
@@ -392,31 +395,51 @@ async def create_automation_tool(
         # Validate automation_type first
         validated_type = _validate_automation_type(automation_type)
 
-        # Validate script code if action_type is "script"
-        if action_type == "script" and action_config.get("script_code"):
-            tool_definitions = None
-            tools_provider = None
-            if hasattr(exec_context, "tools_provider") and exec_context.tools_provider:
-                tools_provider = exec_context.tools_provider
-            elif (
-                exec_context.processing_service
-                and hasattr(exec_context.processing_service, "tools_provider")
-                and exec_context.processing_service.tools_provider
-            ):
-                tools_provider = exec_context.processing_service.tools_provider
-            if tools_provider:
-                tool_definitions = await tools_provider.get_tool_definitions()
-            # Runtime injects these globals (see task_worker.py handle_script_execution)
-            input_names = ["event", "conversation_id", "listener_id", "listener_name"]
-            validator = ScriptValidator(tool_definitions=tool_definitions)
-            validation = validator.validate(
-                action_config["script_code"],
-                input_names=input_names,
-                include_tools_api=tools_provider is not None,
+        # Validate script action_config
+        if action_type == "script":
+            script_error = await validate_script_action_config(
+                exec_context.db_context, action_config
             )
-            if not validation.is_valid:
-                error_msg = f"Script validation failed: {validation.error_message}"
-                return ToolResult(text=f"Error: {error_msg}", data={"error": error_msg})
+            if script_error:
+                return ToolResult(
+                    text=f"Error: {script_error}", data={"error": script_error}
+                )
+            if action_config.get("script_code"):
+                # Validate inline script code
+                tool_definitions = None
+                tools_provider = None
+                if (
+                    hasattr(exec_context, "tools_provider")
+                    and exec_context.tools_provider
+                ):
+                    tools_provider = exec_context.tools_provider
+                elif (
+                    exec_context.processing_service
+                    and hasattr(exec_context.processing_service, "tools_provider")
+                    and exec_context.processing_service.tools_provider
+                ):
+                    tools_provider = exec_context.processing_service.tools_provider
+                if tools_provider:
+                    tool_definitions = await tools_provider.get_tool_definitions()
+                input_names = [
+                    "event",
+                    "conversation_id",
+                    "listener_id",
+                    "listener_name",
+                ]
+                validator = ScriptValidator(tool_definitions=tool_definitions)
+                validation = validator.validate(
+                    action_config["script_code"],
+                    input_names=input_names,
+                    include_tools_api=tools_provider is not None,
+                )
+                if not validation.is_valid:
+                    error_msg = f"Script validation failed: {validation.error_message}"
+                    return ToolResult(
+                        text=f"Error: {error_msg}", data={"error": error_msg}
+                    )
+            # Note: the "neither script_code nor script_name" case is already
+            # rejected by validate_script_action_config above.
 
         # Check name availability
         (
@@ -664,8 +687,13 @@ async def get_automation_tool(
             config = automation.action_config
             if action_type == "wake_llm" and config.get("context"):
                 lines.append(f"Context: {config['context']}")
-            elif action_type == "script" and config.get("script_code"):
-                lines.append(f"Script:\n{config['script_code']}")
+            elif action_type == "script":
+                if config.get("script_name"):
+                    lines.append(f"Script: {config['script_name']} (stored)")
+                    if config.get("parameters"):
+                        lines.append(f"Parameters: {config['parameters']}")
+                elif config.get("script_code"):
+                    lines.append(f"Script:\n{config['script_code']}")
 
         # Build structured data
         result_data = {

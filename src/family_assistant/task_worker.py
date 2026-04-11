@@ -46,6 +46,7 @@ from family_assistant.storage.message_history import message_history_table
 from family_assistant.storage.tasks import enqueue_task, get_task_event
 from family_assistant.storage.types import TaskDict
 from family_assistant.tools import ToolExecutionContext
+from family_assistant.tools.stored_scripts import AUTOMATION_RUNTIME_GLOBALS
 from family_assistant.utils.clock import Clock, SystemClock
 
 logger = logging.getLogger(__name__)
@@ -87,6 +88,9 @@ class ScriptExecutionPayload(TypedDict, total=False):
     """Payload for script_execution tasks."""
 
     script_code: str
+    script_name: str
+    # ast-grep-ignore: no-dict-any - User-defined parameters passed as script globals
+    script_parameters: dict[str, Any]
     # ast-grep-ignore: no-dict-any - Event data from external sources (Home Assistant, webhooks) with arbitrary structure
     event_data: dict[str, Any]
     # ast-grep-ignore: no-dict-any - User-defined script configuration with arbitrary keys (timeout, allowed_tools, etc.)
@@ -1004,6 +1008,9 @@ class TaskWorker:
 
         # Build informative error context for the LLM
         script_code = payload_dict.get("script_code") or ""
+        script_name = payload_dict.get("script_name") or ""
+        if not script_code and script_name:
+            script_code = f"(stored script: {script_name})"
         script_lines = script_code.strip().splitlines()
         if len(script_lines) > 100:
             script_code = "\n".join(script_lines[:100]) + "\n... (truncated)"
@@ -1546,17 +1553,47 @@ async def handle_script_execution(
 
     # Extract required fields from payload
     script_code = payload.get("script_code")
+    script_name = payload.get("script_name")
     event_data = payload.get("event_data", {})
     config = payload.get("config", {})
     listener_id = payload.get("listener_id")
     conversation_id = payload.get("conversation_id")
 
+    # Resolve script_name to script_code from the scripts repository
+    if not script_code and script_name:
+        db = exec_context.db_context
+        stored_script = await db.scripts.get_by_name(script_name)
+        if stored_script is None:
+            raise ValueError(f"Stored script '{script_name}' not found")
+        script_code = stored_script.script_code
+
+        # Validate parameters against stored script schema.
+        # Runtime globals (event, conversation_id, etc.) are injected below into
+        # script_globals, so they count as satisfied even if not in script_parameters.
+        script_parameters = payload.get("script_parameters")
+        if stored_script.parameters_schema:
+            params = script_parameters or {}
+            required = stored_script.parameters_schema.get("required", [])
+            if not isinstance(required, list):
+                required = []
+            for req in required:
+                if req in AUTOMATION_RUNTIME_GLOBALS:
+                    continue
+                if req not in params:
+                    raise ValueError(
+                        f"Stored script '{script_name}' requires parameter '{req}'"
+                    )
+
+        logger.info(f"Resolved script_name '{script_name}' to stored script code")
+
     # Validate required fields
     if not script_code:
         logger.error(
-            f"Invalid payload for script_execution task (missing script_code): {payload}"
+            f"Invalid payload for script_execution task (missing script_code and script_name): {payload}"
         )
-        raise ValueError("Missing required field in payload: script_code")
+        raise ValueError(
+            "Missing required field in payload: script_code or script_name"
+        )
 
     if listener_id:
         logger.info(
@@ -1602,9 +1639,14 @@ async def handle_script_execution(
         "event": event_data,
         "conversation_id": conversation_id,
         "listener_id": listener_id,
-        "listener_name": config.get("listener_name", ""),  # Optional listener name
-        # Note: trigger_count would need to be retrieved from DB if needed
+        "listener_name": config.get("listener_name", ""),
     }
+    # Merge script_parameters, but don't overwrite built-in context variables
+    script_parameters = payload.get("script_parameters")
+    if isinstance(script_parameters, dict):
+        for k, v in script_parameters.items():
+            if k not in script_globals:
+                script_globals[k] = v
 
     # Execute the script
     try:

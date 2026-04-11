@@ -38,6 +38,7 @@ if TYPE_CHECKING:
         NotesRepository,
         PushSubscriptionRepository,
         ScheduleAutomationsRepository,
+        ScriptsRepository,
         TasksRepository,
         VectorRepository,
         WorkerTasksRepository,
@@ -173,6 +174,7 @@ class DatabaseContext:
         self._push_subscriptions = None
         self._worker_tasks = None
         self._a2a_tasks = None
+        self._scripts = None
 
     async def __aenter__(self) -> "DatabaseContext":
         """Enter the async context manager, starting a transaction."""
@@ -520,6 +522,17 @@ class DatabaseContext:
 
             self._a2a_tasks = A2ATasksRepository(self)
         return self._a2a_tasks
+
+    @property
+    def scripts(self) -> "ScriptsRepository":
+        """Get the scripts repository instance."""
+        if self._scripts is None:
+            from family_assistant.storage.repositories import (  # noqa: PLC0415
+                ScriptsRepository,
+            )
+
+            self._scripts = ScriptsRepository(self)
+        return self._scripts
 
     async def init_vector_db(self) -> None:
         """Initialize vector database components."""

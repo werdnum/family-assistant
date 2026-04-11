@@ -17,6 +17,7 @@ from sqlalchemy import select, update
 
 from family_assistant import storage
 from family_assistant.actions import ActionType, execute_action
+from family_assistant.tools.stored_scripts import validate_script_action_config
 from family_assistant.utils.clock import SystemClock
 
 if TYPE_CHECKING:
@@ -934,8 +935,12 @@ async def schedule_action_tool(
     # Validate action config based on type
     if action_type_enum == ActionType.WAKE_LLM and "context" not in action_config:
         return "Error: wake_llm action requires 'context' in action_config"
-    elif action_type_enum == ActionType.SCRIPT and "script_code" not in action_config:
-        return "Error: script action requires 'script_code' in action_config"
+    elif action_type_enum == ActionType.SCRIPT:
+        script_error = await validate_script_action_config(
+            exec_context.db_context, action_config
+        )
+        if script_error:
+            return f"Error: {script_error}"
 
     # Parse and validate time
     clock = exec_context.clock or SystemClock()
@@ -1005,8 +1010,12 @@ async def schedule_recurring_action_tool(
     # Validate action config based on type
     if action_type_enum == ActionType.WAKE_LLM and "context" not in action_config:
         return "Error: wake_llm action requires 'context' in action_config"
-    elif action_type_enum == ActionType.SCRIPT and "script_code" not in action_config:
-        return "Error: script action requires 'script_code' in action_config"
+    elif action_type_enum == ActionType.SCRIPT:
+        script_error = await validate_script_action_config(
+            exec_context.db_context, action_config
+        )
+        if script_error:
+            return f"Error: {script_error}"
 
     # Parse and validate start time
     clock = exec_context.clock or SystemClock()
