@@ -456,3 +456,80 @@ async def test_save_script_with_parameters_schema(db_engine: AsyncEngine) -> Non
         get_result = await get_script_tool(context, name="greet")
         assert isinstance(get_result.data, dict)
         assert get_result.data["parameters_schema"] == parameters_schema
+
+
+@pytest.mark.asyncio
+async def test_save_script_malformed_required_field(db_engine: AsyncEngine) -> None:
+    """Malformed parameters_schema (non-string in required) is rejected at save time."""
+    async with DatabaseContext(engine=db_engine) as db:
+        context = ToolExecutionContext(
+            interface_type="test",
+            conversation_id="test-conv-malformed",
+            user_name="Test User",
+            turn_id="turn-1",
+            db_context=db,
+            processing_service=None,
+            clock=None,
+            home_assistant_client=None,
+            event_sources=None,
+            attachment_registry=None,
+            camera_backend=None,
+            timezone=ZoneInfo("UTC"),
+        )
+
+        # required contains a non-string entry
+        bad_schema = {
+            "type": "object",
+            "properties": {"x": {"type": "integer"}},
+            "required": [["nested", "list"]],
+        }
+        save_result = await save_script_tool(
+            context,
+            name="bad-schema",
+            description="Bad schema test",
+            code="1",
+            parameters_schema=bad_schema,  # type: ignore[arg-type] - deliberately malformed to test validation
+        )
+        assert isinstance(save_result.data, dict)
+        assert "error" in save_result.data
+        assert "parameters_schema" in save_result.data["error"].lower()
+
+        # Verify it was not saved
+        get_result = await get_script_tool(context, name="bad-schema")
+        assert isinstance(get_result.data, dict)
+        assert "error" in get_result.data
+
+
+@pytest.mark.asyncio
+async def test_save_script_malformed_required_not_list(db_engine: AsyncEngine) -> None:
+    """parameters_schema with non-list required is rejected."""
+    async with DatabaseContext(engine=db_engine) as db:
+        context = ToolExecutionContext(
+            interface_type="test",
+            conversation_id="test-conv-malformed-2",
+            user_name="Test User",
+            turn_id="turn-1",
+            db_context=db,
+            processing_service=None,
+            clock=None,
+            home_assistant_client=None,
+            event_sources=None,
+            attachment_registry=None,
+            camera_backend=None,
+            timezone=ZoneInfo("UTC"),
+        )
+
+        bad_schema = {
+            "type": "object",
+            "properties": {"x": {"type": "integer"}},
+            "required": "x",
+        }
+        save_result = await save_script_tool(
+            context,
+            name="bad-schema-2",
+            description="Bad schema test",
+            code="1",
+            parameters_schema=bad_schema,  # type: ignore[arg-type] - deliberately malformed to test validation
+        )
+        assert isinstance(save_result.data, dict)
+        assert "error" in save_result.data

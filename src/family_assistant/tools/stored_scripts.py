@@ -18,6 +18,40 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+def _validate_parameters_schema_shape(
+    # ast-grep-ignore: no-dict-any - JSON Schema is genuinely arbitrary structure
+    schema: dict[str, Any],
+) -> str | None:
+    """Validate the shape of a parameters_schema.
+
+    Ensures the schema is structurally usable by downstream validation:
+    - 'properties' (if present) must be a dict with string keys
+    - 'required' (if present) must be a list of strings
+
+    Returns an error message on failure, or None if valid.
+    """
+    if not isinstance(schema, dict):
+        return "schema must be a dict"
+
+    properties = schema.get("properties")
+    if properties is not None:
+        if not isinstance(properties, dict):
+            return "'properties' must be a dict"
+        for key in properties:
+            if not isinstance(key, str):
+                return f"'properties' keys must be strings, got {type(key).__name__}"
+
+    required = schema.get("required")
+    if required is not None:
+        if not isinstance(required, list):
+            return "'required' must be a list"
+        for item in required:
+            if not isinstance(item, str):
+                return f"'required' entries must be strings, got {type(item).__name__}"
+
+    return None
+
+
 async def validate_script_action_config(
     db_context: DatabaseContext,
     # ast-grep-ignore: no-dict-any - action_config comes from LLM tool args as plain dict
@@ -90,6 +124,14 @@ async def save_script_tool(
     parameters_schema: dict[str, Any] | None = None,
 ) -> ToolResult:
     """Save or update a stored script."""
+    # Validate parameters_schema shape
+    if parameters_schema is not None:
+        schema_error = _validate_parameters_schema_shape(parameters_schema)
+        if schema_error:
+            return ToolResult(
+                data={"error": f"Invalid parameters_schema: {schema_error}"}
+            )
+
     # Validate script syntax before saving
     from family_assistant.scripting.validator import (  # noqa: PLC0415 - lazy import to break circular: scripting → tools → stored_scripts → scripting
         ScriptValidator,
