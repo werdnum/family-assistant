@@ -981,9 +981,13 @@ class Assistant:
         self.fastapi_app.state.processing_services = self.processing_services_registry
         self.fastapi_app.state.a2a_cancel_events = self.a2a_cancel_events
 
-        self.default_processing_service = self.processing_services_registry.get(
-            default_service_profile_id
-        )
+        candidate = self.processing_services_registry.get(default_service_profile_id)
+        if candidate and not isinstance(candidate, ProcessingService):
+            raise SystemExit(
+                f"Default service profile '{default_service_profile_id}' is a remote A2A profile. "
+                f"The default profile must be a local ProcessingService."
+            )
+        self.default_processing_service = candidate
         if not self.default_processing_service:
             logger.warning(
                 f"Default service profile ID '{default_service_profile_id}' not found. Falling back to first available."

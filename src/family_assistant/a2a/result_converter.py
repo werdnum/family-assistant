@@ -71,6 +71,12 @@ def a2a_task_to_chat_result(task: Task) -> ChatInteractionResult:
             error_traceback=f"A2A task state: input_required, message: {msg}",
         )
 
+    if task.status.state != TaskState.completed:
+        return CIR.error(
+            text_reply=f"Remote agent returned unexpected state: {task.status.state}",
+            error_traceback=f"A2A task in non-terminal state: {task.status.state}",
+        )
+
     text_parts: list[str] = []
 
     _extract_text_from_parts(task.artifacts or [], text_parts)
