@@ -69,6 +69,8 @@ async def execute_tool_api(
     camera_backend = None
     processing_services = getattr(request.app.state, "processing_services", {})
     for service in processing_services.values():
+        if service.kind == "remote":
+            continue
         if hasattr(service, "camera_backend") and service.camera_backend is not None:
             camera_backend = service.camera_backend
             break

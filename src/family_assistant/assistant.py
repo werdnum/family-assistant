@@ -1573,7 +1573,15 @@ class Assistant:
                 profile_id,
                 service_instance,
             ) in self.fastapi_app.state.processing_services.items():
-                if (
+                if service_instance.kind == "remote":
+                    try:
+                        await service_instance.close()
+                    except Exception as e:
+                        logger.error(
+                            f"Error closing remote service '{profile_id}': {e}",
+                            exc_info=True,
+                        )
+                elif (
                     hasattr(service_instance, "tools_provider")
                     and service_instance.tools_provider
                 ):

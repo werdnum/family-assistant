@@ -104,8 +104,14 @@ async def _get_context_data(
             processing_services_registry = getattr(
                 request.app.state, "processing_services", {}
             )
-            if profile_id in processing_services_registry:
-                target_service = processing_services_registry[profile_id]
+            candidate = processing_services_registry.get(profile_id)
+            if candidate and candidate.kind == "remote":
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Profile '{profile_id}' is a remote delegation-only profile",
+                )
+            if candidate:
+                target_service = candidate
                 logger.info(f"Using ProcessingService for profile_id: '{profile_id}'")
             else:
                 logger.warning(
@@ -248,6 +254,17 @@ async def get_processing_profiles(request: Request) -> list[dict]:
 
         profiles = []
         for profile_id, service in processing_services_registry.items():
+            if service.kind == "remote":
+                profiles.append({
+                    "id": profile_id,
+                    "description": service.service_config.description,
+                    "llm_model": "remote",
+                    "provider": "a2a",
+                    "tools_count": 0,
+                    "context_providers": [],
+                })
+                continue
+
             service_config = service.service_config
 
             profiles.append({

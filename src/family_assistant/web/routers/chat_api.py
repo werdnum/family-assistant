@@ -407,10 +407,14 @@ async def api_chat_send_message(
         processing_services_registry = getattr(
             request.app.state, "processing_services", {}
         )
-        if profile_id_requested in processing_services_registry:
-            selected_processing_service = processing_services_registry[
-                profile_id_requested
-            ]
+        candidate = processing_services_registry.get(profile_id_requested)
+        if candidate and candidate.kind == "remote":
+            raise HTTPException(
+                status_code=400,
+                detail=f"Profile '{profile_id_requested}' is a remote delegation-only profile and cannot be used for direct chat.",
+            )
+        if candidate:
+            selected_processing_service = candidate
             logger.info(
                 f"Using ProcessingService for profile_id: '{profile_id_requested}'."
             )
@@ -805,10 +809,14 @@ async def api_chat_send_message_stream(
         processing_services_registry = getattr(
             request.app.state, "processing_services", {}
         )
-        if profile_id_requested in processing_services_registry:
-            selected_processing_service = processing_services_registry[
-                profile_id_requested
-            ]
+        candidate = processing_services_registry.get(profile_id_requested)
+        if candidate and candidate.kind == "remote":
+            raise HTTPException(
+                status_code=400,
+                detail=f"Profile '{profile_id_requested}' is a remote delegation-only profile and cannot be used for direct chat.",
+            )
+        if candidate:
+            selected_processing_service = candidate
             logger.info(
                 f"Using ProcessingService for profile_id: '{profile_id_requested}'."
             )
@@ -1445,6 +1453,21 @@ async def get_available_profiles(
 
     # Add all profiles from the registry
     for profile_id, service in processing_services_registry.items():
+        # Skip remote A2A profiles — they are delegation-only targets
+        if service.kind == "remote":
+            service_config = service.service_config
+            profiles.append(
+                ServiceProfile(
+                    id=profile_id,
+                    description=service_config.description
+                    or f"Remote agent: {profile_id}",
+                    llm_model=None,
+                    available_tools=[],
+                    enabled_mcp_servers=[],
+                )
+            )
+            continue
+
         # Get service configuration
         service_config = service.service_config
 
