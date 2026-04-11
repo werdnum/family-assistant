@@ -46,7 +46,11 @@ from family_assistant.indexing.notes_indexer import NotesIndexer
 from family_assistant.indexing.tasks import handle_embed_and_store_batch
 from family_assistant.llm.factory import LLMClientFactory
 from family_assistant.paths import PACKAGE_ROOT
-from family_assistant.processing import ProcessingService, ProcessingServiceConfig
+from family_assistant.processing import (
+    DelegatableService,
+    ProcessingService,
+    ProcessingServiceConfig,
+)
 from family_assistant.services.push_notification import PushNotificationService
 from family_assistant.services.worker_backend import get_worker_backend
 from family_assistant.skills import NoteRegistry, load_skills_from_directory
@@ -108,6 +112,7 @@ if TYPE_CHECKING:
     from fastapi import FastAPI
     from sqlalchemy.ext.asyncio import AsyncEngine
 
+    from family_assistant.config_models import ServiceProfile
     from family_assistant.llm import LLMInterface
     from family_assistant.services.attachment_registry import AttachmentRegistry
     from family_assistant.storage.types import EventConditionEvaluatorConfig
@@ -244,7 +249,7 @@ class Assistant:
         self.fastapi_app: FastAPI | None = None
         self.shared_httpx_client: httpx.AsyncClient | None = None
         self.embedding_generator: EmbeddingGenerator | None = None
-        self.processing_services_registry: dict[str, ProcessingService] = {}
+        self.processing_services_registry: dict[str, DelegatableService] = {}
         self.a2a_cancel_events: dict[str, asyncio.Event] = {}
         self.default_processing_service: ProcessingService | None = None
         self.scraper_instance: PlaywrightScraper | None = None
@@ -675,6 +680,11 @@ class Assistant:
         note_registry = NoteRegistry(all_skills) if all_skills else None
         for profile_conf in resolved_profiles:
             profile_id = profile_conf.id
+
+            if profile_conf.remote_a2a:
+                self._setup_remote_a2a_profile(profile_conf)
+                continue
+
             logger.info(
                 f"Initializing ProcessingService for profile ID: '{profile_id}'"
             )
@@ -975,19 +985,26 @@ class Assistant:
         self.fastapi_app.state.processing_services = self.processing_services_registry
         self.fastapi_app.state.a2a_cancel_events = self.a2a_cancel_events
 
-        self.default_processing_service = self.processing_services_registry.get(
-            default_service_profile_id
-        )
-        if not self.default_processing_service:
+        candidate = self.processing_services_registry.get(default_service_profile_id)
+        if candidate is not None and not isinstance(candidate, ProcessingService):
+            raise SystemExit(
+                f"Default service profile '{default_service_profile_id}' is a remote A2A profile. "
+                f"The default profile must be a local ProcessingService."
+            )
+        self.default_processing_service = candidate
+        if self.default_processing_service is None:
             logger.warning(
                 f"Default service profile ID '{default_service_profile_id}' not found. Falling back to first available."
             )
-            default_service_profile_id = next(
-                iter(self.processing_services_registry.keys())
-            )
-            self.default_processing_service = self.processing_services_registry[
-                default_service_profile_id
-            ]
+            for pid, svc in self.processing_services_registry.items():
+                if isinstance(svc, ProcessingService):
+                    default_service_profile_id = pid
+                    self.default_processing_service = svc
+                    break
+            if self.default_processing_service is None:
+                raise SystemExit(
+                    "No local ProcessingService profiles available for default."
+                )
 
         self.fastapi_app.state.processing_service = self.default_processing_service
         self.fastapi_app.state.llm_client = self.default_processing_service.llm_client
@@ -1112,6 +1129,62 @@ class Assistant:
                 )
             else:
                 logger.info("Event system enabled but no event sources configured")
+
+    def _setup_remote_a2a_profile(self, profile_conf: ServiceProfile) -> None:
+        """Create a RemoteA2AService for a remote A2A profile."""
+        from family_assistant.a2a.auth import A2AAuthConfig  # noqa: PLC0415
+        from family_assistant.a2a.client import A2AClientWrapper  # noqa: PLC0415
+        from family_assistant.a2a.remote_service import (  # noqa: PLC0415
+            RemoteA2AService,
+        )
+        from family_assistant.processing.types import (  # noqa: PLC0415
+            RemoteServiceConfig,
+        )
+
+        remote_config = profile_conf.remote_a2a
+        assert remote_config is not None  # caller checked
+
+        auth_config = A2AAuthConfig(
+            type=remote_config.auth.type,
+            token_env=remote_config.auth.token_env,
+            header_name=remote_config.auth.header_name,
+        )
+
+        # Validate auth env vars at startup
+        auth_errors = auth_config.validate_env_vars()
+        if auth_errors:
+            logger.warning(
+                "Remote A2A profile '%s' has auth config issues: %s",
+                profile_conf.id,
+                "; ".join(auth_errors),
+            )
+
+        client = A2AClientWrapper(
+            agent_url=remote_config.agent_url,
+            auth_config=auth_config,
+            timeout=remote_config.timeout_seconds,
+        )
+
+        service_config = RemoteServiceConfig(
+            id=profile_conf.id,
+            description=profile_conf.description
+            or remote_config.skills_description
+            or f"Remote A2A agent at {remote_config.agent_url}",
+            delegation_security_level=profile_conf.processing_config.delegation_security_level,
+            confirmation_timeout_seconds=profile_conf.tools_config.confirmation_timeout_seconds,
+        )
+
+        service = RemoteA2AService(
+            service_config=service_config,
+            client=client,
+        )
+
+        self.processing_services_registry[profile_conf.id] = service
+        logger.info(
+            "Registered remote A2A profile '%s' -> %s",
+            profile_conf.id,
+            remote_config.agent_url,
+        )
 
     async def start_services(self) -> None:
         """Starts all long-running services and waits for shutdown."""
@@ -1507,7 +1580,15 @@ class Assistant:
                 profile_id,
                 service_instance,
             ) in self.fastapi_app.state.processing_services.items():
-                if (
+                if service_instance.kind == "remote":
+                    try:
+                        await service_instance.close()
+                    except Exception as e:
+                        logger.error(
+                            f"Error closing remote service '{profile_id}': {e}",
+                            exc_info=True,
+                        )
+                elif (
                     hasattr(service_instance, "tools_provider")
                     and service_instance.tools_provider
                 ):

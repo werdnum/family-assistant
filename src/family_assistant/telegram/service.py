@@ -24,7 +24,7 @@ if TYPE_CHECKING:
     from fastapi import FastAPI
 
     from family_assistant.config_models import AppConfig
-    from family_assistant.processing import ProcessingService
+    from family_assistant.processing import DelegatableService, ProcessingService
     from family_assistant.services.attachment_registry import AttachmentRegistry
     from family_assistant.storage.context import DatabaseContext
 
@@ -44,7 +44,7 @@ class TelegramService:
         developer_chat_id: int | None,
         processing_service: ProcessingService,  # Default processing service
         processing_services_registry: dict[
-            str, ProcessingService
+            str, DelegatableService
         ],  # Registry of all services
         app_config: AppConfig,
         attachment_registry: AttachmentRegistry,  # Changed from AttachmentService

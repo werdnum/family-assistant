@@ -39,6 +39,7 @@ from family_assistant.llm.messages import (
     image_url_content,
     text_content,
 )
+from family_assistant.processing import ProcessingService
 from family_assistant.storage.message_history import (
     message_history_table,  # For error handling db update
 )
@@ -50,7 +51,6 @@ if TYPE_CHECKING:
     from collections.abc import AsyncIterator, Callable
 
     from family_assistant.interfaces import ChatInterface
-    from family_assistant.processing import ProcessingService
     from family_assistant.storage.context import DatabaseContext
     from family_assistant.telegram.protocols import MessageBatcher
     from family_assistant.telegram.service import TelegramService
@@ -475,7 +475,9 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
                                     profile_specific_service = self.telegram_service.processing_services_registry.get(
                                         original_profile_id
                                     )
-                                    if profile_specific_service:
+                                    if isinstance(
+                                        profile_specific_service, ProcessingService
+                                    ):
                                         selected_processing_service = (
                                             profile_specific_service
                                         )
@@ -917,6 +919,17 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
         targeted_processing_service = (
             self.telegram_service.processing_services_registry.get(profile_id)
         )
+        if (
+            targeted_processing_service is not None
+            and targeted_processing_service.kind == "remote"
+        ):
+            logger.error(
+                f"Profile '{profile_id}' is a remote profile, cannot use for slash commands."
+            )
+            await update.message.reply_text(
+                f"Error: Profile '{profile_id}' is a remote delegation-only profile."
+            )
+            return
         if not targeted_processing_service:
             logger.error(
                 f"ProcessingService for profile_id '{profile_id}' (command '{command_with_slash}') not found in registry."

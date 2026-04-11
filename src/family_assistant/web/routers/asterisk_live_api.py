@@ -1481,6 +1481,16 @@ async def asterisk_live_endpoint(
         processing_services = getattr(websocket.app.state, "processing_services", {})
         telephone_service = processing_services.get(profile_id)
 
+        if telephone_service and telephone_service.kind == "remote":
+            logger.error(
+                f"Profile '{profile_id}' is a remote profile, cannot use for telephony"
+            )
+            await websocket.close(
+                code=1008,
+                reason=f"Profile '{profile_id}' is a remote delegation-only profile",
+            )
+            return
+
         if telephone_service:
             # Get system prompt
             prompts = telephone_service.service_config.prompts

@@ -23,7 +23,7 @@ from family_assistant.llm.messages import (
     image_url_content,
     text_content,
 )
-from family_assistant.processing import ProcessingService
+from family_assistant.processing import DelegatableService, ProcessingService
 from family_assistant.storage.context import DatabaseContext, get_db_context
 from family_assistant.tools import MCPToolsProvider, find_provider_by_type
 from family_assistant.tools.infrastructure import ToolDescriptorProvider
@@ -366,6 +366,10 @@ class ServiceProfile(BaseModel):
     enabled_mcp_servers: list[str] = Field(
         default_factory=list, description="Enabled MCP servers"
     )
+    delegation_only: bool = Field(
+        default=False,
+        description="If true, this profile is a remote delegation target and cannot be used for direct chat",
+    )
 
 
 class ProfilesResponse(BaseModel):
@@ -407,10 +411,14 @@ async def api_chat_send_message(
         processing_services_registry = getattr(
             request.app.state, "processing_services", {}
         )
-        if profile_id_requested in processing_services_registry:
-            selected_processing_service = processing_services_registry[
-                profile_id_requested
-            ]
+        candidate = processing_services_registry.get(profile_id_requested)
+        if candidate and candidate.kind == "remote":
+            raise HTTPException(
+                status_code=400,
+                detail=f"Profile '{profile_id_requested}' is a remote delegation-only profile and cannot be used for direct chat.",
+            )
+        if candidate:
+            selected_processing_service = candidate
             logger.info(
                 f"Using ProcessingService for profile_id: '{profile_id_requested}'."
             )
@@ -805,10 +813,14 @@ async def api_chat_send_message_stream(
         processing_services_registry = getattr(
             request.app.state, "processing_services", {}
         )
-        if profile_id_requested in processing_services_registry:
-            selected_processing_service = processing_services_registry[
-                profile_id_requested
-            ]
+        candidate = processing_services_registry.get(profile_id_requested)
+        if candidate and candidate.kind == "remote":
+            raise HTTPException(
+                status_code=400,
+                detail=f"Profile '{profile_id_requested}' is a remote delegation-only profile and cannot be used for direct chat.",
+            )
+        if candidate:
+            selected_processing_service = candidate
             logger.info(
                 f"Using ProcessingService for profile_id: '{profile_id_requested}'."
             )
@@ -1435,7 +1447,7 @@ async def get_available_profiles(
     LLM model, and available tools/capabilities.
     """
     # Get processing services registry from app state
-    processing_services_registry: dict[str, ProcessingService] = (
+    processing_services_registry: dict[str, DelegatableService] = (
         request.app.state.processing_services
         if hasattr(request.app.state, "processing_services")
         else {}
@@ -1445,7 +1457,23 @@ async def get_available_profiles(
 
     # Add all profiles from the registry
     for profile_id, service in processing_services_registry.items():
-        # Get service configuration
+        # Skip remote A2A profiles — they are delegation-only targets
+        if service.kind == "remote":
+            service_config = service.service_config
+            profiles.append(
+                ServiceProfile(
+                    id=profile_id,
+                    description=service_config.description
+                    or f"Remote agent: {profile_id}",
+                    llm_model=None,
+                    available_tools=[],
+                    enabled_mcp_servers=[],
+                    delegation_only=True,
+                )
+            )
+            continue
+
+        assert isinstance(service, ProcessingService)  # remote profiles handled above
         service_config = service.service_config
 
         # Extract available tools from tools provider

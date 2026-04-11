@@ -241,8 +241,14 @@ async def create_ephemeral_token(
         processing_services_registry = getattr(
             request.app.state, "processing_services", {}
         )
-        if profile_id in processing_services_registry:
-            target_service = processing_services_registry[profile_id]
+        candidate = processing_services_registry.get(profile_id)
+        if candidate is not None and candidate.kind == "remote":
+            raise HTTPException(
+                status_code=400,
+                detail=f"Profile '{profile_id}' is a remote delegation-only profile and cannot be used for live audio.",
+            )
+        if candidate is not None:
+            target_service = candidate
             logger.info(f"Using ProcessingService for profile_id: '{profile_id}'")
         else:
             logger.warning(

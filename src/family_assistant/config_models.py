@@ -244,11 +244,34 @@ class ToolsConfig(BaseModel):
         ]
 
 
+class RemoteA2AAuthConfig(BaseModel):
+    """Auth configuration for a remote A2A agent (config-level)."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    type: Literal["bearer", "api_key", "none"] = "none"
+    token_env: str | None = None
+    header_name: str = "Authorization"
+
+
+class RemoteA2AConfig(BaseModel):
+    """Configuration for a remote A2A agent profile."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    agent_url: str
+    auth: RemoteA2AAuthConfig = Field(default_factory=RemoteA2AAuthConfig)
+    timeout_seconds: float = 300.0
+    skills_description: str | None = None
+
+
 class ServiceProfile(BaseModel):
     """Configuration for a service profile.
 
     Service profiles allow different assistant behaviors for different
     contexts (e.g., browser profile, research profile, reminder profile).
+    When remote_a2a is set, the profile delegates to a remote A2A agent
+    instead of running a local ProcessingService.
     """
 
     model_config = ConfigDict(extra="forbid")
@@ -262,6 +285,7 @@ class ServiceProfile(BaseModel):
     chat_id_to_name_map: dict[int, str] = Field(default_factory=dict)
     slash_commands: list[str] = Field(default_factory=list)
     visibility_grants: list[str] = Field(default_factory=list)
+    remote_a2a: RemoteA2AConfig | None = None
 
 
 class DefaultProfileSettings(BaseModel):

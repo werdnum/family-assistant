@@ -47,7 +47,7 @@ from family_assistant.a2a.types import (
     TextPart,
 )
 from family_assistant.llm.content_parts import ContentPartDict, text_content
-from family_assistant.processing import ProcessingService
+from family_assistant.processing import DelegatableService, ProcessingService
 from family_assistant.storage.context import DatabaseContext, get_db_context
 from family_assistant.storage.repositories.a2a_tasks import A2ATaskRow
 from family_assistant.web.dependencies import get_current_user, get_db
@@ -60,9 +60,9 @@ a2a_wellknown_router = APIRouter()
 # ===== Helper: resolve processing service by profile =====
 
 
-def _get_processing_services(request: Request) -> dict[str, ProcessingService]:
+def _get_processing_services(request: Request) -> dict[str, DelegatableService]:
     """Get the processing services registry from app state."""
-    registry: dict[str, ProcessingService] = getattr(
+    registry: dict[str, DelegatableService] = getattr(
         request.app.state, "processing_services", {}
     )
     return registry
@@ -85,7 +85,10 @@ async def get_agent_card(request: Request) -> AgentCard:
 
     skills: list[AgentSkill] = []
     for profile_id, service in registry.items():
+        if service.kind == "remote":
+            continue
         config = service.service_config
+        assert isinstance(service, ProcessingService)  # filtered to local above
         tool_defs = await service.tools_provider.get_tool_definitions()
         tool_names = [d.get("function", {}).get("name", "unknown") for d in tool_defs]
 
@@ -697,7 +700,10 @@ def _resolve_service(request: Request, message: Message) -> ProcessingService | 
         profile_id = message.metadata["profile"]
 
     if profile_id and profile_id in registry:
-        return registry[profile_id]
+        candidate = registry[profile_id]
+        if isinstance(candidate, ProcessingService):
+            return candidate
+        return None  # remote profiles can't be served via A2A server
     if default_service:
         return default_service
     return None

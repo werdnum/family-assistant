@@ -211,3 +211,17 @@ class ProcessingServiceConfig:
                 "delegation_security_level must be DelegationSecurityLevel "
                 f"(got {type(self.delegation_security_level).__name__})"
             )
+
+
+@dataclass
+class RemoteServiceConfig:
+    """Minimal config for a remote A2A profile.
+
+    Mirrors the surface area of ProcessingServiceConfig that
+    delegate_to_service and the registry depend on.
+    """
+
+    id: str
+    description: str
+    delegation_security_level: DelegationSecurityLevel
+    confirmation_timeout_seconds: float = 3600.0
