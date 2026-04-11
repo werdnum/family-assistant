@@ -16,6 +16,7 @@ if TYPE_CHECKING:
     from family_assistant.a2a.client import A2AClientWrapper
     from family_assistant.interfaces import ChatInterface
     from family_assistant.llm.content_parts import ContentPartDict
+    from family_assistant.llm.messages import MessageAttachmentMetadata
     from family_assistant.processing.types import (
         ChatInteractionResult,
         RemoteServiceConfig,
@@ -56,6 +57,7 @@ class RemoteA2AService:
         chat_interface: ChatInterface | None = None,
         chat_interfaces: dict[str, ChatInterface] | None = None,
         request_confirmation_callback: RequestConfirmationCallback | None = None,
+        trigger_attachments: list[MessageAttachmentMetadata] | None = None,
         subconversation_id: str | None = None,
     ) -> ChatInteractionResult:
         """Send the request to the remote A2A agent and return the result."""

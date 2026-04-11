@@ -148,7 +148,13 @@ class A2AClientWrapper:
                 f"Timeout connecting to A2A agent at {rpc_url}"
             ) from exc
 
-        body = response.json()
+        try:
+            body = response.json()
+        except ValueError as exc:
+            raise A2AClientError(
+                f"Invalid JSON response from A2A agent at {rpc_url}"
+            ) from exc
+
         if "error" in body:
             error = body["error"]
             raise A2AClientError(
@@ -159,7 +165,10 @@ class A2AClientWrapper:
         if result is None:
             raise A2AClientError("A2A response missing 'result' field")
 
-        return Task.model_validate(result)
+        try:
+            return Task.model_validate(result)
+        except Exception as exc:
+            raise A2AClientError(f"Failed to parse A2A task response: {exc}") from exc
 
     def _convert_and_validate_parts(
         self, content_parts: list[ContentPartDict]
