@@ -204,6 +204,49 @@ log_event()
 
 
 @pytest.mark.asyncio
+async def test_create_automation_with_stored_script_name(
+    db_engine: AsyncEngine,
+) -> None:
+    """Test creating an automation that references a stored script by name."""
+    async with DatabaseContext(engine=db_engine) as db_ctx:
+        # First save a stored script to reference
+        await db_ctx.scripts.save(
+            name="log_event",
+            description="Log an event",
+            script_code='print("event")',
+        )
+
+        exec_context = ToolExecutionContext(
+            interface_type="web",
+            conversation_id="test_conv",
+            user_name="test_user",
+            turn_id="test_turn",
+            db_context=db_ctx,
+            processing_service=None,
+            clock=None,
+            home_assistant_client=None,
+            event_sources=None,
+            attachment_registry=None,
+            camera_backend=None,
+            timezone=ZoneInfo("UTC"),
+        )
+
+        result = await create_automation_tool(
+            exec_context=exec_context,
+            name="Stored Script Automation",
+            automation_type="event",
+            trigger_config={
+                "event_source": "indexing",
+                "event_filter": {"document_type": "pdf"},
+            },
+            action_type="script",
+            action_config={"script_name": "log_event"},
+        )
+
+    assert "Created event automation 'Stored Script Automation'" in result.get_text()
+
+
+@pytest.mark.asyncio
 async def test_create_automation_invalid_type(db_engine: AsyncEngine) -> None:
     """Test that creating automation with invalid type fails."""
     async with DatabaseContext(engine=db_engine) as db_ctx:
