@@ -146,6 +146,109 @@ add_or_update_note(
 
 
 @pytest.mark.asyncio
+async def test_script_execution_by_stored_name(
+    db_engine: AsyncEngine,
+    task_worker_manager: Callable[..., tuple[TaskWorker, asyncio.Event, asyncio.Event]],
+) -> None:
+    """Test that handle_script_execution resolves and runs a stored script by name."""
+    test_run_id = uuid.uuid4()
+    logger.info(f"\n--- Running Stored Script Execution Test ({test_run_id}) ---")
+
+    # Step 1: Save a script to the library and create automation referencing it by name
+    async with DatabaseContext(engine=db_engine) as db_ctx:
+        await db_ctx.scripts.save(
+            name=f"log_temp_{test_run_id}",
+            description="Log temperature to a note",
+            script_code=(
+                'temp = float(event["new_state"]["state"])\n'
+                "add_or_update_note(\n"
+                '    title="Stored Temp Log",\n'
+                '    content="Stored: " + str(temp) + "°C"\n'
+                ")\n"
+            ),
+        )
+        await db_ctx.events.create_event_listener(
+            name=f"Stored Temperature Logger {test_run_id}",
+            source_id=EventSourceType.home_assistant,
+            match_conditions={"entity_id": "sensor.test_temperature"},
+            conversation_id="test_conv",
+            interface_type="telegram",
+            action_type=EventActionType.script,
+            action_config={"script_name": f"log_temp_{test_run_id}"},
+            enabled=True,
+        )
+
+    # Step 2: Minimal infrastructure
+    processor = EventProcessor(
+        sources={},
+        sample_interval_hours=1.0,
+        get_db_context_func=lambda: get_db_context(db_engine),
+        timezone=ZoneInfo("Australia/Sydney"),
+    )
+    processor._running = True
+    await processor._refresh_listener_cache()
+
+    local_provider = LocalToolsProvider(
+        definitions=NOTE_TOOLS_DEFINITION,
+        implementations={
+            "add_or_update_note": local_tool_implementations["add_or_update_note"]
+        },
+    )
+    tools_provider = CompositeToolsProvider(providers=[local_provider])
+    await tools_provider.get_tool_definitions()
+
+    processing_service = ProcessingService(
+        llm_client=RuleBasedMockLLMClient(
+            rules=[], default_response=LLMOutput(content="N/A")
+        ),
+        tools_provider=tools_provider,
+        service_config=ProcessingServiceConfig(
+            id="event_handler",
+            prompts={"system_prompt": "Event handler"},
+            timezone=ZoneInfo("UTC"),
+            max_history_messages=1,
+            history_max_age_hours=1,
+            tools_config=ToolsConfig(),
+            delegation_security_level=DelegationSecurityLevel.BLOCKED,
+        ),
+        app_config=AppConfig(),
+        context_providers=[],
+        server_url=None,
+    )
+
+    worker, new_task_event, _shutdown_event = task_worker_manager(
+        processing_service,
+        AsyncMock(spec=ChatInterface),
+    )
+    worker.register_task_handler("script_execution", handle_script_execution)
+    # ast-grep-ignore: no-asyncio-sleep-in-tests - Waiting for task worker to start and register handler
+    await asyncio.sleep(0.1)
+
+    # Step 3: Trigger the event
+    await processor.process_event(
+        "home_assistant",
+        {
+            "entity_id": "sensor.test_temperature",
+            "old_state": {"state": "18.0"},
+            "new_state": {"state": "24.5"},
+        },
+    )
+
+    new_task_event.set()
+    await wait_for_tasks_to_complete(db_engine, task_types={"script_execution"})
+
+    # Step 4: Verify the stored script was resolved and executed
+    async with DatabaseContext(engine=db_engine) as db_ctx:
+        note = await db_ctx.notes.get_by_title(
+            "Stored Temp Log", visibility_grants=None
+        )
+        assert note is not None
+        assert "Stored: 24.5°C" in note.content
+
+    logger.info(f"--- Stored Script Execution Test ({test_run_id}) Passed ---")
+
+
+@pytest.mark.asyncio
 async def test_script_with_syntax_error_creates_no_note(
     db_engine: AsyncEngine,
     task_worker_manager: Callable[..., tuple[TaskWorker, asyncio.Event, asyncio.Event]],

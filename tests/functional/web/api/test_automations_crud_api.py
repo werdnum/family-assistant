@@ -112,7 +112,7 @@ class TestEventAutomationsAPI:
     async def test_create_event_automation_script_action_requires_script_code(
         self, api_test_client: AsyncClient
     ) -> None:
-        """Test that script action type requires script_code in action_config."""
+        """Test that script action type requires script_code or script_name."""
         automation_data = {
             "name": "Test Script Without Code",
             "source_id": "webhook",
@@ -127,7 +127,7 @@ class TestEventAutomationsAPI:
         )
 
         assert response.status_code == 400
-        assert "script_code is required" in response.json()["detail"]
+        assert "script_code" in response.json()["detail"]
 
     async def test_get_event_automation_includes_condition_script(
         self, api_test_client: AsyncClient
@@ -346,7 +346,7 @@ class TestScheduleAutomationsAPI:
         )
 
         assert response.status_code == 400
-        assert "script_code is required" in response.json()["detail"]
+        assert "script_code" in response.json()["detail"]
 
     async def test_get_schedule_automation(self, api_test_client: AsyncClient) -> None:
         """Test that GET endpoint returns schedule automation details."""
