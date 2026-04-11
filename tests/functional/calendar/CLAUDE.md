@@ -43,11 +43,9 @@ and CalDAV services.
 - Canceling operations via confirmation UI
 - Testing confirmation UI interactions
 
-**`test_recurring_task_timezone.py`** - Recurring events and timezones
-
-- Creating recurring events with proper recurrence rules
-- Handling timezone conversions for international users
-- Verifying recurring event instances
+Recurring schedule / timezone coverage for the automations framework lives in
+`tests/functional/automations/` and `tests/functional/storage/test_automations_crud.py`. Recurring
+schedules are created via `create_automation`, not via calendar tools.
 
 ## Key Fixtures
 

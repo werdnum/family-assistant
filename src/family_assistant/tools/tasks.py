@@ -1,7 +1,8 @@
 """Task and callback management tools.
 
 This module contains tools for scheduling, modifying, and managing
-recurring tasks and future callbacks.
+one-time reminders and future callbacks. Recurring schedules should be
+created via the automations framework (``create_automation``).
 """
 
 from __future__ import annotations
@@ -11,7 +12,6 @@ import uuid
 from datetime import UTC
 from typing import TYPE_CHECKING, Any
 
-from dateutil import rrule
 from dateutil.parser import isoparse
 from sqlalchemy import select, update
 
@@ -122,69 +122,11 @@ TASK_TOOLS_DEFINITION: list[ToolDefinition] = [
     {
         "type": "function",
         "function": {
-            "name": "schedule_recurring_task",
-            "description": (
-                "Schedule a recurring LLM callback that will trigger repeatedly based on a recurrence rule (RRULE string). Use this for tasks that need to happen on a regular schedule, like daily briefings, weekly check-ins, or periodic reminders. "
-                "IMPORTANT: Each recurring task creates individual callback instances that can be managed using list_pending_callbacks, modify_pending_callback, and cancel_pending_callback tools. "
-                "To stop a recurring task entirely, you must cancel all its pending instances.\n\n"
-                "Returns: A string indicating the result. "
-                "On success, returns 'OK. Recurring callback [task_id] scheduled starting [time] with rule [rule].'. "
-                "On invalid arguments (RRULE format, past time), returns 'Error: Invalid arguments provided. [details]'. "
-                "On other errors, returns 'Error: Failed to schedule the recurring task.'."
-            ),
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "initial_schedule_time": {
-                        "type": "string",
-                        "format": "date-time",
-                        "description": (
-                            "The exact date and time (ISO 8601 format with timezone, e.g., '2025-05-15T08:00:00+00:00') when the *first* instance of the callback should run."
-                        ),
-                    },
-                    "recurrence_rule": {
-                        "type": "string",
-                        "description": (
-                            "An RRULE string defining the recurrence schedule according to RFC 5545 (e.g., 'FREQ=DAILY;INTERVAL=1;BYHOUR=8;BYMINUTE=0' for 8:00 AM daily, 'FREQ=WEEKLY;BYDAY=MO' for every Monday)."
-                        ),
-                    },
-                    "callback_context": {
-                        "type": "string",
-                        "description": (
-                            "The context or instructions for the LLM when the callback triggers (e.g., 'Send a morning briefing with today's calendar events and weather', 'Check if any important emails arrived')."
-                        ),
-                    },
-                    "max_retries": {
-                        "type": "integer",
-                        "description": (
-                            "Optional. Maximum number of retries for each instance if it fails (default: 3)."
-                        ),
-                        "default": 3,
-                    },
-                    "description": {
-                        "type": "string",
-                        "description": (
-                            "Optional. A short, URL-safe description to help identify the task (e.g., 'daily_brief', 'weekly_summary')."
-                        ),
-                    },
-                },
-                "required": [
-                    "initial_schedule_time",
-                    "recurrence_rule",
-                    "callback_context",
-                ],
-            },
-        },
-    },
-    {
-        "type": "function",
-        "function": {
             "name": "list_pending_callbacks",
             "description": (
                 "Lists all pending LLM callback tasks for the current conversation, including:"
                 "\n- One-time callbacks from schedule_future_callback"
                 "\n- Reminder callbacks from schedule_reminder"
-                "\n- Individual instances of recurring tasks from schedule_recurring_task"
                 "\nReturns task IDs, scheduled times, and context for each pending callback.\n\n"
                 "Returns: A formatted string listing pending callbacks. "
                 "If callbacks exist, returns 'Pending LLM callbacks:' followed by entries with '- Task ID: [id]\n  Scheduled At: [time]\n  Context: [context preview]'. "
@@ -249,8 +191,6 @@ TASK_TOOLS_DEFINITION: list[ToolDefinition] = [
                 "Cancels a specific pending LLM callback task by its task_id. Use this to:"
                 "\n- Cancel one-time future callbacks"
                 "\n- Cancel scheduled reminders"
-                "\n- Cancel individual instances of recurring tasks"
-                "\n- Stop a recurring task by canceling all its pending instances (use list_pending_callbacks first to find them)"
                 "\nNote: This cancels only the specific task instance identified by task_id.\n\n"
                 "Returns: A string indicating the result. "
                 "On success, returns 'Callback task [task_id] cancelled successfully.'. "
@@ -313,65 +253,6 @@ TASK_TOOLS_DEFINITION: list[ToolDefinition] = [
                     },
                 },
                 "required": ["schedule_time", "action_config"],
-            },
-        },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "schedule_recurring_action",
-            "description": (
-                "Schedule a recurring action (wake_llm or script) using RRULE format. "
-                "This tool allows scheduling scripts to run on a recurring basis, "
-                "complementing schedule_recurring_task which only supports LLM callbacks.\n\n"
-                "Returns: A string indicating the result. "
-                "On success, returns 'OK. Recurring [action_type] action scheduled starting [start_time]' or 'OK. Recurring [action_type] action ([task_name]) scheduled starting [start_time]' if task_name provided. "
-                "If invalid action_type, returns 'Error: Invalid action_type. Must be one of: [valid types]'. "
-                "If wake_llm missing context, returns 'Error: wake_llm action requires 'context' in action_config'. "
-                "If script missing script_code, returns 'Error: script action requires 'script_code' in action_config'. "
-                "If start_time in past, returns 'Error: Start time must be in the future'. "
-                "On invalid time format, returns 'Error: Invalid start_time format: [details]'. "
-                "On invalid RRULE, returns 'Error: Invalid recurrence rule: [details]'. "
-                "On other errors, returns 'Error: Failed to schedule recurring action. [details]'."
-            ),
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "start_time": {
-                        "type": "string",
-                        "format": "date-time",
-                        "description": "When to start the recurring schedule (ISO 8601 format with timezone)",
-                    },
-                    "recurrence_rule": {
-                        "type": "string",
-                        "description": (
-                            "RRULE format string (e.g., 'FREQ=DAILY;INTERVAL=1', 'FREQ=WEEKLY;BYDAY=MO,WE,FR', "
-                            "'FREQ=HOURLY;INTERVAL=4')"
-                        ),
-                    },
-                    "action_type": {
-                        "type": "string",
-                        "enum": ["wake_llm", "script"],
-                        "description": "Type of action to execute",
-                        "default": "wake_llm",
-                    },
-                    "action_config": {
-                        "type": "object",
-                        "description": (
-                            "Configuration for the action. "
-                            "For wake_llm: {'context': 'message for LLM'}. "
-                            "For script: {'script_code': 'Python code', 'timeout': 600}"
-                        ),
-                    },
-                    "task_name": {
-                        "type": "string",
-                        "description": (
-                            "Optional. A short, URL-safe description to help identify the recurring task "
-                            "(e.g., 'daily_weather_check', 'hourly_metrics')"
-                        ),
-                    },
-                },
-                "required": ["start_time", "recurrence_rule", "action_config"],
             },
         },
     },
@@ -478,115 +359,6 @@ async def schedule_reminder_tool(
     except Exception as e:
         logger.error(f"Failed to schedule reminder: {e}", exc_info=True)
         return "Error: Failed to schedule the reminder."
-
-
-async def schedule_recurring_task_tool(
-    exec_context: ToolExecutionContext,
-    initial_schedule_time: str,
-    recurrence_rule: str,
-    callback_context: str,
-    max_retries: int | None = 3,
-    description: str | None = None,
-) -> str | None:
-    """
-    Schedules a recurring LLM callback task.
-
-    Args:
-        exec_context: The execution context containing db_context and timezone.
-        initial_schedule_time: ISO 8601 datetime string for the *first* run.
-        recurrence_rule: RRULE string specifying the recurrence (e.g., 'FREQ=DAILY;INTERVAL=1;BYHOUR=8;BYMINUTE=0').
-        callback_context: The context/instructions for the LLM when the callback triggers.
-        max_retries: Maximum number of retries for each instance (default 3).
-        description: A short, URL-safe description to include in the task ID (e.g., 'daily_brief').
-    """
-
-    # Hardcode task type to llm_callback
-    task_type = "llm_callback"
-
-    logger.info(
-        f"RECURRING TASK CREATION START: type='{task_type}', initial='{initial_schedule_time}', rule='{recurrence_rule}', description='{description}'"
-    )
-    db_context = exec_context.db_context
-    interface_type = exec_context.interface_type
-    conversation_id = exec_context.conversation_id
-    user_name = exec_context.user_name  # Extract user_name from context
-    clock = exec_context.clock or SystemClock()
-
-    try:
-        # Validate recurrence rule format (basic validation)
-        try:
-            # We don't need dtstart here, just parsing validity
-            rrule.rrulestr(recurrence_rule)
-        except ValueError as rrule_err:
-            logger.error(
-                f"RECURRING TASK CREATION ERROR: Invalid recurrence rule '{recurrence_rule}': {rrule_err}"
-            )
-            raise ValueError(
-                f"Invalid recurrence_rule format: {rrule_err}"
-            ) from rrule_err
-
-        # Parse the initial schedule time
-        initial_dt = isoparse(initial_schedule_time)
-        if initial_dt.tzinfo is None:
-            logger.warning(
-                f"RECURRING TASK CREATION WARNING: Initial schedule time '{initial_schedule_time}' lacks timezone. Assuming {exec_context.timezone}."
-            )
-            initial_dt = initial_dt.replace(tzinfo=exec_context.timezone)
-
-        # Ensure it's in the future (optional, but good practice)
-        # Use the clock from context to ensure test compatibility
-        now_aware = clock.now()
-        if initial_dt <= now_aware:
-            logger.error(
-                f"RECURRING TASK CREATION ERROR: Initial schedule time {initial_dt} is not in the future (now: {now_aware})"
-            )
-            raise ValueError("Initial schedule time must be in the future.")
-
-        # Generate the *initial* unique task ID
-        base_id = f"recurring_{task_type}"
-        if description:
-            safe_desc = "".join(
-                c if c.isalnum() or c in {"-", "_"} else "_"
-                for c in description.lower()
-            )
-            base_id += f"_{safe_desc}"
-        initial_task_id = f"{base_id}_{uuid.uuid4()}"
-
-        logger.info(
-            f"RECURRING TASK CREATION ID: Generated initial task ID '{initial_task_id}' for base '{base_id}'"
-        )
-
-        # Build the payload for llm_callback
-        scheduling_time = clock.now()
-        payload: LlmCallbackPayload = {
-            "interface_type": interface_type,
-            "conversation_id": conversation_id,
-            "user_name": user_name,  # Save user_name in payload
-            "callback_context": callback_context,
-            "scheduling_timestamp": scheduling_time.isoformat(),
-        }
-
-        # Enqueue the first instance using the db_context from exec_context
-        await db_context.tasks.enqueue(
-            task_id=initial_task_id,
-            task_type=task_type,
-            payload=payload,
-            scheduled_at=initial_dt,
-            max_retries_override=max_retries,
-            recurrence_rule=recurrence_rule,
-        )
-        logger.info(
-            f"RECURRING TASK CREATION SUCCESS: Scheduled initial recurring task {initial_task_id} (Type: {task_type}) starting at {initial_dt} with rule '{recurrence_rule}'"
-        )
-        return f"OK. Recurring callback '{initial_task_id}' scheduled starting {initial_schedule_time} with rule '{recurrence_rule}'."
-    except ValueError as ve:
-        logger.error(f"RECURRING TASK CREATION ERROR: Invalid arguments: {ve}")
-        return f"Error: Invalid arguments provided. {ve}"
-    except Exception as e:
-        logger.error(
-            f"RECURRING TASK CREATION ERROR: Failed to schedule: {e}", exc_info=True
-        )
-        return "Error: Failed to schedule the recurring task."
 
 
 async def schedule_future_callback_tool(
@@ -974,89 +746,3 @@ async def schedule_action_tool(
     except Exception as e:
         logger.error(f"Error scheduling action: {e}", exc_info=True)
         return f"Error: Failed to schedule action. {e}"
-
-
-async def schedule_recurring_action_tool(
-    exec_context: ToolExecutionContext,
-    start_time: str,
-    recurrence_rule: str,
-    action_type: str = "wake_llm",
-    # ast-grep-ignore: no-dict-any - action config has varying keys per action type
-    action_config: dict[str, Any] | None = None,
-    task_name: str | None = None,
-) -> str:
-    """Schedule a recurring action.
-
-    Args:
-        exec_context: The ToolExecutionContext containing execution details
-        start_time: ISO 8601 formatted datetime string for first occurrence
-        recurrence_rule: RRULE format string
-        action_type: Type of action to execute ("wake_llm" or "script")
-        action_config: Configuration for the action
-        task_name: Optional identifier for the recurring task
-
-    Returns:
-        Success message or error description
-    """
-    if action_config is None:
-        action_config = {}
-
-    # Validate action type using enum
-    try:
-        action_type_enum = ActionType(action_type)
-    except ValueError:
-        return f"Error: Invalid action_type. Must be one of: {[e.value for e in ActionType]}"
-
-    # Validate action config based on type
-    if action_type_enum == ActionType.WAKE_LLM and "context" not in action_config:
-        return "Error: wake_llm action requires 'context' in action_config"
-    elif action_type_enum == ActionType.SCRIPT:
-        script_error = await validate_script_action_config(
-            exec_context.db_context, action_config
-        )
-        if script_error:
-            return f"Error: {script_error}"
-
-    # Parse and validate start time
-    clock = exec_context.clock or SystemClock()
-    try:
-        start_dt = isoparse(start_time)
-        if start_dt.tzinfo is None:
-            logger.warning(
-                f"Start time lacks timezone, assuming {exec_context.timezone}"
-            )
-            start_dt = start_dt.replace(tzinfo=exec_context.timezone)
-
-        if start_dt <= clock.now():
-            return "Error: Start time must be in the future"
-    except ValueError as e:
-        return f"Error: Invalid start_time format: {e}"
-
-    # Validate RRULE
-    try:
-        rrule.rrulestr(recurrence_rule, dtstart=start_dt)
-    except Exception as e:
-        return f"Error: Invalid recurrence rule: {e}"
-
-    # Use the shared action executor with recurrence
-    try:
-        await execute_action(
-            db_ctx=exec_context.db_context,
-            action_type=action_type_enum,
-            action_config=action_config,
-            conversation_id=exec_context.conversation_id,
-            interface_type=exec_context.interface_type,
-            user_name=exec_context.user_name,  # Pass user_name
-            context={
-                "scheduled_via": "schedule_recurring_action tool",
-                "task_name": task_name,
-            },
-            scheduled_at=start_dt,
-            recurrence_rule=recurrence_rule,
-        )
-
-        task_desc = f" ('{task_name}')" if task_name else ""
-        return f"OK. Recurring {action_type} action{task_desc} scheduled starting {start_time}"
-    except Exception as e:
-        logger.error(f"Error scheduling recurring action: {e}", exc_info=True)
-        return f"Error: Failed to schedule recurring action. {e}"

@@ -206,8 +206,6 @@ from family_assistant.tools.tasks import (
     modify_pending_callback_tool,
     schedule_action_tool,
     schedule_future_callback_tool,
-    schedule_recurring_action_tool,
-    schedule_recurring_task_tool,
     schedule_reminder_tool,
 )
 from family_assistant.tools.types import (
@@ -284,7 +282,6 @@ __all__ = [
     # Confirmation renderers
     "TOOL_CONFIRMATION_RENDERERS",
     # Individual tool functions (for testing/direct use)
-    "schedule_recurring_task_tool",
     "schedule_future_callback_tool",
     "search_documents_tool",
     "get_full_document_content_tool",
@@ -307,7 +304,6 @@ __all__ = [
     "list_notes_tool",
     "schedule_reminder_tool",
     "schedule_action_tool",
-    "schedule_recurring_action_tool",
     "EVENT_TOOLS_DEFINITION",
     "query_recent_events_tool",
     "test_event_listener_tool",
@@ -469,10 +465,8 @@ _LOCAL_TOOL_IMPLEMENTATIONS: dict[str, ToolImplementation] = {
     "list_notes": list_notes_tool,
     "delete_note": delete_note_tool,
     "schedule_future_callback": schedule_future_callback_tool,
-    "schedule_recurring_task": schedule_recurring_task_tool,
     "schedule_reminder": schedule_reminder_tool,
     "schedule_action": schedule_action_tool,
-    "schedule_recurring_action": schedule_recurring_action_tool,
     "search_documents": search_documents_tool,
     "get_full_document_content": get_full_document_content_tool,
     "get_attachment_info": get_attachment_info_tool,
@@ -617,11 +611,6 @@ LOCAL_TOOL_METADATA_BY_NAME: dict[str, LocalToolMetadata] = {
         ToolTag.SCHEDULING,
         ToolTag.OUTPUT_TRUSTED,
     ),
-    "schedule_recurring_task": _metadata(
-        ToolTag.STATE_CHANGING,
-        ToolTag.SCHEDULING,
-        ToolTag.OUTPUT_TRUSTED,
-    ),
     "list_pending_callbacks": _metadata(
         ToolTag.READ_ONLY,
         ToolTag.SCHEDULING,
@@ -639,12 +628,6 @@ LOCAL_TOOL_METADATA_BY_NAME: dict[str, LocalToolMetadata] = {
         ToolTag.OUTPUT_TRUSTED,
     ),
     "schedule_action": _metadata(
-        ToolTag.STATE_CHANGING,
-        ToolTag.SCHEDULING,
-        ToolTag.AUTOMATION,
-        ToolTag.OUTPUT_TRUSTED,
-    ),
-    "schedule_recurring_action": _metadata(
         ToolTag.STATE_CHANGING,
         ToolTag.SCHEDULING,
         ToolTag.AUTOMATION,

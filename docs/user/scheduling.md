@@ -1,7 +1,7 @@
 # Scheduling and Task Management Guide
 
 This guide explains how to use the Family Assistant's scheduling features to set reminders, schedule
-tasks, and automate recurring actions.
+one-time callbacks and scripts, and manage recurring schedules via the automations framework.
 
 ## Overview
 
@@ -9,8 +9,9 @@ The Family Assistant provides several ways to schedule future actions:
 
 1. **Reminders** - Simple notifications at specific times
 2. **Callbacks** - Assistant wake-ups to continue work or check on tasks
-3. **Scheduled Scripts** - Automated script execution at specific times
-4. **Recurring Tasks** - Any of the above on a repeating schedule
+3. **Scheduled Scripts/Actions** - One-time action execution at specific times
+4. **Recurring Schedules** - Use the automations framework (see [Automations](./automations.md)) for
+   anything that repeats on a schedule.
 
 ## Quick Start Examples
 
@@ -38,7 +39,10 @@ The Family Assistant provides several ways to schedule future actions:
 "Run a script in 30 minutes to check system status"
 ```
 
-### Recurring Tasks
+### Recurring Schedules
+
+Recurring schedules are created via the automations framework rather than a dedicated scheduling
+tool. Under the hood the assistant calls `create_automation` with `automation_type="schedule"`.
 
 ```
 "Send me a weather update every morning at 7am"
@@ -106,58 +110,50 @@ Schedules any type of action (LLM callback or script) for one-time execution.
 "Run an LLM task at 3pm to review today's activities"
 ```
 
-### schedule_recurring_task
+### Recurring schedules (`create_automation`)
 
-Creates a recurring LLM callback using RRULE format.
+For anything that should repeat on a schedule, the assistant uses the automations framework —
+specifically `create_automation` with `automation_type="schedule"`. There is no longer a dedicated
+legacy "recurring task" tool; it has been fully superseded by automations.
 
-**Parameters:**
+**Key parameters:**
 
-- `initial_schedule_time`: When to start (ISO 8601 format)
-- `recurrence_rule`: RRULE string defining the schedule
-- `callback_context`: What the assistant should do each time
-- `description`: Optional identifier for the task
+- `name`: Short identifier for the automation
+- `automation_type`: `"schedule"`
+- `trigger_config`: `{"recurrence_rule": "<RRULE>", "timezone": "<IANA tz>"}`
+- `action_type`: `"wake_llm"` or `"script"`
+- `action_config`:
+  - wake_llm: `{"context": "what the assistant should do each run"}`
+  - script: `{"script_code": "..."}` (inline) or `{"script_name": "..."}` (stored script)
 
 **Examples:**
 
 ```
 "Send me a daily briefing every morning at 8am"
-→ Uses RRULE: "FREQ=DAILY;BYHOUR=8;BYMINUTE=0"
+→ create_automation(automation_type="schedule", action_type="wake_llm",
+  trigger_config={"recurrence_rule": "FREQ=DAILY;BYHOUR=8;BYMINUTE=0", ...})
 
-"Check for important emails every Monday and Friday at 9am"
-→ Uses RRULE: "FREQ=WEEKLY;BYDAY=MO,FR;BYHOUR=9;BYMINUTE=0"
-```
-
-### schedule_recurring_action
-
-Creates a recurring action (LLM callback or script) with more flexibility.
-
-**Parameters:**
-
-- `start_time`: When to start (ISO 8601 format)
-- `recurrence_rule`: RRULE string
-- `action_type`: Either "wake_llm" or "script"
-- `action_config`: Configuration for the action
-- `task_name`: Optional identifier
-
-**Examples:**
-
-```
 "Run a cleanup script every Sunday at midnight"
-→ action_type="script", RRULE="FREQ=WEEKLY;BYDAY=SU;BYHOUR=0;BYMINUTE=0"
-
-"Execute a metrics collection script every 4 hours"
-→ action_type="script", RRULE="FREQ=HOURLY;INTERVAL=4"
+→ create_automation(automation_type="schedule", action_type="script",
+  trigger_config={"recurrence_rule": "FREQ=WEEKLY;BYDAY=SU;BYHOUR=0;BYMINUTE=0", ...})
 ```
+
+See the [Automations guide](./automations.md) for the full parameter reference and more examples.
 
 ## Managing Scheduled Tasks
 
 ### Listing Tasks
+
+One-time reminders and callbacks:
 
 ```
 "Show me all my pending callbacks"
 "List all scheduled reminders"
 "What tasks are scheduled for tomorrow?"
 ```
+
+Recurring schedules are automations — list them with `list_automations` or from the Automations page
+in the web UI.
 
 ### Modifying Tasks
 
@@ -166,16 +162,22 @@ Creates a recurring action (LLM callback or script) with more flexibility.
 "Update the context for callback task_123"
 ```
 
+Recurring schedules are modified via `update_automation`.
+
 ### Cancelling Tasks
+
+One-time reminders and callbacks are cancelled by task id:
 
 ```
 "Cancel the reminder about the meeting"
-"Stop all daily weather updates"
-"Delete all callbacks related to project X"
 ```
 
-For recurring tasks, each future instance appears as a separate task that can be cancelled
-individually.
+Recurring schedules are stopped via `disable_automation` or removed with `delete_automation`:
+
+```
+"Stop the daily weather updates"
+"Delete the cleanup automation"
+```
 
 ## RRULE Format Guide
 

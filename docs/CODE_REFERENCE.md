@@ -758,15 +758,12 @@ orchestrates tool confirmation logic.
 - `ToolConfirmationRequired`: Exception raised when confirmation is needed.
 - `ToolConfirmationFailed`: Exception raised when confirmation fails.
 - `ToolsProvider` (Protocol): Interface for tool providers.
-- `schedule_recurring_task_tool()`: Local tool to schedule recurring LLM callbacks with RRULE
-  support.
 - `schedule_future_callback_tool()`: Local tool to schedule one-time LLM callbacks at a specific
   time.
 - `schedule_reminder_tool()`: Local tool to schedule reminders with optional follow-up support.
 - `schedule_action_tool()`: Local tool to schedule any action type (wake_llm or script) at a
-  specific time.
-- `schedule_recurring_action_tool()`: Local tool to schedule recurring actions (wake_llm or script)
-  using RRULE format.
+  specific time. Recurring schedules are created via the automations framework (`create_automation`)
+  instead.
 - `list_pending_callbacks_tool()`: Local tool to list pending LLM callback tasks.
 - `modify_pending_callback_tool()`: Local tool to modify a pending LLM callback task.
 - `cancel_pending_callback_tool()`: Local tool to cancel a pending LLM callback task.
