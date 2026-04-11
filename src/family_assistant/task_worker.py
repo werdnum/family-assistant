@@ -1565,6 +1565,20 @@ async def handle_script_execution(
         if stored_script is None:
             raise ValueError(f"Stored script '{script_name}' not found")
         script_code = stored_script.script_code
+
+        # Validate parameters against stored script schema
+        script_parameters = payload.get("script_parameters")
+        if stored_script.parameters_schema:
+            params = script_parameters or {}
+            required = stored_script.parameters_schema.get("required", [])
+            if not isinstance(required, list):
+                required = []
+            for req in required:
+                if req not in params:
+                    raise ValueError(
+                        f"Stored script '{script_name}' requires parameter '{req}'"
+                    )
+
         logger.info(f"Resolved script_name '{script_name}' to stored script code")
 
     # Validate required fields
