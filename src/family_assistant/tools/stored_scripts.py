@@ -142,11 +142,19 @@ async def save_script_tool(
     if tools_provider:
         tool_definitions = await tools_provider.get_tool_definitions()
 
-    # Build input_names from schema properties only.
+    # Build input_names from schema properties and required fields.
     # Scripts that need automation globals (event, etc.) should declare them in parameters_schema.
     input_names: list[str] | None = None
-    if parameters_schema and isinstance(parameters_schema.get("properties"), dict):
-        input_names = list(parameters_schema["properties"].keys())
+    if parameters_schema:
+        declared: set[str] = set()
+        if isinstance(parameters_schema.get("properties"), dict):
+            declared.update(parameters_schema["properties"].keys())
+        if isinstance(parameters_schema.get("required"), list):
+            declared.update(
+                k for k in parameters_schema["required"] if isinstance(k, str)
+            )
+        if declared:
+            input_names = sorted(declared)
 
     validation = ScriptValidator(tool_definitions=tool_definitions).validate(
         code,

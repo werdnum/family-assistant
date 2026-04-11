@@ -533,3 +533,43 @@ async def test_save_script_malformed_required_not_list(db_engine: AsyncEngine) -
         )
         assert isinstance(save_result.data, dict)
         assert "error" in save_result.data
+
+
+@pytest.mark.asyncio
+async def test_save_script_with_required_only_schema(db_engine: AsyncEngine) -> None:
+    """Schema with 'required' but no 'properties' should still accept those names."""
+    async with DatabaseContext(engine=db_engine) as db:
+        context = ToolExecutionContext(
+            interface_type="test",
+            conversation_id="test-conv-required-only",
+            user_name="Test User",
+            turn_id="turn-1",
+            db_context=db,
+            processing_service=None,
+            clock=None,
+            home_assistant_client=None,
+            event_sources=None,
+            attachment_registry=None,
+            camera_backend=None,
+            timezone=ZoneInfo("UTC"),
+        )
+
+        # Schema declares x as required without listing it in properties
+        schema = {"type": "object", "required": ["x"]}
+        save_result = await save_script_tool(
+            context,
+            name="required-only",
+            description="Uses x without properties declaration",
+            code="x * 2",
+            parameters_schema=schema,
+        )
+        assert isinstance(save_result.data, dict)
+        assert "error" not in save_result.data, (
+            f"Unexpected save error: {save_result.data}"
+        )
+
+        # And it should run correctly with a supplied parameter
+        run_result = await execute_script_tool(
+            context, name="required-only", parameters={"x": 7}
+        )
+        assert run_result.data == 14
