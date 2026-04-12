@@ -173,6 +173,9 @@ def _generate_builtin_api_stubs(
         )
         lines.append("def attachment_read(attachment_id: str) -> str | None: ...")
         lines.append(
+            "def attachment_read_bytes(attachment_id: str) -> bytes | None: ..."
+        )
+        lines.append(
             "def attachment_create(content: bytes | str, filename: str, description: str = ..., mime_type: str = ...) -> dict[str, Any]: ..."
         )
         lines.append("")
@@ -511,6 +514,7 @@ class ScriptValidator:
             names.extend([
                 "attachment_get",
                 "attachment_read",
+                "attachment_read_bytes",
                 "attachment_create",
             ])
         if include_tools_api:

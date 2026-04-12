@@ -306,6 +306,22 @@ class AttachmentAPI:
         async with DatabaseContext(engine=self._require_db_engine()) as db_context:
             return await _do_read(db_context)
 
+    async def _read_bytes_async(self, attachment_id: str) -> bytes | None:
+        """Read attachment content as raw bytes without UTF-8 decoding."""
+
+        async def _do_read(db_ctx: DatabaseContext) -> bytes | None:
+            return await self.attachment_registry.get_attachment_content(
+                db_ctx, attachment_id
+            )
+
+        # Use existing db_context if available (allows reading uncommitted attachments)
+        if self.db_context:
+            return await _do_read(self.db_context)
+
+        # Fallback: create new context (for standalone use cases)
+        async with DatabaseContext(engine=self._require_db_engine()) as db_context:
+            return await _do_read(db_context)
+
     async def _get_async(self, attachment_id: str) -> AttachmentInfoDict | None:
         """Get attachment metadata by ID."""
 
