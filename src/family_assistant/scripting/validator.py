@@ -157,7 +157,7 @@ def _generate_builtin_api_stubs(
         lines.append("")
 
     # Base64 API (always available)
-    lines.append("def base64_encode(data: str | bytes) -> str: ...")
+    lines.append("def base64_encode(data: str | bytes | None) -> str: ...")
     lines.append("def base64_decode(data: str) -> str: ...")
     lines.append("def base64_decode_bytes(data: str) -> bytes: ...")
     lines.append("")

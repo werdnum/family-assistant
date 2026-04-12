@@ -491,3 +491,111 @@ chart
         )
         # Should contain indication of success
         assert "Error:" not in result.text or "Script result:" in result.text
+
+
+@pytest.mark.asyncio
+async def test_execute_script_base64_encode_bytes(db_engine: AsyncEngine) -> None:
+    """Test base64_encode with bytes argument through the full execute_script tool path.
+
+    This exercises both validation (type checker) and runtime to ensure bytes
+    are properly supported as an argument to base64_encode.
+    """
+    async with DatabaseContext(engine=db_engine) as db:
+        ctx = ToolExecutionContext(
+            interface_type="test",
+            conversation_id="test-conv",
+            user_name="test",
+            turn_id=None,
+            db_context=db,
+            clock=None,
+            home_assistant_client=None,
+            event_sources=None,
+            attachment_registry=None,
+            processing_service=None,
+            camera_backend=None,
+            timezone=ZoneInfo("UTC"),
+        )
+
+        # Test 1: bytes literal
+        result = await execute_script_tool(ctx, 'base64_encode(b"hello")')
+        assert result.text is not None
+        assert "aGVsbG8=" in result.text, f"Unexpected result: {result.text}"
+
+        # Test 2: bytes from base64_decode_bytes round-trip
+        result = await execute_script_tool(
+            ctx,
+            """
+data = base64_decode_bytes("aGVsbG8=")
+base64_encode(data)
+""",
+        )
+        assert result.text is not None
+        assert "aGVsbG8=" in result.text, f"Unexpected result: {result.text}"
+
+        # Test 3: bytes via globals
+        result = await execute_script_tool(
+            ctx,
+            "base64_encode(raw_data)",
+            globals={"raw_data": b"binary content"},
+        )
+        assert result.text is not None
+        assert "Error" not in result.text, f"Unexpected error: {result.text}"
+
+
+@pytest.mark.asyncio
+async def test_execute_script_base64_encode_bytes_from_optional(
+    db_engine: AsyncEngine,
+    tmp_path: Path,
+) -> None:
+    """Test base64_encode with bytes|None from attachment_read_bytes.
+
+    This reproduces the real-world issue: attachment_read_bytes returns
+    bytes | None, and passing that directly to base64_encode(str | bytes)
+    fails validation because None is not in the union.
+    """
+    async with DatabaseContext(engine=db_engine) as db:
+        test_storage = tmp_path / "test_attachments"
+        test_storage.mkdir(exist_ok=True)
+        attachment_registry = AttachmentRegistry(
+            storage_path=str(test_storage), db_engine=db_engine, config=None
+        )
+
+        mock_service = Mock()
+        mock_service.tools_provider = CompositeToolsProvider([])
+
+        ctx = ToolExecutionContext(
+            interface_type="test",
+            conversation_id="test-conv",
+            user_name="test",
+            turn_id=None,
+            db_context=db,
+            clock=None,
+            home_assistant_client=None,
+            event_sources=None,
+            attachment_registry=attachment_registry,
+            processing_service=mock_service,
+            camera_backend=None,
+            timezone=ZoneInfo("UTC"),
+        )
+
+        # Store a test attachment so attachment_read_bytes returns real bytes
+        metadata = await attachment_registry.store_and_register_tool_attachment(
+            file_content=b"binary content",
+            filename="test.png",
+            content_type="image/png",
+            tool_name="test",
+            description="test data",
+            conversation_id="test-conv",
+        )
+
+        # This is the pattern that fails: attachment_read_bytes returns bytes|None,
+        # and the type checker rejects passing bytes|None to base64_encode(str|bytes)
+        result = await execute_script_tool(
+            ctx,
+            f"""
+data = attachment_read_bytes("{metadata.attachment_id}")
+base64_encode(data)
+""",
+        )
+        assert result.text is not None
+        assert "Error" not in result.text, f"Unexpected error: {result.text}"

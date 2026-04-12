@@ -87,8 +87,10 @@ def _safe_json_decode(value: Any) -> Any:  # noqa: ANN401 - JSON decode returns 
     return value
 
 
-def _base64_encode(data: str | bytes) -> str:
+def _base64_encode(data: str | bytes | None) -> str:
     """Encode a string or bytes to a base64 string."""
+    if data is None:
+        raise TypeError("base64_encode: data must not be None")
     if isinstance(data, str):
         data = data.encode("utf-8")
     return base64.b64encode(data).decode("ascii")
