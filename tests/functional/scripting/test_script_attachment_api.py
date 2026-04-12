@@ -384,6 +384,74 @@ class TestAttachmentAPI:
         assert result is not None
         assert result["attachment_id"] == metadata.attachment_id
 
+    async def test_read_bytes_text_content(
+        self,
+        db_engine: AsyncEngine,
+        attachment_registry: AttachmentRegistry,
+        sample_attachment: str,
+    ) -> None:
+        """Test reading attachment content as raw bytes."""
+        api = AttachmentAPI(
+            attachment_registry=attachment_registry,
+            conversation_id="test_conversation",
+            db_engine=db_engine,
+        )
+
+        result = await api._read_bytes_async(sample_attachment)
+
+        assert result is not None
+        assert isinstance(result, bytes)
+        assert result == b"Test attachment content"
+
+    async def test_read_bytes_binary_content(
+        self,
+        db_engine: AsyncEngine,
+        attachment_registry: AttachmentRegistry,
+    ) -> None:
+        """Test reading binary attachment content as raw bytes without decoding."""
+        # Create an attachment with non-UTF-8 binary content
+        binary_content = b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\xff\xfe"
+        async with DatabaseContext(engine=db_engine) as db_context:
+            attachment_record = await attachment_registry.register_user_attachment(
+                db_context=db_context,
+                content=binary_content,
+                mime_type="image/png",
+                filename="test.png",
+                conversation_id="test_conversation",
+                user_id="test_user",
+                description="Binary test attachment",
+            )
+            attachment_id = attachment_record.attachment_id
+
+        api = AttachmentAPI(
+            attachment_registry=attachment_registry,
+            conversation_id="test_conversation",
+            db_engine=db_engine,
+        )
+
+        result = await api._read_bytes_async(attachment_id)
+
+        assert result is not None
+        assert isinstance(result, bytes)
+        assert result == binary_content
+
+    async def test_read_bytes_not_found(
+        self,
+        db_engine: AsyncEngine,
+        attachment_registry: AttachmentRegistry,
+    ) -> None:
+        """Test reading non-existent attachment returns None."""
+        api = AttachmentAPI(
+            attachment_registry=attachment_registry,
+            conversation_id="test_conversation",
+            db_engine=db_engine,
+        )
+
+        fake_id = str(uuid.uuid4())
+        result = await api._read_bytes_async(fake_id)
+
+        assert result is None
+
 
 class TestCreateAttachmentAPI:
     """Test the create_attachment_api factory function."""
@@ -850,3 +918,138 @@ metadata = attachment_get(attachment_id)
             assert isinstance(result, dict)
             assert "id" in result
             assert result["description"] == "Test file"
+
+    async def test_script_read_bytes_text_attachment(
+        self,
+        db_engine: AsyncEngine,
+        attachment_registry: AttachmentRegistry,
+        sample_attachment: str,
+    ) -> None:
+        """Test reading attachment bytes from within a script."""
+        async with DatabaseContext(engine=db_engine) as db_context:
+            execution_context = ToolExecutionContext(
+                interface_type="test",
+                conversation_id="test_conversation",
+                user_name="test_user",
+                turn_id="test_turn",
+                db_context=db_context,
+                processing_service=None,
+                clock=None,
+                home_assistant_client=None,
+                event_sources=None,
+                attachment_registry=attachment_registry,
+                camera_backend=None,
+                timezone=ZoneInfo("UTC"),
+            )
+
+            config = ScriptConfig(enable_print=True)
+            engine = MontyEngine(
+                config=config, default_timezone=ZoneInfo("Australia/Sydney")
+            )
+
+            script = f"""
+raw = attachment_read_bytes("{sample_attachment}")
+raw
+"""
+
+            result = await engine.evaluate_async(
+                script=script,
+                execution_context=execution_context,
+            )
+
+            assert isinstance(result, bytes)
+            assert result == b"Test attachment content"
+
+    async def test_script_read_bytes_binary_attachment(
+        self,
+        db_engine: AsyncEngine,
+        attachment_registry: AttachmentRegistry,
+    ) -> None:
+        """Test that attachment_read_bytes preserves non-UTF-8 binary data through Monty."""
+        # PNG header followed by bytes that are invalid UTF-8
+        binary_payload = b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\xff\xfe\x80\x81"
+
+        async with DatabaseContext(engine=db_engine) as db_context:
+            attachment_record = await attachment_registry.register_user_attachment(
+                db_context=db_context,
+                content=binary_payload,
+                mime_type="image/png",
+                filename="test.png",
+                conversation_id="test_conversation",
+                user_id="test_user",
+                description="Binary PNG attachment",
+            )
+            attachment_id = attachment_record.attachment_id
+
+            execution_context = ToolExecutionContext(
+                interface_type="test",
+                conversation_id="test_conversation",
+                user_name="test_user",
+                turn_id="test_turn",
+                db_context=db_context,
+                processing_service=None,
+                clock=None,
+                home_assistant_client=None,
+                event_sources=None,
+                attachment_registry=attachment_registry,
+                camera_backend=None,
+                timezone=ZoneInfo("UTC"),
+            )
+
+            config = ScriptConfig(enable_print=True)
+            engine = MontyEngine(
+                config=config, default_timezone=ZoneInfo("Australia/Sydney")
+            )
+
+            script = f"""
+raw = attachment_read_bytes("{attachment_id}")
+raw
+"""
+
+            result = await engine.evaluate_async(
+                script=script,
+                execution_context=execution_context,
+            )
+
+            assert isinstance(result, bytes)
+            assert result == binary_payload
+
+    async def test_script_read_bytes_returns_none_for_missing(
+        self,
+        db_engine: AsyncEngine,
+        attachment_registry: AttachmentRegistry,
+    ) -> None:
+        """Test that attachment_read_bytes returns None for non-existent attachment."""
+        async with DatabaseContext(engine=db_engine) as db_context:
+            execution_context = ToolExecutionContext(
+                interface_type="test",
+                conversation_id="test_conversation",
+                user_name="test_user",
+                turn_id="test_turn",
+                db_context=db_context,
+                processing_service=None,
+                clock=None,
+                home_assistant_client=None,
+                event_sources=None,
+                attachment_registry=attachment_registry,
+                camera_backend=None,
+                timezone=ZoneInfo("UTC"),
+            )
+
+            config = ScriptConfig(enable_print=True)
+            engine = MontyEngine(
+                config=config, default_timezone=ZoneInfo("Australia/Sydney")
+            )
+
+            script = """
+fake_id = "00000000-0000-0000-0000-000000000000"
+result = attachment_read_bytes(fake_id)
+result == None
+"""
+
+            result = await engine.evaluate_async(
+                script=script,
+                execution_context=execution_context,
+            )
+
+            assert result is True

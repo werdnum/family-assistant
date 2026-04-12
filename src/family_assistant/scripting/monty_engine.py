@@ -481,6 +481,9 @@ class MontyEngine:
         async def attachment_read(attachment_id: str) -> str | None:
             return await api._read_async(attachment_id)
 
+        async def attachment_read_bytes(attachment_id: str) -> bytes | None:
+            return await api._read_bytes_async(attachment_id)
+
         async def attachment_create(
             content: bytes | str,
             filename: str,
@@ -503,6 +506,7 @@ class MontyEngine:
         for name, fn in [
             ("attachment_get", attachment_get),
             ("attachment_read", attachment_read),
+            ("attachment_read_bytes", attachment_read_bytes),
             ("attachment_create", attachment_create),
         ]:
             names.append(name)
