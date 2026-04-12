@@ -144,6 +144,7 @@ def _generate_builtin_api_stubs(
     include_tools_api: bool = True,
     include_attachment_api: bool = True,
     include_json_api: bool = True,
+    include_base64_api: bool = True,
     include_time_api: bool = True,
     include_llm_api: bool = True,
 ) -> str:
@@ -154,6 +155,12 @@ def _generate_builtin_api_stubs(
     if include_json_api:
         lines.append("def json_encode(obj: Any) -> str: ...")
         lines.append("def json_decode(value: Any) -> Any: ...")
+        lines.append("")
+
+    # Base64 API
+    if include_base64_api:
+        lines.append("def base64_encode(data: str | bytes) -> str: ...")
+        lines.append("def base64_decode(data: str) -> str: ...")
         lines.append("")
 
     # LLM API
@@ -286,6 +293,7 @@ def generate_prefix_code(
     include_tools_api: bool = True,
     include_attachment_api: bool = True,
     include_json_api: bool = True,
+    include_base64_api: bool = True,
     include_time_api: bool = True,
     include_llm_api: bool = True,
 ) -> str:
@@ -298,6 +306,7 @@ def generate_prefix_code(
         include_tools_api: Whether tools_* functions are available at runtime.
         include_attachment_api: Whether attachment_* functions are available at runtime.
         include_json_api: Whether json_encode/json_decode are available at runtime.
+        include_base64_api: Whether base64_encode/base64_decode are available at runtime.
         include_time_api: Whether time_*/duration_* helpers are available at runtime.
         include_llm_api: Whether llm()/llm_json() are available at runtime.
 
@@ -319,6 +328,7 @@ def generate_prefix_code(
             include_tools_api=include_tools_api,
             include_attachment_api=include_attachment_api,
             include_json_api=include_json_api,
+            include_base64_api=include_base64_api,
             include_time_api=include_time_api,
             include_llm_api=include_llm_api,
         )
@@ -438,6 +448,7 @@ class ScriptValidator:
             include_tools_api=include_tools_api,
             include_attachment_api=include_attachment_api,
             include_json_api=self.config.enable_json_api,
+            include_base64_api=self.config.enable_base64_api,
             include_time_api=self.config.enable_time_api,
             include_llm_api=self.config.enable_llm_api,
         )
@@ -479,6 +490,8 @@ class ScriptValidator:
 
         if self.config.enable_json_api:
             names.extend(["json_encode", "json_decode"])
+        if self.config.enable_base64_api:
+            names.extend(["base64_encode", "base64_decode"])
         if self.config.enable_llm_api:
             names.extend(["llm", "llm_json"])
         if self.config.enable_time_api:

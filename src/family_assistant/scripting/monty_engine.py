@@ -7,6 +7,7 @@ Monty's pause/resume model for clean async external function handling.
 """
 
 import asyncio
+import base64
 import json
 import logging
 import mimetypes
@@ -84,6 +85,18 @@ def _safe_json_decode(value: Any) -> Any:  # noqa: ANN401 - JSON decode returns 
     if isinstance(value, (str, bytes, bytearray)):
         return json.loads(value)
     return value
+
+
+def _base64_encode(data: str | bytes) -> str:
+    """Encode a string or bytes to a base64 string."""
+    if isinstance(data, str):
+        data = data.encode("utf-8")
+    return base64.b64encode(data).decode("ascii")
+
+
+def _base64_decode(data: str) -> str:
+    """Decode a base64 string to a UTF-8 string."""
+    return base64.b64decode(data).decode("utf-8")
 
 
 class MontyEngine:
@@ -285,6 +298,8 @@ class MontyEngine:
 
         if self.config.enable_json_api:
             self._add_json_api(ext_fn_names, ext_fn_impls)
+        if self.config.enable_base64_api:
+            self._add_base64_api(ext_fn_names, ext_fn_impls)
         if self.config.enable_time_api:
             self._add_time_api(ext_fn_names, ext_fn_impls, inputs, execution_context)
         if self.config.enable_llm_api:
@@ -665,6 +680,19 @@ class MontyEngine:
         for name, fn in [
             ("json_encode", json.dumps),
             ("json_decode", _safe_json_decode),
+        ]:
+            names.append(name)
+            impls[name] = fn
+
+    def _add_base64_api(
+        self,
+        names: list[str],
+        impls: dict[str, Callable[..., Any]],
+    ) -> None:
+        """Add base64 encode/decode functions."""
+        for name, fn in [
+            ("base64_encode", _base64_encode),
+            ("base64_decode", _base64_decode),
         ]:
             names.append(name)
             impls[name] = fn
