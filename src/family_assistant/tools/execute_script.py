@@ -486,6 +486,7 @@ SCRIPT_TOOLS_DEFINITION: list[ToolDefinition] = [
                 "• Object inspection: type(), dir(), getattr(), hasattr()\n"
                 "• Control: print(), fail()\n"
                 "• JSON: json_encode(value), json_decode(value)\n"
+                "• Base64: base64_encode(data), base64_decode(data) -> str, base64_decode_bytes(data) -> bytes\n"
                 "• LLM Wake: wake_llm(context, include_event=True) - Request LLM attention with context (string or dict)\n"
                 "• LLM: llm(prompt), llm_json(prompt) - One-shot LLM calls for summarisation and data extraction\n\n"
                 "**Family Assistant Tools:**\n"
