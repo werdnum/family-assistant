@@ -647,14 +647,27 @@ def resolve_service_profile(
                         SYSTEM_PROMPT_DOCS_KEY,
                     )
 
-    # Replace tools_config entirely if defined
+    # Replace tools_config entirely if defined, but union operator MCP server IDs
     if "tools_config" in profile_def and isinstance(profile_def["tools_config"], dict):
         resolved["tools_config"] = profile_def["tools_config"]
+        # Operator-enabled MCP servers are always additive — the operator is
+        # declaring "these servers exist in this deployment" which is true
+        # regardless of what the profile ships with.
+        operator_mcp_ids = default_settings.get("tools_config", {}).get(
+            "enable_mcp_server_ids", []
+        )
+        if operator_mcp_ids:
+            profile_mcp_ids = resolved["tools_config"].get(
+                "enable_mcp_server_ids", []
+            )
+            resolved["tools_config"]["enable_mcp_server_ids"] = list(
+                dict.fromkeys(profile_mcp_ids + operator_mcp_ids)
+            )
 
-    # Replace tools_policy entirely if defined
+    # Replace tools_policy entirely if defined (operator layer is preserved
+    # separately so it still applies via PolicyEngine.from_layers)
     if "tools_policy" in profile_def:
         resolved["tools_policy"] = profile_def["tools_policy"]
-        resolved["operator_tools_policy"] = None
 
     # Merge chat_id_to_name_map
     if "chat_id_to_name_map" in profile_def and isinstance(
