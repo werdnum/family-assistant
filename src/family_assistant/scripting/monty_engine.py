@@ -298,8 +298,7 @@ class MontyEngine:
 
         if self.config.enable_json_api:
             self._add_json_api(ext_fn_names, ext_fn_impls)
-        if self.config.enable_base64_api:
-            self._add_base64_api(ext_fn_names, ext_fn_impls)
+        self._add_base64_api(ext_fn_names, ext_fn_impls)
         if self.config.enable_time_api:
             self._add_time_api(ext_fn_names, ext_fn_impls, inputs, execution_context)
         if self.config.enable_llm_api:

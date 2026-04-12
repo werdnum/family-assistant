@@ -19,4 +19,3 @@ class ScriptConfig:
     enable_json_api: bool = True  # Whether json_encode/json_decode are loaded
     enable_time_api: bool = True  # Whether time_* and duration_* helpers are loaded
     enable_llm_api: bool = True  # Whether llm()/llm_json() are loaded
-    enable_base64_api: bool = True  # Whether base64_encode/base64_decode are loaded
