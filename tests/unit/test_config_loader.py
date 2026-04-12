@@ -1287,10 +1287,10 @@ class TestLoadConfig:
 
         assert engine.evaluate(spawn_worker).decision is ToolPolicyDecision.DENY
 
-    def test_explicit_profile_tools_policy_does_not_inherit_default_operator_layer(
+    def test_explicit_profile_tools_policy_preserves_operator_layer(
         self, tmp_path: Path
     ) -> None:
-        """Explicit profile tools_policy should clear inherited default operator layer."""
+        """Explicit profile tools_policy should preserve operator layer for additive MCP rules."""
         defaults_file = tmp_path / "defaults.yaml"
         defaults_file.write_text(
             yaml.dump({
@@ -1363,7 +1363,7 @@ class TestLoadConfig:
         profile = config.service_profiles[0]
         assert profile.id == "custom_profile"
         assert profile.tools_policy is not None
-        assert profile.operator_tools_policy is None
+        assert profile.operator_tools_policy is not None
         engine = PolicyEngine.from_layers(
             defaults=profile.tools_policy,
             operator=profile.operator_tools_policy,
@@ -1409,9 +1409,11 @@ class TestLoadConfig:
             mcp_server_id="code-execution",
         )
 
+        # Profile's own rules still work
         assert engine.evaluate(get_note).decision is ToolPolicyDecision.ALLOW
         assert engine.evaluate(spawn_worker).decision is ToolPolicyDecision.DENY
-        assert engine.evaluate(code_execution_tool).decision is ToolPolicyDecision.DENY
+        # Operator layer is now preserved — MCP tools from operator config are allowed
+        assert engine.evaluate(code_execution_tool).decision is ToolPolicyDecision.ALLOW
 
     def test_service_profiles_resolved(self, tmp_path: Path) -> None:
         """Test that service profiles are properly resolved."""

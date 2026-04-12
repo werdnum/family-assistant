@@ -338,11 +338,23 @@ def _apply_default_profile_tools_policy_layers(
     Restore the shipped defaults as the inherited policy and keep the operator
     override in a separate internal field so runtime evaluation can apply layer
     precedence without changing the documented 0..99 priority range.
+
+    Also extracts operator-added MCP server IDs so they can be unioned into
+    profiles that define their own tools_config.
     """
 
     operator_default_settings = operator_config_data.get("default_profile_settings")
     if not isinstance(operator_default_settings, dict):
         return
+
+    # Extract operator MCP server IDs
+    operator_tools_config = operator_default_settings.get("tools_config")
+    if isinstance(operator_tools_config, dict):
+        operator_mcp_ids = operator_tools_config.get("enable_mcp_server_ids", [])
+        if operator_mcp_ids:
+            config_data["default_profile_settings"]["operator_mcp_server_ids"] = (
+                list(operator_mcp_ids)
+            )
 
     operator_policy_data = operator_default_settings.get("tools_policy")
     if not isinstance(operator_policy_data, dict):
@@ -653,9 +665,7 @@ def resolve_service_profile(
         # Operator-enabled MCP servers are always additive — the operator is
         # declaring "these servers exist in this deployment" which is true
         # regardless of what the profile ships with.
-        operator_mcp_ids = default_settings.get("tools_config", {}).get(
-            "enable_mcp_server_ids", []
-        )
+        operator_mcp_ids = default_settings.get("operator_mcp_server_ids", [])
         if operator_mcp_ids:
             profile_mcp_ids = resolved["tools_config"].get(
                 "enable_mcp_server_ids", []
