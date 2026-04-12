@@ -522,6 +522,20 @@ json_str = json_encode(data)
 parsed = json_decode('{"name": "test", "value": 42}')
 ```
 
+### Base64 Functions
+
+```python
+# Encode a string or bytes to base64
+encoded = base64_encode("Hello, World!")  # "SGVsbG8sIFdvcmxkIQ=="
+encoded = base64_encode(b"\xff\xfe")      # also accepts bytes
+
+# Decode base64 to a string (UTF-8)
+text = base64_decode(encoded)
+
+# Decode base64 to raw bytes (for non-UTF-8 binary data)
+raw = base64_decode_bytes(encoded)
+```
+
 ### LLM API Functions
 
 Scripts can make one-shot LLM calls for summarisation, data extraction, classification, and similar
