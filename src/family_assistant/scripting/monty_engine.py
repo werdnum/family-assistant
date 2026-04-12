@@ -96,7 +96,7 @@ def _base64_encode(data: str | bytes) -> str:
 
 def _base64_decode(data: str) -> str:
     """Decode a base64 string to a UTF-8 string."""
-    return base64.b64decode(data).decode("utf-8")
+    return base64.b64decode(data, validate=True).decode("utf-8")
 
 
 class MontyEngine:

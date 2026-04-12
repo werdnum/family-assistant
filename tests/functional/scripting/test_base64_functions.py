@@ -84,12 +84,38 @@ base64_decode(encoded) == "héllo wörld"
         assert result is True
 
     @pytest.mark.asyncio
-    async def test_base64_decode_invalid_input(self, engine_class: type) -> None:
-        """Test that decoding invalid base64 raises an error."""
+    async def test_base64_encode_bytes(self, engine_class: type) -> None:
+        """Test encoding bytes to base64."""
+        engine = engine_class()
+
+        script = """
+base64_encode(b"binary data")
+"""
+        result = await engine.evaluate_async(script)
+        assert result == base64.b64encode(b"binary data").decode("ascii")
+
+    @pytest.mark.asyncio
+    async def test_base64_decode_invalid_padding(self, engine_class: type) -> None:
+        """Test that decoding base64 with invalid padding raises an error."""
         engine = engine_class()
 
         script = """
 base64_decode("not-valid-base64!!!")
+"""
+        with pytest.raises(ScriptExecutionError):
+            await engine.evaluate_async(script)
+
+    @pytest.mark.asyncio
+    async def test_base64_decode_illegal_characters(self, engine_class: type) -> None:
+        """Test that decoding base64 with illegal characters raises an error.
+
+        With validate=True, base64.b64decode rejects non-alphabet characters
+        like '$' even when padding is otherwise valid.
+        """
+        engine = engine_class()
+
+        script = """
+base64_decode("YWJj$")
 """
         with pytest.raises(ScriptExecutionError):
             await engine.evaluate_async(script)
