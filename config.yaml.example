@@ -54,10 +54,18 @@
 #       - delete_calendar_event
 #       - modify_calendar_event
 
-# --- Camera Configuration ---
-# Configure Reolink cameras for the camera_analyst profile
-# Or use REOLINK_CAMERAS environment variable (JSON format)
+# --- Service Profiles ---
+# Profiles defined here are merged with defaults.yaml by ID:
+#   - New IDs are added alongside the built-in profiles.
+#   - Matching IDs override the corresponding default profile.
+# You do NOT need to re-list all default profiles to add a new one.
+#
+# Example: add a custom profile and configure an existing one
 # service_profiles:
+#   - id: "my_custom_profile"
+#     description: "A custom profile for my use case"
+#     processing_config:
+#       llm_model: "claude-sonnet-4-6"
 #   - id: "camera_analyst"
 #     processing_config:
 #       camera_config:
