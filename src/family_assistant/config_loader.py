@@ -661,18 +661,26 @@ def resolve_service_profile(
 
     # Replace tools_config entirely if defined, but union operator MCP server IDs
     if "tools_config" in profile_def and isinstance(profile_def["tools_config"], dict):
-        resolved["tools_config"] = profile_def["tools_config"]
+        resolved["tools_config"] = copy.deepcopy(profile_def["tools_config"])
         # Operator-enabled MCP servers are always additive — the operator is
         # declaring "these servers exist in this deployment" which is true
         # regardless of what the profile ships with.
-        operator_mcp_ids = default_settings.get("operator_mcp_server_ids", [])
+        operator_mcp_ids = default_settings.get("operator_mcp_server_ids") or []
         if operator_mcp_ids:
             profile_mcp_ids = resolved["tools_config"].get(
-                "enable_mcp_server_ids", []
-            )
-            resolved["tools_config"]["enable_mcp_server_ids"] = list(
-                dict.fromkeys(profile_mcp_ids + operator_mcp_ids)
-            )
+                "enable_mcp_server_ids",
+            ) or []
+            # Deduplicate by string ID, preserving order. Entries can be
+            # plain strings or MCPServerLoadingEntry dicts — extract the ID
+            # for dedup but keep original form.
+            seen: set[str] = set()
+            merged: list[str | dict[str, Any]] = []
+            for entry in profile_mcp_ids + operator_mcp_ids:
+                entry_id = entry if isinstance(entry, str) else entry.get("id", "")
+                if entry_id and entry_id not in seen:
+                    seen.add(entry_id)
+                    merged.append(entry)
+            resolved["tools_config"]["enable_mcp_server_ids"] = merged
 
     # Replace tools_policy entirely if defined (operator layer is preserved
     # separately so it still applies via PolicyEngine.from_layers)
