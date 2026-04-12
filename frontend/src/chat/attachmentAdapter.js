@@ -81,41 +81,26 @@ export class FileAttachmentAdapter {
    * @returns {Promise<Object>} Attachment object
    */
   async add({ file }) {
-    try {
-      // Validate the file
-      validateFile(file);
+    // Validate the file (throws on failure — the runtime catches adapter
+    // errors, marks the attachment as incomplete, and re-throws so the
+    // caller can display the error message).
+    validateFile(file);
 
-      // Determine attachment type based on file MIME type
-      let attachmentType = 'file';
-      if (SUPPORTED_IMAGE_TYPES.includes(file.type)) {
-        attachmentType = 'image';
-      } else if (file.type === 'application/pdf' || file.type.startsWith('text/')) {
-        attachmentType = 'document';
-      }
-
-      // Create initial attachment object
-      const attachment = {
-        id: generateUUID(),
-        type: attachmentType,
-        name: file.name,
-        file,
-        status: { type: 'running' },
-      };
-
-      return attachment;
-    } catch (error) {
-      // Return attachment with error status
-      return {
-        id: generateUUID(),
-        type: 'file',
-        name: file.name,
-        file,
-        status: {
-          type: 'error',
-          error: error.message,
-        },
-      };
+    // Determine attachment type based on file MIME type
+    let attachmentType = 'file';
+    if (SUPPORTED_IMAGE_TYPES.includes(file.type)) {
+      attachmentType = 'image';
+    } else if (file.type === 'application/pdf' || file.type.startsWith('text/')) {
+      attachmentType = 'document';
     }
+
+    return {
+      id: generateUUID(),
+      type: attachmentType,
+      name: file.name,
+      file,
+      status: { type: 'running' },
+    };
   }
 
   /**
@@ -152,18 +137,7 @@ export class FileAttachmentAdapter {
       };
     } catch (error) {
       console.error('Error processing attachment for sending:', error);
-
-      // Return attachment with error status
-      return {
-        id: attachment.id,
-        type: attachment.type || 'file',
-        name: attachment.name,
-        content: [],
-        status: {
-          type: 'error',
-          error: `Failed to upload file: ${error.message}`,
-        },
-      };
+      throw error;
     }
   }
 
@@ -252,16 +226,7 @@ export class CompositeAttachmentAdapter {
     const adapter = this.getAdapterForType(file.type);
 
     if (!adapter) {
-      return {
-        id: generateUUID(),
-        type: 'file',
-        name: file.name,
-        file,
-        status: {
-          type: 'error',
-          error: `Unsupported file type: ${file.type}`,
-        },
-      };
+      throw new Error(`Unsupported file type: ${file.type}`);
     }
 
     return adapter.add({ file });
@@ -277,13 +242,7 @@ export class CompositeAttachmentAdapter {
     const adapter = this.getAdapterForType(attachment.file?.type || 'application/octet-stream');
 
     if (!adapter) {
-      return {
-        ...attachment,
-        status: {
-          type: 'error',
-          error: 'No adapter available for this file type',
-        },
-      };
+      throw new Error('No adapter available for this file type');
     }
 
     return adapter.send(attachment);

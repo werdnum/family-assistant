@@ -98,39 +98,26 @@ describe('FileAttachmentAdapter', () => {
       expect(result.status.type).toBe('running');
     });
 
-    test('returns error for oversized file', async () => {
+    test('throws for oversized file', async () => {
       const file = createMockFile('large.png', 'image/png', 150 * 1024 * 1024); // 150MB (exceeds 100MB limit)
 
-      const result = await adapter.add({ file });
-
-      expect(result.type).toBe('file');
-      expect(result.name).toBe('large.png');
-      expect(result.status.type).toBe('error');
-      expect(result.status.error).toContain('size exceeds');
+      await expect(adapter.add({ file })).rejects.toThrow('size exceeds');
     });
 
-    test('returns error for invalid file type', async () => {
+    test('throws for invalid file type', async () => {
       const file = createMockFile(
         'document.docx',
         'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
         1024
       );
 
-      const result = await adapter.add({ file });
-
-      expect(result.type).toBe('file');
-      expect(result.name).toBe('document.docx');
-      expect(result.status.type).toBe('error');
-      expect(result.status.error).toContain('Unsupported file type');
+      await expect(adapter.add({ file })).rejects.toThrow('Unsupported file type');
     });
 
-    test('returns error for file with empty name', async () => {
+    test('throws for file with empty name', async () => {
       const file = createMockFile('', 'image/png', 1024);
 
-      const result = await adapter.add({ file });
-
-      expect(result.status.type).toBe('error');
-      expect(result.status.error).toContain('valid name');
+      await expect(adapter.add({ file })).rejects.toThrow('valid name');
     });
   });
 
@@ -162,11 +149,11 @@ describe('FileAttachmentAdapter', () => {
       // MSW handled the API call
     });
 
-    test('handles upload failure gracefully', async () => {
+    test('throws on upload failure', async () => {
       // Override the upload handler to return an error
       server.use(
         http.post('/api/attachments/upload', () => {
-          return HttpResponse.json({ error: 'Upload failed' }, { status: 500 });
+          return HttpResponse.json({ detail: 'Upload failed' }, { status: 500 });
         })
       );
 
@@ -179,14 +166,10 @@ describe('FileAttachmentAdapter', () => {
         status: { type: 'running' },
       };
 
-      const result = await adapter.send(attachment);
-
-      expect(result.id).toBe('test-id');
-      expect(result.status.type).toBe('error');
-      expect(result.status.error).toContain('Failed to upload file');
+      await expect(adapter.send(attachment)).rejects.toThrow('Upload failed');
     });
 
-    test('handles network error gracefully', async () => {
+    test('throws on network error', async () => {
       // Override the upload handler to return a network error
       server.use(
         http.post('/api/attachments/upload', () => {
@@ -203,11 +186,7 @@ describe('FileAttachmentAdapter', () => {
         status: { type: 'running' },
       };
 
-      const result = await adapter.send(attachment);
-
-      expect(result.id).toBe('test-id');
-      expect(result.status.type).toBe('error');
-      expect(result.status.error).toContain('Failed to upload file');
+      await expect(adapter.send(attachment)).rejects.toThrow();
     });
   });
 
@@ -305,19 +284,14 @@ describe('CompositeAttachmentAdapter', () => {
       expect(mockImageAdapter.add).toHaveBeenCalledWith({ file });
     });
 
-    test('returns error for unsupported file type', async () => {
+    test('throws for unsupported file type', async () => {
       const file = createMockFile(
         'document.docx',
         'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
         1024
       );
 
-      const result = await compositeAdapter.add({ file });
-
-      expect(result.type).toBe('file');
-      expect(result.name).toBe('document.docx');
-      expect(result.status.type).toBe('error');
-      expect(result.status.error).toContain('Unsupported file type');
+      await expect(compositeAdapter.add({ file })).rejects.toThrow('Unsupported file type');
     });
   });
 
@@ -337,7 +311,7 @@ describe('CompositeAttachmentAdapter', () => {
       expect(mockImageAdapter.send).toHaveBeenCalledWith(attachment);
     });
 
-    test('returns error for no matching adapter', async () => {
+    test('throws for no matching adapter', async () => {
       const attachment = {
         id: 'test',
         type: 'document',
@@ -348,11 +322,7 @@ describe('CompositeAttachmentAdapter', () => {
         ),
       };
 
-      const result = await compositeAdapter.send(attachment);
-
-      expect(result.id).toBe('test');
-      expect(result.status.type).toBe('error');
-      expect(result.status.error).toContain('No adapter available');
+      await expect(compositeAdapter.send(attachment)).rejects.toThrow('No adapter available');
     });
   });
 });

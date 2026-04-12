@@ -133,14 +133,17 @@ async def test_image_upload_validation_file_type(
         await file_chooser.set_files(temp_path)
 
         # Wait for error message about unsupported file type
-        # Look for the error message element using data-testid
+        # The runtime rejects files not matching adapter.accept and the
+        # ComposerAddAttachment component catches the error and displays it
         error_message = page.locator('[data-testid="attachment-error-message"]').first
         await error_message.wait_for(state="visible", timeout=5000)
 
-        # Verify error message is displayed and contains expected text
+        # Verify error message is displayed and mentions the file type
         error_text = await error_message.text_content()
         assert error_text
-        assert "unsupported" in error_text.lower() and "file" in error_text.lower()
+        assert (
+            "not accepted" in error_text.lower() or "unsupported" in error_text.lower()
+        )
 
     finally:
         # Clean up temp file

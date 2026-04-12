@@ -9,7 +9,7 @@ import {
 } from '@assistant-ui/react';
 import { DialogContent as DialogPrimitiveContent } from '@radix-ui/react-dialog';
 import { CircleXIcon, ClockIcon, FileIcon, PaperclipIcon } from 'lucide-react';
-import { type FC, PropsWithChildren, useEffect, useState } from 'react';
+import { type FC, PropsWithChildren, useCallback, useEffect, useState } from 'react';
 import { useShallow } from 'zustand/shallow';
 import { TooltipIconButton } from '@/components/assistant-ui/tooltip-icon-button';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
@@ -142,13 +142,11 @@ const AttachmentUI: FC = () => {
     }
   });
 
-  // Check if attachment has an error status
-  // @ts-expect-error - status.type may include 'error' at runtime
-  const hasError = status?.type === 'error';
-  const errorMessage = (status as { error?: string })?.error;
+  // Check if attachment has an error status (runtime sets incomplete+error on adapter failures)
+  const hasError = status?.type === 'incomplete' && status?.reason === 'error';
 
   // Check if attachment is currently uploading
-  const isLoading = status?.type === 'running' && !hasError;
+  const isLoading = status?.type === 'running';
 
   return (
     <Tooltip>
@@ -191,9 +189,7 @@ const AttachmentUI: FC = () => {
                 <p className="text-red-600 text-xs font-medium">Error</p>
               </div>
             </div>
-            <p className="text-red-600 text-xs px-1" data-testid="attachment-error-message">
-              {errorMessage}
-            </p>
+            <p className="text-red-600 text-xs px-1">Upload failed</p>
           </div>
         ) : (
           <AttachmentPreviewDialog>
@@ -213,7 +209,13 @@ const AttachmentUI: FC = () => {
         {canRemove && <AttachmentRemove />}
       </AttachmentPrimitive.Root>
       <TooltipContent side="top">
-        {isLoading ? 'Uploading file...' : hasError ? errorMessage : <AttachmentPrimitive.Name />}
+        {isLoading ? (
+          'Uploading file...'
+        ) : hasError ? (
+          'Upload failed'
+        ) : (
+          <AttachmentPrimitive.Name />
+        )}
       </TooltipContent>
     </Tooltip>
   );
@@ -263,21 +265,34 @@ export const ComposerAttachments: FC = () => {
 
 export const ComposerAddAttachment: FC = () => {
   const composerRuntime = useComposerRuntime();
+  const [error, setError] = useState<string | null>(null);
 
-  const handleFileSelect = (event: React.ChangeEvent<HTMLInputElement>) => {
-    const files = event.target.files;
-    if (files && files.length > 0) {
-      // Add each file as an attachment
-      Array.from(files).forEach((file) => {
-        composerRuntime.addAttachment(file);
-      });
-      // Clear the input so the same file can be selected again
-      event.target.value = '';
+  // Auto-dismiss error after 5 seconds
+  useEffect(() => {
+    if (!error) {
+      return;
     }
-  };
+    const timer = setTimeout(() => setError(null), 5000);
+    return () => clearTimeout(timer);
+  }, [error]);
+
+  const handleFileSelect = useCallback(
+    (event: React.ChangeEvent<HTMLInputElement>) => {
+      const files = event.target.files;
+      if (files && files.length > 0) {
+        Array.from(files).forEach((file) => {
+          composerRuntime.addAttachment(file).catch((e: Error) => {
+            setError(e.message);
+          });
+        });
+        event.target.value = '';
+      }
+    },
+    [composerRuntime]
+  );
 
   return (
-    <>
+    <div className="relative">
       <input
         type="file"
         accept="image/png,image/jpeg,image/gif,image/webp,text/plain,text/markdown,application/pdf"
@@ -294,6 +309,7 @@ export const ComposerAddAttachment: FC = () => {
         type="button"
         data-testid="add-attachment-button"
         onClick={() => {
+          setError(null);
           const fileInput = document.getElementById('composer-file-input') as HTMLInputElement;
           if (fileInput) {
             fileInput.click();
@@ -302,7 +318,15 @@ export const ComposerAddAttachment: FC = () => {
       >
         <PaperclipIcon />
       </TooltipIconButton>
-    </>
+      {error && (
+        <div
+          className="absolute bottom-full left-0 mb-1 w-64 rounded-md border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700 shadow-sm"
+          data-testid="attachment-error-message"
+        >
+          {error}
+        </div>
+      )}
+    </div>
   );
 };
 
