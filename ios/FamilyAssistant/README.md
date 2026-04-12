@@ -63,6 +63,24 @@ None. Uses only Apple frameworks:
 - **AuthenticationServices** - ASWebAuthenticationSession
 - **CryptoKit** - SHA-256 for PKCE
 
+## Building from Command Line
+
+If you prefer to build from the command line:
+
+```bash
+# Build for iOS Simulator
+xcodebuild -project FamilyAssistant.xcodeproj \
+  -target FamilyAssistant \
+  -sdk iphonesimulator \
+  -configuration Debug \
+  CODE_SIGN_IDENTITY="" \
+  CODE_SIGNING_REQUIRED=NO \
+  CODE_SIGNING_ALLOWED=NO
+
+# Output will be in:
+# build/Debug-iphonesimulator/FamilyAssistant.app
+```
+
 ## Local Development
 
 To test against a local server over HTTP, the app's Info.plist includes
