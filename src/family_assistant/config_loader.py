@@ -352,8 +352,8 @@ def _apply_default_profile_tools_policy_layers(
     if isinstance(operator_tools_config, dict):
         operator_mcp_ids = operator_tools_config.get("enable_mcp_server_ids", [])
         if operator_mcp_ids:
-            config_data["default_profile_settings"]["operator_mcp_server_ids"] = (
-                list(operator_mcp_ids)
+            config_data["default_profile_settings"]["operator_mcp_server_ids"] = list(
+                operator_mcp_ids
             )
 
     operator_policy_data = operator_default_settings.get("tools_policy")
@@ -667,9 +667,12 @@ def resolve_service_profile(
         # regardless of what the profile ships with.
         operator_mcp_ids = default_settings.get("operator_mcp_server_ids") or []
         if operator_mcp_ids:
-            profile_mcp_ids = resolved["tools_config"].get(
-                "enable_mcp_server_ids",
-            ) or []
+            profile_mcp_ids = (
+                resolved["tools_config"].get(
+                    "enable_mcp_server_ids",
+                )
+                or []
+            )
             # Deduplicate by string ID, preserving order. Entries can be
             # plain strings, MCPServerLoadingEntry dicts (from YAML), or
             # MCPServerLoadingEntry model instances (from validated config).
