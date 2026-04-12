@@ -862,6 +862,11 @@ def _merge_service_profiles_by_id(
     # Operator profiles from the validated (deep-merged) config, keyed by ID.
     operator_by_id = {p.id: p.model_dump(exclude_unset=True) for p in merged_profiles}
 
+    # Default profiles keyed by ID for merging with overrides.
+    defaults_by_id = {
+        dp.id: dp.model_dump(exclude_unset=True) for dp in defaults_profiles
+    }
+
     result: list[dict[str, Any]] = []
 
     # 1. Preserve default profiles not overridden by the operator.
@@ -874,7 +879,14 @@ def _merge_service_profiles_by_id(
         if isinstance(prof_def, dict) and "id" in prof_def:
             pid = prof_def["id"]
             if pid in operator_by_id:
-                result.append(operator_by_id[pid])
+                if pid in defaults_by_id:
+                    # Override: deep-merge operator's partial definition on
+                    # top of the default so unmentioned fields are preserved.
+                    result.append(
+                        deep_merge_dicts(defaults_by_id[pid], operator_by_id[pid])
+                    )
+                else:
+                    result.append(operator_by_id[pid])
             else:
                 result.append(prof_def)
 

@@ -1698,6 +1698,80 @@ class TestLoadConfig:
         assert shared.description == "Overridden"
         assert shared.processing_config.max_iterations == 42
 
+    def test_partial_profile_override_preserves_default_attributes(
+        self, tmp_path: Path
+    ) -> None:
+        """Overriding an existing profile preserves attributes from defaults.yaml."""
+        defaults_file = tmp_path / "defaults.yaml"
+        defaults_file.write_text(
+            yaml.dump({
+                "service_profiles": [
+                    {
+                        "id": "reminder",
+                        "description": "Reminder profile",
+                        "processing_config": {
+                            "prompts": {"system_prompt": "You are a reminder bot."},
+                        },
+                        "tools_config": {
+                            "enable_local_tools": ["get_note", "list_notes"],
+                            "enable_mcp_server_ids": [],
+                        },
+                    },
+                ],
+            })
+        )
+        config_file = tmp_path / "config.yaml"
+        # Operator only wants to change the timezone — everything else
+        # from defaults.yaml should be preserved.
+        config_file.write_text(
+            yaml.dump({
+                "service_profiles": [
+                    {
+                        "id": "reminder",
+                        "processing_config": {"timezone": "US/Eastern"},
+                    },
+                ],
+            })
+        )
+        prompts_file = tmp_path / "prompts.yaml"
+        prompts_file.write_text(yaml.dump({"system_prompt": "test"}))
+
+        env_to_clear = [m.env_var for m in ENV_VAR_MAPPINGS]
+        env_to_clear.extend([
+            "CALDAV_USERNAME",
+            "CALDAV_PASSWORD",
+            "CALDAV_CALENDAR_URLS",
+            "ICAL_URLS",
+            "MCP_CONFIG_PATH",
+            "INDEXING_PIPELINE_CONFIG_JSON",
+        ])
+        clean_env = {k: v for k, v in os.environ.items() if k not in env_to_clear}
+
+        with mock.patch.dict(os.environ, clean_env, clear=True):
+            config = load_config(
+                defaults_file_path=str(defaults_file),
+                config_file_path=str(config_file),
+                prompts_file_path=str(prompts_file),
+                load_dotenv_file=False,
+            )
+
+        reminder = next(p for p in config.service_profiles if p.id == "reminder")
+        # Operator override applied
+        assert reminder.processing_config.timezone == "US/Eastern"
+        # Defaults preserved
+        assert reminder.description == "Reminder profile"
+        assert (
+            reminder.processing_config.prompts["system_prompt"]
+            == "You are a reminder bot."
+        )
+        assert reminder.tools_config.enable_local_tools is not None
+        local_tool_names = [
+            t if isinstance(t, str) else t.name
+            for t in reminder.tools_config.enable_local_tools
+        ]
+        assert "get_note" in local_tool_names
+        assert "list_notes" in local_tool_names
+
     def test_empty_service_profiles_in_config_yaml_wipes_defaults(
         self, tmp_path: Path
     ) -> None:
