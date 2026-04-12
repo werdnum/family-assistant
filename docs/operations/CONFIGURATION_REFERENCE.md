@@ -679,6 +679,13 @@ The main configuration file (`config.yaml`) supports:
 - **attachment_config**: Attachment handling settings
 - **event_system**: Event system configuration
 
+Operator merge note for service profiles:
+
+- `service_profiles` in `config.yaml` are **merged by ID** with `defaults.yaml`.
+- Profiles with new IDs are added alongside the built-in defaults.
+- Profiles whose ID matches a default override that default.
+- You do not need to re-list all default profiles to add a new one.
+
 Operator merge note for tool policy:
 
 - `default_profile_settings.tools_policy.rules` in `config.yaml` are additive.

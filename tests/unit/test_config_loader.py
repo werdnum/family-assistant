@@ -1450,9 +1450,15 @@ class TestLoadConfig:
                 load_dotenv_file=False,
             )
 
-        assert len(config.service_profiles) == 1
-        assert config.service_profiles[0].id == "test_profile"
-        assert config.service_profiles[0].processing_config.max_iterations == 25
+        profile_ids = {p.id for p in config.service_profiles}
+        # test_profile from config.yaml is added alongside defaults
+        assert "test_profile" in profile_ids
+        # Default profiles from defaults.yaml are preserved
+        assert "default_assistant" in profile_ids
+        test_profile = next(
+            p for p in config.service_profiles if p.id == "test_profile"
+        )
+        assert test_profile.processing_config.max_iterations == 25
 
     def test_profile_inherits_timezone_from_defaults(self, tmp_path: Path) -> None:
         """Regression: profile without explicit timezone inherits from defaults.
@@ -1596,6 +1602,215 @@ class TestLoadConfig:
         assert (
             config.service_profiles[0].processing_config.timezone == "America/New_York"
         )
+
+    def test_config_yaml_adds_profiles_to_defaults(self, tmp_path: Path) -> None:
+        """config.yaml profiles are additive — defaults are preserved."""
+        defaults_file = tmp_path / "defaults.yaml"
+        defaults_file.write_text(
+            yaml.dump({
+                "service_profiles": [
+                    {"id": "default_a", "description": "Default A"},
+                    {"id": "default_b", "description": "Default B"},
+                ],
+            })
+        )
+        config_file = tmp_path / "config.yaml"
+        config_file.write_text(
+            yaml.dump({
+                "service_profiles": [
+                    {"id": "custom_c", "description": "Custom C"},
+                ],
+            })
+        )
+        prompts_file = tmp_path / "prompts.yaml"
+        prompts_file.write_text(yaml.dump({"system_prompt": "test"}))
+
+        env_to_clear = [m.env_var for m in ENV_VAR_MAPPINGS]
+        env_to_clear.extend([
+            "CALDAV_USERNAME",
+            "CALDAV_PASSWORD",
+            "CALDAV_CALENDAR_URLS",
+            "ICAL_URLS",
+            "MCP_CONFIG_PATH",
+            "INDEXING_PIPELINE_CONFIG_JSON",
+        ])
+        clean_env = {k: v for k, v in os.environ.items() if k not in env_to_clear}
+
+        with mock.patch.dict(os.environ, clean_env, clear=True):
+            config = load_config(
+                defaults_file_path=str(defaults_file),
+                config_file_path=str(config_file),
+                prompts_file_path=str(prompts_file),
+                load_dotenv_file=False,
+            )
+
+        profile_ids = {p.id for p in config.service_profiles}
+        assert profile_ids == {"default_a", "default_b", "custom_c"}
+
+    def test_config_yaml_overrides_default_profile_by_id(self, tmp_path: Path) -> None:
+        """config.yaml profile with same ID as default overrides it."""
+        defaults_file = tmp_path / "defaults.yaml"
+        defaults_file.write_text(
+            yaml.dump({
+                "service_profiles": [
+                    {"id": "shared", "description": "Original"},
+                    {"id": "other", "description": "Other"},
+                ],
+            })
+        )
+        config_file = tmp_path / "config.yaml"
+        config_file.write_text(
+            yaml.dump({
+                "service_profiles": [
+                    {
+                        "id": "shared",
+                        "description": "Overridden",
+                        "processing_config": {"max_iterations": 42},
+                    },
+                ],
+            })
+        )
+        prompts_file = tmp_path / "prompts.yaml"
+        prompts_file.write_text(yaml.dump({"system_prompt": "test"}))
+
+        env_to_clear = [m.env_var for m in ENV_VAR_MAPPINGS]
+        env_to_clear.extend([
+            "CALDAV_USERNAME",
+            "CALDAV_PASSWORD",
+            "CALDAV_CALENDAR_URLS",
+            "ICAL_URLS",
+            "MCP_CONFIG_PATH",
+            "INDEXING_PIPELINE_CONFIG_JSON",
+        ])
+        clean_env = {k: v for k, v in os.environ.items() if k not in env_to_clear}
+
+        with mock.patch.dict(os.environ, clean_env, clear=True):
+            config = load_config(
+                defaults_file_path=str(defaults_file),
+                config_file_path=str(config_file),
+                prompts_file_path=str(prompts_file),
+                load_dotenv_file=False,
+            )
+
+        profile_ids = {p.id for p in config.service_profiles}
+        assert profile_ids == {"shared", "other"}
+        shared = next(p for p in config.service_profiles if p.id == "shared")
+        assert shared.description == "Overridden"
+        assert shared.processing_config.max_iterations == 42
+
+    def test_partial_profile_override_preserves_default_attributes(
+        self, tmp_path: Path
+    ) -> None:
+        """Overriding an existing profile preserves attributes from defaults.yaml."""
+        defaults_file = tmp_path / "defaults.yaml"
+        defaults_file.write_text(
+            yaml.dump({
+                "service_profiles": [
+                    {
+                        "id": "reminder",
+                        "description": "Reminder profile",
+                        "processing_config": {
+                            "prompts": {"system_prompt": "You are a reminder bot."},
+                        },
+                        "tools_config": {
+                            "enable_local_tools": ["get_note", "list_notes"],
+                            "enable_mcp_server_ids": [],
+                        },
+                    },
+                ],
+            })
+        )
+        config_file = tmp_path / "config.yaml"
+        # Operator only wants to change the timezone — everything else
+        # from defaults.yaml should be preserved.
+        config_file.write_text(
+            yaml.dump({
+                "service_profiles": [
+                    {
+                        "id": "reminder",
+                        "processing_config": {"timezone": "US/Eastern"},
+                    },
+                ],
+            })
+        )
+        prompts_file = tmp_path / "prompts.yaml"
+        prompts_file.write_text(yaml.dump({"system_prompt": "test"}))
+
+        env_to_clear = [m.env_var for m in ENV_VAR_MAPPINGS]
+        env_to_clear.extend([
+            "CALDAV_USERNAME",
+            "CALDAV_PASSWORD",
+            "CALDAV_CALENDAR_URLS",
+            "ICAL_URLS",
+            "MCP_CONFIG_PATH",
+            "INDEXING_PIPELINE_CONFIG_JSON",
+        ])
+        clean_env = {k: v for k, v in os.environ.items() if k not in env_to_clear}
+
+        with mock.patch.dict(os.environ, clean_env, clear=True):
+            config = load_config(
+                defaults_file_path=str(defaults_file),
+                config_file_path=str(config_file),
+                prompts_file_path=str(prompts_file),
+                load_dotenv_file=False,
+            )
+
+        reminder = next(p for p in config.service_profiles if p.id == "reminder")
+        # Operator override applied
+        assert reminder.processing_config.timezone == "US/Eastern"
+        # Defaults preserved
+        assert reminder.description == "Reminder profile"
+        assert (
+            reminder.processing_config.prompts["system_prompt"]
+            == "You are a reminder bot."
+        )
+        assert reminder.tools_config.enable_local_tools is not None
+        local_tool_names = [
+            t if isinstance(t, str) else t.name
+            for t in reminder.tools_config.enable_local_tools
+        ]
+        assert "get_note" in local_tool_names
+        assert "list_notes" in local_tool_names
+
+    def test_empty_service_profiles_in_config_yaml_wipes_defaults(
+        self, tmp_path: Path
+    ) -> None:
+        """Explicitly empty service_profiles in config.yaml removes all defaults."""
+        defaults_file = tmp_path / "defaults.yaml"
+        defaults_file.write_text(
+            yaml.dump({
+                "service_profiles": [
+                    {"id": "default_a", "description": "Default A"},
+                ],
+            })
+        )
+        config_file = tmp_path / "config.yaml"
+        config_file.write_text(yaml.dump({"service_profiles": []}))
+        prompts_file = tmp_path / "prompts.yaml"
+        prompts_file.write_text(yaml.dump({"system_prompt": "test"}))
+
+        env_to_clear = [m.env_var for m in ENV_VAR_MAPPINGS]
+        env_to_clear.extend([
+            "CALDAV_USERNAME",
+            "CALDAV_PASSWORD",
+            "CALDAV_CALENDAR_URLS",
+            "ICAL_URLS",
+            "MCP_CONFIG_PATH",
+            "INDEXING_PIPELINE_CONFIG_JSON",
+        ])
+        clean_env = {k: v for k, v in os.environ.items() if k not in env_to_clear}
+
+        with mock.patch.dict(os.environ, clean_env, clear=True):
+            config = load_config(
+                defaults_file_path=str(defaults_file),
+                config_file_path=str(config_file),
+                prompts_file_path=str(prompts_file),
+                load_dotenv_file=False,
+            )
+
+        # Empty list triggers resolve_all_service_profiles to create a
+        # single fallback profile, but the defaults are NOT preserved.
+        assert "default_a" not in {p.id for p in config.service_profiles}
 
     def test_invalid_config_raises_validation_error(self, tmp_path: Path) -> None:
         """Test that invalid config raises ValidationError."""

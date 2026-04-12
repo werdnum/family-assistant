@@ -352,8 +352,8 @@ def _apply_default_profile_tools_policy_layers(
     if isinstance(operator_tools_config, dict):
         operator_mcp_ids = operator_tools_config.get("enable_mcp_server_ids", [])
         if operator_mcp_ids:
-            config_data["default_profile_settings"]["operator_mcp_server_ids"] = (
-                list(operator_mcp_ids)
+            config_data["default_profile_settings"]["operator_mcp_server_ids"] = list(
+                operator_mcp_ids
             )
 
     operator_policy_data = operator_default_settings.get("tools_policy")
@@ -667,9 +667,12 @@ def resolve_service_profile(
         # regardless of what the profile ships with.
         operator_mcp_ids = default_settings.get("operator_mcp_server_ids") or []
         if operator_mcp_ids:
-            profile_mcp_ids = resolved["tools_config"].get(
-                "enable_mcp_server_ids",
-            ) or []
+            profile_mcp_ids = (
+                resolved["tools_config"].get(
+                    "enable_mcp_server_ids",
+                )
+                or []
+            )
             # Deduplicate by string ID, preserving order. Entries can be
             # plain strings, MCPServerLoadingEntry dicts (from YAML), or
             # MCPServerLoadingEntry model instances (from validated config).
@@ -813,6 +816,83 @@ def load_indexing_pipeline_config(
             logger.error(f"Error parsing INDEXING_PIPELINE_CONFIG_JSON: {e}")
 
 
+def _merge_service_profiles_by_id(
+    defaults_profiles: list[Any],  # noqa: ANN401
+    merged_profiles: list[Any],  # noqa: ANN401
+    operator_config_data: dict[str, Any],  # noqa: ANN401
+) -> list[dict[str, Any]]:  # noqa: ANN401
+    """Merge service profile lists by ID so config.yaml is additive.
+
+    When the operator's config.yaml defines ``service_profiles``, profiles are
+    merged with the defaults by ID rather than replacing the whole list:
+
+    * Default profiles whose ID does not appear in config.yaml are preserved.
+    * Operator profiles whose ID matches a default override that default.
+    * Operator profiles with new IDs are appended.
+
+    ``exclude_unset=True`` is used so that ``resolve_service_profile()`` can
+    later distinguish explicitly-set YAML values from Pydantic defaults.
+
+    Args:
+        defaults_profiles: ServiceProfile instances from defaults.yaml only.
+        merged_profiles: ServiceProfile instances from the deep-merged config
+            (defaults.yaml + config.yaml).  When the operator defines
+            ``service_profiles``, the deep-merge *replaces* the list, so this
+            contains only the operator's profiles.
+        operator_config_data: Raw dict loaded from config.yaml (may be empty).
+
+    Returns:
+        List of profile dicts ready for ``resolve_all_service_profiles()``.
+    """
+    if "service_profiles" not in operator_config_data:
+        # Operator did not mention service_profiles at all — use the merged
+        # result as-is (which equals the defaults since no replacement happened).
+        return [p.model_dump(exclude_unset=True) for p in merged_profiles]
+
+    operator_profile_defs = operator_config_data["service_profiles"]
+    if not operator_profile_defs:
+        # Operator explicitly set an empty list — return nothing so
+        # resolve_all_service_profiles() creates a single default profile.
+        return []
+
+    operator_profile_ids = {
+        p["id"] for p in operator_profile_defs if isinstance(p, dict) and "id" in p
+    }
+
+    # Operator profiles from the validated (deep-merged) config, keyed by ID.
+    operator_by_id = {p.id: p.model_dump(exclude_unset=True) for p in merged_profiles}
+
+    # Default profiles keyed by ID for merging with overrides.
+    defaults_by_id = {
+        dp.id: dp.model_dump(exclude_unset=True) for dp in defaults_profiles
+    }
+
+    result: list[dict[str, Any]] = []
+
+    # 1. Preserve default profiles not overridden by the operator.
+    for dp in defaults_profiles:
+        if dp.id not in operator_profile_ids:
+            result.append(dp.model_dump(exclude_unset=True))
+
+    # 2. Append all operator profiles (overrides + new).
+    for prof_def in operator_profile_defs:
+        if isinstance(prof_def, dict) and "id" in prof_def:
+            pid = prof_def["id"]
+            if pid in operator_by_id:
+                if pid in defaults_by_id:
+                    # Override: deep-merge operator's partial definition on
+                    # top of the default so unmentioned fields are preserved.
+                    result.append(
+                        deep_merge_dicts(defaults_by_id[pid], operator_by_id[pid])
+                    )
+                else:
+                    result.append(operator_by_id[pid])
+            else:
+                result.append(prof_def)
+
+    return result
+
+
 def load_config(
     defaults_file_path: str = DEFAULT_DEFAULTS_FILE,
     config_file_path: str = DEFAULT_CONFIG_FILE,
@@ -869,13 +949,16 @@ def load_config(
         operator_config_data,
     )
 
-    # Use exclude_unset=True for service_profiles so resolve_service_profile()
-    # can distinguish YAML-specified values from Pydantic defaults.
-    # Without this, ProcessingConfig defaults (e.g. timezone="UTC") overwrite
-    # the correct values from default_profile_settings during profile merging.
-    config_data["service_profiles"] = [
-        p.model_dump(exclude_unset=True) for p in base_config.service_profiles
-    ]
+    # Merge service profiles by ID so config.yaml can add new profiles
+    # without re-listing all defaults.  Profiles in config.yaml with the same
+    # ID as a default override it; new IDs are appended.
+    # exclude_unset=True lets resolve_service_profile() distinguish
+    # YAML-specified values from Pydantic defaults.
+    config_data["service_profiles"] = _merge_service_profiles_by_id(
+        defaults_only_config.service_profiles,
+        base_config.service_profiles,
+        operator_config_data,
+    )
 
     if load_dotenv_file:
         load_dotenv()
