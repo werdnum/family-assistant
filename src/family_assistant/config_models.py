@@ -282,6 +282,7 @@ class ServiceProfile(BaseModel):
     tools_config: ToolsConfig = Field(default_factory=ToolsConfig)
     tools_policy: ToolPolicyConfig | None = None
     operator_tools_policy: ToolPolicyConfig | None = Field(default=None, exclude=True)
+    operator_mcp_server_ids: list[str | MCPServerLoadingEntry] = Field(default_factory=list, exclude=True)
     chat_id_to_name_map: dict[int, str] = Field(default_factory=dict)
     slash_commands: list[str] = Field(default_factory=list)
     visibility_grants: list[str] = Field(default_factory=list)
@@ -297,6 +298,7 @@ class DefaultProfileSettings(BaseModel):
     tools_config: ToolsConfig = Field(default_factory=ToolsConfig)
     tools_policy: ToolPolicyConfig | None = None
     operator_tools_policy: ToolPolicyConfig | None = Field(default=None, exclude=True)
+    operator_mcp_server_ids: list[str | MCPServerLoadingEntry] = Field(default_factory=list, exclude=True)
     chat_id_to_name_map: dict[int, str] = Field(default_factory=dict)
     slash_commands: list[str] = Field(default_factory=list)
     visibility_grants: list[str] = Field(default_factory=list)
