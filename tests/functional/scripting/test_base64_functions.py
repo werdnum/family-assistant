@@ -121,6 +121,33 @@ base64_decode("YWJj$")
             await engine.evaluate_async(script)
 
     @pytest.mark.asyncio
+    async def test_base64_decode_bytes(self, engine_class: type) -> None:
+        """Test decoding base64 to raw bytes for non-UTF-8 data."""
+        engine = engine_class()
+
+        # Encode some non-UTF-8 bytes (0xff 0xfe are invalid UTF-8)
+        raw = bytes([0xFF, 0xFE, 0x00, 0x01])
+        encoded = base64.b64encode(raw).decode("ascii")
+        script = f"""
+base64_decode_bytes("{encoded}")
+"""
+        result = await engine.evaluate_async(script)
+        assert result == raw
+
+    @pytest.mark.asyncio
+    async def test_base64_decode_bytes_roundtrip(self, engine_class: type) -> None:
+        """Test encode then decode_bytes preserves arbitrary binary data."""
+        engine = engine_class()
+
+        script = """
+data = b"\\xff\\xfe\\x00\\x01"
+encoded = base64_encode(data)
+base64_decode_bytes(encoded) == data
+"""
+        result = await engine.evaluate_async(script)
+        assert result is True
+
+    @pytest.mark.asyncio
     async def test_base64_with_json(self, engine_class: type) -> None:
         """Test combining base64 with JSON for a realistic use case."""
         engine = engine_class()

@@ -99,6 +99,11 @@ def _base64_decode(data: str) -> str:
     return base64.b64decode(data, validate=True).decode("utf-8")
 
 
+def _base64_decode_bytes(data: str) -> bytes:
+    """Decode a base64 string to raw bytes."""
+    return base64.b64decode(data, validate=True)
+
+
 class MontyEngine:
     """
     Monty scripting engine for executing user-defined scripts.
@@ -692,6 +697,7 @@ class MontyEngine:
         for name, fn in [
             ("base64_encode", _base64_encode),
             ("base64_decode", _base64_decode),
+            ("base64_decode_bytes", _base64_decode_bytes),
         ]:
             names.append(name)
             impls[name] = fn

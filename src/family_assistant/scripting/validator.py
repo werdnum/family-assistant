@@ -159,6 +159,7 @@ def _generate_builtin_api_stubs(
     # Base64 API (always available)
     lines.append("def base64_encode(data: str | bytes) -> str: ...")
     lines.append("def base64_decode(data: str) -> str: ...")
+    lines.append("def base64_decode_bytes(data: str) -> bytes: ...")
     lines.append("")
 
     # LLM API
@@ -484,7 +485,7 @@ class ScriptValidator:
 
         if self.config.enable_json_api:
             names.extend(["json_encode", "json_decode"])
-        names.extend(["base64_encode", "base64_decode"])
+        names.extend(["base64_encode", "base64_decode", "base64_decode_bytes"])
         if self.config.enable_llm_api:
             names.extend(["llm", "llm_json"])
         if self.config.enable_time_api:
