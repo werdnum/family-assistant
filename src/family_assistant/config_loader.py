@@ -844,11 +844,16 @@ def _merge_service_profiles_by_id(
     Returns:
         List of profile dicts ready for ``resolve_all_service_profiles()``.
     """
-    operator_profile_defs = operator_config_data.get("service_profiles")
-    if not operator_profile_defs:
-        # Operator did not define any profiles — use the merged result as-is
-        # (which equals the defaults since no replacement happened).
+    if "service_profiles" not in operator_config_data:
+        # Operator did not mention service_profiles at all — use the merged
+        # result as-is (which equals the defaults since no replacement happened).
         return [p.model_dump(exclude_unset=True) for p in merged_profiles]
+
+    operator_profile_defs = operator_config_data["service_profiles"]
+    if not operator_profile_defs:
+        # Operator explicitly set an empty list — return nothing so
+        # resolve_all_service_profiles() creates a single default profile.
+        return []
 
     operator_profile_ids = {
         p["id"] for p in operator_profile_defs if isinstance(p, dict) and "id" in p

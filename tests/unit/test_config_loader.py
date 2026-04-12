@@ -1698,6 +1698,46 @@ class TestLoadConfig:
         assert shared.description == "Overridden"
         assert shared.processing_config.max_iterations == 42
 
+    def test_empty_service_profiles_in_config_yaml_wipes_defaults(
+        self, tmp_path: Path
+    ) -> None:
+        """Explicitly empty service_profiles in config.yaml removes all defaults."""
+        defaults_file = tmp_path / "defaults.yaml"
+        defaults_file.write_text(
+            yaml.dump({
+                "service_profiles": [
+                    {"id": "default_a", "description": "Default A"},
+                ],
+            })
+        )
+        config_file = tmp_path / "config.yaml"
+        config_file.write_text(yaml.dump({"service_profiles": []}))
+        prompts_file = tmp_path / "prompts.yaml"
+        prompts_file.write_text(yaml.dump({"system_prompt": "test"}))
+
+        env_to_clear = [m.env_var for m in ENV_VAR_MAPPINGS]
+        env_to_clear.extend([
+            "CALDAV_USERNAME",
+            "CALDAV_PASSWORD",
+            "CALDAV_CALENDAR_URLS",
+            "ICAL_URLS",
+            "MCP_CONFIG_PATH",
+            "INDEXING_PIPELINE_CONFIG_JSON",
+        ])
+        clean_env = {k: v for k, v in os.environ.items() if k not in env_to_clear}
+
+        with mock.patch.dict(os.environ, clean_env, clear=True):
+            config = load_config(
+                defaults_file_path=str(defaults_file),
+                config_file_path=str(config_file),
+                prompts_file_path=str(prompts_file),
+                load_dotenv_file=False,
+            )
+
+        # Empty list triggers resolve_all_service_profiles to create a
+        # single fallback profile, but the defaults are NOT preserved.
+        assert "default_a" not in {p.id for p in config.service_profiles}
+
     def test_invalid_config_raises_validation_error(self, tmp_path: Path) -> None:
         """Test that invalid config raises ValidationError."""
         config_file = tmp_path / "config.yaml"
