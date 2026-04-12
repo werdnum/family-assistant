@@ -671,12 +671,17 @@ def resolve_service_profile(
                 "enable_mcp_server_ids",
             ) or []
             # Deduplicate by string ID, preserving order. Entries can be
-            # plain strings or MCPServerLoadingEntry dicts — extract the ID
-            # for dedup but keep original form.
+            # plain strings, MCPServerLoadingEntry dicts (from YAML), or
+            # MCPServerLoadingEntry model instances (from validated config).
             seen: set[str] = set()
-            merged: list[str | dict[str, Any]] = []
+            merged: list[Any] = []
             for entry in profile_mcp_ids + operator_mcp_ids:
-                entry_id = entry if isinstance(entry, str) else entry.get("id", "")
+                if isinstance(entry, str):
+                    entry_id = entry
+                elif isinstance(entry, dict):
+                    entry_id = entry.get("id", "")
+                else:
+                    entry_id = getattr(entry, "id", "")
                 if entry_id and entry_id not in seen:
                     seen.add(entry_id)
                     merged.append(entry)
