@@ -444,7 +444,9 @@ class MontyEngine:
         ) -> Any:  # noqa: ANN401
             parsed_args = json.loads(args_json)
             if not isinstance(parsed_args, dict):
-                raise ValueError("Arguments must be a JSON object")
+                raise ValueError(
+                    f"Arguments: expected JSON object, got {type(parsed_args).__name__}"
+                )
             return await execute_tool_async(tool_name, **parsed_args)
 
         names.append("tools_execute_json")
@@ -893,16 +895,22 @@ class MontyEngine:
             elif isinstance(context, dict):
                 context_dict = dict(context)
             else:
-                raise TypeError("wake_llm context must be a dictionary or string")
+                raise TypeError(
+                    f"wake_llm context: expected dict or str, got {type(context).__name__}"
+                )
 
             if "attachments" in context_dict:
                 attachments = context_dict["attachments"]
                 if not isinstance(attachments, list):
-                    raise TypeError("attachments must be a list of attachment IDs")
+                    raise TypeError(
+                        f"attachments: expected list, got {type(attachments).__name__}"
+                    )
 
                 for attachment_id in attachments:
                     if not isinstance(attachment_id, str):
-                        raise TypeError("attachment IDs must be strings")
+                        raise TypeError(
+                            f"attachment ID: expected str, got {type(attachment_id).__name__}"
+                        )
                     try:
                         uuid.UUID(attachment_id)
                     except ValueError as e:
