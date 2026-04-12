@@ -960,6 +960,60 @@ raw
             assert isinstance(result, bytes)
             assert result == b"Test attachment content"
 
+    async def test_script_read_bytes_binary_attachment(
+        self,
+        db_engine: AsyncEngine,
+        attachment_registry: AttachmentRegistry,
+    ) -> None:
+        """Test that attachment_read_bytes preserves non-UTF-8 binary data through Monty."""
+        # PNG header followed by bytes that are invalid UTF-8
+        binary_payload = b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\xff\xfe\x80\x81"
+
+        async with DatabaseContext(engine=db_engine) as db_context:
+            attachment_record = await attachment_registry.register_user_attachment(
+                db_context=db_context,
+                content=binary_payload,
+                mime_type="image/png",
+                filename="test.png",
+                conversation_id="test_conversation",
+                user_id="test_user",
+                description="Binary PNG attachment",
+            )
+            attachment_id = attachment_record.attachment_id
+
+            execution_context = ToolExecutionContext(
+                interface_type="test",
+                conversation_id="test_conversation",
+                user_name="test_user",
+                turn_id="test_turn",
+                db_context=db_context,
+                processing_service=None,
+                clock=None,
+                home_assistant_client=None,
+                event_sources=None,
+                attachment_registry=attachment_registry,
+                camera_backend=None,
+                timezone=ZoneInfo("UTC"),
+            )
+
+            config = ScriptConfig(enable_print=True)
+            engine = MontyEngine(
+                config=config, default_timezone=ZoneInfo("Australia/Sydney")
+            )
+
+            script = f"""
+raw = attachment_read_bytes("{attachment_id}")
+raw
+"""
+
+            result = await engine.evaluate_async(
+                script=script,
+                execution_context=execution_context,
+            )
+
+            assert isinstance(result, bytes)
+            assert result == binary_payload
+
     async def test_script_read_bytes_returns_none_for_missing(
         self,
         db_engine: AsyncEngine,
