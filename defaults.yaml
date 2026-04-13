@@ -706,13 +706,13 @@ service_profiles:
           priority: 10
     slash_commands: [] # Not accessible via slash commands
   - id: "automation_creation"
-    description: "Specialized profile for creating and validating event-based and schedule-based automations. Includes comprehensive scripting documentation and validation tools."
+    description: "Specialized profile for creating and validating event-based and schedule-based automations. Uses built-in scripting skills and validation tools."
     processing_config:
       provider: "anthropic"
       llm_model: "claude-sonnet-4-6"
       max_iterations: 25 # Allow more iterations for complex validation workflows
-      include_system_docs:
-        - "scripting.md" # Include scripting documentation by default
+      # Scripting documentation is now available as built-in skills:
+      # "Python Scripting" and "Event-Triggered Scripts"
       prompts:
         system_prompt: |
           You are a specialized automation creation assistant helping {user_name} create robust, well-tested automations.

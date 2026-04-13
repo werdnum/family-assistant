@@ -556,7 +556,7 @@ def test_all_processing_profile_system_prompts_can_be_rendered() -> None:
         assert rendered_prompt
 
         if profile_id == "automation_creation":
-            assert 'f"Hello {name}"' in rendered_prompt
+            assert "automation creation assistant" in rendered_prompt
 
 
 @pytest.mark.no_db

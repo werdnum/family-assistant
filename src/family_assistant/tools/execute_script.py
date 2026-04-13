@@ -457,7 +457,7 @@ SCRIPT_TOOLS_DEFINITION: list[ToolDefinition] = [
                 "• **Inline**: Pass code via `script` parameter\n"
                 "• **Stored**: Pass `name` to run a saved script from the library (see list_scripts)\n\n"
                 "**IMPORTANT: Before writing scripts, please read the scripting documentation first!**\n"
-                "Use the command: `get_user_documentation_content filename='scripting.md'`\n\n"
+                "Load the 'Python Scripting' skill via `get_note` for the full reference.\n\n"
                 "**Tool Documentation:**\n"
                 "To see available tools and their parameters, ask: 'Show me the available tools'\n\n"
                 "**Execution Environment:**\n"
