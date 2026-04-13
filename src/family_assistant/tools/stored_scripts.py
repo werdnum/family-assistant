@@ -41,12 +41,12 @@ def _validate_parameters_schema_shape(
     Returns an error message on failure, or None if valid.
     """
     if not isinstance(schema, dict):
-        return "schema must be a dict"
+        return f"schema: expected dict, got {type(schema).__name__}"
 
     properties = schema.get("properties")
     if properties is not None:
         if not isinstance(properties, dict):
-            return "'properties' must be a dict"
+            return f"'properties': expected dict, got {type(properties).__name__}"
         for key in properties:
             if not isinstance(key, str):
                 return f"'properties' keys must be strings, got {type(key).__name__}"
@@ -54,7 +54,7 @@ def _validate_parameters_schema_shape(
     required = schema.get("required")
     if required is not None:
         if not isinstance(required, list):
-            return "'required' must be a list"
+            return f"'required': expected list, got {type(required).__name__}"
         for item in required:
             if not isinstance(item, str):
                 return f"'required' entries must be strings, got {type(item).__name__}"
@@ -90,14 +90,14 @@ async def validate_script_action_config(
     if not name:
         return None
     if not isinstance(name, str):
-        return "'script_name' must be a string"
+        return f"'script_name': expected str, got {type(name).__name__}"
     stored = await db_context.scripts.get_by_name(name)
     if stored is None:
         return f"Stored script '{name}' not found"
 
     raw_params = action_config.get("parameters")
     if raw_params is not None and not isinstance(raw_params, dict):
-        return "Script 'parameters' must be a dict"
+        return f"'parameters': expected dict, got {type(raw_params).__name__}"
 
     if stored.parameters_schema:
         params = raw_params or {}
