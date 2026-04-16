@@ -35,6 +35,7 @@ from family_assistant.tools.calendar import (
     search_calendar_events_tool,
 )
 from family_assistant.tools.confirmation import (
+    TOOL_CONFIRMATION_RENDERERS,
     render_delete_calendar_event_confirmation,
     render_modify_calendar_event_confirmation,
 )
@@ -465,6 +466,118 @@ async def test_confirming_tools_provider_with_calendar_events(
             or "successfully" in result_text.lower()
             or "modified" in result_text.lower()
         ), f"Tool execution failed: {result}"
+
+
+@pytest.mark.asyncio
+@pytest.mark.postgres
+async def test_confirming_provider_sets_tools_provider_for_renderer(
+    pg_vector_db_engine: AsyncEngine,
+    radicale_server: tuple[str, str, str, str],
+) -> None:
+    """Test that ConfirmingToolsProvider makes calendar config available to confirmation renderers.
+
+    Reproduces production path where context.tools_provider starts as None
+    and must be set by ConfirmingToolsProvider before the renderer runs.
+    """
+    radicale_base_url, r_user, r_pass, test_calendar_url = radicale_server
+
+    local_tz = ZoneInfo(TEST_TIMEZONE_STR)
+    event_summary = f"Renderer Integration {uuid.uuid4()}"
+    start_dt = datetime.now(local_tz).replace(
+        hour=11, minute=0, second=0, microsecond=0
+    ) + timedelta(days=2)
+    end_dt = start_dt + timedelta(hours=1)
+
+    event_uid = await create_test_event_in_radicale(
+        radicale_server, event_summary, start_dt, end_dt, pg_vector_db_engine
+    )
+
+    test_calendar_config = cast(
+        "CalendarConfig",
+        {
+            "caldav": {
+                "username": r_user,
+                "password": r_pass,
+                "base_url": radicale_base_url,
+                "calendar_urls": [test_calendar_url],
+            }
+        },
+    )
+
+    local_provider = LocalToolsProvider(
+        definitions=local_tools_definition,
+        implementations=local_tool_implementations,
+        calendar_config=test_calendar_config,
+    )
+
+    rendered_prompts: list[str] = []
+
+    async def rendering_confirmation_callback(
+        interface_type: str,
+        conversation_id: str,
+        turn_id: str | None,
+        tool_name: str,
+        call_id: str,
+        # ast-grep-ignore: no-dict-any - tool args from external LLM tool call have dynamic fields
+        tool_args: dict[str, Any],
+        timeout_seconds: float,
+        context: ToolExecutionContext,
+    ) -> bool:
+        """Callback that uses the actual confirmation renderer, like production."""
+        renderer = TOOL_CONFIRMATION_RENDERERS.get(tool_name)
+        if renderer:
+            prompt_text = await renderer(tool_args, context)
+            rendered_prompts.append(prompt_text)
+        return True
+
+    confirming_provider = ConfirmingToolsProvider(
+        wrapped_provider=local_provider,
+        tools_requiring_confirmation={"modify_calendar_event"},
+        confirmation_timeout=10.0,
+    )
+
+    async with get_db_context(engine=pg_vector_db_engine) as db_ctx:
+        exec_context = ToolExecutionContext(
+            interface_type="test",
+            conversation_id="test-conv-renderer",
+            user_name="TestUser",
+            turn_id="test-turn-renderer",
+            db_context=db_ctx,
+            processing_service=None,
+            clock=None,
+            home_assistant_client=None,
+            event_sources=None,
+            attachment_registry=None,
+            chat_interface=None,
+            timezone=ZoneInfo(TEST_TIMEZONE_STR),
+            request_confirmation_callback=rendering_confirmation_callback,
+            camera_backend=None,
+            # tools_provider intentionally left as None to mimic production
+        )
+
+        test_args = {
+            "uid": event_uid,
+            "calendar_url": test_calendar_url,
+            "new_summary": "Updated Summary",
+        }
+
+        await confirming_provider.execute_tool(
+            name="modify_calendar_event",
+            arguments=test_args,
+            context=exec_context,
+        )
+
+    assert len(rendered_prompts) == 1
+    prompt = rendered_prompts[0]
+
+    escaped_summary = telegramify_markdown.escape_markdown(event_summary)
+    assert event_summary in prompt or escaped_summary in prompt, (
+        f"Original event summary not in rendered prompt: {prompt}"
+    )
+    assert "Event details not found" not in prompt, (
+        f"Event details should have been fetched but got: {prompt}"
+    )
+    assert "Updated Summary" in prompt
 
 
 @pytest.mark.asyncio

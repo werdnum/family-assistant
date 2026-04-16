@@ -21,7 +21,6 @@ from typing import (
     runtime_checkable,
 )
 
-from family_assistant import calendar_integration
 from family_assistant.tools.attachment_utils import process_attachment_arguments
 from family_assistant.tools.metadata import (
     ToolDescriptor,
@@ -41,7 +40,6 @@ if TYPE_CHECKING:
     from collections.abc import Iterable, Sequence
 
     from family_assistant.embeddings import EmbeddingGenerator
-    from family_assistant.tools.types import CalendarEvent
 
 logger = logging.getLogger(__name__)
 
@@ -834,64 +832,6 @@ class ConfirmingToolsProvider(ToolsProvider):
             return None
         return await self.wrapped_provider.get_tool_descriptor(name)
 
-    async def _get_event_details_for_confirmation(
-        self,
-        tool_name: str,
-        # ast-grep-ignore: no-dict-any - Tool arguments are dynamic JSON from LLM
-        args: dict[str, Any],
-        context: ToolExecutionContext,
-    ) -> CalendarEvent | None:
-        """Fetches additional details for tools that need them for confirmation.
-
-        This is specifically for calendar tools that need to fetch event details
-        before showing confirmation.
-        """
-        if tool_name in {"modify_calendar_event", "delete_calendar_event"}:
-            uid = args.get("uid")
-            calendar_url = args.get("calendar_url")
-            if uid and calendar_url:
-                # Try to get calendar config from the wrapped provider
-                calendar_config = None
-
-                # Check if wrapped provider is LocalToolsProvider with calendar config
-                if isinstance(self.wrapped_provider, LocalToolsProvider):
-                    calendar_config = self.wrapped_provider.get_calendar_config()
-                    logger.debug(
-                        f"Found calendar config in wrapped LocalToolsProvider: {bool(calendar_config)}"
-                    )
-                # Check if it's a CompositeToolsProvider wrapping a LocalToolsProvider
-                elif isinstance(self.wrapped_provider, CompositeToolsProvider):
-                    logger.debug(
-                        "Wrapped provider is CompositeToolsProvider, checking providers..."
-                    )
-                    for provider in self.wrapped_provider.get_providers():
-                        if isinstance(provider, LocalToolsProvider):
-                            calendar_config = provider.get_calendar_config()
-                            logger.debug(
-                                f"Found calendar config in provider {type(provider).__name__}: {bool(calendar_config)}"
-                            )
-                            break
-                else:
-                    logger.debug(
-                        f"Wrapped provider type: {type(self.wrapped_provider).__name__}, has no calendar config"
-                    )
-
-                if calendar_config:
-                    try:
-                        # Fetch event details using the dedicated function
-                        event_details = await calendar_integration.fetch_event_details_for_confirmation(
-                            uid=uid,
-                            calendar_url=calendar_url,
-                            calendar_config=cast("CalendarConfig", calendar_config),
-                            timezone=context.timezone,
-                        )
-                        return event_details
-                    except Exception as e:
-                        logger.error(
-                            f"Failed to fetch event details for {tool_name}: {e}"
-                        )
-        return None
-
     async def execute_tool(
         self,
         name: str,
@@ -923,6 +863,11 @@ class ConfirmingToolsProvider(ToolsProvider):
 
                 typed_callback = context.request_confirmation_callback
                 resolved_call_id = call_id or f"tool_{uuid.uuid4()}"
+
+                # Expose the provider chain so confirmation renderers can
+                # access calendar config and other provider-specific data.
+                if context.tools_provider is None:
+                    context.tools_provider = self
 
                 # The callback is expected to handle the timeout internally via asyncio.wait_for
                 # Pass context so renderers can fetch event details, timezone, etc.
@@ -1081,6 +1026,10 @@ class PolicyEnforcingToolsProvider(ToolsProvider):
             try:
                 typed_callback = context.request_confirmation_callback
                 resolved_call_id = call_id or f"tool_{uuid.uuid4()}"
+
+                if context.tools_provider is None:
+                    context.tools_provider = self
+
                 user_confirmed = await typed_callback(
                     interface_type=context.interface_type,
                     conversation_id=context.conversation_id,
