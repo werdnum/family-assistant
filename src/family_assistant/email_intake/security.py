@@ -150,6 +150,35 @@ def verify_sender_authorization(
     raise EmailIntakeSecurityError(msg)
 
 
+def resolve_target_user_id(
+    form_data: FormData, config: EmailIntakeConfig
+) -> str | None:
+    """Resolve the intended application user for an accepted inbound email."""
+    sender = normalize_email_address(_string_field(form_data, "sender"))
+    recipient = normalize_email_address(_string_field(form_data, "recipient"))
+
+    matched_user_ids: set[str] = set()
+    for mapping in config.user_mappings:
+        if (sender is not None and sender in mapping.sender_addresses) or (
+            recipient is not None and recipient in mapping.recipient_addresses
+        ):
+            matched_user_ids.add(mapping.user_id)
+
+    if len(matched_user_ids) > 1:
+        sorted_user_ids = ", ".join(sorted(matched_user_ids))
+        msg = f"Inbound email maps to multiple users: {sorted_user_ids}"
+        raise EmailIntakeSecurityError(msg)
+
+    if matched_user_ids:
+        return next(iter(matched_user_ids))
+
+    if config.require_user_mapping:
+        msg = "Inbound email does not map to a configured user"
+        raise EmailIntakeSecurityError(msg)
+
+    return None
+
+
 def enforce_attachment_size_limits(
     *,
     attachment_name: str,
@@ -227,6 +256,8 @@ def _requires_verified_mailgun(config: EmailIntakeConfig) -> bool:
         config.allowed_sender_addresses
         or config.allowed_recipient_addresses
         or config.require_authenticated_sender
+        or config.require_user_mapping
+        or config.user_mappings
     )
 
 

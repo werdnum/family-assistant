@@ -18,10 +18,11 @@ from __future__ import annotations
 import contextlib
 import zoneinfo
 from contextvars import ContextVar
+from email.utils import parseaddr
 from typing import TYPE_CHECKING, Any, ClassVar, Literal
 
 import cloudcoil.models.kubernetes.core.v1 as k8s_models  # noqa: TC002 - Pydantic needs at runtime
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 if TYPE_CHECKING:
@@ -556,6 +557,45 @@ class AttachmentConfig(BaseModel):
     )
 
 
+class EmailIntakeUserMapping(BaseModel):
+    """Maps authorized inbound email addresses to an application user."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    user_id: str = Field(min_length=1)
+    sender_addresses: set[str] = Field(default_factory=set)
+    recipient_addresses: set[str] = Field(default_factory=set)
+
+    @field_validator("sender_addresses", "recipient_addresses", mode="before")
+    @classmethod
+    def normalize_addresses(cls, values: object) -> set[str]:
+        if values is None:
+            return set()
+        if not isinstance(values, (list, set, tuple)):
+            msg = "Email intake mapping addresses must be a list or set"
+            raise TypeError(msg)
+
+        normalized_addresses: set[str] = set()
+        for value in values:
+            if not isinstance(value, str):
+                msg = "Email intake mapping addresses must be strings"
+                raise TypeError(msg)
+            _, parsed_address = parseaddr(value)
+            normalized = parsed_address.strip().lower()
+            if not normalized:
+                msg = f"Invalid email intake mapping address: {value!r}"
+                raise ValueError(msg)
+            normalized_addresses.add(normalized)
+        return normalized_addresses
+
+    @model_validator(mode="after")
+    def require_at_least_one_address(self) -> EmailIntakeUserMapping:
+        if not self.sender_addresses and not self.recipient_addresses:
+            msg = "Email intake user mappings require at least one sender or recipient address"
+            raise ValueError(msg)
+        return self
+
+
 class EmailIntakeConfig(BaseModel):
     """Security controls for inbound email webhooks."""
 
@@ -568,6 +608,8 @@ class EmailIntakeConfig(BaseModel):
     require_authenticated_sender: bool = False
     require_dmarc_pass: bool = True
     allow_spf_or_dkim_fallback_when_dmarc_missing: bool = False
+    require_user_mapping: bool = False
+    user_mappings: list[EmailIntakeUserMapping] = Field(default_factory=list)
     max_raw_request_bytes: int = Field(default=25 * 1024 * 1024, gt=0)
     max_attachment_bytes: int = Field(default=10 * 1024 * 1024, gt=0)
     max_total_attachment_bytes: int = Field(default=25 * 1024 * 1024, gt=0)

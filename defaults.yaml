@@ -245,6 +245,10 @@ email_intake:
   require_authenticated_sender: false
   require_dmarc_pass: true
   allow_spf_or_dkim_fallback_when_dmarc_missing: false
+  # Require accepted emails to resolve to exactly one configured application user.
+  require_user_mapping: false
+  # Map authorized forwarding senders and/or Mailgun inbound aliases to app users.
+  user_mappings: []
   # Application-level limits in bytes, independent of any reverse proxy limits.
   max_raw_request_bytes: 26214400
   max_attachment_bytes: 10485760

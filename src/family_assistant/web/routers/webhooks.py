@@ -21,6 +21,7 @@ from family_assistant.email_intake.security import (
     enforce_attachment_size_limits,
     enforce_raw_request_size,
     get_security_fields,
+    resolve_target_user_id,
     verify_mailgun_signature,
     verify_sender_authorization,
 )
@@ -126,6 +127,7 @@ async def handle_mail_webhook(
             config=email_intake_config,
         )
         verify_sender_authorization(form_data, email_intake_config)
+        target_user_id = resolve_target_user_id(form_data, email_intake_config)
         await _save_raw_mail_webhook(
             raw_body_content=raw_body_content,
             mailbox_raw_dir=mailbox_raw_dir_to_use,
@@ -252,6 +254,7 @@ async def handle_mail_webhook(
             attachment_info=(
                 processed_attachments if processed_attachments else None
             ),  # Override
+            target_user_id=target_user_id,
         )
 
         # Pass the Pydantic model instance to the storage function

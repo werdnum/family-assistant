@@ -11,7 +11,11 @@ from typing import TYPE_CHECKING
 import pytest
 from sqlalchemy import select
 
-from family_assistant.config_models import AppConfig, EmailIntakeConfig
+from family_assistant.config_models import (
+    AppConfig,
+    EmailIntakeConfig,
+    EmailIntakeUserMapping,
+)
 from family_assistant.storage.context import DatabaseContext
 from family_assistant.storage.email import received_emails_table
 from family_assistant.web.app_creator import app as fastapi_app
@@ -101,6 +105,16 @@ async def _email_exists(engine: AsyncEngine, message_id: str) -> bool:
     return row is not None
 
 
+async def _email_target_user_id(engine: AsyncEngine, message_id: str) -> str | None:
+    async with DatabaseContext(engine=engine) as db_context:
+        row = await db_context.fetch_one(
+            select(received_emails_table.c.target_user_id).where(
+                received_emails_table.c.message_id_header == message_id
+            )
+        )
+    return row["target_user_id"] if row else None
+
+
 def _raw_mail_files(tmp_path: Path) -> list[Path]:
     raw_dir = tmp_path / "raw"
     if not raw_dir.exists():
@@ -124,6 +138,13 @@ async def test_mail_webhook_accepts_signed_authorized_authenticated_sender(
             allowed_sender_addresses=["buyer@example.com"],
             allowed_recipient_addresses=["orders@example.net"],
             require_authenticated_sender=True,
+            require_user_mapping=True,
+            user_mappings=[
+                EmailIntakeUserMapping(
+                    user_id="alice",
+                    sender_addresses={"buyer@example.com"},
+                )
+            ],
         ),
     )
     form = _mailgun_form()
@@ -132,6 +153,7 @@ async def test_mail_webhook_accepts_signed_authorized_authenticated_sender(
 
     assert response.status_code == 200, response.text
     assert await _email_exists(db_engine, form["Message-Id"])
+    assert await _email_target_user_id(db_engine, form["Message-Id"]) == "alice"
     assert _raw_mail_files(tmp_path)
 
 
@@ -180,6 +202,36 @@ async def test_mail_webhook_rejects_policy_without_mailgun_signature_configurati
 
 
 @pytest.mark.asyncio
+async def test_mail_webhook_rejects_user_mapping_without_mailgun_signature_configuration(
+    api_client: httpx.AsyncClient,
+    db_engine: AsyncEngine,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    _configure_email_intake(
+        monkeypatch,
+        tmp_path,
+        EmailIntakeConfig(
+            require_user_mapping=True,
+            user_mappings=[
+                EmailIntakeUserMapping(
+                    user_id="alice",
+                    sender_addresses={"buyer@example.com"},
+                )
+            ],
+        ),
+    )
+    form = _mailgun_form(signing_key=None)
+
+    response = await api_client.post("/webhook/mail", data=form)
+
+    assert response.status_code == 401
+    assert "Mailgun signature verification must be configured" in response.text
+    assert not await _email_exists(db_engine, form["Message-Id"])
+    assert _raw_mail_files(tmp_path) == []
+
+
+@pytest.mark.asyncio
 async def test_mail_webhook_rejects_unlisted_sender(
     api_client: httpx.AsyncClient,
     db_engine: AsyncEngine,
@@ -202,6 +254,102 @@ async def test_mail_webhook_rejects_unlisted_sender(
     assert "not authorized" in response.text
     assert not await _email_exists(db_engine, form["Message-Id"])
     assert _raw_mail_files(tmp_path) == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.postgres
+async def test_mail_webhook_maps_recipient_alias_to_target_user(
+    api_client: httpx.AsyncClient,
+    db_engine: AsyncEngine,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    _configure_email_intake(
+        monkeypatch,
+        tmp_path,
+        EmailIntakeConfig(
+            mailgun_webhook_signing_key="mailgun-test-key",
+            allowed_sender_addresses=["buyer@example.com"],
+            allowed_recipient_addresses=["assistant+alice@mg.example.com"],
+            require_user_mapping=True,
+            user_mappings=[
+                EmailIntakeUserMapping(
+                    user_id="alice",
+                    recipient_addresses={"assistant+alice@mg.example.com"},
+                )
+            ],
+        ),
+    )
+    form = _mailgun_form(recipient="assistant+alice@mg.example.com")
+
+    response = await api_client.post("/webhook/mail", data=form)
+
+    assert response.status_code == 200, response.text
+    assert await _email_target_user_id(db_engine, form["Message-Id"]) == "alice"
+
+
+@pytest.mark.asyncio
+async def test_mail_webhook_rejects_unmapped_user_when_mapping_required(
+    api_client: httpx.AsyncClient,
+    db_engine: AsyncEngine,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    _configure_email_intake(
+        monkeypatch,
+        tmp_path,
+        EmailIntakeConfig(
+            mailgun_webhook_signing_key="mailgun-test-key",
+            require_user_mapping=True,
+            user_mappings=[
+                EmailIntakeUserMapping(
+                    user_id="alice",
+                    sender_addresses={"alice@example.com"},
+                )
+            ],
+        ),
+    )
+    form = _mailgun_form(sender="buyer@example.com")
+
+    response = await api_client.post("/webhook/mail", data=form)
+
+    assert response.status_code == 401
+    assert "does not map to a configured user" in response.text
+    assert not await _email_exists(db_engine, form["Message-Id"])
+
+
+@pytest.mark.asyncio
+async def test_mail_webhook_rejects_ambiguous_user_mapping(
+    api_client: httpx.AsyncClient,
+    db_engine: AsyncEngine,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    _configure_email_intake(
+        monkeypatch,
+        tmp_path,
+        EmailIntakeConfig(
+            mailgun_webhook_signing_key="mailgun-test-key",
+            require_user_mapping=True,
+            user_mappings=[
+                EmailIntakeUserMapping(
+                    user_id="alice",
+                    sender_addresses={"buyer@example.com"},
+                ),
+                EmailIntakeUserMapping(
+                    user_id="bob",
+                    recipient_addresses={"assistant+bob@mg.example.com"},
+                ),
+            ],
+        ),
+    )
+    form = _mailgun_form(recipient="assistant+bob@mg.example.com")
+
+    response = await api_client.post("/webhook/mail", data=form)
+
+    assert response.status_code == 401
+    assert "maps to multiple users" in response.text
+    assert not await _email_exists(db_engine, form["Message-Id"])
 
 
 @pytest.mark.asyncio

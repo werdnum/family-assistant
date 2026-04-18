@@ -157,6 +157,19 @@ email_intake:
   require_dmarc_pass: true
   allow_spf_or_dkim_fallback_when_dmarc_missing: false
 
+  require_user_mapping: true
+  user_mappings:
+    - user_id: "alice"
+      sender_addresses:
+        - "alice@gmail.com"
+      recipient_addresses:
+        - "assistant+alice@mg.example.com"
+    - user_id: "bob"
+      sender_addresses:
+        - "bob@gmail.com"
+      recipient_addresses:
+        - "assistant+bob@mg.example.com"
+
   max_raw_request_bytes: 26214400
   max_attachment_bytes: 10485760
   max_total_attachment_bytes: 26214400
@@ -174,9 +187,9 @@ Mailgun HTTP webhook signing key for the receiving domain.
 | Example   | `0123456789abcdef0123456789abcdef`      |
 
 If this key is unset, the app skips Mailgun signature verification only for permissive indexing-only
-deployments. If sender allowlists, recipient allowlists, or sender authentication are enabled, the
-webhook fails closed until the signing key is configured. This prevents direct HTTP clients from
-forging Mailgun form fields such as `sender`, `recipient`, `dmarc`, `spf`, and `dkim`.
+deployments. If sender allowlists, recipient allowlists, sender authentication, or user mapping are
+enabled, the webhook fails closed until the signing key is configured. This prevents direct HTTP
+clients from forging Mailgun form fields such as `sender`, `recipient`, `dmarc`, `spf`, and `dkim`.
 
 ### allowed_sender_addresses
 
@@ -211,9 +224,7 @@ normal Gmail address unless Gmail is also the Mailgun recipient. Examples:
 Mailgun can route a catch-all or regex recipient pattern to the same `/webhook/mail` endpoint, while
 the app uses `allowed_recipient_addresses` to reject unexpected recipients. Per-user recipient
 aliases add friction because operators need to provision or communicate the aliases, but they give a
-clean way to distinguish which user intended the email intake path. This PR only validates and
-stores the recipient; later action-processing work can use the stored recipient to map the email to
-a user or confirmation channel.
+clean way to distinguish which user intended the email intake path.
 
 | Property  | Value                                     |
 | --------- | ----------------------------------------- |
@@ -223,6 +234,40 @@ a user or confirmation channel.
 | Example   | `["assistant+alice@mg.example.com"]`      |
 
 If this list is non-empty, the Mailgun signing key must also be set.
+
+### User Mapping
+
+`user_mappings` resolve accepted inbound email to an application `user_id`. The resolved value is
+stored on the received email as `target_user_id`, so later action-processing and confirmation flows
+can deterministically choose the right user context.
+
+Mappings can match by authorized forwarding sender, by Mailgun recipient alias, or by both:
+
+```yaml
+email_intake:
+  require_user_mapping: true
+  user_mappings:
+    - user_id: "alice"
+      sender_addresses: ["alice@gmail.com"]
+      recipient_addresses: ["assistant+alice@mg.example.com"]
+```
+
+When `require_user_mapping` is true, accepted email must map to exactly one configured user. If no
+mapping matches, the webhook returns `401`. If sender and recipient mappings point to different
+users, the webhook also returns `401` rather than guessing. If multiple mapping entries match the
+same `user_id`, that is accepted.
+
+For the least operational friction, map each user's stable forwarding address in `sender_addresses`.
+For stronger routing and clearer confirmation behavior, also give each user a Mailgun inbound alias
+and include it in `recipient_addresses`.
+
+| Option                 | Default | Recommended for actions |
+| ---------------------- | ------- | ----------------------- |
+| `require_user_mapping` | `false` | `true`                  |
+| `user_mappings`        | `[]`    | One entry per user      |
+
+If `require_user_mapping` is true or `user_mappings` is non-empty, the Mailgun signing key must also
+be set.
 
 ### Sender Authentication Policy
 
