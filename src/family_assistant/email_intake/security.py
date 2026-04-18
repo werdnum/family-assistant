@@ -69,6 +69,12 @@ def verify_mailgun_signature(
     """Verify Mailgun's timestamp/token/signature tuple when a key is configured."""
     signing_key = config.mailgun_webhook_signing_key
     if signing_key is None:
+        if _requires_verified_mailgun(config):
+            msg = (
+                "Mailgun signature verification must be configured before enabling "
+                "sender, recipient, or authentication policy"
+            )
+            raise EmailIntakeSecurityError(msg)
         return
 
     if not timestamp or not token or not signature:
@@ -214,6 +220,14 @@ def _string_field(form_data: FormData, key: str) -> str | None:
         if stripped_value:
             return stripped_value
     return None
+
+
+def _requires_verified_mailgun(config: EmailIntakeConfig) -> bool:
+    return bool(
+        config.allowed_sender_addresses
+        or config.allowed_recipient_addresses
+        or config.require_authenticated_sender
+    )
 
 
 def _coalesce_auth_result(*values: str | None) -> str | None:

@@ -158,6 +158,28 @@ async def test_mail_webhook_rejects_invalid_mailgun_signature(
 
 
 @pytest.mark.asyncio
+async def test_mail_webhook_rejects_policy_without_mailgun_signature_configuration(
+    api_client: httpx.AsyncClient,
+    db_engine: AsyncEngine,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    _configure_email_intake(
+        monkeypatch,
+        tmp_path,
+        EmailIntakeConfig(allowed_sender_addresses=["buyer@example.com"]),
+    )
+    form = _mailgun_form(signing_key=None)
+
+    response = await api_client.post("/webhook/mail", data=form)
+
+    assert response.status_code == 401
+    assert "Mailgun signature verification must be configured" in response.text
+    assert not await _email_exists(db_engine, form["Message-Id"])
+    assert _raw_mail_files(tmp_path) == []
+
+
+@pytest.mark.asyncio
 async def test_mail_webhook_rejects_unlisted_sender(
     api_client: httpx.AsyncClient,
     db_engine: AsyncEngine,
@@ -168,10 +190,11 @@ async def test_mail_webhook_rejects_unlisted_sender(
         monkeypatch,
         tmp_path,
         EmailIntakeConfig(
+            mailgun_webhook_signing_key="mailgun-test-key",
             allowed_sender_addresses=["authorized@example.com"],
         ),
     )
-    form = _mailgun_form(sender="attacker@example.com", signing_key=None)
+    form = _mailgun_form(sender="attacker@example.com")
 
     response = await api_client.post("/webhook/mail", data=form)
 
@@ -191,9 +214,12 @@ async def test_mail_webhook_rejects_dmarc_failure_even_when_spf_passes(
     _configure_email_intake(
         monkeypatch,
         tmp_path,
-        EmailIntakeConfig(require_authenticated_sender=True),
+        EmailIntakeConfig(
+            mailgun_webhook_signing_key="mailgun-test-key",
+            require_authenticated_sender=True,
+        ),
     )
-    form = _mailgun_form(dmarc="fail", spf="pass", dkim="fail", signing_key=None)
+    form = _mailgun_form(dmarc="fail", spf="pass", dkim="fail")
 
     response = await api_client.post("/webhook/mail", data=form)
 
@@ -213,9 +239,12 @@ async def test_mail_webhook_accepts_authentication_results_from_message_headers(
     _configure_email_intake(
         monkeypatch,
         tmp_path,
-        EmailIntakeConfig(require_authenticated_sender=True),
+        EmailIntakeConfig(
+            mailgun_webhook_signing_key="mailgun-test-key",
+            require_authenticated_sender=True,
+        ),
     )
-    form = _mailgun_form(dmarc=None, spf=None, dkim=None, signing_key=None)
+    form = _mailgun_form(dmarc=None, spf=None, dkim=None)
     form["message-headers"] = (
         '[["Authentication-Results", "mx.example.net; dmarc=pass spf=pass dkim=pass"]]'
     )
@@ -238,12 +267,13 @@ async def test_mail_webhook_accepts_explicit_spf_fallback_when_dmarc_missing(
         monkeypatch,
         tmp_path,
         EmailIntakeConfig(
+            mailgun_webhook_signing_key="mailgun-test-key",
             require_authenticated_sender=True,
             require_dmarc_pass=False,
             allow_spf_or_dkim_fallback_when_dmarc_missing=True,
         ),
     )
-    form = _mailgun_form(dmarc=None, spf="pass", dkim="fail", signing_key=None)
+    form = _mailgun_form(dmarc=None, spf="pass", dkim="fail")
 
     response = await api_client.post("/webhook/mail", data=form)
 
@@ -270,6 +300,28 @@ async def test_mail_webhook_rejects_oversized_raw_payload(
 
     assert response.status_code == 413
     assert not await _email_exists(db_engine, form["Message-Id"])
+
+
+@pytest.mark.asyncio
+async def test_mail_webhook_rejects_oversized_content_length_before_form_parsing(
+    api_client: httpx.AsyncClient,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    _configure_email_intake(
+        monkeypatch,
+        tmp_path,
+        EmailIntakeConfig(max_raw_request_bytes=8),
+    )
+
+    response = await api_client.post(
+        "/webhook/mail",
+        content=b"this is larger than eight bytes",
+        headers={"content-type": "application/octet-stream"},
+    )
+
+    assert response.status_code == 413
+    assert _raw_mail_files(tmp_path) == []
 
 
 @pytest.mark.asyncio

@@ -78,13 +78,29 @@ async def handle_mail_webhook(
     parses it, saves attachments, and passes structured data to the storage layer.
     """
     logger.info("Received POST request on /webhook/mail")
-    raw_body_content = await request.body()
-
-    # Determine directory for saving raw requests from app config or fallback
 
     mailbox_raw_dir_to_use: str = DEFAULT_MAILBOX_RAW_DIR_FALLBACK
     config: AppConfig | None = getattr(request.app.state, "config", None)
     email_intake_config = config.email_intake if config else EmailIntakeConfig()
+
+    content_length = request.headers.get("content-length")
+    if content_length:
+        try:
+            content_length_bytes = int(content_length)
+        except ValueError:
+            logger.warning("Ignoring invalid Content-Length header: %s", content_length)
+        else:
+            if content_length_bytes > email_intake_config.max_raw_request_bytes:
+                msg = (
+                    "Inbound email webhook payload exceeds configured limit "
+                    f"({content_length_bytes} > "
+                    f"{email_intake_config.max_raw_request_bytes} bytes)"
+                )
+                logger.warning("Rejecting oversized inbound email webhook: %s", msg)
+                raise HTTPException(status_code=413, detail=msg)
+
+    raw_body_content = await request.body()
+
     try:
         enforce_raw_request_size(raw_body_content, email_intake_config)
     except EmailIntakePayloadTooLargeError as exc:
