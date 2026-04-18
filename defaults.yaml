@@ -237,8 +237,9 @@ email_intake:
   # Mailgun webhook signing key. When set, timestamp/token/signature fields are required.
   mailgun_webhook_signing_key: null
   mailgun_signature_max_age_seconds: 300
-  # Empty allowlists mean unrestricted. Use lowercase concrete addresses for operational clarity.
+  # Empty allowlists mean unrestricted. Sender addresses are the authorized forwarding users.
   allowed_sender_addresses: []
+  # Recipient addresses are the Mailgun inbound addresses/aliases this app should accept.
   allowed_recipient_addresses: []
   # Require DMARC/SPF/DKIM checks reported by Mailgun/authentication headers.
   require_authenticated_sender: false
