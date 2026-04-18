@@ -58,7 +58,7 @@ Important current tool classifications:
 | Notes write                    | `add_or_update_note`                                                                | `STATE_CHANGING`, `STATE_PERSISTING`, `SENSITIVE_DATA`, `NOTES`             | Confirm                                 |
 | Documents read                 | `search_documents`, `get_full_document_content`                                     | `READ_ONLY`, `SENSITIVE_DATA`, `DOCUMENTS`, `OUTPUT_UNTRUSTED`              | Allow                                   |
 | Message known user             | `send_message_to_user`                                                              | `EXTERNAL_COMM`, `SENSITIVE_DATA`                                           | Confirm                                 |
-| Reminders/tasks                | `schedule_reminder`, `schedule_future_callback`, callback modifiers                 | `STATE_CHANGING`, `SCHEDULING`; cancellation is `DESTRUCTIVE`               | Confirm writes; allow list              |
+| Reminders/tasks                | `schedule_reminder`, `schedule_future_callback`, callback modifiers                 | `STATE_CHANGING`, `SCHEDULING`; cancellation is `DESTRUCTIVE`               | Confirm writes; deny cancellation       |
 | Script/code                    | `execute_script`, `save_script`, `test_script_with_simulated_tools`, `spawn_worker` | `CODE_EXECUTION` and related tags                                           | Deny                                    |
 | Automation                     | `create_automation`, `schedule_action`, automation CRUD                             | `AUTOMATION`, often `STATE_CHANGING`                                        | Deny                                    |
 | Browser/computer use           | `navigate`, `click_at`, `search`, etc.                                              | `BROWSER`, `STATE_CHANGING`, `EXTERNAL_COMM`                                | Deny                                    |
@@ -178,6 +178,12 @@ Risk pressure test:
 
 - The thread contains instructions to future agents. These are summarized as content, not followed.
 
+Same-thread summary delivery is not an LLM-selected `EXTERNAL_COMM` tool. It is the normal final
+response path for the email interface: deterministic application code sends the assistant's final
+text only to the authenticated sender/conversation that submitted the email. The `email_intake`
+profile must not receive a general outbound email tool, and the model must not choose arbitrary
+email recipients.
+
 ## Tool Policy Shape
 
 Add a non-slash-command `email_intake` profile. It should use explicit tool names plus tag-based
@@ -233,7 +239,6 @@ tools_policy:
           - "schedule_reminder"
           - "schedule_future_callback"
           - "modify_pending_callback"
-          - "cancel_pending_callback"
       decision: "confirm"
       priority: 50
       description: "Email intake state changes require user confirmation."
@@ -250,7 +255,13 @@ tools_policy:
 Additional deny-by-name rules may be added for tools whose current tags are broad but not precise
 enough. In particular, deny `schedule_action`, `create_automation`, script tools, worker tools,
 workspace tools, engineering tools, browser/computer-use tools, media generation/download tools,
-MQTT, `attach_to_response`, and `ingest_document_from_url`.
+MQTT, `attach_to_response`, `cancel_pending_callback`, and `ingest_document_from_url`.
+
+Final email replies to the authenticated sender should bypass the tool policy entirely because they
+are interface delivery, not an LLM-callable outbound email capability. They are recipient-locked to
+the authorized sender. Any message to a different known user still goes through
+`send_message_to_user` and requires confirmation; any third-party email reply remains out of scope
+for V1.
 
 ## Confirmation Strategy
 
@@ -428,6 +439,8 @@ Tests:
   `schedule_future_callback`, and `send_message_to_user`.
 - Route email-originated confirmations to the user's primary confirmation channel.
 - If no channel is available, do not advertise confirmed tools for that turn.
+- Keep destructive cancellation/deletion tools denied in V1. Users can perform those actions from
+  normal interactive channels where the broader assistant profile and confirmation UX already exist.
 
 Tests:
 
