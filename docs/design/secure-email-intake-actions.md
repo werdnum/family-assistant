@@ -171,8 +171,11 @@ The user forwards a long email thread or policy and asks for a summary.
 
 Expected behavior:
 
-- Reply to the authenticated sender with a summary and optional action candidates.
-- No confirmation needed if no state change or external communication occurs.
+- Reply to the authenticated sender with a summary and optional action candidates. The application
+  framework routes the assistant's standard response back by email; the LLM does not receive a
+  general email-sending tool.
+- No tool confirmation is needed for summary-only responses because same-thread delivery is
+  deterministic interface routing, not an LLM-selected recipient or tool call.
 
 Risk pressure test:
 
@@ -349,6 +352,8 @@ Required inbound checks:
 - Reject auto-generated, bounce, list, bulk, and no-reply messages for action processing.
 - Deduplicate on `Message-Id`.
 - Rate-limit per authorized sender and globally.
+- Enforce maximum raw webhook payload, parsed body, and attachment size limits before expensive
+  parsing or storage work.
 
 Private per-user aliases are useful but should be optional in V1:
 
@@ -399,11 +404,14 @@ Tests:
 - Unauthorized sender is rejected for action processing.
 - Authorized sender with strict authentication results is accepted.
 - Auto-generated/list/bulk messages do not enqueue action processing.
+- Oversized raw payloads, parsed bodies, and attachments are rejected before expensive parsing.
 
 ### Milestone 2: Email Interaction Builder
 
 - Add parser/classifier that separates trusted outer user intent from untrusted forwarded/quoted
-  content.
+  content. Prefer structural MIME boundaries, such as `message/rfc822` attachments or provider
+  parsed parts, over text-only forwarded-message markers so an attacker cannot spoof boundaries by
+  controlling inner email text.
 - If the user provides no trusted top-level text, synthesize a safe default intent: "Analyze this
   forwarded email and propose useful actions."
 - Mark forwarded/quoted/attached content as untrusted evidence.
@@ -414,6 +422,7 @@ Tests:
 
 - Forwarded content is labelled untrusted.
 - Prompt injection in forwarded body is not presented as trusted user instruction.
+- Structural MIME forwarding is preferred over text marker parsing when both are available.
 - Ambiguous or HTML-only messages are still safe and ask clarifying questions when needed.
 
 ### Milestone 3: Restricted Profile And Policy Verification
