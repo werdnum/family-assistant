@@ -13,7 +13,7 @@ from family_assistant.storage.repositories.base import BaseRepository
 class EmailRepository(BaseRepository):
     """Repository for managing received emails in the database."""
 
-    async def store_incoming(self, parsed_email: ParsedEmailData) -> None:
+    async def store_incoming(self, parsed_email: ParsedEmailData) -> int | None:
         """
         Stores parsed email data in the `received_emails` table and enqueues an indexing task.
 
@@ -95,6 +95,7 @@ class EmailRepository(BaseRepository):
                 f"Email with Message-ID {parsed_email.message_id_header} already exists: {e}"
             )
             # Don't re-raise - email already exists
+            return None
         except SQLAlchemyError as e:
             self._logger.error(
                 f"Database error storing email {parsed_email.message_id_header}: {e}",
@@ -107,6 +108,23 @@ class EmailRepository(BaseRepository):
                 exc_info=True,
             )
             raise
+        return int(email_db_id)
+
+    async def get_by_id(self, email_id: int) -> dict | None:
+        """
+        Retrieves an email by its internal database ID.
+
+        Args:
+            email_id: Internal received_emails ID
+
+        Returns:
+            Email data or None if not found
+        """
+        stmt = select(received_emails_table).where(
+            received_emails_table.c.id == email_id
+        )
+        row = await self._db.fetch_one(stmt)
+        return dict(row) if row else None
 
     async def get_by_message_id(self, message_id_header: str) -> dict | None:
         """

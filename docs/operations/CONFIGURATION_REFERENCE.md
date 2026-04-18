@@ -170,6 +170,10 @@ email_intake:
       recipient_addresses:
         - "assistant+bob@mg.example.com"
 
+  action_planning_enabled: false
+  action_planning_body_max_chars: 20000
+  max_action_proposals_per_email: 5
+
   max_raw_request_bytes: 26214400
   max_attachment_bytes: 10485760
   max_total_attachment_bytes: 26214400
@@ -188,8 +192,9 @@ Mailgun HTTP webhook signing key for the receiving domain.
 
 If this key is unset, the app skips Mailgun signature verification only for permissive indexing-only
 deployments. If sender allowlists, recipient allowlists, sender authentication, or user mapping are
-enabled, the webhook fails closed until the signing key is configured. This prevents direct HTTP
-clients from forging Mailgun form fields such as `sender`, `recipient`, `dmarc`, `spf`, and `dkim`.
+enabled, or if action planning is enabled, the webhook fails closed until the signing key is
+configured. This prevents direct HTTP clients from forging Mailgun form fields such as `sender`,
+`recipient`, `dmarc`, `spf`, and `dkim`.
 
 ### allowed_sender_addresses
 
@@ -268,6 +273,27 @@ and include it in `recipient_addresses`.
 
 If `require_user_mapping` is true or `user_mappings` is non-empty, the Mailgun signing key must also
 be set.
+
+### Action Planning
+
+`action_planning_enabled` controls whether mapped inbound emails enqueue a background task that asks
+the LLM to draft structured action proposals. This is disabled by default. When enabled, the planner
+stores proposals such as `calendar_event`, `note`, `message`, or `no_action` in the database for
+later review. It does not execute calendar, note, or messaging tools.
+
+The planner only runs for accepted emails with a resolved `target_user_id`; unmapped accepted email
+continues to be stored and indexed without action planning. The planning prompt treats email
+headers, body text, HTML, links, and forwarded content as untrusted data and instructs the LLM to
+ignore embedded instructions aimed at assistants or future agents. All state-changing proposal types
+are modeled as requiring confirmation before a later execution step can use them.
+
+| Option                           | Default | Notes                                     |
+| -------------------------------- | ------- | ----------------------------------------- |
+| `action_planning_enabled`        | `false` | Enable only after user mappings are set   |
+| `action_planning_body_max_chars` | `20000` | Truncates long bodies before LLM planning |
+| `max_action_proposals_per_email` | `5`     | Maximum stored proposals for one email    |
+
+If `action_planning_enabled` is true, the Mailgun signing key must also be set.
 
 ### Sender Authentication Policy
 

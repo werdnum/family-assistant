@@ -34,9 +34,11 @@ services to respond or perform actions.
   ![Landing Page](../../screenshots/desktop/landing-page.png) *The Family Assistant landing page
   provides quick access to all major features*
 
-- **Email (Future):** \*Soon, you might be able to forward emails (like flight confirmations or
-  event invitations) to a special address so the assistant can automatically store the information.
-  Stay tuned!
+- **Email (Optional):** If your operator has configured inbound email, you can forward messages such
+  as order confirmations, ticket purchases, or event invitations to the configured assistant
+  address. The assistant stores and indexes accepted emails. When email action planning is enabled,
+  it can draft possible calendar, note, or message actions for later confirmation; it does not
+  execute those actions directly from the email.
 
 ## 3. What Can the Assistant Do For You? (Core Features)
 
@@ -389,6 +391,9 @@ When the assistant needs to perform important actions, you'll be asked to confir
   - The assistant will wait for your response before proceeding
 - **Why this matters:** This gives you full control over what the assistant does and prevents
   unintended actions
+- **Forwarded email:** Email content can contain instructions from third parties. Proposed actions
+  from email are treated as drafts and should be reviewed before they create calendar events, notes,
+  or outgoing messages.
 
 ## 7. Using the Web Interface
 

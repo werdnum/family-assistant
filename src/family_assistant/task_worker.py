@@ -23,6 +23,14 @@ from opentelemetry.trace import StatusCode
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncEngine
 
+from family_assistant.email_intake.action_planner import (
+    action_confidence,
+    action_rationale,
+    action_safety_warnings,
+    action_title,
+    plan_email_actions,
+)
+
 # Removed storage import - using repository pattern
 from family_assistant.embeddings import EmbeddingGenerator
 from family_assistant.interfaces import ChatInterface  # Import ChatInterface
@@ -42,6 +50,7 @@ if TYPE_CHECKING:
 # handle_index_email is now a method of EmailIndexer and registered in __main__.py
 from family_assistant.processing import ProcessingService
 from family_assistant.storage.context import DatabaseContext, get_db_context
+from family_assistant.storage.email_action_proposals import EmailActionProposalData
 from family_assistant.storage.message_history import message_history_table
 from family_assistant.storage.tasks import enqueue_task, get_task_event
 from family_assistant.storage.types import TaskDict
@@ -132,6 +141,13 @@ class ReindexDocumentPayload(TypedDict, total=False):
     """Payload for reindex_document tasks."""
 
     document_id: int
+
+
+class EmailActionPlanningPayload(TypedDict, total=False):
+    """Payload for email action planning tasks."""
+
+    email_db_id: Required[int]
+    planning_task_id: str
 
 
 async def _handle_schedule_automation_recurrence(
@@ -268,6 +284,72 @@ async def handle_log_message(
     await asyncio.sleep(1)
     # In a real handler, you might interact with APIs, DB, etc.
     # If this function raises an exception, the task will be marked 'failed'.
+
+
+async def handle_email_action_planning(
+    exec_context: ToolExecutionContext,
+    payload: EmailActionPlanningPayload,
+) -> None:
+    """Plan confirmable actions from a mapped inbound email."""
+    db_context = exec_context.db_context
+    processing_service = exec_context.processing_service
+    if db_context is None:
+        raise ValueError("Missing DatabaseContext dependency in context.")
+    if processing_service is None:
+        raise ValueError("Missing ProcessingService dependency in context.")
+
+    email_db_id = payload.get("email_db_id")
+    if email_db_id is None:
+        raise ValueError("Missing required field in payload: email_db_id")
+
+    email = await db_context.email.get_by_id(email_db_id)
+    if email is None:
+        raise ValueError(f"Email {email_db_id} not found for action planning")
+
+    target_user_id = email.get("target_user_id")
+    if not isinstance(target_user_id, str) or not target_user_id:
+        logger.info(
+            "Skipping email action planning for email %s without target_user_id",
+            email_db_id,
+        )
+        return
+
+    intake_config = processing_service.app_config.email_intake
+    plan = await plan_email_actions(
+        llm_client=processing_service.llm_client,
+        email=email,
+        target_user_id=target_user_id,
+        timezone=str(exec_context.timezone),
+        body_max_chars=intake_config.action_planning_body_max_chars,
+        max_actions=intake_config.max_action_proposals_per_email,
+    )
+
+    message_id_header = email.get("message_id_header")
+    if not isinstance(message_id_header, str) or not message_id_header:
+        raise ValueError(f"Email {email_db_id} is missing message_id_header")
+
+    planning_task_id = payload.get("planning_task_id")
+    proposals = [
+        EmailActionProposalData(
+            email_id=email_db_id,
+            message_id_header=message_id_header,
+            target_user_id=target_user_id,
+            action_type=action.action_type,
+            title=action_title(action),
+            proposal_json=action.model_dump(mode="json"),
+            rationale=action_rationale(action),
+            confidence=action_confidence(action),
+            safety_warnings=action_safety_warnings(action),
+            planning_task_id=planning_task_id,
+        )
+        for action in plan.actions
+    ]
+    await db_context.email_action_proposals.add_many(proposals)
+    logger.info(
+        "Stored %d email action proposal(s) for email %s",
+        len(proposals),
+        email_db_id,
+    )
 
 
 # Note: Registration now happens in __main__.py using worker instance
@@ -1752,6 +1834,7 @@ async def handle_reindex_document(
 
 __all__ = [
     "TaskWorker",
+    "handle_email_action_planning",
     "handle_log_message",
     "handle_llm_callback",
     "handle_system_event_cleanup",

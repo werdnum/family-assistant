@@ -27,9 +27,12 @@ from family_assistant.storage.base import (
     metadata,
 )
 from family_assistant.storage.context import DatabaseContext, get_db_context
+from family_assistant.storage.email import received_emails_table
 
 # Import table definitions for direct use
-from family_assistant.storage.email import received_emails_table
+from family_assistant.storage.email_action_proposals import (
+    email_action_proposals_table,
+)
 from family_assistant.storage.error_logs import error_logs_table
 from family_assistant.storage.events import (
     EventActionType,
@@ -322,6 +325,7 @@ __all__ = [
     "message_history_table",
     "tasks_table",
     "received_emails_table",
+    "email_action_proposals_table",
     "error_logs_table",
     "event_listeners_table",
     "recent_events_table",

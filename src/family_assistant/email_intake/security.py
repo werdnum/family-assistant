@@ -258,6 +258,7 @@ def _requires_verified_mailgun(config: EmailIntakeConfig) -> bool:
         or config.require_authenticated_sender
         or config.require_user_mapping
         or config.user_mappings
+        or config.action_planning_enabled
     )
 
 

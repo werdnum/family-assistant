@@ -249,6 +249,12 @@ email_intake:
   require_user_mapping: false
   # Map authorized forwarding senders and/or Mailgun inbound aliases to app users.
   user_mappings: []
+  # When enabled, mapped inbound emails enqueue a background task that drafts
+  # confirmable action proposals. The proposals are stored for later review;
+  # no calendar, note, or message action is executed by this planning step.
+  action_planning_enabled: false
+  action_planning_body_max_chars: 20000
+  max_action_proposals_per_email: 5
   # Application-level limits in bytes, independent of any reverse proxy limits.
   max_raw_request_bytes: 26214400
   max_attachment_bytes: 10485760

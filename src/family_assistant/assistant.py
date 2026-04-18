@@ -64,6 +64,7 @@ from family_assistant.task_worker import (
     ReindexDocumentPayload,
     TaskWorker,
     handle_completed_automation_cleanup,
+    handle_email_action_planning,
     handle_llm_callback,
     handle_reindex_document,
     handle_script_execution,
@@ -1267,6 +1268,9 @@ class Assistant:
             )
         self.task_worker_instance.register_task_handler(
             "llm_callback", handle_llm_callback
+        )
+        self.task_worker_instance.register_task_handler(
+            "email_action_planning", handle_email_action_planning
         )
         self.task_worker_instance.register_task_handler(
             "embed_and_store_batch", handle_embed_and_store_batch

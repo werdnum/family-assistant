@@ -610,6 +610,9 @@ class EmailIntakeConfig(BaseModel):
     allow_spf_or_dkim_fallback_when_dmarc_missing: bool = False
     require_user_mapping: bool = False
     user_mappings: list[EmailIntakeUserMapping] = Field(default_factory=list)
+    action_planning_enabled: bool = False
+    action_planning_body_max_chars: int = Field(default=20_000, gt=0)
+    max_action_proposals_per_email: int = Field(default=5, gt=0, le=20)
     max_raw_request_bytes: int = Field(default=25 * 1024 * 1024, gt=0)
     max_attachment_bytes: int = Field(default=10 * 1024 * 1024, gt=0)
     max_total_attachment_bytes: int = Field(default=25 * 1024 * 1024, gt=0)

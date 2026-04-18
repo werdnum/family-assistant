@@ -258,7 +258,21 @@ async def handle_mail_webhook(
         )
 
         # Pass the Pydantic model instance to the storage function
-        await db_context.email.store_incoming(parsed_email_payload)
+        email_db_id = await db_context.email.store_incoming(parsed_email_payload)
+        if (
+            email_db_id is not None
+            and target_user_id is not None
+            and email_intake_config.action_planning_enabled
+        ):
+            planning_task_id = f"email_action_planning_{email_db_id}_{uuid.uuid4()}"
+            await db_context.tasks.enqueue(
+                task_id=planning_task_id,
+                task_type="email_action_planning",
+                payload={
+                    "email_db_id": email_db_id,
+                    "planning_task_id": planning_task_id,
+                },
+            )
 
         return Response(status_code=200, content="Email received and processed.")
 

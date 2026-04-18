@@ -31,6 +31,7 @@ if TYPE_CHECKING:
 
     from family_assistant.storage.repositories import (
         AutomationsRepository,
+        EmailActionProposalsRepository,
         EmailRepository,
         ErrorLogsRepository,
         EventsRepository,
@@ -166,6 +167,7 @@ class DatabaseContext:
         self._tasks = None
         self._message_history = None
         self._email = None
+        self._email_action_proposals = None
         self._error_logs = None
         self._events = None
         self._vector = None
@@ -434,6 +436,17 @@ class DatabaseContext:
 
             self._email = EmailRepository(self)
         return self._email
+
+    @property
+    def email_action_proposals(self) -> "EmailActionProposalsRepository":
+        """Get the email action proposals repository instance."""
+        if self._email_action_proposals is None:
+            from family_assistant.storage.repositories import (  # noqa: PLC0415
+                EmailActionProposalsRepository,
+            )
+
+            self._email_action_proposals = EmailActionProposalsRepository(self)
+        return self._email_action_proposals
 
     @property
     def error_logs(self) -> "ErrorLogsRepository":
