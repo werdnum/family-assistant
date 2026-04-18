@@ -42,9 +42,12 @@ describe.sequential('ErrorHandling', () => {
   }, 30000); // Increased timeout for parallel test runs
 
   it('handles API server errors', async () => {
+    let requestSeen = false;
+
     // Mock 500 server error
     server.use(
       http.post('/api/v1/chat/send_message_stream', () => {
+        requestSeen = true;
         return HttpResponse.json({ error: 'Internal Server Error' }, { status: 500 });
       })
     );
@@ -62,7 +65,10 @@ describe.sequential('ErrorHandling', () => {
     // Wait removed - using waitForReady option
 
     // App should handle server errors without crashing
-    expect(screen.getByText('Chat')).toBeInTheDocument();
+    await waitFor(() => {
+      expect(requestSeen).toBe(true);
+      expect(screen.getByText('Chat')).toBeInTheDocument();
+    });
   }, 10000); // Add timeout
 
   it('handles malformed streaming responses', async () => {

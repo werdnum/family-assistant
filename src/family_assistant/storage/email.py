@@ -50,6 +50,7 @@ class ParsedEmailData(BaseModel):
     attachment_info: list[AttachmentData] | None = None  # Processed by webhook handler
     mailgun_timestamp: str | None = Field(default=None, alias="timestamp")
     mailgun_token: str | None = Field(default=None, alias="token")
+    target_user_id: str | None = None
 
     model_config = ConfigDict(populate_by_name=True)
 
@@ -103,6 +104,9 @@ received_emails_table = sa.Table(
     # Add other potentially useful Mailgun fields if needed
     sa.Column("mailgun_timestamp", sa.Text, nullable=True),  # Mailgun 'timestamp' field
     sa.Column("mailgun_token", sa.Text, nullable=True),  # Mailgun 'token' field
+    sa.Column(
+        "target_user_id", sa.Text, nullable=True, index=True
+    ),  # Resolved application user for action-capable intake
     # --- Indexing Task Tracking ---
     sa.Column(
         "indexing_task_id", sa.String, nullable=True, index=True, unique=True

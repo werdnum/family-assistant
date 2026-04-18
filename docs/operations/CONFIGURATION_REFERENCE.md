@@ -134,6 +134,172 @@ Directory containing user documentation files.
 
 ______________________________________________________________________
 
+## Email Intake Security
+
+The `/webhook/mail` endpoint accepts Mailgun inbound email webhooks. Use this configuration when
+Mailgun routes are enabled, especially before allowing any assistant action from forwarded email.
+
+```yaml
+email_intake:
+  mailgun_webhook_signing_key: "your-mailgun-http-webhook-signing-key"
+  mailgun_signature_max_age_seconds: 300
+
+  allowed_sender_addresses:
+    - "alice@gmail.com"
+    - "bob@gmail.com"
+
+  allowed_recipient_addresses:
+    - "assistant-intake@mg.example.com"
+    - "assistant+alice@mg.example.com"
+    - "assistant+bob@mg.example.com"
+
+  require_authenticated_sender: true
+  require_dmarc_pass: true
+  allow_spf_or_dkim_fallback_when_dmarc_missing: false
+
+  require_user_mapping: true
+  user_mappings:
+    - user_id: "alice"
+      sender_addresses:
+        - "alice@gmail.com"
+      recipient_addresses:
+        - "assistant+alice@mg.example.com"
+    - user_id: "bob"
+      sender_addresses:
+        - "bob@gmail.com"
+      recipient_addresses:
+        - "assistant+bob@mg.example.com"
+
+  max_raw_request_bytes: 26214400
+  max_attachment_bytes: 10485760
+  max_total_attachment_bytes: 26214400
+```
+
+### mailgun_webhook_signing_key
+
+Mailgun HTTP webhook signing key for the receiving domain.
+
+| Property  | Value                                   |
+| --------- | --------------------------------------- |
+| Required  | Yes when any email intake policy is set |
+| Default   | `null`                                  |
+| Sensitive | **Yes**                                 |
+| Example   | `0123456789abcdef0123456789abcdef`      |
+
+If this key is unset, the app skips Mailgun signature verification only for permissive indexing-only
+deployments. If sender allowlists, recipient allowlists, sender authentication, or user mapping are
+enabled, the webhook fails closed until the signing key is configured. This prevents direct HTTP
+clients from forging Mailgun form fields such as `sender`, `recipient`, `dmarc`, `spf`, and `dkim`.
+
+### allowed_sender_addresses
+
+Authorized email accounts that may forward messages into the assistant.
+
+These are the SMTP envelope senders reported by Mailgun in the `sender` form field. In the common
+CUJ where Alice forwards an order confirmation from Gmail, this should contain Alice's Gmail
+address, not the merchant's address from the original forwarded message.
+
+| Property  | Value                        |
+| --------- | ---------------------------- |
+| Required  | Recommended for email intake |
+| Default   | `[]` (unrestricted)          |
+| Sensitive | No                           |
+| Example   | `["alice@gmail.com"]`        |
+
+Use concrete lowercase addresses. If this list is non-empty, the Mailgun signing key must also be
+set.
+
+### allowed_recipient_addresses
+
+Mailgun inbound addresses or aliases that this app should accept.
+
+These are the recipient addresses Mailgun reports in the `recipient` form field. They are addresses
+at your Mailgun receiving domain, not the order vendor's email address and not the human user's
+normal Gmail address unless Gmail is also the Mailgun recipient. Examples:
+
+- Shared intake mailbox: `assistant-intake@mg.example.com`
+- Per-user aliases: `assistant+alice@mg.example.com`, `assistant+bob@mg.example.com`
+- Per-user local parts: `alice@mg.example.com`, `bob@mg.example.com`
+
+Mailgun can route a catch-all or regex recipient pattern to the same `/webhook/mail` endpoint, while
+the app uses `allowed_recipient_addresses` to reject unexpected recipients. Per-user recipient
+aliases add friction because operators need to provision or communicate the aliases, but they give a
+clean way to distinguish which user intended the email intake path.
+
+| Property  | Value                                     |
+| --------- | ----------------------------------------- |
+| Required  | Recommended for production Mailgun routes |
+| Default   | `[]` (unrestricted)                       |
+| Sensitive | No                                        |
+| Example   | `["assistant+alice@mg.example.com"]`      |
+
+If this list is non-empty, the Mailgun signing key must also be set.
+
+### User Mapping
+
+`user_mappings` resolve accepted inbound email to an application `user_id`. The resolved value is
+stored on the received email as `target_user_id`, so later action-processing and confirmation flows
+can deterministically choose the right user context.
+
+Mappings can match by authorized forwarding sender, by Mailgun recipient alias, or by both:
+
+```yaml
+email_intake:
+  require_user_mapping: true
+  user_mappings:
+    - user_id: "alice"
+      sender_addresses: ["alice@gmail.com"]
+      recipient_addresses: ["assistant+alice@mg.example.com"]
+```
+
+When `require_user_mapping` is true, accepted email must map to exactly one configured user. If no
+mapping matches, the webhook returns `401`. If sender and recipient mappings point to different
+users, the webhook also returns `401` rather than guessing. If multiple mapping entries match the
+same `user_id`, that is accepted.
+
+For the least operational friction, map each user's stable forwarding address in `sender_addresses`.
+For stronger routing and clearer confirmation behavior, also give each user a Mailgun inbound alias
+and include it in `recipient_addresses`.
+
+| Option                 | Default | Recommended for actions |
+| ---------------------- | ------- | ----------------------- |
+| `require_user_mapping` | `false` | `true`                  |
+| `user_mappings`        | `[]`    | One entry per user      |
+
+If `require_user_mapping` is true or `user_mappings` is non-empty, the Mailgun signing key must also
+be set.
+
+### Sender Authentication Policy
+
+`require_authenticated_sender` makes the webhook require sender authentication results reported by
+Mailgun or by the message `Authentication-Results` header. With the default strict policy,
+`require_dmarc_pass: true`, DMARC must pass. DMARC failure always fails closed. Set
+`allow_spf_or_dkim_fallback_when_dmarc_missing: true` only if you accept SPF or DKIM pass when DMARC
+is absent.
+
+| Option                                          | Default | Recommended |
+| ----------------------------------------------- | ------- | ----------- |
+| `require_authenticated_sender`                  | `false` | `true`      |
+| `require_dmarc_pass`                            | `true`  | `true`      |
+| `allow_spf_or_dkim_fallback_when_dmarc_missing` | `false` | `false`     |
+
+If `require_authenticated_sender` is true, the Mailgun signing key must also be set.
+
+### Size Limits
+
+Application-level payload limits for inbound email.
+
+| Option                       | Default    | Meaning                                 |
+| ---------------------------- | ---------- | --------------------------------------- |
+| `max_raw_request_bytes`      | `26214400` | Full webhook request body limit         |
+| `max_attachment_bytes`       | `10485760` | Per-attachment limit                    |
+| `max_total_attachment_bytes` | `26214400` | Total attachments for one inbound email |
+
+The webhook checks `Content-Length` before buffering the request body when the header is present,
+and also checks the actual buffered body length.
+
+______________________________________________________________________
+
 ## Authentication - Telegram
 
 ### TELEGRAM_BOT_TOKEN

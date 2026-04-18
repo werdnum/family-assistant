@@ -49,7 +49,7 @@ describe('AttachmentUI Loading States', () => {
   it('can upload a file through the hidden input', async () => {
     await renderChatApp({ waitForReady: true });
 
-    const fileInput = screen.getByTestId('file-input') as HTMLInputElement;
+    const fileInput = (await screen.findByTestId('file-input')) as HTMLInputElement;
     const testFile = new File(['test content'], 'test.png', { type: 'image/png' });
 
     // fireEvent is more stable than user.upload for this hidden input path.
