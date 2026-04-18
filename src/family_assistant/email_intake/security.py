@@ -72,7 +72,7 @@ def verify_mailgun_signature(
         if _requires_verified_mailgun(config):
             msg = (
                 "Mailgun signature verification must be configured before enabling "
-                "sender, recipient, or authentication policy"
+                "sender, recipient, authentication, user mapping, or action planning policy"
             )
             raise EmailIntakeSecurityError(msg)
         return

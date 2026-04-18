@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from typing import TYPE_CHECKING, Annotated, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -148,7 +149,7 @@ def build_email_action_planning_messages(
             content=(
                 "Plan safe, user-confirmable actions from this accepted inbound email. "
                 "Return no_action if no useful safe action is apparent.\n\n"
-                f"{email_facts}"
+                f"{json.dumps(email_facts, indent=2)}"
             )
         ),
     ]

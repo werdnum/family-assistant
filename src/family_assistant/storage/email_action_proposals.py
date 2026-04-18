@@ -68,6 +68,7 @@ email_action_proposals_table = sa.Table(
         "updated_at",
         sa.DateTime(timezone=True),
         server_default=functions.now(),
+        onupdate=functions.now(),
         nullable=False,
     ),
 )

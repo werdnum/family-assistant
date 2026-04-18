@@ -202,6 +202,28 @@ async def test_mail_webhook_rejects_policy_without_mailgun_signature_configurati
 
 
 @pytest.mark.asyncio
+async def test_mail_webhook_rejects_action_planning_without_mailgun_signature_configuration(
+    api_client: httpx.AsyncClient,
+    db_engine: AsyncEngine,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    _configure_email_intake(
+        monkeypatch,
+        tmp_path,
+        EmailIntakeConfig(action_planning_enabled=True),
+    )
+    form = _mailgun_form(signing_key=None)
+
+    response = await api_client.post("/webhook/mail", data=form)
+
+    assert response.status_code == 401
+    assert "action planning policy" in response.text
+    assert not await _email_exists(db_engine, form["Message-Id"])
+    assert _raw_mail_files(tmp_path) == []
+
+
+@pytest.mark.asyncio
 async def test_mail_webhook_rejects_user_mapping_without_mailgun_signature_configuration(
     api_client: httpx.AsyncClient,
     db_engine: AsyncEngine,
