@@ -70,8 +70,8 @@ Important current tool classifications:
 Mailgun can be trusted strongly for webhook origin if the application verifies Mailgun's HMAC-SHA256
 webhook signature, timestamp, and replay token. Mailgun can be trusted to report the SMTP and MIME
 fields it received, but those fields alone do not prove sender identity. For user authorization,
-require the visible sender address to match an allowlisted user and require aligned SPF/DKIM/DMARC
-authentication results when available from Mailgun headers.
+require the visible sender address to match an allowlisted user and require `DMARC` pass for that
+domain when available, with explicit operator policy for any aligned `SPF`/`DKIM` fallback.
 
 Mailgun's receiving documentation distinguishes SMTP `sender` from the visible MIME `From` header,
 and Mailgun's FAQ states that spoof detection is not guaranteed but DKIM/SPF verification is exposed
@@ -346,19 +346,23 @@ Required inbound checks:
 - Verify Mailgun webhook signature.
 - Reject stale timestamps and replayed tokens.
 - Normalize and match visible `From` against an authorized sender list.
-- Require authentication results showing aligned SPF/DKIM/DMARC pass for the visible sender domain
-  when available.
-- Reject if authentication results are absent or failed in strict mode.
+- Require `DMARC` pass for the visible sender domain when available. If `DMARC` is unavailable,
+  allow an explicitly configured fallback policy that requires at least one aligned `SPF` or `DKIM`
+  signal for the visible sender domain.
+- Reject if authentication results are absent or failed and no explicit fallback policy applies.
 - Reject auto-generated, bounce, list, bulk, and no-reply messages for action processing.
-- Deduplicate on `Message-Id`.
+- Deduplicate on a scoped key, such as authorized user, delivered recipient alias, `Message-Id`, and
+  a time window.
 - Rate-limit per authorized sender and globally.
 - Enforce maximum raw webhook payload, parsed body, and attachment size limits before expensive
   parsing or storage work.
 
 Private per-user aliases are useful but should be optional in V1:
 
-- Baseline: shared assistant address + authorized sender allowlist + aligned DMARC pass.
-- Stronger: per-user plus/random alias + authorized sender allowlist + aligned DMARC pass.
+- Baseline: shared assistant address + authorized sender allowlist + `DMARC` pass, with an explicit
+  aligned `SPF`/`DKIM` fallback policy only where needed.
+- Stronger: per-user plus/random alias + authorized sender allowlist + `DMARC` pass, with the same
+  explicit fallback policy.
 
 Mailgun route filters support recipient regex and plus-style matching, so per-user aliases can be
 implemented without one route per user. The application should map the delivered recipient to a user
@@ -403,6 +407,8 @@ Tests:
 - Invalid, stale, or replayed signature is rejected.
 - Unauthorized sender is rejected for action processing.
 - Authorized sender with strict authentication results is accepted.
+- `DMARC` pass is accepted; fallback to aligned `SPF` or `DKIM` requires explicit configuration.
+- Deduplication is scoped by user, delivered recipient alias, `Message-Id`, and time window.
 - Auto-generated/list/bulk messages do not enqueue action processing.
 - Oversized raw payloads, parsed bodies, and attachments are rejected before expensive parsing.
 
@@ -485,8 +491,8 @@ Tests:
 
 ## Open Questions
 
-- Should V1 require aligned DMARC pass strictly, or allow an operator override for providers that do
-  not expose authentication results reliably?
+- Should V1 require `DMARC` pass strictly, or allow an operator override for providers that do not
+  expose authentication results reliably?
 - Which channel should receive confirmations for email-originated actions first: web, Telegram, or
   same-thread email?
 - Should low-risk note creation ever be automatic, or should all persistence require confirmation
