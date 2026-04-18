@@ -68,7 +68,7 @@ def verify_mailgun_signature(
 ) -> None:
     """Verify Mailgun's timestamp/token/signature tuple when a key is configured."""
     signing_key = config.mailgun_webhook_signing_key
-    if signing_key is None:
+    if not signing_key:
         if _requires_verified_mailgun(config):
             msg = (
                 "Mailgun signature verification must be configured before enabling "
