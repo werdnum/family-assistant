@@ -379,3 +379,71 @@ async def test_email_action_planning_limits_stored_proposals(
         )
 
     assert proposal_count == 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.postgres
+async def test_email_action_planning_supports_configured_limit_above_ten(
+    db_engine: AsyncEngine,
+) -> None:
+    plan = EmailActionPlan(
+        source_summary="Many possible actions.",
+        actions=[
+            CalendarEventActionDraft(
+                action_type="calendar_event",
+                title=f"Event {index}",
+                start_time="2026-05-20T19:30:00+00:00",
+                rationale="Concrete event details were present.",
+                confidence=0.8,
+            )
+            for index in range(12)
+        ],
+    )
+    llm_client = RuleBasedMockLLMClient(
+        rules=[],
+        structured_rules=[(lambda _kwargs: True, plan)],
+    )
+    processing_service = _processing_service(
+        llm_client=llm_client,
+        app_config=AppConfig(
+            email_intake=EmailIntakeConfig(
+                action_planning_enabled=True,
+                max_action_proposals_per_email=12,
+            )
+        ),
+    )
+
+    async with DatabaseContext(engine=db_engine) as db_context:
+        email_db_id = await db_context.email.store_incoming(
+            ParsedEmailData.model_validate(
+                {
+                    "Message-Id": f"<planning-limit-twelve-{uuid.uuid4()}@example.com>",
+                    "sender": "alice@gmail.com",
+                    "recipient": "assistant+alice@mg.example.com",
+                    "subject": "Twelve events",
+                    "stripped-text": "Twelve events are mentioned.",
+                    "target_user_id": "alice",
+                },
+            )
+        )
+        assert email_db_id is not None
+        await handle_email_action_planning(
+            ToolExecutionContext(
+                interface_type="email",
+                conversation_id="email-intake",
+                user_name="Alice",
+                turn_id="turn-email-plan-limit-twelve",
+                db_context=db_context,
+                processing_service=processing_service,
+                clock=None,
+                home_assistant_client=None,
+                event_sources=None,
+                attachment_registry=None,
+                camera_backend=None,
+                timezone=ZoneInfo("UTC"),
+            ),
+            {"email_db_id": email_db_id},
+        )
+        proposals = await db_context.email_action_proposals.list_for_email(email_db_id)
+
+    assert len(proposals) == 12

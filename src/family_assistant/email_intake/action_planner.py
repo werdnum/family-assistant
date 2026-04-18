@@ -110,7 +110,7 @@ class EmailActionPlan(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     source_summary: str
-    actions: list[EmailActionDraft] = Field(default_factory=list, max_length=10)
+    actions: list[EmailActionDraft] = Field(default_factory=list)
 
 
 def build_email_action_planning_messages(
