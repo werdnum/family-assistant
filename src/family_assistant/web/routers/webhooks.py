@@ -14,6 +14,16 @@ from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from pydantic import BaseModel, ValidationError
 from starlette.datastructures import UploadFile as StarletteUploadFile
 
+from family_assistant.config_models import EmailIntakeConfig
+from family_assistant.email_intake.security import (
+    EmailIntakePayloadTooLargeError,
+    EmailIntakeSecurityError,
+    enforce_attachment_size_limits,
+    enforce_raw_request_size,
+    get_security_fields,
+    verify_mailgun_signature,
+    verify_sender_authorization,
+)
 from family_assistant.storage.context import DatabaseContext
 from family_assistant.storage.email import AttachmentData, ParsedEmailData
 from family_assistant.web.dependencies import get_db
@@ -32,6 +42,32 @@ DEFAULT_ATTACHMENT_STORAGE_PATH = "/mnt/data/mailbox/attachments_fallback"
 DEFAULT_MAILBOX_RAW_DIR_FALLBACK = "/mnt/data/mailbox/raw_requests_fallback"
 
 
+async def _save_raw_mail_webhook(
+    *,
+    raw_body_content: bytes,
+    mailbox_raw_dir: str,
+    content_type_header: str,
+) -> None:
+    """Save an accepted raw Mailgun webhook request for debugging/replay."""
+    try:
+        os.makedirs(mailbox_raw_dir, exist_ok=True)
+        now_dt = datetime.now(UTC)
+        timestamp_str = now_dt.strftime("%Y%m%d_%H%M%S_%f")
+        safe_content_type = (
+            re.sub(r'[<>:"/\\|?*]', "_", content_type_header).split(";")[0].strip()
+        )
+        raw_filename = f"{timestamp_str}_{safe_content_type}.raw"
+        raw_filepath = os.path.join(mailbox_raw_dir, raw_filename)
+
+        async with aiofiles.open(raw_filepath, "wb") as f:
+            await f.write(raw_body_content)
+        logger.info(
+            f"Saved raw webhook request body ({len(raw_body_content)} bytes) to: {raw_filepath}"
+        )
+    except Exception as e:
+        logger.error(f"Failed to save raw webhook request body: {e}", exc_info=True)
+
+
 @webhooks_router.post("/webhook/mail")
 async def handle_mail_webhook(
     request: Request,
@@ -42,17 +78,19 @@ async def handle_mail_webhook(
     parses it, saves attachments, and passes structured data to the storage layer.
     """
     logger.info("Received POST request on /webhook/mail")
-    # --- Save raw request body for debugging/replay ---
-    # It's good to read the body once if needed for both raw saving and form parsing.
-    # However, request.form() consumes the body. If raw saving is critical,
-    # read body first, then pass to a method that can parse from bytes if FastAPI allows,
-    # or accept that form() is the primary way. For now, keeping existing raw save logic.
     raw_body_content = await request.body()
 
     # Determine directory for saving raw requests from app config or fallback
 
     mailbox_raw_dir_to_use: str = DEFAULT_MAILBOX_RAW_DIR_FALLBACK
     config: AppConfig | None = getattr(request.app.state, "config", None)
+    email_intake_config = config.email_intake if config else EmailIntakeConfig()
+    try:
+        enforce_raw_request_size(raw_body_content, email_intake_config)
+    except EmailIntakePayloadTooLargeError as exc:
+        logger.warning("Rejecting oversized inbound email webhook: %s", exc)
+        raise HTTPException(status_code=413, detail=str(exc)) from exc
+
     if config and config.mailbox_raw_dir:
         mailbox_raw_dir_to_use = config.mailbox_raw_dir
     if mailbox_raw_dir_to_use == DEFAULT_MAILBOX_RAW_DIR_FALLBACK:
@@ -61,30 +99,24 @@ async def handle_mail_webhook(
         )
 
     try:
-        os.makedirs(mailbox_raw_dir_to_use, exist_ok=True)
-        now_dt = datetime.now(UTC)
-        timestamp_str = now_dt.strftime("%Y%m%d_%H%M%S_%f")
-        content_type_header = request.headers.get(
-            "content-type", "unknown_content_type"
-        )
-        safe_content_type = (
-            re.sub(r'[<>:"/\\|?*]', "_", content_type_header).split(";")[0].strip()
-        )
-        raw_filename = f"{timestamp_str}_{safe_content_type}.raw"
-        raw_filepath = os.path.join(mailbox_raw_dir_to_use, raw_filename)
-
-        async with aiofiles.open(raw_filepath, "wb") as f:
-            await f.write(raw_body_content)
-        logger.info(
-            f"Saved raw webhook request body ({len(raw_body_content)} bytes) to: {raw_filepath}"
-        )
-    except Exception as e:
-        logger.error(f"Failed to save raw webhook request body: {e}", exc_info=True)
-    # --- End raw request saving ---
-
-    try:
         # FastAPI's request.form() will parse multipart/form-data
         form_data = await request.form()
+
+        timestamp, token, signature = get_security_fields(form_data)
+        verify_mailgun_signature(
+            timestamp=timestamp,
+            token=token,
+            signature=signature,
+            config=email_intake_config,
+        )
+        verify_sender_authorization(form_data, email_intake_config)
+        await _save_raw_mail_webhook(
+            raw_body_content=raw_body_content,
+            mailbox_raw_dir=mailbox_raw_dir_to_use,
+            content_type_header=request.headers.get(
+                "content-type", "unknown_content_type"
+            ),
+        )
 
         # --- Parse Email Date ---
         email_date_parsed: datetime | None = None
@@ -115,6 +147,7 @@ async def handle_mail_webhook(
             attachment_count = int(attachment_count_str)
             # Generate a single UUID for this email's attachments directory
             email_attachment_batch_id = str(uuid.uuid4())
+            total_attachment_size = 0
 
             # Get attachment storage path from app config
             attachment_storage_path = DEFAULT_ATTACHMENT_STORAGE_PATH
@@ -141,16 +174,17 @@ async def handle_mail_webhook(
 
                         # Save the uploaded file
                         await form_item.seek(0)  # Ensure pointer is at the start
-                        async with aiofiles.open(final_file_path, "wb") as f_out:
-                            content = await form_item.read()
-                            await f_out.write(content)
-
-                        # Get size after reading
-                        size = (
-                            form_item.size
-                            if form_item.size is not None
-                            else len(content)
+                        content = await form_item.read()
+                        size = len(content)
+                        total_attachment_size += size
+                        enforce_attachment_size_limits(
+                            attachment_name=safe_filename,
+                            attachment_size=size,
+                            total_attachment_size=total_attachment_size,
+                            config=email_intake_config,
                         )
+                        async with aiofiles.open(final_file_path, "wb") as f_out:
+                            await f_out.write(content)
 
                         processed_attachments.append(
                             AttachmentData(
@@ -164,6 +198,8 @@ async def handle_mail_webhook(
                         logger.info(
                             f"Saved attachment '{safe_filename}' to {final_file_path}"
                         )
+                    except EmailIntakePayloadTooLargeError:
+                        raise
                     except Exception as e:
                         logger.error(
                             f"Failed to save attachment {form_item.filename}: {e}",
@@ -207,6 +243,12 @@ async def handle_mail_webhook(
 
         return Response(status_code=200, content="Email received and processed.")
 
+    except EmailIntakePayloadTooLargeError as exc:
+        logger.warning("Rejecting oversized inbound email webhook: %s", exc)
+        raise HTTPException(status_code=413, detail=str(exc)) from exc
+    except EmailIntakeSecurityError as exc:
+        logger.warning("Rejecting unauthorized inbound email webhook: %s", exc)
+        raise HTTPException(status_code=401, detail=str(exc)) from exc
     except ValidationError as ve:
         logger.error(
             f"Pydantic validation error processing mail webhook: {ve.errors()}",

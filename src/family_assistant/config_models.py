@@ -556,6 +556,23 @@ class AttachmentConfig(BaseModel):
     )
 
 
+class EmailIntakeConfig(BaseModel):
+    """Security controls for inbound email webhooks."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    mailgun_webhook_signing_key: str | None = None
+    mailgun_signature_max_age_seconds: int = Field(default=300, gt=0)
+    allowed_sender_addresses: list[str] = Field(default_factory=list)
+    allowed_recipient_addresses: list[str] = Field(default_factory=list)
+    require_authenticated_sender: bool = False
+    require_dmarc_pass: bool = True
+    allow_spf_or_dkim_fallback_when_dmarc_missing: bool = False
+    max_raw_request_bytes: int = Field(default=25 * 1024 * 1024, gt=0)
+    max_attachment_bytes: int = Field(default=10 * 1024 * 1024, gt=0)
+    max_total_attachment_bytes: int = Field(default=25 * 1024 * 1024, gt=0)
+
+
 class EventStorageConfig(BaseModel):
     """Event system storage configuration."""
 
@@ -915,6 +932,7 @@ class AppConfig(BaseSettings):
         default_factory=IndexingPipelineConfig
     )
     attachment_config: AttachmentConfig = Field(default_factory=AttachmentConfig)
+    email_intake: EmailIntakeConfig = Field(default_factory=EmailIntakeConfig)
     event_system: EventSystemConfig = Field(default_factory=EventSystemConfig)
     message_batching_config: MessageBatchingConfig = Field(
         default_factory=MessageBatchingConfig
