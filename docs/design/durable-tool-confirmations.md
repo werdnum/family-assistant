@@ -108,6 +108,12 @@ Introduce a central confirmation service, backed by the repository:
 
 ```python
 class ConfirmationService:
+    def __init__(
+        self,
+        *,
+        db_context_factory: Callable[[], AbstractAsyncContextManager[DatabaseContext]],
+    ) -> None: ...
+
     async def create_request(
         *,
         target_user_id: str,
@@ -162,6 +168,10 @@ There should not be a general public `approve()` method for executable confirmat
 would make it too easy to create an `approved` row without durable execution work. Non-executable
 confirmation prompts, if they are ever needed, should use a separate API and status model.
 
+The service should own its write transactions through a context factory. It must not rely on the
+long-lived `ToolExecutionContext.db_context` from the active conversational turn for durable
+confirmation rows or execution enqueueing.
+
 ## Queue-Backed Execution Invariant
 
 The reliable execution boundary is the existing database task queue.
@@ -192,6 +202,56 @@ idempotency key to tools and downstream APIs where that is supported. For non-id
 should prefer "no duplicate side effect" over automatic retry once the handler has crossed the
 execution boundary.
 
+## Transaction Boundaries And Visibility
+
+Durable confirmations must not be written through a transaction that stays open for the whole
+conversation turn.
+
+Today, `DatabaseContext` starts a transaction when entered and commits only when it exits. Current
+chat processing commonly passes one `db_context` through trigger persistence, context gathering, LLM
+streaming, tool execution, confirmation waiting, and generated-message persistence. If a durable
+confirmation row or execution task is inserted through that ambient transaction, other interfaces
+and task workers cannot see it until the whole turn exits. That breaks the confirmation path:
+
+- Web or Telegram may receive a request id for a row that their approval endpoint cannot read yet.
+- `approve_and_enqueue_execution()` may enqueue a task that workers cannot see until the live turn
+  finishes waiting.
+- A live turn may wait for a worker result while the worker is blocked by uncommitted state from the
+  same turn.
+
+This is a PostgreSQL correctness issue because uncommitted rows are invisible across connections. It
+is also a SQLite test/dev issue: nested "isolated" contexts may share the same connection or be
+blocked by the outer transaction, so relying on a second context while the conversational context is
+open will produce deadlocks, missing rows, or misleading tests.
+
+The confirmation implementation needs explicit transaction boundaries:
+
+- Creating a confirmation request must happen in a short transaction that commits before the
+  interface emits the confirmation request event or starts waiting.
+- Rejection must happen in a short transaction that commits before notifying waiters.
+- Approval must happen in a short transaction that commits `pending -> approved` and the
+  deterministic task enqueue before any waiter expects worker execution.
+- Worker execution must load and move `approved -> executing` in a short transaction that commits
+  before calling the wrapped tool.
+- Terminal recording (`executed` or `failed`) must happen in a later short transaction after the
+  tool returns or fails.
+
+The practical implementation shape is:
+
+1. Refactor conversational processing so it does not keep one write transaction open across LLM
+   streaming, tool execution, or confirmation waits. Use phase-scoped transactions instead: persist
+   the incoming user turn and gather committed context, run the LLM/tool loop without an ambient
+   transaction, and persist generated messages/results through short transactions.
+2. Give tool execution a database context factory, not just a single active `db_context`, so tools
+   and confirmation services can perform their own scoped reads and writes.
+3. Add a task-worker execution mode for `confirmation_tool_execution` that is not wrapped in one
+   processing transaction for the full handler duration. The queue claim can remain transactional,
+   but the confirmation request's `approved -> executing` transition must commit before any external
+   side effect.
+4. Keep SQLite support honest by testing this with no hidden nested transaction dependency. If the
+   SQLite engine uses a single shared connection in tests, the live confirmation path must still
+   work because there is no outer conversational transaction open while waiting.
+
 ## V1 Execution Model
 
 V1 keeps existing live-turn behavior while making pending requests durable.
@@ -200,8 +260,8 @@ V1 keeps existing live-turn behavior while making pending requests durable.
 
 1. The assistant calls a confirm-required tool.
 2. `PolicyEnforcingToolsProvider` calls the existing confirmation callback.
-3. The callback creates a durable confirmation request.
-4. The current interface surfaces that request in-context.
+3. The callback creates a durable confirmation request in a short transaction and commits it.
+4. The current interface surfaces that committed request in-context.
 5. The processing coroutine waits on an in-memory waiter for that request id.
 6. Rejection transitions the durable row from `pending -> rejected` and notifies the waiter.
 7. Approval calls `approve_and_enqueue_execution()`, which transitions `pending -> approved` and
@@ -267,11 +327,11 @@ The handler:
 2. Verifies the task id matches `execution_task_id`.
 3. Reconstructs a `ToolExecutionContext` from stored source fields and processing profile.
 4. Re-evaluates policy before execution.
-5. Atomically moves `approved -> executing`; if that transition does not apply, it exits without
-   executing the tool.
+5. In a short transaction, atomically moves `approved -> executing`; if that transition does not
+   apply, it exits without executing the tool.
 6. Executes the stored tool through the same policy-enforcing provider, passing
    `execution_idempotency_key` where the tool API supports it.
-7. Records `executed` with the result or `failed` with the error.
+7. In a later short transaction, records `executed` with the result or `failed` with the error.
 8. Sends a deterministic notification to the target user if a notification route is configured.
 
 The handler should treat `approved -> executing` as the default side-effect boundary. Failures
@@ -380,6 +440,8 @@ milestone.
 ### Milestone 1: Durable Confirmation Core And Queue Handoff
 
 - Add table, migration, repository, and service.
+- Add or expose a database context factory for confirmation operations instead of using the active
+  conversational transaction.
 - Add `approve_and_enqueue_execution()` using one database transaction for `pending -> approved` and
   `confirmation_tool_execution:{request_id}` enqueue.
 - Add the `confirmation_tool_execution` handler with request-level state transitions and terminal
@@ -387,20 +449,29 @@ milestone.
 - Add status transition tests, including wrong-user rejection and idempotency.
 - Add expiry cleanup logic.
 
-### Milestone 2: Web Adapter
+### Milestone 2: Transaction Boundary Refactor
+
+- Stop holding one `DatabaseContext` transaction open across the full conversational turn.
+- Persist incoming user messages, generated messages, tool attachments, and confirmation state
+  through phase-scoped transactions.
+- Add task-worker support for a `confirmation_tool_execution` handler that commits
+  `approved -> executing` before executing the wrapped tool and commits terminal status after.
+- Verify this on both SQLite and PostgreSQL before wiring live adapters to durable confirmations.
+
+### Milestone 3: Web Adapter
 
 - Make Web confirmation creation and resolution go through `ConfirmationService`.
 - Preserve existing SSE events and current user experience.
 - Keep the in-memory waiter map only as a process-local bridge from durable request id to the
   waiting coroutine and recorded task result.
 
-### Milestone 3: Telegram Adapter
+### Milestone 4: Telegram Adapter
 
 - Make Telegram button confirmations resolve durable requests.
 - Validate Telegram chat/user mapping before approval.
 - Keep existing button UX.
 
-### Milestone 4: Email Intake Integration
+### Milestone 5: Email Intake Integration
 
 - Replace email action proposal planning with normal tool calls under an email intake profile.
 - Allow confirm-required tools only when inbound email maps to a user and durable confirmations are
@@ -413,8 +484,12 @@ milestone.
 Core tests:
 
 - Create pending request with exact tool args.
+- Created confirmation is visible from a separate database context before the live turn starts
+  waiting.
 - Approval by target user transitions `pending -> approved` and inserts the deterministic execution
   task in one transaction.
+- Approved execution task is visible to a separate worker context immediately after approval
+  returns.
 - Reject by target user.
 - Deny approval by a different user.
 - Expire pending request.
@@ -423,9 +498,13 @@ Core tests:
 - Policy change between creation and execution fails closed.
 - Task handler exits without execution if the request is no longer `approved`.
 - Task handler failure before `approved -> executing` is retryable by the task queue.
+- `approved -> executing` is committed before the wrapped tool starts, observable from a separate
+  database context.
 - Task handler failure after `approved -> executing` records `failed` without duplicating a
   non-idempotent side effect.
 - Stale `executing` cleanup moves an old request to `failed` with an explicit timeout/crash reason.
+- Run the transaction visibility tests on both SQLite and PostgreSQL; SQLite must not depend on a
+  nested context sharing the outer conversational transaction.
 
 Web tests:
 
