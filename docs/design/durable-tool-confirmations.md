@@ -73,6 +73,10 @@ Required fields:
 - `status`: `pending`, `approved`, `rejected`, `expired`, `executing`, `executed`, `failed`.
 - `tool_name`: exact tool to execute.
 - `tool_args_json`: exact JSON arguments to execute after approval.
+- `tool_args_digest`: canonical digest of `tool_name` plus normalized `tool_args_json`.
+- `tool_schema_version`: tool-provided semantic version when available.
+- `tool_descriptor_digest`: canonical digest of the tool descriptor/schema presented when the
+  confirmation was created.
 - `tool_call_id`: LLM tool call id when available.
 - `processing_profile_id`: profile used to create and later execute the request.
 - `source_interface`: `web`, `telegram`, `email`, `task_worker`, etc.
@@ -90,6 +94,8 @@ Required fields:
   `confirmation_tool_execution:{id}`.
 - `execution_idempotency_key`: stable idempotency key derived from the confirmation id for tools
   that can pass one to downstream APIs.
+- `execution_token`: per-attempt token written when a worker claims execution.
+- `execution_lease_expires_at`: heartbeat/lease expiry for active execution.
 - `execution_started_at`, `execution_finished_at`.
 - `execution_result_json`.
 - `execution_error`.
@@ -101,6 +107,11 @@ Constraints:
 - Only `executing` requests may transition to `executed` or `failed`.
 - Approval and rejection must be idempotent from the user's perspective. Replaying an approval for
   an already resolved request should not execute the tool twice.
+- Execution must validate that the current tool descriptor is compatible with
+  `tool_schema_version`/`tool_descriptor_digest`. If compatibility cannot be proven, execution fails
+  closed and notifies the user that the tool changed after approval.
+- Terminal execution writes must match the active `execution_token` so stale workers cannot
+  overwrite newer recovery decisions.
 
 ## Service API
 
@@ -232,9 +243,12 @@ The confirmation implementation needs explicit transaction boundaries:
 - Approval must happen in a short transaction that commits `pending -> approved` and the
   deterministic task enqueue before any waiter expects worker execution.
 - Worker execution must load and move `approved -> executing` in a short transaction that commits
-  before calling the wrapped tool.
+  before calling the wrapped tool. That transition writes a fresh `execution_token` and lease
+  expiry.
+- Long-running execution must heartbeat by extending `execution_lease_expires_at` in short
+  transactions using the same `execution_token`.
 - Terminal recording (`executed` or `failed`) must happen in a later short transaction after the
-  tool returns or fails.
+  tool returns or fails, guarded by the same `execution_token`.
 
 The practical implementation shape is:
 
@@ -325,14 +339,20 @@ The handler:
 
 1. Loads the request.
 2. Verifies the task id matches `execution_task_id`.
-3. Reconstructs a `ToolExecutionContext` from stored source fields and processing profile.
-4. Re-evaluates policy before execution.
-5. In a short transaction, atomically moves `approved -> executing`; if that transition does not
-   apply, it exits without executing the tool.
-6. Executes the stored tool through the same policy-enforcing provider, passing
-   `execution_idempotency_key` where the tool API supports it.
-7. In a later short transaction, records `executed` with the result or `failed` with the error.
-8. Sends a deterministic notification to the target user if a notification route is configured.
+3. Verifies that the current tool descriptor/schema is compatible with the stored
+   `tool_schema_version` and `tool_descriptor_digest`. If not, it records `failed` without executing
+   the tool.
+4. Reconstructs a `ToolExecutionContext` from stored source fields and processing profile.
+5. Re-evaluates policy before execution.
+6. In a short transaction, atomically moves `approved -> executing`; if that transition does not
+   apply, it exits without executing the tool. This transition writes `execution_token` and
+   `execution_lease_expires_at`.
+7. Executes the stored tool through the same policy-enforcing provider, passing
+   `execution_idempotency_key` where the tool API supports it and passing the confirmation approval
+   signal described below.
+8. In a later short transaction, records `executed` with the result or `failed` with the error,
+   guarded by `execution_token`.
+9. Sends a deterministic notification to the target user if a notification route is configured.
 
 The handler should treat `approved -> executing` as the default side-effect boundary. Failures
 before that transition should raise normally so the task queue can retry. Failures after that
@@ -345,11 +365,26 @@ execution should fail closed unless the implementation explicitly stores and val
 snapshot. V1 should fail closed, record the policy-denial reason, and notify the user that the
 approved action could not be executed because the current tool policy no longer allows it.
 
+Execution-time policy re-evaluation must not create a second confirmation prompt for the same
+approved invocation. The queued execution context should carry:
+
+- `approved_confirmation_request_id`
+- `approved_tool_name`
+- `approved_tool_args_digest`
+
+`PolicyEnforcingToolsProvider` should still apply `deny` decisions normally. If the policy result is
+`confirm`, it may treat the stored approval as satisfying confirmation only when the current tool
+name and normalized args digest exactly match the approved confirmation. Any mismatch fails closed.
+This is an approval bypass for the single already-confirmed invocation, not a broad bypass of tool
+policy.
+
 The service also needs a stale-execution cleanup path. If a worker crashes after moving a request to
-`executing`, a periodic cleanup task should identify requests whose `execution_started_at` is older
-than a configured timeout and transition them to `failed` with an explicit timeout/crash reason.
-This prevents a confirmation from being orphaned in `executing` forever and gives the user a clear
-failure state.
+`executing`, a periodic cleanup task should identify requests whose `execution_lease_expires_at` is
+in the past and transition them to `failed` with an explicit timeout/crash reason. The cleanup
+update must be compare-and-set guarded by the observed `execution_token` and lease timestamp. Active
+long-running workers must extend the lease before it expires; terminal `executed`/`failed` writes
+must also match `execution_token`. This prevents a cleanup task from incorrectly marking an active
+execution failed and then racing with the worker's eventual terminal write.
 
 There should not normally be stale `approved` rows without an execution task. If such rows exist
 because of a migration bug or manual database edit, an audit/repair task may enqueue the
@@ -446,6 +481,8 @@ milestone.
   `confirmation_tool_execution:{request_id}` enqueue.
 - Add the `confirmation_tool_execution` handler with request-level state transitions and terminal
   result recording.
+- Add descriptor/schema digesting and exact approved-invocation matching for queued execution.
+- Add execution leases/heartbeats and token-guarded terminal writes.
 - Add status transition tests, including wrong-user rejection and idempotency.
 - Add expiry cleanup logic.
 
@@ -496,13 +533,22 @@ Core tests:
 - Replayed approval does not enqueue a second task.
 - Simulated enqueue failure rolls the approval back, leaving the request pending.
 - Policy change between creation and execution fails closed.
+- Tool descriptor/schema change between creation and execution fails closed.
+- Queued execution of an already-approved invocation does not prompt for confirmation a second time.
+- Queued execution fails closed if the stored approval digest does not match the tool name or args
+  being executed.
 - Task handler exits without execution if the request is no longer `approved`.
 - Task handler failure before `approved -> executing` is retryable by the task queue.
 - `approved -> executing` is committed before the wrapped tool starts, observable from a separate
   database context.
 - Task handler failure after `approved -> executing` records `failed` without duplicating a
   non-idempotent side effect.
-- Stale `executing` cleanup moves an old request to `failed` with an explicit timeout/crash reason.
+- Stale `executing` cleanup moves an old expired-lease request to `failed` with an explicit
+  timeout/crash reason.
+- Stale `executing` cleanup does not fail an active request whose worker heartbeats/extends the
+  lease.
+- A stale worker cannot overwrite a cleanup decision because terminal writes are guarded by
+  `execution_token`.
 - Run the transaction visibility tests on both SQLite and PostgreSQL; SQLite must not depend on a
   nested context sharing the outer conversational transaction.
 
