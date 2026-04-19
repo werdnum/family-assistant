@@ -9,6 +9,7 @@ Create Date: 2026-04-19
 from collections.abc import Sequence
 
 import sqlalchemy as sa
+from sqlalchemy.dialects import postgresql
 
 from alembic import op
 
@@ -25,7 +26,13 @@ def upgrade() -> None:
         sa.Column("target_user_id", sa.String(length=255), nullable=False),
         sa.Column("status", sa.String(length=32), nullable=False),
         sa.Column("tool_name", sa.String(length=255), nullable=False),
-        sa.Column("tool_args_json", sa.JSON(), nullable=False),
+        sa.Column(
+            "tool_args_json",
+            sa.JSON().with_variant(
+                postgresql.JSONB(astext_type=sa.Text()), "postgresql"
+            ),
+            nullable=False,
+        ),
         sa.Column("tool_call_id", sa.String(length=255), nullable=True),
         sa.Column("source_message_internal_id", sa.Integer(), nullable=True),
         sa.Column("confirmation_prompt", sa.Text(), nullable=False),

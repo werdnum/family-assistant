@@ -1,6 +1,9 @@
 """Functional tests for durable tool confirmations."""
 
+from contextlib import AbstractAsyncContextManager
 from datetime import UTC, datetime, timedelta
+from types import TracebackType
+from typing import Literal, cast
 
 import pytest
 from sqlalchemy.ext.asyncio import AsyncEngine
@@ -13,12 +16,168 @@ from family_assistant.services.confirmation_service import (
     ConfirmationService,
 )
 from family_assistant.storage.context import DatabaseContext
+from family_assistant.storage.repositories.confirmation_requests import (
+    ConfirmationRequestRow,
+    ConfirmationRequestsRepository,
+)
+from family_assistant.storage.repositories.tasks import TasksRepository
+
+RaceMode = Literal["reject_before_approve", "approve_before_reject"]
 
 
 def _service(db_engine: AsyncEngine) -> ConfirmationService:
     return ConfirmationService(
         db_context_factory=lambda: DatabaseContext(engine=db_engine)
     )
+
+
+def _racing_service(db_engine: AsyncEngine, race_mode: RaceMode) -> ConfirmationService:
+    def db_context_factory() -> AbstractAsyncContextManager[DatabaseContext]:
+        return cast(
+            "AbstractAsyncContextManager[DatabaseContext]",
+            _RacingDatabaseContext(db_engine, race_mode),
+        )
+
+    return ConfirmationService(db_context_factory=db_context_factory)
+
+
+class _RacingConfirmationRequestsRepository:
+    def __init__(
+        self,
+        inner: ConfirmationRequestsRepository,
+        db_engine: AsyncEngine,
+        race_mode: RaceMode,
+    ) -> None:
+        self._inner = inner
+        self._db_engine = db_engine
+        self._race_mode = race_mode
+
+    async def create(
+        self,
+        *,
+        request_id: str,
+        target_user_id: str,
+        tool_name: str,
+        tool_args: dict[str, object],
+        tool_call_id: str | None,
+        source_message_internal_id: int | None,
+        confirmation_prompt: str,
+        expires_at: datetime,
+    ) -> ConfirmationRequestRow:
+        return await self._inner.create(
+            request_id=request_id,
+            target_user_id=target_user_id,
+            tool_name=tool_name,
+            tool_args=tool_args,
+            tool_call_id=tool_call_id,
+            source_message_internal_id=source_message_internal_id,
+            confirmation_prompt=confirmation_prompt,
+            expires_at=expires_at,
+        )
+
+    async def get(self, request_id: str) -> ConfirmationRequestRow | None:
+        return await self._inner.get(request_id)
+
+    async def list_pending_for_user(self, user_id: str) -> list[ConfirmationRequestRow]:
+        return await self._inner.list_pending_for_user(user_id)
+
+    async def approve_pending(
+        self,
+        *,
+        request_id: str,
+        resolving_user_id: str,
+        resolving_interface: str,
+        execution_task_id: str,
+        now: datetime,
+    ) -> ConfirmationRequestRow | None:
+        if self._race_mode == "reject_before_approve":
+            async with DatabaseContext(engine=self._db_engine) as racing_db:
+                await racing_db.confirmation_requests.reject_pending(
+                    request_id=request_id,
+                    resolving_user_id="racing-user",
+                    resolving_interface="telegram",
+                    now=now,
+                )
+        return await self._inner.approve_pending(
+            request_id=request_id,
+            resolving_user_id=resolving_user_id,
+            resolving_interface=resolving_interface,
+            execution_task_id=execution_task_id,
+            now=now,
+        )
+
+    async def reject_pending(
+        self,
+        *,
+        request_id: str,
+        resolving_user_id: str,
+        resolving_interface: str,
+        now: datetime,
+    ) -> ConfirmationRequestRow | None:
+        if self._race_mode == "approve_before_reject":
+            execution_task_id = f"confirmation_tool_execution:{request_id}"
+            async with DatabaseContext(engine=self._db_engine) as racing_db:
+                approved = await racing_db.confirmation_requests.approve_pending(
+                    request_id=request_id,
+                    resolving_user_id="racing-user",
+                    resolving_interface="web",
+                    execution_task_id=execution_task_id,
+                    now=now,
+                )
+                if approved is not None:
+                    await racing_db.tasks.enqueue(
+                        task_id=execution_task_id,
+                        task_type=CONFIRMATION_TOOL_EXECUTION_TASK_TYPE,
+                        payload={"confirmation_request_id": request_id},
+                        original_task_id=execution_task_id,
+                    )
+        return await self._inner.reject_pending(
+            request_id=request_id,
+            resolving_user_id=resolving_user_id,
+            resolving_interface=resolving_interface,
+            now=now,
+        )
+
+    async def mark_expired(self, *, now: datetime) -> int:
+        return await self._inner.mark_expired(now=now)
+
+
+class _RacingDatabaseContext:
+    def __init__(self, db_engine: AsyncEngine, race_mode: RaceMode) -> None:
+        self._db_engine = db_engine
+        self._inner_context = DatabaseContext(engine=db_engine)
+        self._race_mode: RaceMode = race_mode
+        self._db: DatabaseContext | None = None
+        self._confirmation_requests: _RacingConfirmationRequestsRepository | None = None
+
+    async def __aenter__(self) -> "_RacingDatabaseContext":
+        self._db = await self._inner_context.__aenter__()
+        self._confirmation_requests = _RacingConfirmationRequestsRepository(
+            self._db.confirmation_requests,
+            self._db_engine,
+            self._race_mode,
+        )
+        return self
+
+    async def __aexit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc_val: BaseException | None,
+        exc_tb: TracebackType | None,
+    ) -> None:
+        await self._inner_context.__aexit__(exc_type, exc_val, exc_tb)
+
+    @property
+    def confirmation_requests(self) -> _RacingConfirmationRequestsRepository:
+        if self._confirmation_requests is None:
+            raise RuntimeError("Racing context has not been entered")
+        return self._confirmation_requests
+
+    @property
+    def tasks(self) -> TasksRepository:
+        if self._db is None:
+            raise RuntimeError("Racing context has not been entered")
+        return self._db.tasks
 
 
 async def _create_request(
@@ -167,6 +326,54 @@ async def test_reject_blocks_later_approval(db_engine: AsyncEngine) -> None:
         tasks = await db.tasks.get_all(task_type=CONFIRMATION_TOOL_EXECUTION_TASK_TYPE)
 
     assert tasks == []
+
+
+@pytest.mark.asyncio
+async def test_concurrent_rejection_during_approval_raises(
+    db_engine: AsyncEngine,
+) -> None:
+    service = _racing_service(db_engine, "reject_before_approve")
+    request_id = await _create_request(db_engine)
+
+    with pytest.raises(ConfirmationAlreadyResolvedError):
+        await service.approve_and_enqueue_execution(
+            request_id=request_id,
+            approving_user_id="user-1",
+            approving_interface="web",
+        )
+
+    async with DatabaseContext(engine=db_engine) as db:
+        request = await db.confirmation_requests.get(request_id)
+        tasks = await db.tasks.get_all(task_type=CONFIRMATION_TOOL_EXECUTION_TASK_TYPE)
+
+    assert request is not None
+    assert request["status"] == "rejected"
+    assert tasks == []
+
+
+@pytest.mark.asyncio
+async def test_concurrent_approval_during_rejection_raises(
+    db_engine: AsyncEngine,
+) -> None:
+    service = _racing_service(db_engine, "approve_before_reject")
+    request_id = await _create_request(db_engine)
+
+    with pytest.raises(ConfirmationAlreadyResolvedError):
+        await service.reject(
+            request_id=request_id,
+            rejecting_user_id="user-1",
+            rejecting_interface="telegram",
+        )
+
+    async with DatabaseContext(engine=db_engine) as db:
+        request = await db.confirmation_requests.get(request_id)
+        tasks = await db.tasks.get_all(task_type=CONFIRMATION_TOOL_EXECUTION_TASK_TYPE)
+
+    assert request is not None
+    assert request["status"] == "approved"
+    assert [task["task_id"] for task in tasks] == [
+        f"confirmation_tool_execution:{request_id}"
+    ]
 
 
 @pytest.mark.asyncio

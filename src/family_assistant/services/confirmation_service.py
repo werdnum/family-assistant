@@ -13,6 +13,7 @@ if TYPE_CHECKING:
     from family_assistant.storage.context import DatabaseContext
     from family_assistant.storage.repositories.confirmation_requests import (
         ConfirmationRequestRow,
+        ConfirmationStatus,
     )
 
 CONFIRMATION_TOOL_EXECUTION_TASK_TYPE = "confirmation_tool_execution"
@@ -112,7 +113,7 @@ class ConfirmationService:
                     raise ConfirmationNotFoundError(
                         f"Confirmation request {request_id} not found"
                     )
-                return self._handle_concurrent_resolution(refreshed)
+                return self._handle_concurrent_resolution(refreshed, "approved")
 
             await db.tasks.enqueue(
                 task_id=execution_task_id,
@@ -159,7 +160,7 @@ class ConfirmationService:
                     raise ConfirmationNotFoundError(
                         f"Confirmation request {request_id} not found"
                     )
-                return self._handle_concurrent_resolution(refreshed)
+                return self._handle_concurrent_resolution(refreshed, "rejected")
             return rejected
 
     async def list_pending_for_user(
@@ -207,13 +208,14 @@ class ConfirmationService:
     @staticmethod
     def _handle_concurrent_resolution(
         request: ConfirmationRequestRow,
+        expected_status: ConfirmationStatus,
     ) -> ConfirmationRequestRow:
-        if request["status"] in {"approved", "rejected"}:
+        if request["status"] == expected_status:
             return request
         if request["status"] == "expired":
             raise ConfirmationExpiredError(
                 f"Confirmation request {request['id']} has expired"
             )
         raise ConfirmationAlreadyResolvedError(
-            f"Confirmation request {request['id']} could not be resolved"
+            f"Confirmation request {request['id']} is already {request['status']}"
         )
