@@ -112,8 +112,9 @@ Constraints:
 - Execution must validate that the current tool descriptor is compatible with
   `tool_schema_version`/`tool_descriptor_digest`. If compatibility cannot be proven, execution fails
   closed and notifies the user that the tool changed after approval.
-- Terminal execution writes must match the active `execution_token` so stale workers cannot
-  overwrite newer recovery decisions.
+- Terminal execution writes must compare-and-set on `status = 'executing'`, the active
+  `execution_token`, and the expected lease/version so stale workers cannot overwrite newer recovery
+  decisions.
 
 ## Service API
 
@@ -250,7 +251,8 @@ The confirmation implementation needs explicit transaction boundaries:
 - Long-running execution must heartbeat by extending `execution_lease_expires_at` in short
   transactions using the same `execution_token`.
 - Terminal recording (`executed` or `failed`) must happen in a later short transaction after the
-  tool returns or fails, guarded by the same `execution_token`.
+  tool returns or fails, guarded by `status = 'executing'`, the same `execution_token`, and the
+  expected lease/version.
 
 The practical implementation shape is:
 
@@ -386,8 +388,7 @@ Payload:
 
 ```json
 {
-  "confirmation_request_id": "confirm_...",
-  "approving_user_id": "user_..."
+  "confirmation_request_id": "confirm_..."
 }
 ```
 
@@ -417,9 +418,15 @@ The handler:
 7. Executes the stored tool through the same policy-enforcing provider, passing
    `execution_idempotency_key` where the tool API supports it and passing the confirmation approval
    signal described below.
-8. In a later short transaction, records `executed` with the result or `failed` with the error,
-   guarded by `execution_token`.
+8. In a later short transaction, records `executed` with the result or `failed` with the error using
+   a compare-and-set predicate on `status = 'executing'`, `execution_token`, and the expected
+   lease/version observed by the worker.
 9. Sends a deterministic notification to the target user if a notification route is configured.
+
+The task payload should not carry authority facts such as `approving_user_id`. The confirmation row
+is the source of truth for `target_user_id`, `resolved_by_user_id`, `resolved_at`, and
+`resolved_via_interface`; the handler should load those fields from the committed row for audit,
+notifications, and authorization-sensitive behavior.
 
 The handler should treat `approved -> executing` as the default side-effect boundary. Failures
 before that transition should raise normally so the task queue can retry. Failures after that
@@ -450,8 +457,9 @@ The service also needs a stale-execution cleanup path. If a worker crashes after
 in the past and transition them to `failed` with an explicit timeout/crash reason. The cleanup
 update must be compare-and-set guarded by the observed `execution_token` and lease timestamp. Active
 long-running workers must extend the lease before it expires; terminal `executed`/`failed` writes
-must also match `execution_token`. This prevents a cleanup task from incorrectly marking an active
-execution failed and then racing with the worker's eventual terminal write.
+must also compare-and-set on `status = 'executing'`, `execution_token`, and the expected
+lease/version. This prevents a cleanup task from incorrectly marking an active execution failed and
+then racing with the worker's eventual terminal write.
 
 There should not normally be stale `approved` rows without an execution task. If such rows exist
 because of a migration bug or manual database edit, an audit/repair task may enqueue the
@@ -626,7 +634,7 @@ Core tests:
 - Stale `executing` cleanup does not fail an active request whose worker heartbeats/extends the
   lease.
 - A stale worker cannot overwrite a cleanup decision because terminal writes are guarded by
-  `execution_token`.
+  `status = 'executing'`, `execution_token`, and the expected lease/version.
 - Run the transaction visibility tests on both SQLite and PostgreSQL; SQLite must not depend on a
   nested context sharing the outer conversational transaction.
 - Lost sync waiter does not reject or approve the pending request automatically.
