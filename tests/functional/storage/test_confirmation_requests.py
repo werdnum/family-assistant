@@ -6,6 +6,8 @@ from types import TracebackType
 from typing import Literal, cast
 
 import pytest
+from sqlalchemy import insert
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncEngine
 
 from family_assistant.services.confirmation_service import (
@@ -15,6 +17,7 @@ from family_assistant.services.confirmation_service import (
     ConfirmationExpiredError,
     ConfirmationService,
 )
+from family_assistant.storage.confirmation_requests import confirmation_requests_table
 from family_assistant.storage.context import DatabaseContext
 from family_assistant.storage.repositories.confirmation_requests import (
     ConfirmationRequestRow,
@@ -220,6 +223,30 @@ async def test_create_request_is_visible_from_separate_context(
     assert fetched["status"] == "pending"
     assert fetched["target_user_id"] == "user-1"
     assert fetched["tool_args_json"]["title"] == "Ticket"
+
+
+@pytest.mark.asyncio
+async def test_invalid_confirmation_status_is_rejected_by_database(
+    db_engine: AsyncEngine,
+) -> None:
+    now = datetime.now(UTC)
+    with pytest.raises(IntegrityError):
+        async with DatabaseContext(engine=db_engine) as db:
+            await db.execute_with_retry(
+                insert(confirmation_requests_table).values(
+                    id="confirm_invalid_status",
+                    target_user_id="user-1",
+                    status="invalid",
+                    tool_name="calendar.create_event",
+                    tool_args_json={"title": "Flight"},
+                    tool_call_id=None,
+                    source_message_internal_id=None,
+                    confirmation_prompt="Create calendar event: Flight",
+                    expires_at=now + timedelta(hours=1),
+                    created_at=now,
+                    updated_at=now,
+                )
+            )
 
 
 @pytest.mark.asyncio

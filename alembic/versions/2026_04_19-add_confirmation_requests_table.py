@@ -48,6 +48,10 @@ def upgrade() -> None:
             ["message_history.internal_id"],
             ondelete="SET NULL",
         ),
+        sa.CheckConstraint(
+            "status IN ('pending', 'approved', 'rejected', 'expired')",
+            name="ck_confirmation_requests_status",
+        ),
         sa.PrimaryKeyConstraint("id"),
         sa.UniqueConstraint("execution_task_id"),
     )

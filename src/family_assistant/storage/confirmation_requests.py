@@ -2,6 +2,7 @@
 
 from sqlalchemy import (
     JSON,
+    CheckConstraint,
     Column,
     DateTime,
     ForeignKey,
@@ -42,4 +43,8 @@ confirmation_requests_table = Table(
     Column("resolved_by_user_id", String(255), nullable=True),
     Column("resolved_via_interface", String(50), nullable=True),
     Column("execution_task_id", String(255), nullable=True, unique=True),
+    CheckConstraint(
+        "status IN ('pending', 'approved', 'rejected', 'expired')",
+        name="ck_confirmation_requests_status",
+    ),
 )
