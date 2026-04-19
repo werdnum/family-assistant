@@ -83,6 +83,8 @@ Required fields:
 - `source_conversation_id`: original conversation id when available.
 - `source_turn_id`: original turn id when available.
 - `source_message_id`: interface message id, email id, worker task id, or other source reference.
+- `continuation_mode`: what should happen after execution: `live_waiter_then_notify`, `notify_only`,
+  or future `resume_conversation`.
 - `confirmation_prompt`: rendered human-readable prompt.
 - `metadata_json`: source metadata, risk tags, policy reason, and display hints.
 - `expires_at`.
@@ -193,8 +195,8 @@ For every confirmation that can cause a tool side effect:
 2. Accepting the confirmation authorizes the user, moves `pending -> approved`, and enqueues exactly
    one `confirmation_tool_execution:{request_id}` task in the same database transaction.
 3. Tool execution happens only in the task worker handler for `confirmation_tool_execution`.
-4. Interface handlers may wait for and display the result, but they do not call the wrapped tool
-   directly after approval.
+4. Interface handlers may wait for and display the recorded result, but they do not call the wrapped
+   tool directly after approval.
 
 This uses the queue properties that already exist in the application:
 
@@ -266,23 +268,87 @@ The practical implementation shape is:
    SQLite engine uses a single shared connection in tests, the live confirmation path must still
    work because there is no outer conversational transaction open while waiting.
 
+## Compatibility With Existing Sync Confirmations
+
+Existing Web and Telegram confirmations behave like synchronous tool calls from the assistant loop's
+point of view: the tool asks for approval, the current turn waits, and if the user approves the tool
+result is returned to the same assistant loop so the assistant can continue naturally.
+
+Durable confirmations should preserve that behavior when the original process is still alive, but
+the wait target changes:
+
+- Current behavior waits for a boolean approval.
+- New behavior waits for a terminal confirmation execution result: `executed`, `failed`, `rejected`,
+  or `expired`.
+
+The compatibility adapter should return a normal tool result to the assistant loop only after the
+queued execution records a terminal state. That keeps the existing assistant-loop contract: a
+confirmed tool call still produces exactly one tool result for the original `tool_call_id`.
+
+This does add one source of latency compared with direct inline execution: approval schedules queued
+work and the live turn waits for the worker to run it. For existing same-process UX, the task worker
+must be running and worker wakeup must be prompt. If the worker is unavailable, the waiting turn
+should time out with a clear tool result such as "approved, but execution is still pending" rather
+than waiting forever. The durable row remains the source of truth and can still complete later.
+
+If several tool calls are issued in parallel, each confirm-required call gets its own confirmation
+request and its own waiter keyed by request id and original tool call id. Results must be routed
+back to the matching `tool_call_id`; approval of one request must not unblock another pending tool
+call.
+
+## Lost Waiters And Restart Behavior
+
+A "sync" confirmation waiter is process-local. If the pod restarts, the waiting coroutine is gone.
+The durable confirmation request should not be automatically approved, rejected, or expired just
+because the waiter disappeared.
+
+Default v1 behavior:
+
+- If the request is still `pending`, it remains pending until `expires_at`.
+- If the user later rejects it, the durable row records `rejected` and no tool executes.
+- If the user later approves it, `approve_and_enqueue_execution()` still executes the exact stored
+  invocation through the task queue.
+- If no live waiter exists when execution reaches a terminal state, the system sends a deterministic
+  notification to the target user instead of trying to return a tool result to the lost assistant
+  turn.
+
+That fallback should be explicit in the user-visible copy: for example, "The approved action was
+completed, but the original chat turn could not be resumed." This avoids silent success and avoids
+misleading the user into thinking the original assistant turn continued.
+
+For v1, live Web/Telegram requests should use `continuation_mode=live_waiter_then_notify`: resume
+the waiting assistant loop when possible, otherwise execute and notify. Async sources such as email
+should use `continuation_mode=notify_only`. The future durable conversation-resumption work can add
+`continuation_mode=resume_conversation`, where the recorded tool result is appended to stored turn
+state and an `llm_callback` or equivalent continuation task resumes the assistant loop.
+
+Expiring a request solely because the waiter died is not the default because it creates surprising
+behavior after deploys/restarts: the user may still be looking at a valid confirmation button for an
+exact action they asked to approve. Instead, use normal `expires_at`, with shorter defaults for
+live-chat confirmations if desired. A tool policy may opt into stricter behavior for actions that
+only make sense inside a live turn, but that should be an explicit policy flag such as
+`requires_live_continuation`, not an accidental consequence of pod lifetime.
+
 ## V1 Execution Model
 
 V1 keeps existing live-turn behavior while making pending requests durable.
 
 ### Live Web Or Telegram Turn
 
-1. The assistant calls a confirm-required tool.
-2. `PolicyEnforcingToolsProvider` calls the existing confirmation callback.
-3. The callback creates a durable confirmation request in a short transaction and commits it.
-4. The current interface surfaces that committed request in-context.
-5. The processing coroutine waits on an in-memory waiter for that request id.
-6. Rejection transitions the durable row from `pending -> rejected` and notifies the waiter.
-7. Approval calls `approve_and_enqueue_execution()`, which transitions `pending -> approved` and
-   enqueues the execution task in the same transaction.
-8. The task worker executes the stored tool invocation and records `executed` or `failed`.
-9. If the original process is still alive, the waiter is notified when the request reaches a
-   terminal execution state and returns the recorded tool result to the assistant loop.
+01. The assistant calls a confirm-required tool.
+02. `PolicyEnforcingToolsProvider` calls the existing confirmation callback.
+03. The callback creates a durable confirmation request in a short transaction and commits it.
+04. The current interface surfaces that committed request in-context.
+05. The processing coroutine waits on an in-memory waiter for that request id and original tool call
+    id.
+06. Rejection transitions the durable row from `pending -> rejected` and notifies the waiter.
+07. Approval calls `approve_and_enqueue_execution()`, which transitions `pending -> approved` and
+    enqueues the execution task in the same transaction.
+08. The task worker executes the stored tool invocation and records `executed` or `failed`.
+09. If the original process is still alive, the waiter is notified when the request reaches a
+    terminal execution state and returns the recorded tool result to the assistant loop.
+10. If the original process is gone, the terminal state is delivered through the configured
+    notification route instead.
 
 The durable row is the source of truth. The in-memory waiter is only an optimization for the live
 conversation that created the request; it is not the executor.
@@ -295,7 +361,8 @@ the durable path uses a richer result internally.
 If the process restarts while a live turn is waiting, v1 does not need to resume the original
 conversation automatically. The durable request remains pending if the user had not approved it yet.
 If the user already approved it, the durable task remains queued or processing and the result is
-recorded for later notification or inspection.
+recorded for later notification or inspection. This is a degraded but deterministic path: the action
+can still complete, but the original assistant loop is not assumed to have continued.
 
 ### Async Source Or No Live Waiter
 
@@ -456,7 +523,14 @@ Important constraints:
 
 ## Conversation Resumption
 
-Full conversation resumption is a future enhancement.
+Full conversation resumption is a future enhancement, but the durable confirmation model should
+avoid making it hard to add.
+
+V1 distinguishes execution from conversational continuation:
+
+- Execution is durable and queue-backed.
+- Same-process continuation is best effort through the in-memory waiter.
+- Lost-waiter continuation degrades to deterministic notification.
 
 The likely v2 shape:
 
@@ -468,7 +542,9 @@ The likely v2 shape:
 
 This is valuable because the assistant can explain the result after approval, ask follow-up
 questions, or continue a multi-step task. It is not required for the first durable confirmation
-milestone.
+milestone, but the v1 schema should retain enough source fields (`source_conversation_id`,
+`source_turn_id`, `tool_call_id`, processing profile, and continuation mode) that v2 does not need a
+breaking migration.
 
 ## Implementation Milestones
 
@@ -501,6 +577,8 @@ milestone.
 - Preserve existing SSE events and current user experience.
 - Keep the in-memory waiter map only as a process-local bridge from durable request id to the
   waiting coroutine and recorded task result.
+- If a waiting SSE stream is gone when execution finishes, send or expose the deterministic
+  notification/pending-result state instead of assuming the assistant turn resumed.
 
 ### Milestone 4: Telegram Adapter
 
@@ -551,18 +629,26 @@ Core tests:
   `execution_token`.
 - Run the transaction visibility tests on both SQLite and PostgreSQL; SQLite must not depend on a
   nested context sharing the outer conversational transaction.
+- Lost sync waiter does not reject or approve the pending request automatically.
+- Approving a request after its live waiter is gone executes the stored invocation and records a
+  notification/pending-result state instead of trying to resume the vanished turn.
+- Rejecting a request after its live waiter is gone records `rejected` without tool execution.
 
 Web tests:
 
 - Existing in-context confirmation still appears during chat streaming.
 - Approval enqueues the durable execution task and the live stream resumes from the recorded task
   result when the same process is still waiting.
+- If the stream disconnects or the process restarts before approval, the request remains visible
+  until expiry and later approval follows the notify-only fallback.
 - Wrong authenticated Web user cannot approve.
 
 Telegram tests:
 
 - Existing confirmation buttons still approve/reject requests and approval runs the queued execution
   path.
+- If the bot restarts before the button press, the durable callback path can still approve/reject
+  the request by id and user mapping; the original assistant loop is not required to be alive.
 - Callback id alone is insufficient without matching Telegram user mapping.
 
 Email/deferred tests:
