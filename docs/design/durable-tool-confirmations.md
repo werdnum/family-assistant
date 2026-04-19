@@ -86,6 +86,10 @@ Required fields:
 - `resolved_at`.
 - `resolved_by_user_id`.
 - `resolved_via_interface`.
+- `execution_task_id`: deterministic task id for the queued execution, such as
+  `confirmation_tool_execution:{id}`.
+- `execution_idempotency_key`: stable idempotency key derived from the confirmation id for tools
+  that can pass one to downstream APIs.
 - `execution_started_at`, `execution_finished_at`.
 - `execution_result_json`.
 - `execution_error`.
@@ -120,7 +124,7 @@ class ConfirmationService:
         metadata: dict[str, object],
     ) -> ConfirmationRequest: ...
 
-    async def approve(
+    async def approve_and_enqueue_execution(
         *,
         request_id: str,
         approving_user_id: str,
@@ -145,23 +149,48 @@ class ConfirmationService:
 The service owns authorization checks for approval and rejection. UI routers and Telegram handlers
 should not directly mutate rows.
 
-For deferred execution, approval should be a single database transaction that both resolves the
-confirmation and enqueues the execution task:
-
-```python
-async def approve_and_enqueue_execution(
-    *,
-    request_id: str,
-    approving_user_id: str,
-    approving_interface: str,
-) -> ConfirmationRequest: ...
-```
+Approval of an executable confirmation is not a plain status update. It is a single database
+transaction that both resolves the confirmation and enqueues the execution task.
 
 That method should update `pending -> approved` with a compare-and-set predicate and insert a
 `confirmation_tool_execution` task with a deterministic task id such as
 `confirmation_tool_execution:{request_id}` in the same transaction. If the transaction rolls back,
 neither the approval nor the task enqueue is visible. If an approval is replayed after the request
 is already resolved, the service must not enqueue a second execution task.
+
+There should not be a general public `approve()` method for executable confirmations, because that
+would make it too easy to create an `approved` row without durable execution work. Non-executable
+confirmation prompts, if they are ever needed, should use a separate API and status model.
+
+## Queue-Backed Execution Invariant
+
+The reliable execution boundary is the existing database task queue.
+
+For every confirmation that can cause a tool side effect:
+
+1. Creating the confirmation only creates a `pending` request.
+2. Accepting the confirmation authorizes the user, moves `pending -> approved`, and enqueues exactly
+   one `confirmation_tool_execution:{request_id}` task in the same database transaction.
+3. Tool execution happens only in the task worker handler for `confirmation_tool_execution`.
+4. Interface handlers may wait for and display the result, but they do not call the wrapped tool
+   directly after approval.
+
+This uses the queue properties that already exist in the application:
+
+- `tasks.task_id` is unique, so duplicate approval attempts cannot create duplicate execution work.
+- Enqueueing through the same `DatabaseContext` transaction gives atomic handoff: approval and
+  queued work become visible together or not at all.
+- The worker claims work through the queue's atomic dequeue path (`SELECT FOR UPDATE SKIP LOCKED` on
+  PostgreSQL, atomic update on SQLite).
+- Worker wakeup is an optimization. Even if the wakeup event is missed, the durable task remains
+  visible to polling workers.
+
+The queue solves the important crash window where approval commits but no executor is durable. It
+does not, by itself, make arbitrary external side effects exactly-once if a process dies after a
+downstream API call but before recording success. The confirmation id should be passed as a stable
+idempotency key to tools and downstream APIs where that is supported. For non-idempotent tools, v1
+should prefer "no duplicate side effect" over automatic retry once the handler has crossed the
+execution boundary.
 
 ## V1 Execution Model
 
@@ -174,30 +203,25 @@ V1 keeps existing live-turn behavior while making pending requests durable.
 3. The callback creates a durable confirmation request.
 4. The current interface surfaces that request in-context.
 5. The processing coroutine waits on an in-memory waiter for that request id.
-6. When the user approves or rejects, the durable row transitions from `pending` to `approved` or
-   `rejected`, and the waiter is notified.
-7. If approved, the provider marks the same request `executing` before calling the wrapped tool.
-8. After the wrapped tool returns or raises, the provider records `executed` or `failed` on the same
-   request before returning the tool result to the assistant loop.
+6. Rejection transitions the durable row from `pending -> rejected` and notifies the waiter.
+7. Approval calls `approve_and_enqueue_execution()`, which transitions `pending -> approved` and
+   enqueues the execution task in the same transaction.
+8. The task worker executes the stored tool invocation and records `executed` or `failed`.
+9. If the original process is still alive, the waiter is notified when the request reaches a
+   terminal execution state and returns the recorded tool result to the assistant loop.
 
 The durable row is the source of truth. The in-memory waiter is only an optimization for the live
-conversation that created the request.
+conversation that created the request; it is not the executor.
 
 The implementation should let the confirmation callback return or otherwise expose the confirmation
 request id to the provider. Keeping a boolean-only internal interface would make it too easy to
-approve a live request without recording its terminal execution state. A compatibility adapter can
-preserve existing call sites while the durable path uses a richer result internally.
+confuse "approved" with "executed". A compatibility adapter can preserve existing call sites while
+the durable path uses a richer result internally.
 
 If the process restarts while a live turn is waiting, v1 does not need to resume the original
-conversation automatically. The durable request remains pending and can be resolved later by the
-deferred execution path.
-
-There is one additional crash window: the user can approve a live request, moving it to `approved`,
-and then the process can die before the live waiter marks it `executing`. A periodic recovery task
-should find `approved` requests older than a short configured timeout and enqueue the same
-`confirmation_tool_execution:{request_id}` deferred task. The deferred worker will then perform the
-normal `approved -> executing -> executed/failed` transition. If the live waiter already won the
-transition, the deferred task exits without executing.
+conversation automatically. The durable request remains pending if the user had not approved it yet.
+If the user already approved it, the durable task remains queued or processing and the result is
+recorded for later notification or inspection.
 
 ### Async Source Or No Live Waiter
 
@@ -207,7 +231,7 @@ For email intake and other async sources:
 2. The callback creates a durable confirmation request.
 3. The worker stops or returns a "waiting for confirmation" result.
 4. Web and Telegram can list or notify the target user about the pending request.
-5. Approval starts deferred execution of the stored tool invocation.
+5. Approval atomically enqueues execution of the stored tool invocation.
 6. The result is recorded and optionally sent to the user through a deterministic notification path.
 
 This path executes the stored tool name and args directly. It does not ask the LLM to reinterpret
@@ -229,28 +253,32 @@ Payload:
 Approval and enqueue:
 
 1. Authenticates the approving user.
-2. In one database transaction, moves `pending -> approved`.
-3. In that same transaction, enqueues a `confirmation_tool_execution` task using the existing task
-   queue.
-4. Uses a deterministic task id derived from the confirmation request id so duplicate approval
-   attempts cannot create multiple queued executions.
+2. Opens one database transaction.
+3. Moves `pending -> approved` using a compare-and-set predicate that includes target user and
+   expiry checks.
+4. Enqueues a `confirmation_tool_execution` task using the existing task queue in that same
+   transaction.
+5. Stores the deterministic task id on the confirmation row.
+6. Commits the transaction, making approval and queued execution visible together.
 
 The handler:
 
 1. Loads the request.
-2. Atomically moves `approved -> executing`; if that transition does not apply, it exits without
-   executing the tool.
+2. Verifies the task id matches `execution_task_id`.
 3. Reconstructs a `ToolExecutionContext` from stored source fields and processing profile.
-4. Executes the stored tool through the same policy-enforcing provider.
-5. Records success or failure.
-6. Sends a deterministic notification to the target user if a notification route is configured.
+4. Re-evaluates policy before execution.
+5. Atomically moves `approved -> executing`; if that transition does not apply, it exits without
+   executing the tool.
+6. Executes the stored tool through the same policy-enforcing provider, passing
+   `execution_idempotency_key` where the tool API supports it.
+7. Records `executed` with the result or `failed` with the error.
+8. Sends a deterministic notification to the target user if a notification route is configured.
 
-This gives exactly-once execution handoff from confirmation acceptance to the task worker: approval
-and task enqueue commit atomically, duplicate approvals cannot enqueue duplicate work, and duplicate
-worker attempts must win the `approved -> executing` transition before executing. For tools with
-non-idempotent external side effects, no queue can make a process crash after the external side
-effect but before recording success perfectly safe; tool implementations should pass stable
-idempotency keys where downstream APIs support them.
+The handler should treat `approved -> executing` as the default side-effect boundary. Failures
+before that transition should raise normally so the task queue can retry. Failures after that
+transition should be recorded on the confirmation request and should not ask the queue to retry the
+same non-idempotent operation by default. Specific tools can opt into safe retry only when they have
+a downstream idempotency key or another tool-specific exactly-once mechanism.
 
 Policy must still be enforced at execution time. If policy has changed since request creation, the
 execution should fail closed unless the implementation explicitly stores and validates a policy
@@ -262,6 +290,11 @@ The service also needs a stale-execution cleanup path. If a worker crashes after
 than a configured timeout and transition them to `failed` with an explicit timeout/crash reason.
 This prevents a confirmation from being orphaned in `executing` forever and gives the user a clear
 failure state.
+
+There should not normally be stale `approved` rows without an execution task. If such rows exist
+because of a migration bug or manual database edit, an audit/repair task may enqueue the
+deterministic task id after verifying no task exists, but that is a safety net rather than the
+primary reliability mechanism.
 
 ## Relationship To Tool Policy
 
@@ -344,9 +377,13 @@ milestone.
 
 ## Implementation Milestones
 
-### Milestone 1: Durable Confirmation Core
+### Milestone 1: Durable Confirmation Core And Queue Handoff
 
 - Add table, migration, repository, and service.
+- Add `approve_and_enqueue_execution()` using one database transaction for `pending -> approved` and
+  `confirmation_tool_execution:{request_id}` enqueue.
+- Add the `confirmation_tool_execution` handler with request-level state transitions and terminal
+  result recording.
 - Add status transition tests, including wrong-user rejection and idempotency.
 - Add expiry cleanup logic.
 
@@ -355,7 +392,7 @@ milestone.
 - Make Web confirmation creation and resolution go through `ConfirmationService`.
 - Preserve existing SSE events and current user experience.
 - Keep the in-memory waiter map only as a process-local bridge from durable request id to the
-  waiting coroutine.
+  waiting coroutine and recorded task result.
 
 ### Milestone 3: Telegram Adapter
 
@@ -363,13 +400,7 @@ milestone.
 - Validate Telegram chat/user mapping before approval.
 - Keep existing button UX.
 
-### Milestone 4: Deferred Execution
-
-- Add `confirmation_tool_execution` task.
-- Execute stored tool invocations after approval when no live waiter handles the request.
-- Record execution result and send deterministic user notification.
-
-### Milestone 5: Email Intake Integration
+### Milestone 4: Email Intake Integration
 
 - Replace email action proposal planning with normal tool calls under an email intake profile.
 - Allow confirm-required tools only when inbound email maps to a user and durable confirmations are
@@ -382,31 +413,37 @@ milestone.
 Core tests:
 
 - Create pending request with exact tool args.
-- Approve by target user.
+- Approval by target user transitions `pending -> approved` and inserts the deterministic execution
+  task in one transaction.
 - Reject by target user.
 - Deny approval by a different user.
 - Expire pending request.
-- Replayed approval does not execute twice.
+- Replayed approval does not enqueue a second task.
+- Simulated enqueue failure rolls the approval back, leaving the request pending.
 - Policy change between creation and execution fails closed.
-- Stale `approved` cleanup enqueues deferred execution and does not duplicate live execution.
+- Task handler exits without execution if the request is no longer `approved`.
+- Task handler failure before `approved -> executing` is retryable by the task queue.
+- Task handler failure after `approved -> executing` records `failed` without duplicating a
+  non-idempotent side effect.
 - Stale `executing` cleanup moves an old request to `failed` with an explicit timeout/crash reason.
 
 Web tests:
 
 - Existing in-context confirmation still appears during chat streaming.
-- Approval moves the durable row through `approved`, `executing`, and `executed` or `failed` while
-  resuming waiting tool execution.
+- Approval enqueues the durable execution task and the live stream resumes from the recorded task
+  result when the same process is still waiting.
 - Wrong authenticated Web user cannot approve.
 
 Telegram tests:
 
-- Existing confirmation buttons still approve/reject live tool execution.
+- Existing confirmation buttons still approve/reject requests and approval runs the queued execution
+  path.
 - Callback id alone is insufficient without matching Telegram user mapping.
 
 Email/deferred tests:
 
 - Email-mapped user can create a pending confirmation request.
-- Approval through another interface executes the stored tool invocation.
+- Approval through another interface executes the stored tool invocation through the queued task.
 - The LLM is mocked; database, confirmation service, and fake tool provider are real or fake rather
   than heavily mocked.
 
