@@ -84,11 +84,13 @@ class ConfirmationRequestsRepository(BaseRepository):
 
     async def list_pending_for_user(self, user_id: str) -> list[ConfirmationRequestRow]:
         """List pending confirmation requests for a target user."""
+        now = datetime.now(UTC)
         stmt = (
             select(confirmation_requests_table)
             .where(
                 confirmation_requests_table.c.target_user_id == user_id,
                 confirmation_requests_table.c.status == "pending",
+                confirmation_requests_table.c.expires_at > now,
             )
             .order_by(confirmation_requests_table.c.created_at.asc())
         )

@@ -377,6 +377,25 @@ async def test_concurrent_approval_during_rejection_raises(
 
 
 @pytest.mark.asyncio
+async def test_list_pending_for_user_excludes_expired_requests(
+    db_engine: AsyncEngine,
+) -> None:
+    service = _service(db_engine)
+    await _create_request(
+        db_engine,
+        expires_at=datetime.now(UTC) - timedelta(minutes=1),
+    )
+    pending_id = await _create_request(
+        db_engine,
+        expires_at=datetime.now(UTC) + timedelta(minutes=30),
+    )
+
+    pending_requests = await service.list_pending_for_user(user_id="user-1")
+
+    assert [request["id"] for request in pending_requests] == [pending_id]
+
+
+@pytest.mark.asyncio
 async def test_mark_expired_expires_only_pending_requests(
     db_engine: AsyncEngine,
 ) -> None:
