@@ -26,9 +26,10 @@ from family_assistant.storage.base import (
     create_engine_with_sqlite_optimizations,
     metadata,
 )
-from family_assistant.storage.context import DatabaseContext, get_db_context
 
 # Import table definitions for direct use
+from family_assistant.storage.confirmation_requests import confirmation_requests_table
+from family_assistant.storage.context import DatabaseContext, get_db_context
 from family_assistant.storage.email import received_emails_table
 from family_assistant.storage.error_logs import error_logs_table
 from family_assistant.storage.events import (
@@ -321,6 +322,7 @@ __all__ = [
     "notes_table",
     "message_history_table",
     "tasks_table",
+    "confirmation_requests_table",
     "received_emails_table",
     "error_logs_table",
     "event_listeners_table",
