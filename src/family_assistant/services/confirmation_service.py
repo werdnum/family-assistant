@@ -174,6 +174,9 @@ class ConfirmationService:
 
     async def mark_expired(self, *, now: datetime) -> int:
         """Expire pending requests whose deadline has passed."""
+        if now.tzinfo is None or now.utcoffset() is None:
+            raise ValueError("now must be timezone-aware")
+        now = now.astimezone(UTC)
         async with self._db_context_factory() as db:
             return await db.confirmation_requests.mark_expired(now=now)
 

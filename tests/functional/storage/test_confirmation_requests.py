@@ -450,6 +450,26 @@ async def test_mark_expired_expires_only_pending_requests(
 
 
 @pytest.mark.asyncio
+async def test_mark_expired_rejects_naive_now(db_engine: AsyncEngine) -> None:
+    service = _service(db_engine)
+    request_id = await _create_request(
+        db_engine,
+        expires_at=datetime.now(UTC) - timedelta(minutes=1),
+    )
+
+    with pytest.raises(ValueError, match="timezone-aware"):
+        await service.mark_expired(
+            now=datetime(2026, 4, 19, 12, 0, 0),  # noqa: DTZ001
+        )
+
+    async with DatabaseContext(engine=db_engine) as db:
+        request = await db.confirmation_requests.get(request_id)
+
+    assert request is not None
+    assert request["status"] == "pending"
+
+
+@pytest.mark.asyncio
 async def test_approval_of_expired_request_does_not_enqueue_task(
     db_engine: AsyncEngine,
 ) -> None:
