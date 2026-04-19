@@ -2,7 +2,13 @@
 
 ## Status
 
-Proposed design for review.
+Superseded in part.
+
+The email authentication, CUJ, and tool-policy analysis in this document remain useful background.
+The earlier implementation direction of storing separate LLM-authored email action proposals should
+not be used. Email-triggered writes should instead use durable pending tool confirmations as
+described in [Durable Tool Confirmations](durable-tool-confirmations.md): the confirmed object is
+the exact tool invocation and arguments, not a secondary planned-action summary.
 
 This plan covers a practical, defense-in-depth way to let authorized users forward order
 confirmations, ticket purchases, school notices, travel details, and similar emails to Family
