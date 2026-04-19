@@ -97,6 +97,8 @@ Required fields:
 - `execution_idempotency_key`: stable idempotency key derived from the confirmation id for tools
   that can pass one to downstream APIs.
 - `execution_token`: per-attempt token written when a worker claims execution.
+- `execution_generation`: monotonic integer incremented when execution is claimed and on each
+  heartbeat.
 - `execution_lease_expires_at`: heartbeat/lease expiry for active execution.
 - `execution_started_at`, `execution_finished_at`.
 - `execution_result_json`.
@@ -113,8 +115,8 @@ Constraints:
   `tool_schema_version`/`tool_descriptor_digest`. If compatibility cannot be proven, execution fails
   closed and notifies the user that the tool changed after approval.
 - Terminal execution writes must compare-and-set on `status = 'executing'`, the active
-  `execution_token`, and the expected lease/version so stale workers cannot overwrite newer recovery
-  decisions.
+  `execution_token`, and the worker's observed `execution_generation` so stale workers cannot
+  overwrite newer recovery decisions.
 
 ## Service API
 
@@ -139,6 +141,11 @@ class ConfirmationService:
         source_conversation_id: str | None,
         source_turn_id: str | None,
         source_message_id: str | None,
+        continuation_mode: Literal[
+            "live_waiter_then_notify",
+            "notify_only",
+            "resume_conversation",
+        ],
         confirmation_prompt: str,
         expires_at: datetime,
         metadata: dict[str, object],
@@ -246,13 +253,13 @@ The confirmation implementation needs explicit transaction boundaries:
 - Approval must happen in a short transaction that commits `pending -> approved` and the
   deterministic task enqueue before any waiter expects worker execution.
 - Worker execution must load and move `approved -> executing` in a short transaction that commits
-  before calling the wrapped tool. That transition writes a fresh `execution_token` and lease
-  expiry.
+  before calling the wrapped tool. That transition writes a fresh `execution_token`, increments
+  `execution_generation`, and writes a lease expiry.
 - Long-running execution must heartbeat by extending `execution_lease_expires_at` in short
-  transactions using the same `execution_token`.
+  transactions using the same `execution_token` and by incrementing `execution_generation`.
 - Terminal recording (`executed` or `failed`) must happen in a later short transaction after the
   tool returns or fails, guarded by `status = 'executing'`, the same `execution_token`, and the
-  expected lease/version.
+  worker's observed `execution_generation`.
 
 The practical implementation shape is:
 
@@ -414,13 +421,13 @@ The handler:
 5. Re-evaluates policy before execution.
 6. In a short transaction, atomically moves `approved -> executing`; if that transition does not
    apply, it exits without executing the tool. This transition writes `execution_token` and
-   `execution_lease_expires_at`.
+   `execution_lease_expires_at`, and increments `execution_generation`.
 7. Executes the stored tool through the same policy-enforcing provider, passing
    `execution_idempotency_key` where the tool API supports it and passing the confirmation approval
    signal described below.
 8. In a later short transaction, records `executed` with the result or `failed` with the error using
    a compare-and-set predicate on `status = 'executing'`, `execution_token`, and the expected
-   lease/version observed by the worker.
+   `execution_generation` observed by the worker.
 9. Sends a deterministic notification to the target user if a notification route is configured.
 
 The task payload should not carry authority facts such as `approving_user_id`. The confirmation row
@@ -455,11 +462,12 @@ policy.
 The service also needs a stale-execution cleanup path. If a worker crashes after moving a request to
 `executing`, a periodic cleanup task should identify requests whose `execution_lease_expires_at` is
 in the past and transition them to `failed` with an explicit timeout/crash reason. The cleanup
-update must be compare-and-set guarded by the observed `execution_token` and lease timestamp. Active
-long-running workers must extend the lease before it expires; terminal `executed`/`failed` writes
-must also compare-and-set on `status = 'executing'`, `execution_token`, and the expected
-lease/version. This prevents a cleanup task from incorrectly marking an active execution failed and
-then racing with the worker's eventual terminal write.
+update must be compare-and-set guarded by `status = 'executing'`, the observed `execution_token`,
+the observed `execution_generation`, and the observed lease timestamp. Active long-running workers
+must extend the lease before it expires and increment `execution_generation`; terminal
+`executed`/`failed` writes must also compare-and-set on `status = 'executing'`, `execution_token`,
+and the worker's observed `execution_generation`. This prevents a cleanup task from incorrectly
+marking an active execution failed and then racing with the worker's eventual terminal write.
 
 There should not normally be stale `approved` rows without an execution task. If such rows exist
 because of a migration bug or manual database edit, an audit/repair task may enqueue the
@@ -632,9 +640,11 @@ Core tests:
 - Stale `executing` cleanup moves an old expired-lease request to `failed` with an explicit
   timeout/crash reason.
 - Stale `executing` cleanup does not fail an active request whose worker heartbeats/extends the
-  lease.
+  lease and advances `execution_generation`.
+- Stale `executing` cleanup fails its compare-and-set if another worker heartbeat has changed
+  `execution_generation` after cleanup observed the row.
 - A stale worker cannot overwrite a cleanup decision because terminal writes are guarded by
-  `status = 'executing'`, `execution_token`, and the expected lease/version.
+  `status = 'executing'`, `execution_token`, and the worker's observed `execution_generation`.
 - Run the transaction visibility tests on both SQLite and PostgreSQL; SQLite must not depend on a
   nested context sharing the outer conversational transaction.
 - Lost sync waiter does not reject or approve the pending request automatically.
