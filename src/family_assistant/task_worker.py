@@ -2,6 +2,8 @@
 Task worker implementation for background processing.
 """
 
+from __future__ import annotations
+
 import asyncio
 import json
 import logging
@@ -9,11 +11,9 @@ import random
 import shutil
 import traceback
 import uuid
-from collections.abc import Awaitable, Callable  # Import Union
 from datetime import UTC, datetime, timedelta  # Added Union
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Required, TypedDict
-from zoneinfo import ZoneInfo
 
 import aiofiles.os
 from dateutil import rrule
@@ -21,11 +21,8 @@ from dateutil.parser import isoparse
 from opentelemetry import trace
 from opentelemetry.trace import StatusCode
 from sqlalchemy import select
-from sqlalchemy.ext.asyncio import AsyncEngine
 
 # Removed storage import - using repository pattern
-from family_assistant.embeddings import EmbeddingGenerator
-from family_assistant.interfaces import ChatInterface  # Import ChatInterface
 from family_assistant.llm.messages import MessageAttachmentMetadata, SystemMessage
 from family_assistant.scripting import (
     MontyEngine,
@@ -33,20 +30,32 @@ from family_assistant.scripting import (
     ScriptTimeoutError,
 )
 from family_assistant.scripting.config import ScriptConfig
-from family_assistant.scripting.monty_engine import WakeRequest
 from family_assistant.tools.types import CalendarConfig, EventSourcesById
 
 if TYPE_CHECKING:
+    from collections.abc import Awaitable, Callable
+    from zoneinfo import ZoneInfo
+
+    from sqlalchemy.ext.asyncio import AsyncEngine
+
+    from family_assistant.embeddings import EmbeddingGenerator
     from family_assistant.events.indexing_source import IndexingSource
+    from family_assistant.interfaces import ChatInterface
+    from family_assistant.scripting.monty_engine import WakeRequest
+    from family_assistant.storage.repositories.confirmation_requests import (
+        ConfirmationRequestRow,
+    )
+    from family_assistant.storage.types import TaskDict
+    from family_assistant.tools import ToolsProvider
 
 # handle_index_email is now a method of EmailIndexer and registered in __main__.py
 from family_assistant.processing import ProcessingService
 from family_assistant.storage.context import DatabaseContext, get_db_context
 from family_assistant.storage.message_history import message_history_table
 from family_assistant.storage.tasks import enqueue_task, get_task_event
-from family_assistant.storage.types import TaskDict
 from family_assistant.tools import ToolExecutionContext
 from family_assistant.tools.stored_scripts import AUTOMATION_RUNTIME_GLOBALS
+from family_assistant.tools.types import ToolResult
 from family_assistant.utils.clock import Clock, SystemClock
 
 logger = logging.getLogger(__name__)
@@ -132,6 +141,12 @@ class ReindexDocumentPayload(TypedDict, total=False):
     """Payload for reindex_document tasks."""
 
     document_id: int
+
+
+class ConfirmationToolExecutionPayload(TypedDict, total=False):
+    """Payload for durable confirmation tool execution tasks."""
+
+    confirmation_request_id: str
 
 
 async def _handle_schedule_automation_recurrence(
@@ -580,7 +595,7 @@ class TaskWorker:
         embedding_generator: EmbeddingGenerator,
         shutdown_event_instance: asyncio.Event | None = None,  # Made optional
         clock: Clock | None = None,
-        indexing_source: "IndexingSource | None" = None,
+        indexing_source: IndexingSource | None = None,
         engine: AsyncEngine
         | None = None,  # Add engine parameter for dependency injection
         event_sources: EventSourcesById | None = None,
@@ -1713,6 +1728,222 @@ async def handle_script_execution(
         raise ScriptError(f"Unexpected error: {e}") from e
 
 
+def _tool_result_text(result: str | ToolResult) -> str:
+    """Return user-facing text for a confirmed tool execution result."""
+    if isinstance(result, ToolResult):
+        return result.get_text()
+    return str(result)
+
+
+async def _build_confirmation_execution_context(
+    exec_context: ToolExecutionContext,
+    request: ConfirmationRequestRow,
+) -> ToolExecutionContext:
+    """Reconstruct the best available context for deferred tool execution."""
+    source_row = None
+    source_message_internal_id = request["source_message_internal_id"]
+    if source_message_internal_id is not None:
+        source_row = (
+            await exec_context.db_context.message_history.get_row_by_internal_id(
+                source_message_internal_id,
+            )
+        )
+
+    interface_type = (
+        str(source_row["interface_type"])
+        if source_row is not None
+        else exec_context.interface_type
+    )
+    conversation_id = (
+        str(source_row["conversation_id"])
+        if source_row is not None
+        else exec_context.conversation_id
+    )
+    turn_id = (
+        str(source_row["turn_id"])
+        if source_row is not None and source_row.get("turn_id") is not None
+        else exec_context.turn_id
+    )
+    user_name = request["target_user_id"]
+    processing_profile_id = (
+        str(source_row["processing_profile_id"])
+        if source_row is not None
+        and source_row.get("processing_profile_id") is not None
+        else exec_context.processing_profile_id
+    )
+    subconversation_id = (
+        str(source_row["subconversation_id"])
+        if source_row is not None and source_row.get("subconversation_id") is not None
+        else exec_context.subconversation_id
+    )
+
+    chat_interface = exec_context.chat_interface
+    if exec_context.chat_interfaces is not None:
+        chat_interface = exec_context.chat_interfaces.get(
+            interface_type, chat_interface
+        )
+
+    tools_provider = _get_processing_tools_provider(exec_context)
+
+    async def approved_confirmation_callback(
+        interface_type: str,
+        conversation_id: str,
+        turn_id: str | None,
+        tool_name: str,
+        call_id: str,
+        # ast-grep-ignore: no-dict-any - confirmation callback protocol carries arbitrary tool arguments
+        tool_args: dict[str, Any],
+        timeout_seconds: float,
+        context: ToolExecutionContext,
+    ) -> bool:
+        _ = interface_type
+        _ = conversation_id
+        _ = turn_id
+        _ = timeout_seconds
+        _ = context
+
+        expected_call_id = request["tool_call_id"] or request["id"]
+        if (
+            tool_name == request["tool_name"]
+            and call_id == expected_call_id
+            and tool_args == request["tool_args_json"]
+        ):
+            return True
+
+        logger.warning(
+            "Approved confirmation %s did not satisfy nested or mismatched "
+            "confirmation request for tool %s",
+            request["id"],
+            tool_name,
+        )
+        return False
+
+    return ToolExecutionContext(
+        interface_type=interface_type,
+        conversation_id=conversation_id,
+        user_name=user_name,
+        user_id=request["target_user_id"],
+        turn_id=turn_id,
+        db_context=exec_context.db_context,
+        processing_service=exec_context.processing_service,
+        clock=exec_context.clock,
+        home_assistant_client=exec_context.home_assistant_client,
+        event_sources=exec_context.event_sources,
+        attachment_registry=exec_context.attachment_registry,
+        camera_backend=exec_context.camera_backend,
+        chat_interface=chat_interface,
+        chat_interfaces=exec_context.chat_interfaces,
+        timezone=exec_context.timezone,
+        processing_profile_id=processing_profile_id,
+        subconversation_id=subconversation_id,
+        request_confirmation_callback=approved_confirmation_callback,
+        update_activity_callback=exec_context.update_activity_callback,
+        embedding_generator=exec_context.embedding_generator,
+        indexing_source=exec_context.indexing_source,
+        tools_provider=tools_provider,
+        visibility_grants=exec_context.visibility_grants,
+        default_note_visibility_labels=exec_context.default_note_visibility_labels,
+        note_registry=exec_context.note_registry,
+    )
+
+
+def _get_processing_tools_provider(exec_context: ToolExecutionContext) -> ToolsProvider:
+    """Return the current tool provider from the processing service."""
+    processing_service = exec_context.processing_service
+    if processing_service is None:
+        raise RuntimeError("Confirmation execution requires a processing service")
+    return processing_service.tools_provider
+
+
+async def _notify_confirmation_execution_result(
+    context: ToolExecutionContext,
+    request: ConfirmationRequestRow,
+    result_text: str,
+) -> None:
+    """Send a deterministic result notification when no live waiter consumes it."""
+    if context.chat_interface is None:
+        logger.info(
+            "Confirmation %s completed without a chat interface for notification",
+            request["id"],
+        )
+        return
+
+    reply_to_interface_id: str | None = None
+    source_message_internal_id = request["source_message_internal_id"]
+    if source_message_internal_id is not None:
+        source_row = await context.db_context.message_history.get_row_by_internal_id(
+            source_message_internal_id,
+        )
+        if (
+            source_row is not None
+            and source_row.get("interface_message_id") is not None
+        ):
+            reply_to_interface_id = str(source_row["interface_message_id"])
+
+    message = (
+        "Approved action completed.\n\n"
+        f"Tool: {request['tool_name']}\n\n"
+        f"Result:\n{result_text}"
+    )
+    sent_message_id = await context.chat_interface.send_message(
+        conversation_id=context.conversation_id,
+        text=message,
+        reply_to_interface_id=reply_to_interface_id,
+    )
+    if sent_message_id is None:
+        logger.warning(
+            "Confirmation %s completed but result notification could not be sent",
+            request["id"],
+        )
+
+
+async def handle_confirmation_tool_execution(
+    exec_context: ToolExecutionContext,
+    payload: ConfirmationToolExecutionPayload,
+) -> None:
+    """Execute the exact tool invocation stored on an approved confirmation."""
+    request_id = payload.get("confirmation_request_id")
+    if not request_id:
+        raise ValueError("Missing confirmation_request_id in task payload")
+
+    request = await exec_context.db_context.confirmation_requests.get(request_id)
+    if request is None:
+        raise ValueError(f"Confirmation request {request_id} not found")
+
+    if request["status"] != "approved":
+        logger.info(
+            "Skipping confirmation execution for request %s with status %s",
+            request_id,
+            request["status"],
+        )
+        return
+
+    execution_context = await _build_confirmation_execution_context(
+        exec_context,
+        request,
+    )
+    tools_provider = _get_processing_tools_provider(execution_context)
+    call_id = request["tool_call_id"] or request["id"]
+
+    logger.info(
+        "Executing approved confirmation %s as tool %s",
+        request_id,
+        request["tool_name"],
+    )
+    result = await tools_provider.execute_tool(
+        request["tool_name"],
+        request["tool_args_json"],
+        execution_context,
+        call_id,
+    )
+
+    await _notify_confirmation_execution_result(
+        execution_context,
+        request,
+        _tool_result_text(result),
+    )
+
+
 async def handle_reindex_document(
     exec_context: ToolExecutionContext,
     payload: ReindexDocumentPayload,
@@ -1757,5 +1988,6 @@ __all__ = [
     "handle_system_event_cleanup",
     "handle_system_error_log_cleanup",
     "handle_script_execution",
+    "handle_confirmation_tool_execution",
     "handle_reindex_document",
 ]  # Export class and relevant handlers

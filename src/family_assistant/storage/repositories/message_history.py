@@ -726,6 +726,26 @@ class MessageHistoryRepository(BaseRepository):
         row = await self._db.fetch_one(stmt)
         return cast("MessageHistoryRow", dict(row)) if row else None
 
+    async def get_row_by_internal_id(
+        self,
+        internal_id: int,
+    ) -> MessageHistoryRow | None:
+        """
+        Retrieves raw database row by internal database ID, including metadata.
+
+        Args:
+            internal_id: Internal database ID
+
+        Returns:
+            Dict with all database fields including metadata, or None if not found
+        """
+        stmt = select(message_history_table).where(
+            message_history_table.c.internal_id == internal_id,
+        )
+
+        row = await self._db.fetch_one(stmt)
+        return cast("MessageHistoryRow", dict(row)) if row else None
+
     async def get_interface_type_for_conversation(
         self, conversation_id: str
     ) -> str | None:

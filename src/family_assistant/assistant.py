@@ -51,6 +51,9 @@ from family_assistant.processing import (
     ProcessingService,
     ProcessingServiceConfig,
 )
+from family_assistant.services.confirmation_service import (
+    CONFIRMATION_TOOL_EXECUTION_TASK_TYPE,
+)
 from family_assistant.services.push_notification import PushNotificationService
 from family_assistant.services.worker_backend import get_worker_backend
 from family_assistant.skills import NoteRegistry, load_skills_from_directory
@@ -64,6 +67,7 @@ from family_assistant.task_worker import (
     ReindexDocumentPayload,
     TaskWorker,
     handle_completed_automation_cleanup,
+    handle_confirmation_tool_execution,
     handle_llm_callback,
     handle_reindex_document,
     handle_script_execution,
@@ -1295,6 +1299,10 @@ class Assistant:
         )
         self.task_worker_instance.register_task_handler(
             "script_execution", handle_script_execution
+        )
+        self.task_worker_instance.register_task_handler(
+            CONFIRMATION_TOOL_EXECUTION_TASK_TYPE,
+            handle_confirmation_tool_execution,
         )
         self.task_worker_instance.register_task_handler(
             "worker_task_cleanup", handle_worker_task_cleanup
