@@ -113,7 +113,7 @@ class ConfirmationService:
                     raise ConfirmationNotFoundError(
                         f"Confirmation request {request_id} not found"
                     )
-                return self._handle_concurrent_resolution(refreshed, "approved")
+                return self._handle_concurrent_resolution(refreshed, "approved", now)
 
             await db.tasks.enqueue(
                 task_id=execution_task_id,
@@ -160,7 +160,7 @@ class ConfirmationService:
                     raise ConfirmationNotFoundError(
                         f"Confirmation request {request_id} not found"
                     )
-                return self._handle_concurrent_resolution(refreshed, "rejected")
+                return self._handle_concurrent_resolution(refreshed, "rejected", now)
             return rejected
 
     async def list_pending_for_user(
@@ -212,9 +212,14 @@ class ConfirmationService:
     def _handle_concurrent_resolution(
         request: ConfirmationRequestRow,
         expected_status: ConfirmationStatus,
+        now: datetime,
     ) -> ConfirmationRequestRow:
         if request["status"] == expected_status:
             return request
+        if request["status"] == "pending" and request["expires_at"] <= now:
+            raise ConfirmationExpiredError(
+                f"Confirmation request {request['id']} has expired"
+            )
         if request["status"] == "expired":
             raise ConfirmationExpiredError(
                 f"Confirmation request {request['id']} has expired"

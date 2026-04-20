@@ -6,7 +6,7 @@ from types import TracebackType
 from typing import Literal, cast
 
 import pytest
-from sqlalchemy import insert
+from sqlalchemy import insert, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncEngine
 
@@ -25,7 +25,12 @@ from family_assistant.storage.repositories.confirmation_requests import (
 )
 from family_assistant.storage.repositories.tasks import TasksRepository
 
-RaceMode = Literal["reject_before_approve", "approve_before_reject"]
+RaceMode = Literal[
+    "reject_before_approve",
+    "approve_before_reject",
+    "expire_before_approve",
+    "expire_before_reject",
+]
 
 
 def _service(db_engine: AsyncEngine) -> ConfirmationService:
@@ -101,6 +106,8 @@ class _RacingConfirmationRequestsRepository:
                     resolving_interface="telegram",
                     now=now,
                 )
+        if self._race_mode == "expire_before_approve":
+            await self._expire_request(request_id=request_id, now=now)
         return await self._inner.approve_pending(
             request_id=request_id,
             resolving_user_id=resolving_user_id,
@@ -134,6 +141,8 @@ class _RacingConfirmationRequestsRepository:
                         payload={"confirmation_request_id": request_id},
                         original_task_id=execution_task_id,
                     )
+        if self._race_mode == "expire_before_reject":
+            await self._expire_request(request_id=request_id, now=now)
         return await self._inner.reject_pending(
             request_id=request_id,
             resolving_user_id=resolving_user_id,
@@ -143,6 +152,17 @@ class _RacingConfirmationRequestsRepository:
 
     async def mark_expired(self, *, now: datetime) -> int:
         return await self._inner.mark_expired(now=now)
+
+    async def _expire_request(self, *, request_id: str, now: datetime) -> None:
+        async with DatabaseContext(engine=self._db_engine) as racing_db:
+            await racing_db.execute_with_retry(
+                update(confirmation_requests_table)
+                .where(confirmation_requests_table.c.id == request_id)
+                .values(
+                    expires_at=now - timedelta(microseconds=1),
+                    updated_at=now,
+                )
+            )
 
 
 class _RacingDatabaseContext:
@@ -401,6 +421,52 @@ async def test_concurrent_approval_during_rejection_raises(
     assert [task["task_id"] for task in tasks] == [
         f"confirmation_tool_execution:{request_id}"
     ]
+
+
+@pytest.mark.asyncio
+async def test_expiry_during_approval_raises_expired_error(
+    db_engine: AsyncEngine,
+) -> None:
+    service = _racing_service(db_engine, "expire_before_approve")
+    request_id = await _create_request(db_engine)
+
+    with pytest.raises(ConfirmationExpiredError):
+        await service.approve_and_enqueue_execution(
+            request_id=request_id,
+            approving_user_id="user-1",
+            approving_interface="web",
+        )
+
+    async with DatabaseContext(engine=db_engine) as db:
+        request = await db.confirmation_requests.get(request_id)
+        tasks = await db.tasks.get_all(task_type=CONFIRMATION_TOOL_EXECUTION_TASK_TYPE)
+
+    assert request is not None
+    assert request["status"] == "pending"
+    assert tasks == []
+
+
+@pytest.mark.asyncio
+async def test_expiry_during_rejection_raises_expired_error(
+    db_engine: AsyncEngine,
+) -> None:
+    service = _racing_service(db_engine, "expire_before_reject")
+    request_id = await _create_request(db_engine)
+
+    with pytest.raises(ConfirmationExpiredError):
+        await service.reject(
+            request_id=request_id,
+            rejecting_user_id="user-1",
+            rejecting_interface="telegram",
+        )
+
+    async with DatabaseContext(engine=db_engine) as db:
+        request = await db.confirmation_requests.get(request_id)
+        tasks = await db.tasks.get_all(task_type=CONFIRMATION_TOOL_EXECUTION_TASK_TYPE)
+
+    assert request is not None
+    assert request["status"] == "pending"
+    assert tasks == []
 
 
 @pytest.mark.asyncio
