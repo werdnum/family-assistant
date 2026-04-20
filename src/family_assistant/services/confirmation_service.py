@@ -1,0 +1,229 @@
+"""Service for durable tool confirmation requests."""
+
+from __future__ import annotations
+
+import uuid
+from datetime import UTC, datetime
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
+    from contextlib import AbstractAsyncContextManager
+
+    from family_assistant.storage.context import DatabaseContext
+    from family_assistant.storage.repositories.confirmation_requests import (
+        ConfirmationRequestRow,
+        ConfirmationStatus,
+    )
+
+CONFIRMATION_TOOL_EXECUTION_TASK_TYPE = "confirmation_tool_execution"
+
+
+class ConfirmationError(Exception):
+    """Base class for confirmation service errors."""
+
+
+class ConfirmationNotFoundError(ConfirmationError):
+    """Raised when a confirmation request does not exist."""
+
+
+class ConfirmationAuthorizationError(ConfirmationError):
+    """Raised when a principal cannot resolve a confirmation request."""
+
+
+class ConfirmationExpiredError(ConfirmationError):
+    """Raised when a pending confirmation request has expired."""
+
+
+class ConfirmationAlreadyResolvedError(ConfirmationError):
+    """Raised when a request has already been resolved incompatibly."""
+
+
+class ConfirmationService:
+    """Service that owns durable confirmation transactions and authorization."""
+
+    def __init__(
+        self,
+        *,
+        db_context_factory: Callable[[], AbstractAsyncContextManager[DatabaseContext]],
+    ) -> None:
+        self._db_context_factory = db_context_factory
+
+    async def create_request(
+        self,
+        *,
+        target_user_id: str,
+        tool_name: str,
+        tool_args: dict[str, object],
+        tool_call_id: str | None,
+        source_message_internal_id: int | None,
+        confirmation_prompt: str,
+        expires_at: datetime,
+    ) -> ConfirmationRequestRow:
+        """Create a durable pending confirmation request."""
+        request_id = f"confirm_{uuid.uuid4().hex[:12]}"
+        async with self._db_context_factory() as db:
+            return await db.confirmation_requests.create(
+                request_id=request_id,
+                target_user_id=target_user_id,
+                tool_name=tool_name,
+                tool_args=tool_args,
+                tool_call_id=tool_call_id,
+                source_message_internal_id=source_message_internal_id,
+                confirmation_prompt=confirmation_prompt,
+                expires_at=expires_at,
+            )
+
+    async def approve_and_enqueue_execution(
+        self,
+        *,
+        request_id: str,
+        approving_user_id: str,
+        approving_interface: str,
+    ) -> ConfirmationRequestRow:
+        """Approve a pending request and enqueue its execution atomically."""
+        async with self._db_context_factory() as db:
+            request = await self._get_authorized_request(
+                db=db,
+                request_id=request_id,
+                user_id=approving_user_id,
+            )
+            if request["status"] == "approved":
+                return request
+            if request["status"] != "pending":
+                self._raise_if_not_pending(request)
+
+            now = datetime.now(UTC)
+            if request["expires_at"] <= now:
+                raise ConfirmationExpiredError(
+                    f"Confirmation request {request_id} has expired"
+                )
+
+            execution_task_id = f"confirmation_tool_execution:{request_id}"
+            approved = await db.confirmation_requests.approve_pending(
+                request_id=request_id,
+                resolving_user_id=approving_user_id,
+                resolving_interface=approving_interface,
+                execution_task_id=execution_task_id,
+                now=now,
+            )
+            if approved is None:
+                refreshed = await db.confirmation_requests.get(request_id)
+                if refreshed is None:
+                    raise ConfirmationNotFoundError(
+                        f"Confirmation request {request_id} not found"
+                    )
+                return self._handle_concurrent_resolution(refreshed, "approved", now)
+
+            await db.tasks.enqueue(
+                task_id=execution_task_id,
+                task_type=CONFIRMATION_TOOL_EXECUTION_TASK_TYPE,
+                payload={"confirmation_request_id": request_id},
+                original_task_id=execution_task_id,
+            )
+            return approved
+
+    async def reject(
+        self,
+        *,
+        request_id: str,
+        rejecting_user_id: str,
+        rejecting_interface: str,
+    ) -> ConfirmationRequestRow:
+        """Reject a pending confirmation request."""
+        async with self._db_context_factory() as db:
+            request = await self._get_authorized_request(
+                db=db,
+                request_id=request_id,
+                user_id=rejecting_user_id,
+            )
+            if request["status"] == "rejected":
+                return request
+            if request["status"] != "pending":
+                self._raise_if_not_pending(request)
+
+            now = datetime.now(UTC)
+            if request["expires_at"] <= now:
+                raise ConfirmationExpiredError(
+                    f"Confirmation request {request_id} has expired"
+                )
+
+            rejected = await db.confirmation_requests.reject_pending(
+                request_id=request_id,
+                resolving_user_id=rejecting_user_id,
+                resolving_interface=rejecting_interface,
+                now=now,
+            )
+            if rejected is None:
+                refreshed = await db.confirmation_requests.get(request_id)
+                if refreshed is None:
+                    raise ConfirmationNotFoundError(
+                        f"Confirmation request {request_id} not found"
+                    )
+                return self._handle_concurrent_resolution(refreshed, "rejected", now)
+            return rejected
+
+    async def list_pending_for_user(
+        self,
+        *,
+        user_id: str,
+    ) -> list[ConfirmationRequestRow]:
+        """List pending requests for a user."""
+        async with self._db_context_factory() as db:
+            return await db.confirmation_requests.list_pending_for_user(user_id)
+
+    async def mark_expired(self, *, now: datetime) -> int:
+        """Expire pending requests whose deadline has passed."""
+        if now.tzinfo is None or now.utcoffset() is None:
+            raise ValueError("now must be timezone-aware")
+        now = now.astimezone(UTC)
+        async with self._db_context_factory() as db:
+            return await db.confirmation_requests.mark_expired(now=now)
+
+    @staticmethod
+    async def _get_authorized_request(
+        *,
+        db: DatabaseContext,
+        request_id: str,
+        user_id: str,
+    ) -> ConfirmationRequestRow:
+        request = await db.confirmation_requests.get(request_id)
+        if request is None:
+            raise ConfirmationNotFoundError(
+                f"Confirmation request {request_id} not found"
+            )
+        if request["target_user_id"] != user_id:
+            raise ConfirmationAuthorizationError(
+                f"User {user_id} cannot resolve confirmation request {request_id}"
+            )
+        return request
+
+    @staticmethod
+    def _raise_if_not_pending(request: ConfirmationRequestRow) -> None:
+        if request["status"] == "expired":
+            raise ConfirmationExpiredError(
+                f"Confirmation request {request['id']} has expired"
+            )
+        raise ConfirmationAlreadyResolvedError(
+            f"Confirmation request {request['id']} is already {request['status']}"
+        )
+
+    @staticmethod
+    def _handle_concurrent_resolution(
+        request: ConfirmationRequestRow,
+        expected_status: ConfirmationStatus,
+        now: datetime,
+    ) -> ConfirmationRequestRow:
+        if request["status"] == expected_status:
+            return request
+        if request["status"] == "pending" and request["expires_at"] <= now:
+            raise ConfirmationExpiredError(
+                f"Confirmation request {request['id']} has expired"
+            )
+        if request["status"] == "expired":
+            raise ConfirmationExpiredError(
+                f"Confirmation request {request['id']} has expired"
+            )
+        raise ConfirmationAlreadyResolvedError(
+            f"Confirmation request {request['id']} is already {request['status']}"
+        )
