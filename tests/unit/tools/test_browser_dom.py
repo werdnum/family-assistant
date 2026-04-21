@@ -1,14 +1,15 @@
 """Unit tests for the semantic DOM browser tools.
 
 These tests cover the pure-Python helpers in :mod:`family_assistant.tools.browser_dom`:
-TOON rendering, query filtering, ref collection/resolution, load-state coercion,
-and ref-cache invalidation. The Playwright-driven tool implementations are
-exercised in :mod:`tests.functional.tools.test_browser_dom`.
+TOON rendering (via the ``toons`` library), query filtering, ref collection/resolution,
+load-state coercion, and ref-cache invalidation. The Playwright-driven tool
+implementations are exercised in :mod:`tests.functional.tools.test_browser_dom`.
 """
 
 from __future__ import annotations
 
 import pytest
+import toons
 
 from family_assistant.tools.browser_dom import (
     Snapshot,
@@ -65,63 +66,72 @@ def _sample_snapshot() -> Snapshot:
 
 
 class TestFormatToon:
-    """TOON-style rendering of accessibility snapshots."""
+    """TOON v3 rendering of accessibility snapshots."""
 
-    def test_header_lines_include_url_title_and_counts(self) -> None:
+    def test_round_trips_via_the_toons_library(self) -> None:
+        """The renderer must emit real TOON — ``toons.loads`` should recover
+        the structure we asked ``toons.dumps`` to encode."""
         text = _format_toon(_sample_snapshot())
-        # The header block should be stable and cheap to diff against.
-        header = text.splitlines()[:5]
-        assert header == [
-            "page:",
-            "  url: https://example.com/",
-            "  title: Example",
-            "  forms: 1",
-            "  elements: 4",
-        ]
+        parsed = toons.loads(text)
+        assert parsed["url"] == "https://example.com/"
+        assert parsed["title"] == "Example"
+        assert parsed["forms"] == 1
+        assert parsed["elements"] == 4
+        assert len(parsed["roots"]) == 2
 
-    def test_renders_refs_with_roles_and_names(self) -> None:
+    def test_renders_scalar_header_fields(self) -> None:
         text = _format_toon(_sample_snapshot())
-        assert '[e1] heading "Welcome"' in text
-        assert '[e4] link "About us" href=https://example.com/about' in text
+        assert "url: " in text and "https://example.com/" in text
+        assert "title: Example" in text
+        assert "forms: 1" in text
+        assert "elements: 4" in text
 
-    def test_includes_input_value_and_type_as_attributes(self) -> None:
+    def test_renders_refs_and_roles_for_each_node(self) -> None:
         text = _format_toon(_sample_snapshot())
-        # Input values are rendered via repr() so quotes are preserved.
-        assert "[e3] textbox" in text
-        assert "type=text" in text
-        assert "value='kittens'" in text
+        # TOON renders nested dicts with `ref:`/`role:` keys — the LLM finds
+        # nodes by these tokens rather than a synthetic `[eN]` prefix.
+        assert "ref: e1" in text
+        assert "role: heading" in text
+        assert "ref: e4" in text
+        assert "role: link" in text
 
-    def test_nodes_without_a_name_omit_the_label_quotes(self) -> None:
-        snap: Snapshot = {
-            "url": "u",
-            "title": "t",
-            "forms": 0,
-            "elements": 1,
-            "roots": [{"ref": "e1", "role": "form", "name": ""}],
-        }
-        text = _format_toon(snap)
-        # Empty-name nodes shouldn't emit bare `""` — the role stands alone.
-        assert "[e1] form\n" in text
+    def test_renders_input_attributes_on_their_own_lines(self) -> None:
+        text = _format_toon(_sample_snapshot())
+        assert "ref: e3" in text
+        assert "input_type: text" in text
+        assert "value: kittens" in text
+
+    def test_renders_link_href(self) -> None:
+        text = _format_toon(_sample_snapshot())
+        assert "About us" in text
+        assert "example.com/about" in text
 
     def test_query_filters_out_nonmatching_branches(self) -> None:
         text = _format_toon(_sample_snapshot(), query="about")
-        assert "[e4] link" in text
-        # Heading "Welcome" doesn't match "about", and has no matching descendants.
-        assert '[e1] heading "Welcome"' not in text
+        parsed = toons.loads(text)
+        # Heading "Welcome" doesn't match "about", so only the form survives.
+        roots = parsed["roots"]
+        assert len(roots) == 1
+        assert roots[0]["role"] == "form"
 
     def test_query_keeps_ancestor_of_matching_descendant(self) -> None:
         text = _format_toon(_sample_snapshot(), query="about")
+        parsed = toons.loads(text)
         # The form parent of e4 should survive the filter because its subtree
         # contains a matching link — otherwise refs would be orphaned.
-        assert "[e2] form" in text
+        form = parsed["roots"][0]
+        assert form["ref"] == "e2"
+        link = form["children"][0]
+        assert link["ref"] == "e4"
+        assert link["role"] == "link"
 
-    def test_query_with_no_matches_adds_placeholder(self) -> None:
+    def test_query_with_no_matches_adds_placeholder_note(self) -> None:
         text = _format_toon(_sample_snapshot(), query="nonexistent")
         assert "no matches for query=" in text
 
 
 class TestAnyMatch:
-    """Deep query matching used by the TOON renderer to keep ancestors."""
+    """Deep query matching used by the tree filter to keep ancestors."""
 
     def test_matches_by_role(self) -> None:
         nodes = [_heading_node("e1", "Hello")]

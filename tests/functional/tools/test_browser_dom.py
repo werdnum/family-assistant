@@ -22,6 +22,7 @@ from aiohttp import web
 from aiohttp.test_utils import TestServer
 
 from family_assistant.tools.browser_dom import (
+    SnapshotNode,
     browser_click_tool,
     browser_exec_tool,
     browser_extract_tool,
@@ -36,7 +37,7 @@ from family_assistant.tools.browser_session import (
     close_browser_session,
     get_browser_session,
 )
-from family_assistant.tools.types import ToolExecutionContext
+from family_assistant.tools.types import ToolExecutionContext, ToolResult
 
 if TYPE_CHECKING:
     from collections.abc import AsyncGenerator
@@ -183,7 +184,7 @@ async def test_browser_fill_and_submit_navigates(
 ) -> None:
     await browser_open_tool(exec_context, fixture_server.url + "/")
     snap = await browser_snapshot_tool(exec_context, query="search")
-    input_ref = _first_ref_for(snap.get_text(), role="textbox")
+    input_ref = _first_ref_for(snap, role="textbox")
 
     result = await browser_fill_tool(
         exec_context, ref=input_ref, text="kittens", submit=True
@@ -199,7 +200,7 @@ async def test_browser_select_changes_value(
 ) -> None:
     await browser_open_tool(exec_context, fixture_server.url + "/")
     snap = await browser_snapshot_tool(exec_context)
-    select_ref = _first_ref_for(snap.get_text(), role="combobox")
+    select_ref = _first_ref_for(snap, role="combobox")
 
     await browser_select_tool(exec_context, ref=select_ref, value="Green")
     # Verify the DOM state changed by reading .value via browser_exec.
@@ -216,7 +217,7 @@ async def test_browser_click_follows_link(
 ) -> None:
     await browser_open_tool(exec_context, fixture_server.url + "/")
     snap = await browser_snapshot_tool(exec_context, query="about")
-    link_ref = _first_ref_for(snap.get_text(), role="link")
+    link_ref = _first_ref_for(snap, role="link")
 
     result = await browser_click_tool(exec_context, ref=link_ref)
     data = result.get_data()
@@ -314,23 +315,31 @@ async def test_unknown_ref_raises_clear_error(
         await browser_click_tool(exec_context, ref="e999")
 
 
-def _first_ref_for(snapshot_text: str, role: str) -> str:
-    """Return the first ref whose line's role matches ``role``.
+def _first_ref_for(snap: ToolResult, role: str) -> str:
+    """Return the first ref whose node has the given ``role``.
 
-    The TOON lines look like ``  [e12] textbox "Search"``; this util extracts
-    the first ref for the requested role so tests don't have to hard-code
-    ref numbers (which aren't stable across runs).
+    Walks the structured ``roots`` tree from the snapshot ``data`` rather than
+    parsing TOON text — refs aren't stable across runs, and tree traversal is
+    both simpler and more reliable than regexing serialized output.
     """
-    for line in snapshot_text.splitlines():
-        stripped = line.strip()
-        if not stripped.startswith("["):
-            continue
-        close = stripped.find("]")
-        if close == -1:
-            continue
-        after = stripped[close + 1 :].strip()
-        if after.startswith(role):
-            return stripped[1:close]
-    raise AssertionError(
-        f"No ref with role={role!r} found in snapshot:\n{snapshot_text}"
-    )
+    data = snap.get_data()
+    assert isinstance(data, dict), f"expected dict snapshot data, got {type(data)}"
+    roots = data.get("roots", [])
+
+    def walk(nodes: list[SnapshotNode]) -> str | None:
+        for node in nodes:
+            if node["role"] == role:
+                return node["ref"]
+            children = node.get("children", [])
+            if children:
+                found = walk(children)
+                if found is not None:
+                    return found
+        return None
+
+    found = walk(roots)
+    if found is None:
+        raise AssertionError(
+            f"No ref with role={role!r} found in snapshot:\n{snap.get_text()}"
+        )
+    return found

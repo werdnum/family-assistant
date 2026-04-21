@@ -24,6 +24,7 @@ import contextlib
 import logging
 from typing import TYPE_CHECKING, Literal, NotRequired, TypedDict, cast, get_args
 
+import toons
 from rebrowser_playwright.async_api import Error as PlaywrightError
 
 from family_assistant.tools.browser_session import (
@@ -96,6 +97,7 @@ class SnapshotData(TypedDict):
     title: str
     counts: SnapshotCounts
     refs: list[str]
+    roots: list[SnapshotNode]
 
 
 logger = logging.getLogger(__name__)
@@ -247,71 +249,74 @@ _SNAPSHOT_JS = r"""
 """
 
 
-def _format_toon(snapshot: Snapshot, query: str | None = None) -> str:
-    """Render an accessibility snapshot as indented TOON-style text."""
-    lines: list[str] = [
-        "page:",
-        f"  url: {snapshot['url']}",
-        f"  title: {snapshot['title']}",
-        f"  forms: {snapshot['forms']}",
-        f"  elements: {snapshot['elements']}",
-        "",
-    ]
-
-    def match(node: SnapshotNode) -> bool:
-        if not query:
-            return True
-        needle = query.lower()
-        return (
-            needle in node["name"].lower()
-            or needle in node["role"].lower()
-            or needle in node.get("href", "").lower()
-        )
-
-    def render(nodes: list[SnapshotNode], depth: int, include_all: bool) -> None:
-        indent = "  " * depth
-        for node in nodes:
-            children = node.get("children", [])
-            node_matches = match(node)
-            # When filtering, keep a node if it matches OR any descendant matches.
-            if not include_all and not (node_matches or _any_match(children, query)):
-                continue
-            attrs: list[str] = []
-            if "href" in node:
-                attrs.append(f"href={node['href']}")
-            if "input_type" in node:
-                attrs.append(f"type={node['input_type']}")
-            if "value" in node:
-                attrs.append(f"value={node['value']!r}")
-            suffix = f" {' '.join(attrs)}" if attrs else ""
-            label = f' "{node["name"]}"' if node["name"] else ""
-            lines.append(f"{indent}[{node['ref']}] {node['role']}{label}{suffix}")
-            if children:
-                # Once a node directly matches the query, include its whole
-                # subtree — the user asked to see this branch, so don't
-                # re-apply the filter to its descendants.
-                render(children, depth + 1, include_all or node_matches)
-
-    render(snapshot["roots"], depth=1, include_all=query is None)
-    if query and len(lines) == 6:
-        lines.append(f"  (no matches for query={query!r})")
-    return "\n".join(lines).rstrip() + "\n"
+def _node_matches(node: SnapshotNode, query: str) -> bool:
+    """Case-insensitive match against a node's role, name, and href."""
+    needle = query.lower()
+    return (
+        needle in node["name"].lower()
+        or needle in node["role"].lower()
+        or needle in node.get("href", "").lower()
+    )
 
 
 def _any_match(nodes: list[SnapshotNode], query: str | None) -> bool:
     if not query:
         return True
-    needle = query.lower()
     for node in nodes:
-        if (
-            needle in node["name"].lower()
-            or needle in node["role"].lower()
-            or needle in node.get("href", "").lower()
-        ):
-            return True
-        if _any_match(node.get("children", []), query):
+        if _node_matches(node, query) or _any_match(node.get("children", []), query):
             return True
     return False
+
+
+def _filter_tree(
+    nodes: list[SnapshotNode], query: str, *, include_all: bool
+) -> list[SnapshotNode]:
+    """Prune the snapshot tree to branches matching ``query``.
+
+    A node is kept if it directly matches or any descendant matches. Once a
+    node directly matches, its entire subtree survives — users filtering by
+    "search" want the whole search form, not just the parts that spell
+    "search".
+    """
+    kept: list[SnapshotNode] = []
+    for node in nodes:
+        children = node.get("children", [])
+        node_matches = include_all or _node_matches(node, query)
+        if not (node_matches or _any_match(children, query)):
+            continue
+        # TypedDicts can't be copy-constructed via dict(td) per pyright; the
+        # shape is invariant, so a shallow cast preserves types safely.
+        copy = cast("SnapshotNode", dict(node))
+        if children:
+            copy["children"] = _filter_tree(children, query, include_all=node_matches)
+            if not copy["children"]:
+                del copy["children"]
+        else:
+            copy.pop("children", None)
+        kept.append(copy)
+    return kept
+
+
+def _format_toon(snapshot: Snapshot, query: str | None = None) -> str:
+    """Render an accessibility snapshot as TOON v3 text via the ``toons`` lib.
+
+    The snapshot is a plain nested dict, so ``toons.dumps`` handles the
+    indentation, key:value lines, and tabular-array compaction where
+    applicable. When ``query`` is supplied the tree is pre-pruned.
+    """
+    roots = snapshot["roots"]
+    if query:
+        roots = _filter_tree(roots, query, include_all=False)
+    payload: dict[str, object] = {
+        "url": snapshot["url"],
+        "title": snapshot["title"],
+        "forms": snapshot["forms"],
+        "elements": snapshot["elements"],
+        "roots": roots,
+    }
+    if query and not roots:
+        payload["note"] = f"no matches for query={query!r}"
+    return toons.dumps(payload)
 
 
 def _collect_refs(
@@ -345,6 +350,7 @@ async def _take_snapshot(
         title=snapshot["title"],
         counts=SnapshotCounts(forms=snapshot["forms"], elements=snapshot["elements"]),
         refs=list(session.ref_cache.keys()),
+        roots=snapshot["roots"],
     )
 
 

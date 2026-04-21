@@ -89,6 +89,8 @@ dependencies = [
     # For detecting file types
     "rebrowser-playwright>=1.52.0",
     # Patched Playwright for reduced bot detection (drop-in replacement)
+    "toons>=0.5.4",
+    # Token-Oriented Object Notation encoder for LLM-bound snapshots
     "homeassistant-api>=5.0.0",
     # For Home Assistant integration
     "janus>=1.0.0",
