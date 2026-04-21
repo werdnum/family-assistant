@@ -67,6 +67,9 @@ ENV_VAR_MAPPINGS: list[EnvVarMapping] = [
     # Secrets and API keys
     EnvVarMapping("TELEGRAM_BOT_TOKEN", "telegram_token"),
     EnvVarMapping("OPENROUTER_API_KEY", "openrouter_api_key"),
+    EnvVarMapping(
+        "MAILGUN_WEBHOOK_SIGNING_KEY", "email_intake.mailgun_webhook_signing_key"
+    ),
     EnvVarMapping("GEMINI_API_KEY", "gemini_api_key"),
     EnvVarMapping("WILLYWEATHER_API_KEY", "willyweather_api_key"),
     EnvVarMapping("WILLYWEATHER_LOCATION_ID", "willyweather_location_id", int),
