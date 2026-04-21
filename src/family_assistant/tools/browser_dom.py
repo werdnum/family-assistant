@@ -146,6 +146,14 @@ _SNAPSHOT_JS = r"""
     range: 'slider', file: 'textbox',
   };
   const HEADING_TAGS = new Set(['H1','H2','H3','H4','H5','H6']);
+  // Elements whose accessible name is derived from their text content.
+  // Landmark containers (FORM, NAV, MAIN, …) deliberately fall back to the
+  // empty string — letting them pick up descendant text would produce giant
+  // concatenated names with embedded newlines.
+  const NAME_FROM_CONTENT = new Set([
+    'A', 'BUTTON', 'H1', 'H2', 'H3', 'H4', 'H5', 'H6',
+    'P', 'LI', 'SPAN', 'LABEL', 'OPTION', 'TD', 'TH', 'CAPTION',
+  ]);
 
   function roleFor(el) {
     const aria = el.getAttribute('role');
@@ -158,23 +166,26 @@ _SNAPSHOT_JS = r"""
     return ROLE_MAP[el.tagName] || null;
   }
 
+  // Accessible name computation — ordered roughly per the ARIA spec so that
+  // an explicit <label for=...> outranks a placeholder fallback.
   function accName(el) {
-    const aria = el.getAttribute('aria-label');
-    if (aria) return aria.trim();
     const labelledBy = el.getAttribute('aria-labelledby');
     if (labelledBy) {
       const target = document.getElementById(labelledBy);
       if (target) return target.textContent.trim();
     }
-    if (el.getAttribute('alt')) return el.getAttribute('alt').trim();
-    if (el.getAttribute('title')) return el.getAttribute('title').trim();
-    if (el.getAttribute('placeholder')) return el.getAttribute('placeholder').trim();
+    const aria = el.getAttribute('aria-label');
+    if (aria) return aria.trim();
     if (el.id) {
       const lbl = document.querySelector('label[for="' + CSS.escape(el.id) + '"]');
       if (lbl) return lbl.textContent.trim();
     }
     const parentLabel = el.closest && el.closest('label');
     if (parentLabel && parentLabel !== el) return parentLabel.textContent.trim();
+    if (el.getAttribute('alt')) return el.getAttribute('alt').trim();
+    if (el.getAttribute('title')) return el.getAttribute('title').trim();
+    if (el.getAttribute('placeholder')) return el.getAttribute('placeholder').trim();
+    if (!NAME_FROM_CONTENT.has(el.tagName)) return '';
     const txt = (el.innerText || el.textContent || '').trim();
     return txt.length > 120 ? txt.slice(0, 120) + '…' : txt;
   }
@@ -261,8 +272,9 @@ def _format_toon(snapshot: Snapshot, query: str | None = None) -> str:
         indent = "  " * depth
         for node in nodes:
             children = node.get("children", [])
+            node_matches = match(node)
             # When filtering, keep a node if it matches OR any descendant matches.
-            if not include_all and not (match(node) or _any_match(children, query)):
+            if not include_all and not (node_matches or _any_match(children, query)):
                 continue
             attrs: list[str] = []
             if "href" in node:
@@ -275,7 +287,10 @@ def _format_toon(snapshot: Snapshot, query: str | None = None) -> str:
             label = f' "{node["name"]}"' if node["name"] else ""
             lines.append(f"{indent}[{node['ref']}] {node['role']}{label}{suffix}")
             if children:
-                render(children, depth + 1, include_all)
+                # Once a node directly matches the query, include its whole
+                # subtree — the user asked to see this branch, so don't
+                # re-apply the filter to its descendants.
+                render(children, depth + 1, include_all or node_matches)
 
     render(snapshot["roots"], depth=1, include_all=query is None)
     if query and len(lines) == 6:
@@ -331,6 +346,29 @@ async def _take_snapshot(
         counts=SnapshotCounts(forms=snapshot["forms"], elements=snapshot["elements"]),
         refs=list(session.ref_cache.keys()),
     )
+
+
+def _wrap_exec_code(code: str) -> str:
+    """Wrap user-provided JS so ``page.evaluate`` can run it uniformly.
+
+    Playwright treats a function-shaped string as callable and evaluates a
+    bare expression as its value. We want both styles — ``document.title``
+    (expression) and ``return document.title`` (statement body) — to work.
+    """
+    stripped = code.strip()
+    if not stripped:
+        return "async () => null"
+    if stripped.startswith(("(", "async ", "function ")):
+        return stripped
+    if stripped.startswith("{"):
+        return f"async () => {stripped}"
+    # Heuristic: if it looks like statements (has `return`, semicolons, or
+    # multiple lines), wrap as a function body; otherwise treat as a single
+    # expression.
+    looks_like_statements = "return " in stripped or ";" in stripped or "\n" in stripped
+    if looks_like_statements:
+        return f"async () => {{ {stripped} }}"
+    return f"async () => ({stripped})"
 
 
 def _resolve_ref(session: BrowserSession, ref: str) -> str:
@@ -512,16 +550,7 @@ async def browser_exec_tool(
     page = await session.ensure_page()
     logger.info("browser_exec: %d chars", len(code))
     try:
-        # Accept both expressions ("document.title") and statement blocks
-        # ("{ const x = 1; return x * 2; }") by wrapping in an arrow function
-        # when the code isn't already one.
-        wrapped = code.strip()
-        if not wrapped.startswith(("(", "async ", "()")):
-            if wrapped.startswith("{"):
-                wrapped = f"() => {wrapped}"
-            else:
-                wrapped = f"() => ({wrapped})"
-        raw_result = await page.evaluate(wrapped)
+        raw_result = await page.evaluate(_wrap_exec_code(code))
     except PlaywrightError as exc:
         return ToolResult(
             text=f"JS error: {exc}",
