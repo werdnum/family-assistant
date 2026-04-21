@@ -11,11 +11,11 @@ once, so each stays cheap and focused.
 
 - **`/browse`** (default) — reads the page's accessibility tree and interacts with elements by
   semantic reference. Best for reading content and filling forms.
-- **`/browse-visual`** (fallback) — uses a Google Gemini Computer Use model to click at pixel
+- **`/browse_visual`** (fallback) — uses a Google Gemini Computer Use model to click at pixel
   coordinates from screenshots. Best for `<canvas>`, image maps, and drag-and-drop on non-DOM
   surfaces.
 
-By default, start with `/browse`. It's cheaper and faster. Fall back to `/browse-visual` only when
+By default, start with `/browse`. It's cheaper and faster. Fall back to `/browse_visual` only when
 the DOM-based path cannot see what it needs to interact with.
 
 ## When to Use Browser Automation
@@ -63,17 +63,17 @@ Prefix your request with `/browse` to use the semantic DOM profile:
 - **`browser_exec`** — run JavaScript in the page (escape hatch for shadow DOM, iframes, reading
   same-origin JSON endpoints, or multi-step DOM mutation in a single turn).
 
-## The `/browse-visual` Command (fallback, coordinate-based)
+## The `/browse_visual` Command (fallback, coordinate-based)
 
 When the DOM path can't see what it needs — canvas drawings, image maps, drag-and-drop against pixel
-targets — use `/browse-visual`:
+targets — use `/browse_visual`:
 
 ```
-/browse-visual Go to the drawing app and sketch a circle in the middle
-/browse-visual On the map tool, click the red dot over Seattle
+/browse_visual Go to the drawing app and sketch a circle in the middle
+/browse_visual On the map tool, click the red dot over Seattle
 ```
 
-### How `/browse-visual` works
+### How `/browse_visual` works
 
 - Every action returns a screenshot; the model visually locates elements and commands clicks by
   coordinates.
@@ -83,12 +83,12 @@ targets — use `/browse-visual`:
 
 ## Delegation between profiles
 
-`/browse` can hand off to `/browse-visual` when it hits a visual-only task. The handoff keeps the
+`/browse` can hand off to `/browse_visual` when it hits a visual-only task. The handoff keeps the
 same live browser tab (same conversation, same cookies, same page), so state is preserved across
 profiles.
 
 In practice you usually don't need to think about this — start with `/browse` and the assistant will
-delegate when needed. You can also invoke `/browse-visual` directly if you know the task is
+delegate when needed. You can also invoke `/browse_visual` directly if you know the task is
 visual-only from the start.
 
 ## Examples by Use Case
@@ -114,7 +114,7 @@ visual-only from the start.
 ### Visual / Canvas Tasks
 
 ```
-/browse-visual On the drawing tool, drag the blue square into the green target zone
+/browse_visual On the drawing tool, drag the blue square into the green target zone
 ```
 
 ## Limitations
@@ -130,7 +130,7 @@ Both profiles share these limits:
 ## Privacy and Security
 
 - The assistant can see everything displayed on pages it visits. With `/browse`, it reads the
-  accessibility tree. With `/browse-visual`, it captures screenshots after every action.
+  accessibility tree. With `/browse_visual`, it captures screenshots after every action.
 - Browser sessions are isolated per conversation. No cookies or session data persist between
   conversations, and your personal browser is untouched.
 - Never share passwords in a browser automation request.
@@ -138,7 +138,7 @@ Both profiles share these limits:
 
 ## Tips for Best Results
 
-1. **Default to `/browse`.** It's cheaper and faster. Fall back to `/browse-visual` only when the
+1. **Default to `/browse`.** It's cheaper and faster. Fall back to `/browse_visual` only when the
    DOM path fails.
 2. **Provide full URLs** including `https://`.
 3. **Break complex tasks into steps** — multi-page workflows are easier to debug one step at a time.
@@ -158,7 +158,7 @@ Both profiles share these limits:
 - Describe what you're looking for more specifically.
 - Ask the assistant to scroll down or look in a different section.
 - If `/browse` can't see the element (e.g., it's inside a canvas or rendered as an image), try
-  `/browse-visual`.
+  `/browse_visual`.
 
 ### Action Didn't Work
 

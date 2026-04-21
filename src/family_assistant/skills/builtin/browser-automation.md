@@ -1,6 +1,6 @@
 ---
 name: Browser Automation
-description: Guide for using the /browse and /browse-visual commands to navigate websites, fill forms, and perform multi-step web workflows.
+description: Guide for using the /browse and /browse_visual commands to navigate websites, fill forms, and perform multi-step web workflows.
 ---
 
 # Browser Automation
@@ -30,19 +30,19 @@ rather than pixel screenshots, so interactions are cheaper and faster.
 - Click through links or navigate forms where elements have accessible labels.
 - Pull structured data out of a same-origin JSON endpoint via `browser_exec`.
 
-## `/browse-visual` — fallback, coordinate-based
+## `/browse_visual` — fallback, coordinate-based
 
 Uses Google Gemini's Computer Use model to click at pixel coordinates based on screenshots. Reserved
 for tasks that genuinely can't be done from the DOM.
 
-- **Activation**: prefix your request with `/browse-visual`.
+- **Activation**: prefix your request with `/browse_visual`.
 - **Tools**: `click_at`, `type_text_at`, `scroll_at`, `drag_and_drop`, `hover_at`,
   `key_combination`, `navigate`, `go_back`, `go_forward`, `scroll_document`, `wait_5_seconds`,
   `open_web_browser`, `search`.
 - **How it works**: every action returns a screenshot; the model visually locates elements and
   commands clicks by coordinates.
 
-### When to use `/browse-visual`
+### When to use `/browse_visual`
 
 - Interact with `<canvas>` elements, image maps, or custom drawing surfaces.
 - Drag-and-drop that targets non-DOM drop zones.
@@ -51,7 +51,7 @@ for tasks that genuinely can't be done from the DOM.
 
 ## Delegation
 
-`/browse` can delegate to `/browse-visual` via `delegate_to_service` when it hits a visual-only
+`/browse` can delegate to `/browse_visual` via `delegate_to_service` when it hits a visual-only
 task. The delegated agent picks up the same live browser tab (same `conversation_id`, same
 `BrowserSession`) so state is preserved.
 
@@ -64,7 +64,7 @@ task. The delegated agent picks up the same live browser tab (same `conversation
 
 ## Tips
 
-1. Prefer `/browse` by default — it's cheaper and faster. Fall back to `/browse-visual` only when
+1. Prefer `/browse` by default — it's cheaper and faster. Fall back to `/browse_visual` only when
    the DOM path fails.
 2. Provide full URLs including `https://`.
 3. Break complex tasks into steps.

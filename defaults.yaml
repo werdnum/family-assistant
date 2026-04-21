@@ -558,14 +558,7 @@ service_profiles:
         - match:
             names:
               - "delegate_to_service"
-            argument_equals:
-              target_service_id: "browser_visual_profile"
           decision: "allow"
-          priority: 20
-        - match:
-            names:
-              - "delegate_to_service"
-          decision: "deny"
           priority: 10
     slash_commands:
       - "/browse"
@@ -618,7 +611,7 @@ service_profiles:
           decision: "allow"
           priority: 10
     slash_commands:
-      - "/browse-visual"
+      - "/browse_visual"
   - id: "research"
     description: "Assistant profile for deep research, utilizing the Google Gemini Deep Research agent. Ideal for comprehensive information gathering and analysis when web browsing or specific tool execution is not required."
     processing_config:
