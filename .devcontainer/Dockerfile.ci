@@ -144,11 +144,8 @@ FROM base AS final
 USER root
 RUN mkdir -p /opt/uv-cache && chown claude:claude /opt/uv-cache
 COPY --from=frontend-builder --chown=claude:claude /tmp/frontend-dist /opt/frontend-dist/
-COPY --chown=claude:claude frontend/package*.json /opt/frontend/
-RUN --mount=type=cache,target=/root/.npm,sharing=locked \
-    cd /opt/frontend && \
-    npm ci --no-audit --no-fund && \
-    chown -R claude:claude /opt/frontend
+COPY --from=frontend-builder --chown=claude:claude /opt/frontend/node_modules /opt/frontend/node_modules
+COPY --from=frontend-builder --chown=claude:claude /opt/frontend/package.json /opt/frontend/package-lock.json /opt/frontend/
 
 ENV UV_CACHE_DIR=/opt/uv-cache
 ENV IS_CI_CONTAINER=true
