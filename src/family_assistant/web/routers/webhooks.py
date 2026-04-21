@@ -127,7 +127,7 @@ async def handle_mail_webhook(
             signature=signature,
             config=email_intake_config,
         )
-        raw_mime = extract_raw_mime(form_data)
+        raw_mime = await extract_raw_mime(form_data)
         if raw_mime is None and not email_intake_config.require_authenticated_sender:
             logger.warning(
                 "Inbound email webhook did not include body-mime; DKIM/DMARC "

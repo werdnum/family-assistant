@@ -10,6 +10,7 @@ from __future__ import annotations
 import logging
 import re
 from dataclasses import dataclass
+from email.parser import BytesHeaderParser
 from email.utils import getaddresses, parseaddr
 from typing import TYPE_CHECKING, Protocol
 
@@ -141,20 +142,21 @@ def extract_from_domain(raw_mime: bytes) -> str | None:
 
 
 def extract_client_ip(raw_mime: bytes) -> str | None:
-    """Extract the peer SMTP client IP from Mailgun-provided inbound headers.
+    """Extract the peer SMTP client IP from trusted inbound headers.
 
-    Prefers the ``X-Mailgun-Sending-Ip``/``X-Envelope-From`` headers Mailgun adds to
-    forwarded MIME. Falls back to the topmost ``Received:`` header, extracting the
-    ``from ... (ip)`` portion.
+    Prefers the ``X-Mailgun-Sending-Ip`` header Mailgun adds to forwarded MIME.
+    Falls back to parsing the topmost ``Received:`` header, which is the hop
+    Mailgun itself recorded (i.e. the peer SMTP client). Does not trust
+    ``X-Forwarded-For`` or other attacker-controllable headers that can appear
+    in inbound email and would allow SPF spoofing if used.
     """
     headers = _parse_headers(raw_mime)
 
-    for header_name in ("x-mailgun-sending-ip", "x-forwarded-for"):
-        value = headers.get(header_name)
-        if value:
-            match = _IP_PATTERN.search(value)
-            if match:
-                return match.group(0)
+    value = headers.get("x-mailgun-sending-ip")
+    if value:
+        match = _IP_PATTERN.search(value)
+        if match:
+            return match.group(0)
 
     received_values = _all_headers(raw_mime, "received")
     for value in received_values:
@@ -186,43 +188,21 @@ def _all_headers(raw_mime: bytes, name: str) -> list[str]:
     ]
 
 
+_WHITESPACE_RE = re.compile(r"\s+")
+
+
 def _header_pairs(raw_mime: bytes) -> list[tuple[str, str]]:
     """Parse the header block into ``(name, value)`` pairs without touching the body."""
-    try:
-        text = raw_mime.decode("utf-8", errors="replace")
-    except AttributeError:
+    if not isinstance(raw_mime, (bytes, bytearray)):
         return []
-    separator = _header_body_split(text)
-    header_block = text[:separator]
-    pairs: list[tuple[str, str]] = []
-    current_name: str | None = None
-    current_value: list[str] = []
-    for line in header_block.splitlines():
-        if not line:
-            continue
-        if line[0] in {" ", "\t"} and current_name is not None:
-            current_value.append(line.strip())
-            continue
-        if current_name is not None:
-            pairs.append((current_name, " ".join(current_value).strip()))
-        name_part, _, value_part = line.partition(":")
-        if not _:
-            current_name = None
-            current_value = []
-            continue
-        current_name = name_part.strip()
-        current_value = [value_part.strip()]
-    if current_name is not None:
-        pairs.append((current_name, " ".join(current_value).strip()))
-    return pairs
-
-
-def _header_body_split(text: str) -> int:
-    for marker in ("\r\n\r\n", "\n\n"):
-        idx = text.find(marker)
-        if idx != -1:
-            return idx
-    return len(text)
+    try:
+        msg = BytesHeaderParser().parsebytes(raw_mime)
+    except Exception:
+        return []
+    return [
+        (name, _WHITESPACE_RE.sub(" ", str(value)).strip())
+        for name, value in msg.items()
+    ]
 
 
 def _from_addresses(raw_mime: bytes) -> list[str]:

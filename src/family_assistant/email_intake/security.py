@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import hashlib
 import hmac
+import inspect
 import logging
 import time
 from email.utils import parseaddr
@@ -217,12 +218,16 @@ def normalize_email_address(raw_address: str | None) -> str | None:
     return normalized or None
 
 
-def extract_raw_mime(form_data: FormData) -> bytes | None:
+async def extract_raw_mime(form_data: FormData) -> bytes | None:
     """Return the raw MIME message bytes from a Mailgun webhook, if present.
 
     Mailgun includes the raw RFC 822 message in ``body-mime`` when the inbound route
     is configured with the MIME-type forwarding option (``forward('url', 'mime')``).
     Without this configuration we cannot cryptographically verify DKIM signatures.
+
+    Starlette parses large form fields as ``UploadFile`` objects whose ``read()`` is
+    an awaitable coroutine; we await it to avoid silently returning ``None`` and
+    causing authentication to fail for large emails.
     """
     value = form_data.get("body-mime")
     if value is None:
@@ -231,12 +236,15 @@ def extract_raw_mime(form_data: FormData) -> bytes | None:
         return value
     if isinstance(value, str):
         return value.encode("utf-8", errors="surrogateescape")
-    # Starlette UploadFile — not expected for this field, but handle defensively.
     read = getattr(value, "read", None)
     if callable(read):
         data = read()
+        if inspect.isawaitable(data):
+            data = await data
         if isinstance(data, bytes):
             return data
+        if isinstance(data, str):
+            return data.encode("utf-8", errors="surrogateescape")
     return None
 
 
