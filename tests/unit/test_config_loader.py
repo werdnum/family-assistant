@@ -539,6 +539,17 @@ class TestApplyEnvVarOverrides:
             apply_env_var_overrides(config)
         assert config["otel"]["traces_sample_rate"] == 0.25
 
+    def test_applies_mailgun_webhook_signing_key_env_var(self) -> None:
+        """Test applying MAILGUN_WEBHOOK_SIGNING_KEY env var."""
+        config: dict[str, Any] = {"email_intake": {}}
+        with mock.patch.dict(
+            os.environ, {"MAILGUN_WEBHOOK_SIGNING_KEY": "test-signing-key"}, clear=False
+        ):
+            apply_env_var_overrides(config)
+        assert (
+            config["email_intake"]["mailgun_webhook_signing_key"] == "test-signing-key"
+        )
+
 
 class TestApplyCalendarEnvVars:
     """Tests for apply_calendar_env_vars function."""

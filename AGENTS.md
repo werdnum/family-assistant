@@ -282,6 +282,17 @@ python scripts/generate_vapid_keys.py
 # VAPID_PUBLIC_KEY=<url-safe-base64-no-padding>
 ```
 
+### Environment Variables for Email Intake
+
+The following environment variable can be used instead of hardcoding the value in `config.yaml`:
+
+- **`MAILGUN_WEBHOOK_SIGNING_KEY`** - Mailgun webhook signing key for verifying incoming email
+  webhooks
+
+  - Maps to `email_intake.mailgun_webhook_signing_key` in config
+  - Found in the Mailgun dashboard under Sending → Webhooks
+  - Example: `export MAILGUN_WEBHOOK_SIGNING_KEY=your-signing-key-here`
+
 ### Code Generation
 
 ```bash
