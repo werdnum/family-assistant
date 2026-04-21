@@ -26,25 +26,17 @@ jobs:
     outputs:
       tag: ${{ steps.tags.outputs.tag }}
       should-push: ${{ steps.tags.outputs.should-push }}
-      platforms: ${{ steps.tags.outputs.platforms }}
-      devcontainer-platforms: ${{ steps.tags.outputs.devcontainer-platforms }}
     steps:
       - name: Generate tags and determine build strategy
         id: tags
         run: |
-          # Determine tag
           if [ "${{ github.event_name }}" = "workflow_dispatch" ] && [ -n "${{ github.event.inputs.tag }}" ]; then
             TAG="${{ github.event.inputs.tag }}"
           else
             TAG=$(date +%Y%m%d_%H%M%S)
           fi
           echo "tag=${TAG}" >> $GITHUB_OUTPUT
-
-          # Always push since we only run on main or workflow dispatch
           echo "should-push=true" >> $GITHUB_OUTPUT
-          # Both main app and devcontainer need multi-arch
-          echo "platforms=linux/amd64,linux/arm64" >> $GITHUB_OUTPUT
-          echo "devcontainer-platforms=linux/amd64,linux/arm64" >> $GITHUB_OUTPUT
   smoke-test:
     needs: [prepare]
     runs-on: ubuntu-latest
@@ -60,8 +52,18 @@ jobs:
           image-prefix: ${{ env.IMAGE_PREFIX }}
 
   build-devcontainer:
-    needs: [prepare, smoke-test]
-    runs-on: ubuntu-latest
+    needs: [prepare]
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: linux/amd64
+            runner: ubuntu-latest
+            arch: amd64
+          - platform: linux/arm64
+            runner: ubuntu-24.04-arm
+            arch: arm64
+    runs-on: ${{ matrix.runner }}
     timeout-minutes: 60
     steps:
       - name: Free up disk space
@@ -77,9 +79,6 @@ jobs:
           df -h
       - name: Checkout code
         uses: actions/checkout@v6
-      - name: Set up QEMU
-        if: needs.prepare.outputs.devcontainer-platforms != 'linux/amd64'
-        uses: docker/setup-qemu-action@v4
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v4
       - name: Log in to Container Registry
@@ -89,25 +88,79 @@ jobs:
           registry: ${{ env.REGISTRY }}
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
-      - name: Build and conditionally push devcontainer image
+      - name: Build and push devcontainer image by digest
+        id: build
         uses: docker/build-push-action@v7
         with:
           context: .
           file: .devcontainer/Dockerfile
-          platforms: ${{ needs.prepare.outputs.devcontainer-platforms }}
-          push: ${{ needs.prepare.outputs.should-push }}
-          tags: |
-            ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}:devcontainer-${{ needs.prepare.outputs.tag }}
-            ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}:devcontainer-latest
-            ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}:devcontainer-main
+          platforms: ${{ matrix.platform }}
+          outputs: type=image,name=${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }},push-by-digest=true,name-canonical=true,push=${{ needs.prepare.outputs.should-push }}
           cache-from: |
-            type=registry,ref=${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}:devcontainer-main
+            type=registry,ref=${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}:cache-devcontainer-dev-${{ matrix.arch }}
             type=registry,ref=${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}:cache-devcontainer-dev
           cache-to: |
-            type=registry,ref=${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}:cache-devcontainer-dev,mode=max
-  build-main:
-    needs: [prepare, smoke-test]
+            type=registry,ref=${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}:cache-devcontainer-dev-${{ matrix.arch }},mode=max
+      - name: Export digest
+        if: needs.prepare.outputs.should-push == 'true'
+        run: |
+          mkdir -p /tmp/digests
+          digest="${{ steps.build.outputs.digest }}"
+          touch "/tmp/digests/${digest#sha256:}"
+      - name: Upload digest
+        if: needs.prepare.outputs.should-push == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: digests-devcontainer-${{ matrix.arch }}
+          path: /tmp/digests/*
+          if-no-files-found: error
+          retention-days: 1
+
+  merge-devcontainer:
+    needs: [prepare, build-devcontainer]
+    if: needs.prepare.outputs.should-push == 'true'
     runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Download digests
+        uses: actions/download-artifact@v4
+        with:
+          path: /tmp/digests
+          pattern: digests-devcontainer-*
+          merge-multiple: true
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4
+      - name: Log in to Container Registry
+        uses: docker/login-action@v4
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Create multi-arch manifest
+        working-directory: /tmp/digests
+        env:
+          IMAGE: ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}
+          TAG: ${{ needs.prepare.outputs.tag }}
+        run: |
+          docker buildx imagetools create \
+            -t "${IMAGE}:devcontainer-${TAG}" \
+            -t "${IMAGE}:devcontainer-latest" \
+            -t "${IMAGE}:devcontainer-main" \
+            $(printf "${IMAGE}@sha256:%s " *)
+
+  build-main:
+    needs: [prepare]
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: linux/amd64
+            runner: ubuntu-latest
+            arch: amd64
+          - platform: linux/arm64
+            runner: ubuntu-24.04-arm
+            arch: arm64
+    runs-on: ${{ matrix.runner }}
     timeout-minutes: 120 # 2 hours for build
     steps:
       - name: Free up disk space
@@ -123,9 +176,6 @@ jobs:
           df -h
       - name: Checkout code
         uses: actions/checkout@v6
-      - name: Set up QEMU
-        if: needs.prepare.outputs.platforms != 'linux/amd64'
-        uses: docker/setup-qemu-action@v4
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v4
       - name: Log in to Container Registry
@@ -137,45 +187,93 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
       - name: Set build date
         run: echo "BUILD_DATE=$(date -u +'%Y-%m-%dT%H:%M:%SZ')" >> $GITHUB_ENV
-      - name: Build and conditionally push main application image
+      - name: Build and push main application image by digest
         id: build
         uses: docker/build-push-action@v7
         with:
           context: .
           file: Dockerfile
-          platforms: ${{ needs.prepare.outputs.platforms }}
-          push: ${{ needs.prepare.outputs.should-push }}
+          platforms: ${{ matrix.platform }}
+          outputs: type=image,name=${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }},push-by-digest=true,name-canonical=true,push=${{ needs.prepare.outputs.should-push }}
           build-args: |
             GIT_COMMIT=${{ github.sha }}
             BUILD_DATE=${{ env.BUILD_DATE }}
-          tags: |
-            ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}:${{ needs.prepare.outputs.tag }}
-            ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}:latest
-            ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}:main
-            ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}:buildcache
           cache-from: |
-            type=gha
-            type=registry,ref=${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}:main
+            type=registry,ref=${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}:buildcache-${{ matrix.arch }}
             type=registry,ref=${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}:buildcache
           cache-to: |
-            type=gha,mode=max
-            type=registry,ref=${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}:buildcache,mode=max
-
-      - name: Generate GitHub App token
+            type=registry,ref=${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}:buildcache-${{ matrix.arch }},mode=max
+      - name: Export digest
         if: needs.prepare.outputs.should-push == 'true'
+        run: |
+          mkdir -p /tmp/digests
+          digest="${{ steps.build.outputs.digest }}"
+          touch "/tmp/digests/${digest#sha256:}"
+      - name: Upload digest
+        if: needs.prepare.outputs.should-push == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: digests-main-${{ matrix.arch }}
+          path: /tmp/digests/*
+          if-no-files-found: error
+          retention-days: 1
+
+  merge-main:
+    needs: [prepare, smoke-test, build-main]
+    if: needs.prepare.outputs.should-push == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    outputs:
+      digest: ${{ steps.manifest.outputs.digest }}
+    steps:
+      - name: Download digests
+        uses: actions/download-artifact@v4
+        with:
+          path: /tmp/digests
+          pattern: digests-main-*
+          merge-multiple: true
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4
+      - name: Log in to Container Registry
+        uses: docker/login-action@v4
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Create multi-arch manifest
+        id: manifest
+        working-directory: /tmp/digests
+        env:
+          IMAGE: ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}
+          TAG: ${{ needs.prepare.outputs.tag }}
+        run: |
+          primary_tag="${IMAGE}:${TAG}"
+          docker buildx imagetools create \
+            -t "${primary_tag}" \
+            -t "${IMAGE}:latest" \
+            -t "${IMAGE}:main" \
+            -t "${IMAGE}:buildcache" \
+            $(printf "${IMAGE}@sha256:%s " *)
+          manifest_digest=$(docker buildx imagetools inspect "${primary_tag}" --format '{{.Manifest.Digest}}')
+          echo "digest=${manifest_digest}" >> $GITHUB_OUTPUT
+
+  update-kube-config:
+    needs: [prepare, merge-main]
+    if: needs.prepare.outputs.should-push == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Generate GitHub App token
         id: app-token
         uses: actions/create-github-app-token@v3
         with:
           app-id: ${{ secrets.IMAGE_UPDATER_APP_ID }}
           private-key: ${{ secrets.IMAGE_UPDATER_PRIVATE_KEY }}
           owner: werdnum
-          # repositories: kube-config
-
       - name: Update kube-config
-        if: needs.prepare.outputs.should-push == 'true'
         env:
           GH_TOKEN: ${{ steps.app-token.outputs.token }}
-          IMAGE_DIGEST: ${{ steps.build.outputs.digest }}
+          IMAGE_DIGEST: ${{ needs.merge-main.outputs.digest }}
         run: |
           set -e
 
