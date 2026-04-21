@@ -154,8 +154,6 @@ email_intake:
     - "assistant+bob@mg.example.com"
 
   require_authenticated_sender: true
-  require_dmarc_pass: true
-  allow_spf_or_dkim_fallback_when_dmarc_missing: false
 
   require_user_mapping: true
   user_mappings:
@@ -271,17 +269,20 @@ be set.
 
 ### Sender Authentication Policy
 
-`require_authenticated_sender` makes the webhook require sender authentication results reported by
-Mailgun or by the message `Authentication-Results` header. With the default strict policy,
-`require_dmarc_pass: true`, DMARC must pass. DMARC failure always fails closed. Set
-`allow_spf_or_dkim_fallback_when_dmarc_missing: true` only if you accept SPF or DKIM pass when DMARC
-is absent.
+`require_authenticated_sender` makes the webhook require a DMARC `pass` result that the app computes
+locally from the raw MIME message. The app verifies DKIM signatures and evaluates DMARC alignment
+with [`authheaders`](https://pypi.org/project/authheaders/) and
+[`dkimpy`](https://pypi.org/project/dkimpy/); it no longer trusts Mailgun's `dmarc`, `SPF`, or
+`Dkim` form fields or the embedded `Authentication-Results` header.
 
-| Option                                          | Default | Recommended |
-| ----------------------------------------------- | ------- | ----------- |
-| `require_authenticated_sender`                  | `false` | `true`      |
-| `require_dmarc_pass`                            | `true`  | `true`      |
-| `allow_spf_or_dkim_fallback_when_dmarc_missing` | `false` | `false`     |
+Because local DKIM verification needs the byte-exact raw message, Mailgun routes must be configured
+to forward the MIME payload rather than the parsed representation (`forward('url', 'mime')`). The
+webhook reads the raw message from the `body-mime` form field. When `require_authenticated_sender`
+is true, requests without `body-mime` fail closed with `401`. DMARC failures always fail closed.
+
+| Option                         | Default | Recommended |
+| ------------------------------ | ------- | ----------- |
+| `require_authenticated_sender` | `false` | `true`      |
 
 If `require_authenticated_sender` is true, the Mailgun signing key must also be set.
 

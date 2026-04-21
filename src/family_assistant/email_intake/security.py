@@ -1,19 +1,33 @@
-"""Security checks for inbound Mailgun email webhooks."""
+"""Security checks for inbound Mailgun email webhooks.
+
+Sender authentication (DKIM/SPF/DMARC) is performed locally against the raw MIME
+body forwarded by Mailgun. The legacy scheme of trusting Mailgun-populated form fields
+is no longer supported because Mailgun does not reliably populate them. See
+:mod:`family_assistant.email_intake.authentication` for the verification implementation.
+"""
 
 from __future__ import annotations
 
 import hashlib
 import hmac
-import json
+import logging
 import time
-from dataclasses import dataclass
 from email.utils import parseaddr
 from typing import TYPE_CHECKING
+
+from family_assistant.email_intake.authentication import (
+    DnsResolver,
+    EmailAuthenticationResult,
+    extract_client_ip,
+    verify_email_authentication,
+)
 
 if TYPE_CHECKING:
     from starlette.datastructures import FormData
 
     from family_assistant.config_models import EmailIntakeConfig
+
+logger = logging.getLogger(__name__)
 
 
 class EmailIntakeSecurityError(ValueError):
@@ -22,30 +36,6 @@ class EmailIntakeSecurityError(ValueError):
 
 class EmailIntakePayloadTooLargeError(EmailIntakeSecurityError):
     """Raised when an inbound email webhook exceeds configured size limits."""
-
-
-@dataclass(frozen=True, slots=True)
-class SenderAuthentication:
-    """Normalized sender authentication results from Mailgun/form headers."""
-
-    dmarc: str | None
-    spf: str | None
-    dkim: str | None
-
-    @property
-    def dmarc_passed(self) -> bool:
-        """Return whether DMARC passed."""
-        return _is_pass(self.dmarc)
-
-    @property
-    def spf_passed(self) -> bool:
-        """Return whether SPF passed."""
-        return _is_pass(self.spf)
-
-    @property
-    def dkim_passed(self) -> bool:
-        """Return whether DKIM passed."""
-        return _is_pass(self.dkim)
 
 
 def enforce_raw_request_size(raw_body: bytes, config: EmailIntakeConfig) -> None:
@@ -106,8 +96,14 @@ def verify_mailgun_signature(
 def verify_sender_authorization(
     form_data: FormData,
     config: EmailIntakeConfig,
-) -> None:
-    """Verify sender/recipient allowlists and sender authentication policy."""
+    *,
+    raw_mime: bytes | None = None,
+    dns_resolver: DnsResolver | None = None,
+) -> EmailAuthenticationResult | None:
+    """Verify sender/recipient allowlists and (when required) DKIM/DMARC authentication.
+
+    Returns the authentication result when authentication was evaluated, else ``None``.
+    """
     sender = normalize_email_address(_string_field(form_data, "sender"))
     if config.allowed_sender_addresses:
         allowed_senders = {
@@ -129,25 +125,35 @@ def verify_sender_authorization(
             raise EmailIntakeSecurityError(msg)
 
     if not config.require_authenticated_sender:
-        return
+        if raw_mime is None:
+            return None
+        return _evaluate_authentication(
+            raw_mime=raw_mime,
+            envelope_from=sender,
+            dns_resolver=dns_resolver,
+        )
 
-    authentication = extract_sender_authentication(form_data)
-    if authentication.dmarc_passed:
-        return
-
-    if authentication.dmarc is not None or config.require_dmarc_pass:
-        msg = "Sender authentication failed DMARC policy"
+    if raw_mime is None:
+        msg = (
+            "Sender authentication is required but the Mailgun webhook did not "
+            "include the raw MIME message (body-mime). Configure the Mailgun route "
+            "to forward the full MIME message."
+        )
         raise EmailIntakeSecurityError(msg)
 
-    if (
-        config.allow_spf_or_dkim_fallback_when_dmarc_missing
-        and authentication.dmarc is None
-        and (authentication.spf_passed or authentication.dkim_passed)
-    ):
-        return
-
-    msg = "Sender authentication did not meet the configured policy"
-    raise EmailIntakeSecurityError(msg)
+    authentication = _evaluate_authentication(
+        raw_mime=raw_mime,
+        envelope_from=sender,
+        dns_resolver=dns_resolver,
+    )
+    if not authentication.dmarc_passed:
+        msg = (
+            "Sender authentication failed DMARC policy "
+            f"(dkim={authentication.dkim}, spf={authentication.spf}, "
+            f"dmarc={authentication.dmarc})"
+        )
+        raise EmailIntakeSecurityError(msg)
+    return authentication
 
 
 def resolve_target_user_id(
@@ -211,34 +217,41 @@ def normalize_email_address(raw_address: str | None) -> str | None:
     return normalized or None
 
 
-def extract_sender_authentication(form_data: FormData) -> SenderAuthentication:
-    """Extract DMARC/SPF/DKIM results from Mailgun fields or Authentication-Results."""
-    authentication_results = _string_field(form_data, "Authentication-Results")
-    if authentication_results is None:
-        authentication_results = _string_field(form_data, "authentication-results")
-    if authentication_results is None:
-        authentication_results = _message_header_value(
-            form_data, "Authentication-Results"
-        )
+def extract_raw_mime(form_data: FormData) -> bytes | None:
+    """Return the raw MIME message bytes from a Mailgun webhook, if present.
 
-    return SenderAuthentication(
-        dmarc=_coalesce_auth_result(
-            _string_field(form_data, "dmarc"),
-            _string_field(form_data, "DMARC"),
-            _string_field(form_data, "Dmarc"),
-            _extract_authentication_results_value(authentication_results, "dmarc"),
-        ),
-        spf=_coalesce_auth_result(
-            _string_field(form_data, "spf"),
-            _string_field(form_data, "SPF"),
-            _extract_authentication_results_value(authentication_results, "spf"),
-        ),
-        dkim=_coalesce_auth_result(
-            _string_field(form_data, "dkim"),
-            _string_field(form_data, "Dkim"),
-            _string_field(form_data, "DKIM"),
-            _extract_authentication_results_value(authentication_results, "dkim"),
-        ),
+    Mailgun includes the raw RFC 822 message in ``body-mime`` when the inbound route
+    is configured with the MIME-type forwarding option (``forward('url', 'mime')``).
+    Without this configuration we cannot cryptographically verify DKIM signatures.
+    """
+    value = form_data.get("body-mime")
+    if value is None:
+        return None
+    if isinstance(value, bytes):
+        return value
+    if isinstance(value, str):
+        return value.encode("utf-8", errors="surrogateescape")
+    # Starlette UploadFile — not expected for this field, but handle defensively.
+    read = getattr(value, "read", None)
+    if callable(read):
+        data = read()
+        if isinstance(data, bytes):
+            return data
+    return None
+
+
+def _evaluate_authentication(
+    *,
+    raw_mime: bytes,
+    envelope_from: str | None,
+    dns_resolver: DnsResolver | None,
+) -> EmailAuthenticationResult:
+    client_ip = extract_client_ip(raw_mime)
+    return verify_email_authentication(
+        raw_mime,
+        envelope_from=envelope_from,
+        client_ip=client_ip,
+        dns_resolver=dns_resolver,
     )
 
 
@@ -259,57 +272,6 @@ def _requires_verified_mailgun(config: EmailIntakeConfig) -> bool:
         or config.require_user_mapping
         or config.user_mappings
     )
-
-
-def _coalesce_auth_result(*values: str | None) -> str | None:
-    for value in values:
-        if value is not None:
-            return value.lower()
-    return None
-
-
-def _extract_authentication_results_value(
-    authentication_results: str | None,
-    mechanism: str,
-) -> str | None:
-    if authentication_results is None:
-        return None
-
-    mechanism_prefix = f"{mechanism.lower()}="
-    for raw_token in authentication_results.replace(";", " ").split():
-        token = raw_token.strip().lower()
-        if token.startswith(mechanism_prefix):
-            return token.removeprefix(mechanism_prefix)
-    return None
-
-
-def _message_header_value(form_data: FormData, header_name: str) -> str | None:
-    headers_raw = _string_field(form_data, "message-headers")
-    if headers_raw is None:
-        return None
-
-    try:
-        parsed_headers = json.loads(headers_raw)
-    except json.JSONDecodeError:
-        return None
-
-    if not isinstance(parsed_headers, list):
-        return None
-
-    normalized_header_name = header_name.lower()
-    for header in parsed_headers:
-        if not isinstance(header, list) or len(header) < 2:
-            continue
-        raw_name, raw_value = header[0], header[1]
-        if not isinstance(raw_name, str):
-            continue
-        if raw_name.lower() == normalized_header_name and isinstance(raw_value, str):
-            return raw_value
-    return None
-
-
-def _is_pass(value: str | None) -> bool:
-    return value is not None and value.lower() in {"pass", "passed", "true", "yes"}
 
 
 def get_security_fields(

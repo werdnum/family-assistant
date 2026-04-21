@@ -233,6 +233,11 @@ notes_config:
 # Optional controls for the /webhook/mail Mailgun receiving webhook. By default
 # these are permissive to preserve existing indexing-only deployments; configure
 # them before enabling assistant actions from inbound email.
+#
+# Sender authentication (DKIM and DMARC) is performed locally against the raw MIME
+# forwarded by Mailgun. The Mailgun route action must therefore use the MIME-type
+# forwarding option (e.g. `forward('https://.../webhook/mail', 'mime')`) so the
+# webhook body includes a `body-mime` field containing the raw RFC 822 message.
 email_intake:
   # Mailgun webhook signing key. When set, timestamp/token/signature fields are required.
   mailgun_webhook_signing_key: null
@@ -241,10 +246,9 @@ email_intake:
   allowed_sender_addresses: []
   # Recipient addresses are the Mailgun inbound addresses/aliases this app should accept.
   allowed_recipient_addresses: []
-  # Require DMARC/SPF/DKIM checks reported by Mailgun/authentication headers.
+  # Require DMARC pass (aligned DKIM or SPF) before accepting an email. When enabled,
+  # Mailgun must be configured to forward raw MIME (see comment above).
   require_authenticated_sender: false
-  require_dmarc_pass: true
-  allow_spf_or_dkim_fallback_when_dmarc_missing: false
   # Require accepted emails to resolve to exactly one configured application user.
   require_user_mapping: false
   # Map authorized forwarding senders and/or Mailgun inbound aliases to app users.

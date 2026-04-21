@@ -1,4 +1,9 @@
-"""Functional tests for inbound Mailgun email webhook security checks."""
+"""Functional tests for inbound Mailgun email webhook security checks.
+
+Authentication (DKIM/SPF/DMARC) is evaluated locally against the raw MIME that Mailgun
+forwards in the ``body-mime`` field. A fake in-memory DNS resolver is injected via
+``app.state.email_intake_dns_resolver`` so the tests do not rely on real DNS.
+"""
 
 from __future__ import annotations
 
@@ -19,12 +24,23 @@ from family_assistant.config_models import (
 from family_assistant.storage.context import DatabaseContext
 from family_assistant.storage.email import received_emails_table
 from family_assistant.web.app_creator import app as fastapi_app
+from tests.mocks.email_auth import (
+    FakeDnsResolver,
+    build_dns_for,
+    build_signed_message,
+)
 
 if TYPE_CHECKING:
     from pathlib import Path
 
     import httpx
     from sqlalchemy.ext.asyncio import AsyncEngine
+
+
+SIGNING_KEY = "mailgun-test-key"
+SENDER = "buyer@example.com"
+RECIPIENT = "orders@example.net"
+SENDER_DOMAIN = "example.com"
 
 
 def _signature(timestamp: str, token: str, signing_key: str) -> str:
@@ -37,14 +53,15 @@ def _signature(timestamp: str, token: str, signing_key: str) -> str:
 
 def _mailgun_form(
     *,
-    sender: str = "buyer@example.com",
-    recipient: str = "orders@example.net",
-    dmarc: str | None = "pass",
-    spf: str | None = "pass",
-    dkim: str | None = "pass",
-    signing_key: str | None = "mailgun-test-key",
+    sender: str = SENDER,
+    recipient: str = RECIPIENT,
+    signing_key: str | None = SIGNING_KEY,
     signature: str | None = None,
     message_id: str | None = None,
+    include_body_mime: bool = True,
+    raw_mime: bytes | None = None,
+    subject: str = "Order confirmation",
+    from_header: str | None = None,
 ) -> dict[str, str]:
     timestamp = str(int(time.time()))
     token = f"token-{uuid.uuid4().hex}"
@@ -54,27 +71,36 @@ def _mailgun_form(
         else (_signature(timestamp, token, signing_key) if signing_key else "")
     )
 
+    resolved_message_id = message_id or f"<mailgun-security-{uuid.uuid4()}@example.com>"
+    resolved_from = from_header or f"Buyer <{sender}>"
+
     form = {
-        "subject": "Order confirmation",
+        "subject": subject,
         "stripped-text": "Your order ABC-123 is confirmed for pickup tomorrow.",
         "sender": sender,
         "recipient": recipient,
-        "Message-Id": message_id or f"<mailgun-security-{uuid.uuid4()}@example.com>",
-        "From": f"Buyer <{sender}>",
+        "Message-Id": resolved_message_id,
+        "From": resolved_from,
         "To": f"Orders <{recipient}>",
         "timestamp": timestamp,
         "token": token,
         "signature": resolved_signature,
         "message-headers": (
-            f'[["From", "Buyer <{sender}>"], ["To", "Orders <{recipient}>"]]'
+            f'[["From", "{resolved_from}"], ["To", "Orders <{recipient}>"]]'
         ),
     }
-    if dmarc is not None:
-        form["dmarc"] = dmarc
-    if spf is not None:
-        form["SPF"] = spf
-    if dkim is not None:
-        form["Dkim"] = dkim
+    if include_body_mime:
+        mime = (
+            raw_mime
+            if raw_mime is not None
+            else build_signed_message(
+                from_address=sender,
+                to_address=recipient,
+                subject=subject,
+                message_id=resolved_message_id,
+            )
+        )
+        form["body-mime"] = mime.decode("utf-8", errors="surrogateescape")
     return form
 
 
@@ -82,6 +108,8 @@ def _configure_email_intake(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
     email_intake: EmailIntakeConfig,
+    *,
+    dns_resolver: FakeDnsResolver | None = None,
 ) -> None:
     monkeypatch.setattr(
         fastapi_app.state,
@@ -91,6 +119,14 @@ def _configure_email_intake(
             mailbox_raw_dir=str(tmp_path / "raw"),
             email_intake=email_intake,
         ),
+        raising=False,
+    )
+    monkeypatch.setattr(
+        fastapi_app.state,
+        "email_intake_dns_resolver",
+        dns_resolver
+        if dns_resolver is not None
+        else build_dns_for(domain=SENDER_DOMAIN),
         raising=False,
     )
 
@@ -115,6 +151,16 @@ async def _email_target_user_id(engine: AsyncEngine, message_id: str) -> str | N
     return row["target_user_id"] if row else None
 
 
+async def _email_dmarc_result(engine: AsyncEngine, message_id: str) -> str | None:
+    async with DatabaseContext(engine=engine) as db_context:
+        row = await db_context.fetch_one(
+            select(received_emails_table.c.dmarc_result).where(
+                received_emails_table.c.message_id_header == message_id
+            )
+        )
+    return row["dmarc_result"] if row else None
+
+
 def _raw_mail_files(tmp_path: Path) -> list[Path]:
     raw_dir = tmp_path / "raw"
     if not raw_dir.exists():
@@ -134,15 +180,15 @@ async def test_mail_webhook_accepts_signed_authorized_authenticated_sender(
         monkeypatch,
         tmp_path,
         EmailIntakeConfig(
-            mailgun_webhook_signing_key="mailgun-test-key",
-            allowed_sender_addresses=["buyer@example.com"],
-            allowed_recipient_addresses=["orders@example.net"],
+            mailgun_webhook_signing_key=SIGNING_KEY,
+            allowed_sender_addresses=[SENDER],
+            allowed_recipient_addresses=[RECIPIENT],
             require_authenticated_sender=True,
             require_user_mapping=True,
             user_mappings=[
                 EmailIntakeUserMapping(
                     user_id="alice",
-                    sender_addresses={"buyer@example.com"},
+                    sender_addresses={SENDER},
                 )
             ],
         ),
@@ -154,6 +200,7 @@ async def test_mail_webhook_accepts_signed_authorized_authenticated_sender(
     assert response.status_code == 200, response.text
     assert await _email_exists(db_engine, form["Message-Id"])
     assert await _email_target_user_id(db_engine, form["Message-Id"]) == "alice"
+    assert await _email_dmarc_result(db_engine, form["Message-Id"]) == "pass"
     assert _raw_mail_files(tmp_path)
 
 
@@ -167,7 +214,7 @@ async def test_mail_webhook_rejects_invalid_mailgun_signature(
     _configure_email_intake(
         monkeypatch,
         tmp_path,
-        EmailIntakeConfig(mailgun_webhook_signing_key="mailgun-test-key"),
+        EmailIntakeConfig(mailgun_webhook_signing_key=SIGNING_KEY),
     )
     form = _mailgun_form(signature="not-a-valid-signature")
 
@@ -189,7 +236,7 @@ async def test_mail_webhook_rejects_policy_without_mailgun_signature_configurati
     _configure_email_intake(
         monkeypatch,
         tmp_path,
-        EmailIntakeConfig(allowed_sender_addresses=["buyer@example.com"]),
+        EmailIntakeConfig(allowed_sender_addresses=[SENDER]),
     )
     form = _mailgun_form(signing_key=None)
 
@@ -216,7 +263,7 @@ async def test_mail_webhook_rejects_user_mapping_without_mailgun_signature_confi
             user_mappings=[
                 EmailIntakeUserMapping(
                     user_id="alice",
-                    sender_addresses={"buyer@example.com"},
+                    sender_addresses={SENDER},
                 )
             ],
         ),
@@ -242,7 +289,7 @@ async def test_mail_webhook_rejects_unlisted_sender(
         monkeypatch,
         tmp_path,
         EmailIntakeConfig(
-            mailgun_webhook_signing_key="mailgun-test-key",
+            mailgun_webhook_signing_key=SIGNING_KEY,
             allowed_sender_addresses=["authorized@example.com"],
         ),
     )
@@ -268,8 +315,8 @@ async def test_mail_webhook_maps_recipient_alias_to_target_user(
         monkeypatch,
         tmp_path,
         EmailIntakeConfig(
-            mailgun_webhook_signing_key="mailgun-test-key",
-            allowed_sender_addresses=["buyer@example.com"],
+            mailgun_webhook_signing_key=SIGNING_KEY,
+            allowed_sender_addresses=[SENDER],
             allowed_recipient_addresses=["assistant+alice@mg.example.com"],
             require_user_mapping=True,
             user_mappings=[
@@ -299,7 +346,7 @@ async def test_mail_webhook_rejects_unmapped_user_when_mapping_required(
         monkeypatch,
         tmp_path,
         EmailIntakeConfig(
-            mailgun_webhook_signing_key="mailgun-test-key",
+            mailgun_webhook_signing_key=SIGNING_KEY,
             require_user_mapping=True,
             user_mappings=[
                 EmailIntakeUserMapping(
@@ -309,7 +356,7 @@ async def test_mail_webhook_rejects_unmapped_user_when_mapping_required(
             ],
         ),
     )
-    form = _mailgun_form(sender="buyer@example.com")
+    form = _mailgun_form(sender=SENDER)
 
     response = await api_client.post("/webhook/mail", data=form)
 
@@ -329,12 +376,12 @@ async def test_mail_webhook_rejects_ambiguous_user_mapping(
         monkeypatch,
         tmp_path,
         EmailIntakeConfig(
-            mailgun_webhook_signing_key="mailgun-test-key",
+            mailgun_webhook_signing_key=SIGNING_KEY,
             require_user_mapping=True,
             user_mappings=[
                 EmailIntakeUserMapping(
                     user_id="alice",
-                    sender_addresses={"buyer@example.com"},
+                    sender_addresses={SENDER},
                 ),
                 EmailIntakeUserMapping(
                     user_id="bob",
@@ -353,7 +400,7 @@ async def test_mail_webhook_rejects_ambiguous_user_mapping(
 
 
 @pytest.mark.asyncio
-async def test_mail_webhook_rejects_dmarc_failure_even_when_spf_passes(
+async def test_mail_webhook_rejects_tampered_dkim_signature(
     api_client: httpx.AsyncClient,
     db_engine: AsyncEngine,
     monkeypatch: pytest.MonkeyPatch,
@@ -363,11 +410,14 @@ async def test_mail_webhook_rejects_dmarc_failure_even_when_spf_passes(
         monkeypatch,
         tmp_path,
         EmailIntakeConfig(
-            mailgun_webhook_signing_key="mailgun-test-key",
+            mailgun_webhook_signing_key=SIGNING_KEY,
             require_authenticated_sender=True,
         ),
     )
-    form = _mailgun_form(dmarc="fail", spf="pass", dkim="fail")
+    tampered = build_signed_message(from_address=SENDER).replace(
+        b"Your order is confirmed.", b"Evil payload."
+    )
+    form = _mailgun_form(raw_mime=tampered)
 
     response = await api_client.post("/webhook/mail", data=form)
 
@@ -377,8 +427,7 @@ async def test_mail_webhook_rejects_dmarc_failure_even_when_spf_passes(
 
 
 @pytest.mark.asyncio
-@pytest.mark.postgres
-async def test_mail_webhook_accepts_authentication_results_from_message_headers(
+async def test_mail_webhook_rejects_unsigned_message_when_dmarc_required(
     api_client: httpx.AsyncClient,
     db_engine: AsyncEngine,
     monkeypatch: pytest.MonkeyPatch,
@@ -388,24 +437,55 @@ async def test_mail_webhook_accepts_authentication_results_from_message_headers(
         monkeypatch,
         tmp_path,
         EmailIntakeConfig(
-            mailgun_webhook_signing_key="mailgun-test-key",
+            mailgun_webhook_signing_key=SIGNING_KEY,
             require_authenticated_sender=True,
         ),
     )
-    form = _mailgun_form(dmarc=None, spf=None, dkim=None)
-    form["message-headers"] = (
-        '[["Authentication-Results", "mx.example.net; dmarc=pass spf=pass dkim=pass"]]'
+    unsigned = (
+        b"From: buyer@example.com\r\n"
+        b"To: orders@example.net\r\n"
+        b"Subject: Plain\r\n"
+        b"Date: Mon, 21 Apr 2026 12:00:00 +0000\r\n"
+        b"Message-ID: <plain@example.com>\r\n"
+        b"\r\n"
+        b"Plain body\r\n"
     )
+    form = _mailgun_form(raw_mime=unsigned)
 
     response = await api_client.post("/webhook/mail", data=form)
 
-    assert response.status_code == 200, response.text
-    assert await _email_exists(db_engine, form["Message-Id"])
+    assert response.status_code == 401
+    assert "DMARC" in response.text
+    assert not await _email_exists(db_engine, form["Message-Id"])
+
+
+@pytest.mark.asyncio
+async def test_mail_webhook_rejects_missing_body_mime_when_auth_required(
+    api_client: httpx.AsyncClient,
+    db_engine: AsyncEngine,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    _configure_email_intake(
+        monkeypatch,
+        tmp_path,
+        EmailIntakeConfig(
+            mailgun_webhook_signing_key=SIGNING_KEY,
+            require_authenticated_sender=True,
+        ),
+    )
+    form = _mailgun_form(include_body_mime=False)
+
+    response = await api_client.post("/webhook/mail", data=form)
+
+    assert response.status_code == 401
+    assert "body-mime" in response.text
+    assert not await _email_exists(db_engine, form["Message-Id"])
 
 
 @pytest.mark.asyncio
 @pytest.mark.postgres
-async def test_mail_webhook_accepts_explicit_spf_fallback_when_dmarc_missing(
+async def test_mail_webhook_accepts_missing_body_mime_without_auth_required(
     api_client: httpx.AsyncClient,
     db_engine: AsyncEngine,
     monkeypatch: pytest.MonkeyPatch,
@@ -414,19 +494,47 @@ async def test_mail_webhook_accepts_explicit_spf_fallback_when_dmarc_missing(
     _configure_email_intake(
         monkeypatch,
         tmp_path,
-        EmailIntakeConfig(
-            mailgun_webhook_signing_key="mailgun-test-key",
-            require_authenticated_sender=True,
-            require_dmarc_pass=False,
-            allow_spf_or_dkim_fallback_when_dmarc_missing=True,
-        ),
+        EmailIntakeConfig(mailgun_webhook_signing_key=SIGNING_KEY),
     )
-    form = _mailgun_form(dmarc=None, spf="pass", dkim="fail")
+    form = _mailgun_form(include_body_mime=False)
 
     response = await api_client.post("/webhook/mail", data=form)
 
     assert response.status_code == 200, response.text
     assert await _email_exists(db_engine, form["Message-Id"])
+    assert await _email_dmarc_result(db_engine, form["Message-Id"]) is None
+
+
+@pytest.mark.asyncio
+@pytest.mark.postgres
+async def test_mail_webhook_rejects_from_domain_without_dmarc_policy(
+    api_client: httpx.AsyncClient,
+    db_engine: AsyncEngine,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    dns = FakeDnsResolver({
+        # DKIM key for a domain with no DMARC record.
+        f"test._domainkey.{SENDER_DOMAIN}": build_dns_for(
+            domain=SENDER_DOMAIN
+        )._records[f"test._domainkey.{SENDER_DOMAIN}"],
+    })
+    _configure_email_intake(
+        monkeypatch,
+        tmp_path,
+        EmailIntakeConfig(
+            mailgun_webhook_signing_key=SIGNING_KEY,
+            require_authenticated_sender=True,
+        ),
+        dns_resolver=dns,
+    )
+    form = _mailgun_form()
+
+    response = await api_client.post("/webhook/mail", data=form)
+
+    assert response.status_code == 401
+    assert "DMARC" in response.text
+    assert not await _email_exists(db_engine, form["Message-Id"])
 
 
 @pytest.mark.asyncio
@@ -441,7 +549,7 @@ async def test_mail_webhook_rejects_oversized_raw_payload(
         tmp_path,
         EmailIntakeConfig(max_raw_request_bytes=512),
     )
-    form = _mailgun_form(signing_key=None)
+    form = _mailgun_form(signing_key=None, include_body_mime=False)
     form["stripped-text"] = "x" * 2048
 
     response = await api_client.post("/webhook/mail", data=form)
@@ -484,7 +592,7 @@ async def test_mail_webhook_rejects_oversized_attachment(
         tmp_path,
         EmailIntakeConfig(max_attachment_bytes=3),
     )
-    form = _mailgun_form(signing_key=None)
+    form = _mailgun_form(signing_key=None, include_body_mime=False)
     form["attachment-count"] = "1"
 
     response = await api_client.post(
