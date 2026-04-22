@@ -494,6 +494,47 @@ async def test_mail_webhook_rejects_unsigned_message_when_dmarc_required(
 
 
 @pytest.mark.asyncio
+@pytest.mark.postgres
+async def test_mail_webhook_swallows_permissive_auth_errors(
+    api_client: httpx.AsyncClient,
+    db_engine: AsyncEngine,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """Fail-open telemetry: DNS/library errors during permissive evaluation must not 5xx.
+
+    With ``require_authenticated_sender=False`` the webhook evaluates DKIM/DMARC only
+    for telemetry, so operators can observe the result before flipping enforcement on.
+    An unreachable DNS resolver or a crash inside ``authheaders`` must not bubble up
+    and reject messages that would otherwise have been accepted.
+    """
+
+    def raising_resolver(_: str) -> str | None:
+        msg = "DNS unavailable"
+        raise RuntimeError(msg)
+
+    _configure_email_intake(
+        monkeypatch,
+        tmp_path,
+        EmailIntakeConfig(mailgun_webhook_signing_key=SIGNING_KEY),
+        dns_resolver=FakeDnsResolver(),
+    )
+    monkeypatch.setattr(
+        fastapi_app.state,
+        "email_intake_dns_resolver",
+        raising_resolver,
+        raising=False,
+    )
+    form = _mailgun_form()
+
+    response = await api_client.post("/webhook/mail", data=form)
+
+    assert response.status_code == 200, response.text
+    assert await _email_exists(db_engine, form["Message-Id"])
+    assert await _email_dmarc_result(db_engine, form["Message-Id"]) is None
+
+
+@pytest.mark.asyncio
 async def test_mail_webhook_rejects_missing_body_mime_when_auth_required(
     api_client: httpx.AsyncClient,
     db_engine: AsyncEngine,

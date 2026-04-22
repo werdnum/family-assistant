@@ -128,11 +128,19 @@ def verify_sender_authorization(
     if not config.require_authenticated_sender:
         if raw_mime is None:
             return None
-        return _evaluate_authentication(
-            raw_mime=raw_mime,
-            envelope_from=sender,
-            dns_resolver=dns_resolver,
-        )
+        try:
+            return _evaluate_authentication(
+                raw_mime=raw_mime,
+                envelope_from=sender,
+                dns_resolver=dns_resolver,
+            )
+        except Exception:
+            logger.warning(
+                "Permissive inbound email authentication evaluation failed; "
+                "accepting message without auth telemetry",
+                exc_info=True,
+            )
+            return None
 
     if raw_mime is None:
         msg = (
