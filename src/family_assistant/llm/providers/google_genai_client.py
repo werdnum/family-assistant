@@ -1503,7 +1503,11 @@ class GoogleGenAIClient(BaseLLMClient):
                 "agent": agent_name,
                 "background": True,
                 "stream": True,
-                "agent_config": {"type": "deep-research", "thinking_summaries": "auto"},
+                "agent_config": {
+                    "type": "deep-research",
+                    "thinking_summaries": "auto",
+                    "visualization": "auto",
+                },
             }
             if previous_interaction_id:
                 create_kwargs["previous_interaction_id"] = previous_interaction_id
@@ -1536,6 +1540,12 @@ class GoogleGenAIClient(BaseLLMClient):
                             type="content", content=f"\n*Thinking: {thought_text}*\n"
                         )
                         content_yielded = True
+                    elif chunk.delta.type == "image":
+                        # Image deltas (e.g. visualization charts) are not yet surfaced as
+                        # attachments; skip them so text output is unaffected.
+                        logger.debug(
+                            "Ignoring Deep Research image delta (visualization not yet wired)"
+                        )
 
                 elif chunk.event_type == "interaction.complete":
                     logger.info("Deep Research interaction complete")
