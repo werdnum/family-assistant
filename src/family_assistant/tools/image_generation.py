@@ -19,6 +19,7 @@ from family_assistant.tools.image_backends import (
     GeminiImageBackend,
     ImageGenerationBackend,
     MockImageBackend,
+    OpenAIImageBackend,
 )
 from family_assistant.tools.types import ToolAttachment, ToolDefinition, ToolResult
 
@@ -86,22 +87,40 @@ def _create_image_backend(
     if hasattr(exec_context, "image_backend"):
         return exec_context.image_backend  # type: ignore[attr-defined]
 
-    # Check configuration for API key
-    api_key = None
+    # Check configuration for API keys
+    app_config: AppConfig | None = None
     if exec_context.processing_service and hasattr(
         exec_context.processing_service, "app_config"
     ):
-        app_config: AppConfig | None = exec_context.processing_service.app_config
-        if app_config:
-            api_key = app_config.gemini_api_key
+        app_config = exec_context.processing_service.app_config
 
-    # Create appropriate backend
-    if api_key:
-        # Use Gemini backend directly - let errors surface instead of masking them
-        return GeminiImageBackend(api_key)
+    backend_choice = app_config.image_generation_backend if app_config else None
+    openai_key = app_config.openai_api_key if app_config else None
+    gemini_key = app_config.gemini_api_key if app_config else None
+
+    if backend_choice == "openai":
+        if not openai_key:
+            raise ValueError(
+                "image_generation_backend is 'openai' but OPENAI_API_KEY is not set"
+            )
+        return OpenAIImageBackend(openai_key)
+    elif backend_choice == "gemini":
+        if not gemini_key:
+            raise ValueError(
+                "image_generation_backend is 'gemini' but GEMINI_API_KEY is not set"
+            )
+        return GeminiImageBackend(gemini_key)
+    elif backend_choice == "mock":
+        return MockImageBackend()
+    # No explicit backend — auto-detect from available API keys
+    elif openai_key:
+        logger.info("No image_generation_backend configured, auto-selecting OpenAI")
+        return OpenAIImageBackend(openai_key)
+    elif gemini_key:
+        logger.info("No image_generation_backend configured, auto-selecting Gemini")
+        return GeminiImageBackend(gemini_key)
     else:
-        # Use mock backend when no API key is available
-        logger.info("No Google API key found, using mock image backend")
+        logger.info("No image_generation_backend or API keys configured, using mock")
         return MockImageBackend()
 
 

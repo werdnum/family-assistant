@@ -71,6 +71,7 @@ ENV_VAR_MAPPINGS: list[EnvVarMapping] = [
         "MAILGUN_WEBHOOK_SIGNING_KEY", "email_intake.mailgun_webhook_signing_key"
     ),
     EnvVarMapping("GEMINI_API_KEY", "gemini_api_key"),
+    EnvVarMapping("OPENAI_API_KEY", "openai_api_key"),
     EnvVarMapping("WILLYWEATHER_API_KEY", "willyweather_api_key"),
     EnvVarMapping("WILLYWEATHER_LOCATION_ID", "willyweather_location_id", int),
     # Database and server
@@ -1017,6 +1018,7 @@ def _log_config(
         "telegram_token",
         "openrouter_api_key",
         "gemini_api_key",
+        "openai_api_key",
         "willyweather_api_key",
         "database_url",
     }

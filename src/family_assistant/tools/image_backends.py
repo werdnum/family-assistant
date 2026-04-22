@@ -2,7 +2,7 @@
 Image generation backend protocols and implementations.
 
 This module defines the protocol for image generation backends and provides
-concrete implementations including mock (PIL-based) and Gemini API backends.
+concrete implementations including mock (PIL-based), Gemini API, and OpenAI API backends.
 """
 
 import asyncio
@@ -16,13 +16,20 @@ from typing import Protocol, runtime_checkable
 
 from PIL import Image, ImageDraw, ImageFilter, ImageFont, ImageOps
 
-# Optional import for production use
+# Optional imports for production use
 try:
     from google import genai
 
     GENAI_AVAILABLE = True
 except ImportError:
     GENAI_AVAILABLE = False
+
+try:
+    import openai
+
+    OPENAI_AVAILABLE = True
+except ImportError:
+    OPENAI_AVAILABLE = False
 
 logger = logging.getLogger(__name__)
 
@@ -478,6 +485,97 @@ class GeminiImageBackend:
         )
         mock_backend = MockImageBackend()
         return await mock_backend.transform_image(image_bytes, instruction)
+
+
+class OpenAIImageBackend:
+    """OpenAI API backend for image generation using gpt-image-2."""
+
+    def __init__(self, api_key: str) -> None:
+        """Initialize the OpenAI backend with API key."""
+        if not OPENAI_AVAILABLE:
+            raise ImportError("openai library required for OpenAI image generation")
+
+        self.api_key = api_key
+        self.client = openai.AsyncOpenAI(api_key=api_key)
+        self.logger = logging.getLogger(f"{__name__}.{self.__class__.__name__}")
+
+    async def generate_image(self, prompt: str, style: str = "auto") -> bytes:
+        """Generate image using OpenAI gpt-image-2 API."""
+        full_prompt = self._apply_style_to_prompt(prompt, style)
+
+        self.logger.debug(f"Calling OpenAI image API with prompt: {full_prompt}")
+
+        response = await self.client.images.generate(
+            model="gpt-image-2",
+            prompt=full_prompt,
+            size="1024x1024",
+            quality="high",
+            output_format="png",
+            n=1,
+        )
+
+        if not response.data:
+            raise ValueError("No image data in OpenAI API response")
+
+        b64_data = response.data[0].b64_json
+        if not b64_data:
+            raise ValueError("No image data in OpenAI API response")
+
+        image_bytes = base64.b64decode(b64_data)
+
+        self.logger.info(f"OpenAI returned image: {len(image_bytes)} bytes")
+        if response.usage:
+            self.logger.info(
+                f"Token usage: input={response.usage.input_tokens}, "
+                f"output={response.usage.output_tokens}"
+            )
+
+        return image_bytes
+
+    async def transform_image(self, image_bytes: bytes, instruction: str) -> bytes:
+        """Transform an existing image using OpenAI gpt-image-2 edit endpoint."""
+        self.logger.debug(f"Calling OpenAI image edit with instruction: {instruction}")
+
+        # gpt-image-2 supports mask-free editing
+        image_file = io.BytesIO(image_bytes)
+        image_file.name = "image.png"
+
+        response = await self.client.images.edit(
+            model="gpt-image-2",
+            image=image_file,
+            prompt=instruction,
+            size="1024x1024",
+            n=1,
+        )
+
+        if not response.data:
+            raise ValueError("No image data in OpenAI edit API response")
+
+        b64_data = response.data[0].b64_json
+        if not b64_data:
+            raise ValueError("No image data in OpenAI edit API response")
+
+        result_bytes = base64.b64decode(b64_data)
+        self.logger.info(f"OpenAI edit returned image: {len(result_bytes)} bytes")
+
+        return result_bytes
+
+    @staticmethod
+    def _apply_style_to_prompt(prompt: str, style: str) -> str:
+        """Inject style guidance into the prompt text."""
+        if style == "photorealistic":
+            return (
+                f"Generate a high-quality, photorealistic image. "
+                f"Scene description: {prompt}. "
+                f"Ensure realistic lighting, textures, and fine details."
+            )
+        elif style == "artistic":
+            return (
+                f"Generate a stylized, artistic illustration. "
+                f"Description: {prompt}. "
+                f"Focus on creative style, composition, and visual flair."
+            )
+        return prompt
 
 
 class FallbackImageBackend:
