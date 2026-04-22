@@ -275,10 +275,14 @@ with [`authheaders`](https://pypi.org/project/authheaders/) and
 [`dkimpy`](https://pypi.org/project/dkimpy/); it no longer trusts Mailgun's `dmarc`, `SPF`, or
 `Dkim` form fields or the embedded `Authentication-Results` header.
 
-Because local DKIM verification needs the byte-exact raw message, Mailgun routes must be configured
-to forward the MIME payload rather than the parsed representation (`forward('url', 'mime')`). The
-webhook reads the raw message from the `body-mime` form field. When `require_authenticated_sender`
-is true, requests without `body-mime` fail closed with `401`. DMARC failures always fail closed.
+Because local DKIM verification needs the byte-exact raw message, Mailgun must be configured to
+forward the MIME payload rather than the parsed representation. Mailgun only includes the raw
+message in the `body-mime` form field when the route's Destination URL path ends in `mime` or
+`raw-mime`; otherwise it sends parsed `body-plain`/`body-html` fields instead. The app therefore
+exposes the same webhook at both `/webhook/mail` and `/webhook/mail/mime`. Point the Mailgun route
+at the `/webhook/mail/mime` URL so Mailgun triggers raw-MIME forwarding. When
+`require_authenticated_sender` is true, requests without `body-mime` fail closed with `401`. DMARC
+failures always fail closed.
 
 | Option                         | Default | Recommended |
 | ------------------------------ | ------- | ----------- |

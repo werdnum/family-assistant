@@ -205,6 +205,40 @@ async def test_mail_webhook_accepts_signed_authorized_authenticated_sender(
 
 
 @pytest.mark.asyncio
+@pytest.mark.postgres
+async def test_mail_webhook_mime_alias_accepts_same_payload(
+    api_client: httpx.AsyncClient,
+    db_engine: AsyncEngine,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """The ``/webhook/mail/mime`` alias exists so Mailgun forwards raw MIME.
+
+    Mailgun only populates the ``body-mime`` form field when the destination URL
+    path ends in ``mime`` or ``raw-mime``. We expose the same handler at both
+    ``/webhook/mail`` and ``/webhook/mail/mime`` so operators can migrate by
+    swapping the Destination in Mailgun without changing the legacy path.
+    """
+    _configure_email_intake(
+        monkeypatch,
+        tmp_path,
+        EmailIntakeConfig(
+            mailgun_webhook_signing_key=SIGNING_KEY,
+            allowed_sender_addresses=[SENDER],
+            allowed_recipient_addresses=[RECIPIENT],
+            require_authenticated_sender=True,
+        ),
+    )
+    form = _mailgun_form()
+
+    response = await api_client.post("/webhook/mail/mime", data=form)
+
+    assert response.status_code == 200, response.text
+    assert await _email_exists(db_engine, form["Message-Id"])
+    assert await _email_dmarc_result(db_engine, form["Message-Id"]) == "pass"
+
+
+@pytest.mark.asyncio
 async def test_mail_webhook_rejects_invalid_mailgun_signature(
     api_client: httpx.AsyncClient,
     db_engine: AsyncEngine,

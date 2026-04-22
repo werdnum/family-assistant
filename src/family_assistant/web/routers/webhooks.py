@@ -71,6 +71,7 @@ async def _save_raw_mail_webhook(
 
 
 @webhooks_router.post("/webhook/mail")
+@webhooks_router.post("/webhook/mail/mime")
 async def handle_mail_webhook(
     request: Request,
     db_context: Annotated[DatabaseContext, Depends(get_db)],
@@ -78,6 +79,11 @@ async def handle_mail_webhook(
     """
     Receives incoming email via webhook (expects multipart/form-data from Mailgun),
     parses it, saves attachments, and passes structured data to the storage layer.
+
+    Mailgun only includes the raw RFC 822 message in the ``body-mime`` form field when
+    the route's Destination URL path ends in ``mime`` or ``raw-mime``. The alias route
+    ``/webhook/mail/mime`` exists so operators can point Mailgun at a URL that satisfies
+    that suffix requirement without renaming the legacy ``/webhook/mail`` path.
     """
     logger.info("Received POST request on /webhook/mail")
 
