@@ -176,8 +176,16 @@ _SNAPSHOT_JS = r"""
   function accName(el) {
     const labelledBy = el.getAttribute('aria-labelledby');
     if (labelledBy) {
-      const target = document.getElementById(labelledBy);
-      if (target) return target.textContent.trim();
+      // aria-labelledby is a space-separated list of IDs whose text content is
+      // joined in document order — see the ARIA Accessible Name Computation
+      // spec. Dropping all but the first ID silently produces wrong names for
+      // composite labels like `<span id="a">Quantity</span><span id="b">lbs</span>`.
+      const parts = [];
+      for (const id of labelledBy.trim().split(/\s+/)) {
+        const target = id && document.getElementById(id);
+        if (target) parts.push(target.textContent.trim());
+      }
+      if (parts.length) return parts.join(' ');
     }
     const aria = el.getAttribute('aria-label');
     if (aria) return aria.trim();

@@ -89,6 +89,20 @@ SUBMIT_HTML_TEMPLATE = """<!doctype html>
 </html>
 """
 
+# Exercises the multi-ID form of ``aria-labelledby``: the input below should
+# pick up "Quantity lbs" as its accessible name, not just the first referenced
+# span.
+LABELLEDBY_HTML = """<!doctype html>
+<html>
+  <head><title>Labelled</title></head>
+  <body>
+    <span id="lbl-a">Quantity</span>
+    <span id="lbl-b">lbs</span>
+    <input id="qty" type="number" aria-labelledby="lbl-a lbl-b" />
+  </body>
+</html>
+"""
+
 
 async def _index(_request: web.Request) -> web.Response:
     return web.Response(text=INDEX_HTML, content_type="text/html")
@@ -105,6 +119,10 @@ async def _submit(request: web.Request) -> web.Response:
         text=SUBMIT_HTML_TEMPLATE.format(query=query, color=color),
         content_type="text/html",
     )
+
+
+async def _labelledby(_request: web.Request) -> web.Response:
+    return web.Response(text=LABELLEDBY_HTML, content_type="text/html")
 
 
 @dataclass
@@ -127,6 +145,7 @@ async def fixture_server() -> AsyncGenerator[BoundFixtureServer]:
     app.router.add_get("/", _index)
     app.router.add_get("/about", _about)
     app.router.add_get("/submit", _submit)
+    app.router.add_get("/labelledby", _labelledby)
 
     server = TestServer(app)
     await server.start_server()
@@ -313,6 +332,32 @@ async def test_unknown_ref_raises_clear_error(
     await browser_open_tool(exec_context, fixture_server.url + "/")
     with pytest.raises(ValueError, match="Unknown ref 'e999'"):
         await browser_click_tool(exec_context, ref="e999")
+
+
+async def test_aria_labelledby_joins_multiple_ids(
+    fixture_server: BoundFixtureServer, exec_context: ToolExecutionContext
+) -> None:
+    """``aria-labelledby`` is a space-separated list; the snapshot must
+    concatenate the referenced labels in document order. A naive
+    ``getElementById(attr)`` would silently drop all but the first label."""
+    result = await browser_open_tool(exec_context, fixture_server.url + "/labelledby")
+    data = result.get_data()
+    assert isinstance(data, dict)
+
+    def walk(nodes: list[SnapshotNode]) -> SnapshotNode | None:
+        for node in nodes:
+            if node["role"] == "textbox":
+                return node
+            children = node.get("children", [])
+            if children:
+                found = walk(children)
+                if found is not None:
+                    return found
+        return None
+
+    textbox = walk(data["roots"])
+    assert textbox is not None, f"no textbox in snapshot:\n{result.get_text()}"
+    assert textbox["name"] == "Quantity lbs"
 
 
 def _first_ref_for(snap: ToolResult, role: str) -> str:
