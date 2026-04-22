@@ -498,3 +498,101 @@ async def test_deep_research_unknown_error_code_yields_generic(
     with pytest.raises(LLMProviderError, match="Something went wrong"):
         async for _ in client.generate_response_stream(messages):
             pass
+
+
+@pytest.mark.parametrize(
+    "model_id",
+    [
+        "deep-research-pro-preview-12-2025",
+        "deep-research-preview-04-2026",
+        "deep-research-max-preview-04-2026",
+    ],
+)
+def test_is_deep_research_model_matches_all_tiers(model_id: str) -> None:
+    """Both the legacy preview and the 04-2026 regular/max tiers should route to deep research."""
+    client = GoogleGenAIClient(api_key="test", model=model_id)
+    assert client._is_deep_research_model(model_id) is True
+
+
+@pytest.mark.asyncio
+async def test_deep_research_agent_config_includes_visualization(
+    mock_genai_client: MagicMock,
+) -> None:
+    """agent_config should request visualizations alongside thought summaries."""
+    client = GoogleGenAIClient(
+        api_key="test", model="deep-research-max-preview-04-2026"
+    )
+
+    async def mock_stream_generator() -> AsyncGenerator[MagicMock]:
+        mock_start = MagicMock()
+        mock_start.event_type = "interaction.start"
+        mock_start.interaction.id = "inter_viz"
+        mock_start.event_id = "evt_0"
+        yield mock_start
+
+        mock_complete = MagicMock()
+        mock_complete.event_type = "interaction.complete"
+        mock_complete.event_id = "evt_1"
+        yield mock_complete
+
+    mock_genai_client.aio.interactions.create = AsyncMock(
+        return_value=mock_stream_generator()
+    )
+
+    async for _ in client.generate_response_stream([UserMessage(content="Test")]):
+        pass
+
+    call_kwargs = mock_genai_client.aio.interactions.create.call_args.kwargs
+    assert call_kwargs["agent"] == "deep-research-max-preview-04-2026"
+    assert call_kwargs["agent_config"] == {
+        "type": "deep-research",
+        "thinking_summaries": "auto",
+        "visualization": "auto",
+    }
+
+
+@pytest.mark.asyncio
+async def test_deep_research_image_delta_is_skipped(
+    mock_genai_client: MagicMock,
+) -> None:
+    """Image deltas should be ignored cleanly without breaking the stream."""
+    client = GoogleGenAIClient(api_key="test", model="deep-research-preview-04-2026")
+
+    async def mock_stream_generator() -> AsyncGenerator[MagicMock]:
+        mock_start = MagicMock()
+        mock_start.event_type = "interaction.start"
+        mock_start.interaction.id = "inter_img"
+        mock_start.event_id = "evt_0"
+        yield mock_start
+
+        mock_image = MagicMock()
+        mock_image.event_type = "content.delta"
+        mock_image.delta.type = "image"
+        mock_image.event_id = "evt_1"
+        yield mock_image
+
+        mock_text = MagicMock()
+        mock_text.event_type = "content.delta"
+        mock_text.delta.type = "text"
+        mock_text.delta.text = "After image"
+        mock_text.event_id = "evt_2"
+        yield mock_text
+
+        mock_complete = MagicMock()
+        mock_complete.event_type = "interaction.complete"
+        mock_complete.event_id = "evt_3"
+        yield mock_complete
+
+    mock_genai_client.aio.interactions.create = AsyncMock(
+        return_value=mock_stream_generator()
+    )
+
+    events = []
+    async for event in client.generate_response_stream([UserMessage(content="Test")]):
+        events.append(event)
+
+    content_events = [e for e in events if e.type == "content"]
+    assert len(content_events) == 1
+    assert content_events[0].content == "After image"
+    done_events = [e for e in events if e.type == "done"]
+    assert len(done_events) == 1

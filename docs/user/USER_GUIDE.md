@@ -21,7 +21,9 @@ services to respond or perform actions.
   tell you its name). \*Start a chat and simply send messages with your questions or requests. \*You
   can also use **slash commands** to activate specialized modes for certain tasks. For example,
   typing `/browse` before your query activates a powerful web browsing mode for complex web tasks or
-  research, while `/research` focuses the assistant on in-depth research questions.
+  research, while `/research` focuses the assistant on in-depth research questions. For
+  investigations that need the most thorough, multi-source synthesis (at the cost of longer
+  latency), use `/research_max` instead.
 
 - **Web Interface (Secondary):** \*There's also a web interface for various tasks: \*Chat directly
   with the assistant with real-time streaming responses. \*Managing notes. \*Viewing and filtering
@@ -525,10 +527,13 @@ various tasks with dark mode support and mobile optimization.
 
 - **Use Slash Commands:** For specialized tasks like complex web browsing (e.g.,
   `/browse find travel options to Paris for next June`), in-depth research (e.g.,
-  `/research Tell me about the history of Python`), complex multi-step reasoning or planning (e.g.,
+  `/research Tell me about the history of Python`), the most comprehensive deep research (e.g.,
+  `/research_max Compare the regulatory landscape for autonomous vehicles across the EU, US, and Japan`),
+  complex multi-step reasoning or planning (e.g.,
   `/complex Plan a detailed family vacation considering everyone's schedules and preferences`), or
   engineering diagnostics (e.g., `/engineer Why isn't my daily brief automation triggering?`), using
-  the appropriate slash command can provide more focused and effective responses.
+  the appropriate slash command can provide more focused and effective responses. Use `/research`
+  for most questions and reach for `/research_max` when thoroughness matters more than turnaround.
 
 - **Mobile Experience:** The web interface is fully optimized for mobile devices. All features are
   accessible on phones and tablets with responsive design that adapts to your screen size.
