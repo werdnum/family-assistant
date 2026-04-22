@@ -115,8 +115,8 @@ async def assert_bot_sent_message_with_keyboard(
     updates = await wait_for_bot_response(client, timeout)
 
     for update in updates:
-        message = update.get("message", {})
-        reply_markup = message.get("reply_markup", {})
+        message = update.get("message") or {}
+        reply_markup = message.get("reply_markup") or {}
         if reply_markup.get("inline_keyboard"):
             return update
 

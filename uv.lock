@@ -792,6 +792,18 @@ wheels = [
 ]
 
 [[package]]
+name = "authheaders"
+version = "0.16.3"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "authres" },
+    { name = "dkimpy" },
+    { name = "dnspython" },
+    { name = "publicsuffix2" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/6a/3b/50fb88a96976e14730bb0eb699be194ed66146489a64ddb3ccfed5b75e85/authheaders-0.16.3.tar.gz", hash = "sha256:118edc6d3cb1ad18ffab3d788ccc562fca2854cd645faab08fc47033c648148a", size = 115428, upload-time = "2024-06-24T12:44:18.977Z" }
+
+[[package]]
 name = "authlib"
 version = "1.6.4"
 source = { registry = "https://pypi.org/simple" }
@@ -804,6 +816,12 @@ sdist = { url = "https://files.pythonhosted.org/packages/ce/bb/73a1f1c64ee527877
 wheels = [
     { url = "https://files.pythonhosted.org/packages/0e/aa/91355b5f539caf1b94f0e66ff1e4ee39373b757fce08204981f7829ede51/authlib-1.6.4-py2.py3-none-any.whl", hash = "sha256:39313d2a2caac3ecf6d8f95fbebdfd30ae6ea6ae6a6db794d976405fdd9aa796", size = 243076, upload-time = "2025-09-17T09:59:22.259Z" },
 ]
+
+[[package]]
+name = "authres"
+version = "1.2.0"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/6a/29/e28209b5d3d56c102845cca5a4a3abaf2724f79e83476a52b94d775ecce6/authres-1.2.0.tar.gz", hash = "sha256:93d1b995ad7ce21e62db649f361048125dd6022563a0ae8a23909465f1fd25b7", size = 23226, upload-time = "2019-08-03T19:38:00.494Z" }
 
 [[package]]
 name = "awesomeversion"
@@ -1583,6 +1601,15 @@ wheels = [
 ]
 
 [[package]]
+name = "dkimpy"
+version = "1.1.8"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "dnspython" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/f0/6f/84e91828186bbfcedd7f9385ef5e0d369632444195c20e08951b7ffe0481/dkimpy-1.1.8.tar.gz", hash = "sha256:b5f60fb47bbf5d8d762f134bcea0c388eba6b498342a682a21f1686545094b77", size = 66979, upload-time = "2024-07-04T22:16:38.321Z" }
+
+[[package]]
 name = "dnspython"
 version = "2.8.0"
 source = { registry = "https://pypi.org/simple" }
@@ -1662,12 +1689,15 @@ dependencies = [
     { name = "anthropic" },
     { name = "anyio" },
     { name = "asyncpg" },
+    { name = "authheaders" },
     { name = "authlib" },
     { name = "backoff" },
     { name = "bcrypt", version = "4.2.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.13.2' or platform_python_implementation == 'PyPy'" },
     { name = "bcrypt", version = "4.3.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.13.2' and platform_python_implementation != 'PyPy'" },
     { name = "caldav" },
     { name = "cloudcoil-models-kubernetes" },
+    { name = "dkimpy" },
+    { name = "dnspython" },
     { name = "fastapi" },
     { name = "filetype" },
     { name = "genson" },
@@ -1704,6 +1734,7 @@ dependencies = [
     { name = "pycares" },
     { name = "pydantic-monty" },
     { name = "pydantic-settings" },
+    { name = "pyspf" },
     { name = "python-dateutil" },
     { name = "python-dotenv" },
     { name = "python-multipart" },
@@ -1804,12 +1835,15 @@ requires-dist = [
     { name = "assertpy", marker = "extra == 'dev'", specifier = ">=1.1" },
     { name = "ast-grep-cli", marker = "extra == 'dev'", specifier = ">=0.39.0" },
     { name = "asyncpg", specifier = ">=0.29.0" },
+    { name = "authheaders", specifier = ">=0.16.3" },
     { name = "authlib", specifier = ">=1.3.1" },
     { name = "backoff", specifier = ">=2.2.1" },
     { name = "basedpyright", marker = "extra == 'dev'" },
     { name = "bcrypt", specifier = ">=4.0.0,<5.0.0" },
     { name = "caldav", specifier = ">=1.2.0" },
     { name = "cloudcoil-models-kubernetes", specifier = ">=1.32" },
+    { name = "dkimpy", specifier = ">=1.1.8" },
+    { name = "dnspython", specifier = ">=2.8.0" },
     { name = "fastapi", specifier = ">=0.111.0" },
     { name = "fastapi-sso", marker = "extra == 'dev'", specifier = ">=0.18.0" },
     { name = "filetype", specifier = ">=1.2.0" },
@@ -1866,6 +1900,7 @@ requires-dist = [
     { name = "pydantic-monty", specifier = ">=0.0.3" },
     { name = "pydantic-settings", specifier = ">=2.10.1" },
     { name = "pylint", marker = "extra == 'dev'", specifier = ">=3.0.0" },
+    { name = "pyspf", specifier = ">=2.0.14" },
     { name = "pytest", marker = "extra == 'dev'" },
     { name = "pytest-alembic", marker = "extra == 'dev'", specifier = ">=0.11.0" },
     { name = "pytest-asyncio", marker = "extra == 'dev'", specifier = ">=0.26.0" },
@@ -4629,6 +4664,15 @@ wheels = [
 ]
 
 [[package]]
+name = "publicsuffix2"
+version = "2.20191221"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/5a/04/1759906c4c5b67b2903f546de234a824d4028ef24eb0b1122daa43376c20/publicsuffix2-2.20191221.tar.gz", hash = "sha256:00f8cc31aa8d0d5592a5ced19cccba7de428ebca985db26ac852d920ddd6fe7b", size = 99592, upload-time = "2019-12-21T11:30:44.863Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/9d/16/053c2945c5e3aebeefb4ccd5c5e7639e38bc30ad1bdc7ce86c6d01707726/publicsuffix2-2.20191221-py2.py3-none-any.whl", hash = "sha256:786b5e36205b88758bd3518725ec8cfe7a8173f5269354641f581c6b80a99893", size = 89033, upload-time = "2019-12-21T11:30:41.744Z" },
+]
+
+[[package]]
 name = "puremagic"
 version = "1.30"
 source = { registry = "https://pypi.org/simple" }
@@ -5048,6 +5092,12 @@ name = "pyspeex-noise"
 version = "1.0.2"
 source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/ee/1d/7d2ebb8f73c2b2e929b4ba5370b35dbc91f37268ea53f4b6acd9afa532cb/pyspeex_noise-1.0.2.tar.gz", hash = "sha256:56a888ca2ef7fdea2316aa7fad3636d2fcf5f4450f3a0db58caa7c10a614b254", size = 49882, upload-time = "2024-08-27T17:00:34.859Z" }
+
+[[package]]
+name = "pyspf"
+version = "2.0.14"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/d4/dc/5b3838ff90474e21fe0914920c53430f73402e07d6598ea228e61b74963e/pyspf-2.0.14.tar.gz", hash = "sha256:57a7ef01bda090173aafb6af0106251686ed73f03db4e911fcd34c57fc347186", size = 69446, upload-time = "2020-01-02T02:54:37.109Z" }
 
 [[package]]
 name = "pytest"
