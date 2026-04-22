@@ -488,7 +488,7 @@ class GeminiImageBackend:
 
 
 class OpenAIImageBackend:
-    """OpenAI API backend for image generation using gpt-image-1."""
+    """OpenAI API backend for image generation using gpt-image-2."""
 
     def __init__(self, api_key: str) -> None:
         """Initialize the OpenAI backend with API key."""
@@ -500,7 +500,7 @@ class OpenAIImageBackend:
         self.logger = logging.getLogger(f"{__name__}.{self.__class__.__name__}")
 
     async def generate_image(self, prompt: str, style: str = "auto") -> bytes:
-        """Generate image using OpenAI gpt-image-1 API."""
+        """Generate image using OpenAI gpt-image-2 API."""
         quality = self._style_to_quality(style)
 
         self.logger.debug(
@@ -508,7 +508,7 @@ class OpenAIImageBackend:
         )
 
         response = await self.client.images.generate(
-            model="gpt-image-1",
+            model="gpt-image-2",
             prompt=prompt,
             size="1024x1024",
             quality=quality,
@@ -535,15 +535,15 @@ class OpenAIImageBackend:
         return image_bytes
 
     async def transform_image(self, image_bytes: bytes, instruction: str) -> bytes:
-        """Transform an existing image using OpenAI gpt-image-1 edit endpoint."""
+        """Transform an existing image using OpenAI gpt-image-2 edit endpoint."""
         self.logger.debug(f"Calling OpenAI image edit with instruction: {instruction}")
 
-        # gpt-image-1 supports mask-free editing
+        # gpt-image-2 supports mask-free editing
         image_file = io.BytesIO(image_bytes)
         image_file.name = "image.png"
 
         response = await self.client.images.edit(
-            model="gpt-image-1",
+            model="gpt-image-2",
             image=image_file,
             prompt=instruction,
             size="1024x1024",

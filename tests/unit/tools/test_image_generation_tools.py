@@ -401,7 +401,7 @@ class TestOpenAIImageBackend:
         assert img.format == "PNG"
 
         call_kwargs = openai_backend.client.images.generate.call_args.kwargs
-        assert call_kwargs["model"] == "gpt-image-1"
+        assert call_kwargs["model"] == "gpt-image-2"
         assert call_kwargs["prompt"] == "a red square"
         assert call_kwargs["quality"] == "high"
 
@@ -469,7 +469,7 @@ class TestOpenAIImageBackend:
         assert len(result) > 0
 
         call_kwargs = openai_backend.client.images.edit.call_args.kwargs
-        assert call_kwargs["model"] == "gpt-image-1"
+        assert call_kwargs["model"] == "gpt-image-2"
         assert call_kwargs["prompt"] == "make it red"
 
     def test_style_to_quality_mapping(self) -> None:
@@ -484,16 +484,16 @@ class TestBackendSelection:
     """Test that the correct backend is selected based on configuration."""
 
     @pytest.mark.asyncio
-    async def test_openai_key_selects_openai_backend(self) -> None:
-        """When OpenAI key is set, OpenAI backend is used."""
+    async def test_openai_backend_selected(self) -> None:
+        """When image_generation_backend is 'openai', OpenAI backend is used."""
         app_config = Mock()
+        app_config.image_generation_backend = "openai"
         app_config.openai_api_key = "test-openai-key"
         app_config.gemini_api_key = None
 
         context = Mock()
         context.processing_service = Mock()
         context.processing_service.app_config = app_config
-        # Ensure no injected backend
         del context.image_backend
 
         with patch(
@@ -507,9 +507,10 @@ class TestBackendSelection:
             mock_cls.assert_called_once_with("test-openai-key")
 
     @pytest.mark.asyncio
-    async def test_gemini_key_selects_gemini_backend(self) -> None:
-        """When only Gemini key is set, Gemini backend is used."""
+    async def test_gemini_backend_selected(self) -> None:
+        """When image_generation_backend is 'gemini', Gemini backend is used."""
         app_config = Mock()
+        app_config.image_generation_backend = "gemini"
         app_config.openai_api_key = None
         app_config.gemini_api_key = "test-gemini-key"
 
@@ -529,9 +530,10 @@ class TestBackendSelection:
             mock_cls.assert_called_once_with("test-gemini-key")
 
     @pytest.mark.asyncio
-    async def test_no_keys_selects_mock_backend(self) -> None:
-        """When no API keys are set, mock backend is used."""
+    async def test_mock_backend_selected(self) -> None:
+        """When image_generation_backend is 'mock', mock backend is used."""
         app_config = Mock()
+        app_config.image_generation_backend = "mock"
         app_config.openai_api_key = None
         app_config.gemini_api_key = None
 
@@ -546,26 +548,58 @@ class TestBackendSelection:
         assert result.attachments and len(result.attachments) > 0
 
     @pytest.mark.asyncio
-    async def test_openai_preferred_over_gemini(self) -> None:
-        """When both keys are set, OpenAI is preferred."""
+    async def test_no_backend_configured_uses_mock(self) -> None:
+        """When image_generation_backend is None, falls back to mock."""
         app_config = Mock()
-        app_config.openai_api_key = "test-openai-key"
-        app_config.gemini_api_key = "test-gemini-key"
+        app_config.image_generation_backend = None
+        app_config.openai_api_key = "key-present-but-unused"
+        app_config.gemini_api_key = "key-present-but-unused"
 
         context = Mock()
         context.processing_service = Mock()
         context.processing_service.app_config = app_config
         del context.image_backend
 
-        with patch(
-            "family_assistant.tools.image_generation.OpenAIImageBackend"
-        ) as mock_cls:
-            mock_backend = Mock()
-            mock_backend.generate_image = AsyncMock(return_value=_make_png_bytes())
-            mock_cls.return_value = mock_backend
+        result = await generate_image_tool(context, prompt="test landscape")
 
-            await generate_image_tool(context, prompt="test")
-            mock_cls.assert_called_once_with("test-openai-key")
+        assert isinstance(result, ToolResult)
+        assert result.attachments and len(result.attachments) > 0
+
+    @pytest.mark.asyncio
+    async def test_openai_backend_without_key_raises(self) -> None:
+        """When backend is 'openai' but no key, error is returned."""
+        app_config = Mock()
+        app_config.image_generation_backend = "openai"
+        app_config.openai_api_key = None
+        app_config.gemini_api_key = None
+
+        context = Mock()
+        context.processing_service = Mock()
+        context.processing_service.app_config = app_config
+        del context.image_backend
+
+        result = await generate_image_tool(context, prompt="test")
+
+        assert isinstance(result, ToolResult)
+        assert "OPENAI_API_KEY is not set" in result.get_text()
+
+    @pytest.mark.asyncio
+    async def test_gemini_backend_without_key_raises(self) -> None:
+        """When backend is 'gemini' but no key, error is returned."""
+        app_config = Mock()
+        app_config.image_generation_backend = "gemini"
+        app_config.openai_api_key = None
+        app_config.gemini_api_key = None
+
+        context = Mock()
+        context.processing_service = Mock()
+        context.processing_service.app_config = app_config
+        del context.image_backend
+
+        result = await generate_image_tool(context, prompt="test")
+
+        assert isinstance(result, ToolResult)
+        assert "GEMINI_API_KEY is not set" in result.get_text()
 
 
 def _make_png_bytes() -> bytes:

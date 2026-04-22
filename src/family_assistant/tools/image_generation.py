@@ -94,17 +94,27 @@ def _create_image_backend(
     ):
         app_config = exec_context.processing_service.app_config
 
+    backend_choice = app_config.image_generation_backend if app_config else None
     openai_key = app_config.openai_api_key if app_config else None
     gemini_key = app_config.gemini_api_key if app_config else None
 
-    # Prefer OpenAI (gpt-image-1 supports both generation and editing natively),
-    # fall back to Gemini, then mock
-    if openai_key:
+    if backend_choice == "openai":
+        if not openai_key:
+            raise ValueError(
+                "image_generation_backend is 'openai' but OPENAI_API_KEY is not set"
+            )
         return OpenAIImageBackend(openai_key)
-    elif gemini_key:
+    elif backend_choice == "gemini":
+        if not gemini_key:
+            raise ValueError(
+                "image_generation_backend is 'gemini' but GEMINI_API_KEY is not set"
+            )
         return GeminiImageBackend(gemini_key)
+    elif backend_choice == "mock":
+        return MockImageBackend()
     else:
-        logger.info("No image API key found, using mock image backend")
+        # No explicit backend configured — fall back to mock
+        logger.info("No image_generation_backend configured, using mock image backend")
         return MockImageBackend()
 
 

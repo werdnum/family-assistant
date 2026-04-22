@@ -937,6 +937,9 @@ class AppConfig(BaseSettings):
     allowed_user_ids: list[int] = Field(default_factory=list)
     developer_chat_id: int | None = None
 
+    # Image generation
+    image_generation_backend: Literal["openai", "gemini", "mock"] | None = None
+
     # Model configuration
     model: str = "gemini/gemini-2.5-pro"
     embedding_model: str = "gemini/gemini-embedding-001"
