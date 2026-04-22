@@ -472,6 +472,44 @@ class TestOpenAIImageBackend:
         assert call_kwargs["model"] == "gpt-image-2"
         assert call_kwargs["prompt"] == "make it red"
 
+    @pytest.mark.asyncio
+    async def test_transform_image_no_data_raises(
+        self, openai_backend: OpenAIImageBackend
+    ) -> None:
+        """Test error when transform API returns no data."""
+        mock_response = Mock()
+        mock_response.data = None
+
+        openai_backend.client.images.edit = AsyncMock(return_value=mock_response)
+
+        # Create dummy image bytes
+        src_img = Image.new("RGB", (64, 64), color=(0, 0, 255))
+        buf = io.BytesIO()
+        src_img.save(buf, format="PNG")
+        src_bytes = buf.getvalue()
+
+        with pytest.raises(ValueError, match="No image data"):
+            await openai_backend.transform_image(src_bytes, "make it red")
+
+    @pytest.mark.asyncio
+    async def test_transform_image_no_b64_raises(
+        self, openai_backend: OpenAIImageBackend
+    ) -> None:
+        """Test error when transform API returns empty b64_json."""
+        mock_response = Mock()
+        mock_response.data = [Mock(b64_json=None)]
+
+        openai_backend.client.images.edit = AsyncMock(return_value=mock_response)
+
+        # Create dummy image bytes
+        src_img = Image.new("RGB", (64, 64), color=(0, 0, 255))
+        buf = io.BytesIO()
+        src_img.save(buf, format="PNG")
+        src_bytes = buf.getvalue()
+
+        with pytest.raises(ValueError, match="No image data"):
+            await openai_backend.transform_image(src_bytes, "make it red")
+
     def test_style_to_quality_mapping(self) -> None:
         """Test style-to-quality mapping."""
         assert OpenAIImageBackend._style_to_quality("photorealistic") == "high"
@@ -548,12 +586,58 @@ class TestBackendSelection:
         assert result.attachments and len(result.attachments) > 0
 
     @pytest.mark.asyncio
-    async def test_no_backend_configured_uses_mock(self) -> None:
-        """When image_generation_backend is None, falls back to mock."""
+    async def test_no_backend_configured_autodetects_openai(self) -> None:
+        """When image_generation_backend is None and OpenAI key exists, use OpenAI."""
         app_config = Mock()
         app_config.image_generation_backend = None
-        app_config.openai_api_key = "key-present-but-unused"
-        app_config.gemini_api_key = "key-present-but-unused"
+        app_config.openai_api_key = "test-key"
+        app_config.gemini_api_key = None
+
+        context = Mock()
+        context.processing_service = Mock()
+        context.processing_service.app_config = app_config
+        del context.image_backend
+
+        with patch(
+            "family_assistant.tools.image_generation.OpenAIImageBackend"
+        ) as mock_cls:
+            mock_backend = Mock()
+            mock_backend.generate_image = AsyncMock(return_value=_make_png_bytes())
+            mock_cls.return_value = mock_backend
+
+            await generate_image_tool(context, prompt="test")
+            mock_cls.assert_called_once_with("test-key")
+
+    @pytest.mark.asyncio
+    async def test_no_backend_configured_autodetects_gemini(self) -> None:
+        """When image_generation_backend is None and Gemini key exists, use Gemini."""
+        app_config = Mock()
+        app_config.image_generation_backend = None
+        app_config.openai_api_key = None
+        app_config.gemini_api_key = "test-key"
+
+        context = Mock()
+        context.processing_service = Mock()
+        context.processing_service.app_config = app_config
+        del context.image_backend
+
+        with patch(
+            "family_assistant.tools.image_generation.GeminiImageBackend"
+        ) as mock_cls:
+            mock_backend = Mock()
+            mock_backend.generate_image = AsyncMock(return_value=_make_png_bytes())
+            mock_cls.return_value = mock_backend
+
+            await generate_image_tool(context, prompt="test")
+            mock_cls.assert_called_once_with("test-key")
+
+    @pytest.mark.asyncio
+    async def test_no_backend_configured_uses_mock(self) -> None:
+        """When image_generation_backend is None and no API keys, use mock."""
+        app_config = Mock()
+        app_config.image_generation_backend = None
+        app_config.openai_api_key = None
+        app_config.gemini_api_key = None
 
         context = Mock()
         context.processing_service = Mock()

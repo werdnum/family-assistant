@@ -112,9 +112,15 @@ def _create_image_backend(
         return GeminiImageBackend(gemini_key)
     elif backend_choice == "mock":
         return MockImageBackend()
+    # No explicit backend — auto-detect from available API keys
+    elif openai_key:
+        logger.info("No image_generation_backend configured, auto-selecting OpenAI")
+        return OpenAIImageBackend(openai_key)
+    elif gemini_key:
+        logger.info("No image_generation_backend configured, auto-selecting Gemini")
+        return GeminiImageBackend(gemini_key)
     else:
-        # No explicit backend configured — fall back to mock
-        logger.info("No image_generation_backend configured, using mock image backend")
+        logger.info("No image_generation_backend or API keys configured, using mock")
         return MockImageBackend()
 
 
