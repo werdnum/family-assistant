@@ -555,3 +555,67 @@ async def test_attachment_display_in_message_history(
     finally:
         # Clean up temp file
         await anyio.Path(temp_path).unlink(missing_ok=True)
+
+
+@pytest.mark.playwright
+@pytest.mark.asyncio
+async def test_selecting_image_fires_upload_request(
+    web_test_fixture: WebTestFixture, mock_llm_client: RuleBasedMockLLMClient
+) -> None:
+    """Regression test: picking a file must eagerly POST to /api/attachments/upload.
+
+    The original adapter returned a ``running`` attachment from ``add()`` but
+    deferred the actual upload until ``send()``. That left the UI stuck
+    showing "Uploading..." with zero network activity until the user sent the
+    message — which looked broken, so most users never sent. The adapter now
+    uploads eagerly in ``add()``; this test asserts the POST fires as soon as
+    a file is selected, independently of any send action.
+    """
+    page = web_test_fixture.page
+    chat_page = ChatPage(page, web_test_fixture.base_url)
+
+    upload_urls: list[str] = []
+
+    def handle_request(request: Any) -> None:  # noqa: ANN401 - playwright request object has no public type
+        if "/api/attachments/upload" in request.url and request.method == "POST":
+            upload_urls.append(request.url)
+
+    page.on("request", handle_request)
+
+    await chat_page.navigate_to_chat()
+
+    with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as temp_file:
+        img = Image.new("RGB", (80, 80), color="red")
+        img.save(temp_file.name, "PNG")
+        temp_path = temp_file.name
+
+    try:
+        attachment_button = page.locator('[data-testid="add-attachment-button"]').first
+        await attachment_button.wait_for(state="visible", timeout=10000)
+
+        async with page.expect_file_chooser() as fc_info:
+            await attachment_button.click()
+        file_chooser = await fc_info.value
+        await file_chooser.set_files(temp_path)
+
+        # Preview appearing confirms the adapter's add() generator yielded
+        # its first ``running`` state into the composer.
+        attachment_preview = page.locator('[data-testid="attachment-preview"]').first
+        await attachment_preview.wait_for(state="visible", timeout=5000)
+
+        # Poll for the upload POST. If the runtime skips the adapter, or the
+        # adapter defers the upload to send-time, this list stays empty.
+        deadline = time.time() + 10
+        while not upload_urls and time.time() < deadline:  # noqa: ASYNC110 - polling a playwright callback-populated list, not awaitable I/O
+            # ast-grep-ignore: no-asyncio-sleep-in-tests - polling for a network event captured via playwright callback
+            await asyncio.sleep(0.1)
+
+        assert upload_urls, (
+            "Expected POST /api/attachments/upload to fire when a file is "
+            "selected. No upload request was captured — the adapter is "
+            "likely not uploading eagerly in add(), leaving the UI stuck on "
+            "'Uploading...' with no network activity."
+        )
+
+    finally:
+        await anyio.Path(temp_path).unlink(missing_ok=True)

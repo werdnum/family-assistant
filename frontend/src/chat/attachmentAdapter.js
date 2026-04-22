@@ -75,89 +75,68 @@ export class FileAttachmentAdapter {
   }
 
   /**
-   * Process a file when it's added to the composer
+   * Process a file when it's added to the composer. Uploads eagerly: yields
+   * a ``running`` attachment first so the UI can show progress, then yields
+   * the ``complete`` attachment with the server URL once the upload lands.
+   * Splitting the upload into send-time would leave the UI claiming
+   * "Uploading..." with no network activity until the user hits send.
    * @param {Object} params - The parameters object
    * @param {File} params.file - The file being added
-   * @returns {Promise<Object>} Attachment object
    */
-  async add({ file }) {
+  async *add({ file }) {
+    const id = generateUUID();
     try {
-      // Validate the file
       validateFile(file);
-
-      // Determine attachment type based on file MIME type
-      let attachmentType = 'file';
-      if (SUPPORTED_IMAGE_TYPES.includes(file.type)) {
-        attachmentType = 'image';
-      } else if (file.type === 'application/pdf' || file.type.startsWith('text/')) {
-        attachmentType = 'document';
-      }
-
-      // Create initial attachment object
-      const attachment = {
-        id: generateUUID(),
-        type: attachmentType,
-        name: file.name,
-        file,
-        status: { type: 'running' },
-      };
-
-      return attachment;
     } catch (error) {
-      // Return attachment with error status
-      return {
-        id: generateUUID(),
+      yield {
+        id,
         type: 'file',
         name: file.name,
         file,
-        status: {
-          type: 'error',
-          error: error.message,
-        },
+        status: { type: 'error', error: error.message },
       };
+      return;
     }
-  }
 
-  /**
-   * Process attachment for sending (upload to service)
-   * @param {Object} attachment - The attachment to process
-   * @returns {Promise<Object>} Processed attachment with content parts array
-   */
-  async send(attachment) {
+    let attachmentType = 'file';
+    if (SUPPORTED_IMAGE_TYPES.includes(file.type)) {
+      attachmentType = 'image';
+    } else if (file.type === 'application/pdf' || file.type.startsWith('text/')) {
+      attachmentType = 'document';
+    }
+
+    yield {
+      id,
+      type: attachmentType,
+      name: file.name,
+      file,
+      status: { type: 'running' },
+    };
+
     try {
-      // Upload file to attachment service
-      const uploadResponse = await uploadFileToService(attachment.file);
-
+      const uploadResponse = await uploadFileToService(file);
       const url = uploadResponse.url;
+      const contentParts =
+        attachmentType === 'image'
+          ? [{ type: 'image', image: url }]
+          : [{ type: 'data', name: 'url', data: url }];
 
-      // Build content as an array of ThreadUserMessagePart objects.
-      // @assistant-ui/react 0.12.15+ requires CompleteAttachment.content to be
-      // ThreadUserMessagePart[] rather than a plain string URL.
-      let contentParts;
-      if (attachment.type === 'image') {
-        contentParts = [{ type: 'image', image: url }];
-      } else {
-        // For documents and other file types, use a data part with the URL so
-        // the runtime can pass it through to our handleNew callback.
-        contentParts = [{ type: 'data', name: 'url', data: url }];
-      }
-
-      return {
-        id: attachment.id,
-        type: attachment.type, // Use the type determined during add()
-        name: attachment.name,
+      yield {
+        id,
+        type: attachmentType,
+        name: file.name,
+        file,
         content: contentParts,
-        uploadedId: uploadResponse.attachment_id, // Store server-side ID for potential cleanup
+        uploadedId: uploadResponse.attachment_id,
         status: { type: 'complete' },
       };
     } catch (error) {
-      console.error('Error processing attachment for sending:', error);
-
-      // Return attachment with error status
-      return {
-        id: attachment.id,
-        type: attachment.type || 'file',
-        name: attachment.name,
+      console.error('Error uploading attachment:', error);
+      yield {
+        id,
+        type: attachmentType,
+        name: file.name,
+        file,
         content: [],
         status: {
           type: 'error',
@@ -165,6 +144,20 @@ export class FileAttachmentAdapter {
         },
       };
     }
+  }
+
+  /**
+   * Pass-through for send. The upload already happened in ``add`` so the
+   * attachment reaches here already marked complete with its content parts.
+   * The base composer runtime short-circuits ``adapter.send`` for
+   * already-complete attachments, so this should rarely be invoked — it's
+   * kept defensively for any non-complete attachment the runtime still routes
+   * through send.
+   * @param {Object} attachment
+   * @returns {Promise<Object>}
+   */
+  async send(attachment) {
+    return attachment;
   }
 
   /**
@@ -248,11 +241,11 @@ export class CompositeAttachmentAdapter {
    * @param {File} params.file - The file being added
    * @returns {Promise<Object>} Attachment object
    */
-  async add({ file }) {
+  async *add({ file }) {
     const adapter = this.getAdapterForType(file.type);
 
     if (!adapter) {
-      return {
+      yield {
         id: generateUUID(),
         type: 'file',
         name: file.name,
@@ -262,9 +255,17 @@ export class CompositeAttachmentAdapter {
           error: `Unsupported file type: ${file.type}`,
         },
       };
+      return;
     }
 
-    return adapter.add({ file });
+    // Delegate to the inner adapter. It may be a generator (eager upload) or
+    // a plain async function — handle both to stay forward-compatible.
+    const result = adapter.add({ file });
+    if (result && typeof result === 'object' && Symbol.asyncIterator in result) {
+      yield* result;
+    } else {
+      yield await result;
+    }
   }
 
   /**

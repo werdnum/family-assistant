@@ -46,6 +46,17 @@ function createMockFile(name, type, size, content = 'test content') {
   return file;
 }
 
+// Drain an add() call into an array of yielded attachment states. add() is
+// an async generator that yields an initial ``running`` state then resolves
+// to ``complete`` once the upload lands (or ``error``).
+async function collectAdd(adapter, params) {
+  const results = [];
+  for await (const attachment of adapter.add(params)) {
+    results.push(attachment);
+  }
+  return results;
+}
+
 describe('FileAttachmentAdapter', () => {
   let adapter;
 
@@ -62,152 +73,122 @@ describe('FileAttachmentAdapter', () => {
   });
 
   describe('add method', () => {
-    test('successfully adds valid image file', async () => {
-      const file = createMockFile('test.png', 'image/png', 1024 * 1024); // 1MB
+    test('uploads image eagerly, yielding running then complete', async () => {
+      const file = createMockFile('test.png', 'image/png', 1024 * 1024);
 
-      const result = await adapter.add({ file });
+      const results = await collectAdd(adapter, { file });
 
-      expect(result.id).toBe('test-uuid-123');
-      expect(result.type).toBe('image');
-      expect(result.name).toBe('test.png');
-      expect(result.file).toBe(file);
-      expect(result.status.type).toBe('running');
+      expect(results).toHaveLength(2);
+      expect(results[0]).toMatchObject({
+        id: 'test-uuid-123',
+        type: 'image',
+        name: 'test.png',
+        file,
+        status: { type: 'running' },
+      });
+      expect(results[1]).toMatchObject({
+        id: 'test-uuid-123',
+        type: 'image',
+        name: 'test.png',
+        uploadedId: 'server-uuid-456',
+        status: { type: 'complete' },
+      });
+      expect(results[1].content).toEqual([
+        { type: 'image', image: '/api/attachments/server-uuid-456' },
+      ]);
     });
 
-    test('successfully adds valid text file', async () => {
+    test('uploads text file eagerly as a document', async () => {
       const file = createMockFile('document.txt', 'text/plain', 1024);
 
-      const result = await adapter.add({ file });
+      const results = await collectAdd(adapter, { file });
 
-      expect(result.id).toBe('test-uuid-123');
-      expect(result.type).toBe('document');
-      expect(result.name).toBe('document.txt');
-      expect(result.file).toBe(file);
-      expect(result.status.type).toBe('running');
+      expect(results[0].type).toBe('document');
+      expect(results[0].status.type).toBe('running');
+      expect(results.at(-1).status.type).toBe('complete');
+      expect(results.at(-1).content).toEqual([
+        { type: 'data', name: 'url', data: '/api/attachments/server-uuid-456' },
+      ]);
     });
 
-    test('successfully adds valid PDF file', async () => {
+    test('uploads PDF eagerly as a document', async () => {
       const file = createMockFile('document.pdf', 'application/pdf', 1024);
 
-      const result = await adapter.add({ file });
+      const results = await collectAdd(adapter, { file });
 
-      expect(result.id).toBe('test-uuid-123');
-      expect(result.type).toBe('document');
-      expect(result.name).toBe('document.pdf');
-      expect(result.file).toBe(file);
-      expect(result.status.type).toBe('running');
+      expect(results[0].type).toBe('document');
+      expect(results.at(-1).status.type).toBe('complete');
+      expect(results.at(-1).uploadedId).toBe('server-uuid-456');
     });
 
-    test('returns error for oversized file', async () => {
-      const file = createMockFile('large.png', 'image/png', 150 * 1024 * 1024); // 150MB (exceeds 100MB limit)
+    test('yields a single error state for oversized file without uploading', async () => {
+      const file = createMockFile('large.png', 'image/png', 150 * 1024 * 1024);
 
-      const result = await adapter.add({ file });
+      const results = await collectAdd(adapter, { file });
 
-      expect(result.type).toBe('file');
-      expect(result.name).toBe('large.png');
-      expect(result.status.type).toBe('error');
-      expect(result.status.error).toContain('size exceeds');
+      expect(results).toHaveLength(1);
+      expect(results[0].type).toBe('file');
+      expect(results[0].name).toBe('large.png');
+      expect(results[0].status.type).toBe('error');
+      expect(results[0].status.error).toContain('size exceeds');
     });
 
-    test('returns error for invalid file type', async () => {
+    test('yields a single error state for unsupported file type', async () => {
       const file = createMockFile(
         'document.docx',
         'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
         1024
       );
 
-      const result = await adapter.add({ file });
+      const results = await collectAdd(adapter, { file });
 
-      expect(result.type).toBe('file');
-      expect(result.name).toBe('document.docx');
-      expect(result.status.type).toBe('error');
-      expect(result.status.error).toContain('Unsupported file type');
+      expect(results).toHaveLength(1);
+      expect(results[0].status.type).toBe('error');
+      expect(results[0].status.error).toContain('Unsupported file type');
     });
 
-    test('returns error for file with empty name', async () => {
+    test('yields a single error state for file with empty name', async () => {
       const file = createMockFile('', 'image/png', 1024);
 
-      const result = await adapter.add({ file });
+      const results = await collectAdd(adapter, { file });
 
-      expect(result.status.type).toBe('error');
-      expect(result.status.error).toContain('valid name');
+      expect(results).toHaveLength(1);
+      expect(results[0].status.type).toBe('error');
+      expect(results[0].status.error).toContain('valid name');
+    });
+
+    test('yields error state when upload request fails', async () => {
+      server.use(
+        http.post('/api/attachments/upload', () =>
+          HttpResponse.json({ error: 'Upload failed' }, { status: 500 })
+        )
+      );
+      const file = createMockFile('test.png', 'image/png', 1024);
+
+      const results = await collectAdd(adapter, { file });
+
+      expect(results[0].status.type).toBe('running');
+      expect(results.at(-1).status.type).toBe('error');
+      expect(results.at(-1).status.error).toContain('Failed to upload file');
     });
   });
 
   describe('send method', () => {
-    test('successfully processes attachment', async () => {
-      const file = createMockFile('test.png', 'image/png', 1024);
+    test('passes already-complete attachment through unchanged', async () => {
+      // Upload happens during add() now. send() is a pass-through; the base
+      // composer runtime short-circuits it for complete attachments anyway.
       const attachment = {
         id: 'test-id',
         type: 'image',
         name: 'test.png',
-        file,
-        status: { type: 'running' },
-      };
-
-      // MSW will handle the API call
-
-      const result = await adapter.send(attachment);
-
-      expect(result.id).toBe('test-id');
-      expect(result.type).toBe('image');
-      expect(result.name).toBe('test.png');
-      // content is now ThreadUserMessagePart[] as required by @assistant-ui/react 0.12.15+
-      expect(result.content).toEqual([
-        { type: 'image', image: '/api/attachments/server-uuid-456' },
-      ]);
-      expect(result.uploadedId).toBe('server-uuid-456');
-      expect(result.status.type).toBe('complete');
-
-      // MSW handled the API call
-    });
-
-    test('handles upload failure gracefully', async () => {
-      // Override the upload handler to return an error
-      server.use(
-        http.post('/api/attachments/upload', () => {
-          return HttpResponse.json({ error: 'Upload failed' }, { status: 500 });
-        })
-      );
-
-      const file = new File(['test content'], 'test.png', { type: 'image/png' });
-      const attachment = {
-        id: 'test-id',
-        type: 'image',
-        name: 'test.png',
-        file,
-        status: { type: 'running' },
+        content: [{ type: 'image', image: '/api/attachments/server-uuid-456' }],
+        uploadedId: 'server-uuid-456',
+        status: { type: 'complete' },
       };
 
       const result = await adapter.send(attachment);
 
-      expect(result.id).toBe('test-id');
-      expect(result.status.type).toBe('error');
-      expect(result.status.error).toContain('Failed to upload file');
-    });
-
-    test('handles network error gracefully', async () => {
-      // Override the upload handler to return a network error
-      server.use(
-        http.post('/api/attachments/upload', () => {
-          return HttpResponse.error();
-        })
-      );
-
-      const file = new File(['test content'], 'test.png', { type: 'image/png' });
-      const attachment = {
-        id: 'test-id',
-        type: 'image',
-        name: 'test.png',
-        file,
-        status: { type: 'running' },
-      };
-
-      const result = await adapter.send(attachment);
-
-      expect(result.id).toBe('test-id');
-      expect(result.status.type).toBe('error');
-      expect(result.status.error).toContain('Failed to upload file');
+      expect(result).toBe(attachment);
     });
   });
 
@@ -294,30 +275,47 @@ describe('CompositeAttachmentAdapter', () => {
   });
 
   describe('add method', () => {
-    test('delegates to matching adapter', async () => {
+    test('delegates to matching adapter (async-generator inner)', async () => {
       const file = createMockFile('test.png', 'image/png', 1024);
-      const expectedResult = { id: 'test', type: 'image' };
-      mockImageAdapter.add.mockResolvedValue(expectedResult);
+      const running = { id: 'test', type: 'image', status: { type: 'running' } };
+      const complete = { id: 'test', type: 'image', status: { type: 'complete' } };
 
-      const result = await compositeAdapter.add({ file });
+      mockImageAdapter.add = vi.fn(async function* () {
+        yield running;
+        yield complete;
+      });
 
-      expect(result).toBe(expectedResult);
+      const results = await collectAdd(compositeAdapter, { file });
+
+      expect(results).toEqual([running, complete]);
       expect(mockImageAdapter.add).toHaveBeenCalledWith({ file });
     });
 
-    test('returns error for unsupported file type', async () => {
+    test('delegates to matching adapter (promise-returning inner)', async () => {
+      const file = createMockFile('test.png', 'image/png', 1024);
+      const resolved = { id: 'test', type: 'image', status: { type: 'complete' } };
+      mockImageAdapter.add = vi.fn().mockResolvedValue(resolved);
+
+      const results = await collectAdd(compositeAdapter, { file });
+
+      expect(results).toEqual([resolved]);
+      expect(mockImageAdapter.add).toHaveBeenCalledWith({ file });
+    });
+
+    test('yields error for unsupported file type', async () => {
       const file = createMockFile(
         'document.docx',
         'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
         1024
       );
 
-      const result = await compositeAdapter.add({ file });
+      const results = await collectAdd(compositeAdapter, { file });
 
-      expect(result.type).toBe('file');
-      expect(result.name).toBe('document.docx');
-      expect(result.status.type).toBe('error');
-      expect(result.status.error).toContain('Unsupported file type');
+      expect(results).toHaveLength(1);
+      expect(results[0].type).toBe('file');
+      expect(results[0].name).toBe('document.docx');
+      expect(results[0].status.type).toBe('error');
+      expect(results[0].status.error).toContain('Unsupported file type');
     });
   });
 
@@ -367,27 +365,30 @@ describe('defaultAttachmentAdapter', () => {
   test('supports image files', async () => {
     const file = createMockFile('test.jpg', 'image/jpeg', 1024);
 
-    const result = await defaultAttachmentAdapter.add({ file });
+    const results = await collectAdd(defaultAttachmentAdapter, { file });
 
-    expect(result.type).toBe('image');
-    expect(result.status.type).toBe('running');
+    expect(results[0].type).toBe('image');
+    expect(results[0].status.type).toBe('running');
+    expect(results.at(-1).status.type).toBe('complete');
   });
 
   test('supports text files', async () => {
     const file = createMockFile('readme.txt', 'text/plain', 1024);
 
-    const result = await defaultAttachmentAdapter.add({ file });
+    const results = await collectAdd(defaultAttachmentAdapter, { file });
 
-    expect(result.type).toBe('document');
-    expect(result.status.type).toBe('running');
+    expect(results[0].type).toBe('document');
+    expect(results[0].status.type).toBe('running');
+    expect(results.at(-1).status.type).toBe('complete');
   });
 
   test('supports PDF files', async () => {
     const file = createMockFile('document.pdf', 'application/pdf', 1024);
 
-    const result = await defaultAttachmentAdapter.add({ file });
+    const results = await collectAdd(defaultAttachmentAdapter, { file });
 
-    expect(result.type).toBe('document');
-    expect(result.status.type).toBe('running');
+    expect(results[0].type).toBe('document');
+    expect(results[0].status.type).toBe('running');
+    expect(results.at(-1).status.type).toBe('complete');
   });
 });
