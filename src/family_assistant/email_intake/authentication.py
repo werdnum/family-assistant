@@ -144,23 +144,32 @@ def extract_from_domain(raw_mime: bytes) -> str | None:
 def extract_client_ip(raw_mime: bytes) -> str | None:
     """Extract the peer SMTP client IP from trusted inbound headers.
 
-    Prefers the ``X-Mailgun-Sending-Ip`` header Mailgun adds to forwarded MIME.
-    Falls back to parsing the topmost ``Received:`` header, which is the hop
-    Mailgun itself recorded (i.e. the peer SMTP client). Does not trust
-    ``X-Forwarded-For`` or other attacker-controllable headers that can appear
-    in inbound email and would allow SPF spoofing if used.
-    """
-    headers = _parse_headers(raw_mime)
+    Mailgun prepends ``X-Mailgun-Sending-Ip`` and a ``Received:`` trace line to
+    every forwarded message, so the *first* value of each header (in header
+    order) is the one Mailgun added and therefore trusted. An attacker can
+    stamp duplicates of either header inside the original message they sent,
+    so we must only look at the topmost occurrence:
 
-    value = headers.get("x-mailgun-sending-ip")
-    if value:
-        match = _IP_PATTERN.search(value)
+    * Picking a later ``X-Mailgun-Sending-Ip`` duplicate would let an attacker
+      override the SPF client IP with an address covered by the spoofed
+      sender's SPF record.
+    * Falling through past the topmost ``Received:`` header to an older hop
+      would let an attacker supply their own parseable ``Received:`` line to
+      influence SPF if Mailgun's trace line was not parseable for any reason.
+
+    We therefore fail closed on the topmost ``Received:`` header: if its IP
+    cannot be parsed we return ``None`` rather than trust an older hop. Also
+    never trusts ``X-Forwarded-For`` or other attacker-controllable headers.
+    """
+    mailgun_values = _all_headers(raw_mime, "x-mailgun-sending-ip")
+    if mailgun_values:
+        match = _IP_PATTERN.search(mailgun_values[0])
         if match:
             return match.group(0)
 
     received_values = _all_headers(raw_mime, "received")
-    for value in received_values:
-        match = _RECEIVED_IP_PATTERN.search(value)
+    if received_values:
+        match = _RECEIVED_IP_PATTERN.search(received_values[0])
         if match:
             return match.group(1)
     return None
@@ -170,14 +179,6 @@ _IP_PATTERN = re.compile(
     r"\b(?:\d{1,3}\.){3}\d{1,3}\b|\b[0-9a-fA-F:]{2,}:[0-9a-fA-F:]*\b"
 )
 _RECEIVED_IP_PATTERN = re.compile(r"\[((?:\d{1,3}\.){3}\d{1,3}|[0-9a-fA-F:]+)\]")
-
-
-def _parse_headers(raw_mime: bytes) -> dict[str, str]:
-    """Return a case-insensitive dict of headers (last value wins)."""
-    headers: dict[str, str] = {}
-    for name, value in _header_pairs(raw_mime):
-        headers[name.lower()] = value
-    return headers
 
 
 def _all_headers(raw_mime: bytes, name: str) -> list[str]:
