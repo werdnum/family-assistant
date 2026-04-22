@@ -14,6 +14,7 @@ import uuid
 from typing import TYPE_CHECKING
 
 import pytest
+from authheaders import SPFAuthenticationResult
 from sqlalchemy import select
 
 from family_assistant.config_models import (
@@ -431,6 +432,80 @@ async def test_mail_webhook_rejects_ambiguous_user_mapping(
     assert response.status_code == 401
     assert "maps to multiple users" in response.text
     assert not await _email_exists(db_engine, form["Message-Id"])
+
+
+@pytest.mark.asyncio
+@pytest.mark.postgres
+async def test_mail_webhook_passes_dmarc_via_spf_alignment(
+    api_client: httpx.AsyncClient,
+    db_engine: AsyncEngine,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """Covers the SPF-only DMARC alignment path.
+
+    A message without DKIM still passes DMARC when SPF passes and the envelope
+    sender domain aligns with the From: domain. We need ``extract_client_ip`` to
+    pull the trusted IP from the Mailgun-added ``X-Mailgun-Sending-Ip`` header
+    and feed it into SPF, then ``check_dmarc`` must propagate the aligned SPF
+    pass to the overall DMARC result. Previously this path had no coverage
+    because every test message omitted ``X-Mailgun-Sending-Ip``/``Received:``,
+    so ``client_ip`` was always ``None`` and SPF evaluation was skipped.
+    """
+    client_ip = "203.0.113.7"
+    message_id = f"<spf-only-{uuid.uuid4()}@example.com>"
+    raw = (
+        f"X-Mailgun-Sending-Ip: {client_ip}\r\n"
+        f"From: {SENDER}\r\n"
+        f"To: {RECIPIENT}\r\n"
+        "Subject: SPF-only DMARC alignment\r\n"
+        "Date: Mon, 21 Apr 2026 12:00:00 +0000\r\n"
+        f"Message-ID: {message_id}\r\n"
+        "\r\n"
+        "body\r\n"
+    ).encode()
+
+    observed: dict[str, object] = {}
+
+    def fake_check_spf(ip: str, mail_from: str, helo: str) -> SPFAuthenticationResult:
+        observed["ip"] = ip
+        observed["mail_from"] = mail_from
+        observed["helo"] = helo
+        return SPFAuthenticationResult(
+            result="pass",
+            reason="test fixture",
+            smtp_mailfrom=mail_from,
+            smtp_helo=helo,
+        )
+
+    monkeypatch.setattr(
+        "family_assistant.email_intake.authentication.check_spf",
+        fake_check_spf,
+    )
+
+    dns = FakeDnsResolver({
+        f"_dmarc.{SENDER_DOMAIN}": "v=DMARC1; p=reject; adkim=s; aspf=s",
+    })
+    _configure_email_intake(
+        monkeypatch,
+        tmp_path,
+        EmailIntakeConfig(
+            mailgun_webhook_signing_key=SIGNING_KEY,
+            require_authenticated_sender=True,
+        ),
+        dns_resolver=dns,
+    )
+    form = _mailgun_form(raw_mime=raw, message_id=message_id)
+
+    response = await api_client.post("/webhook/mail", data=form)
+
+    assert response.status_code == 200, response.text
+    assert observed == {
+        "ip": client_ip,
+        "mail_from": SENDER,
+        "helo": SENDER_DOMAIN,
+    }
+    assert await _email_dmarc_result(db_engine, message_id) == "pass"
 
 
 @pytest.mark.asyncio
