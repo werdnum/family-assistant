@@ -597,7 +597,13 @@ class EmailIntakeUserMapping(BaseModel):
 
 
 class EmailIntakeConfig(BaseModel):
-    """Security controls for inbound email webhooks."""
+    """Security controls for inbound email webhooks.
+
+    DKIM and DMARC are always evaluated locally against the raw MIME message that
+    Mailgun forwards in the ``body-mime`` form field. When
+    :attr:`require_authenticated_sender` is set, DMARC pass (aligned DKIM or SPF) is
+    required before an email is accepted.
+    """
 
     model_config = ConfigDict(extra="forbid")
 
@@ -606,8 +612,6 @@ class EmailIntakeConfig(BaseModel):
     allowed_sender_addresses: list[str] = Field(default_factory=list)
     allowed_recipient_addresses: list[str] = Field(default_factory=list)
     require_authenticated_sender: bool = False
-    require_dmarc_pass: bool = True
-    allow_spf_or_dkim_fallback_when_dmarc_missing: bool = False
     require_user_mapping: bool = False
     user_mappings: list[EmailIntakeUserMapping] = Field(default_factory=list)
     max_raw_request_bytes: int = Field(default=25 * 1024 * 1024, gt=0)

@@ -20,6 +20,7 @@ from family_assistant.email_intake.security import (
     EmailIntakeSecurityError,
     enforce_attachment_size_limits,
     enforce_raw_request_size,
+    extract_raw_mime,
     get_security_fields,
     resolve_target_user_id,
     verify_mailgun_signature,
@@ -70,6 +71,7 @@ async def _save_raw_mail_webhook(
 
 
 @webhooks_router.post("/webhook/mail")
+@webhooks_router.post("/webhook/mail/mime")
 async def handle_mail_webhook(
     request: Request,
     db_context: Annotated[DatabaseContext, Depends(get_db)],
@@ -77,6 +79,11 @@ async def handle_mail_webhook(
     """
     Receives incoming email via webhook (expects multipart/form-data from Mailgun),
     parses it, saves attachments, and passes structured data to the storage layer.
+
+    Mailgun only includes the raw RFC 822 message in the ``body-mime`` form field when
+    the route's Destination URL path ends in ``mime`` or ``raw-mime``. The alias route
+    ``/webhook/mail/mime`` exists so operators can point Mailgun at a URL that satisfies
+    that suffix requirement without renaming the legacy ``/webhook/mail`` path.
     """
     logger.info("Received POST request on /webhook/mail")
 
@@ -126,7 +133,30 @@ async def handle_mail_webhook(
             signature=signature,
             config=email_intake_config,
         )
-        verify_sender_authorization(form_data, email_intake_config)
+        raw_mime = await extract_raw_mime(form_data)
+        if raw_mime is None and not email_intake_config.require_authenticated_sender:
+            logger.warning(
+                "Inbound email webhook did not include body-mime; DKIM/DMARC "
+                "verification skipped. Configure the Mailgun route to use MIME "
+                "forwarding before enabling require_authenticated_sender."
+            )
+        dns_resolver = getattr(request.app.state, "email_intake_dns_resolver", None)
+        authentication = verify_sender_authorization(
+            form_data,
+            email_intake_config,
+            raw_mime=raw_mime,
+            dns_resolver=dns_resolver,
+        )
+        if authentication is not None:
+            logger.info(
+                "Inbound email authentication: dkim=%s spf=%s dmarc=%s "
+                "from_domain=%s dkim_domain=%s",
+                authentication.dkim,
+                authentication.spf,
+                authentication.dmarc,
+                authentication.from_domain,
+                authentication.dkim_domain,
+            )
         target_user_id = resolve_target_user_id(form_data, email_intake_config)
         await _save_raw_mail_webhook(
             raw_body_content=raw_body_content,
@@ -255,6 +285,11 @@ async def handle_mail_webhook(
                 processed_attachments if processed_attachments else None
             ),  # Override
             target_user_id=target_user_id,
+            dkim_result=authentication.dkim if authentication else None,
+            spf_result=authentication.spf if authentication else None,
+            dmarc_result=authentication.dmarc if authentication else None,
+            dmarc_policy=authentication.dmarc_policy if authentication else None,
+            dkim_domain=authentication.dkim_domain if authentication else None,
         )
 
         # Pass the Pydantic model instance to the storage function

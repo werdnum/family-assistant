@@ -51,6 +51,11 @@ class ParsedEmailData(BaseModel):
     mailgun_timestamp: str | None = Field(default=None, alias="timestamp")
     mailgun_token: str | None = Field(default=None, alias="token")
     target_user_id: str | None = None
+    dkim_result: str | None = None
+    spf_result: str | None = None
+    dmarc_result: str | None = None
+    dmarc_policy: str | None = None
+    dkim_domain: str | None = None
 
     model_config = ConfigDict(populate_by_name=True)
 
@@ -107,6 +112,12 @@ received_emails_table = sa.Table(
     sa.Column(
         "target_user_id", sa.Text, nullable=True, index=True
     ),  # Resolved application user for action-capable intake
+    # --- Local DKIM/SPF/DMARC verification results ---
+    sa.Column("dkim_result", sa.Text, nullable=True),
+    sa.Column("spf_result", sa.Text, nullable=True),
+    sa.Column("dmarc_result", sa.Text, nullable=True, index=True),
+    sa.Column("dmarc_policy", sa.Text, nullable=True),
+    sa.Column("dkim_domain", sa.Text, nullable=True),
     # --- Indexing Task Tracking ---
     sa.Column(
         "indexing_task_id", sa.String, nullable=True, index=True, unique=True
