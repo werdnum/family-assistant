@@ -313,6 +313,34 @@ async def test_browser_exec_handles_js_errors_gracefully(
     assert "nonexistent_variable" in data["error"]
 
 
+async def test_browser_exec_clears_refs_even_when_js_throws(
+    fixture_server: BoundFixtureServer, exec_context: ToolExecutionContext
+) -> None:
+    """JS that mutates the DOM *and then* throws must still invalidate refs.
+
+    If the cache survived the exception, a follow-up ``browser_click`` could
+    target a selector pointing at a node that was already removed.
+    """
+    await browser_open_tool(exec_context, fixture_server.url + "/")
+    session = await get_browser_session(exec_context)
+    assert session.ref_cache, "browser_open should populate ref cache"
+
+    # Remove the about link, then throw. The remove() succeeds before the
+    # throw, so the DOM is mutated even though evaluate() raises.
+    result = await browser_exec_tool(
+        exec_context,
+        code=(
+            "document.querySelector('#about-link').remove(); throw new Error('boom');"
+        ),
+    )
+    data = result.get_data()
+    assert isinstance(data, dict)
+    assert "error" in data
+    assert session.ref_cache == {}, (
+        "ref cache must be cleared even when JS throws after mutating the DOM"
+    )
+
+
 async def test_browser_exec_clears_refs_after_dom_mutation(
     fixture_server: BoundFixtureServer, exec_context: ToolExecutionContext
 ) -> None:

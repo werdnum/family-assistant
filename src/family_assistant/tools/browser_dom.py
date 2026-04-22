@@ -568,6 +568,12 @@ async def browser_exec_tool(
     session = await get_browser_session(exec_context)
     page = await session.ensure_page()
     logger.info("browser_exec: %d chars", len(code))
+    # Clear the ref cache unconditionally — arbitrary JS could have mutated
+    # the DOM before throwing (e.g. ``node.remove(); throw new Error()``),
+    # so previously-captured refs are unreliable whether or not ``evaluate``
+    # succeeds. Doing this up-front keeps the invariant simple: any call to
+    # browser_exec means the next click/fill must re-snapshot.
+    session.clear_refs()
     try:
         raw_result = await page.evaluate(_wrap_exec_code(code))
     except PlaywrightError as exc:
@@ -578,10 +584,6 @@ async def browser_exec_tool(
 
     with contextlib.suppress(PlaywrightError):
         await page.wait_for_load_state("domcontentloaded", timeout=2000)
-
-    # Clear the ref cache — arbitrary JS could have mutated the DOM, so any
-    # previously-captured refs are now unreliable.
-    session.clear_refs()
 
     # Surface both the result and the (possibly-changed) URL so the LLM can
     # decide whether to re-snapshot. ``raw_result`` is whatever the JS
