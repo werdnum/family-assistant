@@ -51,12 +51,19 @@ __all__ = [
 ]
 
 
-async def _take_screenshot_with_url(page: Page) -> ToolResult:
+async def _take_screenshot_with_url(session: BrowserSession, page: Page) -> ToolResult:
     """Take a screenshot and return it as a ToolResult with URL.
 
     The Gemini Computer Use model requires function responses to include
     the URL of the current web page along with the screenshot.
+
+    Every Computer Use action is assumed to have potentially mutated the
+    page (click, type, scroll, navigate, …), so any DOM refs captured by
+    ``browser_dom`` snapshots on the shared session are now stale. We
+    invalidate them here so that a subsequent ``browser_click`` can't
+    target a ref that no longer points at the intended element.
     """
+    session.clear_refs()
     screenshot_bytes = await page.screenshot(type="png")
     attachment = ToolAttachment(
         content=screenshot_bytes,
@@ -98,7 +105,7 @@ async def computer_use_click_at(
     with contextlib.suppress(Exception):
         await page.wait_for_load_state(timeout=2000)
 
-    return await _take_screenshot_with_url(page)
+    return await _take_screenshot_with_url(session, page)
 
 
 async def computer_use_type_text_at(
@@ -144,7 +151,7 @@ async def computer_use_type_text_at(
     with contextlib.suppress(Exception):
         await page.wait_for_load_state(timeout=2000)
 
-    return await _take_screenshot_with_url(page)
+    return await _take_screenshot_with_url(session, page)
 
 
 async def computer_use_scroll_at(
@@ -201,7 +208,7 @@ async def computer_use_scroll_at(
 
     await asyncio.sleep(0.5)  # Wait for scroll animation
 
-    return await _take_screenshot_with_url(page)
+    return await _take_screenshot_with_url(session, page)
 
 
 async def computer_use_open_web_browser(
@@ -222,7 +229,7 @@ async def computer_use_open_web_browser(
     # Computer Use API requires a valid HTTP/HTTPS URL
     logger.info("Opening web browser (navigating to Google)")
     await page.goto("https://www.google.com")
-    return await _take_screenshot_with_url(page)
+    return await _take_screenshot_with_url(session, page)
 
 
 async def computer_use_navigate(
@@ -247,7 +254,7 @@ async def computer_use_navigate(
         url = "https://" + url
 
     await page.goto(url)
-    return await _take_screenshot_with_url(page)
+    return await _take_screenshot_with_url(session, page)
 
 
 async def computer_use_search(exec_context: ToolExecutionContext) -> ToolResult:
@@ -264,7 +271,7 @@ async def computer_use_search(exec_context: ToolExecutionContext) -> ToolResult:
 
     logger.info("Navigating to search engine")
     await page.goto("https://www.google.com")
-    return await _take_screenshot_with_url(page)
+    return await _take_screenshot_with_url(session, page)
 
 
 async def computer_use_go_back(exec_context: ToolExecutionContext) -> ToolResult:
@@ -281,7 +288,7 @@ async def computer_use_go_back(exec_context: ToolExecutionContext) -> ToolResult
 
     logger.info("Going back")
     await page.go_back()
-    return await _take_screenshot_with_url(page)
+    return await _take_screenshot_with_url(session, page)
 
 
 async def computer_use_go_forward(exec_context: ToolExecutionContext) -> ToolResult:
@@ -298,7 +305,7 @@ async def computer_use_go_forward(exec_context: ToolExecutionContext) -> ToolRes
 
     logger.info("Going forward")
     await page.go_forward()
-    return await _take_screenshot_with_url(page)
+    return await _take_screenshot_with_url(session, page)
 
 
 async def computer_use_key_combination(
@@ -318,7 +325,7 @@ async def computer_use_key_combination(
 
     logger.info(f"Pressing keys: {keys}")
     await page.keyboard.press(keys)
-    return await _take_screenshot_with_url(page)
+    return await _take_screenshot_with_url(session, page)
 
 
 async def computer_use_wait_5_seconds(
@@ -337,7 +344,7 @@ async def computer_use_wait_5_seconds(
 
     logger.info("Waiting 5 seconds")
     await asyncio.sleep(5)
-    return await _take_screenshot_with_url(page)
+    return await _take_screenshot_with_url(session, page)
 
 
 async def computer_use_hover_at(
@@ -362,7 +369,7 @@ async def computer_use_hover_at(
     logger.info(f"Hovering at ({actual_x}, {actual_y})")
     await page.mouse.move(actual_x, actual_y)
 
-    return await _take_screenshot_with_url(page)
+    return await _take_screenshot_with_url(session, page)
 
 
 async def computer_use_drag_and_drop(
@@ -401,7 +408,7 @@ async def computer_use_drag_and_drop(
     )  # Steps make it more realistic/reliable
     await page.mouse.up()
 
-    return await _take_screenshot_with_url(page)
+    return await _take_screenshot_with_url(session, page)
 
 
 async def computer_use_scroll_document(
@@ -440,7 +447,7 @@ async def computer_use_scroll_document(
         await page.evaluate("window.scrollBy(-window.innerWidth, 0)")
 
     await asyncio.sleep(0.5)
-    return await _take_screenshot_with_url(page)
+    return await _take_screenshot_with_url(session, page)
 
 
 # Tools Definition

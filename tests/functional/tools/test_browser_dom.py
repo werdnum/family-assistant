@@ -37,6 +37,7 @@ from family_assistant.tools.browser_session import (
     close_browser_session,
     get_browser_session,
 )
+from family_assistant.tools.computer_use import computer_use_navigate
 from family_assistant.tools.types import ToolExecutionContext, ToolResult
 
 if TYPE_CHECKING:
@@ -332,6 +333,36 @@ async def test_unknown_ref_raises_clear_error(
     await browser_open_tool(exec_context, fixture_server.url + "/")
     with pytest.raises(ValueError, match="Unknown ref 'e999'"):
         await browser_click_tool(exec_context, ref="e999")
+
+
+async def test_computer_use_navigation_invalidates_dom_refs(
+    fixture_server: BoundFixtureServer, exec_context: ToolExecutionContext
+) -> None:
+    """The core contract of the split browser profiles is that they share one
+    live tab via ``conversation_id``. Navigation through the visual profile
+    must therefore invalidate DOM refs captured by the semantic profile —
+    otherwise a follow-up ``browser_click`` would target selectors that no
+    longer match anything on the new page.
+    """
+    await browser_open_tool(exec_context, fixture_server.url + "/")
+    session = await get_browser_session(exec_context)
+    assert session.ref_cache, "browser_open should have populated ref cache"
+    stale_refs = set(session.ref_cache)
+
+    await computer_use_navigate(exec_context, fixture_server.url + "/about")
+
+    assert session.ref_cache == {}, (
+        "computer_use navigation must clear stale DOM refs from the shared session"
+    )
+    # The tab really did navigate — a fresh snapshot sees the About page,
+    # confirming both profiles drove the same BrowserSession.
+    fresh = await browser_snapshot_tool(exec_context)
+    fresh_data = fresh.get_data()
+    assert isinstance(fresh_data, dict)
+    assert fresh_data["title"] == "About"
+    assert set(fresh_data["refs"]).isdisjoint(stale_refs) or session.ref_cache, (
+        "fresh snapshot should re-populate refs for the new page"
+    )
 
 
 async def test_aria_labelledby_joins_multiple_ids(
