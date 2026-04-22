@@ -402,14 +402,15 @@ class TestOpenAIImageBackend:
 
         call_kwargs = openai_backend.client.images.generate.call_args.kwargs
         assert call_kwargs["model"] == "gpt-image-2"
-        assert call_kwargs["prompt"] == "a red square"
+        assert "photorealistic" in call_kwargs["prompt"]
+        assert "a red square" in call_kwargs["prompt"]
         assert call_kwargs["quality"] == "high"
 
     @pytest.mark.asyncio
-    async def test_generate_image_auto_quality(
+    async def test_generate_image_auto_style_passes_prompt_through(
         self, openai_backend: OpenAIImageBackend
     ) -> None:
-        """Test that auto style maps to auto quality."""
+        """Test that auto style passes the prompt through unchanged."""
         png_b64 = _make_png_b64()
         mock_response = Mock()
         mock_response.data = [Mock(b64_json=png_b64)]
@@ -420,7 +421,7 @@ class TestOpenAIImageBackend:
         await openai_backend.generate_image("test", "auto")
 
         call_kwargs = openai_backend.client.images.generate.call_args.kwargs
-        assert call_kwargs["quality"] == "auto"
+        assert call_kwargs["prompt"] == "test"
 
     @pytest.mark.asyncio
     async def test_generate_image_no_data_raises(
@@ -510,12 +511,18 @@ class TestOpenAIImageBackend:
         with pytest.raises(ValueError, match="No image data"):
             await openai_backend.transform_image(src_bytes, "make it red")
 
-    def test_style_to_quality_mapping(self) -> None:
-        """Test style-to-quality mapping."""
-        assert OpenAIImageBackend._style_to_quality("photorealistic") == "high"
-        assert OpenAIImageBackend._style_to_quality("artistic") == "medium"
-        assert OpenAIImageBackend._style_to_quality("auto") == "auto"
-        assert OpenAIImageBackend._style_to_quality("unknown") == "auto"
+    def test_style_prompt_injection(self) -> None:
+        """Test style is injected into prompt text."""
+        photo = OpenAIImageBackend._apply_style_to_prompt("a cat", "photorealistic")
+        assert "photorealistic" in photo
+        assert "a cat" in photo
+
+        artistic = OpenAIImageBackend._apply_style_to_prompt("a cat", "artistic")
+        assert "artistic" in artistic
+        assert "a cat" in artistic
+
+        auto = OpenAIImageBackend._apply_style_to_prompt("a cat", "auto")
+        assert auto == "a cat"
 
 
 class TestBackendSelection:

@@ -12,7 +12,7 @@ import logging
 import random
 from abc import abstractmethod
 from pathlib import Path
-from typing import Literal, Protocol, runtime_checkable
+from typing import Protocol, runtime_checkable
 
 from PIL import Image, ImageDraw, ImageFilter, ImageFont, ImageOps
 
@@ -501,17 +501,15 @@ class OpenAIImageBackend:
 
     async def generate_image(self, prompt: str, style: str = "auto") -> bytes:
         """Generate image using OpenAI gpt-image-2 API."""
-        quality = self._style_to_quality(style)
+        full_prompt = self._apply_style_to_prompt(prompt, style)
 
-        self.logger.debug(
-            f"Calling OpenAI image API with prompt: {prompt}, quality: {quality}"
-        )
+        self.logger.debug(f"Calling OpenAI image API with prompt: {full_prompt}")
 
         response = await self.client.images.generate(
             model="gpt-image-2",
-            prompt=prompt,
+            prompt=full_prompt,
             size="1024x1024",
-            quality=quality,
+            quality="high",
             output_format="png",
             n=1,
         )
@@ -562,16 +560,22 @@ class OpenAIImageBackend:
 
         return result_bytes
 
-    _STYLE_TO_QUALITY: dict[str, Literal["low", "medium", "high", "auto"]] = {
-        "photorealistic": "high",
-        "artistic": "medium",
-        "auto": "auto",
-    }
-
     @staticmethod
-    def _style_to_quality(style: str) -> Literal["low", "medium", "high", "auto"]:
-        """Map style parameter to OpenAI quality parameter."""
-        return OpenAIImageBackend._STYLE_TO_QUALITY.get(style, "auto")
+    def _apply_style_to_prompt(prompt: str, style: str) -> str:
+        """Inject style guidance into the prompt text."""
+        if style == "photorealistic":
+            return (
+                f"Generate a high-quality, photorealistic image. "
+                f"Scene description: {prompt}. "
+                f"Ensure realistic lighting, textures, and fine details."
+            )
+        elif style == "artistic":
+            return (
+                f"Generate a stylized, artistic illustration. "
+                f"Description: {prompt}. "
+                f"Focus on creative style, composition, and visual flair."
+            )
+        return prompt
 
 
 class FallbackImageBackend:
