@@ -2,6 +2,10 @@
 
 This module implements the tools required by the Gemini Computer Use model
 to interact with a web browser using async Playwright.
+
+Session management (``BrowserSession``, ``get_browser_session``,
+``close_browser_session``) lives in :mod:`family_assistant.tools.browser_session`
+so the semantic DOM tools in ``browser_dom.py`` can share the same browser tab.
 """
 
 from __future__ import annotations
@@ -9,117 +13,57 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import logging
-from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
-from rebrowser_playwright.async_api import (
-    Browser,
-    BrowserContext,
-    Page,
-    Playwright,
-    async_playwright,
+from family_assistant.tools.browser_session import (
+    BrowserSession,
+    close_browser_session,
+    denormalize_coordinate,
+    get_browser_session,
 )
-
 from family_assistant.tools.types import ToolAttachment, ToolDefinition, ToolResult
-from family_assistant.utils.stealth_browser import (
-    create_stealth_context,
-    launch_stealth_browser,
-)
 
 if TYPE_CHECKING:
+    from rebrowser_playwright.async_api import Page
+
     from family_assistant.tools.types import ToolExecutionContext
 
 logger = logging.getLogger(__name__)
 
-# Default screen dimensions for Gemini Computer Use
-_SCREEN_WIDTH = 1024
-_SCREEN_HEIGHT = 768
+__all__ = [
+    "COMPUTER_USE_TOOLS_DEFINITION",
+    "BrowserSession",
+    "close_browser_session",
+    "computer_use_click_at",
+    "computer_use_drag_and_drop",
+    "computer_use_go_back",
+    "computer_use_go_forward",
+    "computer_use_hover_at",
+    "computer_use_key_combination",
+    "computer_use_navigate",
+    "computer_use_open_web_browser",
+    "computer_use_scroll_at",
+    "computer_use_scroll_document",
+    "computer_use_search",
+    "computer_use_type_text_at",
+    "computer_use_wait_5_seconds",
+    "get_browser_session",
+]
 
 
-@dataclass
-class BrowserSession:
-    """Manages the browser lifecycle for computer use tools.
-
-    This class encapsulates browser state in a clean, non-global way.
-    Each session can be started, used, and closed independently.
-    """
-
-    playwright: Playwright | None = field(default=None, repr=False)
-    browser: Browser | None = field(default=None, repr=False)
-    context: BrowserContext | None = field(default=None, repr=False)
-    page: Page | None = field(default=None, repr=False)
-    screen_width: int = _SCREEN_WIDTH
-    screen_height: int = _SCREEN_HEIGHT
-
-    async def ensure_page(self) -> Page:
-        """Ensure a browser page is available, creating one if necessary."""
-        if self.page is not None:
-            return self.page
-
-        if self.playwright is None:
-            self.playwright = await async_playwright().start()
-
-        if self.browser is None:
-            self.browser = await launch_stealth_browser(self.playwright, headless=True)
-
-        if self.context is None:
-            self.context = await create_stealth_context(
-                self.browser,
-                viewport={"width": self.screen_width, "height": self.screen_height},
-            )
-
-        if self.page is None:
-            self.page = await self.context.new_page()
-
-        return self.page
-
-    async def close(self) -> None:
-        """Close all browser resources."""
-        if self.context is not None:
-            await self.context.close()
-            self.context = None
-            self.page = None
-
-        if self.browser is not None:
-            await self.browser.close()
-            self.browser = None
-
-        if self.playwright is not None:
-            await self.playwright.stop()
-            self.playwright = None
-
-
-# Session storage keyed by conversation_id for multi-user support
-_sessions: dict[str, BrowserSession] = {}
-
-
-async def get_browser_session(exec_context: ToolExecutionContext) -> BrowserSession:
-    """Get or create a browser session for the given execution context."""
-    session_key = exec_context.conversation_id or "default"
-    if session_key not in _sessions:
-        _sessions[session_key] = BrowserSession()
-    return _sessions[session_key]
-
-
-async def close_browser_session(exec_context: ToolExecutionContext) -> None:
-    """Close and remove the browser session for the given execution context."""
-    session_key = exec_context.conversation_id or "default"
-    if session_key in _sessions:
-        await _sessions[session_key].close()
-        del _sessions[session_key]
-
-
-def _denormalize_coordinate(value: int, max_value: int) -> int:
-    """Convert normalized coordinate (0-1000) to pixel value."""
-    return int(value / 1000 * max_value)
-
-
-async def _take_screenshot_with_url(page: Page) -> ToolResult:
+async def _take_screenshot_with_url(session: BrowserSession, page: Page) -> ToolResult:
     """Take a screenshot and return it as a ToolResult with URL.
 
     The Gemini Computer Use model requires function responses to include
     the URL of the current web page along with the screenshot.
+
+    Every Computer Use action is assumed to have potentially mutated the
+    page (click, type, scroll, navigate, …), so any DOM refs captured by
+    ``browser_dom`` snapshots on the shared session are now stale. We
+    invalidate them here so that a subsequent ``browser_click`` can't
+    target a ref that no longer points at the intended element.
     """
+    session.clear_refs()
     screenshot_bytes = await page.screenshot(type="png")
     attachment = ToolAttachment(
         content=screenshot_bytes,
@@ -151,8 +95,8 @@ async def computer_use_click_at(
     session = await get_browser_session(exec_context)
     page = await session.ensure_page()
 
-    actual_x = _denormalize_coordinate(x, session.screen_width)
-    actual_y = _denormalize_coordinate(y, session.screen_height)
+    actual_x = denormalize_coordinate(x, session.screen_width)
+    actual_y = denormalize_coordinate(y, session.screen_height)
 
     logger.info(f"Clicking at ({actual_x}, {actual_y})")
     await page.mouse.click(actual_x, actual_y)
@@ -161,7 +105,7 @@ async def computer_use_click_at(
     with contextlib.suppress(Exception):
         await page.wait_for_load_state(timeout=2000)
 
-    return await _take_screenshot_with_url(page)
+    return await _take_screenshot_with_url(session, page)
 
 
 async def computer_use_type_text_at(
@@ -186,8 +130,8 @@ async def computer_use_type_text_at(
     session = await get_browser_session(exec_context)
     page = await session.ensure_page()
 
-    actual_x = _denormalize_coordinate(x, session.screen_width)
-    actual_y = _denormalize_coordinate(y, session.screen_height)
+    actual_x = denormalize_coordinate(x, session.screen_width)
+    actual_y = denormalize_coordinate(y, session.screen_height)
 
     logger.info(f"Typing '{text}' at ({actual_x}, {actual_y})")
 
@@ -207,7 +151,7 @@ async def computer_use_type_text_at(
     with contextlib.suppress(Exception):
         await page.wait_for_load_state(timeout=2000)
 
-    return await _take_screenshot_with_url(page)
+    return await _take_screenshot_with_url(session, page)
 
 
 async def computer_use_scroll_at(
@@ -241,8 +185,8 @@ async def computer_use_scroll_at(
     session = await get_browser_session(exec_context)
     page = await session.ensure_page()
 
-    actual_x = _denormalize_coordinate(x, session.screen_width)
-    actual_y = _denormalize_coordinate(y, session.screen_height)
+    actual_x = denormalize_coordinate(x, session.screen_width)
+    actual_y = denormalize_coordinate(y, session.screen_height)
 
     logger.info(f"Scrolling {direction} at ({actual_x}, {actual_y}) by {magnitude}")
 
@@ -264,7 +208,7 @@ async def computer_use_scroll_at(
 
     await asyncio.sleep(0.5)  # Wait for scroll animation
 
-    return await _take_screenshot_with_url(page)
+    return await _take_screenshot_with_url(session, page)
 
 
 async def computer_use_open_web_browser(
@@ -285,7 +229,7 @@ async def computer_use_open_web_browser(
     # Computer Use API requires a valid HTTP/HTTPS URL
     logger.info("Opening web browser (navigating to Google)")
     await page.goto("https://www.google.com")
-    return await _take_screenshot_with_url(page)
+    return await _take_screenshot_with_url(session, page)
 
 
 async def computer_use_navigate(
@@ -310,7 +254,7 @@ async def computer_use_navigate(
         url = "https://" + url
 
     await page.goto(url)
-    return await _take_screenshot_with_url(page)
+    return await _take_screenshot_with_url(session, page)
 
 
 async def computer_use_search(exec_context: ToolExecutionContext) -> ToolResult:
@@ -327,7 +271,7 @@ async def computer_use_search(exec_context: ToolExecutionContext) -> ToolResult:
 
     logger.info("Navigating to search engine")
     await page.goto("https://www.google.com")
-    return await _take_screenshot_with_url(page)
+    return await _take_screenshot_with_url(session, page)
 
 
 async def computer_use_go_back(exec_context: ToolExecutionContext) -> ToolResult:
@@ -344,7 +288,7 @@ async def computer_use_go_back(exec_context: ToolExecutionContext) -> ToolResult
 
     logger.info("Going back")
     await page.go_back()
-    return await _take_screenshot_with_url(page)
+    return await _take_screenshot_with_url(session, page)
 
 
 async def computer_use_go_forward(exec_context: ToolExecutionContext) -> ToolResult:
@@ -361,7 +305,7 @@ async def computer_use_go_forward(exec_context: ToolExecutionContext) -> ToolRes
 
     logger.info("Going forward")
     await page.go_forward()
-    return await _take_screenshot_with_url(page)
+    return await _take_screenshot_with_url(session, page)
 
 
 async def computer_use_key_combination(
@@ -381,7 +325,7 @@ async def computer_use_key_combination(
 
     logger.info(f"Pressing keys: {keys}")
     await page.keyboard.press(keys)
-    return await _take_screenshot_with_url(page)
+    return await _take_screenshot_with_url(session, page)
 
 
 async def computer_use_wait_5_seconds(
@@ -400,7 +344,7 @@ async def computer_use_wait_5_seconds(
 
     logger.info("Waiting 5 seconds")
     await asyncio.sleep(5)
-    return await _take_screenshot_with_url(page)
+    return await _take_screenshot_with_url(session, page)
 
 
 async def computer_use_hover_at(
@@ -419,13 +363,13 @@ async def computer_use_hover_at(
     session = await get_browser_session(exec_context)
     page = await session.ensure_page()
 
-    actual_x = _denormalize_coordinate(x, session.screen_width)
-    actual_y = _denormalize_coordinate(y, session.screen_height)
+    actual_x = denormalize_coordinate(x, session.screen_width)
+    actual_y = denormalize_coordinate(y, session.screen_height)
 
     logger.info(f"Hovering at ({actual_x}, {actual_y})")
     await page.mouse.move(actual_x, actual_y)
 
-    return await _take_screenshot_with_url(page)
+    return await _take_screenshot_with_url(session, page)
 
 
 async def computer_use_drag_and_drop(
@@ -450,10 +394,10 @@ async def computer_use_drag_and_drop(
     session = await get_browser_session(exec_context)
     page = await session.ensure_page()
 
-    start_x = _denormalize_coordinate(x, session.screen_width)
-    start_y = _denormalize_coordinate(y, session.screen_height)
-    end_x = _denormalize_coordinate(destination_x, session.screen_width)
-    end_y = _denormalize_coordinate(destination_y, session.screen_height)
+    start_x = denormalize_coordinate(x, session.screen_width)
+    start_y = denormalize_coordinate(y, session.screen_height)
+    end_x = denormalize_coordinate(destination_x, session.screen_width)
+    end_y = denormalize_coordinate(destination_y, session.screen_height)
 
     logger.info(f"Dragging from ({start_x}, {start_y}) to ({end_x}, {end_y})")
 
@@ -464,7 +408,7 @@ async def computer_use_drag_and_drop(
     )  # Steps make it more realistic/reliable
     await page.mouse.up()
 
-    return await _take_screenshot_with_url(page)
+    return await _take_screenshot_with_url(session, page)
 
 
 async def computer_use_scroll_document(
@@ -503,7 +447,7 @@ async def computer_use_scroll_document(
         await page.evaluate("window.scrollBy(-window.innerWidth, 0)")
 
     await asyncio.sleep(0.5)
-    return await _take_screenshot_with_url(page)
+    return await _take_screenshot_with_url(session, page)
 
 
 # Tools Definition

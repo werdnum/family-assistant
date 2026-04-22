@@ -5,39 +5,36 @@ websites, fill out forms, and perform complex web tasks.
 
 ## Overview
 
-Browser automation allows the assistant to control a web browser on your behalf. This is useful when
-you need to:
+Browser automation lets the assistant drive a headless browser on your behalf. Two profiles share
+the same browser tab but expose different tool sets — they never appear in the same LLM context at
+once, so each stays cheap and focused.
 
-- Navigate websites that require interaction (clicking, scrolling, typing)
-- Fill out forms or complete web-based tasks
-- Extract information from dynamic or JavaScript-heavy pages
-- Perform multi-step web workflows
+- **`/browse`** (default) — reads the page's accessibility tree and interacts with elements by
+  semantic reference. Best for reading content and filling forms.
+- **`/browse_visual`** (fallback) — uses a Google Gemini Computer Use model to click at pixel
+  coordinates from screenshots. Best for `<canvas>`, image maps, and drag-and-drop on non-DOM
+  surfaces.
 
-The assistant uses a specialized browser profile powered by an AI model designed for computer use,
-allowing it to see and interact with web pages like a human would.
+By default, start with `/browse`. It's cheaper and faster. Fall back to `/browse_visual` only when
+the DOM-based path cannot see what it needs to interact with.
 
 ## When to Use Browser Automation
 
 ### Good Use Cases
 
-- **Complex web forms** - Multi-step forms, login flows, or interactive applications
-- **JavaScript-heavy sites** - Pages that load content dynamically
-- **Multi-step workflows** - Tasks requiring navigation through multiple pages
-- **Interactive research** - When you need to click through results, expand sections, or interact
-  with page elements
+- **Complex web forms** — multi-step forms, login flows, or interactive applications
+- **JavaScript-heavy sites** — pages that load content dynamically
+- **Multi-step workflows** — tasks requiring navigation through multiple pages
+- **Interactive research** — clicking through results, expanding sections, reading dynamic content
 
 ### When NOT to Use Browser Automation
 
-- **Simple page content** - For reading articles or static pages, ask directly: "What does this page
-  say: https://example.com/article"
-- **Basic web searches** - The assistant can search the web without browser automation
-- **Saving pages for later** - Use "Save this page for later: [URL]" instead
+- **Saving pages for later** — use "Save this page for later: [URL]" instead
+- **Basic web searches** — the assistant can search the web without browser automation
 
-## How to Use Browser Automation
+## The `/browse` Command (default, DOM-based)
 
-### The `/browse` Command
-
-Prefix your request with `/browse` to activate browser automation mode:
+Prefix your request with `/browse` to use the semantic DOM profile:
 
 ```
 /browse Go to example.com and find the contact form
@@ -45,53 +42,54 @@ Prefix your request with `/browse` to activate browser automation mode:
 /browse Navigate to the settings page and check my account status
 ```
 
-### Natural Language Examples
+### How `/browse` works
 
-Once in browse mode, you can give natural instructions:
+- Each interaction uses an **accessibility snapshot** of the page — a structured tree of roles,
+  names, and references (like `e12`).
+- The assistant clicks, fills, and selects by **semantic ref**, not by pixel coordinates.
+- Snapshots can be filtered with a query substring to keep the context small, so the assistant stays
+  focused on what matters.
+
+### Available actions in `/browse`
+
+- **`browser_open`** — navigate to a URL and return the page snapshot in one step.
+- **`browser_snapshot`** — re-snapshot the current page, optionally filtered by a query.
+- **`browser_click`** — click an element by its ref.
+- **`browser_fill`** — fill an input by ref, optionally pressing Enter to submit.
+- **`browser_select`** — select a `<select>` option by label or value.
+- **`browser_extract`** — convert the current page (or a subtree) to Markdown.
+- **`browser_wait`** — wait for a load state or CSS selector to appear.
+- **`browser_screenshot`** — take an explicit screenshot to attach to the conversation.
+- **`browser_exec`** — run JavaScript in the page (escape hatch for shadow DOM, iframes, reading
+  same-origin JSON endpoints, or multi-step DOM mutation in a single turn).
+
+## The `/browse_visual` Command (fallback, coordinate-based)
+
+When the DOM path can't see what it needs — canvas drawings, image maps, drag-and-drop against pixel
+targets — use `/browse_visual`:
 
 ```
-/browse Go to amazon.com and search for wireless headphones under $50
+/browse_visual Go to the drawing app and sketch a circle in the middle
+/browse_visual On the map tool, click the red dot over Seattle
 ```
 
-```
-/browse Visit the city library website and check if "The Great Gatsby" is available
-```
+### How `/browse_visual` works
 
-```
-/browse Go to weather.com and tell me the 7-day forecast for Seattle
-```
+- Every action returns a screenshot; the model visually locates elements and commands clicks by
+  coordinates.
+- Uses Google's Gemini Computer Use model, so it's somewhat slower and more expensive per turn.
+- Available actions: click at a coordinate, type text at a location, scroll, drag-and-drop, hover,
+  keyboard shortcuts, navigate, back/forward, wait, search.
 
-```
-/browse Navigate to my bank's website login page and take a screenshot
-```
+## Delegation between profiles
 
-## Available Browser Actions
+`/browse` can hand off to `/browse_visual` when it hits a visual-only task. The handoff keeps the
+same live browser tab (same conversation, same cookies, same page), so state is preserved across
+profiles.
 
-The assistant can perform these actions while browsing:
-
-### Navigation
-
-- **Open browser** - Starts with a search page (Google)
-- **Navigate to URL** - Goes directly to a specific web address
-- **Go back/forward** - Navigate through browser history
-- **Search** - Return to the search page
-
-### Interaction
-
-- **Click** - Click on buttons, links, and other elements
-- **Type text** - Enter text into input fields and forms
-- **Scroll** - Scroll up, down, left, or right on the page
-- **Hover** - Move the mouse over elements to reveal tooltips or menus
-- **Drag and drop** - Move elements on interactive pages
-
-### Keyboard
-
-- **Key combinations** - Press keyboard shortcuts (e.g., Ctrl+C, Enter)
-- **Form submission** - Press Enter to submit forms
-
-### Timing
-
-- **Wait** - Pause for pages to load or animations to complete
+In practice you usually don't need to think about this — start with `/browse` and the assistant will
+delegate when needed. You can also invoke `/browse_visual` directly if you know the task is
+visual-only from the start.
 
 ## Examples by Use Case
 
@@ -101,15 +99,11 @@ The assistant can perform these actions while browsing:
 /browse Go to bestbuy.com and find the price of a 65-inch Samsung TV
 ```
 
-The assistant will navigate to the site, search for the product, and report the price.
-
 ### Information Research
 
 ```
 /browse Check the opening hours for the Metropolitan Museum of Art
 ```
-
-The assistant will find the museum's website and locate the hours information.
 
 ### Form Completion
 
@@ -117,116 +111,67 @@ The assistant will find the museum's website and locate the hours information.
 /browse Go to the DMV appointment scheduler and show me available dates next week
 ```
 
-The assistant will navigate the site and gather the available appointment information.
-
-### Account Checking
+### Visual / Canvas Tasks
 
 ```
-/browse Go to my utility provider's website and find where to view my billing history
+/browse_visual On the drawing tool, drag the blue square into the green target zone
 ```
-
-The assistant will navigate the site and identify the relevant section (though it cannot log in
-without credentials).
-
-## Understanding Screenshots
-
-When using browser automation, the assistant takes screenshots to "see" what's on the page. After
-each action, it captures the current state to understand what happened and decide what to do next.
-
-The assistant may share screenshots with you to:
-
-- Show what it found
-- Ask for clarification when a page is unclear
-- Confirm it completed the task
 
 ## Limitations
 
-### Cannot Do
+Both profiles share these limits:
 
-- **Access your logged-in accounts** - The browser session is separate from your personal browser,
-  so the assistant cannot see your saved passwords or active sessions
-- **Download files to your computer** - Files downloaded go to the assistant's environment, not your
-  device
-- **Interact with desktop applications** - Only web pages in the browser are accessible
-- **Bypass CAPTCHAs** - The assistant cannot solve CAPTCHA challenges
-- **Access content behind paywalls** - Unless the content is publicly available
+- **No access to your logged-in accounts** — the browser session is separate from your personal
+  browser, so saved passwords and active sessions are not visible.
+- **No downloads to your device** — files downloaded go to the assistant's environment.
+- **Cannot bypass CAPTCHAs or paywalls.**
+- **May be blocked by anti-bot protection** on some sites.
 
-### May Have Difficulty With
+## Privacy and Security
 
-- **Rapidly changing pages** - Content that updates frequently or uses heavy animations
-- **Complex multi-factor authentication** - While it can navigate login pages, MFA requirements may
-  block access
-- **Sites with anti-bot protections** - Some websites detect and block automated browsers
-- **Very slow-loading pages** - There are timeout limits on page loads
-
-## Privacy and Security Considerations
-
-### What the Assistant Sees
-
-- The assistant can see everything displayed on web pages during automation
-- Screenshots are taken after each action
-- Page content, including any visible personal information, is processed by the AI model
-
-### Session Isolation
-
-- Browser sessions are isolated per conversation
-- No cookies, passwords, or session data persist between conversations
-- Your personal browser is not affected
-
-### Sensitive Information
-
-- **Never share passwords** in your browser automation requests
-- **Avoid navigating to pages with sensitive data** unless necessary
-- **Be cautious with banking and financial sites** - the assistant can see displayed information
-
-### Best Practices
-
-- Use browser automation for public information and navigation
-- Avoid requesting the assistant to log into accounts with sensitive data
-- Review what information is displayed before asking the assistant to screenshot or describe a page
+- The assistant can see everything displayed on pages it visits. With `/browse`, it reads the
+  accessibility tree. With `/browse_visual`, it captures screenshots after every action.
+- Browser sessions are isolated per conversation. No cookies or session data persist between
+  conversations, and your personal browser is untouched.
+- Never share passwords in a browser automation request.
+- Be cautious with pages that display sensitive information — the content reaches the AI model.
 
 ## Tips for Best Results
 
-1. **Be specific about your goal** - "Find the contact email on the About page" is better than "Find
-   contact info"
-
-2. **Provide the full URL when possible** - Starting with the right page saves time
-
-3. **Break complex tasks into steps** - For multi-page workflows, guide the assistant through each
-   step
-
-4. **Describe what you're looking for** - "Look for a blue 'Submit' button at the bottom of the
-   form"
-
-5. **Be patient with slow pages** - Some sites take time to load; the assistant will wait as needed
+1. **Default to `/browse`.** It's cheaper and faster. Fall back to `/browse_visual` only when the
+   DOM path fails.
+2. **Provide full URLs** including `https://`.
+3. **Break complex tasks into steps** — multi-page workflows are easier to debug one step at a time.
+4. **Describe what you're looking for** — "the blue Submit button at the bottom of the form" helps
+   the assistant filter the snapshot or screenshot down to the relevant region.
+5. **Be patient with slow pages.** The assistant can wait for content to load.
 
 ## Troubleshooting
 
 ### Page Won't Load
 
-- Try providing the full URL with `https://`
-- Some sites block automated browsers; try a different approach or site
+- Try providing the full URL with `https://`.
+- Some sites block automated browsers; try a different approach or site.
 
 ### Can't Find an Element
 
-- Describe what you're looking for more specifically
-- Ask the assistant to scroll down or look in a different section
-- Some elements may only appear after certain actions (hovering, clicking)
+- Describe what you're looking for more specifically.
+- Ask the assistant to scroll down or look in a different section.
+- If `/browse` can't see the element (e.g., it's inside a canvas or rendered as an image), try
+  `/browse_visual`.
 
 ### Action Didn't Work
 
-- Dynamic pages may require waiting for content to load
-- Ask the assistant to try the action again
-- Some interactive elements may not work with automation
+- Dynamic pages may require waiting for content to load.
+- Ask the assistant to try again, or to take a snapshot/screenshot first to check the page state.
 
 ### Session Timeout
 
-- Long-running browser sessions may time out
-- For complex tasks, break them into smaller requests
-- Start a new `/browse` session if needed
+- Long-running browser sessions may time out. Break complex tasks into smaller requests.
+- Start a new `/browse` session if needed.
 
 ## Related Features
 
-- **[User Guide](USER_GUIDE.md)** - Full assistant documentation
-- **[Scripting Guide](scripting.md)** - Automate tasks with scripts
-- **Document Ingestion** - Save web content: "Save this page for later: [URL]"
+- **[User Guide](USER_GUIDE.md)** — full assistant documentation
+- **[Scripting Guide](scripting.md)** — automate tasks with scripts
+- **Document Ingestion** — save web content: "Save this page for later: [URL]"

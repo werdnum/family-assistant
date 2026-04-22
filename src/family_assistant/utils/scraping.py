@@ -555,6 +555,39 @@ class PlaywrightScraper:
         return None, None, url, None  # Return original URL on failure here
 
 
+async def convert_html_bytes_to_markdown(
+    content_bytes: bytes, filename: str | None = None
+) -> str | None:
+    """Convert arbitrary bytes (typically HTML) to Markdown using MarkItDown.
+
+    Runs the conversion in a worker thread because MarkItDown is synchronous.
+    Returns ``None`` if MarkItDown is unavailable or the conversion produces
+    empty output.
+    """
+    if not content_bytes or MarkItDownType is None:
+        if MarkItDownType is None:
+            logger.warning(
+                "markitdown library not installed; cannot convert to markdown."
+            )
+        return None
+
+    converter = MarkItDownType()
+    effective_filename = filename or "unknown_file"
+
+    def _convert_sync() -> str | None:
+        stream = io.BytesIO(content_bytes)
+        try:
+            result = converter.convert_stream(stream, filename=effective_filename)
+        except Exception:
+            logger.exception("MarkItDown conversion failed for %s", effective_filename)
+            return None
+        if result and result.text_content:
+            return result.text_content
+        return None
+
+    return await asyncio.to_thread(_convert_sync)
+
+
 async def check_playwright_is_functional() -> bool:
     """Checks if Playwright async API and browser are functional."""
     if not _playwright_installed or async_playwright is None:

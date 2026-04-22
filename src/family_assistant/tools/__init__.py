@@ -25,6 +25,18 @@ from family_assistant.tools.automations import (
     list_automations_tool,
     update_automation_tool,
 )
+from family_assistant.tools.browser_dom import (
+    BROWSER_DOM_TOOLS_DEFINITION,
+    browser_click_tool,
+    browser_exec_tool,
+    browser_extract_tool,
+    browser_fill_tool,
+    browser_open_tool,
+    browser_screenshot_tool,
+    browser_select_tool,
+    browser_snapshot_tool,
+    browser_wait_tool,
+)
 from family_assistant.tools.calendar import (
     CALENDAR_TOOLS_DEFINITION,
     add_calendar_event_tool,
@@ -362,6 +374,17 @@ __all__ = [
     "computer_use_search",
     "computer_use_type_text_at",
     "computer_use_wait_5_seconds",
+    # Browser DOM (semantic) tools
+    "BROWSER_DOM_TOOLS_DEFINITION",
+    "browser_click_tool",
+    "browser_exec_tool",
+    "browser_extract_tool",
+    "browser_fill_tool",
+    "browser_open_tool",
+    "browser_screenshot_tool",
+    "browser_select_tool",
+    "browser_snapshot_tool",
+    "browser_wait_tool",
     # Workspace file tools
     "WORKSPACE_TOOLS_DEFINITION",
     "workspace_read_tool",
@@ -453,6 +476,7 @@ _LOCAL_TOOL_DEFINITIONS: list[ToolDefinition] = (
     + MEDIA_DOWNLOAD_TOOLS_DEFINITION
     + MOCK_IMAGE_TOOLS_DEFINITION
     + COMPUTER_USE_TOOLS_DEFINITION
+    + BROWSER_DOM_TOOLS_DEFINITION
     + WORKSPACE_TOOLS_DEFINITION
     + WORKER_TOOLS_DEFINITION
     + ENGINEERING_TOOLS_DEFINITION
@@ -545,6 +569,16 @@ _LOCAL_TOOL_IMPLEMENTATIONS: dict[str, ToolImplementation] = {
     "search": computer_use_search,
     "type_text_at": computer_use_type_text_at,
     "wait_5_seconds": computer_use_wait_5_seconds,
+    # Browser DOM (semantic) tools
+    "browser_open": browser_open_tool,
+    "browser_snapshot": browser_snapshot_tool,
+    "browser_click": browser_click_tool,
+    "browser_fill": browser_fill_tool,
+    "browser_select": browser_select_tool,
+    "browser_wait": browser_wait_tool,
+    "browser_extract": browser_extract_tool,
+    "browser_screenshot": browser_screenshot_tool,
+    "browser_exec": browser_exec_tool,
     # Workspace file tools
     "workspace_read": workspace_read_tool,
     "workspace_write": workspace_write_tool,
@@ -1001,6 +1035,62 @@ LOCAL_TOOL_METADATA_BY_NAME: dict[str, LocalToolMetadata] = {
         ToolTag.OUTPUT_UNTRUSTED,
     ),
     "scroll_document": _metadata(
+        ToolTag.BROWSER,
+        ToolTag.STATE_CHANGING,
+        ToolTag.EXTERNAL_COMM,
+        ToolTag.OUTPUT_UNTRUSTED,
+    ),
+    # Browser DOM (semantic) tools — same [BC] posture as Computer Use tools:
+    # untrusted web output, external comms, and DOM state changes.
+    "browser_open": _metadata(
+        ToolTag.BROWSER,
+        ToolTag.STATE_CHANGING,
+        ToolTag.EXTERNAL_COMM,
+        ToolTag.OUTPUT_UNTRUSTED,
+    ),
+    "browser_snapshot": _metadata(
+        ToolTag.BROWSER,
+        ToolTag.READ_ONLY,
+        ToolTag.EXTERNAL_COMM,
+        ToolTag.OUTPUT_UNTRUSTED,
+    ),
+    "browser_click": _metadata(
+        ToolTag.BROWSER,
+        ToolTag.STATE_CHANGING,
+        ToolTag.EXTERNAL_COMM,
+        ToolTag.OUTPUT_UNTRUSTED,
+    ),
+    "browser_fill": _metadata(
+        ToolTag.BROWSER,
+        ToolTag.STATE_CHANGING,
+        ToolTag.EXTERNAL_COMM,
+        ToolTag.OUTPUT_UNTRUSTED,
+    ),
+    "browser_select": _metadata(
+        ToolTag.BROWSER,
+        ToolTag.STATE_CHANGING,
+        ToolTag.EXTERNAL_COMM,
+        ToolTag.OUTPUT_UNTRUSTED,
+    ),
+    "browser_wait": _metadata(
+        ToolTag.BROWSER,
+        ToolTag.READ_ONLY,
+        ToolTag.EXTERNAL_COMM,
+        ToolTag.OUTPUT_UNTRUSTED,
+    ),
+    "browser_extract": _metadata(
+        ToolTag.BROWSER,
+        ToolTag.READ_ONLY,
+        ToolTag.EXTERNAL_COMM,
+        ToolTag.OUTPUT_UNTRUSTED,
+    ),
+    "browser_screenshot": _metadata(
+        ToolTag.BROWSER,
+        ToolTag.READ_ONLY,
+        ToolTag.EXTERNAL_COMM,
+        ToolTag.OUTPUT_UNTRUSTED,
+    ),
+    "browser_exec": _metadata(
         ToolTag.BROWSER,
         ToolTag.STATE_CHANGING,
         ToolTag.EXTERNAL_COMM,

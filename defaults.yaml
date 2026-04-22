@@ -522,7 +522,52 @@ service_profiles:
           priority: 10
     slash_commands: []
   - id: "browser_profile"
-    description: "Assistant profile with web browsing capabilities for complex browser interactions like filling forms or navigating JavaScript-heavy sites. For simple web scraping, consider using the ingest_document_from_url tool or direct MCP browser tools."
+    description: "Assistant profile with web browsing capabilities using semantic accessibility snapshots. Handles reading pages, filling forms, clicking elements, and extracting content. Delegates to browser_visual_profile for tasks that can only be solved visually (canvas, image maps, drag-and-drop that doesn't target DOM nodes)."
+    processing_config:
+      max_iterations: 25
+      prompts: # MERGES with default_profile_settings.processing_config.prompts
+        system_prompt: "You browse the web via accessibility snapshots on behalf of {user_name}. Start every session with browser_open, which navigates to a URL and returns a snapshot of the page structure. Each snapshot is rendered as indented text where interactive elements are tagged with stable refs like `e12`; use those refs with browser_click, browser_fill, and browser_select. Use browser_extract when {user_name} wants the page content as Markdown, browser_wait when you need to wait for load states or a specific element, and browser_screenshot only when you need a visual to attach to your reply. When the fixed tools don't fit — shadow DOM traversal, iframes, reading JSON endpoints via fetch, or complex multi-step DOM mutation in a single turn — use browser_exec to run JavaScript in-page via page.evaluate. For tasks that can only be solved visually (canvas, image maps, drag-and-drop that doesn't target DOM nodes), call delegate_to_service with target_service_id='browser_visual_profile'; the visual profile shares the same browser tab so the session state (URL, cookies, form progress) carries over. After any tool calls, your final text response will be sent directly to {user_name}. Do NOT use the 'send_message_to_user' tool to respond to {user_name} - that tool is only for sending messages to OTHER users. Current time is {current_time}."
+    tools_config: # REPLACES default_profile_settings.tools_config entirely for this profile
+      enable_local_tools:
+        - "browser_open"
+        - "browser_snapshot"
+        - "browser_click"
+        - "browser_fill"
+        - "browser_select"
+        - "browser_extract"
+        - "browser_wait"
+        - "browser_screenshot"
+        - "browser_exec"
+        - "attach_to_response"
+        - "delegate_to_service"
+      enable_mcp_server_ids: []
+      confirm_tools: [] # No tools to confirm
+    tools_policy: # REPLACES default_profile_settings.tools_policy entirely for this profile
+      default_decision: "deny"
+      rules:
+        - match:
+            names:
+              - "browser_open"
+              - "browser_snapshot"
+              - "browser_click"
+              - "browser_fill"
+              - "browser_select"
+              - "browser_extract"
+              - "browser_wait"
+              - "browser_screenshot"
+              - "browser_exec"
+              - "attach_to_response"
+          decision: "allow"
+          priority: 10
+        - match:
+            names:
+              - "delegate_to_service"
+          decision: "allow"
+          priority: 10
+    slash_commands:
+      - "/browse"
+  - id: "browser_visual_profile"
+    description: "Visual browser automation profile driven by Google's Computer Use model. Uses coordinate-based click/type/scroll against screenshots. Used when a task can only be solved visually (canvas, image maps, drag-and-drop on non-DOM elements). Typically invoked by delegation from browser_profile, which shares the same browser tab."
     processing_config:
       # Using simple format (no retry/fallback for browser tasks)
       provider: "google"
@@ -570,7 +615,7 @@ service_profiles:
           decision: "allow"
           priority: 10
     slash_commands:
-      - "/browse"
+      - "/browse_visual"
   - id: "research"
     description: "Assistant profile for deep research, utilizing the Google Gemini Deep Research agent (regular tier). Faster turnaround; ideal for everyday research questions that benefit from web-grounded synthesis."
     processing_config:
@@ -1759,3 +1804,4 @@ otel:
 
 # Secrets (telegram_token, api_keys, database_url) are primarily from env.
 # Model, embedding_model, server_url, storage_paths are also top-level or env.
+
