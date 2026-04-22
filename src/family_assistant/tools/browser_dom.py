@@ -121,17 +121,20 @@ __all__ = [
 # ---------------------------------------------------------------------------
 
 # JS that walks the DOM, tags interactive/labeled elements with a stable
-# ``data-ref`` attribute, and returns a nested structure describing each
+# ``data-fa-ref`` attribute, and returns a nested structure describing each
 # element's role, accessible name, and key attributes. The attribute-tagging
 # strategy means the Python side doesn't have to store a per-ref selector —
-# the ref ``e12`` always resolves to ``[data-ref="e12"]``.
+# the ref ``e12`` always resolves to ``[data-fa-ref="e12"]``. The attribute
+# is namespaced (``data-fa-ref`` rather than ``data-ref``) so it can't
+# collide with application-owned ``data-ref`` attributes that some sites use
+# for their own runtime logic or test harnesses.
 #
 # The function is wrapped in an IIFE so it can be passed straight to
 # ``page.evaluate`` without leaking globals.
 _SNAPSHOT_JS = r"""
 () => {
   // Clear previous refs so snapshots between navigations don't collide.
-  document.querySelectorAll('[data-ref]').forEach(el => el.removeAttribute('data-ref'));
+  document.querySelectorAll('[data-fa-ref]').forEach(el => el.removeAttribute('data-fa-ref'));
 
   let refCounter = 0;
   const allocRef = () => 'e' + (++refCounter);
@@ -214,7 +217,7 @@ _SNAPSHOT_JS = r"""
     const role = interesting(el);
     if (role) {
       const ref = allocRef();
-      el.setAttribute('data-ref', ref);
+      el.setAttribute('data-fa-ref', ref);
       const node = { ref, role, name: accName(el) };
       const href = el.getAttribute('href');
       if (href) node.href = href;
@@ -326,7 +329,7 @@ def _collect_refs(
     if out is None:
         out = {}
     for node in nodes:
-        out[node["ref"]] = f'[data-ref="{node["ref"]}"]'
+        out[node["ref"]] = f'[data-fa-ref="{node["ref"]}"]'
         children = node.get("children")
         if children:
             _collect_refs(children, out)
@@ -459,15 +462,17 @@ async def browser_fill_tool(
 async def browser_select_tool(
     exec_context: ToolExecutionContext, ref: str, value: str
 ) -> ToolResult:
-    """Select an ``<option>`` by visible label or value."""
+    """Select an ``<option>`` by visible label or value.
+
+    Passing ``value`` positionally lets Playwright match against the option's
+    value *or* its visible label in a single call, avoiding a 30s default
+    timeout when the LLM guesses value-vs-label wrong.
+    """
     session = await get_browser_session(exec_context)
     page = await session.ensure_page()
     selector = _resolve_ref(session, ref)
     logger.info("browser_select: %s <- %r", ref, value)
-    try:
-        await page.locator(selector).select_option(label=value)
-    except PlaywrightError:
-        await page.locator(selector).select_option(value=value)
+    await page.locator(selector).select_option(value)
     snap = await _take_snapshot(session, page, query=None)
     return ToolResult(text=snap["text"], data=dict(snap))
 

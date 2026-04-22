@@ -56,7 +56,7 @@ class BrowserSession:
     page: Page | None = field(default=None, repr=False)
     screen_width: int = SCREEN_WIDTH
     screen_height: int = SCREEN_HEIGHT
-    # Maps short refs (e.g. ``"e12"``) to serialized XPath selectors that the
+    # Maps short refs (e.g. ``"e12"``) to CSS selectors that the
     # semantic DOM tools can hand back to Playwright. Populated by
     # browser_dom snapshots; cleared on navigation.
     ref_cache: dict[str, str] = field(default_factory=dict)

@@ -160,15 +160,15 @@ class TestCollectRefs:
     def test_returns_selector_for_every_node(self) -> None:
         refs = _collect_refs(_sample_snapshot()["roots"])
         assert refs == {
-            "e1": '[data-ref="e1"]',
-            "e2": '[data-ref="e2"]',
-            "e3": '[data-ref="e3"]',
-            "e4": '[data-ref="e4"]',
+            "e1": '[data-fa-ref="e1"]',
+            "e2": '[data-fa-ref="e2"]',
+            "e3": '[data-fa-ref="e3"]',
+            "e4": '[data-fa-ref="e4"]',
         }
 
     def test_handles_empty_children_list(self) -> None:
         node: SnapshotNode = {"ref": "e1", "role": "text", "name": "", "children": []}
-        assert _collect_refs([node]) == {"e1": '[data-ref="e1"]'}
+        assert _collect_refs([node]) == {"e1": '[data-fa-ref="e1"]'}
 
 
 class TestResolveRef:
@@ -176,13 +176,13 @@ class TestResolveRef:
 
     def test_returns_selector_when_ref_is_known(self) -> None:
         session = BrowserSession()
-        session.ref_cache["e7"] = '[data-ref="e7"]'
-        assert _resolve_ref(session, "e7") == '[data-ref="e7"]'
+        session.ref_cache["e7"] = '[data-fa-ref="e7"]'
+        assert _resolve_ref(session, "e7") == '[data-fa-ref="e7"]'
 
     def test_raises_valueerror_with_known_refs_listed(self) -> None:
         session = BrowserSession()
-        session.ref_cache["e1"] = '[data-ref="e1"]'
-        session.ref_cache["e2"] = '[data-ref="e2"]'
+        session.ref_cache["e1"] = '[data-fa-ref="e1"]'
+        session.ref_cache["e2"] = '[data-fa-ref="e2"]'
         with pytest.raises(ValueError, match="Unknown ref 'e99'") as exc:
             _resolve_ref(session, "e99")
         assert "e1" in str(exc.value)
@@ -210,7 +210,10 @@ class TestBrowserSessionRefCache:
 
     def test_clear_refs_empties_the_cache(self) -> None:
         session = BrowserSession()
-        session.ref_cache.update({"e1": '[data-ref="e1"]', "e2": '[data-ref="e2"]'})
+        session.ref_cache.update({
+            "e1": '[data-fa-ref="e1"]',
+            "e2": '[data-fa-ref="e2"]',
+        })
         session.clear_refs()
         assert session.ref_cache == {}
 
