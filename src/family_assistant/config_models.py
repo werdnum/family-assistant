@@ -931,6 +931,7 @@ class AppConfig(BaseSettings):
     )
     openrouter_api_key: str | None = None
     gemini_api_key: str | None = None
+    openai_api_key: str | None = None
 
     # User access control
     allowed_user_ids: list[int] = Field(default_factory=list)

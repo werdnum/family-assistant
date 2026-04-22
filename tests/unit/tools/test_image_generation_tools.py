@@ -1,13 +1,15 @@
 """Tests for image generation tools."""
 
+import base64
 import io
-from unittest.mock import AsyncMock, Mock
+from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
 from PIL import Image
 
 from family_assistant.tools.image_backends import (
     MockImageBackend,
+    OpenAIImageBackend,
 )
 from family_assistant.tools.image_generation import (
     generate_image_tool,
@@ -363,3 +365,212 @@ class TestImageGenerationTools:
         assert isinstance(result, ToolResult)
         assert "Error transforming image: Backend error" in result.get_text()
         assert not result.attachments or len(result.attachments) == 0
+
+
+def _make_png_b64() -> str:
+    """Create a minimal valid PNG and return as base64."""
+    img = Image.new("RGB", (64, 64), color=(255, 0, 0))
+    buf = io.BytesIO()
+    img.save(buf, format="PNG")
+    return base64.b64encode(buf.getvalue()).decode()
+
+
+class TestOpenAIImageBackend:
+    """Test the OpenAI image backend."""
+
+    @pytest.fixture
+    def openai_backend(self) -> OpenAIImageBackend:
+        """Create an OpenAI backend with a dummy key."""
+        return OpenAIImageBackend(api_key="test-key")
+
+    @pytest.mark.asyncio
+    async def test_generate_image(self, openai_backend: OpenAIImageBackend) -> None:
+        """Test image generation calls the OpenAI API correctly."""
+        png_b64 = _make_png_b64()
+        mock_response = Mock()
+        mock_response.data = [Mock(b64_json=png_b64)]
+        mock_response.usage = Mock(input_tokens=10, output_tokens=100)
+
+        openai_backend.client.images.generate = AsyncMock(return_value=mock_response)
+
+        result = await openai_backend.generate_image("a red square", "photorealistic")
+
+        assert isinstance(result, bytes)
+        assert len(result) > 0
+        img = Image.open(io.BytesIO(result))
+        assert img.format == "PNG"
+
+        call_kwargs = openai_backend.client.images.generate.call_args.kwargs
+        assert call_kwargs["model"] == "gpt-image-1"
+        assert call_kwargs["prompt"] == "a red square"
+        assert call_kwargs["quality"] == "high"
+
+    @pytest.mark.asyncio
+    async def test_generate_image_auto_quality(
+        self, openai_backend: OpenAIImageBackend
+    ) -> None:
+        """Test that auto style maps to auto quality."""
+        png_b64 = _make_png_b64()
+        mock_response = Mock()
+        mock_response.data = [Mock(b64_json=png_b64)]
+        mock_response.usage = None
+
+        openai_backend.client.images.generate = AsyncMock(return_value=mock_response)
+
+        await openai_backend.generate_image("test", "auto")
+
+        call_kwargs = openai_backend.client.images.generate.call_args.kwargs
+        assert call_kwargs["quality"] == "auto"
+
+    @pytest.mark.asyncio
+    async def test_generate_image_no_data_raises(
+        self, openai_backend: OpenAIImageBackend
+    ) -> None:
+        """Test error when API returns no data."""
+        mock_response = Mock()
+        mock_response.data = None
+
+        openai_backend.client.images.generate = AsyncMock(return_value=mock_response)
+
+        with pytest.raises(ValueError, match="No image data"):
+            await openai_backend.generate_image("test")
+
+    @pytest.mark.asyncio
+    async def test_generate_image_no_b64_raises(
+        self, openai_backend: OpenAIImageBackend
+    ) -> None:
+        """Test error when API returns empty b64_json."""
+        mock_response = Mock()
+        mock_response.data = [Mock(b64_json=None)]
+
+        openai_backend.client.images.generate = AsyncMock(return_value=mock_response)
+
+        with pytest.raises(ValueError, match="No image data"):
+            await openai_backend.generate_image("test")
+
+    @pytest.mark.asyncio
+    async def test_transform_image(self, openai_backend: OpenAIImageBackend) -> None:
+        """Test image transformation calls the edit endpoint."""
+        png_b64 = _make_png_b64()
+        mock_response = Mock()
+        mock_response.data = [Mock(b64_json=png_b64)]
+
+        openai_backend.client.images.edit = AsyncMock(return_value=mock_response)
+
+        # Create source image bytes
+        src_img = Image.new("RGB", (64, 64), color=(0, 0, 255))
+        buf = io.BytesIO()
+        src_img.save(buf, format="PNG")
+        src_bytes = buf.getvalue()
+
+        result = await openai_backend.transform_image(src_bytes, "make it red")
+
+        assert isinstance(result, bytes)
+        assert len(result) > 0
+
+        call_kwargs = openai_backend.client.images.edit.call_args.kwargs
+        assert call_kwargs["model"] == "gpt-image-1"
+        assert call_kwargs["prompt"] == "make it red"
+
+    def test_style_to_quality_mapping(self) -> None:
+        """Test style-to-quality mapping."""
+        assert OpenAIImageBackend._style_to_quality("photorealistic") == "high"
+        assert OpenAIImageBackend._style_to_quality("artistic") == "medium"
+        assert OpenAIImageBackend._style_to_quality("auto") == "auto"
+        assert OpenAIImageBackend._style_to_quality("unknown") == "auto"
+
+
+class TestBackendSelection:
+    """Test that the correct backend is selected based on configuration."""
+
+    @pytest.mark.asyncio
+    async def test_openai_key_selects_openai_backend(self) -> None:
+        """When OpenAI key is set, OpenAI backend is used."""
+        app_config = Mock()
+        app_config.openai_api_key = "test-openai-key"
+        app_config.gemini_api_key = None
+
+        context = Mock()
+        context.processing_service = Mock()
+        context.processing_service.app_config = app_config
+        # Ensure no injected backend
+        del context.image_backend
+
+        with patch(
+            "family_assistant.tools.image_generation.OpenAIImageBackend"
+        ) as mock_cls:
+            mock_backend = Mock()
+            mock_backend.generate_image = AsyncMock(return_value=_make_png_bytes())
+            mock_cls.return_value = mock_backend
+
+            await generate_image_tool(context, prompt="test")
+            mock_cls.assert_called_once_with("test-openai-key")
+
+    @pytest.mark.asyncio
+    async def test_gemini_key_selects_gemini_backend(self) -> None:
+        """When only Gemini key is set, Gemini backend is used."""
+        app_config = Mock()
+        app_config.openai_api_key = None
+        app_config.gemini_api_key = "test-gemini-key"
+
+        context = Mock()
+        context.processing_service = Mock()
+        context.processing_service.app_config = app_config
+        del context.image_backend
+
+        with patch(
+            "family_assistant.tools.image_generation.GeminiImageBackend"
+        ) as mock_cls:
+            mock_backend = Mock()
+            mock_backend.generate_image = AsyncMock(return_value=_make_png_bytes())
+            mock_cls.return_value = mock_backend
+
+            await generate_image_tool(context, prompt="test")
+            mock_cls.assert_called_once_with("test-gemini-key")
+
+    @pytest.mark.asyncio
+    async def test_no_keys_selects_mock_backend(self) -> None:
+        """When no API keys are set, mock backend is used."""
+        app_config = Mock()
+        app_config.openai_api_key = None
+        app_config.gemini_api_key = None
+
+        context = Mock()
+        context.processing_service = Mock()
+        context.processing_service.app_config = app_config
+        del context.image_backend
+
+        result = await generate_image_tool(context, prompt="test landscape")
+
+        assert isinstance(result, ToolResult)
+        assert result.attachments and len(result.attachments) > 0
+
+    @pytest.mark.asyncio
+    async def test_openai_preferred_over_gemini(self) -> None:
+        """When both keys are set, OpenAI is preferred."""
+        app_config = Mock()
+        app_config.openai_api_key = "test-openai-key"
+        app_config.gemini_api_key = "test-gemini-key"
+
+        context = Mock()
+        context.processing_service = Mock()
+        context.processing_service.app_config = app_config
+        del context.image_backend
+
+        with patch(
+            "family_assistant.tools.image_generation.OpenAIImageBackend"
+        ) as mock_cls:
+            mock_backend = Mock()
+            mock_backend.generate_image = AsyncMock(return_value=_make_png_bytes())
+            mock_cls.return_value = mock_backend
+
+            await generate_image_tool(context, prompt="test")
+            mock_cls.assert_called_once_with("test-openai-key")
+
+
+def _make_png_bytes() -> bytes:
+    """Create minimal valid PNG bytes."""
+    img = Image.new("RGB", (64, 64), color=(255, 0, 0))
+    buf = io.BytesIO()
+    img.save(buf, format="PNG")
+    return buf.getvalue()
