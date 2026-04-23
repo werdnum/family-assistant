@@ -10,6 +10,7 @@ from typing import Annotated, Any
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from fastapi.responses import Response
 
+from family_assistant.config_models import ServiceProfile
 from family_assistant.web.auth import (
     AUTH_ENABLED,
     OIDC_CLIENT_ID,
@@ -76,6 +77,36 @@ def redact_sensitive_config(obj: Any) -> Any:  # noqa: ANN401 - recursive over a
     if isinstance(obj, list):
         return [redact_sensitive_config(item) for item in obj]
     return obj
+
+
+def _dump_profile(
+    profile: ServiceProfile,
+    # ast-grep-ignore: no-dict-any - Serialized Pydantic model has heterogeneous top-level values
+) -> dict[str, Any]:
+    """Serialize a ServiceProfile including operator-layer fields that model_dump excludes.
+
+    ``ServiceProfile.operator_tools_policy`` and ``operator_mcp_server_ids`` are
+    declared with ``exclude=True`` so they do not round-trip through the YAML
+    config, but they ARE merged with the profile layer at runtime (see
+    ``PolicyEngine.from_layers``). For the debug dump we want the caller to see
+    every layer contributing to the effective policy, so we serialize them
+    explicitly.
+    """
+    dumped = profile.model_dump(mode="json")
+
+    if profile.operator_tools_policy is not None:
+        dumped["operator_tools_policy"] = profile.operator_tools_policy.model_dump(
+            mode="json"
+        )
+    else:
+        dumped["operator_tools_policy"] = None
+
+    dumped["operator_mcp_server_ids"] = [
+        entry if isinstance(entry, str) else entry.model_dump(mode="json")
+        for entry in profile.operator_mcp_server_ids
+    ]
+
+    return dumped
 
 
 def _runtime_info_for(
@@ -279,10 +310,17 @@ async def dump_profiles(  # noqa: A002 - FastAPI query param name shadows builti
 
     This endpoint exposes internal configuration (prompts, policy rules, tool
     enablement). It requires an authenticated user (OIDC session or API token)
-    and redacts secret-bearing fields (tokens, passwords, API keys). The
-    response defaults to pretty-printed JSON (``indent=2``); pass
-    ``?format=raw`` for compact JSON.
+    and is additionally gated through the shared ``is_debug_authorized`` check
+    used by the other ``/api/debug/*`` routes. Secret-bearing fields (tokens,
+    passwords, API keys) are redacted. The response defaults to pretty-printed
+    JSON (``indent=2``); pass ``?format=raw`` for compact JSON.
     """
+    if not is_debug_authorized(request):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Debug endpoints are not authorized",
+        )
+
     app = request.app
     config = getattr(app.state, "config", None)
     if config is None:
@@ -298,7 +336,7 @@ async def dump_profiles(  # noqa: A002 - FastAPI query param name shadows builti
     for profile in config.service_profiles:
         if profile_id is not None and profile.id != profile_id:
             continue
-        profile_dump = redact_sensitive_config(profile.model_dump(mode="json"))
+        profile_dump = redact_sensitive_config(_dump_profile(profile))
         runtime_info = _runtime_info_for(profile.id, processing_services_registry)
         profiles_info.append({
             "id": profile.id,

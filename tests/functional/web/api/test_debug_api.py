@@ -9,6 +9,7 @@ import pytest
 from family_assistant.config_models import (
     AppConfig,
     DefaultProfileSettings,
+    MCPServerLoadingEntry,
     ProcessingConfig,
     ServiceProfile,
     ToolLoadingEntry,
@@ -310,6 +311,88 @@ async def test_dump_profiles_includes_runtime_info(
         assert readonly["runtime"] == {"kind": "remote"}
 
         assert data["registered_service_ids"] == ["readonly", "trusted"]
+    finally:
+        _restore_registry(original_registry)
+        _restore_config(original_config)
+
+
+@pytest.mark.asyncio
+async def test_dump_profiles_includes_operator_layer(
+    api_client: httpx.AsyncClient,
+) -> None:
+    """Operator-layer policy/MCP overrides are exposed even though model_dump excludes them.
+
+    ``ServiceProfile.operator_tools_policy`` and ``operator_mcp_server_ids`` are
+    declared with ``exclude=True`` so Pydantic's default ``model_dump()`` leaves
+    them out. At runtime they get merged into the effective policy alongside
+    the profile-layer rules, so the debug endpoint must surface them or it will
+    misrepresent how tools will actually be gated.
+    """
+    profile = ServiceProfile(
+        id="with_operator_overrides",
+        description="Profile with operator-layer policy overrides.",
+        processing_config=ProcessingConfig(llm_model="gemini/gemini-2.5-flash"),
+        tools_policy=ToolPolicyConfig(
+            rules=[
+                PolicyRule(
+                    match=ToolMatcher(names=["profile_*"]),
+                    decision=ToolPolicyDecision.ALLOW,
+                    description="Profile-layer rule",
+                ),
+            ],
+            default_decision=ToolPolicyDecision.CONFIRM,
+        ),
+    )
+    config = AppConfig(
+        default_service_profile_id="with_operator_overrides",
+        service_profiles=[profile],
+        default_profile_settings=DefaultProfileSettings(),
+    )
+    # ServiceProfile declares operator_tools_policy / operator_mcp_server_ids with
+    # exclude=True, so passing them to AppConfig(...) would strip them during
+    # nested re-validation. In production they are set programmatically after
+    # config load, so we mirror that here.
+    config.service_profiles[0].operator_tools_policy = ToolPolicyConfig(
+        rules=[
+            PolicyRule(
+                match=ToolMatcher(names=["operator_*"]),
+                decision=ToolPolicyDecision.DENY,
+                description="Operator-layer override",
+            ),
+        ],
+        default_decision=ToolPolicyDecision.DENY,
+    )
+    config.service_profiles[0].operator_mcp_server_ids = [
+        "operator_eager_mcp",
+        MCPServerLoadingEntry(id="operator_lazy_mcp", loading="on_demand"),
+    ]
+
+    original_config = _install_test_config(config)
+    original_registry = _install_registry({})
+    try:
+        response = await api_client.get("/api/debug/profiles")
+        assert response.status_code == 200
+        dumped = response.json()["profiles"][0]["config"]
+
+        operator_policy = dumped["operator_tools_policy"]
+        assert operator_policy is not None
+        assert operator_policy["default_decision"] == "deny"
+        assert len(operator_policy["rules"]) == 1
+        assert operator_policy["rules"][0]["match"]["names"] == ["operator_*"]
+        assert operator_policy["rules"][0]["decision"] == "deny"
+        assert operator_policy["rules"][0]["description"] == "Operator-layer override"
+
+        # MCP overrides serialize plain strings as strings and loading entries as dicts.
+        assert "operator_eager_mcp" in dumped["operator_mcp_server_ids"]
+        lazy = next(
+            entry
+            for entry in dumped["operator_mcp_server_ids"]
+            if isinstance(entry, dict)
+        )
+        assert lazy == {"id": "operator_lazy_mcp", "loading": "on_demand"}
+
+        # The profile-layer policy is still present alongside the operator layer.
+        assert dumped["tools_policy"]["rules"][0]["match"]["names"] == ["profile_*"]
     finally:
         _restore_registry(original_registry)
         _restore_config(original_config)
