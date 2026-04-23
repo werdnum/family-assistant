@@ -21,19 +21,26 @@ const SUPPORTED_FILE_TYPES = [
 ];
 
 /**
- * Uploads a file to the attachment service
+ * Uploads a file to the attachment service.
+ *
+ * Deliberately does NOT accept an AbortSignal: aborting a POST mid-flight
+ * can race with the server committing the upload. If the server stored the
+ * file but the browser aborted before reading the response, ``fetch`` would
+ * reject with ``AbortError`` and the attachment_id needed to DELETE it
+ * would never reach us — turning every cancelled upload into a potential
+ * orphan. Cancellation is handled client-side via a flag instead: we let
+ * the request complete, then DELETE server-side if the user aborted.
+ *
  * @param {File} file - The file to upload
- * @param {AbortSignal} [signal] - Optional abort signal for cancelling the upload
  * @returns {Promise<Object>} Upload response with attachment metadata
  */
-const uploadFileToService = async (file, signal) => {
+const uploadFileToService = async (file) => {
   const formData = new globalThis.FormData();
   formData.append('file', file);
 
   const response = await fetch('/api/attachments/upload', {
     method: 'POST',
     body: formData,
-    signal,
   });
 
   if (!response.ok) {
@@ -74,8 +81,10 @@ export class FileAttachmentAdapter {
   constructor() {
     // Accept all supported file types
     this.accept = SUPPORTED_FILE_TYPES.join(',');
-    // Tracks AbortControllers for in-flight uploads by attachment id so
-    // ``remove`` can cancel them, preventing orphan files on the server.
+    // Cancellation tokens for in-flight uploads, keyed by attachment id.
+    // Each token is ``{ cancelled: boolean }``. ``remove`` flips the flag;
+    // ``add`` checks it after the upload lands and issues a DELETE if set.
+    // We do NOT abort the underlying fetch — see ``uploadFileToService``.
     this._inFlightUploads = new Map();
   }
 
@@ -110,11 +119,11 @@ export class FileAttachmentAdapter {
       attachmentType = 'document';
     }
 
-    // Register the AbortController before yielding, so a remove() fired in
-    // response to the ``running`` state (before the consumer pulls the next
-    // value) still has a controller to abort.
-    const controller = new AbortController();
-    this._inFlightUploads.set(id, controller);
+    // Register the cancellation token before yielding, so a remove() fired
+    // in response to the ``running`` state (before the consumer pulls the
+    // next value) still finds a token to flip.
+    const cancelToken = { cancelled: false };
+    this._inFlightUploads.set(id, cancelToken);
 
     yield {
       id,
@@ -125,18 +134,18 @@ export class FileAttachmentAdapter {
     };
 
     try {
-      const uploadResponse = await uploadFileToService(file, controller.signal);
+      const uploadResponse = await uploadFileToService(file);
       const url = uploadResponse.url;
       const contentParts =
         attachmentType === 'image'
           ? [{ type: 'image', image: url }]
           : [{ type: 'data', name: 'url', data: url }];
 
-      // If remove() fired after the server accepted the file but before the
-      // response landed, the controller was aborted. Clean up the now-orphan
-      // attachment server-side rather than leaving it dangling.
-      if (controller.signal.aborted) {
-        this._deleteOnServer(uploadResponse.attachment_id);
+      // remove() flipped the flag while the upload was in flight. We now
+      // know the attachment_id, so DELETE it rather than leaking an orphan.
+      // Awaited so the iterator's terminal ``next()`` reflects cleanup.
+      if (cancelToken.cancelled) {
+        await this._deleteOnServer(uploadResponse.attachment_id);
         return;
       }
 
@@ -150,9 +159,9 @@ export class FileAttachmentAdapter {
         status: { type: 'complete' },
       };
     } catch (error) {
-      if (error.name === 'AbortError' || controller.signal.aborted) {
-        // remove() cancelled the upload in flight. The runtime has already
-        // dropped the attachment from state, so don't yield anything.
+      if (cancelToken.cancelled) {
+        // remove() fired while uploading AND the upload itself failed —
+        // there's no server-side attachment to clean up. Terminate quietly.
         return;
       }
       console.error('Error uploading attachment:', error);
@@ -212,19 +221,20 @@ export class FileAttachmentAdapter {
   }
 
   /**
-   * Remove an attachment. Aborts the upload if it's still in flight (so the
-   * server never sees it), and issues a DELETE for already-uploaded files.
+   * Remove an attachment. For in-flight uploads, flips a cancellation flag
+   * so ``add`` DELETEs the attachment server-side once the upload response
+   * arrives. For already-uploaded files, issues the DELETE immediately.
    * @param {Object} attachment - The attachment to remove
    * @returns {Promise<void>}
    */
   async remove(attachment) {
-    // Abort any in-flight upload for this attachment. If the upload hasn't
-    // landed server-side yet, this prevents the orphan. If it has already
-    // landed, the add() generator sees the aborted signal and issues the
-    // delete via _deleteOnServer().
-    const controller = this._inFlightUploads.get(attachment.id);
-    if (controller) {
-      controller.abort();
+    // Flip the cancellation flag on any in-flight upload. The upload is
+    // allowed to complete so we learn the attachment_id — otherwise an
+    // aborted fetch that races with server-side commit would orphan the
+    // file. ``add`` reads this flag and issues the DELETE.
+    const cancelToken = this._inFlightUploads.get(attachment.id);
+    if (cancelToken) {
+      cancelToken.cancelled = true;
     }
 
     if (attachment.uploadedId && attachment.status?.type === 'complete') {

@@ -251,16 +251,31 @@ describe('FileAttachmentAdapter', () => {
       // Attachment was not uploaded, so no server call should be made
     });
 
-    test('aborts an in-flight upload so the generator terminates quietly', async () => {
-      // Stall the upload handler indefinitely so remove() fires mid-flight.
-      // The client-side AbortController should cancel the pending fetch,
-      // surfacing AbortError into add()'s catch and terminating the generator
-      // without yielding a ``complete`` (or ``error``) state.
+    test('cancels in-flight upload and DELETEs the server attachment once it lands', async () => {
+      // Stall the upload handler behind a deferred promise so remove() can
+      // fire mid-flight. The adapter should NOT abort the fetch (that would
+      // race with server-side commit and orphan the file); instead it
+      // flips a flag, waits for the response, and DELETEs the attachment.
+      let releaseUpload;
+      const uploadReleased = new Promise((resolve) => {
+        releaseUpload = resolve;
+      });
       server.use(
-        http.post(
-          '/api/attachments/upload',
-          () => new Promise(() => {}) // never resolves
-        )
+        http.post('/api/attachments/upload', async () => {
+          await uploadReleased;
+          return HttpResponse.json({
+            attachment_id: 'server-uuid-456',
+            url: '/api/attachments/server-uuid-456',
+          });
+        })
+      );
+
+      const deleteRequests = [];
+      server.use(
+        http.delete('/api/attachments/:id', ({ params }) => {
+          deleteRequests.push(params.id);
+          return HttpResponse.json({ success: true });
+        })
       );
 
       const file = createMockFile('test.png', 'image/png', 1024);
@@ -268,9 +283,38 @@ describe('FileAttachmentAdapter', () => {
       const running = (await iterator.next()).value;
       expect(running.status.type).toBe('running');
 
-      // Fire remove() while upload is pending. The adapter tracks the
-      // AbortController keyed by attachment id so it can cancel this.
+      // Fire remove() while upload is pending. The flag is set, but the
+      // fetch keeps going until the server responds.
       await adapter.remove(running);
+
+      // Now let the upload complete server-side.
+      releaseUpload();
+
+      const finalResult = await iterator.next();
+      expect(finalResult.done).toBe(true);
+      expect(deleteRequests).toContain('server-uuid-456');
+    });
+
+    test('cancels in-flight upload quietly when the upload itself fails', async () => {
+      let rejectUpload;
+      const uploadRejected = new Promise((_, reject) => {
+        rejectUpload = reject;
+      });
+      server.use(
+        http.post('/api/attachments/upload', async () => {
+          await uploadRejected;
+          return HttpResponse.json({ error: 'boom' }, { status: 500 });
+        })
+      );
+
+      const file = createMockFile('test.png', 'image/png', 1024);
+      const iterator = adapter.add({ file });
+      const running = (await iterator.next()).value;
+      expect(running.status.type).toBe('running');
+
+      await adapter.remove(running);
+
+      rejectUpload(new Error('simulated network failure'));
 
       const finalResult = await iterator.next();
       expect(finalResult.done).toBe(true);
