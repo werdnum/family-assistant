@@ -3,12 +3,13 @@ Handles the indexing process for emails stored in the database.
 """
 
 import logging
+import uuid
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any, TypedDict, cast
 
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.exc import SQLAlchemyError
 
 from family_assistant.indexing.pipeline import IndexableContent, IndexingPipeline
@@ -17,7 +18,10 @@ from family_assistant.indexing.types import (
     EmailMetadata,
     IndexableContentMetadata,
 )
+from family_assistant.services.attachment_registry import AttachmentRegistry
+from family_assistant.storage.context import DatabaseContext
 from family_assistant.storage.email import (
+    AttachmentData,
     received_emails_table,
 )
 from family_assistant.storage.vector import Document, get_document_by_id
@@ -159,6 +163,65 @@ class EmailDocument(Document):
         }
 
 
+async def _ensure_email_attachments_registered(
+    db_context: DatabaseContext,
+    attachment_registry: AttachmentRegistry,
+    email_db_id: int,
+    message_id_header: str,
+    raw_attachment_info: list[Mapping[str, Any]],
+) -> list[AttachmentData]:
+    """Register any email attachments that do not yet have an ``attachment_id``.
+
+    Runs on the indexing write path where each ``email_db_id`` is handled by a
+    single task, so there is no concurrent writer for the same email row. The
+    function returns the updated attachment list as ``AttachmentData`` models
+    and, if any IDs were added, persists the update to
+    ``received_emails.attachment_info``.
+    """
+    attachments = [AttachmentData.model_validate(item) for item in raw_attachment_info]
+    updated = False
+
+    for att in attachments:
+        if att.attachment_id:
+            continue
+        new_id = str(uuid.uuid4())
+        try:
+            await attachment_registry.register_attachment(
+                db_context=db_context,
+                attachment_id=new_id,
+                source_type="email",
+                source_id=message_id_header,
+                mime_type=att.content_type,
+                description=f"Email attachment: {att.filename}",
+                size=att.size or 0,
+                storage_path=att.storage_path,
+                content_url=f"/api/attachments/{new_id}",
+                metadata={
+                    "original_filename": att.filename,
+                    "email_message_id": message_id_header,
+                    "email_db_id": email_db_id,
+                },
+            )
+        except Exception as reg_err:
+            logger.error(
+                f"Failed to register email attachment '{att.filename}' "
+                f"for message {message_id_header}: {reg_err}",
+                exc_info=True,
+            )
+            continue
+        att.attachment_id = new_id
+        updated = True
+
+    if updated:
+        await db_context.execute_with_retry(
+            update(received_emails_table)
+            .where(received_emails_table.c.id == email_db_id)
+            .values(attachment_info=[att.model_dump() for att in attachments])
+        )
+
+    return attachments
+
+
 # --- EmailIndexer Class ---
 class EmailIndexer:
     """
@@ -270,34 +333,51 @@ class EmailIndexer:
 
         # Add attachments to the pipeline
         if email_doc.attachments:
-            for att_meta in email_doc.attachments:
-                storage_path = att_meta.get("storage_path")
-                mime_type = att_meta.get("content_type")
-                original_filename = att_meta.get("filename")
+            attachment_registry = exec_context.attachment_registry
+            if attachment_registry is not None:
+                registered_attachments = await _ensure_email_attachments_registered(
+                    db_context=db_context,
+                    attachment_registry=attachment_registry,
+                    email_db_id=email_db_id,
+                    message_id_header=email_doc.source_id,
+                    raw_attachment_info=list(email_doc.attachments),
+                )
+            else:
+                logger.info(
+                    "AttachmentRegistry not available during indexing of email "
+                    f"{email_db_id}; skipping attachment registration."
+                )
+                registered_attachments = [
+                    AttachmentData.model_validate(item)
+                    for item in email_doc.attachments
+                ]
 
-                if not storage_path or not mime_type:
+            for att in registered_attachments:
+                if not att.storage_path or not att.content_type:
                     logger.warning(
-                        f"Skipping attachment for email {email_db_id} due to missing path or mime_type: {att_meta}"
+                        f"Skipping attachment for email {email_db_id} due to missing path or mime_type: {att}"
                     )
                     continue
 
                 logger.info(
-                    f"Preparing attachment for pipeline: {original_filename} ({mime_type}) at {storage_path} for email {email_db_id}"
+                    f"Preparing attachment for pipeline: {att.filename} "
+                    f"({att.content_type}) at {att.storage_path} for email {email_db_id}"
                 )
                 attachment_item = IndexableContent(
                     content=None,
                     embedding_type="email_attachment_file",
-                    mime_type=mime_type,
+                    mime_type=att.content_type,
                     source_processor="EmailIndexer.handle_index_email.attachment",
                     metadata=cast(
                         "IndexableContentMetadata",
                         {
-                            "original_filename": original_filename,
+                            "original_filename": att.filename,
                             "email_db_id": email_db_id,
                             "email_source_id": email_doc.source_id,
+                            "attachment_id": att.attachment_id,
                         },
                     ),
-                    ref=storage_path,
+                    ref=att.storage_path,
                 )
                 initial_items.append(attachment_item)
 

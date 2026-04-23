@@ -1,15 +1,13 @@
 """Functional tests for email-attachment registration in AttachmentRegistry.
 
-These tests verify that the Mailgun webhook:
-1. Registers each saved attachment in ``attachment_metadata_table`` with
-   ``source_type="email"``.
-2. Persists the generated ``attachment_id`` back into
-   ``received_emails.attachment_info``.
-3. Makes attachment bytes accessible through ``get_attachment_content``.
+These tests verify that:
 
-They also verify the lazy-backfill path in
-``get_full_document_content_tool`` so emails predating registry integration
-get their attachment IDs registered on first read.
+1. The Mailgun webhook accepts emails with attachments (no direct registration).
+2. ``EmailIndexer.handle_index_email`` registers each attachment in
+   ``attachment_metadata_table`` with ``source_type="email"`` and persists the
+   generated ``attachment_id`` back into ``received_emails.attachment_info``.
+3. ``resolve_email_attachments`` is strictly read-only and simply surfaces
+   whatever IDs are already stored on the email row.
 """
 
 from __future__ import annotations
@@ -19,16 +17,21 @@ import hmac
 import time
 import uuid
 from typing import TYPE_CHECKING
+from unittest.mock import AsyncMock, MagicMock
+from zoneinfo import ZoneInfo
 
 import pytest
 from sqlalchemy import insert, select
 
 from family_assistant.config_models import AppConfig, EmailIntakeConfig
+from family_assistant.indexing.email_indexer import EmailIndexer
+from family_assistant.indexing.pipeline import IndexingPipeline
 from family_assistant.services.attachment_registry import AttachmentRegistry
 from family_assistant.storage.base import attachment_metadata_table
 from family_assistant.storage.context import DatabaseContext
 from family_assistant.storage.email import AttachmentData, received_emails_table
 from family_assistant.tools.documents import resolve_email_attachments
+from family_assistant.tools.types import ToolExecutionContext
 from family_assistant.web.app_creator import app as fastapi_app
 from tests.mocks.email_auth import build_dns_for
 
@@ -75,7 +78,6 @@ def _mailgun_form(*, message_id: str) -> dict[str, str]:
 def _configure_app(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
-    registry: AttachmentRegistry | None,
 ) -> None:
     monkeypatch.setattr(
         fastapi_app.state,
@@ -98,50 +100,87 @@ def _configure_app(
         build_dns_for(domain=SENDER_DOMAIN),
         raising=False,
     )
-    monkeypatch.setattr(
-        fastapi_app.state, "attachment_registry", registry, raising=False
+
+
+def _build_indexer_context(
+    db_context: DatabaseContext,
+    attachment_registry: AttachmentRegistry,
+) -> ToolExecutionContext:
+    """Minimal ToolExecutionContext suitable for driving EmailIndexer in tests."""
+    return ToolExecutionContext(
+        interface_type="test",
+        conversation_id="test-conversation",
+        user_name="test-user",
+        turn_id=None,
+        db_context=db_context,
+        processing_service=None,
+        clock=None,
+        home_assistant_client=None,
+        event_sources=None,
+        attachment_registry=attachment_registry,
+        camera_backend=None,
+        timezone=ZoneInfo("UTC"),
     )
 
 
 @pytest.mark.asyncio
 @pytest.mark.postgres
-async def test_webhook_registers_email_attachment(
-    api_client: httpx.AsyncClient,
+async def test_email_indexer_registers_email_attachment(
     db_engine: AsyncEngine,
-    monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
+    """The indexer registers attachments and writes IDs back to the email row."""
+    external_file = tmp_path / "ticket.pdf"
+    external_file.write_bytes(b"PDF bytes here")
+
     registry = AttachmentRegistry(
         storage_path=str(tmp_path / "registry"),
         db_engine=db_engine,
         config=None,
     )
-    _configure_app(monkeypatch, tmp_path, registry)
+    pipeline = MagicMock(spec=IndexingPipeline)
+    pipeline.run = AsyncMock(return_value=None)
+    indexer = EmailIndexer(pipeline=pipeline)
 
     message_id = f"<mailgun-{uuid.uuid4()}@example.com>"
-    form = _mailgun_form(message_id=message_id)
-    form["attachment-count"] = "1"
-    attachment_bytes = b"PDF bytes here"
-
-    response = await api_client.post(
-        "/webhook/mail",
-        data=form,
-        files={
-            "attachment-1": ("ticket.pdf", attachment_bytes, "application/pdf"),
-        },
-    )
-
-    assert response.status_code == 200, response.text
 
     async with DatabaseContext(engine=db_engine) as db_context:
-        email_row = await db_context.fetch_one(
+        insert_result = await db_context.execute_with_retry(
+            insert(received_emails_table)
+            .values(
+                message_id_header=message_id,
+                sender_address=SENDER,
+                recipient_address=RECIPIENT,
+                subject="Ticket",
+                stripped_text="Body",
+                attachment_info=[
+                    {
+                        "filename": "ticket.pdf",
+                        "content_type": "application/pdf",
+                        "size": external_file.stat().st_size,
+                        "storage_path": str(external_file),
+                    }
+                ],
+            )
+            .returning(received_emails_table.c.id)
+        )
+        email_db_id = insert_result.scalar_one()
+
+        exec_context = _build_indexer_context(db_context, registry)
+        await indexer.handle_index_email(
+            exec_context=exec_context,
+            payload={"email_db_id": email_db_id},
+        )
+
+        updated_row = await db_context.fetch_one(
             select(received_emails_table.c.attachment_info).where(
-                received_emails_table.c.message_id_header == message_id
+                received_emails_table.c.id == email_db_id
             )
         )
-        assert email_row is not None
+        assert updated_row is not None
         stored_attachments = [
-            AttachmentData.model_validate(item) for item in email_row["attachment_info"]
+            AttachmentData.model_validate(item)
+            for item in updated_row["attachment_info"]
         ]
         assert len(stored_attachments) == 1
         attachment_id = stored_attachments[0].attachment_id
@@ -159,24 +198,84 @@ async def test_webhook_registers_email_attachment(
         assert registry_row is not None
         assert registry_row["source_type"] == "email"
         assert registry_row["source_id"] == message_id
+        assert registry_row["storage_path"] == str(external_file)
         assert registry_row["mime_type"] == "application/pdf"
-        assert registry_row["size"] == len(attachment_bytes)
-        assert registry_row["storage_path"] == stored_attachments[0].storage_path
 
         content = await registry.get_attachment_content(db_context, attachment_id)
-        assert content == attachment_bytes
+        assert content == b"PDF bytes here"
 
 
 @pytest.mark.asyncio
 @pytest.mark.postgres
-async def test_webhook_tolerates_missing_registry(
+async def test_email_indexer_registration_is_idempotent(
+    db_engine: AsyncEngine,
+    tmp_path: Path,
+) -> None:
+    """Running the indexer twice does not produce duplicate registry rows."""
+    external_file = tmp_path / "invoice.txt"
+    external_file.write_bytes(b"bytes")
+
+    registry = AttachmentRegistry(
+        storage_path=str(tmp_path / "registry"),
+        db_engine=db_engine,
+        config=None,
+    )
+    pipeline = MagicMock(spec=IndexingPipeline)
+    pipeline.run = AsyncMock(return_value=None)
+    indexer = EmailIndexer(pipeline=pipeline)
+
+    message_id = f"<mailgun-{uuid.uuid4()}@example.com>"
+
+    async with DatabaseContext(engine=db_engine) as db_context:
+        insert_result = await db_context.execute_with_retry(
+            insert(received_emails_table)
+            .values(
+                message_id_header=message_id,
+                sender_address=SENDER,
+                recipient_address=RECIPIENT,
+                subject="Invoice",
+                stripped_text="Body",
+                attachment_info=[
+                    {
+                        "filename": "invoice.txt",
+                        "content_type": "text/plain",
+                        "size": external_file.stat().st_size,
+                        "storage_path": str(external_file),
+                    }
+                ],
+            )
+            .returning(received_emails_table.c.id)
+        )
+        email_db_id = insert_result.scalar_one()
+
+        exec_context = _build_indexer_context(db_context, registry)
+        await indexer.handle_index_email(
+            exec_context=exec_context,
+            payload={"email_db_id": email_db_id},
+        )
+        await indexer.handle_index_email(
+            exec_context=exec_context,
+            payload={"email_db_id": email_db_id},
+        )
+
+        registry_rows = await db_context.fetch_all(
+            select(attachment_metadata_table.c.attachment_id).where(
+                attachment_metadata_table.c.source_id == message_id
+            )
+        )
+        assert len(registry_rows) == 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.postgres
+async def test_webhook_accepts_email_with_attachment(
     api_client: httpx.AsyncClient,
     db_engine: AsyncEngine,
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
-    """Webhook must still accept emails when no registry is configured."""
-    _configure_app(monkeypatch, tmp_path, registry=None)
+    """The webhook persists the email; registration happens later in the indexer."""
+    _configure_app(monkeypatch, tmp_path)
 
     message_id = f"<mailgun-{uuid.uuid4()}@example.com>"
     form = _mailgun_form(message_id=message_id)
@@ -190,7 +289,7 @@ async def test_webhook_tolerates_missing_registry(
         },
     )
 
-    assert response.status_code == 200
+    assert response.status_code == 200, response.text
 
     async with DatabaseContext(engine=db_engine) as db_context:
         email_row = await db_context.fetch_one(
@@ -199,27 +298,28 @@ async def test_webhook_tolerates_missing_registry(
             )
         )
         assert email_row is not None
-        stored_attachments = [
+        stored = [
             AttachmentData.model_validate(item) for item in email_row["attachment_info"]
         ]
-        assert stored_attachments[0].attachment_id is None
+        # Webhook stores the file; indexing (which runs separately) assigns the ID.
+        assert stored[0].storage_path.endswith("ticket.pdf")
+        assert stored[0].attachment_id is None
 
 
 @pytest.mark.asyncio
 @pytest.mark.postgres
-async def test_resolve_email_attachments_backfills_missing_ids(
+async def test_resolve_email_attachments_is_read_only(
     db_engine: AsyncEngine,
     tmp_path: Path,
 ) -> None:
-    """A legacy email with no attachment_ids should get IDs assigned on read."""
+    """``resolve_email_attachments`` must not write to the database.
+
+    A legacy email without attachment_ids stays in that state; the helper
+    merely surfaces what is stored. Registration only happens in the indexer.
+    """
     external_file = tmp_path / "invoice.txt"
     external_file.write_bytes(b"invoice body")
 
-    registry = AttachmentRegistry(
-        storage_path=str(tmp_path / "registry"),
-        db_engine=db_engine,
-        config=None,
-    )
     legacy_message_id = f"<legacy-{uuid.uuid4()}@example.com>"
 
     async with DatabaseContext(engine=db_engine) as db_context:
@@ -243,29 +343,17 @@ async def test_resolve_email_attachments_backfills_missing_ids(
         summary = await resolve_email_attachments(
             db_context=db_context,
             message_id_header=legacy_message_id,
-            attachment_registry=registry,
         )
 
         assert summary is not None and len(summary) == 1
-        attachment_id = summary[0]["attachment_id"]
-        assert attachment_id is not None
+        # ID is None because the indexer has not run for this email.
+        assert summary[0]["attachment_id"] is None
         assert summary[0]["filename"] == "invoice.txt"
 
-        second = await resolve_email_attachments(
-            db_context=db_context,
-            message_id_header=legacy_message_id,
-            attachment_registry=registry,
-        )
-        assert second is not None
-        assert second[0]["attachment_id"] == attachment_id
-
-        registry_row = await db_context.fetch_one(
-            select(attachment_metadata_table.c.source_type).where(
-                attachment_metadata_table.c.attachment_id == attachment_id
+        # No registry rows should exist for this message id.
+        registry_rows = await db_context.fetch_all(
+            select(attachment_metadata_table.c.attachment_id).where(
+                attachment_metadata_table.c.source_id == legacy_message_id
             )
         )
-        assert registry_row is not None
-        assert registry_row["source_type"] == "email"
-
-        content = await registry.get_attachment_content(db_context, attachment_id)
-        assert content == b"invoice body"
+        assert registry_rows == []

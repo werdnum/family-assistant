@@ -1127,16 +1127,29 @@ class AttachmentRegistry:
         """
         Delete an attachment file (private method).
 
+        Only unlinks files the registry manages (i.e. files inside the sharded
+        ``storage_path`` directory). When ``stored_path`` is supplied the file
+        lives in externally-managed storage (for example, an email attachment
+        in the mailbox directory); that file's lifecycle is owned by the
+        producer (the ``received_emails.attachment_info`` record still
+        references it), so the registry must not unlink it here.
+
         Args:
             attachment_id: The attachment UUID
-            stored_path: Optional externally-managed file path, used to locate
-                attachments whose files live outside the registry's sharded
-                storage (e.g. email attachments).
+            stored_path: Optional externally-managed file path from the
+                attachment metadata. If set, file deletion is skipped.
 
         Returns:
-            True if file was deleted, False if not found
+            True if a registry-managed file was deleted, False otherwise.
         """
-        file_path = self.get_attachment_path(attachment_id, stored_path=stored_path)
+        if stored_path:
+            logger.info(
+                f"Skipping file unlink for externally-managed attachment "
+                f"{attachment_id} (storage_path={stored_path})"
+            )
+            return False
+
+        file_path = self.get_attachment_path(attachment_id)
         if file_path and file_path.exists():
             try:
                 file_path.unlink()

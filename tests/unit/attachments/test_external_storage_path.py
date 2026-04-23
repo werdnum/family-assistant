@@ -101,10 +101,12 @@ class TestGetAttachmentPathExternal:
             assert content == payload
 
     @pytest.mark.asyncio
-    async def test_delete_attachment_removes_external_file(
+    async def test_delete_attachment_preserves_external_file(
         self, db_engine: AsyncEngine, tmp_path: Path
     ) -> None:
-        external_file = tmp_path / "remove_me.txt"
+        """Deleting an email-attachment registry row must NOT unlink the
+        externally-managed file — the email record still references it."""
+        external_file = tmp_path / "keep_me.txt"
         external_file.write_bytes(b"bytes")
 
         with tempfile.TemporaryDirectory() as registry_dir:
@@ -127,5 +129,7 @@ class TestGetAttachmentPathExternal:
 
                 deleted = await registry.delete_attachment(db_context, attachment_id)
 
-            assert deleted is True
-            assert not external_file.exists()
+                # Registry row was removed but the external file survives.
+                assert deleted is True
+                assert external_file.exists()
+                assert await registry.get_attachment(db_context, attachment_id) is None

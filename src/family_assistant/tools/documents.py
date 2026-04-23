@@ -11,12 +11,11 @@ import json
 import logging
 import os
 import pathlib
-import uuid
 from typing import TYPE_CHECKING, Any, TypedDict
 
 import aiofiles
 import filetype  # type: ignore[import-untyped]
-from sqlalchemy import select, text, update
+from sqlalchemy import select, text
 
 from family_assistant.indexing.ingestion import process_document_ingestion_request
 from family_assistant.storage.email import AttachmentData, received_emails_table
@@ -34,7 +33,6 @@ from family_assistant.tools.types import (
 if TYPE_CHECKING:
     from family_assistant.config_models import AppConfig
     from family_assistant.embeddings import EmbeddingGenerator
-    from family_assistant.services.attachment_registry import AttachmentRegistry
     from family_assistant.storage.context import DatabaseContext
     from family_assistant.tools.types import ToolExecutionContext
 
@@ -405,7 +403,6 @@ async def get_full_document_content_tool(
             email_attachments_summary = await resolve_email_attachments(
                 db_context=db_context,
                 message_id_header=source_id,
-                attachment_registry=exec_context.attachment_registry,
             )
 
         # Try to return original file if available
@@ -452,9 +449,28 @@ async def get_full_document_content_tool(
                         description=f"{title or original_filename} ({source_type})",
                     )
 
-                    # Return ToolResult with both text and file
+                    display_text = (
+                        text_content or f"Original document: {original_filename}"
+                    )
+                    if email_attachments_summary:
+                        summary_text = _format_email_attachments_text(
+                            email_attachments_summary
+                        )
+                        if summary_text:
+                            display_text = (
+                                f"{display_text}\n\nAttachments:\n{summary_text}"
+                            )
+                        return ToolResult(
+                            text=display_text,
+                            attachments=[attachment],
+                            data={
+                                "content": text_content or "",
+                                "attachments": email_attachments_summary,
+                            },
+                        )
+
                     return ToolResult(
-                        text=text_content or f"Original document: {original_filename}",
+                        text=display_text,
                         attachments=[attachment],
                     )
             except Exception as file_err:
@@ -471,15 +487,10 @@ async def get_full_document_content_tool(
 
         if email_attachments_summary:
             body_text = text_content or ""
-            attachments_text = "\n".join(
-                f"- {att['filename']} ({att['mime_type']}, {att['size']} bytes) "
-                f"— attachment_id: {att['attachment_id']}"
-                for att in email_attachments_summary
-                if att.get("attachment_id")
-            )
+            summary_text = _format_email_attachments_text(email_attachments_summary)
             display_text = (
-                f"{body_text}\n\nAttachments:\n{attachments_text}"
-                if attachments_text
+                f"{body_text}\n\nAttachments:\n{summary_text}"
+                if summary_text
                 else body_text
             )
             return ToolResult(
@@ -501,22 +512,36 @@ async def get_full_document_content_tool(
         return f"Error: Failed to retrieve content for document ID {document_id}. {e}"
 
 
+def _format_email_attachments_text(
+    attachments: list[EmailAttachmentSummary],
+) -> str:
+    """Format an email's attachment summary as a human-readable list."""
+    return "\n".join(
+        f"- {att['filename']} ({att['mime_type']}, {att['size']} bytes) "
+        f"— attachment_id: {att['attachment_id']}"
+        for att in attachments
+        if att.get("attachment_id")
+    )
+
+
 async def resolve_email_attachments(
     *,
     db_context: DatabaseContext,
     message_id_header: str,
-    attachment_registry: AttachmentRegistry | None,
 ) -> list[EmailAttachmentSummary] | None:
-    """Return a summary of attachments for an email, registering any that are
-    not yet tracked in the AttachmentRegistry (lazy backfill for emails that
-    were received before registry integration).
+    """Return a read-only summary of attachments for an email.
+
+    Attachments are registered in the ``AttachmentRegistry`` at ingestion time
+    (see ``EmailIndexer.handle_index_email``), so this helper never writes.
+    Legacy emails received before registry integration will have
+    ``attachment_id`` set to ``None`` in the result; reindexing those emails
+    populates the IDs.
 
     Returns None if the email row is not found or has no attachments.
     """
-    row_query = select(
-        received_emails_table.c.id,
-        received_emails_table.c.attachment_info,
-    ).where(received_emails_table.c.message_id_header == message_id_header)
+    row_query = select(received_emails_table.c.attachment_info).where(
+        received_emails_table.c.message_id_header == message_id_header
+    )
     row = await db_context.fetch_one(row_query)
     if not row:
         return None
@@ -526,47 +551,6 @@ async def resolve_email_attachments(
         return None
 
     attachments = [AttachmentData.model_validate(item) for item in raw_info]
-    updated = False
-
-    if attachment_registry is not None:
-        for att in attachments:
-            if att.attachment_id:
-                continue
-            new_id = str(uuid.uuid4())
-            try:
-                await attachment_registry.register_attachment(
-                    db_context=db_context,
-                    attachment_id=new_id,
-                    source_type="email",
-                    source_id=message_id_header,
-                    mime_type=att.content_type,
-                    description=f"Email attachment: {att.filename}",
-                    size=att.size or 0,
-                    storage_path=att.storage_path,
-                    content_url=f"/api/attachments/{new_id}",
-                    metadata={
-                        "original_filename": att.filename,
-                        "email_message_id": message_id_header,
-                        "backfilled": True,
-                    },
-                )
-            except Exception as reg_err:
-                logger.error(
-                    f"Failed to lazy-register email attachment '{att.filename}' "
-                    f"for message {message_id_header}: {reg_err}",
-                    exc_info=True,
-                )
-                continue
-            att.attachment_id = new_id
-            updated = True
-
-    if updated:
-        await db_context.execute_with_retry(
-            update(received_emails_table)
-            .where(received_emails_table.c.id == row["id"])
-            .values(attachment_info=[att.model_dump() for att in attachments])
-        )
-
     return [
         {
             "attachment_id": att.attachment_id,
