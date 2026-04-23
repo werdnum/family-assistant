@@ -238,8 +238,9 @@ class AttachmentRegistry:
         Args:
             db_context: Database context
             attachment_id: Unique attachment identifier
-            source_type: Source of attachment ("user", "tool", "script")
-            source_id: Source identifier (user_id, tool_name, etc.)
+            source_type: Source of attachment ("user", "tool", "script", "email")
+            source_id: Source identifier (user_id, tool_name, email message-id,
+                etc.)
             mime_type: MIME type of the attachment
             description: Human-readable description
             size: Size in bytes
@@ -501,7 +502,9 @@ class AttachmentRegistry:
             return None
 
         # Get content from file system
-        file_path = self.get_attachment_path(attachment_id)
+        file_path = self.get_attachment_path(
+            attachment_id, stored_path=metadata.storage_path
+        )
         if not file_path or not file_path.exists():
             logger.warning(f"Attachment file not found: {attachment_id}")
             return None
@@ -528,6 +531,11 @@ class AttachmentRegistry:
         Returns:
             True if deleted, False if not found
         """
+        # Load metadata before deletion so we can locate the file (including
+        # external paths like email attachments) after the row is gone.
+        metadata = await self.get_attachment(db_context, attachment_id)
+        stored_path = metadata.storage_path if metadata else None
+
         conditions = [attachment_metadata_table.c.attachment_id == attachment_id]
 
         # Atomic delete
@@ -539,7 +547,9 @@ class AttachmentRegistry:
 
         if success:
             # Only delete file if database deletion succeeded
-            file_deleted = self._delete_attachment_file(attachment_id)
+            file_deleted = self._delete_attachment_file(
+                attachment_id, stored_path=stored_path
+            )
             logger.info(
                 f"Deleted attachment {attachment_id} (db: {success}, file: {file_deleted})"
             )
@@ -1052,24 +1062,36 @@ class AttachmentRegistry:
                 status_code=500, detail=f"Failed to store attachment: {str(e)}"
             ) from e
 
-    def get_attachment_path(self, attachment_id: str) -> Path | None:
+    def get_attachment_path(
+        self,
+        attachment_id: str,
+        stored_path: str | None = None,
+    ) -> Path | None:
         """
         Get the file system path for an attachment by ID.
 
         Args:
             attachment_id: The attachment UUID
+            stored_path: Optional externally-managed file path taken from
+                ``attachment_metadata.storage_path``. When provided and the file
+                exists, it is returned directly. This supports attachments whose
+                files live outside the registry's sharded storage (for example,
+                email attachments saved to the mailbox directory).
 
         Returns:
             Path to the attachment file, or None if not found
         """
+        if stored_path:
+            external_path = Path(stored_path)
+            if external_path.is_file():
+                return external_path
+
         try:
-            # Parse as UUID to validate format
             uuid.UUID(attachment_id)
         except ValueError:
             logger.warning(f"Invalid attachment ID format: {attachment_id}")
             return None
 
-        # Use hash prefix to directly locate the file
         hash_prefix = attachment_id[:2]
         hash_dir = self.storage_path / hash_prefix
 
@@ -1077,8 +1099,6 @@ class AttachmentRegistry:
             logger.info(f"Attachment file not found: {attachment_id}")
             return None
 
-        # Look for files starting with the attachment ID in the hash directory
-        # Use attachment_id* to find both files with and without extensions
         for file_path in hash_dir.glob(f"{attachment_id}*"):
             if file_path.is_file():
                 return file_path
@@ -1099,17 +1119,24 @@ class AttachmentRegistry:
         content_type, _ = mimetypes.guess_type(str(file_path))
         return content_type or "application/octet-stream"
 
-    def _delete_attachment_file(self, attachment_id: str) -> bool:
+    def _delete_attachment_file(
+        self,
+        attachment_id: str,
+        stored_path: str | None = None,
+    ) -> bool:
         """
         Delete an attachment file (private method).
 
         Args:
             attachment_id: The attachment UUID
+            stored_path: Optional externally-managed file path, used to locate
+                attachments whose files live outside the registry's sharded
+                storage (e.g. email attachments).
 
         Returns:
             True if file was deleted, False if not found
         """
-        file_path = self.get_attachment_path(attachment_id)
+        file_path = self.get_attachment_path(attachment_id, stored_path=stored_path)
         if file_path and file_path.exists():
             try:
                 file_path.unlink()

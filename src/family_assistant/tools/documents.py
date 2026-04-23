@@ -11,13 +11,15 @@ import json
 import logging
 import os
 import pathlib
-from typing import TYPE_CHECKING, Any
+import uuid
+from typing import TYPE_CHECKING, Any, TypedDict
 
 import aiofiles
 import filetype  # type: ignore[import-untyped]
-from sqlalchemy import text
+from sqlalchemy import select, text, update
 
 from family_assistant.indexing.ingestion import process_document_ingestion_request
+from family_assistant.storage.email import AttachmentData, received_emails_table
 from family_assistant.storage.vector_search import (
     VectorSearchQuery,
     query_vector_store,
@@ -32,8 +34,19 @@ from family_assistant.tools.types import (
 if TYPE_CHECKING:
     from family_assistant.config_models import AppConfig
     from family_assistant.embeddings import EmbeddingGenerator
+    from family_assistant.services.attachment_registry import AttachmentRegistry
     from family_assistant.storage.context import DatabaseContext
     from family_assistant.tools.types import ToolExecutionContext
+
+
+class EmailAttachmentSummary(TypedDict):
+    """Summary of a registered email attachment surfaced to tool callers."""
+
+    attachment_id: str | None
+    filename: str
+    mime_type: str
+    size: int | None
+
 
 logger = logging.getLogger(__name__)
 
@@ -97,6 +110,8 @@ DOCUMENT_TOOLS_DEFINITION: list[ToolDefinition] = [
                 "When original file exists, returns both the file as an attachment and extracted text for context. "
                 "For PDFs and images, you can analyze the file directly using your multimodal capabilities. "
                 "If only text content is available, returns the full text content (raw content if available, or reconstructed from chunks). "
+                "For email documents, the result also includes an `attachments` list with `attachment_id` values for each email attachment; "
+                "pass those IDs to `read_text_attachment` or `get_attachment_info` to inspect attachment contents. "
                 "If document exists but no content available, returns 'Error: Document [id] found, but no content is available.'. "
                 "If document not found, returns 'Error: Document with ID [id] not found.'. "
                 "On error, returns 'Error: Failed to retrieve content for document ID [id]. [error details]'. "
@@ -363,7 +378,7 @@ async def get_full_document_content_tool(
         # First, get document metadata including file_path and original filename
         doc_query = text(
             """
-            SELECT file_path, doc_metadata, title, source_type, visibility_labels
+            SELECT file_path, doc_metadata, title, source_type, source_id, visibility_labels
             FROM documents
             WHERE id = :doc_id
         """
@@ -383,6 +398,15 @@ async def get_full_document_content_tool(
         doc_metadata = doc_result.get("doc_metadata") or {}
         title = doc_result.get("title")
         source_type = doc_result.get("source_type")
+        source_id = doc_result.get("source_id")
+
+        email_attachments_summary: list[EmailAttachmentSummary] | None = None
+        if source_type == "email" and source_id:
+            email_attachments_summary = await resolve_email_attachments(
+                db_context=db_context,
+                message_id_header=source_id,
+                attachment_registry=exec_context.attachment_registry,
+            )
 
         # Try to return original file if available
         if file_path and await asyncio.to_thread(pathlib.Path(file_path).exists):
@@ -442,10 +466,32 @@ async def get_full_document_content_tool(
 
         # Fall back to text content
         text_content = await _get_text_content_fallback(db_context, document_id)
-        if text_content:
-            return text_content
-        else:
+        if not text_content and not email_attachments_summary:
             return f"Error: Document {document_id} found, but no content is available."
+
+        if email_attachments_summary:
+            body_text = text_content or ""
+            attachments_text = "\n".join(
+                f"- {att['filename']} ({att['mime_type']}, {att['size']} bytes) "
+                f"— attachment_id: {att['attachment_id']}"
+                for att in email_attachments_summary
+                if att.get("attachment_id")
+            )
+            display_text = (
+                f"{body_text}\n\nAttachments:\n{attachments_text}"
+                if attachments_text
+                else body_text
+            )
+            return ToolResult(
+                text=display_text,
+                data={
+                    "content": body_text,
+                    "attachments": email_attachments_summary,
+                },
+            )
+
+        assert text_content is not None
+        return text_content
 
     except Exception as e:
         logger.error(
@@ -453,6 +499,83 @@ async def get_full_document_content_tool(
             exc_info=True,
         )
         return f"Error: Failed to retrieve content for document ID {document_id}. {e}"
+
+
+async def resolve_email_attachments(
+    *,
+    db_context: DatabaseContext,
+    message_id_header: str,
+    attachment_registry: AttachmentRegistry | None,
+) -> list[EmailAttachmentSummary] | None:
+    """Return a summary of attachments for an email, registering any that are
+    not yet tracked in the AttachmentRegistry (lazy backfill for emails that
+    were received before registry integration).
+
+    Returns None if the email row is not found or has no attachments.
+    """
+    row_query = select(
+        received_emails_table.c.id,
+        received_emails_table.c.attachment_info,
+    ).where(received_emails_table.c.message_id_header == message_id_header)
+    row = await db_context.fetch_one(row_query)
+    if not row:
+        return None
+
+    raw_info = row.get("attachment_info")
+    if not raw_info:
+        return None
+
+    attachments = [AttachmentData.model_validate(item) for item in raw_info]
+    updated = False
+
+    if attachment_registry is not None:
+        for att in attachments:
+            if att.attachment_id:
+                continue
+            new_id = str(uuid.uuid4())
+            try:
+                await attachment_registry.register_attachment(
+                    db_context=db_context,
+                    attachment_id=new_id,
+                    source_type="email",
+                    source_id=message_id_header,
+                    mime_type=att.content_type,
+                    description=f"Email attachment: {att.filename}",
+                    size=att.size or 0,
+                    storage_path=att.storage_path,
+                    content_url=f"/api/attachments/{new_id}",
+                    metadata={
+                        "original_filename": att.filename,
+                        "email_message_id": message_id_header,
+                        "backfilled": True,
+                    },
+                )
+            except Exception as reg_err:
+                logger.error(
+                    f"Failed to lazy-register email attachment '{att.filename}' "
+                    f"for message {message_id_header}: {reg_err}",
+                    exc_info=True,
+                )
+                continue
+            att.attachment_id = new_id
+            updated = True
+
+    if updated:
+        await db_context.execute_with_retry(
+            update(received_emails_table)
+            .where(received_emails_table.c.id == row["id"])
+            .values(attachment_info=[att.model_dump() for att in attachments])
+        )
+
+    return [
+        {
+            "attachment_id": att.attachment_id,
+            "filename": att.filename,
+            "mime_type": att.content_type,
+            "size": att.size,
+        }
+        for att in attachments
+    ]
 
 
 async def _get_text_content_fallback(

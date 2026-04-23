@@ -29,6 +29,9 @@ class AttachmentData(BaseModel):
     content_type: str
     size: int | None = None
     storage_path: str  # Path where the attachment is saved
+    attachment_id: str | None = (
+        None  # Registry UUID once registered with AttachmentRegistry
+    )
 
 
 class ParsedEmailData(BaseModel):

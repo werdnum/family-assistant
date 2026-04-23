@@ -34,6 +34,7 @@ from family_assistant.web.models import WebhookEventPayload
 if TYPE_CHECKING:
     from family_assistant.config_models import AppConfig
     from family_assistant.events.webhook_source import WebhookEventSource
+    from family_assistant.services.attachment_registry import AttachmentRegistry
 
 logger = logging.getLogger(__name__)
 webhooks_router = APIRouter()
@@ -188,6 +189,23 @@ async def handle_mail_webhook(
             except json.JSONDecodeError as e:
                 logger.warning(f"Could not decode message-headers JSON: {e}")
 
+        # Identify the email for attachment source_id (falls back to batch id if absent)
+        email_message_id_header = form_data.get("Message-Id")
+        email_source_id: str | None = (
+            email_message_id_header
+            if isinstance(email_message_id_header, str) and email_message_id_header
+            else None
+        )
+
+        attachment_registry: AttachmentRegistry | None = getattr(
+            request.app.state, "attachment_registry", None
+        )
+        if attachment_registry is None:
+            logger.info(
+                "AttachmentRegistry not configured in app state; email "
+                "attachments will not be registered for LLM access."
+            )
+
         # --- Process Attachments ---
         processed_attachments: list[AttachmentData] = []
         attachment_count_str = form_data.get("attachment-count")
@@ -234,17 +252,50 @@ async def handle_mail_webhook(
                         async with aiofiles.open(final_file_path, "wb") as f_out:
                             await f_out.write(content)
 
+                        attachment_mime_type = (
+                            form_item.content_type or "application/octet-stream"
+                        )
+                        attachment_id: str | None = None
+                        if attachment_registry is not None:
+                            attachment_id = str(uuid.uuid4())
+                            try:
+                                await attachment_registry.register_attachment(
+                                    db_context=db_context,
+                                    attachment_id=attachment_id,
+                                    source_type="email",
+                                    source_id=email_source_id
+                                    or email_attachment_batch_id,
+                                    mime_type=attachment_mime_type,
+                                    description=f"Email attachment: {safe_filename}",
+                                    size=size,
+                                    storage_path=final_file_path,
+                                    content_url=f"/api/attachments/{attachment_id}",
+                                    metadata={
+                                        "original_filename": safe_filename,
+                                        "email_batch_id": email_attachment_batch_id,
+                                        "email_message_id": email_source_id,
+                                    },
+                                )
+                            except Exception as reg_err:
+                                logger.error(
+                                    f"Failed to register email attachment '{safe_filename}' "
+                                    f"in AttachmentRegistry: {reg_err}",
+                                    exc_info=True,
+                                )
+                                attachment_id = None
+
                         processed_attachments.append(
                             AttachmentData(
                                 filename=safe_filename,
-                                content_type=form_item.content_type
-                                or "application/octet-stream",
+                                content_type=attachment_mime_type,
                                 size=size,
                                 storage_path=final_file_path,
+                                attachment_id=attachment_id,
                             )
                         )
                         logger.info(
-                            f"Saved attachment '{safe_filename}' to {final_file_path}"
+                            f"Saved attachment '{safe_filename}' to {final_file_path} "
+                            f"(attachment_id={attachment_id})"
                         )
                     except EmailIntakePayloadTooLargeError:
                         raise

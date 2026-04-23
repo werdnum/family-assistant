@@ -149,8 +149,10 @@ async def serve_attachment(
         attachment_registry.update_access_time_background, attachment_id
     )
 
-    # Get file path
-    file_path = attachment_registry.get_attachment_path(attachment_id)
+    # Get file path (honoring externally-managed storage_path for e.g. email attachments)
+    file_path = attachment_registry.get_attachment_path(
+        attachment_id, stored_path=attachment_metadata.storage_path
+    )
     if not file_path or not file_path.exists():
         raise HTTPException(status_code=404, detail="Attachment file not found")
 
