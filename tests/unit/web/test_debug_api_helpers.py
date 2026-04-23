@@ -8,6 +8,7 @@ from family_assistant.web.routers.debug_api import (
     SENSITIVE_FIELD_NAMES,
     is_sensitive_field_name,
     redact_sensitive_config,
+    resolve_live_llm_fallback_model,
     resolve_live_llm_model,
 )
 
@@ -76,6 +77,66 @@ def test_resolve_live_llm_model_prefers_model_over_model_name() -> None:
         model_name = "models/gemini-2.5-pro"
 
     assert resolve_live_llm_model(_Both()) == "gpt-5-turbo"
+
+
+def test_resolve_live_llm_model_reads_primary_model_on_retrying_client() -> None:
+    """RetryingLLMClient shape: the wrapper sets ``self.primary_model`` only.
+
+    It does NOT expose ``.model`` or ``.model_name`` itself, so the helper
+    must check ``primary_model`` first to correctly report the active model
+    for profiles configured with ``processing_config.retry_config``.
+    """
+
+    class _RetryingLike:
+        primary_model = "anthropic/claude-sonnet-4"
+        fallback_model = "openai/gpt-5.2"
+
+    assert resolve_live_llm_model(_RetryingLike()) == "anthropic/claude-sonnet-4"
+
+
+def test_resolve_live_llm_model_prefers_primary_model_over_plain_model() -> None:
+    """When both are present, primary_model wins — it reflects the wrapper's choice."""
+
+    class _Hybrid:
+        primary_model = "primary-one"
+        model = "concrete-two"
+
+    assert resolve_live_llm_model(_Hybrid()) == "primary-one"
+
+
+def test_resolve_live_llm_model_strips_google_prefix_from_primary_model() -> None:
+    """The ``models/`` prefix normalization also applies to primary_model."""
+
+    class _RetryingGoogle:
+        primary_model = "models/gemini-2.5-pro"
+
+    assert resolve_live_llm_model(_RetryingGoogle()) == "gemini-2.5-pro"
+
+
+def test_resolve_live_llm_fallback_model_returns_configured_fallback() -> None:
+    class _RetryingLike:
+        fallback_model = "openai/gpt-5.2"
+
+    assert resolve_live_llm_fallback_model(_RetryingLike()) == "openai/gpt-5.2"
+
+
+def test_resolve_live_llm_fallback_model_strips_google_prefix() -> None:
+    class _RetryingGoogleFallback:
+        fallback_model = "models/gemini-2.5-flash"
+
+    assert (
+        resolve_live_llm_fallback_model(_RetryingGoogleFallback()) == "gemini-2.5-flash"
+    )
+
+
+def test_resolve_live_llm_fallback_model_returns_none_for_plain_client() -> None:
+    """Concrete provider clients do not have a fallback_model attribute."""
+
+    class _OpenAILike:
+        model = "gpt-5-turbo"
+
+    assert resolve_live_llm_fallback_model(_OpenAILike()) is None
+    assert resolve_live_llm_fallback_model(None) is None
 
 
 def testredact_sensitive_config_walks_nested_structures() -> None:

@@ -110,24 +110,49 @@ def _dump_profile_like(
     return dumped
 
 
+def _strip_google_prefix(model: str) -> str:
+    prefix = "models/"
+    return model[len(prefix) :] if model.startswith(prefix) else model
+
+
 def resolve_live_llm_model(llm_client: object) -> str | None:
-    """Return the live model identifier from an LLM client, handling shape differences.
+    """Return the live primary model identifier from an LLM client.
 
     Provider clients disagree on where they stash the model identifier:
-    ``OpenAIClient`` and ``AnthropicClient`` set ``self.model``, while
-    ``GoogleGenAIClient`` stores ``self.model_name`` with a leading ``models/``
-    prefix. We read from either location and normalize the prefix so consumers
-    see the same identifier they configured.
+
+    - ``OpenAIClient`` / ``AnthropicClient`` set ``self.model``.
+    - ``GoogleGenAIClient`` stores ``self.model_name`` with a leading
+      ``models/`` prefix.
+    - ``RetryingLLMClient`` (the wrapper created for profiles with
+      ``processing_config.retry_config``) stores the active model on
+      ``self.primary_model`` and does not itself have ``model`` /
+      ``model_name`` attributes.
+
+    We check these in priority order — wrapper's ``primary_model`` first so
+    the dump reflects what the retry wrapper is actually driving — then fall
+    through to the concrete provider attributes. The ``models/`` prefix is
+    normalized away so consumers see the same identifier they configured.
     """
-    raw_model = getattr(llm_client, "model", None) or getattr(
-        llm_client, "model_name", None
+    raw_model = (
+        getattr(llm_client, "primary_model", None)
+        or getattr(llm_client, "model", None)
+        or getattr(llm_client, "model_name", None)
     )
     if not isinstance(raw_model, str):
         return None
-    prefix = "models/"
-    if raw_model.startswith(prefix):
-        return raw_model[len(prefix) :]
-    return raw_model
+    return _strip_google_prefix(raw_model)
+
+
+def resolve_live_llm_fallback_model(llm_client: object) -> str | None:
+    """Return the configured fallback model for ``RetryingLLMClient``, if any.
+
+    Only ``RetryingLLMClient`` exposes a fallback chain; concrete provider
+    clients do not, so this returns ``None`` for them.
+    """
+    fallback = getattr(llm_client, "fallback_model", None)
+    if not isinstance(fallback, str):
+        return None
+    return _strip_google_prefix(fallback)
 
 
 def _runtime_info_for(
@@ -158,6 +183,9 @@ def _runtime_info_for(
     return {
         "kind": kind,
         "llm_model": resolve_live_llm_model(llm_client) if llm_client else None,
+        "llm_fallback_model": (
+            resolve_live_llm_fallback_model(llm_client) if llm_client else None
+        ),
         "llm_client_class": type(llm_client).__name__ if llm_client else None,
         "context_providers": [
             getattr(p, "name", type(p).__name__) for p in context_providers

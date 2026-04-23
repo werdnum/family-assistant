@@ -330,6 +330,7 @@ async def test_dump_profiles_includes_runtime_info(
         trusted = next(p for p in data["profiles"] if p["id"] == "trusted")
         assert trusted["runtime"]["kind"] == "local"
         assert trusted["runtime"]["llm_model"] == "gpt-5-turbo"
+        assert trusted["runtime"]["llm_fallback_model"] is None
         assert trusted["runtime"]["llm_client_class"] == "_OpenAILikeClient"
         assert trusted["runtime"]["context_providers"] == ["notes"]
         # provider should NOT be in runtime: no concrete client exposes it.
@@ -339,7 +340,56 @@ async def test_dump_profiles_includes_runtime_info(
         # Google-like client: model_name with "models/" prefix is normalized.
         assert readonly["runtime"]["kind"] == "local"
         assert readonly["runtime"]["llm_model"] == "gemini-2.5-pro"
+        assert readonly["runtime"]["llm_fallback_model"] is None
         assert readonly["runtime"]["llm_client_class"] == "_GoogleLikeClient"
+    finally:
+        _restore_registry(original_registry)
+        _restore_config(original_config)
+
+
+@pytest.mark.asyncio
+async def test_dump_profiles_runtime_info_for_retrying_llm_client(
+    api_client: httpx.AsyncClient,
+) -> None:
+    """RetryingLLMClient exposes model names on primary_model / fallback_model.
+
+    Profiles configured with ``processing_config.retry_config`` get their LLM
+    client wrapped by ``RetryingLLMClient`` in production (see ``assistant.py``).
+    That wrapper does not have ``model`` or ``model_name`` attributes; it stores
+    the active identifier on ``self.primary_model`` and the fallback on
+    ``self.fallback_model``. The endpoint must handle this wrapper shape or
+    ``/api/debug/profiles`` would emit ``"llm_model": null`` for any profile
+    using retry/fallback — a supported production configuration.
+    """
+
+    class _RetryingLikeClient:
+        """Mirrors RetryingLLMClient — wraps primary/fallback clients."""
+
+        def __init__(self) -> None:
+            self.primary_model = "anthropic/claude-sonnet-4"
+            self.fallback_model = "models/gemini-2.5-flash"
+            # Real RetryingLLMClient also has primary_client / fallback_client,
+            # but the endpoint never reads those and we don't need them here.
+
+    class _RetryingLocalService:
+        kind = "local"
+
+        def __init__(self) -> None:
+            self.llm_client = _RetryingLikeClient()
+            self.context_providers: list[object] = []
+
+    original_config = _install_test_config(_make_sample_config())
+    original_registry = _install_registry({"trusted": _RetryingLocalService()})
+    try:
+        response = await api_client.get("/api/debug/profiles")
+        assert response.status_code == 200
+        trusted = next(p for p in response.json()["profiles"] if p["id"] == "trusted")
+        runtime = trusted["runtime"]
+        assert runtime["kind"] == "local"
+        assert runtime["llm_model"] == "anthropic/claude-sonnet-4"
+        # Fallback's "models/" prefix is normalized too.
+        assert runtime["llm_fallback_model"] == "gemini-2.5-flash"
+        assert runtime["llm_client_class"] == "_RetryingLikeClient"
     finally:
         _restore_registry(original_registry)
         _restore_config(original_config)
