@@ -6,6 +6,7 @@ from typing import Any
 import httpx
 import pytest
 
+from family_assistant.config_loader import resolve_all_service_profiles
 from family_assistant.config_models import (
     AppConfig,
     DefaultProfileSettings,
@@ -393,6 +394,118 @@ async def test_dump_profiles_includes_operator_layer(
 
         # The profile-layer policy is still present alongside the operator layer.
         assert dumped["tools_policy"]["rules"][0]["match"]["names"] == ["profile_*"]
+    finally:
+        _restore_registry(original_registry)
+        _restore_config(original_config)
+
+
+@pytest.mark.asyncio
+async def test_dump_profiles_reflects_resolved_defaults(
+    api_client: httpx.AsyncClient,
+) -> None:
+    """Fields inherited from default_profile_settings must appear in each profile's dump.
+
+    Uses ``resolve_all_service_profiles`` — the same resolver
+    ``config_loader.load_config`` runs in production — so the profiles that end
+    up in ``config.service_profiles`` have defaults merged the same way the app
+    sees them at runtime. If the endpoint ever switched to
+    ``model_dump(exclude_defaults=True)`` or otherwise dropped inherited values,
+    this test would catch it.
+    """
+    config_data = {
+        "default_service_profile_id": "inheriting_profile",
+        "default_profile_settings": {
+            "processing_config": {
+                "timezone": "Australia/Sydney",
+                "max_history_messages": 11,
+                "history_max_age_hours": 48.0,
+                "llm_model": "gemini/default-model",
+            },
+            "tools_config": {
+                "confirm_tools": ["delete_note"],
+            },
+        },
+        "service_profiles": [
+            {
+                "id": "inheriting_profile",
+                "description": "Inherits defaults without overriding them.",
+            },
+        ],
+    }
+    resolved = resolve_all_service_profiles(config_data, {})
+    config_data["service_profiles"] = resolved
+    app_config = AppConfig.model_validate(config_data)
+
+    original_config = _install_test_config(app_config)
+    original_registry = _install_registry({})
+    try:
+        response = await api_client.get("/api/debug/profiles")
+        assert response.status_code == 200
+        data = response.json()
+
+        profile_config = data["profiles"][0]["config"]
+        processing = profile_config["processing_config"]
+        # These values come from default_profile_settings, not from the profile
+        # definition, so the endpoint only surfaces them if it emits the
+        # already-merged ServiceProfile (as production does).
+        assert processing["timezone"] == "Australia/Sydney"
+        assert processing["max_history_messages"] == 11
+        assert processing["history_max_age_hours"] == 48.0
+        assert processing["llm_model"] == "gemini/default-model"
+        assert profile_config["tools_config"]["confirm_tools"] == ["delete_note"]
+    finally:
+        _restore_registry(original_registry)
+        _restore_config(original_config)
+
+
+@pytest.mark.asyncio
+async def test_dump_profiles_default_settings_include_operator_layer(
+    api_client: httpx.AsyncClient,
+) -> None:
+    """default_profile_settings also exposes excluded operator-layer fields.
+
+    ``DefaultProfileSettings.operator_tools_policy`` and
+    ``operator_mcp_server_ids`` have ``exclude=True`` for the same reason the
+    profile-level fields do, and they apply to every profile at runtime. The
+    top-level ``default_profile_settings`` dump must include them too or a
+    consumer reading this endpoint will misjudge the effective policy.
+    """
+    config = _make_sample_config()
+    config.default_profile_settings.operator_tools_policy = ToolPolicyConfig(
+        rules=[
+            PolicyRule(
+                match=ToolMatcher(names=["global_*"]),
+                decision=ToolPolicyDecision.DENY,
+                description="Global operator override",
+            ),
+        ],
+        default_decision=ToolPolicyDecision.DENY,
+    )
+    config.default_profile_settings.operator_mcp_server_ids = [
+        "global_eager_mcp",
+        MCPServerLoadingEntry(id="global_lazy_mcp", loading="on_demand"),
+    ]
+
+    original_config = _install_test_config(config)
+    original_registry = _install_registry({})
+    try:
+        response = await api_client.get("/api/debug/profiles")
+        assert response.status_code == 200
+        defaults = response.json()["default_profile_settings"]
+
+        op_policy = defaults["operator_tools_policy"]
+        assert op_policy is not None
+        assert op_policy["default_decision"] == "deny"
+        assert op_policy["rules"][0]["match"]["names"] == ["global_*"]
+        assert op_policy["rules"][0]["description"] == "Global operator override"
+
+        assert "global_eager_mcp" in defaults["operator_mcp_server_ids"]
+        lazy = next(
+            entry
+            for entry in defaults["operator_mcp_server_ids"]
+            if isinstance(entry, dict)
+        )
+        assert lazy == {"id": "global_lazy_mcp", "loading": "on_demand"}
     finally:
         _restore_registry(original_registry)
         _restore_config(original_config)

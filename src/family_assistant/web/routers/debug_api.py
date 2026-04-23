@@ -10,7 +10,7 @@ from typing import Annotated, Any
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from fastapi.responses import Response
 
-from family_assistant.config_models import ServiceProfile
+from family_assistant.config_models import DefaultProfileSettings, ServiceProfile
 from family_assistant.web.auth import (
     AUTH_ENABLED,
     OIDC_CLIENT_ID,
@@ -79,18 +79,19 @@ def redact_sensitive_config(obj: Any) -> Any:  # noqa: ANN401 - recursive over a
     return obj
 
 
-def _dump_profile(
-    profile: ServiceProfile,
+def _dump_profile_like(
+    profile: ServiceProfile | DefaultProfileSettings,
     # ast-grep-ignore: no-dict-any - Serialized Pydantic model has heterogeneous top-level values
 ) -> dict[str, Any]:
-    """Serialize a ServiceProfile including operator-layer fields that model_dump excludes.
+    """Serialize a ServiceProfile/DefaultProfileSettings including excluded operator fields.
 
-    ``ServiceProfile.operator_tools_policy`` and ``operator_mcp_server_ids`` are
-    declared with ``exclude=True`` so they do not round-trip through the YAML
-    config, but they ARE merged with the profile layer at runtime (see
+    ``operator_tools_policy`` and ``operator_mcp_server_ids`` on both
+    ``ServiceProfile`` and ``DefaultProfileSettings`` are declared with
+    ``exclude=True`` so they do not round-trip through the YAML config, but they
+    ARE merged with the profile/defaults layers at runtime (see
     ``PolicyEngine.from_layers``). For the debug dump we want the caller to see
-    every layer contributing to the effective policy, so we serialize them
-    explicitly.
+    every layer contributing to the effective policy — including any defaults
+    that apply to every profile — so we serialize them explicitly here.
     """
     dumped = profile.model_dump(mode="json")
 
@@ -336,7 +337,7 @@ async def dump_profiles(  # noqa: A002 - FastAPI query param name shadows builti
     for profile in config.service_profiles:
         if profile_id is not None and profile.id != profile_id:
             continue
-        profile_dump = redact_sensitive_config(_dump_profile(profile))
+        profile_dump = redact_sensitive_config(_dump_profile_like(profile))
         runtime_info = _runtime_info_for(profile.id, processing_services_registry)
         profiles_info.append({
             "id": profile.id,
@@ -352,7 +353,7 @@ async def dump_profiles(  # noqa: A002 - FastAPI query param name shadows builti
         )
 
     default_settings_dump = redact_sensitive_config(
-        config.default_profile_settings.model_dump(mode="json")
+        _dump_profile_like(config.default_profile_settings)
     )
 
     # ast-grep-ignore: no-dict-any - Debug endpoint returns serialized Pydantic config dicts
