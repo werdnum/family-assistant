@@ -19,6 +19,7 @@ from family_assistant.indexing.types import (
     IndexableContentMetadata,
 )
 from family_assistant.services.attachment_registry import AttachmentRegistry
+from family_assistant.storage.base import attachment_metadata_table
 from family_assistant.storage.context import DatabaseContext
 from family_assistant.storage.email import (
     AttachmentData,
@@ -184,6 +185,23 @@ async def _ensure_email_attachments_registered(
     for att in attachments:
         if att.attachment_id:
             continue
+
+        # Dedup: if a previous run of this task registered the attachment but
+        # crashed before writing the id back to ``received_emails``, the
+        # registry row for (source_type=email, source_id, storage_path) will
+        # already exist. Reuse it instead of creating a duplicate.
+        existing_row = await db_context.fetch_one(
+            select(attachment_metadata_table.c.attachment_id)
+            .where(attachment_metadata_table.c.source_type == "email")
+            .where(attachment_metadata_table.c.source_id == message_id_header)
+            .where(attachment_metadata_table.c.storage_path == att.storage_path)
+            .limit(1)
+        )
+        if existing_row:
+            att.attachment_id = existing_row["attachment_id"]
+            updated = True
+            continue
+
         new_id = str(uuid.uuid4())
         try:
             await attachment_registry.register_attachment(

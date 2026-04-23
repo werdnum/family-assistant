@@ -357,3 +357,173 @@ async def test_resolve_email_attachments_is_read_only(
             )
         )
         assert registry_rows == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.postgres
+async def test_email_indexer_dedups_on_retry(
+    db_engine: AsyncEngine,
+    tmp_path: Path,
+) -> None:
+    """If a registry row already exists for (source_id, storage_path), the
+    indexer reuses its attachment_id instead of creating a duplicate. This
+    guards against the retry-after-partial-failure scenario where
+    ``register_attachment`` succeeds but the final update to
+    ``received_emails.attachment_info`` fails.
+    """
+    external_file = tmp_path / "ticket.pdf"
+    external_file.write_bytes(b"PDF")
+
+    registry = AttachmentRegistry(
+        storage_path=str(tmp_path / "registry"),
+        db_engine=db_engine,
+        config=None,
+    )
+    pipeline = MagicMock(spec=IndexingPipeline)
+    pipeline.run = AsyncMock(return_value=None)
+    indexer = EmailIndexer(pipeline=pipeline)
+
+    message_id = f"<mailgun-{uuid.uuid4()}@example.com>"
+
+    async with DatabaseContext(engine=db_engine) as db_context:
+        insert_result = await db_context.execute_with_retry(
+            insert(received_emails_table)
+            .values(
+                message_id_header=message_id,
+                sender_address=SENDER,
+                recipient_address=RECIPIENT,
+                subject="Ticket",
+                stripped_text="Body",
+                attachment_info=[
+                    {
+                        "filename": "ticket.pdf",
+                        "content_type": "application/pdf",
+                        "size": external_file.stat().st_size,
+                        "storage_path": str(external_file),
+                    }
+                ],
+            )
+            .returning(received_emails_table.c.id)
+        )
+        email_db_id = insert_result.scalar_one()
+
+        # Simulate the partial-failure case by pre-registering a row without
+        # writing the id back to received_emails.attachment_info.
+        orphan_id = str(uuid.uuid4())
+        await registry.register_attachment(
+            db_context=db_context,
+            attachment_id=orphan_id,
+            source_type="email",
+            source_id=message_id,
+            mime_type="application/pdf",
+            description="orphan",
+            size=external_file.stat().st_size,
+            storage_path=str(external_file),
+        )
+
+        exec_context = _build_indexer_context(db_context, registry)
+        await indexer.handle_index_email(
+            exec_context=exec_context,
+            payload={"email_db_id": email_db_id},
+        )
+
+        registry_rows = await db_context.fetch_all(
+            select(attachment_metadata_table.c.attachment_id).where(
+                attachment_metadata_table.c.source_id == message_id
+            )
+        )
+        assert len(registry_rows) == 1
+        assert registry_rows[0]["attachment_id"] == orphan_id
+
+        updated_row = await db_context.fetch_one(
+            select(received_emails_table.c.attachment_info).where(
+                received_emails_table.c.id == email_db_id
+            )
+        )
+        assert updated_row is not None
+        stored = [
+            AttachmentData.model_validate(item)
+            for item in updated_row["attachment_info"]
+        ]
+        assert stored[0].attachment_id == orphan_id
+
+
+@pytest.mark.asyncio
+@pytest.mark.postgres
+async def test_delete_email_attachment_clears_email_row(
+    db_engine: AsyncEngine,
+    tmp_path: Path,
+) -> None:
+    """Deleting an email attachment's registry row must clear its
+    ``attachment_id`` from ``received_emails.attachment_info`` so the next
+    read doesn't surface a broken handle."""
+    external_file = tmp_path / "ticket.pdf"
+    external_file.write_bytes(b"PDF")
+
+    registry = AttachmentRegistry(
+        storage_path=str(tmp_path / "registry"),
+        db_engine=db_engine,
+        config=None,
+    )
+    pipeline = MagicMock(spec=IndexingPipeline)
+    pipeline.run = AsyncMock(return_value=None)
+    indexer = EmailIndexer(pipeline=pipeline)
+
+    message_id = f"<mailgun-{uuid.uuid4()}@example.com>"
+
+    async with DatabaseContext(engine=db_engine) as db_context:
+        insert_result = await db_context.execute_with_retry(
+            insert(received_emails_table)
+            .values(
+                message_id_header=message_id,
+                sender_address=SENDER,
+                recipient_address=RECIPIENT,
+                subject="Ticket",
+                stripped_text="Body",
+                attachment_info=[
+                    {
+                        "filename": "ticket.pdf",
+                        "content_type": "application/pdf",
+                        "size": external_file.stat().st_size,
+                        "storage_path": str(external_file),
+                    }
+                ],
+            )
+            .returning(received_emails_table.c.id)
+        )
+        email_db_id = insert_result.scalar_one()
+
+        exec_context = _build_indexer_context(db_context, registry)
+        await indexer.handle_index_email(
+            exec_context=exec_context,
+            payload={"email_db_id": email_db_id},
+        )
+
+        # Grab the attachment_id produced by the indexer, then delete it.
+        row = await db_context.fetch_one(
+            select(received_emails_table.c.attachment_info).where(
+                received_emails_table.c.id == email_db_id
+            )
+        )
+        assert row is not None
+        attachments = [
+            AttachmentData.model_validate(item) for item in row["attachment_info"]
+        ]
+        attachment_id = attachments[0].attachment_id
+        assert attachment_id is not None
+
+        await registry.delete_attachment(db_context, attachment_id)
+
+        # External file is preserved (owned by the email record), but the
+        # ``attachment_id`` entry in received_emails is cleared.
+        assert external_file.exists()
+        refreshed = await db_context.fetch_one(
+            select(received_emails_table.c.attachment_info).where(
+                received_emails_table.c.id == email_db_id
+            )
+        )
+        assert refreshed is not None
+        refreshed_atts = [
+            AttachmentData.model_validate(item) for item in refreshed["attachment_info"]
+        ]
+        assert refreshed_atts[0].attachment_id is None

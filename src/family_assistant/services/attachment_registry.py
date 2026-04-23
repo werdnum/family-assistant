@@ -23,6 +23,7 @@ from sqlalchemy import and_, delete, insert, select, update
 
 from family_assistant.storage.base import attachment_metadata_table
 from family_assistant.storage.context import DatabaseContext
+from family_assistant.storage.email import AttachmentData, received_emails_table
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncEngine
@@ -171,6 +172,45 @@ class AttachmentMetadata:
             created_at=row["created_at"],
             accessed_at=row["accessed_at"],
             metadata=row["metadata"],
+        )
+
+
+async def _clear_email_attachment_id(
+    *,
+    db_context: DatabaseContext,
+    message_id_header: str,
+    attachment_id: str,
+) -> None:
+    """Clear the given ``attachment_id`` from ``received_emails.attachment_info``.
+
+    Called from ``delete_attachment`` when an email-sourced attachment is
+    removed from the registry. The external mailbox file stays on disk, but
+    the email row must no longer advertise the now-dangling registry ID, or
+    ``get_full_document_content`` would surface a broken handle that 404s.
+    """
+    row = await db_context.fetch_one(
+        select(
+            received_emails_table.c.id,
+            received_emails_table.c.attachment_info,
+        ).where(received_emails_table.c.message_id_header == message_id_header)
+    )
+    if not row or not row.get("attachment_info"):
+        return
+
+    attachments = [
+        AttachmentData.model_validate(item) for item in row["attachment_info"]
+    ]
+    updated = False
+    for att in attachments:
+        if att.attachment_id == attachment_id:
+            att.attachment_id = None
+            updated = True
+
+    if updated:
+        await db_context.execute_with_retry(
+            update(received_emails_table)
+            .where(received_emails_table.c.id == row["id"])
+            .values(attachment_info=[att.model_dump() for att in attachments])
         )
 
 
@@ -535,6 +575,8 @@ class AttachmentRegistry:
         # external paths like email attachments) after the row is gone.
         metadata = await self.get_attachment(db_context, attachment_id)
         stored_path = metadata.storage_path if metadata else None
+        source_type = metadata.source_type if metadata else None
+        source_id = metadata.source_id if metadata else None
 
         conditions = [attachment_metadata_table.c.attachment_id == attachment_id]
 
@@ -550,6 +592,17 @@ class AttachmentRegistry:
             file_deleted = self._delete_attachment_file(
                 attachment_id, stored_path=stored_path
             )
+            # For email attachments the file is externally owned and the
+            # ``received_emails.attachment_info`` JSON still references the
+            # deleted ``attachment_id``. Clear that reference so subsequent
+            # reads/downloads no longer surface a broken ID. A later reindex
+            # will re-register the attachment with a fresh ID.
+            if source_type == "email" and source_id:
+                await _clear_email_attachment_id(
+                    db_context=db_context,
+                    message_id_header=source_id,
+                    attachment_id=attachment_id,
+                )
             logger.info(
                 f"Deleted attachment {attachment_id} (db: {success}, file: {file_deleted})"
             )

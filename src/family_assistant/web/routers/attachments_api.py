@@ -2,6 +2,7 @@
 
 import logging
 import uuid
+from pathlib import Path
 from typing import Annotated
 
 from fastapi import APIRouter, BackgroundTasks, Depends, File, HTTPException, UploadFile
@@ -223,6 +224,7 @@ async def get_attachment_metadata(
     attachment_registry: Annotated[
         AttachmentRegistry, Depends(get_attachment_registry)
     ],
+    db_context: Annotated[DatabaseContext, Depends(get_db)],
 ) -> AttachmentMetadata:
     """
     Get metadata for an attachment.
@@ -247,8 +249,16 @@ async def get_attachment_metadata(
             status_code=400, detail="Invalid attachment ID format"
         ) from e
 
-    # Get file path
-    file_path = attachment_registry.get_attachment_path(attachment_id)
+    # Look up the registry row so we honor externally-managed ``storage_path``
+    # (for example, email attachments saved to the mailbox directory).
+    registry_metadata = await attachment_registry.get_attachment(
+        db_context, attachment_id
+    )
+
+    file_path = attachment_registry.get_attachment_path(
+        attachment_id,
+        stored_path=registry_metadata.storage_path if registry_metadata else None,
+    )
     if not file_path or not file_path.exists():
         raise HTTPException(status_code=404, detail="Attachment not found")
 
@@ -263,6 +273,14 @@ async def get_attachment_metadata(
         type=content_type,
         size=stat.st_size,
         hash="unknown",  # Would need to recalculate or store in DB
-        storage_path=str(file_path.relative_to(attachment_registry.storage_path)),
+        storage_path=_format_storage_path(file_path, attachment_registry.storage_path),
         uploaded_at="unknown",  # Would need to be stored in DB
     )
+
+
+def _format_storage_path(file_path: Path, base_path: Path) -> str:
+    """Return a relative path for registry-managed files, absolute otherwise."""
+    try:
+        return str(file_path.relative_to(base_path))
+    except ValueError:
+        return str(file_path)

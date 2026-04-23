@@ -11,6 +11,7 @@ import json
 import logging
 import os
 import pathlib
+import uuid
 from typing import TYPE_CHECKING, Any, TypedDict
 
 import aiofiles
@@ -404,6 +405,15 @@ async def get_full_document_content_tool(
                 db_context=db_context,
                 message_id_header=source_id,
             )
+            # Legacy emails indexed before registry integration surface with
+            # ``attachment_id=None``. Enqueue a reindex task so the indexer
+            # (the write-path owner) registers them and populates the IDs on
+            # the next call. ``resolve_email_attachments`` itself stays pure
+            # read-only so the READ_ONLY tool-tag contract is preserved.
+            if email_attachments_summary and any(
+                att["attachment_id"] is None for att in email_attachments_summary
+            ):
+                await _enqueue_email_reindex(db_context, source_id)
 
         # Try to return original file if available
         if file_path and await asyncio.to_thread(pathlib.Path(file_path).exists):
@@ -510,6 +520,39 @@ async def get_full_document_content_tool(
             exc_info=True,
         )
         return f"Error: Failed to retrieve content for document ID {document_id}. {e}"
+
+
+async def _enqueue_email_reindex(
+    db_context: DatabaseContext, message_id_header: str
+) -> None:
+    """Enqueue a reindex task for the email so legacy attachments get IDs.
+
+    The read path calls this when ``resolve_email_attachments`` returns
+    entries without ``attachment_id``. Registration itself happens in
+    ``EmailIndexer.handle_index_email`` (the write path), which dedups on
+    ``(source_type, source_id, storage_path)`` so concurrent/repeat
+    enqueues are safe. If no matching email row is found the enqueue is
+    silently skipped.
+    """
+    row = await db_context.fetch_one(
+        select(received_emails_table.c.id).where(
+            received_emails_table.c.message_id_header == message_id_header
+        )
+    )
+    if not row:
+        return
+    email_db_id = row["id"]
+    task_id = f"index_email_{email_db_id}_{uuid.uuid4()}"
+    try:
+        await db_context.tasks.enqueue(
+            task_id=task_id,
+            task_type="index_email",
+            payload={"email_db_id": email_db_id},
+        )
+    except Exception as err:
+        logger.warning(
+            f"Failed to enqueue email reindex task for email {email_db_id}: {err}"
+        )
 
 
 def _format_email_attachments_text(
