@@ -567,11 +567,22 @@ async def reindex_email_tool(
     logger.info(f"Executing reindex_email_tool for document ID: {document_id}")
 
     doc_row = await db_context.fetch_one(
-        text("SELECT source_type, source_id FROM documents WHERE id = :doc_id"),
+        text(
+            "SELECT source_type, source_id, visibility_labels "
+            "FROM documents WHERE id = :doc_id"
+        ),
         {"doc_id": document_id},
     )
+    # Apply the same visibility gate as get_full_document_content so hidden
+    # document IDs can't be distinguished from missing ones via error text,
+    # and so we don't enqueue indexing work for docs the caller can't see.
+    not_found_error = ToolResult(data={"error": f"Document {document_id} not found"})
     if not doc_row:
-        return ToolResult(data={"error": f"Document {document_id} not found"})
+        return not_found_error
+    if exec_context.visibility_grants is not None:
+        labels = json.loads(doc_row["visibility_labels"] or "[]")
+        if not set(labels) <= exec_context.visibility_grants:
+            return not_found_error
     if doc_row["source_type"] != "email":
         return ToolResult(
             data={

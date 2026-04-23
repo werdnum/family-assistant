@@ -22,6 +22,7 @@ from zoneinfo import ZoneInfo
 
 import pytest
 from sqlalchemy import insert, select
+from sqlalchemy import text as sa_text
 
 from family_assistant.config_models import AppConfig, EmailIntakeConfig
 from family_assistant.indexing.email_indexer import EmailIndexer
@@ -30,7 +31,11 @@ from family_assistant.services.attachment_registry import AttachmentRegistry
 from family_assistant.storage.base import attachment_metadata_table
 from family_assistant.storage.context import DatabaseContext
 from family_assistant.storage.email import AttachmentData, received_emails_table
-from family_assistant.tools.documents import resolve_email_attachments
+from family_assistant.storage.tasks import tasks_table
+from family_assistant.tools.documents import (
+    reindex_email_tool,
+    resolve_email_attachments,
+)
 from family_assistant.tools.types import ToolExecutionContext
 from family_assistant.web.app_creator import app as fastapi_app
 from tests.mocks.email_auth import build_dns_for
@@ -446,6 +451,80 @@ async def test_email_indexer_dedups_on_retry(
             for item in updated_row["attachment_info"]
         ]
         assert stored[0].attachment_id == orphan_id
+
+
+@pytest.mark.asyncio
+@pytest.mark.postgres
+async def test_reindex_email_tool_respects_visibility_grants(
+    db_engine: AsyncEngine,
+    tmp_path: Path,
+) -> None:
+    """``reindex_email_tool`` must treat docs the caller can't see as
+    "not found" — otherwise callers can distinguish hidden document IDs
+    and trigger indexing work for emails they shouldn't access.
+    """
+    external_file = tmp_path / "ticket.pdf"
+    external_file.write_bytes(b"PDF")
+
+    message_id = f"<mailgun-{uuid.uuid4()}@example.com>"
+    async with DatabaseContext(engine=db_engine) as db_context:
+        email_insert = await db_context.execute_with_retry(
+            insert(received_emails_table)
+            .values(
+                message_id_header=message_id,
+                sender_address=SENDER,
+                recipient_address=RECIPIENT,
+                subject="Hidden",
+                stripped_text="Body",
+                attachment_info=[
+                    {
+                        "filename": "ticket.pdf",
+                        "content_type": "application/pdf",
+                        "size": external_file.stat().st_size,
+                        "storage_path": str(external_file),
+                    }
+                ],
+            )
+            .returning(received_emails_table.c.id)
+        )
+        email_db_id = email_insert.scalar_one()
+
+        # Insert a document row with a restricted visibility label.
+        doc_row = await db_context.execute_with_retry(
+            sa_text(
+                "INSERT INTO documents "
+                "(source_type, source_id, visibility_labels) "
+                "VALUES ('email', :sid, '[\"secret\"]') RETURNING id"
+            ),
+            {"sid": message_id},
+        )
+        document_id = doc_row.scalar_one()
+
+        registry = AttachmentRegistry(
+            storage_path=str(tmp_path / "registry"),
+            db_engine=db_engine,
+            config=None,
+        )
+        exec_context = _build_indexer_context(db_context, registry)
+        # Caller lacks the 'secret' visibility label.
+        exec_context.visibility_grants = {"public"}
+
+        result = await reindex_email_tool(
+            exec_context=exec_context, document_id=document_id
+        )
+
+        data = result.get_data()
+        assert isinstance(data, dict)
+        assert data.get("error") == f"Document {document_id} not found"
+
+        # Also confirm no reindex task was enqueued.
+        task_prefix = f"index_email_{email_db_id}_"
+        existing = await db_context.fetch_all(
+            select(tasks_table.c.task_id).where(
+                tasks_table.c.task_id.startswith(task_prefix)
+            )
+        )
+        assert existing == []
 
 
 @pytest.mark.asyncio
