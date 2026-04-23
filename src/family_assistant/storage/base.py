@@ -22,6 +22,7 @@ from sqlalchemy import (
     Table,
     Text,
     event,
+    text,
 )
 from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
 from sqlalchemy.pool import NullPool, StaticPool
@@ -142,7 +143,9 @@ attachment_metadata_table = Table(
     "attachment_metadata",
     metadata,
     Column("attachment_id", String(36), primary_key=True),  # UUID
-    Column("source_type", String(20), nullable=False),  # "user", "tool", "script"
+    Column(
+        "source_type", String(20), nullable=False
+    ),  # "user", "tool", "script", "email"
     Column("source_id", String(255), nullable=False),  # user_id, tool_name, script_id
     Column("mime_type", String(100), nullable=False),
     Column("description", Text, nullable=True),
@@ -160,5 +163,16 @@ attachment_metadata_table = Table(
     Index("idx_attachment_conversation", "conversation_id"),
     Index("idx_attachment_source", "source_type", "source_id"),
     Index("idx_attachment_created", "created_at"),
+    # Partial unique index: email attachments (source_type="email") must be
+    # unique on (source_id, storage_path) so concurrent indexer runs cannot
+    # create duplicate registry rows for the same underlying attachment.
+    Index(
+        "uix_attachment_metadata_email_identity",
+        "source_id",
+        "storage_path",
+        unique=True,
+        postgresql_where=text("source_type = 'email' AND storage_path IS NOT NULL"),
+        sqlite_where=text("source_type = 'email' AND storage_path IS NOT NULL"),
+    ),
     extend_existing=True,
 )

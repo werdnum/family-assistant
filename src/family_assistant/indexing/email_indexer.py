@@ -10,7 +10,7 @@ from datetime import datetime
 from typing import Any, TypedDict, cast
 
 from sqlalchemy import select, update
-from sqlalchemy.exc import SQLAlchemyError
+from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 
 from family_assistant.indexing.pipeline import IndexableContent, IndexingPipeline
 from family_assistant.indexing.types import (
@@ -164,6 +164,84 @@ class EmailDocument(Document):
         }
 
 
+async def _register_or_reuse_email_attachment(
+    *,
+    db_context: DatabaseContext,
+    attachment_registry: AttachmentRegistry,
+    email_db_id: int,
+    message_id_header: str,
+    attachment: AttachmentData,
+) -> str | None:
+    """Register an email attachment or return the canonical id if one already
+    exists for ``(source_type="email", source_id, storage_path)``.
+
+    The partial unique index ``uix_attachment_metadata_email_identity`` makes
+    the insert atomic: if two concurrent indexer runs race for the same email
+    attachment, only one INSERT succeeds and the other raises
+    ``IntegrityError``. In both branches we finish with the canonical row's
+    ``attachment_id``.
+
+    Returns ``None`` if registration failed for a reason other than a
+    uniqueness conflict.
+    """
+    # Fast-path: existing row (no transient conflict needed).
+    existing_row = await db_context.fetch_one(
+        select(attachment_metadata_table.c.attachment_id)
+        .where(attachment_metadata_table.c.source_type == "email")
+        .where(attachment_metadata_table.c.source_id == message_id_header)
+        .where(attachment_metadata_table.c.storage_path == attachment.storage_path)
+        .limit(1)
+    )
+    if existing_row:
+        return existing_row["attachment_id"]
+
+    new_id = str(uuid.uuid4())
+    try:
+        await attachment_registry.register_attachment(
+            db_context=db_context,
+            attachment_id=new_id,
+            source_type="email",
+            source_id=message_id_header,
+            mime_type=attachment.content_type,
+            description=f"Email attachment: {attachment.filename}",
+            size=attachment.size or 0,
+            storage_path=attachment.storage_path,
+            content_url=f"/api/attachments/{new_id}",
+            metadata={
+                "original_filename": attachment.filename,
+                "email_message_id": message_id_header,
+                "email_db_id": email_db_id,
+            },
+        )
+    except IntegrityError:
+        # Another worker inserted the canonical row between our lookup and
+        # our insert. Re-query to pick up the winner's id.
+        logger.info(
+            "Email attachment %s for message %s was registered concurrently; "
+            "reusing existing registry row.",
+            attachment.filename,
+            message_id_header,
+        )
+        winner = await db_context.fetch_one(
+            select(attachment_metadata_table.c.attachment_id)
+            .where(attachment_metadata_table.c.source_type == "email")
+            .where(attachment_metadata_table.c.source_id == message_id_header)
+            .where(attachment_metadata_table.c.storage_path == attachment.storage_path)
+            .limit(1)
+        )
+        return winner["attachment_id"] if winner else None
+    except Exception as reg_err:
+        logger.error(
+            "Failed to register email attachment '%s' for message %s: %s",
+            attachment.filename,
+            message_id_header,
+            reg_err,
+            exc_info=True,
+        )
+        return None
+    return new_id
+
+
 async def _ensure_email_attachments_registered(
     db_context: DatabaseContext,
     attachment_registry: AttachmentRegistry,
@@ -186,48 +264,16 @@ async def _ensure_email_attachments_registered(
         if att.attachment_id:
             continue
 
-        # Dedup: if a previous run of this task registered the attachment but
-        # crashed before writing the id back to ``received_emails``, the
-        # registry row for (source_type=email, source_id, storage_path) will
-        # already exist. Reuse it instead of creating a duplicate.
-        existing_row = await db_context.fetch_one(
-            select(attachment_metadata_table.c.attachment_id)
-            .where(attachment_metadata_table.c.source_type == "email")
-            .where(attachment_metadata_table.c.source_id == message_id_header)
-            .where(attachment_metadata_table.c.storage_path == att.storage_path)
-            .limit(1)
+        resolved_id = await _register_or_reuse_email_attachment(
+            db_context=db_context,
+            attachment_registry=attachment_registry,
+            email_db_id=email_db_id,
+            message_id_header=message_id_header,
+            attachment=att,
         )
-        if existing_row:
-            att.attachment_id = existing_row["attachment_id"]
-            updated = True
+        if resolved_id is None:
             continue
-
-        new_id = str(uuid.uuid4())
-        try:
-            await attachment_registry.register_attachment(
-                db_context=db_context,
-                attachment_id=new_id,
-                source_type="email",
-                source_id=message_id_header,
-                mime_type=att.content_type,
-                description=f"Email attachment: {att.filename}",
-                size=att.size or 0,
-                storage_path=att.storage_path,
-                content_url=f"/api/attachments/{new_id}",
-                metadata={
-                    "original_filename": att.filename,
-                    "email_message_id": message_id_header,
-                    "email_db_id": email_db_id,
-                },
-            )
-        except Exception as reg_err:
-            logger.error(
-                f"Failed to register email attachment '{att.filename}' "
-                f"for message {message_id_header}: {reg_err}",
-                exc_info=True,
-            )
-            continue
-        att.attachment_id = new_id
+        att.attachment_id = resolved_id
         updated = True
 
     if updated:

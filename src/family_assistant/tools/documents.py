@@ -20,6 +20,7 @@ from sqlalchemy import select, text
 
 from family_assistant.indexing.ingestion import process_document_ingestion_request
 from family_assistant.storage.email import AttachmentData, received_emails_table
+from family_assistant.storage.tasks import tasks_table
 from family_assistant.storage.vector_search import (
     VectorSearchQuery,
     query_vector_store,
@@ -111,6 +112,8 @@ DOCUMENT_TOOLS_DEFINITION: list[ToolDefinition] = [
                 "If only text content is available, returns the full text content (raw content if available, or reconstructed from chunks). "
                 "For email documents, the result also includes an `attachments` list with `attachment_id` values for each email attachment; "
                 "pass those IDs to `read_text_attachment` or `get_attachment_info` to inspect attachment contents. "
+                "For legacy emails ingested before registry integration, the first call may return `attachment_id: null` for some entries; "
+                "a reindex task is automatically enqueued in that case, so a subsequent call (after indexing completes) will surface the IDs. "
                 "If document exists but no content available, returns 'Error: Document [id] found, but no content is available.'. "
                 "If document not found, returns 'Error: Document with ID [id] not found.'. "
                 "On error, returns 'Error: Failed to retrieve content for document ID [id]. [error details]'. "
@@ -529,10 +532,15 @@ async def _enqueue_email_reindex(
 
     The read path calls this when ``resolve_email_attachments`` returns
     entries without ``attachment_id``. Registration itself happens in
-    ``EmailIndexer.handle_index_email`` (the write path), which dedups on
-    ``(source_type, source_id, storage_path)`` so concurrent/repeat
-    enqueues are safe. If no matching email row is found the enqueue is
-    silently skipped.
+    ``EmailIndexer.handle_index_email`` (the write path). The indexer
+    uses an atomic INSERT against the partial unique index
+    ``uix_attachment_metadata_email_identity`` (plus an IntegrityError
+    fallback re-query) so concurrent/repeat enqueues cannot create
+    duplicate registry rows.
+
+    Silently skips the enqueue when no matching email row exists or when a
+    pending/processing ``index_email`` task for this email is already in
+    flight, to avoid piling up redundant tasks on repeated reads.
     """
     row = await db_context.fetch_one(
         select(received_emails_table.c.id).where(
@@ -542,7 +550,23 @@ async def _enqueue_email_reindex(
     if not row:
         return
     email_db_id = row["id"]
-    task_id = f"index_email_{email_db_id}_{uuid.uuid4()}"
+
+    task_prefix = f"index_email_{email_db_id}_"
+    existing_task = await db_context.fetch_one(
+        select(tasks_table.c.task_id)
+        .where(tasks_table.c.task_type == "index_email")
+        .where(tasks_table.c.task_id.startswith(task_prefix))
+        .where(tasks_table.c.status.in_(("pending", "processing")))
+        .limit(1)
+    )
+    if existing_task:
+        logger.debug(
+            f"Skipping reindex enqueue for email {email_db_id}: task "
+            f"{existing_task['task_id']} is already in flight."
+        )
+        return
+
+    task_id = f"{task_prefix}{uuid.uuid4()}"
     try:
         await db_context.tasks.enqueue(
             task_id=task_id,
@@ -576,8 +600,9 @@ def _format_email_attachments_text(
         else:
             lines.append(
                 f"- {att['filename']} ({att['mime_type']}, {size_label}) "
-                "— attachment_id not yet assigned; reindex this email to "
-                "register the attachment."
+                "— attachment_id not yet assigned; a reindex has been "
+                "enqueued, try calling this tool again once indexing "
+                "completes to retrieve the attachment_id."
             )
     return "\n".join(lines)
 
