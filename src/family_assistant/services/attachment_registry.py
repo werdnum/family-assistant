@@ -1115,6 +1115,30 @@ class AttachmentRegistry:
                 status_code=500, detail=f"Failed to store attachment: {str(e)}"
             ) from e
 
+    async def resolve_attachment_path(
+        self,
+        attachment_id: str,
+        db_context: DatabaseContext | None = None,
+    ) -> Path | None:
+        """Async counterpart of ``get_attachment_path`` that resolves the
+        ``storage_path`` column internally.
+
+        Use this from call sites that don't already have the attachment
+        metadata handy (for example, URL→data-URI conversion in the
+        processing layer). External-path attachments such as email files
+        are surfaced transparently without the caller needing to pre-fetch
+        metadata.
+        """
+        metadata: AttachmentMetadata | None = None
+        if db_context is None:
+            async with DatabaseContext(engine=self.db_engine) as own_db_context:
+                metadata = await self.get_attachment(own_db_context, attachment_id)
+        else:
+            metadata = await self.get_attachment(db_context, attachment_id)
+
+        stored_path = metadata.storage_path if metadata else None
+        return self.get_attachment_path(attachment_id, stored_path=stored_path)
+
     def get_attachment_path(
         self,
         attachment_id: str,
@@ -1129,7 +1153,10 @@ class AttachmentRegistry:
                 ``attachment_metadata.storage_path``. When provided and the file
                 exists, it is returned directly. This supports attachments whose
                 files live outside the registry's sharded storage (for example,
-                email attachments saved to the mailbox directory).
+                email attachments saved to the mailbox directory). For call
+                sites without pre-fetched metadata, use
+                :meth:`resolve_attachment_path` instead, which performs the
+                lookup internally.
 
         Returns:
             Path to the attachment file, or None if not found

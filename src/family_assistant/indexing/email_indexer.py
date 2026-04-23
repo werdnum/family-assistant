@@ -196,6 +196,20 @@ async def _register_or_reuse_email_attachment(
         return existing_row["attachment_id"]
 
     new_id = str(uuid.uuid4())
+    conn = db_context.conn
+    if conn is None:
+        logger.error(
+            "Cannot register email attachment '%s' for message %s: "
+            "no active database connection",
+            attachment.filename,
+            message_id_header,
+        )
+        return None
+
+    # Wrap the insert in a savepoint so that on Postgres a unique-violation
+    # does not abort the outer indexer transaction. Once the savepoint is
+    # rolled back we can safely re-query for the canonical row.
+    savepoint = await conn.begin_nested()
     try:
         await attachment_registry.register_attachment(
             db_context=db_context,
@@ -214,8 +228,7 @@ async def _register_or_reuse_email_attachment(
             },
         )
     except IntegrityError:
-        # Another worker inserted the canonical row between our lookup and
-        # our insert. Re-query to pick up the winner's id.
+        await savepoint.rollback()
         logger.info(
             "Email attachment %s for message %s was registered concurrently; "
             "reusing existing registry row.",
@@ -231,6 +244,7 @@ async def _register_or_reuse_email_attachment(
         )
         return winner["attachment_id"] if winner else None
     except Exception as reg_err:
+        await savepoint.rollback()
         logger.error(
             "Failed to register email attachment '%s' for message %s: %s",
             attachment.filename,
@@ -239,6 +253,7 @@ async def _register_or_reuse_email_attachment(
             exc_info=True,
         )
         return None
+    await savepoint.commit()
     return new_id
 
 

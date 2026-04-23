@@ -560,8 +560,12 @@ async def reindex_email_tool(
     atomic INSERT against
     ``uix_attachment_metadata_email_identity`` (plus an ``IntegrityError``
     fallback re-query) so concurrent/repeat runs cannot create duplicate
-    registry rows. If a reindex for this email is already in flight the
-    call is a no-op.
+    registry rows.
+
+    The "already_in_flight" check is best-effort: concurrent calls may
+    still both enqueue an ``index_email`` task because there is no
+    uniqueness constraint on pending tasks per email. Duplicate tasks are
+    safe — the indexer itself is idempotent — but they do redundant work.
     """
     db_context = exec_context.db_context
     logger.info(f"Executing reindex_email_tool for document ID: {document_id}")
