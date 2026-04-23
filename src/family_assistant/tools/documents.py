@@ -515,13 +515,28 @@ async def get_full_document_content_tool(
 def _format_email_attachments_text(
     attachments: list[EmailAttachmentSummary],
 ) -> str:
-    """Format an email's attachment summary as a human-readable list."""
-    return "\n".join(
-        f"- {att['filename']} ({att['mime_type']}, {att['size']} bytes) "
-        f"— attachment_id: {att['attachment_id']}"
-        for att in attachments
-        if att.get("attachment_id")
-    )
+    """Format an email's attachment summary as a human-readable list.
+
+    Attachments without an ``attachment_id`` are rendered with a hint that
+    they need reindexing before they can be opened with
+    ``read_text_attachment`` or ``get_attachment_info``.
+    """
+    lines: list[str] = []
+    for att in attachments:
+        size = att["size"]
+        size_label = f"{size} bytes" if size is not None else "unknown size"
+        if att["attachment_id"]:
+            lines.append(
+                f"- {att['filename']} ({att['mime_type']}, {size_label}) "
+                f"— attachment_id: {att['attachment_id']}"
+            )
+        else:
+            lines.append(
+                f"- {att['filename']} ({att['mime_type']}, {size_label}) "
+                "— attachment_id not yet assigned; reindex this email to "
+                "register the attachment."
+            )
+    return "\n".join(lines)
 
 
 async def resolve_email_attachments(

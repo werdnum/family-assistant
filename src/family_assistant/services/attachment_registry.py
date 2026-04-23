@@ -1127,22 +1127,23 @@ class AttachmentRegistry:
         """
         Delete an attachment file (private method).
 
-        Only unlinks files the registry manages (i.e. files inside the sharded
-        ``storage_path`` directory). When ``stored_path`` is supplied the file
-        lives in externally-managed storage (for example, an email attachment
-        in the mailbox directory); that file's lifecycle is owned by the
-        producer (the ``received_emails.attachment_info`` record still
-        references it), so the registry must not unlink it here.
+        Unlinks files the registry manages (i.e. files inside its own
+        ``storage_path`` directory). Skips the unlink when ``stored_path``
+        points at an externally-managed location (for example, an email
+        attachment in the mailbox directory); that file's lifecycle is owned
+        by the producer (the ``received_emails.attachment_info`` record still
+        references it), so the registry must not remove it here.
 
         Args:
             attachment_id: The attachment UUID
-            stored_path: Optional externally-managed file path from the
-                attachment metadata. If set, file deletion is skipped.
+            stored_path: Optional ``storage_path`` from the attachment
+                metadata. If the path lies outside the registry's managed
+                storage directory, file deletion is skipped.
 
         Returns:
             True if a registry-managed file was deleted, False otherwise.
         """
-        if stored_path:
+        if stored_path and not self._path_is_managed(stored_path):
             logger.info(
                 f"Skipping file unlink for externally-managed attachment "
                 f"{attachment_id} (storage_path={stored_path})"
@@ -1159,6 +1160,30 @@ class AttachmentRegistry:
                 logger.error(f"Failed to delete attachment {attachment_id}: {e}")
                 return False
         return False
+
+    def _path_is_managed(self, candidate: str) -> bool:
+        """Return True when ``candidate`` is inside the registry's storage dir.
+
+        ``_store_file_only`` writes ``storage_path`` as a relative path (e.g.
+        ``"c7/<uuid>.txt"``) for registry-managed uploads, while email
+        attachments are registered with an absolute external path (e.g.
+        ``"/mnt/data/mailbox/attachments/..."``). Treat relative paths as
+        managed by convention; resolve absolute paths against
+        ``self.storage_path`` to decide.
+        """
+        path = Path(candidate)
+        if not path.is_absolute():
+            return True
+        try:
+            resolved = path.resolve()
+            base = self.storage_path.resolve()
+        except (OSError, ValueError):
+            return False
+        try:
+            resolved.relative_to(base)
+        except ValueError:
+            return False
+        return True
 
     def _cleanup_orphaned_files(self, referenced_attachment_ids: set[str]) -> int:
         """

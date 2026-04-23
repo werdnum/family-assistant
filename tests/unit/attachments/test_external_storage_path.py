@@ -101,6 +101,34 @@ class TestGetAttachmentPathExternal:
             assert content == payload
 
     @pytest.mark.asyncio
+    async def test_delete_attachment_unlinks_managed_file(
+        self, db_engine: AsyncEngine
+    ) -> None:
+        """Registry-managed uploads must still have their files unlinked."""
+        with tempfile.TemporaryDirectory() as registry_dir:
+            registry = AttachmentRegistry(
+                storage_path=registry_dir, db_engine=db_engine, config=None
+            )
+
+            async with DatabaseContext(engine=db_engine) as db_context:
+                metadata = await registry.register_user_attachment(
+                    db_context=db_context,
+                    content=b"user upload",
+                    filename="doc.txt",
+                    mime_type="text/plain",
+                )
+
+                managed_path = registry.get_attachment_path(metadata.attachment_id)
+                assert managed_path is not None and managed_path.exists()
+
+                deleted = await registry.delete_attachment(
+                    db_context, metadata.attachment_id
+                )
+
+            assert deleted is True
+            assert not managed_path.exists()
+
+    @pytest.mark.asyncio
     async def test_delete_attachment_preserves_external_file(
         self, db_engine: AsyncEngine, tmp_path: Path
     ) -> None:
