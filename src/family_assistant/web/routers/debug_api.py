@@ -3,10 +3,12 @@ Debug API endpoints for troubleshooting route registration and other issues.
 Protected by debug token for security.
 """
 
+import json
 import logging
-from typing import Any
+from typing import Annotated, Any
 
-from fastapi import APIRouter, HTTPException, Request, status
+from fastapi import APIRouter, HTTPException, Query, Request, status
+from fastapi.responses import PlainTextResponse, Response
 
 from family_assistant.web.auth import (
     AUTH_ENABLED,
@@ -17,6 +19,67 @@ from family_assistant.web.auth import (
 
 logger = logging.getLogger(__name__)
 debug_api_router = APIRouter()
+
+# Fields whose values may leak secrets or per-user credentials. When a key with
+# one of these names appears anywhere in the serialized config (including nested
+# dicts under e.g. ``camera_config`` or ``home_assistant_*``), its value is
+# replaced with "[REDACTED]" in the response.
+SENSITIVE_FIELD_NAMES: frozenset[str] = frozenset({
+    "home_assistant_token",
+    "password",
+    "client_secret",
+    "mailgun_webhook_signing_key",
+    "gemini_api_key",
+    "openai_api_key",
+    "openrouter_api_key",
+    "telegram_token",
+    "vapid_private_key",
+    "session_secret_key",
+    "token_env",  # name of env var, redacted defensively
+})
+
+
+# ast-grep-ignore: no-dict-any - Recursive config redaction handles arbitrary nested structures
+def _redact_sensitive(obj: Any) -> Any:  # noqa: ANN401 - recursive over arbitrary JSON-like data
+    """Recursively redact sensitive fields in a serialized config structure."""
+    if isinstance(obj, dict):
+        return {
+            key: "[REDACTED]"
+            if key in SENSITIVE_FIELD_NAMES and value
+            else _redact_sensitive(value)
+            for key, value in obj.items()
+        }
+    if isinstance(obj, list):
+        return [_redact_sensitive(item) for item in obj]
+    return obj
+
+
+def _runtime_info_for(
+    profile_id: str,
+    # ast-grep-ignore: no-dict-any - Debug endpoint inspects dynamic runtime registry state
+    processing_services_registry: dict[str, Any],
+    # ast-grep-ignore: no-dict-any - Debug endpoint returns dynamic runtime introspection data
+) -> dict[str, Any] | None:
+    """Collect live runtime info for a profile from the services registry."""
+    service = processing_services_registry.get(profile_id)
+    if service is None:
+        return None
+
+    kind = getattr(service, "kind", "unknown")
+    if kind == "remote":
+        return {"kind": "remote"}
+
+    llm_client = getattr(service, "llm_client", None)
+    context_providers = getattr(service, "context_providers", []) or []
+    return {
+        "kind": kind,
+        "llm_model": getattr(llm_client, "model", None) if llm_client else None,
+        "llm_provider": getattr(llm_client, "provider", None) if llm_client else None,
+        "llm_client_class": type(llm_client).__name__ if llm_client else None,
+        "context_providers": [
+            getattr(p, "name", type(p).__name__) for p in context_providers
+        ],
+    }
 
 
 def is_debug_authorized(request: Request) -> bool:
@@ -151,3 +214,104 @@ async def dump_auth_state(request: Request) -> dict[str, Any]:
         if hasattr(app.state, "config")
         else None,
     }
+
+
+@debug_api_router.get("/profiles")
+async def dump_profiles(  # noqa: A002 - FastAPI query param name shadows builtin
+    request: Request,
+    format: Annotated[
+        str,
+        Query(
+            description=(
+                "Output format: 'json' (pretty-printed JSON) or 'raw' (compact JSON)."
+            ),
+            pattern="^(json|raw)$",
+        ),
+    ] = "json",
+    profile_id: Annotated[
+        str | None,
+        Query(description="If set, return only the profile with this id."),
+    ] = None,
+) -> Response:
+    """
+    Dump the full processing profile configuration.
+
+    Shows each resolved service profile (after ``default_profile_settings`` have
+    been merged) including:
+
+    - ``processing_config`` — prompts, LLM model/provider, retry/fallback chain,
+      history limits, timezone, iteration caps, calendar/camera/Home Assistant
+      settings, delegation security level, system-doc includes.
+    - ``tools_config`` — enabled local tools (with eager/on-demand loading mode),
+      enabled MCP servers, tools requiring confirmation, timeouts.
+    - ``tools_policy`` — the full policy matrix: each rule's matcher (names,
+      tags, MCP server ids, argument equality), decision (allow/deny/confirm),
+      priority, and description; plus the default decision.
+    - ``slash_commands``, ``visibility_grants``, and ``remote_a2a`` delegation
+      config if configured.
+    - ``runtime`` info from the live processing services registry (resolved LLM
+      model/provider, LLM client class, context provider names).
+
+    Secret-bearing fields (tokens, passwords, API keys) are redacted. The
+    response defaults to pretty-printed JSON (``indent=2``); pass
+    ``?format=raw`` for compact JSON.
+    """
+    if not is_debug_authorized(request):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Debug endpoints are not authorized",
+        )
+
+    app = request.app
+    config = getattr(app.state, "config", None)
+    if config is None:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Application config not initialized",
+        )
+
+    processing_services_registry = getattr(app.state, "processing_services", None) or {}
+
+    # ast-grep-ignore: no-dict-any - Debug endpoint returns serialized Pydantic config dicts
+    profiles_info: list[dict[str, Any]] = []
+    for profile in config.service_profiles:
+        if profile_id is not None and profile.id != profile_id:
+            continue
+        profile_dump = _redact_sensitive(profile.model_dump(mode="json"))
+        runtime_info = _runtime_info_for(profile.id, processing_services_registry)
+        profiles_info.append({
+            "id": profile.id,
+            "description": profile.description,
+            "config": profile_dump,
+            "runtime": runtime_info,
+        })
+
+    if profile_id is not None and not profiles_info:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Profile '{profile_id}' not found",
+        )
+
+    default_settings_dump = _redact_sensitive(
+        config.default_profile_settings.model_dump(mode="json")
+    )
+
+    # ast-grep-ignore: no-dict-any - Debug endpoint returns serialized Pydantic config dicts
+    payload: dict[str, Any] = {
+        "default_service_profile_id": config.default_service_profile_id,
+        "default_profile_settings": default_settings_dump,
+        "profiles": profiles_info,
+        "profile_count": len(profiles_info),
+        "registered_service_ids": sorted(processing_services_registry.keys()),
+    }
+
+    if format == "raw":
+        return Response(
+            content=json.dumps(payload, default=str),
+            media_type="application/json",
+        )
+
+    return PlainTextResponse(
+        content=json.dumps(payload, indent=2, sort_keys=False, default=str),
+        media_type="application/json",
+    )
