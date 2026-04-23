@@ -113,7 +113,7 @@ DOCUMENT_TOOLS_DEFINITION: list[ToolDefinition] = [
                 "For email documents, the result also includes an `attachments` list with `attachment_id` values for each email attachment; "
                 "pass those IDs to `read_text_attachment` or `get_attachment_info` to inspect attachment contents. "
                 "For legacy emails ingested before registry integration, the first call may return `attachment_id: null` for some entries; "
-                "a reindex task is automatically enqueued in that case, so a subsequent call (after indexing completes) will surface the IDs. "
+                "call `reindex_email` on the document to register the attachments, then call this tool again to retrieve the IDs. "
                 "If document exists but no content available, returns 'Error: Document [id] found, but no content is available.'. "
                 "If document not found, returns 'Error: Document with ID [id] not found.'. "
                 "On error, returns 'Error: Failed to retrieve content for document ID [id]. [error details]'. "
@@ -207,6 +207,36 @@ DOCUMENT_TOOLS_DEFINITION: list[ToolDefinition] = [
                     },
                 },
                 "required": ["filename"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "reindex_email",
+            "description": (
+                "Enqueue an indexing task for an email that was ingested before "
+                "attachment-registry integration. Call this when "
+                "get_full_document_content surfaces email attachments with "
+                "attachment_id=null; once the indexer runs, a subsequent "
+                "get_full_document_content call returns the registered "
+                "attachment_ids usable with read_text_attachment and "
+                "get_attachment_info.\n\n"
+                "Returns: ToolResult with the enqueued task_id, or a no-op "
+                "status if a reindex for this email is already in flight."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "document_id": {
+                        "type": "integer",
+                        "description": (
+                            "The document ID of the email (obtained from "
+                            "search_documents or get_full_document_content)."
+                        ),
+                    },
+                },
+                "required": ["document_id"],
             },
         },
     },
@@ -408,15 +438,6 @@ async def get_full_document_content_tool(
                 db_context=db_context,
                 message_id_header=source_id,
             )
-            # Legacy emails indexed before registry integration surface with
-            # ``attachment_id=None``. Enqueue a reindex task so the indexer
-            # (the write-path owner) registers them and populates the IDs on
-            # the next call. ``resolve_email_attachments`` itself stays pure
-            # read-only so the READ_ONLY tool-tag contract is preserved.
-            if email_attachments_summary and any(
-                att["attachment_id"] is None for att in email_attachments_summary
-            ):
-                await _enqueue_email_reindex(db_context, source_id)
 
         # Try to return original file if available
         if file_path and await asyncio.to_thread(pathlib.Path(file_path).exists):
@@ -525,31 +546,53 @@ async def get_full_document_content_tool(
         return f"Error: Failed to retrieve content for document ID {document_id}. {e}"
 
 
-async def _enqueue_email_reindex(
-    db_context: DatabaseContext, message_id_header: str
-) -> None:
-    """Enqueue a reindex task for the email so legacy attachments get IDs.
+async def reindex_email_tool(
+    exec_context: ToolExecutionContext,
+    document_id: int,
+) -> ToolResult:
+    """Enqueue an indexing task for an email so legacy attachments get
+    registered with the AttachmentRegistry.
 
-    The read path calls this when ``resolve_email_attachments`` returns
-    entries without ``attachment_id``. Registration itself happens in
-    ``EmailIndexer.handle_index_email`` (the write path). The indexer
-    uses an atomic INSERT against the partial unique index
-    ``uix_attachment_metadata_email_identity`` (plus an IntegrityError
-    fallback re-query) so concurrent/repeat enqueues cannot create
-    duplicate registry rows.
-
-    Silently skips the enqueue when no matching email row exists or when a
-    pending/processing ``index_email`` task for this email is already in
-    flight, to avoid piling up redundant tasks on repeated reads.
+    This is the write-path companion to ``get_full_document_content``: when
+    that tool surfaces email attachments with ``attachment_id=null``, the
+    LLM should call ``reindex_email`` to queue a reindex. Registration
+    itself happens in ``EmailIndexer.handle_index_email``, which uses an
+    atomic INSERT against
+    ``uix_attachment_metadata_email_identity`` (plus an ``IntegrityError``
+    fallback re-query) so concurrent/repeat runs cannot create duplicate
+    registry rows. If a reindex for this email is already in flight the
+    call is a no-op.
     """
-    row = await db_context.fetch_one(
+    db_context = exec_context.db_context
+    logger.info(f"Executing reindex_email_tool for document ID: {document_id}")
+
+    doc_row = await db_context.fetch_one(
+        text("SELECT source_type, source_id FROM documents WHERE id = :doc_id"),
+        {"doc_id": document_id},
+    )
+    if not doc_row:
+        return ToolResult(data={"error": f"Document {document_id} not found"})
+    if doc_row["source_type"] != "email":
+        return ToolResult(
+            data={
+                "error": (
+                    f"Document {document_id} is not an email "
+                    f"(source_type={doc_row['source_type']})"
+                )
+            }
+        )
+
+    message_id_header = doc_row["source_id"]
+    email_row = await db_context.fetch_one(
         select(received_emails_table.c.id).where(
             received_emails_table.c.message_id_header == message_id_header
         )
     )
-    if not row:
-        return
-    email_db_id = row["id"]
+    if not email_row:
+        return ToolResult(
+            data={"error": f"Email row for document {document_id} not found"}
+        )
+    email_db_id = email_row["id"]
 
     task_prefix = f"index_email_{email_db_id}_"
     existing_task = await db_context.fetch_one(
@@ -560,11 +603,13 @@ async def _enqueue_email_reindex(
         .limit(1)
     )
     if existing_task:
-        logger.debug(
-            f"Skipping reindex enqueue for email {email_db_id}: task "
-            f"{existing_task['task_id']} is already in flight."
+        return ToolResult(
+            data={
+                "status": "already_in_flight",
+                "task_id": existing_task["task_id"],
+                "email_db_id": email_db_id,
+            }
         )
-        return
 
     task_id = f"{task_prefix}{uuid.uuid4()}"
     try:
@@ -577,6 +622,15 @@ async def _enqueue_email_reindex(
         logger.warning(
             f"Failed to enqueue email reindex task for email {email_db_id}: {err}"
         )
+        return ToolResult(data={"error": f"Failed to enqueue reindex: {err}"})
+
+    return ToolResult(
+        data={
+            "status": "enqueued",
+            "task_id": task_id,
+            "email_db_id": email_db_id,
+        }
+    )
 
 
 def _format_email_attachments_text(
@@ -600,9 +654,8 @@ def _format_email_attachments_text(
         else:
             lines.append(
                 f"- {att['filename']} ({att['mime_type']}, {size_label}) "
-                "— attachment_id not yet assigned; a reindex has been "
-                "enqueued, try calling this tool again once indexing "
-                "completes to retrieve the attachment_id."
+                "— attachment_id not yet assigned; call `reindex_email` on "
+                "this document to register it, then call this tool again."
             )
     return "\n".join(lines)
 

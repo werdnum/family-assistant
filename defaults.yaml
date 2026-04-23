@@ -312,6 +312,7 @@ default_profile_settings:
       - "get_message_history"
       - "get_user_documentation_content"
       - "ingest_document_from_url"
+      - "reindex_email"
       - "send_message_to_user"
       - "attach_to_response"
       - "add_calendar_event"
@@ -396,6 +397,7 @@ default_profile_settings:
             - "get_message_history"
             - "get_user_documentation_content"
             - "ingest_document_from_url"
+            - "reindex_email"
             - "execute_script"
             - "save_script"
 

@@ -279,8 +279,14 @@ async def get_attachment_metadata(
 
 
 def _format_storage_path(file_path: Path, base_path: Path) -> str:
-    """Return a relative path for registry-managed files, absolute otherwise."""
+    """Return a relative path for registry-managed files; redact others.
+
+    Registry-managed uploads are written inside ``base_path`` and expose a
+    sharded relative path. For externally-managed files (for example, email
+    attachments stored under the mailbox directory), the absolute server
+    path must not be leaked over the public API — return just the basename.
+    """
     try:
         return str(file_path.relative_to(base_path))
     except ValueError:
-        return str(file_path)
+        return file_path.name

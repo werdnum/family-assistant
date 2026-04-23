@@ -96,6 +96,7 @@ from family_assistant.tools.documents import (
     get_full_document_content_tool,
     get_user_documentation_content_tool,
     ingest_document_from_url_tool,
+    reindex_email_tool,
     search_documents_tool,
 )
 from family_assistant.tools.engineering import (
@@ -419,6 +420,7 @@ __all__ = [
     "list_scripts_tool",
     "get_script_tool",
     "delete_script_tool",
+    "reindex_email_tool",
 ]
 
 
@@ -497,6 +499,7 @@ _LOCAL_TOOL_IMPLEMENTATIONS: dict[str, ToolImplementation] = {
     "get_message_history": get_message_history_tool,
     "get_user_documentation_content": get_user_documentation_content_tool,
     "ingest_document_from_url": ingest_document_from_url_tool,
+    "reindex_email": reindex_email_tool,
     "send_message_to_user": send_message_to_user_tool,
     # Calendar tools
     "add_calendar_event": add_calendar_event_tool,
@@ -685,6 +688,11 @@ LOCAL_TOOL_METADATA_BY_NAME: dict[str, LocalToolMetadata] = {
         ToolTag.DOCUMENTS,
         ToolTag.EXTERNAL_COMM,
         ToolTag.OUTPUT_UNTRUSTED,
+    ),
+    "reindex_email": _metadata(
+        ToolTag.STATE_CHANGING,
+        ToolTag.STATE_PERSISTING,
+        ToolTag.DOCUMENTS,
     ),
     "get_user_documentation_content": _metadata(
         ToolTag.READ_ONLY,
