@@ -23,15 +23,17 @@ const SUPPORTED_FILE_TYPES = [
 /**
  * Uploads a file to the attachment service
  * @param {File} file - The file to upload
+ * @param {AbortSignal} [signal] - Optional abort signal for cancelling the upload
  * @returns {Promise<Object>} Upload response with attachment metadata
  */
-const uploadFileToService = async (file) => {
+const uploadFileToService = async (file, signal) => {
   const formData = new globalThis.FormData();
   formData.append('file', file);
 
   const response = await fetch('/api/attachments/upload', {
     method: 'POST',
     body: formData,
+    signal,
   });
 
   if (!response.ok) {
@@ -72,6 +74,9 @@ export class FileAttachmentAdapter {
   constructor() {
     // Accept all supported file types
     this.accept = SUPPORTED_FILE_TYPES.join(',');
+    // Tracks AbortControllers for in-flight uploads by attachment id so
+    // ``remove`` can cancel them, preventing orphan files on the server.
+    this._inFlightUploads = new Map();
   }
 
   /**
@@ -105,6 +110,12 @@ export class FileAttachmentAdapter {
       attachmentType = 'document';
     }
 
+    // Register the AbortController before yielding, so a remove() fired in
+    // response to the ``running`` state (before the consumer pulls the next
+    // value) still has a controller to abort.
+    const controller = new AbortController();
+    this._inFlightUploads.set(id, controller);
+
     yield {
       id,
       type: attachmentType,
@@ -114,12 +125,20 @@ export class FileAttachmentAdapter {
     };
 
     try {
-      const uploadResponse = await uploadFileToService(file);
+      const uploadResponse = await uploadFileToService(file, controller.signal);
       const url = uploadResponse.url;
       const contentParts =
         attachmentType === 'image'
           ? [{ type: 'image', image: url }]
           : [{ type: 'data', name: 'url', data: url }];
+
+      // If remove() fired after the server accepted the file but before the
+      // response landed, the controller was aborted. Clean up the now-orphan
+      // attachment server-side rather than leaving it dangling.
+      if (controller.signal.aborted) {
+        this._deleteOnServer(uploadResponse.attachment_id);
+        return;
+      }
 
       yield {
         id,
@@ -131,6 +150,11 @@ export class FileAttachmentAdapter {
         status: { type: 'complete' },
       };
     } catch (error) {
+      if (error.name === 'AbortError' || controller.signal.aborted) {
+        // remove() cancelled the upload in flight. The runtime has already
+        // dropped the attachment from state, so don't yield anything.
+        return;
+      }
       console.error('Error uploading attachment:', error);
       yield {
         id,
@@ -143,45 +167,69 @@ export class FileAttachmentAdapter {
           error: `Failed to upload file: ${error.message}`,
         },
       };
+    } finally {
+      this._inFlightUploads.delete(id);
     }
   }
 
   /**
-   * Pass-through for send. The upload already happened in ``add`` so the
-   * attachment reaches here already marked complete with its content parts.
-   * The base composer runtime short-circuits ``adapter.send`` for
-   * already-complete attachments, so this should rarely be invoked — it's
-   * kept defensively for any non-complete attachment the runtime still routes
-   * through send.
+   * Defensive send. Eager uploads in ``add`` mean attachments reach send
+   * already marked complete with their content parts, and the base composer
+   * runtime short-circuits send for complete attachments — so this should
+   * never be called with a non-complete attachment in practice. Surface any
+   * future regression loudly rather than silently sending a message with a
+   * half-uploaded file.
    * @param {Object} attachment
    * @returns {Promise<Object>}
    */
   async send(attachment) {
+    if (attachment.status?.type !== 'complete') {
+      throw new Error(
+        `FileAttachmentAdapter.send called with non-complete attachment (status=${
+          attachment.status?.type ?? 'unknown'
+        }). Eager upload in add() should have already marked it complete.`
+      );
+    }
     return attachment;
   }
 
   /**
-   * Remove an attachment
+   * Delete an attachment server-side. Used both for removing completed
+   * uploads and for cleaning up aborted-but-landed uploads.
+   * @param {string} attachmentId
+   */
+  async _deleteOnServer(attachmentId) {
+    try {
+      const response = await fetch(`/api/attachments/${attachmentId}`, {
+        method: 'DELETE',
+      });
+      if (!response.ok) {
+        console.error(`Failed to delete attachment ${attachmentId} from server`);
+      }
+    } catch (error) {
+      console.error(`Error deleting attachment from server: ${error.message}`);
+    }
+  }
+
+  /**
+   * Remove an attachment. Aborts the upload if it's still in flight (so the
+   * server never sees it), and issues a DELETE for already-uploaded files.
    * @param {Object} attachment - The attachment to remove
    * @returns {Promise<void>}
    */
   async remove(attachment) {
-    try {
-      // If the attachment was successfully uploaded, clean it up from the server
-      if (attachment.uploadedId && attachment.status?.type === 'complete') {
-        const response = await fetch(`/api/attachments/${attachment.uploadedId}`, {
-          method: 'DELETE',
-        });
-
-        if (!response.ok) {
-          console.error(`Failed to delete attachment ${attachment.uploadedId} from server`);
-        }
-      }
-    } catch (error) {
-      console.error(`Error removing attachment from server: ${error.message}`);
+    // Abort any in-flight upload for this attachment. If the upload hasn't
+    // landed server-side yet, this prevents the orphan. If it has already
+    // landed, the add() generator sees the aborted signal and issues the
+    // delete via _deleteOnServer().
+    const controller = this._inFlightUploads.get(attachment.id);
+    if (controller) {
+      controller.abort();
     }
 
-    // The runtime will remove the attachment from its internal state
+    if (attachment.uploadedId && attachment.status?.type === 'complete') {
+      await this._deleteOnServer(attachment.uploadedId);
+    }
   }
 }
 

@@ -605,8 +605,8 @@ async def test_selecting_image_fires_upload_request(
 
         # Poll for the upload POST. If the runtime skips the adapter, or the
         # adapter defers the upload to send-time, this list stays empty.
-        deadline = time.time() + 10
-        while not upload_urls and time.time() < deadline:  # noqa: ASYNC110 - polling a playwright callback-populated list, not awaitable I/O
+        deadline = time.monotonic() + 10
+        while not upload_urls and time.monotonic() < deadline:  # noqa: ASYNC110 - polling a playwright callback-populated list, not awaitable I/O
             # ast-grep-ignore: no-asyncio-sleep-in-tests - polling for a network event captured via playwright callback
             await asyncio.sleep(0.1)
 

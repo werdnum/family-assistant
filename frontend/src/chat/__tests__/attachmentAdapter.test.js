@@ -175,8 +175,6 @@ describe('FileAttachmentAdapter', () => {
 
   describe('send method', () => {
     test('passes already-complete attachment through unchanged', async () => {
-      // Upload happens during add() now. send() is a pass-through; the base
-      // composer runtime short-circuits it for complete attachments anyway.
       const attachment = {
         id: 'test-id',
         type: 'image',
@@ -189,6 +187,21 @@ describe('FileAttachmentAdapter', () => {
       const result = await adapter.send(attachment);
 
       expect(result).toBe(attachment);
+    });
+
+    test('throws when called with a non-complete attachment', async () => {
+      // Eager upload in add() should have marked it complete before send is
+      // ever reached. If the runtime ever routes a running/error attachment
+      // through send, we want a loud failure — silently sending a message
+      // with a missing content URL is worse.
+      const attachment = {
+        id: 'test-id',
+        type: 'image',
+        name: 'test.png',
+        status: { type: 'running' },
+      };
+
+      await expect(adapter.send(attachment)).rejects.toThrow(/non-complete attachment/);
     });
   });
 
@@ -236,6 +249,31 @@ describe('FileAttachmentAdapter', () => {
 
       // Should not call fetch
       // Attachment was not uploaded, so no server call should be made
+    });
+
+    test('aborts an in-flight upload so the generator terminates quietly', async () => {
+      // Stall the upload handler indefinitely so remove() fires mid-flight.
+      // The client-side AbortController should cancel the pending fetch,
+      // surfacing AbortError into add()'s catch and terminating the generator
+      // without yielding a ``complete`` (or ``error``) state.
+      server.use(
+        http.post(
+          '/api/attachments/upload',
+          () => new Promise(() => {}) // never resolves
+        )
+      );
+
+      const file = createMockFile('test.png', 'image/png', 1024);
+      const iterator = adapter.add({ file });
+      const running = (await iterator.next()).value;
+      expect(running.status.type).toBe('running');
+
+      // Fire remove() while upload is pending. The adapter tracks the
+      // AbortController keyed by attachment id so it can cancel this.
+      await adapter.remove(running);
+
+      const finalResult = await iterator.next();
+      expect(finalResult.done).toBe(true);
     });
   });
 });
