@@ -455,6 +455,80 @@ async def test_email_indexer_dedups_on_retry(
 
 @pytest.mark.asyncio
 @pytest.mark.postgres
+async def test_email_indexer_applies_chunk_index_offset_per_attachment(
+    db_engine: AsyncEngine,
+    tmp_path: Path,
+) -> None:
+    """An email with multiple attachments must produce disjoint
+    ``chunk_index`` ranges per attachment so content_chunk rows for
+    different attachments don't collide on the
+    (document_id, chunk_index, embedding_type) unique constraint.
+    """
+    first_pdf = tmp_path / "first.pdf"
+    first_pdf.write_bytes(b"first")
+    second_pdf = tmp_path / "second.pdf"
+    second_pdf.write_bytes(b"second")
+
+    registry = AttachmentRegistry(
+        storage_path=str(tmp_path / "registry"),
+        db_engine=db_engine,
+        config=None,
+    )
+    pipeline = MagicMock(spec=IndexingPipeline)
+    pipeline.run = AsyncMock(return_value=None)
+    indexer = EmailIndexer(pipeline=pipeline)
+
+    message_id = f"<mailgun-{uuid.uuid4()}@example.com>"
+    async with DatabaseContext(engine=db_engine) as db_context:
+        insert_result = await db_context.execute_with_retry(
+            insert(received_emails_table)
+            .values(
+                message_id_header=message_id,
+                sender_address=SENDER,
+                recipient_address=RECIPIENT,
+                subject="Two attachments",
+                stripped_text="Body",
+                attachment_info=[
+                    {
+                        "filename": "first.pdf",
+                        "content_type": "application/pdf",
+                        "size": first_pdf.stat().st_size,
+                        "storage_path": str(first_pdf),
+                    },
+                    {
+                        "filename": "second.pdf",
+                        "content_type": "application/pdf",
+                        "size": second_pdf.stat().st_size,
+                        "storage_path": str(second_pdf),
+                    },
+                ],
+            )
+            .returning(received_emails_table.c.id)
+        )
+        email_db_id = insert_result.scalar_one()
+
+        exec_context = _build_indexer_context(db_context, registry)
+        await indexer.handle_index_email(
+            exec_context=exec_context,
+            payload={"email_db_id": email_db_id},
+        )
+
+    pipeline.run.assert_called_once()
+    pipeline_kwargs = pipeline.run.call_args.kwargs
+    initial_items = pipeline_kwargs["initial_items"]
+    attachment_items = [
+        item for item in initial_items if item.embedding_type == "email_attachment_file"
+    ]
+    assert len(attachment_items) == 2
+    offsets = [item.metadata["chunk_index_offset"] for item in attachment_items]
+    assert offsets[0] != offsets[1]
+    # Offsets must be large enough that no realistic per-attachment chunk
+    # count could bridge them.
+    assert abs(offsets[0] - offsets[1]) >= 1_000_000
+
+
+@pytest.mark.asyncio
+@pytest.mark.postgres
 async def test_reindex_email_tool_respects_visibility_grants(
     db_engine: AsyncEngine,
     tmp_path: Path,

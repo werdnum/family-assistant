@@ -138,7 +138,18 @@ class AttachmentMetadata:
         self.metadata = metadata or {}
 
     def to_dict(self) -> AttachmentMetadataDict:
-        """Convert to dictionary representation."""
+        """Convert to dictionary representation.
+
+        ``storage_path`` is redacted for externally-managed sources (for
+        example, email attachments living under the mailbox directory) to
+        avoid leaking absolute server filesystem paths through tool output
+        like ``get_attachment_info`` or HTTP metadata responses. Only the
+        basename is returned in that case; registry-managed attachments
+        keep their (already-relative) sharded path.
+        """
+        path = self.storage_path
+        if path is not None and self.source_type == "email":
+            path = Path(path).name
         return {
             "attachment_id": self.attachment_id,
             "source_type": self.source_type,
@@ -147,7 +158,7 @@ class AttachmentMetadata:
             "description": self.description,
             "size": self.size,
             "content_url": self.content_url,
-            "storage_path": self.storage_path,
+            "storage_path": path,
             "conversation_id": self.conversation_id,
             "message_id": self.message_id,
             "created_at": self.created_at.isoformat() if self.created_at else None,

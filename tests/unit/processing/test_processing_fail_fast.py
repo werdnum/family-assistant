@@ -681,8 +681,8 @@ async def test_convert_urls_to_data_uris_invalid_internal_url_raises() -> None:
 @pytest.mark.asyncio
 async def test_convert_urls_to_data_uris_missing_file_raises() -> None:
     mock_registry = MagicMock()
-    mock_registry.get_attachment_path.return_value = Path(
-        "/tmp/file-does-not-exist.png"
+    mock_registry.resolve_attachment_path = AsyncMock(
+        return_value=Path("/tmp/file-does-not-exist.png")
     )
     processor = AttachmentProcessor(
         attachment_registry=mock_registry,

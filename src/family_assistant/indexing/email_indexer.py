@@ -431,7 +431,13 @@ class EmailIndexer:
                     for item in email_doc.attachments
                 ]
 
-            for att in registered_attachments:
+            # Each attachment's chunks share the same parent document_id with
+            # the email body and each other, so allocate a disjoint
+            # chunk_index slot to every attachment (and reserve 0..spacing-1
+            # for the email body). The TextChunker honors
+            # ``chunk_index_offset`` from item.metadata.
+            chunk_index_spacing = 1_000_000
+            for attachment_index, att in enumerate(registered_attachments):
                 if not att.storage_path or not att.content_type:
                     logger.warning(
                         f"Skipping attachment for email {email_db_id} due to missing path or mime_type: {att}"
@@ -454,6 +460,8 @@ class EmailIndexer:
                             "email_db_id": email_db_id,
                             "email_source_id": email_doc.source_id,
                             "attachment_id": att.attachment_id,
+                            "chunk_index_offset": (attachment_index + 1)
+                            * chunk_index_spacing,
                         },
                     ),
                     ref=att.storage_path,
