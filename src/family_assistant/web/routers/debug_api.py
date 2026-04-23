@@ -7,8 +7,8 @@ import json
 import logging
 from typing import Annotated, Any
 
-from fastapi import APIRouter, HTTPException, Query, Request, status
-from fastapi.responses import PlainTextResponse, Response
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
+from fastapi.responses import Response
 
 from family_assistant.web.auth import (
     AUTH_ENABLED,
@@ -16,6 +16,7 @@ from family_assistant.web.auth import (
     OIDC_DISCOVERY_URL,
     SESSION_SECRET_KEY,
 )
+from family_assistant.web.dependencies import get_current_user
 
 logger = logging.getLogger(__name__)
 debug_api_router = APIRouter()
@@ -38,19 +39,42 @@ SENSITIVE_FIELD_NAMES: frozenset[str] = frozenset({
     "token_env",  # name of env var, redacted defensively
 })
 
+# Substring patterns used as a defense-in-depth fallback so config fields added
+# in the future with secret-looking names (e.g. ``*_api_key``, ``*_secret``,
+# ``*_token``, ``*_password``) are redacted even if not explicitly allowlisted.
+_SENSITIVE_SUBSTRINGS: tuple[str, ...] = (
+    "api_key",
+    "apikey",
+    "secret",
+    "token",
+    "password",
+    "passwd",
+    "private_key",
+)
+
+
+def is_sensitive_field_name(key: object) -> bool:
+    """Return True if the given dict key looks like it carries a secret."""
+    if not isinstance(key, str):
+        return False
+    if key in SENSITIVE_FIELD_NAMES:
+        return True
+    lowered = key.lower()
+    return any(substring in lowered for substring in _SENSITIVE_SUBSTRINGS)
+
 
 # ast-grep-ignore: no-dict-any - Recursive config redaction handles arbitrary nested structures
-def _redact_sensitive(obj: Any) -> Any:  # noqa: ANN401 - recursive over arbitrary JSON-like data
+def redact_sensitive_config(obj: Any) -> Any:  # noqa: ANN401 - recursive over arbitrary JSON-like data
     """Recursively redact sensitive fields in a serialized config structure."""
     if isinstance(obj, dict):
         return {
             key: "[REDACTED]"
-            if key in SENSITIVE_FIELD_NAMES and value
-            else _redact_sensitive(value)
+            if is_sensitive_field_name(key) and value
+            else redact_sensitive_config(value)
             for key, value in obj.items()
         }
     if isinstance(obj, list):
-        return [_redact_sensitive(item) for item in obj]
+        return [redact_sensitive_config(item) for item in obj]
     return obj
 
 
@@ -219,6 +243,7 @@ async def dump_auth_state(request: Request) -> dict[str, Any]:
 @debug_api_router.get("/profiles")
 async def dump_profiles(  # noqa: A002 - FastAPI query param name shadows builtin
     request: Request,
+    _user: Annotated[dict, Depends(get_current_user)],
     format: Annotated[
         str,
         Query(
@@ -252,16 +277,12 @@ async def dump_profiles(  # noqa: A002 - FastAPI query param name shadows builti
     - ``runtime`` info from the live processing services registry (resolved LLM
       model/provider, LLM client class, context provider names).
 
-    Secret-bearing fields (tokens, passwords, API keys) are redacted. The
+    This endpoint exposes internal configuration (prompts, policy rules, tool
+    enablement). It requires an authenticated user (OIDC session or API token)
+    and redacts secret-bearing fields (tokens, passwords, API keys). The
     response defaults to pretty-printed JSON (``indent=2``); pass
     ``?format=raw`` for compact JSON.
     """
-    if not is_debug_authorized(request):
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Debug endpoints are not authorized",
-        )
-
     app = request.app
     config = getattr(app.state, "config", None)
     if config is None:
@@ -277,7 +298,7 @@ async def dump_profiles(  # noqa: A002 - FastAPI query param name shadows builti
     for profile in config.service_profiles:
         if profile_id is not None and profile.id != profile_id:
             continue
-        profile_dump = _redact_sensitive(profile.model_dump(mode="json"))
+        profile_dump = redact_sensitive_config(profile.model_dump(mode="json"))
         runtime_info = _runtime_info_for(profile.id, processing_services_registry)
         profiles_info.append({
             "id": profile.id,
@@ -292,7 +313,7 @@ async def dump_profiles(  # noqa: A002 - FastAPI query param name shadows builti
             detail=f"Profile '{profile_id}' not found",
         )
 
-    default_settings_dump = _redact_sensitive(
+    default_settings_dump = redact_sensitive_config(
         config.default_profile_settings.model_dump(mode="json")
     )
 
@@ -305,13 +326,8 @@ async def dump_profiles(  # noqa: A002 - FastAPI query param name shadows builti
         "registered_service_ids": sorted(processing_services_registry.keys()),
     }
 
-    if format == "raw":
-        return Response(
-            content=json.dumps(payload, default=str),
-            media_type="application/json",
-        )
-
-    return PlainTextResponse(
-        content=json.dumps(payload, indent=2, sort_keys=False, default=str),
+    indent = None if format == "raw" else 2
+    return Response(
+        content=json.dumps(payload, indent=indent, sort_keys=False, default=str),
         media_type="application/json",
     )

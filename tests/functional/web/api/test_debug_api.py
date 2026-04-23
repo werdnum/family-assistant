@@ -331,3 +331,82 @@ async def test_dump_profiles_returns_503_without_config(
         _restore_registry(original_registry)
         if original_config is not None:
             fastapi_app.state.config = original_config
+
+
+class _FakeAuthService:
+    """Minimal stand-in for AuthService with auth enabled and no valid sessions/tokens."""
+
+    auth_enabled = True
+    oauth = None
+
+    async def get_user_from_api_token(
+        self,
+        auth_header: str,  # noqa: ARG002 - protocol requires this parameter
+        request: object,  # noqa: ARG002 - protocol requires this parameter
+    ) -> None:
+        return None
+
+
+@pytest.mark.asyncio
+async def test_dump_profiles_requires_authentication(
+    api_client: httpx.AsyncClient,
+) -> None:
+    """With auth enabled, unauthenticated requests to /api/debug/profiles return 401."""
+    original_config = _install_test_config(_make_sample_config())
+    original_registry = _install_registry({})
+    original_auth = getattr(fastapi_app.state, "auth_service", None)
+    fastapi_app.state.auth_service = _FakeAuthService()
+    try:
+        response = await api_client.get("/api/debug/profiles")
+        assert response.status_code == 401
+        # The response must not leak profile data when unauthenticated.
+        assert "default_service_profile_id" not in response.text
+    finally:
+        if original_auth is not None:
+            fastapi_app.state.auth_service = original_auth
+        else:
+            del fastapi_app.state.auth_service
+        _restore_registry(original_registry)
+        _restore_config(original_config)
+
+
+@pytest.mark.asyncio
+async def test_dump_profiles_accepts_valid_bearer_token(
+    api_client: httpx.AsyncClient,
+) -> None:
+    """With auth enabled, a valid bearer token lets the caller read the dump."""
+
+    class _AcceptingAuthService(_FakeAuthService):
+        async def get_user_from_api_token(
+            self,
+            auth_header: str,
+            request: object,  # noqa: ARG002 - protocol requires this parameter
+        ) -> dict | None:
+            if auth_header == "Bearer good-token":
+                return {"sub": "tester", "source": "api_token"}
+            return None
+
+    original_config = _install_test_config(_make_sample_config())
+    original_registry = _install_registry({})
+    original_auth = getattr(fastapi_app.state, "auth_service", None)
+    fastapi_app.state.auth_service = _AcceptingAuthService()
+    try:
+        bad = await api_client.get(
+            "/api/debug/profiles",
+            headers={"Authorization": "Bearer wrong-token"},
+        )
+        assert bad.status_code == 401
+
+        good = await api_client.get(
+            "/api/debug/profiles",
+            headers={"Authorization": "Bearer good-token"},
+        )
+        assert good.status_code == 200
+        assert good.json()["default_service_profile_id"] == "trusted"
+    finally:
+        if original_auth is not None:
+            fastapi_app.state.auth_service = original_auth
+        else:
+            del fastapi_app.state.auth_service
+        _restore_registry(original_registry)
+        _restore_config(original_config)
