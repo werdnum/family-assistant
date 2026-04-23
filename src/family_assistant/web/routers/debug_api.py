@@ -146,9 +146,21 @@ def resolve_live_llm_model(llm_client: object) -> str | None:
 def resolve_live_llm_fallback_model(llm_client: object) -> str | None:
     """Return the configured fallback model for ``RetryingLLMClient``, if any.
 
-    Only ``RetryingLLMClient`` exposes a fallback chain; concrete provider
-    clients do not, so this returns ``None`` for them.
+    ``RetryingLLMClient.__init__`` sets ``self.fallback_model`` to a hard-coded
+    default string even when the caller passes ``fallback_client=None``, so we
+    MUST gate on the presence of a real ``fallback_client`` — otherwise every
+    primary-only retry profile would falsely appear to have a fallback. We use
+    ``hasattr`` + truthiness of ``fallback_client`` as the "fallback is actually
+    wired" signal, and only then surface ``fallback_model``.
+
+    Concrete provider clients (``OpenAIClient``, ``AnthropicClient``,
+    ``GoogleGenAIClient``) do not expose a fallback chain at all, so this
+    returns ``None`` for them.
     """
+    if not hasattr(llm_client, "fallback_client"):
+        return None
+    if not getattr(llm_client, "fallback_client", None):
+        return None
     fallback = getattr(llm_client, "fallback_model", None)
     if not isinstance(fallback, str):
         return None

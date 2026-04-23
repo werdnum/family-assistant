@@ -362,14 +362,23 @@ async def test_dump_profiles_runtime_info_for_retrying_llm_client(
     using retry/fallback — a supported production configuration.
     """
 
+    class _InnerClient:
+        """Stand-in for the primary/fallback provider client that RetryingLLMClient wraps."""
+
     class _RetryingLikeClient:
-        """Mirrors RetryingLLMClient — wraps primary/fallback clients."""
+        """Mirrors RetryingLLMClient — wraps primary/fallback clients.
+
+        Sets ``fallback_client`` to a truthy object to signal that a fallback
+        is actually configured. ``RetryingLLMClient.__init__`` always sets
+        ``self.fallback_model`` to a default string, so the endpoint uses
+        ``fallback_client`` as the "fallback is wired" signal.
+        """
 
         def __init__(self) -> None:
+            self.primary_client = _InnerClient()
             self.primary_model = "anthropic/claude-sonnet-4"
+            self.fallback_client = _InnerClient()
             self.fallback_model = "models/gemini-2.5-flash"
-            # Real RetryingLLMClient also has primary_client / fallback_client,
-            # but the endpoint never reads those and we don't need them here.
 
     class _RetryingLocalService:
         kind = "local"
@@ -390,6 +399,53 @@ async def test_dump_profiles_runtime_info_for_retrying_llm_client(
         # Fallback's "models/" prefix is normalized too.
         assert runtime["llm_fallback_model"] == "gemini-2.5-flash"
         assert runtime["llm_client_class"] == "_RetryingLikeClient"
+    finally:
+        _restore_registry(original_registry)
+        _restore_config(original_config)
+
+
+@pytest.mark.asyncio
+async def test_dump_profiles_retrying_llm_client_without_fallback_reports_no_fallback(
+    api_client: httpx.AsyncClient,
+) -> None:
+    """Primary-only retry_config profiles must not falsely advertise a fallback.
+
+    ``RetryingLLMClient.__init__`` always stores a default string on
+    ``self.fallback_model`` (currently ``"openai/gpt-5.2"``) even when
+    ``fallback_client=None``, so a naive read of ``fallback_model`` would
+    misrepresent every primary-only retry profile as having a fallback.
+    """
+
+    class _PrimaryOnlyRetrying:
+        def __init__(self) -> None:
+            self.primary_client = object()
+            self.primary_model = "anthropic/claude-sonnet-4"
+            # Mirrors RetryingLLMClient: fallback_client=None but
+            # fallback_model retains its default string because of the
+            # ``fallback_model or "openai/gpt-5.2"`` constructor logic.
+            self.fallback_client = None
+            self.fallback_model = "openai/gpt-5.2"
+
+    class _PrimaryOnlyService:
+        kind = "local"
+
+        def __init__(self) -> None:
+            self.llm_client = _PrimaryOnlyRetrying()
+            self.context_providers: list[object] = []
+
+    original_config = _install_test_config(_make_sample_config())
+    original_registry = _install_registry({"trusted": _PrimaryOnlyService()})
+    try:
+        response = await api_client.get("/api/debug/profiles")
+        assert response.status_code == 200
+        runtime = next(p for p in response.json()["profiles"] if p["id"] == "trusted")[
+            "runtime"
+        ]
+        assert runtime["llm_model"] == "anthropic/claude-sonnet-4"
+        assert runtime["llm_fallback_model"] is None
+        # Sanity: the default fallback string must not leak into the response
+        # anywhere, since no fallback_client is configured.
+        assert "openai/gpt-5.2" not in response.text
     finally:
         _restore_registry(original_registry)
         _restore_config(original_config)

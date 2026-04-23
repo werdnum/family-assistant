@@ -114,7 +114,10 @@ def test_resolve_live_llm_model_strips_google_prefix_from_primary_model() -> Non
 
 
 def test_resolve_live_llm_fallback_model_returns_configured_fallback() -> None:
+    """Fallback is reported only when a ``fallback_client`` is actually wired."""
+
     class _RetryingLike:
+        fallback_client = object()  # truthy = fallback is real
         fallback_model = "openai/gpt-5.2"
 
     assert resolve_live_llm_fallback_model(_RetryingLike()) == "openai/gpt-5.2"
@@ -122,6 +125,7 @@ def test_resolve_live_llm_fallback_model_returns_configured_fallback() -> None:
 
 def test_resolve_live_llm_fallback_model_strips_google_prefix() -> None:
     class _RetryingGoogleFallback:
+        fallback_client = object()
         fallback_model = "models/gemini-2.5-flash"
 
     assert (
@@ -129,8 +133,19 @@ def test_resolve_live_llm_fallback_model_strips_google_prefix() -> None:
     )
 
 
+def test_resolve_live_llm_fallback_model_returns_none_when_no_fallback_client() -> None:
+    """RetryingLLMClient sets ``fallback_model`` to a default string even when no
+    ``fallback_client`` is configured, so the default would otherwise leak."""
+
+    class _PrimaryOnlyRetrying:
+        fallback_client = None  # no real fallback is wired
+        fallback_model = "openai/gpt-5.2"  # default from RetryingLLMClient.__init__
+
+    assert resolve_live_llm_fallback_model(_PrimaryOnlyRetrying()) is None
+
+
 def test_resolve_live_llm_fallback_model_returns_none_for_plain_client() -> None:
-    """Concrete provider clients do not have a fallback_model attribute."""
+    """Concrete provider clients do not have fallback_client / fallback_model."""
 
     class _OpenAILike:
         model = "gpt-5-turbo"
