@@ -146,7 +146,9 @@ attachment_metadata_table = Table(
     Column(
         "source_type", String(20), nullable=False
     ),  # "user", "tool", "script", "email"
-    Column("source_id", String(255), nullable=False),  # user_id, tool_name, script_id
+    Column(
+        "source_id", Text, nullable=False
+    ),  # user_id, tool_name, script_id, email Message-Id
     Column("mime_type", String(100), nullable=False),
     Column("description", Text, nullable=True),
     Column("size", Integer, nullable=False),

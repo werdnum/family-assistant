@@ -682,11 +682,14 @@ async def resolve_email_attachments(
 ) -> list[EmailAttachmentSummary] | None:
     """Return a read-only summary of attachments for an email.
 
-    Attachments are registered in the ``AttachmentRegistry`` at ingestion time
-    (see ``EmailIndexer.handle_index_email``), so this helper never writes.
+    Attachments are registered in the ``AttachmentRegistry`` at ingestion
+    time (see ``EmailIndexer.handle_index_email``), so this helper never
+    writes — keeping ``get_full_document_content`` truly ``READ_ONLY``.
+
     Legacy emails received before registry integration will have
-    ``attachment_id`` set to ``None`` in the result; reindexing those emails
-    populates the IDs.
+    ``attachment_id`` set to ``None`` in the result. Registration must be
+    triggered by the write-path ``reindex_email`` tool; after that task
+    runs, a subsequent call to this helper returns the populated IDs.
 
     Returns None if the email row is not found or has no attachments.
     """
