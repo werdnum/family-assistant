@@ -110,13 +110,41 @@ def _dump_profile_like(
     return dumped
 
 
+def resolve_live_llm_model(llm_client: object) -> str | None:
+    """Return the live model identifier from an LLM client, handling shape differences.
+
+    Provider clients disagree on where they stash the model identifier:
+    ``OpenAIClient`` and ``AnthropicClient`` set ``self.model``, while
+    ``GoogleGenAIClient`` stores ``self.model_name`` with a leading ``models/``
+    prefix. We read from either location and normalize the prefix so consumers
+    see the same identifier they configured.
+    """
+    raw_model = getattr(llm_client, "model", None) or getattr(
+        llm_client, "model_name", None
+    )
+    if not isinstance(raw_model, str):
+        return None
+    prefix = "models/"
+    if raw_model.startswith(prefix):
+        return raw_model[len(prefix) :]
+    return raw_model
+
+
 def _runtime_info_for(
     profile_id: str,
     # ast-grep-ignore: no-dict-any - Debug endpoint inspects dynamic runtime registry state
     processing_services_registry: dict[str, Any],
     # ast-grep-ignore: no-dict-any - Debug endpoint returns dynamic runtime introspection data
 ) -> dict[str, Any] | None:
-    """Collect live runtime info for a profile from the services registry."""
+    """Collect live runtime info for a profile from the services registry.
+
+    The configured ``provider`` and ``llm_model`` are already in the profile's
+    ``processing_config`` dump; we intentionally do NOT re-emit ``provider``
+    here because no concrete LLM client exposes a stable ``provider`` attribute
+    (it only appears on exception types). We do expose the live resolved model
+    via :func:`resolve_live_llm_model` so callers can detect drift between the
+    configured value and what the runtime client is actually using.
+    """
     service = processing_services_registry.get(profile_id)
     if service is None:
         return None
@@ -129,8 +157,7 @@ def _runtime_info_for(
     context_providers = getattr(service, "context_providers", []) or []
     return {
         "kind": kind,
-        "llm_model": getattr(llm_client, "model", None) if llm_client else None,
-        "llm_provider": getattr(llm_client, "provider", None) if llm_client else None,
+        "llm_model": resolve_live_llm_model(llm_client) if llm_client else None,
         "llm_client_class": type(llm_client).__name__ if llm_client else None,
         "context_providers": [
             getattr(p, "name", type(p).__name__) for p in context_providers
@@ -310,11 +337,23 @@ async def dump_profiles(  # noqa: A002 - FastAPI query param name shadows builti
       model/provider, LLM client class, context provider names).
 
     This endpoint exposes internal configuration (prompts, policy rules, tool
-    enablement). It requires an authenticated user (OIDC session or API token)
-    and is additionally gated through the shared ``is_debug_authorized`` check
-    used by the other ``/api/debug/*`` routes. Secret-bearing fields (tokens,
-    passwords, API keys) are redacted. The response defaults to pretty-printed
-    JSON (``indent=2``); pass ``?format=raw`` for compact JSON.
+    enablement). It is gated in three layers:
+
+    1. ``Depends(get_current_user)`` — requires an OIDC session or API token
+       when ``auth_service.auth_enabled`` is true.
+    2. Fail-closed check — when auth is disabled, the endpoint only responds
+       for deployments that have explicitly opted in by setting
+       ``app_config.dev_mode=true``. This prevents misconfigured prod
+       deployments (auth off, dev_mode off) from silently leaking prompts and
+       policy rules, since ``get_current_user`` otherwise returns a synthetic
+       test user in that configuration.
+    3. Shared ``is_debug_authorized`` check used by the other
+       ``/api/debug/*`` routes, so any future tightening of that gate applies
+       here too.
+
+    Secret-bearing fields (tokens, passwords, API keys) are redacted. The
+    response defaults to pretty-printed JSON (``indent=2``); pass
+    ``?format=raw`` for compact JSON.
     """
     if not is_debug_authorized(request):
         raise HTTPException(
@@ -328,6 +367,22 @@ async def dump_profiles(  # noqa: A002 - FastAPI query param name shadows builti
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="Application config not initialized",
+        )
+
+    auth_service = getattr(app.state, "auth_service", None)
+    auth_enabled = bool(auth_service and getattr(auth_service, "auth_enabled", False))
+    dev_mode = bool(getattr(config, "dev_mode", False))
+    if not auth_enabled and not dev_mode:
+        # get_current_user() returned a synthetic test user because auth is
+        # off. Refuse to expose profile internals unless the operator
+        # explicitly set dev_mode=true.
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=(
+                "Debug profile dump is disabled: authentication is not enabled "
+                "and dev_mode is false. Enable OIDC auth or set "
+                "app_config.dev_mode=true to access this endpoint."
+            ),
         )
 
     processing_services_registry = getattr(app.state, "processing_services", None) or {}

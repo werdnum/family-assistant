@@ -98,6 +98,9 @@ def _make_sample_config() -> AppConfig:
     )
 
     return AppConfig(
+        # The endpoint fails closed when auth is disabled unless dev_mode is
+        # explicitly on; these tests run with auth disabled so they opt in here.
+        dev_mode=True,
         default_service_profile_id="trusted",
         service_profiles=[profile_a, profile_b],
         default_profile_settings=DefaultProfileSettings(
@@ -272,26 +275,49 @@ async def test_dump_profiles_raw_format_is_compact(
 async def test_dump_profiles_includes_runtime_info(
     api_client: httpx.AsyncClient,
 ) -> None:
-    """Runtime info from the services registry is included when available."""
+    """Runtime info is extracted using the same attribute shapes the real LLM clients use.
 
-    class _FakeLLM:
-        model = "gemini/gemini-2.5-pro"
-        provider = "google"
+    ``OpenAIClient`` / ``AnthropicClient`` expose ``self.model``, while
+    ``GoogleGenAIClient`` uses ``self.model_name`` with a leading ``models/``
+    prefix. The endpoint must surface the live model for all shapes and must
+    NOT re-emit a configured-only ``provider`` field (no concrete client
+    exposes one). This test uses small classes that mirror those real attribute
+    shapes to catch regressions where the endpoint reads from a
+    non-existent attribute.
+    """
+
+    class _OpenAILikeClient:
+        """Mirrors OpenAIClient/AnthropicClient — sets ``self.model``."""
+
+        def __init__(self) -> None:
+            self.model = "gpt-5-turbo"
+
+    class _GoogleLikeClient:
+        """Mirrors GoogleGenAIClient — sets ``self.model_name`` with ``models/`` prefix."""
+
+        def __init__(self) -> None:
+            self.model_name = "models/gemini-2.5-pro"
 
     class _FakeContextProvider:
         name = "notes"
 
-    class _FakeLocalService:
+    class _OpenAILocalService:
         kind = "local"
-        llm_client = _FakeLLM()
-        context_providers = [_FakeContextProvider()]
 
-    class _FakeRemoteService:
-        kind = "remote"
+        def __init__(self) -> None:
+            self.llm_client = _OpenAILikeClient()
+            self.context_providers = [_FakeContextProvider()]
+
+    class _GoogleLocalService:
+        kind = "local"
+
+        def __init__(self) -> None:
+            self.llm_client = _GoogleLikeClient()
+            self.context_providers = [_FakeContextProvider()]
 
     registry = {
-        "trusted": _FakeLocalService(),
-        "readonly": _FakeRemoteService(),
+        "trusted": _OpenAILocalService(),  # exercises the .model path
+        "readonly": _GoogleLocalService(),  # exercises the .model_name path
     }
 
     original_config = _install_test_config(_make_sample_config())
@@ -303,15 +329,38 @@ async def test_dump_profiles_includes_runtime_info(
 
         trusted = next(p for p in data["profiles"] if p["id"] == "trusted")
         assert trusted["runtime"]["kind"] == "local"
-        assert trusted["runtime"]["llm_model"] == "gemini/gemini-2.5-pro"
-        assert trusted["runtime"]["llm_provider"] == "google"
-        assert trusted["runtime"]["llm_client_class"] == "_FakeLLM"
+        assert trusted["runtime"]["llm_model"] == "gpt-5-turbo"
+        assert trusted["runtime"]["llm_client_class"] == "_OpenAILikeClient"
         assert trusted["runtime"]["context_providers"] == ["notes"]
+        # provider should NOT be in runtime: no concrete client exposes it.
+        assert "llm_provider" not in trusted["runtime"]
 
         readonly = next(p for p in data["profiles"] if p["id"] == "readonly")
-        assert readonly["runtime"] == {"kind": "remote"}
+        # Google-like client: model_name with "models/" prefix is normalized.
+        assert readonly["runtime"]["kind"] == "local"
+        assert readonly["runtime"]["llm_model"] == "gemini-2.5-pro"
+        assert readonly["runtime"]["llm_client_class"] == "_GoogleLikeClient"
+    finally:
+        _restore_registry(original_registry)
+        _restore_config(original_config)
 
-        assert data["registered_service_ids"] == ["readonly", "trusted"]
+
+@pytest.mark.asyncio
+async def test_dump_profiles_remote_services_have_no_live_llm_fields(
+    api_client: httpx.AsyncClient,
+) -> None:
+    """Remote A2A profiles surface only ``kind`` in runtime info."""
+
+    class _RemoteService:
+        kind = "remote"
+
+    original_config = _install_test_config(_make_sample_config())
+    original_registry = _install_registry({"trusted": _RemoteService()})
+    try:
+        response = await api_client.get("/api/debug/profiles")
+        assert response.status_code == 200
+        trusted = next(p for p in response.json()["profiles"] if p["id"] == "trusted")
+        assert trusted["runtime"] == {"kind": "remote"}
     finally:
         _restore_registry(original_registry)
         _restore_config(original_config)
@@ -345,6 +394,7 @@ async def test_dump_profiles_includes_operator_layer(
         ),
     )
     config = AppConfig(
+        dev_mode=True,  # opt in to debug dump when auth is disabled
         default_service_profile_id="with_operator_overrides",
         service_profiles=[profile],
         default_profile_settings=DefaultProfileSettings(),
@@ -413,6 +463,7 @@ async def test_dump_profiles_reflects_resolved_defaults(
     this test would catch it.
     """
     config_data = {
+        "dev_mode": True,  # endpoint fails closed without real auth otherwise
         "default_service_profile_id": "inheriting_profile",
         "default_profile_settings": {
             "processing_config": {
@@ -527,6 +578,64 @@ async def test_dump_profiles_returns_503_without_config(
         _restore_registry(original_registry)
         if original_config is not None:
             fastapi_app.state.config = original_config
+
+
+@pytest.mark.asyncio
+async def test_dump_profiles_fails_closed_when_auth_disabled_and_dev_mode_off(
+    api_client: httpx.AsyncClient,
+) -> None:
+    """With auth disabled and dev_mode off, the endpoint returns 403.
+
+    ``get_current_user`` returns a synthetic test user when
+    ``auth_service.auth_enabled`` is false, which would otherwise let an
+    unauthenticated caller read prompts / policy / runtime state. The endpoint
+    must refuse to respond in that configuration unless the operator has
+    explicitly set ``dev_mode=true``.
+    """
+    config = _make_sample_config()
+    config.dev_mode = False  # override the default enabled by _make_sample_config
+    original_config = _install_test_config(config)
+    original_registry = _install_registry({})
+    # Ensure no real auth_service is attached — mirrors auth-disabled deployments.
+    original_auth = getattr(fastapi_app.state, "auth_service", None)
+    if hasattr(fastapi_app.state, "auth_service"):
+        del fastapi_app.state.auth_service
+    try:
+        response = await api_client.get("/api/debug/profiles")
+        assert response.status_code == 403
+        # No profile data should leak in the error body.
+        assert "default_service_profile_id" not in response.text
+    finally:
+        if original_auth is not None:
+            fastapi_app.state.auth_service = original_auth
+        _restore_registry(original_registry)
+        _restore_config(original_config)
+
+
+@pytest.mark.asyncio
+async def test_dump_profiles_dev_mode_bypasses_fail_closed_check(
+    api_client: httpx.AsyncClient,
+) -> None:
+    """With dev_mode=True and no auth service, the endpoint still responds 200.
+
+    This is the explicit opt-in path for local development: the operator sets
+    ``app_config.dev_mode=true`` to accept responsibility for the exposure.
+    """
+    config = _make_sample_config()  # dev_mode=True from the helper
+    original_config = _install_test_config(config)
+    original_registry = _install_registry({})
+    original_auth = getattr(fastapi_app.state, "auth_service", None)
+    if hasattr(fastapi_app.state, "auth_service"):
+        del fastapi_app.state.auth_service
+    try:
+        response = await api_client.get("/api/debug/profiles")
+        assert response.status_code == 200
+        assert response.json()["default_service_profile_id"] == "trusted"
+    finally:
+        if original_auth is not None:
+            fastapi_app.state.auth_service = original_auth
+        _restore_registry(original_registry)
+        _restore_config(original_config)
 
 
 class _FakeAuthService:

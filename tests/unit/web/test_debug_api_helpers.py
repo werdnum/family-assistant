@@ -8,6 +8,7 @@ from family_assistant.web.routers.debug_api import (
     SENSITIVE_FIELD_NAMES,
     is_sensitive_field_name,
     redact_sensitive_config,
+    resolve_live_llm_model,
 )
 
 
@@ -39,6 +40,42 @@ def test_non_secret_field_names_are_not_redacted() -> None:
         "enable_local_tools",
     ):
         assert not is_sensitive_field_name(name), name
+
+
+def test_resolve_live_llm_model_reads_model_attribute() -> None:
+    """OpenAIClient/AnthropicClient shape: ``self.model``."""
+
+    class _OpenAILike:
+        model = "gpt-5-turbo"
+
+    assert resolve_live_llm_model(_OpenAILike()) == "gpt-5-turbo"
+
+
+def test_resolve_live_llm_model_reads_model_name_and_strips_prefix() -> None:
+    """GoogleGenAIClient shape: ``self.model_name`` with ``models/`` prefix."""
+
+    class _GoogleLike:
+        model_name = "models/gemini-2.5-pro"
+
+    assert resolve_live_llm_model(_GoogleLike()) == "gemini-2.5-pro"
+
+
+def test_resolve_live_llm_model_returns_none_when_no_attribute() -> None:
+    class _BareClient:
+        pass
+
+    assert resolve_live_llm_model(_BareClient()) is None
+    assert resolve_live_llm_model(None) is None
+
+
+def test_resolve_live_llm_model_prefers_model_over_model_name() -> None:
+    """When both attributes are present, ``model`` takes precedence."""
+
+    class _Both:
+        model = "gpt-5-turbo"
+        model_name = "models/gemini-2.5-pro"
+
+    assert resolve_live_llm_model(_Both()) == "gpt-5-turbo"
 
 
 def testredact_sensitive_config_walks_nested_structures() -> None:
