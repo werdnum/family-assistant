@@ -902,8 +902,17 @@ class AppConfig(BaseSettings):
     @classmethod
     @contextlib.contextmanager
     def yaml_source_context(cls, yaml_files: list[str]) -> Generator[None]:
-        """Context manager to set YAML file paths for AppConfig construction."""
-        token = cls._yaml_files_ctx.set(yaml_files)
+        """Context manager to set YAML file paths for AppConfig construction.
+
+        YAML paths are normalized to absolute paths against the current cwd
+        once, at entry. Downstream consumers — including
+        ``_normalize_storage_path`` that resolves relative
+        ``attachment_storage_path`` values against the config file's
+        directory — can then trust that ``_yaml_files_ctx`` always holds
+        absolute paths, regardless of how ``load_config`` was invoked.
+        """
+        absolute_yaml_files = [os.path.abspath(path) for path in yaml_files]
+        token = cls._yaml_files_ctx.set(absolute_yaml_files)
         try:
             yield
         finally:

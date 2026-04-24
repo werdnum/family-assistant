@@ -14,7 +14,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from pydantic import BaseModel, ValidationError
 from starlette.datastructures import UploadFile as StarletteUploadFile
 
-from family_assistant.config_models import EmailIntakeConfig
+from family_assistant.config_models import AppConfig, EmailIntakeConfig
 from family_assistant.email_intake.security import (
     EmailIntakePayloadTooLargeError,
     EmailIntakeSecurityError,
@@ -32,7 +32,6 @@ from family_assistant.web.dependencies import get_db
 from family_assistant.web.models import WebhookEventPayload
 
 if TYPE_CHECKING:
-    from family_assistant.config_models import AppConfig
     from family_assistant.events.webhook_source import WebhookEventSource
 
 logger = logging.getLogger(__name__)
@@ -42,6 +41,31 @@ webhooks_router = APIRouter()
 DEFAULT_ATTACHMENT_STORAGE_PATH = "/mnt/data/mailbox/attachments_fallback"
 # Fallback for raw webhook dir if not in app config
 DEFAULT_MAILBOX_RAW_DIR_FALLBACK = "/mnt/data/mailbox/raw_requests_fallback"
+
+
+def select_email_attachment_base(
+    app_config: AppConfig | None,
+) -> tuple[str, bool]:
+    """Pick the on-disk base directory for saving an inbound email batch.
+
+    Returns ``(base_dir, persist_absolute_storage_path)``:
+
+    - If ``app_config.attachment_storage_path`` is set, use it as the base
+      and tell the caller to persist a path **relative** to that base on
+      ``received_emails.attachment_info.storage_path``. The runtime
+      registry rejoins the relative path against its configured
+      ``email_attachment_base_path`` at read time, which keeps the
+      stored row portable across environment moves.
+    - When no app config is attached to the request (bootstrap race,
+      misconfiguration), fall back to ``DEFAULT_ATTACHMENT_STORAGE_PATH``
+      and signal that the caller must persist the **absolute** disk path.
+      The runtime registry that later reads the attachment may be
+      configured with a different base than the fallback we wrote to, so
+      a relative path would point at the wrong mailbox root and 404.
+    """
+    if app_config and app_config.attachment_storage_path:
+        return app_config.attachment_storage_path, False
+    return DEFAULT_ATTACHMENT_STORAGE_PATH, True
 
 
 async def _save_raw_mail_webhook(
@@ -201,18 +225,17 @@ async def handle_mail_webhook(
             email_attachment_batch_id = str(uuid.uuid4())
             total_attachment_size = 0
 
-            # Get attachment storage path from app config
-            attachment_storage_path = DEFAULT_ATTACHMENT_STORAGE_PATH
+            # Get attachment storage path from app config (or fallback).
             app_config: AppConfig | None = getattr(request.app.state, "config", None)
-            if app_config and app_config.attachment_storage_path:
-                attachment_storage_path = app_config.attachment_storage_path
+            attachment_storage_path, persist_absolute_storage_path = (
+                select_email_attachment_base(app_config)
+            )
 
             # On-disk write location for the batch: resolved against the
-            # current mailbox base. The path we persist in
-            # ``received_emails.attachment_info`` is relative to that base
-            # so environment moves (mounts, restores) stay portable:
-            # ``AttachmentRegistry.get_attachment_path`` rejoins the
-            # relative path against the configured
+            # current mailbox base. When config is present we persist a
+            # relative path so environment moves (mounts, restores) stay
+            # portable: ``AttachmentRegistry.get_attachment_path`` rejoins
+            # the relative path against the configured
             # ``email_attachment_base_path`` at read time.
             base_attachment_dir = os.path.join(
                 attachment_storage_path, email_attachment_batch_id
@@ -234,12 +257,23 @@ async def handle_mail_webhook(
                         # (message_id, storage_path).
                         persisted_filename = f"{i}-{safe_filename}"
                         # Disk I/O happens at the absolute path; the
-                        # registry row stores the relative one.
+                        # registry row stores a relative path when we
+                        # have an app config (the stable mailbox base is
+                        # known, so reads rejoin it safely), or the
+                        # absolute disk path otherwise (no stable base →
+                        # persist the fully-qualified path so later
+                        # reads can find the file regardless of whatever
+                        # base the runtime registry is configured with).
                         disk_path = os.path.join(
                             base_attachment_dir, persisted_filename
                         )
                         relative_storage_path = os.path.join(
                             email_attachment_batch_id, persisted_filename
+                        )
+                        persisted_storage_path = (
+                            disk_path
+                            if persist_absolute_storage_path
+                            else relative_storage_path
                         )
 
                         # Save the uploaded file
@@ -264,12 +298,12 @@ async def handle_mail_webhook(
                                 filename=safe_filename,
                                 content_type=attachment_mime_type,
                                 size=size,
-                                storage_path=relative_storage_path,
+                                storage_path=persisted_storage_path,
                             )
                         )
                         logger.info(
                             f"Saved attachment '{safe_filename}' to {disk_path} "
-                            f"(stored relative path: {relative_storage_path})"
+                            f"(stored path: {persisted_storage_path})"
                         )
                     except EmailIntakePayloadTooLargeError:
                         raise
