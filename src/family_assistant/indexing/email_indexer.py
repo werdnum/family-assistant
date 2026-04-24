@@ -464,9 +464,33 @@ class EmailIndexer:
                     )
                     continue
 
+                # ``att.storage_path`` is stored relative to the configured
+                # mailbox base for portability across mounts/restores. The
+                # downstream pipeline (e.g. PDFTextExtractor) reads ``ref``
+                # as a direct file path, so resolve to absolute here via
+                # the registry — which rejoins against
+                # ``email_attachment_base_path``. This also transparently
+                # handles pre-PR absolute paths (registry leaves them
+                # as-is).
+                resolved_path: str | None = None
+                if exec_context.attachment_registry is not None:
+                    resolved = exec_context.attachment_registry.get_attachment_path(
+                        att.attachment_id or "unused",
+                        stored_path=att.storage_path,
+                        source_type="email",
+                    )
+                    if resolved is not None:
+                        resolved_path = str(resolved)
+                if resolved_path is None:
+                    # No registry available or file not found — fall back
+                    # to the stored path literally so downstream code can
+                    # still surface a meaningful error.
+                    resolved_path = att.storage_path
+
                 logger.info(
                     f"Preparing attachment for pipeline: {att.filename} "
-                    f"({att.content_type}) at {att.storage_path} for email {email_db_id}"
+                    f"({att.content_type}) at {resolved_path} "
+                    f"(stored: {att.storage_path}) for email {email_db_id}"
                 )
                 attachment_item = IndexableContent(
                     content=None,
@@ -484,7 +508,7 @@ class EmailIndexer:
                             * chunk_index_spacing,
                         },
                     ),
-                    ref=att.storage_path,
+                    ref=resolved_path,
                 )
                 initial_items.append(attachment_item)
 

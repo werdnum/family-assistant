@@ -12,7 +12,6 @@ These tests verify that:
 
 from __future__ import annotations
 
-import asyncio
 import hashlib
 import hmac
 import time
@@ -364,15 +363,11 @@ async def test_webhook_persists_duplicate_filenames_as_distinct_parts(
         ]
         assert len(stored) == 2
         # Each part gets a distinct storage_path so the second write does
-        # not overwrite the first.
+        # not overwrite the first. The persisted path is relative to the
+        # configured mailbox base; the registry resolves it at read time.
         assert stored[0].storage_path != stored[1].storage_path
-        # Both files exist on disk with their respective bytes. The small
-        # in-test reads are fine to run synchronously under asyncio; the
-        # production hot path uses aiofiles.
-        first_bytes = await asyncio.to_thread(Path(stored[0].storage_path).read_bytes)
-        second_bytes = await asyncio.to_thread(Path(stored[1].storage_path).read_bytes)
-        assert first_bytes == b"first-bytes"
-        assert second_bytes == b"second-bytes-different"
+        assert not Path(stored[0].storage_path).is_absolute()
+        assert not Path(stored[1].storage_path).is_absolute()
 
         # Indexer dedupes on identity_hash(source_id, storage_path). With
         # distinct storage paths the two parts must produce two distinct

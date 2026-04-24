@@ -207,6 +207,13 @@ async def handle_mail_webhook(
             if app_config and app_config.attachment_storage_path:
                 attachment_storage_path = app_config.attachment_storage_path
 
+            # On-disk write location for the batch: resolved against the
+            # current mailbox base. The path we persist in
+            # ``received_emails.attachment_info`` is relative to that base
+            # so environment moves (mounts, restores) stay portable:
+            # ``AttachmentRegistry.get_attachment_path`` rejoins the
+            # relative path against the configured
+            # ``email_attachment_base_path`` at read time.
             base_attachment_dir = os.path.join(
                 attachment_storage_path, email_attachment_batch_id
             )
@@ -226,16 +233,14 @@ async def handle_mail_webhook(
                         # the same email-attachment dedup key
                         # (message_id, storage_path).
                         persisted_filename = f"{i}-{safe_filename}"
-                        # Store the absolute path so attachment resolution
-                        # does not depend on the worker process's cwd at the
-                        # time of a later read (e.g. after a restart from a
-                        # different working directory). os.path.abspath is
-                        # just string manipulation when the input is already
-                        # absolute (the typical case for the configured
-                        # attachment_storage_path); we accept the negligible
-                        # getcwd() call when it isn't.
-                        joined = os.path.join(base_attachment_dir, persisted_filename)
-                        final_file_path = os.path.abspath(joined)  # noqa: ASYNC240 - just string normalization, attachment_storage_path is configured as absolute
+                        # Disk I/O happens at the absolute path; the
+                        # registry row stores the relative one.
+                        disk_path = os.path.join(
+                            base_attachment_dir, persisted_filename
+                        )
+                        relative_storage_path = os.path.join(
+                            email_attachment_batch_id, persisted_filename
+                        )
 
                         # Save the uploaded file
                         await form_item.seek(0)  # Ensure pointer is at the start
@@ -248,7 +253,7 @@ async def handle_mail_webhook(
                             total_attachment_size=total_attachment_size,
                             config=email_intake_config,
                         )
-                        async with aiofiles.open(final_file_path, "wb") as f_out:
+                        async with aiofiles.open(disk_path, "wb") as f_out:
                             await f_out.write(content)
 
                         attachment_mime_type = (
@@ -259,11 +264,12 @@ async def handle_mail_webhook(
                                 filename=safe_filename,
                                 content_type=attachment_mime_type,
                                 size=size,
-                                storage_path=final_file_path,
+                                storage_path=relative_storage_path,
                             )
                         )
                         logger.info(
-                            f"Saved attachment '{safe_filename}' to {final_file_path}"
+                            f"Saved attachment '{safe_filename}' to {disk_path} "
+                            f"(stored relative path: {relative_storage_path})"
                         )
                     except EmailIntakePayloadTooLargeError:
                         raise

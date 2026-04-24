@@ -76,8 +76,18 @@ def upgrade() -> None:
         sa.Column("original_task_id", sa.String),
     )
 
-    rows = bind.execute(sa.select(emails.c.id, emails.c.attachment_info)).fetchall()
-    for row in rows:
+    # Stream the result set — for a large mailbox the full
+    # ``attachment_info`` JSON blob can be tens of MB per row, so a plain
+    # ``fetchall()`` would materialize the whole table into memory.
+    # Filter out obviously-empty rows at the SQL level, then iterate
+    # with a bounded yield_per window.
+    select_stmt = (
+        sa
+        .select(emails.c.id, emails.c.attachment_info)
+        .where(emails.c.attachment_info.isnot(None))
+        .execution_options(yield_per=500, stream_results=True)
+    )
+    for row in bind.execute(select_stmt):
         email_db_id = row[0]
         attachment_info = row[1]
         if not _needs_reindex(attachment_info):
