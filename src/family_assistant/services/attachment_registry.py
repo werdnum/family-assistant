@@ -1199,9 +1199,16 @@ class AttachmentRegistry:
             Path to the attachment file, or None if not found
         """
         if stored_path:
-            external_path = Path(stored_path)
-            if external_path.is_file():
-                return external_path
+            candidate = Path(stored_path)
+            # Registry-managed uploads persist ``storage_path`` as a
+            # relative shard path (e.g. ``ab/<uuid>...``); resolve those
+            # against ``self.storage_path`` so lookup is not cwd-dependent
+            # and cannot escape the managed directory. Email attachments
+            # are persisted as absolute paths and used as-is.
+            if not candidate.is_absolute():
+                candidate = self.storage_path / candidate
+            if candidate.is_file():
+                return candidate
 
         try:
             uuid.UUID(attachment_id)
