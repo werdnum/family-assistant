@@ -154,6 +154,10 @@ attachment_metadata_table = Table(
     Column("size", Integer, nullable=False),
     Column("content_url", Text, nullable=True),  # URL for retrieval
     Column("storage_path", Text, nullable=True),  # File system path
+    # Bounded SHA-256 hex digest of ``f"{source_id}\0{storage_path}"`` used
+    # to uniquely identify an email attachment regardless of how long the
+    # Message-Id or path is. Only populated for ``source_type="email"``.
+    Column("email_identity_hash", String(64), nullable=True),
     Column("conversation_id", String(255), nullable=True),
     Column(
         "message_id", Integer, ForeignKey("message_history.internal_id"), nullable=True
@@ -166,15 +170,17 @@ attachment_metadata_table = Table(
     Index("idx_attachment_source", "source_type", "source_id"),
     Index("idx_attachment_created", "created_at"),
     # Partial unique index: email attachments (source_type="email") must be
-    # unique on (source_id, storage_path) so concurrent indexer runs cannot
-    # create duplicate registry rows for the same underlying attachment.
+    # unique on the bounded ``email_identity_hash``. Indexing the raw
+    # ``(source_id, storage_path)`` Text columns risks exceeding Postgres'
+    # btree index-row size limit for long Message-Ids / paths.
     Index(
         "uix_attachment_metadata_email_identity",
-        "source_id",
-        "storage_path",
+        "email_identity_hash",
         unique=True,
-        postgresql_where=text("source_type = 'email' AND storage_path IS NOT NULL"),
-        sqlite_where=text("source_type = 'email' AND storage_path IS NOT NULL"),
+        postgresql_where=text(
+            "source_type = 'email' AND email_identity_hash IS NOT NULL"
+        ),
+        sqlite_where=text("source_type = 'email' AND email_identity_hash IS NOT NULL"),
     ),
     extend_existing=True,
 )

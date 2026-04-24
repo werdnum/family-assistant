@@ -18,7 +18,10 @@ from family_assistant.indexing.types import (
     EmailMetadata,
     IndexableContentMetadata,
 )
-from family_assistant.services.attachment_registry import AttachmentRegistry
+from family_assistant.services.attachment_registry import (
+    AttachmentRegistry,
+    compute_email_identity_hash,
+)
 from family_assistant.storage.base import attachment_metadata_table
 from family_assistant.storage.context import DatabaseContext
 from family_assistant.storage.email import (
@@ -184,12 +187,19 @@ async def _register_or_reuse_email_attachment(
     Returns ``None`` if registration failed for a reason other than a
     uniqueness conflict.
     """
+    # Dedup on the bounded identity hash (see
+    # ``uix_attachment_metadata_email_identity``). Using the raw
+    # source_id/storage_path columns would risk the Postgres btree index
+    # row-size limit for long Message-Id headers or paths.
+    identity_hash = compute_email_identity_hash(
+        message_id_header, attachment.storage_path
+    )
+
     # Fast-path: existing row (no transient conflict needed).
     existing_row = await db_context.fetch_one(
         select(attachment_metadata_table.c.attachment_id)
         .where(attachment_metadata_table.c.source_type == "email")
-        .where(attachment_metadata_table.c.source_id == message_id_header)
-        .where(attachment_metadata_table.c.storage_path == attachment.storage_path)
+        .where(attachment_metadata_table.c.email_identity_hash == identity_hash)
         .limit(1)
     )
     if existing_row:
@@ -238,8 +248,7 @@ async def _register_or_reuse_email_attachment(
         winner = await db_context.fetch_one(
             select(attachment_metadata_table.c.attachment_id)
             .where(attachment_metadata_table.c.source_type == "email")
-            .where(attachment_metadata_table.c.source_id == message_id_header)
-            .where(attachment_metadata_table.c.storage_path == attachment.storage_path)
+            .where(attachment_metadata_table.c.email_identity_hash == identity_hash)
             .limit(1)
         )
         return winner["attachment_id"] if winner else None

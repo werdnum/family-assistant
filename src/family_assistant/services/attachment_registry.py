@@ -50,12 +50,25 @@ class AttachmentRowDict(TypedDict):
     size: int
     content_url: str | None
     storage_path: str | None
+    email_identity_hash: str | None
     conversation_id: str | None
     message_id: int | None
     created_at: datetime
     accessed_at: datetime | None
     # ast-grep-ignore: no-dict-any - Free-form JSON metadata column stored in DB
     metadata: dict[str, Any] | None
+
+
+def compute_email_identity_hash(source_id: str, storage_path: str) -> str:
+    """Return the bounded SHA-256 hex digest used to dedup email attachments.
+
+    Email registrations key their partial unique index on this digest of
+    ``f"{source_id}\\0{storage_path}"`` so that arbitrarily long
+    ``Message-Id`` headers or external paths cannot exceed Postgres'
+    btree index-row size limit. Call sites outside email ingestion do
+    not populate this column; it remains ``NULL``.
+    """
+    return hashlib.sha256(f"{source_id}\0{storage_path}".encode()).hexdigest()
 
 
 class AttachmentMetadataDict(TypedDict):
@@ -116,6 +129,7 @@ class AttachmentMetadata:
         size: int,
         content_url: str | None = None,
         storage_path: str | None = None,
+        email_identity_hash: str | None = None,
         conversation_id: str | None = None,
         message_id: int | None = None,
         created_at: datetime | None = None,
@@ -124,13 +138,14 @@ class AttachmentMetadata:
         metadata: dict[str, Any] | None = None,
     ) -> None:
         self.attachment_id = attachment_id
-        self.source_type = source_type  # "user", "tool", "script"
-        self.source_id = source_id  # user_id, tool_name, script_id
+        self.source_type = source_type  # "user", "tool", "script", "email"
+        self.source_id = source_id  # user_id, tool_name, script_id, email Message-Id
         self.mime_type = mime_type
         self.description = description
         self.size = size
         self.content_url = content_url
         self.storage_path = storage_path
+        self.email_identity_hash = email_identity_hash
         self.conversation_id = conversation_id
         self.message_id = message_id
         self.created_at = created_at or datetime.now(UTC)
@@ -178,6 +193,7 @@ class AttachmentMetadata:
             size=row["size"],
             content_url=row["content_url"],
             storage_path=row["storage_path"],
+            email_identity_hash=row.get("email_identity_hash"),
             conversation_id=row["conversation_id"],
             message_id=row["message_id"],
             created_at=row["created_at"],
@@ -304,6 +320,14 @@ class AttachmentRegistry:
         Returns:
             AttachmentMetadata object
         """
+        # Email attachments uniquely identify themselves by a bounded hash
+        # of ``(source_id, storage_path)``; see
+        # ``uix_attachment_metadata_email_identity``. Other source types
+        # leave the hash NULL.
+        email_identity_hash: str | None = None
+        if source_type == "email" and storage_path is not None:
+            email_identity_hash = compute_email_identity_hash(source_id, storage_path)
+
         attachment_metadata = AttachmentMetadata(
             attachment_id=attachment_id,
             source_type=source_type,
@@ -313,6 +337,7 @@ class AttachmentRegistry:
             size=size,
             content_url=content_url,
             storage_path=storage_path,
+            email_identity_hash=email_identity_hash,
             conversation_id=conversation_id,
             message_id=message_id,
             metadata=metadata,
@@ -328,6 +353,7 @@ class AttachmentRegistry:
             size=attachment_metadata.size,
             content_url=attachment_metadata.content_url,
             storage_path=attachment_metadata.storage_path,
+            email_identity_hash=attachment_metadata.email_identity_hash,
             conversation_id=attachment_metadata.conversation_id,
             message_id=attachment_metadata.message_id,
             created_at=attachment_metadata.created_at,
