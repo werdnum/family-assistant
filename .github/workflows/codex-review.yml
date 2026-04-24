@@ -176,16 +176,33 @@ jobs:
             echo "This is PR #${PR_NUMBER} for ${GITHUB_REPOSITORY}."
             echo
             echo "Review ONLY the changes introduced by this pull request."
-            echo "Focus on correctness issues, regressions, missing tests, and maintainability concerns."
+            echo "Focus on correctness issues, regressions, and maintainability concerns."
             echo "Return strict JSON that matches the provided output schema."
+            echo
+            echo "Before reviewing:"
+            echo "- Articulate to yourself in 1-2 sentences what this PR is trying to accomplish, based on the title, body, and diff. Use this as the lens for finding defects. Bugs that cause the code to behave contrary to the stated intent are by definition high-priority findings."
+            echo "- Read the surrounding code for context: open the full files in the diff (not just the hunks), the files they import, structurally neighbouring modules, and the related tests. The repository is checked out in the working directory; use shell tools to read it. Do not comment on a function's contract, callers, or invariants without first reading the code that establishes them."
+            echo
+            echo "Focus weighting:"
+            echo "- Concentrate your deepest analysis on application (non-test) code: trace the logic, consider edge cases, off-by-one errors, race conditions, and improper error handling."
+            echo "- For test files, flag only major correctness issues — incorrect assertions, tautological tests, missing critical coverage, or violations of project test policy (e.g. fixed time-based waits, over-mocking where a fake exists). Do not suggest stylistic or minor refactors in tests."
+            echo
+            echo "Assume tests and linters pass:"
+            echo "- This repo runs ruff, basedpyright, pylint, ast-grep, mdformat, and the full test suite deterministically in CI on the head revision. Treat them as authoritative."
+            echo "- DO NOT post comments speculating that a change 'might fail tests', 'could break the linter', 'may not pass type checking', or similar. Either point at the concrete defect, or say nothing."
             echo
             echo "Comment policy (STRICT):"
             echo "- Every comment MUST be actionable: identify a concrete defect and tell the author what to change."
             echo "- DO NOT post praise, approval, 'looks good', or 'LGTM' style remarks."
-            echo "- DO NOT post comments that only describe or restate what the code does."
+            echo "- DO NOT post comments that only describe, restate, or explain what the code does. The author wrote the code and knows what it does."
             echo "- DO NOT ask the author to 'check', 'verify', 'confirm', or 'consider' something — if you do not have a specific defect, say nothing."
-            echo "- DO NOT include rhetorical questions or hedged 'might/could' speculation without a concrete failure mode."
+            echo "- DO NOT include rhetorical questions or hedged 'might/could/may' speculation without a concrete failure mode."
+            echo "- DO NOT comment on trailing newlines, whitespace, import ordering, line length, quote style, or any purely cosmetic issue with no functional effect — formatters handle these in CI."
             echo "- An empty inline_comments array is the correct output when you have no actionable findings."
+            echo
+            echo "Severity bias (when you do post comments):"
+            echo "- Functional correctness bugs that contradict the change's stated intent are HIGH or CRITICAL priority — never minor."
+            echo "- Any newly introduced linter / type-checker bypass (# noqa, # type: ignore, # pylint: disable, # ast-grep-ignore, # pragma: no cover) WITHOUT a specific inline justification explaining the underlying problem is a HIGH-priority finding. Generic justifications such as 'needed', 'false positive', 'fixes lint', or 'to make CI pass' do not count — flag them as if no justification were present."
             echo
             echo "Pay particular attention to error handling: prefer throwing / propagating errors over graceful fallbacks."
             echo "Flag any new try/except that returns None, empty collections, or default sentinels instead of raising."
@@ -362,3 +379,4 @@ jobs:
               issue_number: issueNumber,
               body,
             });
+

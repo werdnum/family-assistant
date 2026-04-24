@@ -17,8 +17,24 @@ concrete problem in the changed code and tells the author what to do differently
   failure mode in mind.
 - Questions unless you already know the answer and are using the question form rhetorically to point
   out a defect.
+- Speculation about whether a change "might fail tests", "could break the linter", or "may not pass
+  type checking" — see "Tests and Linters Are Authoritative" below.
+- Don't explain the code to the author. They wrote it and know what it does.
+- Purely cosmetic nits (trailing newlines, whitespace, import ordering, line length, quote style)
+  with no functional effect — formatters handle these.
 
 If there are no actionable findings for a file, say nothing about that file.
+
+## Tests and Linters Are Authoritative
+
+CI runs `ruff`, `basedpyright`, `pylint`, `ast-grep`, `mdformat`, and the full test suite
+deterministically on every revision. Reviewers — human or automated — should treat these as
+authoritative and **must not** post comments speculating about whether something will fail tests or
+fail a linter. Either point at the concrete defect in the code itself, or say nothing. CI results
+are verified separately.
+
+This frees review attention for what CI cannot check: correctness against intent, design, security,
+and whether the change does the right thing.
 
 ## Core Principle: Fail Fast, Never Mask Errors
 
@@ -380,10 +396,15 @@ This project follows the patterns defined in CLAUDE.md:
 
 ## Linter and Type-Checker Bypasses
 
-**Severity: SHORTCUT (warning) - without justification**
+**Severity: 🟠 High / SHORTCUT — without a specific justification.** Reviewers must flag this at high
+priority. The exit-code mapping is `SHORTCUT` (warning), but the review-comment severity is high: an
+unjustified bypass routinely hides a real defect, and waving it through trains the team to suppress
+more warnings.
 
-Any bypassing of type-checkers, ast-grep rules, ruff, or other linters must be accompanied by a
-specific justification comment explaining why the bypass is necessary.
+Any bypassing of type-checkers, ast-grep rules, ruff, pylint, or other linters must be accompanied
+by a **specific** inline justification comment explaining the underlying problem the bypass works
+around. Generic justifications such as "needed", "false positive", "fixes lint", "to make CI pass",
+or "linter is wrong" are **not acceptable** — flag them as if no justification were present.
 
 ### Common Bypass Patterns
 
