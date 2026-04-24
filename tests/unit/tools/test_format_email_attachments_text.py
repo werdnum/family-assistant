@@ -1,10 +1,8 @@
-"""Unit coverage for ``format_email_attachments_text`` branches.
+"""Unit coverage for ``format_email_attachments_text``.
 
-The formatter's wording determines what the LLM is told to do about
-email attachments surfaced via ``get_full_document_content``. The
-branches have different operator/caller implications — getting them
-wrong either sends the model chasing unavailable tools or has it
-advertise ids that can't be dereferenced.
+Drives the two rendering branches — ``attachment_id`` present vs legacy
+email needing reindex — so the LLM-visible wording in
+``get_full_document_content`` stays stable.
 """
 
 from __future__ import annotations
@@ -30,43 +28,44 @@ def _summary(
     }
 
 
-def test_registry_available_with_id_surfaces_attachment_id() -> None:
-    """Happy path: attachment is registered, model gets the id."""
-    text = format_email_attachments_text(
-        [_summary(attachment_id="att-123")], registry_available=True
-    )
+def test_attachment_with_id_surfaces_attachment_id() -> None:
+    """Happy path: the model gets the id so it can chain into read_text_attachment."""
+    text = format_email_attachments_text([_summary(attachment_id="att-123")])
+
     assert "attachment_id: att-123" in text
     assert "reindex_email" not in text
-    assert "AttachmentRegistry" not in text
 
 
-def test_registry_available_without_id_asks_for_reindex() -> None:
-    """Legacy email: registry exists but row not yet registered → suggest reindex."""
-    text = format_email_attachments_text(
-        [_summary(attachment_id=None)], registry_available=True
-    )
-    assert "reindex_email" in text
-    assert "attachment_id not yet assigned" in text
-
-
-def test_registry_unavailable_never_surfaces_id() -> None:
-    """Without a registry, ``read_text_attachment`` / ``get_attachment_info``
-    can't dereference the id, so the formatter must not advertise it even
-    when ``attachment_id`` is present on the row.
+def test_attachment_without_id_emits_tool_agnostic_reindex_guidance() -> None:
+    """Legacy email: no id yet → describe the action without prescribing
+    a tool that some profiles don't have.
     """
-    text = format_email_attachments_text(
-        [_summary(attachment_id="att-456")], registry_available=False
-    )
-    assert "att-456" not in text
-    assert "AttachmentRegistry" in text
-    assert "operator" in text.lower()
+    text = format_email_attachments_text([_summary(attachment_id=None)])
+
+    assert "attachment_id not yet assigned" in text
+    # The text mentions reindex_email by name but explicitly as "if it is
+    # available in this profile" — not a hard prescription.
+    assert "if it is available in this profile" in text
 
 
-def test_registry_unavailable_without_id_surfaces_operator_guidance() -> None:
-    """Same operator-action guidance applies when there's no id either."""
-    text = format_email_attachments_text(
-        [_summary(attachment_id=None)], registry_available=False
-    )
-    assert "AttachmentRegistry" in text
-    assert "operator" in text.lower()
-    assert "reindex_email" not in text
+def test_multiple_attachments_render_distinct_lines() -> None:
+    """Each attachment gets its own line so the caller can read them individually."""
+    text = format_email_attachments_text([
+        _summary(filename="first.pdf", attachment_id="att-1"),
+        _summary(filename="second.jpg", mime_type="image/jpeg", attachment_id=None),
+    ])
+
+    lines = text.splitlines()
+    assert len(lines) == 2
+    assert "first.pdf" in lines[0]
+    assert "att-1" in lines[0]
+    assert "second.jpg" in lines[1]
+    assert "attachment_id not yet assigned" in lines[1]
+
+
+def test_unknown_size_renders_as_unknown_size() -> None:
+    """``size=None`` on legacy rows renders as ``unknown size``, not ``None bytes``."""
+    text = format_email_attachments_text([_summary(size=None, attachment_id="att-9")])
+
+    assert "unknown size" in text
+    assert "None bytes" not in text

@@ -440,7 +440,6 @@ async def get_full_document_content_tool(
                 db_context=db_context,
                 message_id_header=source_id,
             )
-        registry_available = exec_context.attachment_registry is not None
 
         # Try to return original file if available
         if file_path and await asyncio.to_thread(pathlib.Path(file_path).exists):
@@ -491,8 +490,7 @@ async def get_full_document_content_tool(
                     )
                     if email_attachments_summary:
                         summary_text = format_email_attachments_text(
-                            email_attachments_summary,
-                            registry_available=registry_available,
+                            email_attachments_summary
                         )
                         if summary_text:
                             display_text = (
@@ -525,10 +523,7 @@ async def get_full_document_content_tool(
 
         if email_attachments_summary:
             body_text = text_content or ""
-            summary_text = format_email_attachments_text(
-                email_attachments_summary,
-                registry_available=registry_available,
-            )
+            summary_text = format_email_attachments_text(email_attachments_summary)
             display_text = (
                 f"{body_text}\n\nAttachments:\n{summary_text}"
                 if summary_text
@@ -691,34 +686,26 @@ async def reindex_email_tool(
 
 def format_email_attachments_text(
     attachments: list[EmailAttachmentSummary],
-    *,
-    registry_available: bool,
 ) -> str:
     """Format an email's attachment summary as a human-readable list.
 
-    When no ``AttachmentRegistry`` is configured, attachment IDs can't
-    be dereferenced (``read_text_attachment`` / ``get_attachment_info``
-    both fail immediately without one), so every entry is rendered with
-    the same operator-action guidance regardless of whether the row
-    already carries an ``attachment_id``. Otherwise, surface the id when
-    present, or describe the action needed in a tool-agnostic way — we
-    deliberately don't prescribe calling ``reindex_email``, because that
-    tool is only enabled in some profiles (default assistant) and not
-    others (reminder, engineer, data-viz, automation, etc.).
+    Surfaces the ``attachment_id`` when present so the caller can pipe
+    it into ``read_text_attachment`` / ``get_attachment_info``. Entries
+    without an id are rendered with tool-agnostic guidance (a reindex
+    is needed) — we deliberately don't prescribe ``reindex_email`` by
+    name because that write tool is only enabled in some profiles and
+    flows running without it would otherwise be told to call something
+    they can't invoke.
+
+    The caller is expected to have a configured ``AttachmentRegistry``;
+    without one the ids here can't be dereferenced, but that's a wiring
+    bug at the caller's level, not a mode this formatter needs to model.
     """
     lines: list[str] = []
     for att in attachments:
         size = att["size"]
         size_label = f"{size} bytes" if size is not None else "unknown size"
-        if not registry_available:
-            lines.append(
-                f"- {att['filename']} ({att['mime_type']}, {size_label}) "
-                "— attachment not accessible: this deployment has no "
-                "AttachmentRegistry configured, so attachment IDs cannot "
-                "be dereferenced. Contact the operator to enable the "
-                "registry."
-            )
-        elif att["attachment_id"]:
+        if att["attachment_id"]:
             lines.append(
                 f"- {att['filename']} ({att['mime_type']}, {size_label}) "
                 f"— attachment_id: {att['attachment_id']}"
