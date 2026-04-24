@@ -40,6 +40,8 @@ jobs:
     outputs:
       available_labels: '${{ steps.get_labels.outputs.available_labels }}'
       triaged_issues: '${{ env.TRIAGED_ISSUES }}'
+    env:
+      GEMINI_CLI_TRUST_WORKSPACE: 'true'
     steps:
       - name: 'Get repository labels'
         id: 'get_labels'
