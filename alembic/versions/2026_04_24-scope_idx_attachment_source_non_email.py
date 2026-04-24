@@ -1,6 +1,6 @@
 """Scope ``idx_attachment_source`` to non-email rows.
 
-Revision ID: scope_idx_attachment_source_non_email
+Revision ID: scope_idx_attach_src_non_email
 Revises: backfill_email_attachment_ids
 Create Date: 2026-04-24
 
@@ -30,7 +30,7 @@ from alembic import op
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
-revision: str = "scope_idx_attachment_source_non_email"
+revision: str = "scope_idx_attach_src_non_email"
 down_revision: str | None = "backfill_email_attachment_ids"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
