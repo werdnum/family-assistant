@@ -7,6 +7,7 @@ import uuid
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from datetime import datetime
+from pathlib import Path
 from typing import Any, TypedDict, cast
 
 from sqlalchemy import select, update
@@ -327,14 +328,28 @@ class EmailIndexer:
     Handles the indexing process for emails stored in the database.
     """
 
-    def __init__(self, pipeline: IndexingPipeline) -> None:
+    def __init__(
+        self,
+        pipeline: IndexingPipeline,
+        email_attachment_base_path: str | None = None,
+    ) -> None:
         """
         Initializes the EmailIndexer.
 
         Args:
-            pipeline: The IndexingPipeline instance to use for processing emails.
+            pipeline: The IndexingPipeline instance to use for processing
+                emails.
+            email_attachment_base_path: Optional stable base directory for
+                externally-managed email attachments. Used to resolve
+                relative ``storage_path`` values when no
+                ``AttachmentRegistry`` is available in the execution
+                context (the registry already handles this rejoining when
+                it is configured).
         """
         self.pipeline = pipeline
+        self.email_attachment_base_path: Path | None = (
+            Path(email_attachment_base_path) if email_attachment_base_path else None
+        )
         logger.info("EmailIndexer initialized with an IndexingPipeline instance.")
 
     async def handle_index_email(
@@ -482,10 +497,18 @@ class EmailIndexer:
                     if resolved is not None:
                         resolved_path = str(resolved)
                 if resolved_path is None:
-                    # No registry available or file not found — fall back
-                    # to the stored path literally so downstream code can
-                    # still surface a meaningful error.
-                    resolved_path = att.storage_path
+                    # No registry (or file missing there). Rejoin a
+                    # relative ``storage_path`` against our own configured
+                    # mailbox base so the pipeline still sees a concrete
+                    # absolute path even on registry-less deployments.
+                    # Absolute paths (pre-PR rows) are used verbatim.
+                    candidate = Path(att.storage_path)
+                    if (
+                        not candidate.is_absolute()
+                        and self.email_attachment_base_path is not None
+                    ):
+                        candidate = self.email_attachment_base_path / candidate
+                    resolved_path = str(candidate)
 
                 logger.info(
                     f"Preparing attachment for pipeline: {att.filename} "

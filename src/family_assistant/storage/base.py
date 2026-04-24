@@ -167,7 +167,17 @@ attachment_metadata_table = Table(
     Column("metadata", JSON, nullable=True),
     # Indexes for common queries
     Index("idx_attachment_conversation", "conversation_id"),
-    Index("idx_attachment_source", "source_type", "source_id"),
+    # ``idx_attachment_source`` excludes email rows — long ``Message-Id``
+    # headers stored in ``source_id`` can blow past the Postgres btree
+    # index-row size limit. Email lookups are served by the partial
+    # unique index on ``email_identity_hash`` below instead.
+    Index(
+        "idx_attachment_source",
+        "source_type",
+        "source_id",
+        postgresql_where=text("source_type <> 'email'"),
+        sqlite_where=text("source_type <> 'email'"),
+    ),
     Index("idx_attachment_created", "created_at"),
     # Partial unique index: email attachments (source_type="email") must be
     # unique on the bounded ``email_identity_hash``. Indexing the raw
