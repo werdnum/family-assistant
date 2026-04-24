@@ -115,8 +115,7 @@ DOCUMENT_TOOLS_DEFINITION: list[ToolDefinition] = [
                 "If only text content is available, returns the full text content (raw content if available, or reconstructed from chunks). "
                 "For email documents, the result also includes an `attachments` list with `attachment_id` values for each email attachment; "
                 "pass those IDs to `read_text_attachment` or `get_attachment_info` to inspect attachment contents. "
-                "For legacy emails ingested before registry integration, the first call may return `attachment_id: null` for some entries; "
-                "call `reindex_email` on the document to register the attachments, then call this tool again to retrieve the IDs. "
+                "For legacy emails ingested before registry integration, the first call may return `attachment_id: null` for some entries — the returned text will describe the action needed (e.g. triggering a reindex) without prescribing a specific tool, since the write tool is only enabled in some profiles. "
                 "If document exists but no content available, returns 'Error: Document [id] found, but no content is available.'. "
                 "If document not found, returns 'Error: Document with ID [id] not found.'. "
                 "On error, returns 'Error: Failed to retrieve content for document ID [id]. [error details]'. "
@@ -491,7 +490,7 @@ async def get_full_document_content_tool(
                         text_content or f"Original document: {original_filename}"
                     )
                     if email_attachments_summary:
-                        summary_text = _format_email_attachments_text(
+                        summary_text = format_email_attachments_text(
                             email_attachments_summary,
                             registry_available=registry_available,
                         )
@@ -526,7 +525,7 @@ async def get_full_document_content_tool(
 
         if email_attachments_summary:
             body_text = text_content or ""
-            summary_text = _format_email_attachments_text(
+            summary_text = format_email_attachments_text(
                 email_attachments_summary,
                 registry_available=registry_available,
             )
@@ -690,45 +689,47 @@ async def reindex_email_tool(
     )
 
 
-def _format_email_attachments_text(
+def format_email_attachments_text(
     attachments: list[EmailAttachmentSummary],
     *,
     registry_available: bool,
 ) -> str:
     """Format an email's attachment summary as a human-readable list.
 
-    Attachments without an ``attachment_id`` are rendered with a
-    tool-agnostic description of what is needed. We deliberately do not
-    prescribe calling a specific write tool (``reindex_email``) because
-    that tool is only enabled in some profiles (e.g. the default
-    assistant); flows that ship other profiles — reminder, engineer,
-    data-viz, automation, etc. — would otherwise be told to call a tool
-    they cannot invoke. When no ``AttachmentRegistry`` is configured at
-    all, we describe the operator action needed instead.
+    When no ``AttachmentRegistry`` is configured, attachment IDs can't
+    be dereferenced (``read_text_attachment`` / ``get_attachment_info``
+    both fail immediately without one), so every entry is rendered with
+    the same operator-action guidance regardless of whether the row
+    already carries an ``attachment_id``. Otherwise, surface the id when
+    present, or describe the action needed in a tool-agnostic way — we
+    deliberately don't prescribe calling ``reindex_email``, because that
+    tool is only enabled in some profiles (default assistant) and not
+    others (reminder, engineer, data-viz, automation, etc.).
     """
     lines: list[str] = []
     for att in attachments:
         size = att["size"]
         size_label = f"{size} bytes" if size is not None else "unknown size"
-        if att["attachment_id"]:
+        if not registry_available:
+            lines.append(
+                f"- {att['filename']} ({att['mime_type']}, {size_label}) "
+                "— attachment not accessible: this deployment has no "
+                "AttachmentRegistry configured, so attachment IDs cannot "
+                "be dereferenced. Contact the operator to enable the "
+                "registry."
+            )
+        elif att["attachment_id"]:
             lines.append(
                 f"- {att['filename']} ({att['mime_type']}, {size_label}) "
                 f"— attachment_id: {att['attachment_id']}"
             )
-        elif registry_available:
+        else:
             lines.append(
                 f"- {att['filename']} ({att['mime_type']}, {size_label}) "
                 "— attachment_id not yet assigned; this email needs to be "
                 "reindexed to register the attachment (use the "
                 "`reindex_email` tool if it is available in this profile, "
                 "otherwise ask the operator to reindex the email)."
-            )
-        else:
-            lines.append(
-                f"- {att['filename']} ({att['mime_type']}, {size_label}) "
-                "— attachment_id not available: this deployment has no "
-                "AttachmentRegistry configured, so attachments cannot be "
-                "registered. Contact the operator to enable the registry."
             )
     return "\n".join(lines)
 
