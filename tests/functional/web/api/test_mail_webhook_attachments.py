@@ -145,7 +145,7 @@ async def test_email_indexer_registers_email_attachment(
     )
     pipeline = MagicMock(spec=IndexingPipeline)
     pipeline.run = AsyncMock(return_value=None)
-    indexer = EmailIndexer(pipeline=pipeline)
+    indexer = EmailIndexer(pipeline=pipeline, attachment_registry=registry)
 
     message_id = f"<mailgun-{uuid.uuid4()}@example.com>"
 
@@ -227,7 +227,7 @@ async def test_email_indexer_registration_is_idempotent(
     )
     pipeline = MagicMock(spec=IndexingPipeline)
     pipeline.run = AsyncMock(return_value=None)
-    indexer = EmailIndexer(pipeline=pipeline)
+    indexer = EmailIndexer(pipeline=pipeline, attachment_registry=registry)
 
     message_id = f"<mailgun-{uuid.uuid4()}@example.com>"
 
@@ -374,7 +374,7 @@ async def test_webhook_persists_duplicate_filenames_as_distinct_parts(
         # registry rows, not collapse into one.
         pipeline = MagicMock(spec=IndexingPipeline)
         pipeline.run = AsyncMock(return_value=None)
-        indexer = EmailIndexer(pipeline=pipeline)
+        indexer = EmailIndexer(pipeline=pipeline, attachment_registry=registry)
         email_db_row = await db_context.fetch_one(
             select(received_emails_table.c.id).where(
                 received_emails_table.c.message_id_header == message_id
@@ -471,7 +471,7 @@ async def test_email_indexer_dedups_on_retry(
     )
     pipeline = MagicMock(spec=IndexingPipeline)
     pipeline.run = AsyncMock(return_value=None)
-    indexer = EmailIndexer(pipeline=pipeline)
+    indexer = EmailIndexer(pipeline=pipeline, attachment_registry=registry)
 
     message_id = f"<mailgun-{uuid.uuid4()}@example.com>"
 
@@ -561,7 +561,7 @@ async def test_email_indexer_applies_chunk_index_offset_per_attachment(
     )
     pipeline = MagicMock(spec=IndexingPipeline)
     pipeline.run = AsyncMock(return_value=None)
-    indexer = EmailIndexer(pipeline=pipeline)
+    indexer = EmailIndexer(pipeline=pipeline, attachment_registry=registry)
 
     message_id = f"<mailgun-{uuid.uuid4()}@example.com>"
     async with DatabaseContext(engine=db_engine) as db_context:
@@ -636,7 +636,7 @@ async def test_reindex_email_then_get_full_document_content_populates_ids(
     )
     pipeline = MagicMock(spec=IndexingPipeline)
     pipeline.run = AsyncMock(return_value=None)
-    indexer = EmailIndexer(pipeline=pipeline)
+    indexer = EmailIndexer(pipeline=pipeline, attachment_registry=registry)
 
     message_id = f"<mailgun-{uuid.uuid4()}@example.com>"
 
@@ -833,7 +833,7 @@ async def test_delete_email_attachment_clears_email_row(
     )
     pipeline = MagicMock(spec=IndexingPipeline)
     pipeline.run = AsyncMock(return_value=None)
-    indexer = EmailIndexer(pipeline=pipeline)
+    indexer = EmailIndexer(pipeline=pipeline, attachment_registry=registry)
 
     message_id = f"<mailgun-{uuid.uuid4()}@example.com>"
 

@@ -33,6 +33,7 @@ from family_assistant.indexing.processors.dispatch_processors import (
 from family_assistant.indexing.processors.metadata_processors import TitleExtractor
 from family_assistant.indexing.processors.text_processors import TextChunker
 from family_assistant.indexing.tasks import handle_embed_and_store_batch
+from family_assistant.services.attachment_registry import AttachmentRegistry
 from family_assistant.storage.context import DatabaseContext
 from family_assistant.storage.email import received_emails_table
 from family_assistant.storage.tasks import tasks_table
@@ -371,7 +372,14 @@ async def test_email_indexing_and_query_e2e(
     )
 
     # --- Arrange: Instantiate Email Indexer ---
-    email_indexer_instance = EmailIndexer(pipeline=test_pipeline)
+    email_indexer_instance = EmailIndexer(
+        pipeline=test_pipeline,
+        attachment_registry=AttachmentRegistry(
+            storage_path=tempfile.mkdtemp(),
+            db_engine=pg_vector_db_engine,
+            config=None,
+        ),
+    )
     logger.info("Instantiated EmailIndexer for email indexing.")
 
     # --- Arrange: Register Task Handler ---

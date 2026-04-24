@@ -7,7 +7,6 @@ import uuid
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from datetime import datetime
-from pathlib import Path
 from typing import Any, TypedDict, cast
 
 from sqlalchemy import select, update
@@ -266,60 +265,31 @@ async def _register_or_reuse_email_attachment(
     return new_id
 
 
-async def _ensure_email_attachments_registered(
+async def _register_resolvable_email_attachment(
     db_context: DatabaseContext,
     attachment_registry: AttachmentRegistry,
     email_db_id: int,
     message_id_header: str,
-    raw_attachment_info: list[Mapping[str, Any]],
-) -> list[AttachmentData]:
-    """Register any email attachments that do not yet have an ``attachment_id``.
+    attachment: AttachmentData,
+) -> str | None:
+    """Register a single email attachment whose file has been verified on disk.
 
-    Runs on the indexing write path where each ``email_db_id`` is handled by a
-    single task, so there is no concurrent writer for the same email row. The
-    function returns the updated attachment list as ``AttachmentData`` models
-    and, if any IDs were added, persists the update to
-    ``received_emails.attachment_info``.
+    Called from the per-attachment loop in
+    :meth:`EmailIndexer.handle_index_email` *after* the storage path has been
+    resolved to an existing file, so we never persist an ``attachment_id`` that
+    immediately 404s when a client tries to download it.
+
+    Returns the canonical ``attachment_id`` (new or previously-registered), or
+    ``None`` if a concurrent-registration race left no discoverable canonical
+    row.
     """
-    attachments = [AttachmentData.model_validate(item) for item in raw_attachment_info]
-    updated = False
-
-    for att in attachments:
-        if att.attachment_id:
-            continue
-
-        resolved_id = await _register_or_reuse_email_attachment(
-            db_context=db_context,
-            attachment_registry=attachment_registry,
-            email_db_id=email_db_id,
-            message_id_header=message_id_header,
-            attachment=att,
-        )
-        if resolved_id is None:
-            # Only reachable when an IntegrityError fired (concurrent
-            # writer won the race) but our re-query found no row — a
-            # genuine consistency anomaly (e.g. row deleted between the
-            # conflict and the SELECT). Log loudly so the operator can
-            # investigate; the next reindex will try again.
-            logger.warning(
-                "Could not resolve canonical attachment_id for email %s "
-                "attachment '%s' after concurrent registration race; "
-                "leaving attachment_id unset.",
-                message_id_header,
-                att.filename,
-            )
-            continue
-        att.attachment_id = resolved_id
-        updated = True
-
-    if updated:
-        await db_context.execute_with_retry(
-            update(received_emails_table)
-            .where(received_emails_table.c.id == email_db_id)
-            .values(attachment_info=[att.model_dump() for att in attachments])
-        )
-
-    return attachments
+    return await _register_or_reuse_email_attachment(
+        db_context=db_context,
+        attachment_registry=attachment_registry,
+        email_db_id=email_db_id,
+        message_id_header=message_id_header,
+        attachment=attachment,
+    )
 
 
 # --- EmailIndexer Class ---
@@ -331,26 +301,52 @@ class EmailIndexer:
     def __init__(
         self,
         pipeline: IndexingPipeline,
-        email_attachment_base_path: str | None = None,
+        attachment_registry: AttachmentRegistry,
     ) -> None:
-        """
-        Initializes the EmailIndexer.
+        """Initialize the EmailIndexer.
 
         Args:
             pipeline: The IndexingPipeline instance to use for processing
                 emails.
-            email_attachment_base_path: Optional stable base directory for
-                externally-managed email attachments. Used to resolve
-                relative ``storage_path`` values when no
-                ``AttachmentRegistry`` is available in the execution
-                context (the registry already handles this rejoining when
-                it is configured).
+            attachment_registry: Registry used to register email
+                attachments and resolve their on-disk paths. Required —
+                the indexer always needs it to register attachment ids
+                and to locate files under the configured mailbox base
+                path.
         """
         self.pipeline = pipeline
-        self.email_attachment_base_path: Path | None = (
-            Path(email_attachment_base_path) if email_attachment_base_path else None
-        )
+        self.attachment_registry = attachment_registry
         logger.info("EmailIndexer initialized with an IndexingPipeline instance.")
+
+    def _resolve_email_attachment_path(
+        self,
+        att: AttachmentData,
+        email_db_id: int,
+    ) -> str | None:
+        """Resolve ``att.storage_path`` to an absolute path that exists on disk.
+
+        Delegates to the registry, which knows
+        ``email_attachment_base_path`` and checks file existence. Logs and
+        returns ``None`` for missing or unresolvable files — we never pass
+        a cwd-relative or missing path through to the pipeline.
+        """
+        if not att.storage_path:
+            return None
+        resolved = self.attachment_registry.get_attachment_path(
+            att.attachment_id or "unused",
+            stored_path=att.storage_path,
+            source_type="email",
+        )
+        if resolved is None:
+            logger.warning(
+                "Email attachment %s for email %s could not be located "
+                "on disk (stored_path=%s); skipping attachment extraction.",
+                att.filename,
+                email_db_id,
+                att.storage_path,
+            )
+            return None
+        return str(resolved)
 
     async def handle_index_email(
         self,
@@ -447,24 +443,10 @@ class EmailIndexer:
 
         # Add attachments to the pipeline
         if email_doc.attachments:
-            attachment_registry = exec_context.attachment_registry
-            if attachment_registry is not None:
-                registered_attachments = await _ensure_email_attachments_registered(
-                    db_context=db_context,
-                    attachment_registry=attachment_registry,
-                    email_db_id=email_db_id,
-                    message_id_header=email_doc.source_id,
-                    raw_attachment_info=list(email_doc.attachments),
-                )
-            else:
-                logger.info(
-                    "AttachmentRegistry not available during indexing of email "
-                    f"{email_db_id}; skipping attachment registration."
-                )
-                registered_attachments = [
-                    AttachmentData.model_validate(item)
-                    for item in email_doc.attachments
-                ]
+            attachment_registry = self.attachment_registry
+            attachments = [
+                AttachmentData.model_validate(item) for item in email_doc.attachments
+            ]
 
             # Each attachment's chunks share the same parent document_id with
             # the email body and each other, so allocate a disjoint
@@ -472,58 +454,52 @@ class EmailIndexer:
             # for the email body). The TextChunker honors
             # ``chunk_index_offset`` from item.metadata.
             chunk_index_spacing = 1_000_000
-            for attachment_index, att in enumerate(registered_attachments):
+            attachment_info_dirty = False
+            for attachment_index, att in enumerate(attachments):
                 if not att.storage_path or not att.content_type:
                     logger.warning(
                         f"Skipping attachment for email {email_db_id} due to missing path or mime_type: {att}"
                     )
                     continue
 
-                # ``att.storage_path`` is stored relative to the configured
-                # mailbox base for portability across mounts/restores. The
-                # downstream pipeline (e.g. PDFTextExtractor) reads ``ref``
-                # as a direct file path, so resolve to a concrete absolute
-                # path here. Prefer the registry (which knows
-                # ``email_attachment_base_path`` and checks existence); if
-                # no registry is available, rejoin against our own
-                # constructor-configured base. Anything we can't reliably
-                # resolve is logged loudly and skipped — we never pass a
-                # cwd-relative path through to the pipeline.
-                resolved_path: str | None = None
-                if exec_context.attachment_registry is not None:
-                    resolved = exec_context.attachment_registry.get_attachment_path(
-                        att.attachment_id or "unused",
-                        stored_path=att.storage_path,
-                        source_type="email",
+                # Resolve ``att.storage_path`` (stored relative to the
+                # configured mailbox base for portability) to a concrete
+                # absolute path that exists on disk BEFORE registering the
+                # attachment in the registry. Registering first and then
+                # discovering the file is gone would leave an
+                # ``attachment_id`` stored in ``received_emails.attachment_info``
+                # that 404s on every subsequent download — registering after
+                # path resolution keeps ``attachment_id``/file presence in
+                # lockstep.
+                resolved_path = self._resolve_email_attachment_path(att, email_db_id)
+                if resolved_path is None:
+                    continue
+
+                # Now that the file is confirmed on disk, register (or reuse)
+                # the registry row and persist the canonical ``attachment_id``
+                # back to ``received_emails.attachment_info``.
+                if att.attachment_id is None:
+                    resolved_id = await _register_resolvable_email_attachment(
+                        db_context=db_context,
+                        attachment_registry=attachment_registry,
+                        email_db_id=email_db_id,
+                        message_id_header=email_doc.source_id,
+                        attachment=att,
                     )
-                    if resolved is None:
+                    if resolved_id is None:
+                        # Concurrent registration race left no discoverable
+                        # canonical row — log and continue without an id;
+                        # the next reindex will try again.
                         logger.warning(
-                            "Email attachment %s for email %s is registered "
-                            "but the file could not be located on disk "
-                            "(stored_path=%s); skipping attachment extraction.",
+                            "Could not resolve canonical attachment_id for "
+                            "email %s attachment '%s' after concurrent "
+                            "registration race; leaving attachment_id unset.",
+                            email_doc.source_id,
                             att.filename,
-                            email_db_id,
-                            att.storage_path,
                         )
-                        continue
-                    resolved_path = str(resolved)
-                else:
-                    candidate = Path(att.storage_path)
-                    if candidate.is_absolute():
-                        resolved_path = str(candidate)
-                    elif self.email_attachment_base_path is not None:
-                        resolved_path = str(self.email_attachment_base_path / candidate)
                     else:
-                        logger.warning(
-                            "Cannot resolve relative email attachment "
-                            "storage_path=%s for email %s: no "
-                            "AttachmentRegistry is configured and no "
-                            "email_attachment_base_path was passed to "
-                            "EmailIndexer. Skipping attachment extraction.",
-                            att.storage_path,
-                            email_db_id,
-                        )
-                        continue
+                        att.attachment_id = resolved_id
+                        attachment_info_dirty = True
 
                 logger.info(
                     f"Preparing attachment for pipeline: {att.filename} "
@@ -549,6 +525,13 @@ class EmailIndexer:
                     ref=resolved_path,
                 )
                 initial_items.append(attachment_item)
+
+            if attachment_info_dirty:
+                await db_context.execute_with_retry(
+                    update(received_emails_table)
+                    .where(received_emails_table.c.id == email_db_id)
+                    .values(attachment_info=[a.model_dump() for a in attachments])
+                )
 
         if not initial_items:
             logger.warning(

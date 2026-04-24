@@ -1038,7 +1038,7 @@ class Assistant:
         )
         self.email_indexer = EmailIndexer(
             pipeline=self.document_indexer.pipeline,
-            email_attachment_base_path=self.config.attachment_storage_path,
+            attachment_registry=self.attachment_registry,
         )
         self.notes_indexer = NotesIndexer(pipeline=self.document_indexer.pipeline)
         logger.info("DocumentIndexer, EmailIndexer, and NotesIndexer initialized.")

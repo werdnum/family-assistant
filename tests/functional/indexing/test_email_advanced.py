@@ -32,6 +32,7 @@ from family_assistant.indexing.processors.dispatch_processors import (
 from family_assistant.indexing.processors.metadata_processors import TitleExtractor
 from family_assistant.indexing.processors.text_processors import TextChunker
 from family_assistant.indexing.tasks import handle_embed_and_store_batch
+from family_assistant.services.attachment_registry import AttachmentRegistry
 from family_assistant.storage.context import DatabaseContext
 from family_assistant.storage.email import received_emails_table
 from family_assistant.storage.tasks import tasks_table
@@ -390,7 +391,12 @@ async def test_vector_ranking(
         processors=[title_extractor, text_chunker, embedding_dispatcher_kw], config={}
     )
     email_indexer_instance_kw = EmailIndexer(
-        pipeline=test_pipeline_kw
+        pipeline=test_pipeline_kw,
+        attachment_registry=AttachmentRegistry(
+            storage_path=tempfile.mkdtemp(),
+            db_engine=pg_vector_db_engine,
+            config=None,
+        ),
     )  # Instantiate EmailIndexer
 
     # Mock application for TaskWorker
@@ -583,7 +589,12 @@ async def test_metadata_filtering(
         config={},
     )
     email_indexer_instance_meta = EmailIndexer(
-        pipeline=test_pipeline_meta
+        pipeline=test_pipeline_meta,
+        attachment_registry=AttachmentRegistry(
+            storage_path=tempfile.mkdtemp(),
+            db_engine=pg_vector_db_engine,
+            config=None,
+        ),
     )  # Instantiate EmailIndexer
 
     # Mock application for TaskWorker
@@ -765,7 +776,12 @@ async def test_keyword_filtering(
         processors=[title_extractor, text_chunker, embedding_dispatcher_kw], config={}
     )
     email_indexer_instance_kw = EmailIndexer(
-        pipeline=test_pipeline_kw
+        pipeline=test_pipeline_kw,
+        attachment_registry=AttachmentRegistry(
+            storage_path=tempfile.mkdtemp(),
+            db_engine=pg_vector_db_engine,
+            config=None,
+        ),
     )  # Instantiate EmailIndexer
 
     # Mock application for TaskWorker
