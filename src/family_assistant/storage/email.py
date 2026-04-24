@@ -5,9 +5,10 @@ Handles storage and retrieval of received emails.
 import logging
 import uuid  # Add uuid import
 from datetime import datetime  # Added for Pydantic models
+from typing import Any
 
 import sqlalchemy as sa
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, ValidationError
 from sqlalchemy import JSON  # Import generic JSON type
 from sqlalchemy.dialects.postgresql import JSONB  # Import PostgreSQL specific JSONB
 from sqlalchemy.exc import SQLAlchemyError  # Use broader exception
@@ -32,6 +33,43 @@ class AttachmentData(BaseModel):
     attachment_id: str | None = (
         None  # Registry UUID once registered with AttachmentRegistry
     )
+
+
+def parse_attachment_infos(
+    raw_entries: list[Any] | None,
+    *,
+    context: str,
+) -> list[AttachmentData]:
+    """Validate ``received_emails.attachment_info`` entries one-by-one.
+
+    ``attachment_info`` is free-form JSON and legacy/corrupt emails have
+    been observed with missing fields (no ``storage_path``,
+    ``content_type`` as None, etc.). Validating the full list in a single
+    comprehension would let a single bad entry abort the caller — the
+    indexer would fail the whole task, and
+    ``get_full_document_content_tool`` would refuse to return the email
+    body. Parse per-entry instead, log+skip malformed ones, and return
+    only the records that round-tripped cleanly.
+
+    ``context`` is a short human-readable identifier (e.g. Message-Id or
+    email_db_id) included in the warning log so operators can find the
+    offending row.
+    """
+    if not raw_entries:
+        return []
+    validated: list[AttachmentData] = []
+    for index, entry in enumerate(raw_entries):
+        try:
+            validated.append(AttachmentData.model_validate(entry))
+        except (ValidationError, TypeError) as exc:
+            logger.warning(
+                "Skipping malformed attachment_info entry %d for %s: %s. Raw entry: %r",
+                index,
+                context,
+                exc,
+                entry,
+            )
+    return validated
 
 
 class ParsedEmailData(BaseModel):

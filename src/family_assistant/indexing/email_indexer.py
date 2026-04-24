@@ -26,6 +26,7 @@ from family_assistant.storage.base import attachment_metadata_table
 from family_assistant.storage.context import DatabaseContext
 from family_assistant.storage.email import (
     AttachmentData,
+    parse_attachment_infos,
     received_emails_table,
 )
 from family_assistant.storage.vector import Document, get_document_by_id
@@ -444,9 +445,12 @@ class EmailIndexer:
         # Add attachments to the pipeline
         if email_doc.attachments:
             attachment_registry = self.attachment_registry
-            attachments = [
-                AttachmentData.model_validate(item) for item in email_doc.attachments
-            ]
+            # Validate per-entry so one malformed legacy record doesn't
+            # abort indexing of the rest of the email.
+            attachments = parse_attachment_infos(
+                list(email_doc.attachments),
+                context=f"email_db_id={email_db_id}",
+            )
 
             # Each attachment's chunks share the same parent document_id with
             # the email body and each other, so allocate a disjoint

@@ -19,7 +19,10 @@ import filetype  # type: ignore[import-untyped]
 from sqlalchemy import select, text, update
 
 from family_assistant.indexing.ingestion import process_document_ingestion_request
-from family_assistant.storage.email import AttachmentData, received_emails_table
+from family_assistant.storage.email import (
+    parse_attachment_infos,
+    received_emails_table,
+)
 from family_assistant.storage.tasks import tasks_table
 from family_assistant.storage.vector_search import (
     VectorSearchQuery,
@@ -759,7 +762,14 @@ async def resolve_email_attachments(
     if not raw_info:
         return None
 
-    attachments = [AttachmentData.model_validate(item) for item in raw_info]
+    # Per-entry validation: legacy rows occasionally contain malformed
+    # attachment descriptors (missing ``storage_path``, ``content_type``
+    # null, etc.). Because this helper runs on the ``READ_ONLY``
+    # ``get_full_document_content`` path, one bad record must not abort
+    # the whole fetch — skip the bad entry and return what we can.
+    attachments = parse_attachment_infos(
+        raw_info, context=f"message_id={message_id_header}"
+    )
     return [
         {
             "attachment_id": att.attachment_id,
