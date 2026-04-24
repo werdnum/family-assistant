@@ -103,14 +103,22 @@ class EmbeddingDispatchProcessor(ContentProcessor):
         for item_to_dispatch in items_to_embed:
             if item_to_dispatch.content:  # Ensure content is not None
                 texts_to_embed_list.append(item_to_dispatch.content)
+                # Honor an upstream ``chunk_index_offset`` so multiple
+                # logical sub-documents (e.g. each attachment on an email)
+                # don't collide on the (document_id, chunk_index,
+                # embedding_type) unique constraint. This mirrors the same
+                # handling in TextChunker for the chunked path.
+                raw_chunk_index = item_to_dispatch.metadata.get("chunk_index", 0)
+                chunk_index = raw_chunk_index if isinstance(raw_chunk_index, int) else 0
+                raw_offset = item_to_dispatch.metadata.get("chunk_index_offset", 0)
+                if isinstance(raw_offset, int):
+                    chunk_index += raw_offset
                 embedding_metadata_list.append(
                     cast(
                         "EmbeddingMetadata",
                         {
                             "embedding_type": item_to_dispatch.embedding_type,
-                            "chunk_index": item_to_dispatch.metadata.get(
-                                "chunk_index", 0
-                            ),
+                            "chunk_index": chunk_index,
                             "original_content_metadata": item_to_dispatch.metadata,
                             "content_hash": item_to_dispatch.metadata.get(
                                 "content_hash"
