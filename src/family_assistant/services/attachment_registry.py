@@ -580,7 +580,9 @@ class AttachmentRegistry:
 
         # Get content from file system
         file_path = self.get_attachment_path(
-            attachment_id, stored_path=metadata.storage_path
+            attachment_id,
+            stored_path=metadata.storage_path,
+            source_type=metadata.source_type,
         )
         if not file_path or not file_path.exists():
             logger.warning(f"Attachment file not found: {attachment_id}")
@@ -1174,12 +1176,18 @@ class AttachmentRegistry:
             metadata = await self.get_attachment(db_context, attachment_id)
 
         stored_path = metadata.storage_path if metadata else None
-        return self.get_attachment_path(attachment_id, stored_path=stored_path)
+        source_type = metadata.source_type if metadata else None
+        return self.get_attachment_path(
+            attachment_id,
+            stored_path=stored_path,
+            source_type=source_type,
+        )
 
     def get_attachment_path(
         self,
         attachment_id: str,
         stored_path: str | None = None,
+        source_type: str | None = None,
     ) -> Path | None:
         """
         Get the file system path for an attachment by ID.
@@ -1194,18 +1202,27 @@ class AttachmentRegistry:
                 sites without pre-fetched metadata, use
                 :meth:`resolve_attachment_path` instead, which performs the
                 lookup internally.
+            source_type: Optional ``attachment_metadata.source_type``. When
+                ``"email"``, ``stored_path`` is used as-is (absolute or, for
+                legacy rows persisted before paths were normalized, relative
+                to the worker cwd / mailbox config). For other source types
+                a relative ``stored_path`` is resolved against
+                ``self.storage_path`` (the registry-managed sharded layout).
 
         Returns:
             Path to the attachment file, or None if not found
         """
         if stored_path:
             candidate = Path(stored_path)
-            # Registry-managed uploads persist ``storage_path`` as a
-            # relative shard path (e.g. ``ab/<uuid>...``); resolve those
-            # against ``self.storage_path`` so lookup is not cwd-dependent
-            # and cannot escape the managed directory. Email attachments
-            # are persisted as absolute paths and used as-is.
-            if not candidate.is_absolute():
+            # For non-email sources, registry-managed uploads persist
+            # ``storage_path`` as a relative shard path (e.g.
+            # ``ab/<uuid>...``); resolve those against ``self.storage_path``
+            # so lookup is not cwd-dependent and cannot escape the managed
+            # directory. Email attachments live in an externally-managed
+            # mailbox directory and the path is used verbatim — current
+            # rows are absolute, legacy rows may be relative to the
+            # mailbox configuration.
+            if source_type != "email" and not candidate.is_absolute():
                 candidate = self.storage_path / candidate
             if candidate.is_file():
                 return candidate

@@ -93,7 +93,9 @@ async def jq_query_tool(
 
         # Get attachment content (honoring externally-managed storage_path)
         file_path = attachment_registry.get_attachment_path(
-            attachment_id_str, stored_path=attachment.storage_path
+            attachment_id_str,
+            stored_path=attachment.storage_path,
+            source_type=attachment.source_type,
         )
         if not file_path or not file_path.exists():
             logger.error(f"Attachment file not found for {attachment_id}")

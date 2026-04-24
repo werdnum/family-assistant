@@ -570,6 +570,21 @@ async def reindex_email_tool(
     db_context = exec_context.db_context
     logger.info(f"Executing reindex_email_tool for document ID: {document_id}")
 
+    # Fail fast if no attachment registry is configured: the indexer
+    # would log-and-skip registration in that case, so the queued task
+    # can never populate any missing attachment_id values and the caller
+    # would be stuck in a permanent reindex/retry loop.
+    if exec_context.attachment_registry is None:
+        return ToolResult(
+            data={
+                "error": (
+                    "Attachment registry is not configured; reindex would "
+                    "not register any attachments. Configure "
+                    "AttachmentRegistry on the application before retrying."
+                )
+            }
+        )
+
     doc_row = await db_context.fetch_one(
         text(
             "SELECT source_type, source_id, visibility_labels "

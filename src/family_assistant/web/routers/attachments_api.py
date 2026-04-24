@@ -152,7 +152,9 @@ async def serve_attachment(
 
     # Get file path (honoring externally-managed storage_path for e.g. email attachments)
     file_path = attachment_registry.get_attachment_path(
-        attachment_id, stored_path=attachment_metadata.storage_path
+        attachment_id,
+        stored_path=attachment_metadata.storage_path,
+        source_type=attachment_metadata.source_type,
     )
     if not file_path or not file_path.exists():
         raise HTTPException(status_code=404, detail="Attachment file not found")
@@ -258,6 +260,7 @@ async def get_attachment_metadata(
     file_path = attachment_registry.get_attachment_path(
         attachment_id,
         stored_path=registry_metadata.storage_path if registry_metadata else None,
+        source_type=registry_metadata.source_type if registry_metadata else None,
     )
     if not file_path or not file_path.exists():
         raise HTTPException(status_code=404, detail="Attachment not found")

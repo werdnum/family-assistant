@@ -208,13 +208,13 @@ async def _register_or_reuse_email_attachment(
     new_id = str(uuid.uuid4())
     conn = db_context.conn
     if conn is None:
-        logger.error(
-            "Cannot register email attachment '%s' for message %s: "
-            "no active database connection",
-            attachment.filename,
-            message_id_header,
+        # Hard-fail: silently returning None would surface as a perpetual
+        # "needs reindex" state to readers while the real problem is a
+        # missing DB connection.
+        raise RuntimeError(
+            f"Cannot register email attachment '{attachment.filename}' for "
+            f"message {message_id_header}: no active database connection"
         )
-        return None
 
     # Wrap the insert in a savepoint so that on Postgres a unique-violation
     # does not abort the outer indexer transaction. Once the savepoint is
@@ -252,16 +252,15 @@ async def _register_or_reuse_email_attachment(
             .limit(1)
         )
         return winner["attachment_id"] if winner else None
-    except Exception as reg_err:
+    except Exception:
+        # Roll back the savepoint so the outer indexer transaction stays
+        # usable, then re-raise. We deliberately do NOT swallow the error
+        # here: silently returning ``None`` would surface as
+        # ``attachment_id=null`` to readers and hide the real problem
+        # behind a perpetual "needs reindex" hint. Letting the task fail
+        # makes the failure visible in the task queue.
         await savepoint.rollback()
-        logger.error(
-            "Failed to register email attachment '%s' for message %s: %s",
-            attachment.filename,
-            message_id_header,
-            reg_err,
-            exc_info=True,
-        )
-        return None
+        raise
     await savepoint.commit()
     return new_id
 
@@ -296,6 +295,18 @@ async def _ensure_email_attachments_registered(
             attachment=att,
         )
         if resolved_id is None:
+            # Only reachable when an IntegrityError fired (concurrent
+            # writer won the race) but our re-query found no row — a
+            # genuine consistency anomaly (e.g. row deleted between the
+            # conflict and the SELECT). Log loudly so the operator can
+            # investigate; the next reindex will try again.
+            logger.warning(
+                "Could not resolve canonical attachment_id for email %s "
+                "attachment '%s' after concurrent registration race; "
+                "leaving attachment_id unset.",
+                message_id_header,
+                att.filename,
+            )
             continue
         att.attachment_id = resolved_id
         updated = True
