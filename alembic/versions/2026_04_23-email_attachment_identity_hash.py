@@ -1,7 +1,7 @@
 """Replace partial unique index on raw Text columns with bounded hash.
 
 Revision ID: email_attachment_identity_hash
-Revises: backfill_email_attachment_ids
+Revises: widen_attachment_source_id
 Create Date: 2026-04-23
 
 The previous ``uix_attachment_metadata_email_identity`` index used the raw
@@ -30,7 +30,7 @@ if TYPE_CHECKING:
     from collections.abc import Sequence
 
 revision: str = "email_attachment_identity_hash"
-down_revision: str | None = "backfill_email_attachment_ids"
+down_revision: str | None = "widen_attachment_source_id"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 

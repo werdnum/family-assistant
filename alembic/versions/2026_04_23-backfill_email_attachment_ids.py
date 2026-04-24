@@ -22,6 +22,7 @@ idempotent, so duplicate work is harmless.
 from __future__ import annotations
 
 import uuid
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
 import sqlalchemy as sa
@@ -32,7 +33,11 @@ if TYPE_CHECKING:
     from collections.abc import Sequence
 
 revision: str = "backfill_email_attachment_ids"
-down_revision: str | None = "widen_attachment_source_id"
+# Runs AFTER ``email_attachment_identity_hash`` so that any ``index_email``
+# task picked up while the migration is still running (or right after) sees
+# the new ``attachment_metadata.email_identity_hash`` column that the
+# indexer now reads and writes.
+down_revision: str | None = "email_attachment_identity_hash"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
@@ -64,6 +69,7 @@ def upgrade() -> None:
         sa.Column("task_type", sa.String),
         sa.Column("payload", sa.JSON),
         sa.Column("scheduled_at", sa.DateTime(timezone=True)),
+        sa.Column("created_at", sa.DateTime(timezone=True)),
         sa.Column("status", sa.String),
         sa.Column("retry_count", sa.Integer),
         sa.Column("max_retries", sa.Integer),
@@ -83,6 +89,10 @@ def upgrade() -> None:
                 task_type="index_email",
                 payload={"email_db_id": email_db_id},
                 status="pending",
+                # ``tasks.created_at`` is NOT NULL with no server default —
+                # populate it explicitly so the migration works on a DB
+                # where the column was never defaulted by a prior INSERT.
+                created_at=datetime.now(UTC),
                 retry_count=0,
                 max_retries=3,
                 original_task_id=task_id,
