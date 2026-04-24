@@ -684,11 +684,14 @@ def _format_email_attachments_text(
 ) -> str:
     """Format an email's attachment summary as a human-readable list.
 
-    Attachments without an ``attachment_id`` are rendered with a hint so
-    the caller knows what to do next. The hint is only actionable when
-    an ``AttachmentRegistry`` is configured — otherwise ``reindex_email``
-    would hard-fail — so we reword it to describe the operator action
-    needed instead.
+    Attachments without an ``attachment_id`` are rendered with a
+    tool-agnostic description of what is needed. We deliberately do not
+    prescribe calling a specific write tool (``reindex_email``) because
+    that tool is only enabled in some profiles (e.g. the default
+    assistant); flows that ship other profiles — reminder, engineer,
+    data-viz, automation, etc. — would otherwise be told to call a tool
+    they cannot invoke. When no ``AttachmentRegistry`` is configured at
+    all, we describe the operator action needed instead.
     """
     lines: list[str] = []
     for att in attachments:
@@ -702,8 +705,10 @@ def _format_email_attachments_text(
         elif registry_available:
             lines.append(
                 f"- {att['filename']} ({att['mime_type']}, {size_label}) "
-                "— attachment_id not yet assigned; call `reindex_email` on "
-                "this document to register it, then call this tool again."
+                "— attachment_id not yet assigned; this email needs to be "
+                "reindexed to register the attachment (use the "
+                "`reindex_email` tool if it is available in this profile, "
+                "otherwise ask the operator to reindex the email)."
             )
         else:
             lines.append(

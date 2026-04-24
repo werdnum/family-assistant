@@ -220,6 +220,12 @@ async def handle_mail_webhook(
                         os.makedirs(base_attachment_dir, exist_ok=True)
                         # Sanitize filename (basic)
                         safe_filename = os.path.basename(form_item.filename)
+                        # Prefix the saved filename with the attachment index
+                        # so that two parts sharing the same filename don't
+                        # overwrite each other on disk and don't collapse to
+                        # the same email-attachment dedup key
+                        # (message_id, storage_path).
+                        persisted_filename = f"{i}-{safe_filename}"
                         # Store the absolute path so attachment resolution
                         # does not depend on the worker process's cwd at the
                         # time of a later read (e.g. after a restart from a
@@ -228,7 +234,7 @@ async def handle_mail_webhook(
                         # absolute (the typical case for the configured
                         # attachment_storage_path); we accept the negligible
                         # getcwd() call when it isn't.
-                        joined = os.path.join(base_attachment_dir, safe_filename)
+                        joined = os.path.join(base_attachment_dir, persisted_filename)
                         final_file_path = os.path.abspath(joined)  # noqa: ASYNC240 - just string normalization, attachment_storage_path is configured as absolute
 
                         # Save the uploaded file

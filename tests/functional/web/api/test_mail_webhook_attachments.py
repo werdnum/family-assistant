@@ -12,10 +12,12 @@ These tests verify that:
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import hmac
 import time
 import uuid
+from pathlib import Path
 from typing import TYPE_CHECKING
 from unittest.mock import AsyncMock, MagicMock
 from zoneinfo import ZoneInfo
@@ -42,8 +44,6 @@ from family_assistant.web.app_creator import app as fastapi_app
 from tests.mocks.email_auth import build_dns_for
 
 if TYPE_CHECKING:
-    from pathlib import Path
-
     import httpx
     from sqlalchemy.ext.asyncio import AsyncEngine
 
@@ -310,6 +310,95 @@ async def test_webhook_accepts_email_with_attachment(
         # Webhook stores the file; indexing (which runs separately) assigns the ID.
         assert stored[0].storage_path.endswith("ticket.pdf")
         assert stored[0].attachment_id is None
+
+
+@pytest.mark.asyncio
+@pytest.mark.postgres
+async def test_webhook_persists_duplicate_filenames_as_distinct_parts(
+    api_client: httpx.AsyncClient,
+    db_engine: AsyncEngine,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """Two attachments on one email sharing the same filename must land
+    at distinct storage paths so they don't overwrite on disk and don't
+    collapse to one registry row after indexing dedup."""
+    registry = AttachmentRegistry(
+        storage_path=str(tmp_path / "registry"),
+        db_engine=db_engine,
+        config={
+            "email_attachment_base_path": str(tmp_path / "mailbox"),
+        },
+    )
+    monkeypatch.setattr(
+        fastapi_app.state, "attachment_registry", registry, raising=False
+    )
+    _configure_app(monkeypatch, tmp_path)
+    monkeypatch.setattr(
+        fastapi_app.state, "attachment_registry", registry, raising=False
+    )
+
+    message_id = f"<mailgun-{uuid.uuid4()}@example.com>"
+    form = _mailgun_form(message_id=message_id)
+    form["attachment-count"] = "2"
+
+    response = await api_client.post(
+        "/webhook/mail",
+        data=form,
+        files={
+            "attachment-1": ("image.png", b"first-bytes", "image/png"),
+            "attachment-2": ("image.png", b"second-bytes-different", "image/png"),
+        },
+    )
+    assert response.status_code == 200, response.text
+
+    async with DatabaseContext(engine=db_engine) as db_context:
+        email_row = await db_context.fetch_one(
+            select(received_emails_table.c.attachment_info).where(
+                received_emails_table.c.message_id_header == message_id
+            )
+        )
+        assert email_row is not None
+        stored = [
+            AttachmentData.model_validate(item) for item in email_row["attachment_info"]
+        ]
+        assert len(stored) == 2
+        # Each part gets a distinct storage_path so the second write does
+        # not overwrite the first.
+        assert stored[0].storage_path != stored[1].storage_path
+        # Both files exist on disk with their respective bytes. The small
+        # in-test reads are fine to run synchronously under asyncio; the
+        # production hot path uses aiofiles.
+        first_bytes = await asyncio.to_thread(Path(stored[0].storage_path).read_bytes)
+        second_bytes = await asyncio.to_thread(Path(stored[1].storage_path).read_bytes)
+        assert first_bytes == b"first-bytes"
+        assert second_bytes == b"second-bytes-different"
+
+        # Indexer dedupes on identity_hash(source_id, storage_path). With
+        # distinct storage paths the two parts must produce two distinct
+        # registry rows, not collapse into one.
+        pipeline = MagicMock(spec=IndexingPipeline)
+        pipeline.run = AsyncMock(return_value=None)
+        indexer = EmailIndexer(pipeline=pipeline)
+        email_db_row = await db_context.fetch_one(
+            select(received_emails_table.c.id).where(
+                received_emails_table.c.message_id_header == message_id
+            )
+        )
+        assert email_db_row is not None
+        email_db_id = email_db_row["id"]
+        exec_context = _build_indexer_context(db_context, registry)
+        await indexer.handle_index_email(
+            exec_context=exec_context,
+            payload={"email_db_id": email_db_id},
+        )
+
+        registry_rows = await db_context.fetch_all(
+            select(attachment_metadata_table.c.attachment_id).where(
+                attachment_metadata_table.c.source_id == message_id
+            )
+        )
+        assert len(registry_rows) == 2
 
 
 @pytest.mark.asyncio
