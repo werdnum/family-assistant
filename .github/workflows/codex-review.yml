@@ -180,7 +180,7 @@ jobs:
             echo "Return strict JSON that matches the provided output schema."
             echo
             echo "Before reviewing:"
-            echo "- Articulate to yourself in 1-2 sentences what this PR is trying to accomplish, based on the title, body, and diff. Use this as the lens for finding defects. Bugs that cause the code to behave contrary to the stated intent are by definition high-priority findings."
+            echo "- Articulate the change's intent and broad implementation strategy in 2-4 sentences, based on the title, body, and diff. Many of this project's PRs are AI-generated, so a reviewer-written restatement is the most valuable thing the human merger receives — you MUST include this as the first part of your 'summary' field, prefixed 'Change summary:'. Use the same restatement as your defect-finding lens: bugs that cause the code to behave contrary to the stated intent are HIGH or CRITICAL priority by definition."
             echo "- Read the surrounding code for context: open the full files in the diff (not just the hunks), the files they import, structurally neighbouring modules, and the related tests. The repository is checked out in the working directory; use shell tools to read it. Do not comment on a function's contract, callers, or invariants without first reading the code that establishes them."
             echo
             echo "Focus weighting:"
@@ -194,7 +194,7 @@ jobs:
             echo "Comment policy (STRICT):"
             echo "- Every comment MUST be actionable: identify a concrete defect and tell the author what to change."
             echo "- DO NOT post praise, approval, 'looks good', or 'LGTM' style remarks."
-            echo "- DO NOT post comments that only describe, restate, or explain what the code does. The author wrote the code and knows what it does."
+            echo "- DO NOT post inline comments that only describe or paraphrase what a specific line, expression, or block does. (A reviewer-written change summary in the 'summary' field is required and useful — see above — but inline restatement is forbidden.)"
             echo "- DO NOT ask the author to 'check', 'verify', 'confirm', or 'consider' something — if you do not have a specific defect, say nothing."
             echo "- DO NOT include rhetorical questions or hedged 'might/could/may' speculation without a concrete failure mode."
             echo "- DO NOT comment on trailing newlines, whitespace, import ordering, line length, quote style, or any purely cosmetic issue with no functional effect — formatters handle these in CI."
@@ -239,7 +239,7 @@ jobs:
               "properties": {
                 "summary": {
                   "type": "string",
-                  "description": "High-level review summary. Must describe concrete issues or state that none were found — no praise."
+                  "description": "Review summary. MUST start with a 'Change summary:' paragraph (2-4 sentences) describing the PR's apparent intent and broad implementation strategy — this is mandatory and is the most valuable thing the human merger receives, especially for AI-generated PRs. After that, state any blocking findings or that none were found. No praise; no evaluative language in the change summary itself."
                 },
                 "inline_comments": {
                   "type": "array",

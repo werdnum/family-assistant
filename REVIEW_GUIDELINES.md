@@ -10,7 +10,9 @@ concrete problem in the changed code and tells the author what to do differently
 **forbidden** and should never be posted — if you catch yourself writing one, drop it:
 
 - Praise, approval, or "looks good" / "nice work" / "LGTM" style remarks.
-- Observations that only restate or explain what the code does.
+- Inline comments that only restate or paraphrase what a specific line, expression, or block does.
+  (A reviewer-written restatement of the change's overall intent and strategy belongs in the review
+  summary — see "Change Summary in the Review Summary" below — but inline paraphrase is noise.)
 - "Please confirm", "please verify", "make sure", "consider whether" style prompts that push the
   work back onto the author without identifying a specific defect.
 - Comments hedged with "might", "could potentially", "in some cases" when you have no concrete
@@ -19,11 +21,28 @@ concrete problem in the changed code and tells the author what to do differently
   out a defect.
 - Speculation about whether a change "might fail tests", "could break the linter", or "may not pass
   type checking" — see "Tests and Linters Are Authoritative" below.
-- Don't explain the code to the author. They wrote it and know what it does.
 - Purely cosmetic nits (trailing newlines, whitespace, import ordering, line length, quote style)
   with no functional effect — formatters handle these.
 
 If there are no actionable findings for a file, say nothing about that file.
+
+## Change Summary in the Review Summary
+
+Every review summary **must** open with a reviewer-written restatement of the PR's **intent** (what
+it is trying to accomplish) and **broad implementation strategy** (how it goes about it), in 2–4
+sentences. Many PRs in this project are AI-generated and the reviewer's independent restatement is
+the most valuable thing the human merger receives — it surfaces mismatches between what the PR
+description claims and what the diff actually does.
+
+Constraints on the change summary:
+
+- Describe, do not evaluate. No praise, no criticism, no "well-structured" or "could be cleaner".
+  Defects belong in inline comments and the verdict / general feedback section.
+- Be specific. "Adds a new feature" is useless; "Adds a `/notes/search` endpoint that issues a
+  pgvector similarity query against `notes.embedding` and returns the top 10 by cosine distance" is
+  useful.
+- Stay grounded in the diff, not the PR description. If the description says X but the diff does Y,
+  restate Y — that mismatch is exactly what the human merger needs to see.
 
 ## Tests and Linters Are Authoritative
 
