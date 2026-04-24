@@ -33,11 +33,15 @@ if TYPE_CHECKING:
     from collections.abc import Sequence
 
 revision: str = "backfill_email_attachment_ids"
-# Runs AFTER ``email_attachment_identity_hash`` so that any ``index_email``
-# task picked up while the migration is still running (or right after) sees
-# the new ``attachment_metadata.email_identity_hash`` column that the
-# indexer now reads and writes.
-down_revision: str | None = "email_attachment_identity_hash"
+# Runs AFTER ``scope_idx_attach_src_non_email`` (and therefore also
+# after ``email_attachment_identity_hash``): the backfill enqueues
+# ``index_email`` tasks that workers may pick up immediately, and those
+# tasks INSERT into ``attachment_metadata`` for email rows. If the old
+# unfiltered ``idx_attachment_source`` were still in place, a long
+# ``Message-Id`` could exceed Postgres' btree tuple-size limit mid-
+# backfill. ``scope_idx_attach_src_non_email`` drops email rows from
+# that index, so the backfill-triggered INSERTs are safe.
+down_revision: str | None = "scope_idx_attach_src_non_email"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 

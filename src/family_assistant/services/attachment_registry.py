@@ -23,7 +23,10 @@ from sqlalchemy import and_, delete, insert, select, update
 
 from family_assistant.storage.base import attachment_metadata_table
 from family_assistant.storage.context import DatabaseContext
-from family_assistant.storage.email import AttachmentData, received_emails_table
+from family_assistant.storage.email import (
+    parse_attachment_infos_with_raw,
+    received_emails_table,
+)
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncEngine
@@ -230,20 +233,29 @@ async def _clear_email_attachment_id(
     if not row or not row.get("attachment_info"):
         return
 
-    attachments = [
-        AttachmentData.model_validate(item) for item in row["attachment_info"]
-    ]
+    # Per-entry validation: a malformed legacy sibling entry must not
+    # make the post-delete cleanup raise (the registry row is already
+    # gone, so a 500 here would leave a broken-but-advertised id in the
+    # email row). Preserve the raw bytes for entries we don't touch so
+    # we don't accidentally drop data we can't regenerate.
+    pairs = parse_attachment_infos_with_raw(
+        row["attachment_info"], context=f"message_id={message_id_header}"
+    )
     updated = False
-    for att in attachments:
-        if att.attachment_id == attachment_id:
-            att.attachment_id = None
+    new_entries: list[Any] = []
+    for raw, parsed in pairs:
+        if parsed is not None and parsed.attachment_id == attachment_id:
+            parsed.attachment_id = None
+            new_entries.append(parsed.model_dump())
             updated = True
+        else:
+            new_entries.append(raw)
 
     if updated:
         await db_context.execute_with_retry(
             update(received_emails_table)
             .where(received_emails_table.c.id == row["id"])
-            .values(attachment_info=[att.model_dump() for att in attachments])
+            .values(attachment_info=new_entries)
         )
 
 

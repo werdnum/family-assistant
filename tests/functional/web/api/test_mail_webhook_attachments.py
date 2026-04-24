@@ -1043,3 +1043,143 @@ async def test_reindex_email_tool_syncs_indexing_task_id_when_already_in_flight(
         )
         assert refreshed is not None
         assert refreshed["indexing_task_id"] == in_flight_task_id
+
+
+@pytest.mark.asyncio
+@pytest.mark.postgres
+async def test_email_indexer_preserves_malformed_sibling_attachment_info(
+    db_engine: AsyncEngine,
+    tmp_path: Path,
+) -> None:
+    """A malformed sibling entry in ``attachment_info`` must round-trip
+    through the indexer's write-back instead of being silently dropped.
+    The indexer registers the valid attachment and rewrites
+    ``attachment_info``; the malformed raw dict should still be there
+    afterwards so we don't destroy data we can't regenerate.
+    """
+    good_file = tmp_path / "valid.pdf"
+    good_file.write_bytes(b"PDF bytes")
+
+    registry = AttachmentRegistry(
+        storage_path=str(tmp_path / "registry"),
+        db_engine=db_engine,
+        config=None,
+    )
+    pipeline = MagicMock(spec=IndexingPipeline)
+    pipeline.run = AsyncMock(return_value=None)
+    indexer = EmailIndexer(pipeline=pipeline, attachment_registry=registry)
+
+    malformed_entry = {"filename": "legacy-no-path.bin", "size": 123}
+    message_id = f"<mailgun-{uuid.uuid4()}@example.com>"
+    async with DatabaseContext(engine=db_engine) as db_context:
+        insert_result = await db_context.execute_with_retry(
+            insert(received_emails_table)
+            .values(
+                message_id_header=message_id,
+                sender_address=SENDER,
+                recipient_address=RECIPIENT,
+                subject="Mixed",
+                stripped_text="body",
+                attachment_info=[
+                    malformed_entry,
+                    {
+                        "filename": "valid.pdf",
+                        "content_type": "application/pdf",
+                        "size": good_file.stat().st_size,
+                        "storage_path": str(good_file),
+                    },
+                ],
+            )
+            .returning(received_emails_table.c.id)
+        )
+        email_db_id = insert_result.scalar_one()
+
+        exec_context = _build_indexer_context(db_context, registry)
+        await indexer.handle_index_email(exec_context, {"email_db_id": email_db_id})
+
+        refreshed = await db_context.fetch_one(
+            select(received_emails_table.c.attachment_info).where(
+                received_emails_table.c.id == email_db_id
+            )
+        )
+        assert refreshed is not None
+        entries = refreshed["attachment_info"]
+        assert len(entries) == 2
+        # Malformed entry is preserved verbatim.
+        assert entries[0] == malformed_entry
+        # Valid sibling now has an attachment_id populated.
+        assert entries[1]["filename"] == "valid.pdf"
+        assert entries[1].get("attachment_id")
+
+
+@pytest.mark.asyncio
+@pytest.mark.postgres
+async def test_delete_email_attachment_tolerates_malformed_sibling(
+    db_engine: AsyncEngine,
+    tmp_path: Path,
+) -> None:
+    """``_clear_email_attachment_id`` must not fail (or drop siblings)
+    when another ``attachment_info`` entry is malformed. Otherwise the
+    registry delete would succeed and then raise a 500 while trying to
+    clean the email row, leaving a stale id advertised to callers.
+    """
+    external_file = tmp_path / "to-delete.pdf"
+    external_file.write_bytes(b"PDF bytes")
+
+    registry = AttachmentRegistry(
+        storage_path=str(tmp_path / "registry"),
+        db_engine=db_engine,
+        config=None,
+    )
+
+    message_id = f"<mailgun-{uuid.uuid4()}@example.com>"
+    async with DatabaseContext(engine=db_engine) as db_context:
+        attachment_id = str(uuid.uuid4())
+        await registry.register_attachment(
+            db_context=db_context,
+            attachment_id=attachment_id,
+            source_type="email",
+            source_id=message_id,
+            mime_type="application/pdf",
+            description="Email attachment: to-delete.pdf",
+            size=external_file.stat().st_size,
+            storage_path=str(external_file),
+        )
+        malformed_entry = {"filename": "legacy-no-path.bin", "size": 42}
+        insert_result = await db_context.execute_with_retry(
+            insert(received_emails_table)
+            .values(
+                message_id_header=message_id,
+                sender_address=SENDER,
+                recipient_address=RECIPIENT,
+                subject="Mixed delete",
+                stripped_text="body",
+                attachment_info=[
+                    malformed_entry,
+                    {
+                        "filename": "to-delete.pdf",
+                        "content_type": "application/pdf",
+                        "size": external_file.stat().st_size,
+                        "storage_path": str(external_file),
+                        "attachment_id": attachment_id,
+                    },
+                ],
+            )
+            .returning(received_emails_table.c.id)
+        )
+        email_db_id = insert_result.scalar_one()
+
+        deleted = await registry.delete_attachment(db_context, attachment_id)
+        assert deleted is True
+
+        refreshed = await db_context.fetch_one(
+            select(received_emails_table.c.attachment_info).where(
+                received_emails_table.c.id == email_db_id
+            )
+        )
+        assert refreshed is not None
+        entries = refreshed["attachment_info"]
+        assert len(entries) == 2
+        assert entries[0] == malformed_entry  # raw preserved
+        assert entries[1]["filename"] == "to-delete.pdf"
+        assert entries[1].get("attachment_id") is None

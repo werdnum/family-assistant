@@ -26,7 +26,7 @@ from family_assistant.storage.base import attachment_metadata_table
 from family_assistant.storage.context import DatabaseContext
 from family_assistant.storage.email import (
     AttachmentData,
-    parse_attachment_infos,
+    parse_attachment_infos_with_raw,
     received_emails_table,
 )
 from family_assistant.storage.vector import Document, get_document_by_id
@@ -446,11 +446,19 @@ class EmailIndexer:
         if email_doc.attachments:
             attachment_registry = self.attachment_registry
             # Validate per-entry so one malformed legacy record doesn't
-            # abort indexing of the rest of the email.
-            attachments = parse_attachment_infos(
+            # abort indexing of the rest of the email. Keep the raw
+            # payload alongside each parsed model so the write-back
+            # step at the end of the loop can preserve entries we
+            # skipped instead of silently dropping them from the
+            # persisted JSON.
+            attachment_pairs = parse_attachment_infos_with_raw(
                 list(email_doc.attachments),
                 context=f"email_db_id={email_db_id}",
             )
+            # ``new_attachment_info`` starts as the raw entries and is
+            # only overwritten where we mutate the parsed model. That
+            # way malformed entries round-trip untouched on write-back.
+            new_attachment_info: list[Any] = [raw for raw, _ in attachment_pairs]
 
             # Each attachment's chunks share the same parent document_id with
             # the email body and each other, so allocate a disjoint
@@ -459,7 +467,11 @@ class EmailIndexer:
             # ``chunk_index_offset`` from item.metadata.
             chunk_index_spacing = 1_000_000
             attachment_info_dirty = False
-            for attachment_index, att in enumerate(attachments):
+            for attachment_index, (_raw, att) in enumerate(attachment_pairs):
+                if att is None:
+                    # Malformed entry already logged by parse_attachment_infos_with_raw.
+                    # Keep the raw payload in new_attachment_info and skip.
+                    continue
                 if not att.storage_path or not att.content_type:
                     logger.warning(
                         f"Skipping attachment for email {email_db_id} due to missing path or mime_type: {att}"
@@ -495,6 +507,7 @@ class EmailIndexer:
                             att.filename,
                         )
                         att.attachment_id = None
+                        new_attachment_info[attachment_index] = att.model_dump()
                         attachment_info_dirty = True
                     continue
 
@@ -522,6 +535,7 @@ class EmailIndexer:
                         )
                     else:
                         att.attachment_id = resolved_id
+                        new_attachment_info[attachment_index] = att.model_dump()
                         attachment_info_dirty = True
 
                 logger.info(
@@ -553,7 +567,7 @@ class EmailIndexer:
                 await db_context.execute_with_retry(
                     update(received_emails_table)
                     .where(received_emails_table.c.id == email_db_id)
-                    .values(attachment_info=[a.model_dump() for a in attachments])
+                    .values(attachment_info=new_attachment_info)
                 )
 
         if not initial_items:

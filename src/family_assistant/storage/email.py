@@ -55,12 +55,37 @@ def parse_attachment_infos(
     email_db_id) included in the warning log so operators can find the
     offending row.
     """
+    return [
+        parsed
+        for _raw, parsed in parse_attachment_infos_with_raw(
+            raw_entries, context=context
+        )
+        if parsed is not None
+    ]
+
+
+def parse_attachment_infos_with_raw(
+    raw_entries: list[Any] | None,
+    *,
+    context: str,
+) -> list[tuple[Any, AttachmentData | None]]:
+    """Per-entry validate, keeping the original raw payload alongside.
+
+    Callers that need to write the list back to the database (e.g. the
+    indexer persisting new ``attachment_id`` values, or
+    ``_clear_email_attachment_id`` nulling a single id) must preserve
+    entries that failed validation — otherwise a malformed legacy entry
+    gets silently dropped by the rewrite and we destroy data we can't
+    regenerate. Returning ``(raw, parsed)`` pairs lets the caller emit
+    ``parsed.model_dump()`` where it mutates the model and fall back to
+    the untouched ``raw`` entry everywhere else.
+    """
     if not raw_entries:
         return []
-    validated: list[AttachmentData] = []
+    pairs: list[tuple[Any, AttachmentData | None]] = []
     for index, entry in enumerate(raw_entries):
         try:
-            validated.append(AttachmentData.model_validate(entry))
+            pairs.append((entry, AttachmentData.model_validate(entry)))
         except (ValidationError, TypeError) as exc:
             logger.warning(
                 "Skipping malformed attachment_info entry %d for %s: %s. Raw entry: %r",
@@ -69,7 +94,8 @@ def parse_attachment_infos(
                 exc,
                 entry,
             )
-    return validated
+            pairs.append((entry, None))
+    return pairs
 
 
 class ParsedEmailData(BaseModel):
