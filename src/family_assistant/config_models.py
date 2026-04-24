@@ -16,9 +16,11 @@ Configuration priority (lowest to highest):
 from __future__ import annotations
 
 import contextlib
+import os
 import zoneinfo
 from contextvars import ContextVar
 from email.utils import parseaddr
+from pathlib import Path
 from typing import TYPE_CHECKING, Any, ClassVar, Literal
 
 import cloudcoil.models.kubernetes.core.v1 as k8s_models  # noqa: TC002 - Pydantic needs at runtime
@@ -900,8 +902,17 @@ class AppConfig(BaseSettings):
     @classmethod
     @contextlib.contextmanager
     def yaml_source_context(cls, yaml_files: list[str]) -> Generator[None]:
-        """Context manager to set YAML file paths for AppConfig construction."""
-        token = cls._yaml_files_ctx.set(yaml_files)
+        """Context manager to set YAML file paths for AppConfig construction.
+
+        YAML paths are normalized to absolute paths against the current cwd
+        once, at entry. Downstream consumers — including
+        ``_normalize_storage_path`` that resolves relative
+        ``attachment_storage_path`` values against the config file's
+        directory — can then trust that ``_yaml_files_ctx`` always holds
+        absolute paths, regardless of how ``load_config`` was invoked.
+        """
+        absolute_yaml_files = [os.path.abspath(path) for path in yaml_files]
+        token = cls._yaml_files_ctx.set(absolute_yaml_files)
         try:
             yield
         finally:
@@ -1008,3 +1019,39 @@ class AppConfig(BaseSettings):
     # Attachment selection thresholds (global)
     attachment_selection_threshold: int = 3  # Trigger selection when > this many
     max_response_attachments: int = 6  # Max attachments per response
+
+    @field_validator("attachment_storage_path", "document_storage_path")
+    @classmethod
+    def _normalize_storage_path(cls, value: str) -> str:
+        """Anchor storage paths to a stable absolute directory at load time.
+
+        Email-attachment ``storage_path`` values are persisted relative to
+        ``attachment_storage_path``. If the config value itself were left
+        relative, ``AttachmentRegistry`` would resolve it against whatever
+        cwd the worker process had at startup — a later restart from a
+        different directory would re-anchor the mailbox root and every
+        stored relative path would point to the wrong place.
+
+        To make the result stable across restarts regardless of cwd:
+
+        - Absolute values are returned unchanged.
+        - Relative values are anchored to the first YAML config file's
+          directory (the deployment-owned, restart-invariant location).
+          ``settings_customise_sources`` populates
+          ``_yaml_files_ctx`` when ``AppConfig`` is constructed via
+          ``yaml_source_context`` (production load path).
+        - When no YAML context is available (tests, ad-hoc scripts),
+          fall back to ``os.path.abspath`` — same cwd-dependent behavior
+          as before, but warned about by the caller environment since
+          there's no stable anchor to substitute.
+        """
+        if not value:
+            return value
+        path = Path(value)
+        if path.is_absolute():
+            return str(path)
+        yaml_files = cls._yaml_files_ctx.get()
+        if yaml_files:
+            config_dir = Path(yaml_files[0]).resolve().parent
+            return str(config_dir / path)
+        return os.path.abspath(value)

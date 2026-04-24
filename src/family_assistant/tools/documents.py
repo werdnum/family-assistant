@@ -11,13 +11,19 @@ import json
 import logging
 import os
 import pathlib
-from typing import TYPE_CHECKING, Any
+import uuid
+from typing import TYPE_CHECKING, Any, TypedDict
 
 import aiofiles
 import filetype  # type: ignore[import-untyped]
-from sqlalchemy import text
+from sqlalchemy import select, text, update
 
 from family_assistant.indexing.ingestion import process_document_ingestion_request
+from family_assistant.storage.email import (
+    parse_attachment_infos,
+    received_emails_table,
+)
+from family_assistant.storage.tasks import tasks_table
 from family_assistant.storage.vector_search import (
     VectorSearchQuery,
     query_vector_store,
@@ -34,6 +40,16 @@ if TYPE_CHECKING:
     from family_assistant.embeddings import EmbeddingGenerator
     from family_assistant.storage.context import DatabaseContext
     from family_assistant.tools.types import ToolExecutionContext
+
+
+class EmailAttachmentSummary(TypedDict):
+    """Summary of a registered email attachment surfaced to tool callers."""
+
+    attachment_id: str | None
+    filename: str
+    mime_type: str
+    size: int | None
+
 
 logger = logging.getLogger(__name__)
 
@@ -97,6 +113,9 @@ DOCUMENT_TOOLS_DEFINITION: list[ToolDefinition] = [
                 "When original file exists, returns both the file as an attachment and extracted text for context. "
                 "For PDFs and images, you can analyze the file directly using your multimodal capabilities. "
                 "If only text content is available, returns the full text content (raw content if available, or reconstructed from chunks). "
+                "For email documents, the result also includes an `attachments` list with `attachment_id` values for each email attachment; "
+                "pass those IDs to `read_text_attachment` or `get_attachment_info` to inspect attachment contents. "
+                "For legacy emails ingested before registry integration, the first call may return `attachment_id: null` for some entries — the returned text will describe the action needed (e.g. triggering a reindex) without prescribing a specific tool, since the write tool is only enabled in some profiles. "
                 "If document exists but no content available, returns 'Error: Document [id] found, but no content is available.'. "
                 "If document not found, returns 'Error: Document with ID [id] not found.'. "
                 "On error, returns 'Error: Failed to retrieve content for document ID [id]. [error details]'. "
@@ -190,6 +209,36 @@ DOCUMENT_TOOLS_DEFINITION: list[ToolDefinition] = [
                     },
                 },
                 "required": ["filename"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "reindex_email",
+            "description": (
+                "Enqueue an indexing task for an email that was ingested before "
+                "attachment-registry integration. Call this when "
+                "get_full_document_content surfaces email attachments with "
+                "attachment_id=null; once the indexer runs, a subsequent "
+                "get_full_document_content call returns the registered "
+                "attachment_ids usable with read_text_attachment and "
+                "get_attachment_info.\n\n"
+                "Returns: ToolResult with the enqueued task_id, or a no-op "
+                "status if a reindex for this email is already in flight."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "document_id": {
+                        "type": "integer",
+                        "description": (
+                            "The document ID of the email (obtained from "
+                            "search_documents or get_full_document_content)."
+                        ),
+                    },
+                },
+                "required": ["document_id"],
             },
         },
     },
@@ -363,7 +412,7 @@ async def get_full_document_content_tool(
         # First, get document metadata including file_path and original filename
         doc_query = text(
             """
-            SELECT file_path, doc_metadata, title, source_type, visibility_labels
+            SELECT file_path, doc_metadata, title, source_type, source_id, visibility_labels
             FROM documents
             WHERE id = :doc_id
         """
@@ -383,6 +432,14 @@ async def get_full_document_content_tool(
         doc_metadata = doc_result.get("doc_metadata") or {}
         title = doc_result.get("title")
         source_type = doc_result.get("source_type")
+        source_id = doc_result.get("source_id")
+
+        email_attachments_summary: list[EmailAttachmentSummary] | None = None
+        if source_type == "email" and source_id:
+            email_attachments_summary = await resolve_email_attachments(
+                db_context=db_context,
+                message_id_header=source_id,
+            )
 
         # Try to return original file if available
         if file_path and await asyncio.to_thread(pathlib.Path(file_path).exists):
@@ -428,9 +485,28 @@ async def get_full_document_content_tool(
                         description=f"{title or original_filename} ({source_type})",
                     )
 
-                    # Return ToolResult with both text and file
+                    display_text = (
+                        text_content or f"Original document: {original_filename}"
+                    )
+                    if email_attachments_summary:
+                        summary_text = format_email_attachments_text(
+                            email_attachments_summary
+                        )
+                        if summary_text:
+                            display_text = (
+                                f"{display_text}\n\nAttachments:\n{summary_text}"
+                            )
+                        return ToolResult(
+                            text=display_text,
+                            attachments=[attachment],
+                            data={
+                                "content": text_content or "",
+                                "attachments": email_attachments_summary,
+                            },
+                        )
+
                     return ToolResult(
-                        text=text_content or f"Original document: {original_filename}",
+                        text=display_text,
                         attachments=[attachment],
                     )
             except Exception as file_err:
@@ -442,10 +518,27 @@ async def get_full_document_content_tool(
 
         # Fall back to text content
         text_content = await _get_text_content_fallback(db_context, document_id)
-        if text_content:
-            return text_content
-        else:
+        if not text_content and not email_attachments_summary:
             return f"Error: Document {document_id} found, but no content is available."
+
+        if email_attachments_summary:
+            body_text = text_content or ""
+            summary_text = format_email_attachments_text(email_attachments_summary)
+            display_text = (
+                f"{body_text}\n\nAttachments:\n{summary_text}"
+                if summary_text
+                else body_text
+            )
+            return ToolResult(
+                text=display_text,
+                data={
+                    "content": body_text,
+                    "attachments": email_attachments_summary,
+                },
+            )
+
+        assert text_content is not None
+        return text_content
 
     except Exception as e:
         logger.error(
@@ -453,6 +546,234 @@ async def get_full_document_content_tool(
             exc_info=True,
         )
         return f"Error: Failed to retrieve content for document ID {document_id}. {e}"
+
+
+async def reindex_email_tool(
+    exec_context: ToolExecutionContext,
+    document_id: int,
+) -> ToolResult:
+    """Enqueue an indexing task for an email so legacy attachments get
+    registered with the AttachmentRegistry.
+
+    This is the write-path companion to ``get_full_document_content``: when
+    that tool surfaces email attachments with ``attachment_id=null``, the
+    LLM should call ``reindex_email`` to queue a reindex. Registration
+    itself happens in ``EmailIndexer.handle_index_email``, which uses an
+    atomic INSERT against
+    ``uix_attachment_metadata_email_identity`` (plus an ``IntegrityError``
+    fallback re-query) so concurrent/repeat runs cannot create duplicate
+    registry rows.
+
+    The "already_in_flight" check is best-effort: concurrent calls may
+    still both enqueue an ``index_email`` task because there is no
+    uniqueness constraint on pending tasks per email. Duplicate tasks are
+    safe — the indexer itself is idempotent — but they do redundant work.
+    """
+    db_context = exec_context.db_context
+    logger.info(f"Executing reindex_email_tool for document ID: {document_id}")
+
+    # Fail fast if no attachment registry is configured: the indexer
+    # would log-and-skip registration in that case, so the queued task
+    # can never populate any missing attachment_id values and the caller
+    # would be stuck in a permanent reindex/retry loop.
+    if exec_context.attachment_registry is None:
+        return ToolResult(
+            data={
+                "error": (
+                    "Attachment registry is not configured; reindex would "
+                    "not register any attachments. Configure "
+                    "AttachmentRegistry on the application before retrying."
+                )
+            }
+        )
+
+    doc_row = await db_context.fetch_one(
+        text(
+            "SELECT source_type, source_id, visibility_labels "
+            "FROM documents WHERE id = :doc_id"
+        ),
+        {"doc_id": document_id},
+    )
+    # Apply the same visibility gate as get_full_document_content so hidden
+    # document IDs can't be distinguished from missing ones via error text,
+    # and so we don't enqueue indexing work for docs the caller can't see.
+    not_found_error = ToolResult(data={"error": f"Document {document_id} not found"})
+    if not doc_row:
+        return not_found_error
+    if exec_context.visibility_grants is not None:
+        labels = json.loads(doc_row["visibility_labels"] or "[]")
+        if not set(labels) <= exec_context.visibility_grants:
+            return not_found_error
+    if doc_row["source_type"] != "email":
+        return ToolResult(
+            data={
+                "error": (
+                    f"Document {document_id} is not an email "
+                    f"(source_type={doc_row['source_type']})"
+                )
+            }
+        )
+
+    message_id_header = doc_row["source_id"]
+    email_row = await db_context.fetch_one(
+        select(received_emails_table.c.id).where(
+            received_emails_table.c.message_id_header == message_id_header
+        )
+    )
+    if not email_row:
+        return ToolResult(
+            data={"error": f"Email row for document {document_id} not found"}
+        )
+    email_db_id = email_row["id"]
+
+    task_prefix = f"index_email_{email_db_id}_"
+    # ``startswith`` compiles to a SQL ``LIKE`` predicate, and the
+    # underscores in ``index_email_{email_db_id}_`` are LIKE wildcards
+    # — without ``autoescape`` the prefix for email ``1`` would also
+    # match ``index_email_12_...``, ``index_email_100_...``, etc. and
+    # cause ``reindex_email`` to report ``already_in_flight`` for the
+    # wrong email (and overwrite ``received_emails.indexing_task_id``
+    # with another email's task).
+    existing_task = await db_context.fetch_one(
+        select(tasks_table.c.task_id)
+        .where(tasks_table.c.task_type == "index_email")
+        .where(tasks_table.c.task_id.startswith(task_prefix, autoescape=True))
+        .where(tasks_table.c.status.in_(("pending", "processing")))
+        .limit(1)
+    )
+    if existing_task:
+        # The backfill migration enqueues ``index_email_*`` tasks directly
+        # without updating ``received_emails.indexing_task_id``, so the
+        # email row may still point at a stale/NULL task id even though a
+        # fresh indexing job is already pending. Repair the link here so
+        # callers always see the task that's actually in flight.
+        await db_context.execute_with_retry(
+            update(received_emails_table)
+            .where(received_emails_table.c.id == email_db_id)
+            .values(indexing_task_id=existing_task["task_id"])
+        )
+        return ToolResult(
+            data={
+                "status": "already_in_flight",
+                "task_id": existing_task["task_id"],
+                "email_db_id": email_db_id,
+            }
+        )
+
+    task_id = f"{task_prefix}{uuid.uuid4()}"
+    try:
+        await db_context.tasks.enqueue(
+            task_id=task_id,
+            task_type="index_email",
+            payload={"email_db_id": email_db_id},
+        )
+    except Exception as err:
+        logger.warning(
+            f"Failed to enqueue email reindex task for email {email_db_id}: {err}"
+        )
+        return ToolResult(data={"error": f"Failed to enqueue reindex: {err}"})
+
+    # Keep ``received_emails.indexing_task_id`` in sync with the newly
+    # enqueued job so any status/debugging code that reads it sees the
+    # currently-active task rather than a stale or NULL reference.
+    await db_context.execute_with_retry(
+        update(received_emails_table)
+        .where(received_emails_table.c.id == email_db_id)
+        .values(indexing_task_id=task_id)
+    )
+
+    return ToolResult(
+        data={
+            "status": "enqueued",
+            "task_id": task_id,
+            "email_db_id": email_db_id,
+        }
+    )
+
+
+def format_email_attachments_text(
+    attachments: list[EmailAttachmentSummary],
+) -> str:
+    """Format an email's attachment summary as a human-readable list.
+
+    Surfaces the ``attachment_id`` when present so the caller can pipe
+    it into ``read_text_attachment`` / ``get_attachment_info``. Entries
+    without an id are rendered with tool-agnostic guidance (a reindex
+    is needed) — we deliberately don't prescribe ``reindex_email`` by
+    name because that write tool is only enabled in some profiles and
+    flows running without it would otherwise be told to call something
+    they can't invoke.
+
+    The caller is expected to have a configured ``AttachmentRegistry``;
+    without one the ids here can't be dereferenced, but that's a wiring
+    bug at the caller's level, not a mode this formatter needs to model.
+    """
+    lines: list[str] = []
+    for att in attachments:
+        size = att["size"]
+        size_label = f"{size} bytes" if size is not None else "unknown size"
+        if att["attachment_id"]:
+            lines.append(
+                f"- {att['filename']} ({att['mime_type']}, {size_label}) "
+                f"— attachment_id: {att['attachment_id']}"
+            )
+        else:
+            lines.append(
+                f"- {att['filename']} ({att['mime_type']}, {size_label}) "
+                "— attachment_id not yet assigned; this email needs to be "
+                "reindexed to register the attachment (use the "
+                "`reindex_email` tool if it is available in this profile, "
+                "otherwise ask the operator to reindex the email)."
+            )
+    return "\n".join(lines)
+
+
+async def resolve_email_attachments(
+    *,
+    db_context: DatabaseContext,
+    message_id_header: str,
+) -> list[EmailAttachmentSummary] | None:
+    """Return a read-only summary of attachments for an email.
+
+    Attachments are registered in the ``AttachmentRegistry`` at ingestion
+    time (see ``EmailIndexer.handle_index_email``), so this helper never
+    writes — keeping ``get_full_document_content`` truly ``READ_ONLY``.
+
+    Legacy emails received before registry integration will have
+    ``attachment_id`` set to ``None`` in the result. Registration must be
+    triggered by the write-path ``reindex_email`` tool; after that task
+    runs, a subsequent call to this helper returns the populated IDs.
+
+    Returns None if the email row is not found or has no attachments.
+    """
+    row_query = select(received_emails_table.c.attachment_info).where(
+        received_emails_table.c.message_id_header == message_id_header
+    )
+    row = await db_context.fetch_one(row_query)
+    if not row:
+        return None
+
+    raw_info = row.get("attachment_info")
+    if not raw_info:
+        return None
+
+    # Per-entry validation: legacy rows occasionally contain malformed
+    # attachment descriptors (missing ``storage_path``, ``content_type``
+    # null, etc.). Because this helper runs on the ``READ_ONLY``
+    # ``get_full_document_content`` path, one bad record must not abort
+    # the whole fetch — skip the bad entry and return what we can.
+    attachments = parse_attachment_infos(
+        raw_info, context=f"message_id={message_id_header}"
+    )
+    return [
+        {
+            "attachment_id": att.attachment_id,
+            "filename": att.filename,
+            "mime_type": att.content_type,
+            "size": att.size,
+        }
+        for att in attachments
+    ]
 
 
 async def _get_text_content_fallback(

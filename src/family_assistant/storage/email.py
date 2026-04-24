@@ -5,9 +5,10 @@ Handles storage and retrieval of received emails.
 import logging
 import uuid  # Add uuid import
 from datetime import datetime  # Added for Pydantic models
+from typing import Any
 
 import sqlalchemy as sa
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, ValidationError
 from sqlalchemy import JSON  # Import generic JSON type
 from sqlalchemy.dialects.postgresql import JSONB  # Import PostgreSQL specific JSONB
 from sqlalchemy.exc import SQLAlchemyError  # Use broader exception
@@ -29,6 +30,72 @@ class AttachmentData(BaseModel):
     content_type: str
     size: int | None = None
     storage_path: str  # Path where the attachment is saved
+    attachment_id: str | None = (
+        None  # Registry UUID once registered with AttachmentRegistry
+    )
+
+
+def parse_attachment_infos(
+    raw_entries: list[Any] | None,
+    *,
+    context: str,
+) -> list[AttachmentData]:
+    """Validate ``received_emails.attachment_info`` entries one-by-one.
+
+    ``attachment_info`` is free-form JSON and legacy/corrupt emails have
+    been observed with missing fields (no ``storage_path``,
+    ``content_type`` as None, etc.). Validating the full list in a single
+    comprehension would let a single bad entry abort the caller — the
+    indexer would fail the whole task, and
+    ``get_full_document_content_tool`` would refuse to return the email
+    body. Parse per-entry instead, log+skip malformed ones, and return
+    only the records that round-tripped cleanly.
+
+    ``context`` is a short human-readable identifier (e.g. Message-Id or
+    email_db_id) included in the warning log so operators can find the
+    offending row.
+    """
+    return [
+        parsed
+        for _raw, parsed in parse_attachment_infos_with_raw(
+            raw_entries, context=context
+        )
+        if parsed is not None
+    ]
+
+
+def parse_attachment_infos_with_raw(
+    raw_entries: list[Any] | None,
+    *,
+    context: str,
+) -> list[tuple[Any, AttachmentData | None]]:
+    """Per-entry validate, keeping the original raw payload alongside.
+
+    Callers that need to write the list back to the database (e.g. the
+    indexer persisting new ``attachment_id`` values, or
+    ``_clear_email_attachment_id`` nulling a single id) must preserve
+    entries that failed validation — otherwise a malformed legacy entry
+    gets silently dropped by the rewrite and we destroy data we can't
+    regenerate. Returning ``(raw, parsed)`` pairs lets the caller emit
+    ``parsed.model_dump()`` where it mutates the model and fall back to
+    the untouched ``raw`` entry everywhere else.
+    """
+    if not raw_entries:
+        return []
+    pairs: list[tuple[Any, AttachmentData | None]] = []
+    for index, entry in enumerate(raw_entries):
+        try:
+            pairs.append((entry, AttachmentData.model_validate(entry)))
+        except (ValidationError, TypeError) as exc:
+            logger.warning(
+                "Skipping malformed attachment_info entry %d for %s: %s. Raw entry: %r",
+                index,
+                context,
+                exc,
+                entry,
+            )
+            pairs.append((entry, None))
+    return pairs
 
 
 class ParsedEmailData(BaseModel):

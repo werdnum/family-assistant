@@ -52,6 +52,7 @@ from family_assistant.indexing.tasks import handle_embed_and_store_batch
 # Import components needed for the E2E test
 # Import test helpers
 from family_assistant.llm import ToolCallFunction, ToolCallItem
+from family_assistant.services.attachment_registry import AttachmentRegistry
 from family_assistant.storage.context import DatabaseContext
 from family_assistant.storage.email import received_emails_table
 from family_assistant.storage.tasks import (
@@ -78,8 +79,17 @@ logger = logging.getLogger(__name__)
 
 
 def _create_mock_processing_service() -> MagicMock:
-    """Create a mock ProcessingService with required attributes."""
+    """Create a mock ProcessingService with required attributes.
+
+    ``attachment_registry`` is pinned to ``None`` rather than left as an
+    auto-generated ``MagicMock``: any tool that happened to ``await`` a
+    ``MagicMock`` method would otherwise raise ``TypeError``. The
+    ``EmailIndexer`` uses its own ``attachment_registry`` constructor
+    argument, so the ``exec_context`` value here is unused by the code
+    under test.
+    """
     mock = MagicMock()
+    mock.attachment_registry = None
     return mock
 
 
@@ -457,7 +467,14 @@ async def test_email_with_pdf_attachment_indexing_e2e(
         config={"text_chunker": text_chunker_test_config},
     )
     email_indexer_instance_pdf = EmailIndexer(
-        pipeline=test_pipeline_with_pdf
+        pipeline=test_pipeline_with_pdf,
+        attachment_registry=AttachmentRegistry(
+            storage_path=fastapi_app.state.config.attachment_storage_path,
+            db_engine=pg_vector_db_engine,
+            config={
+                "email_attachment_base_path": fastapi_app.state.config.attachment_storage_path,
+            },
+        ),
     )  # Instantiate EmailIndexer
     logger.info(
         "Set IndexingPipeline with PDFTextExtractor for email attachment indexing."
@@ -739,7 +756,14 @@ async def test_email_indexing_with_llm_summary_e2e(
         config={},
     )
     email_indexer_instance_summary = EmailIndexer(
-        pipeline=test_pipeline_email_summary
+        pipeline=test_pipeline_email_summary,
+        attachment_registry=AttachmentRegistry(
+            storage_path=fastapi_app.state.config.attachment_storage_path,
+            db_engine=pg_vector_db_engine,
+            config={
+                "email_attachment_base_path": fastapi_app.state.config.attachment_storage_path,
+            },
+        ),
     )  # Instantiate EmailIndexer
 
     # --- Arrange: Task Worker Setup ---
@@ -1017,7 +1041,14 @@ async def test_email_indexing_with_primary_link_extraction_e2e(
         config={},
     )
     email_indexer_instance_link = EmailIndexer(
-        pipeline=test_pipeline_link_extraction
+        pipeline=test_pipeline_link_extraction,
+        attachment_registry=AttachmentRegistry(
+            storage_path=fastapi_app.state.config.attachment_storage_path,
+            db_engine=pg_vector_db_engine,
+            config={
+                "email_attachment_base_path": fastapi_app.state.config.attachment_storage_path,
+            },
+        ),
     )  # Instantiate EmailIndexer
 
     # --- Arrange: Task Worker Setup ---

@@ -22,6 +22,7 @@ from sqlalchemy import (
     Table,
     Text,
     event,
+    text,
 )
 from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
 from sqlalchemy.pool import NullPool, StaticPool
@@ -142,13 +143,21 @@ attachment_metadata_table = Table(
     "attachment_metadata",
     metadata,
     Column("attachment_id", String(36), primary_key=True),  # UUID
-    Column("source_type", String(20), nullable=False),  # "user", "tool", "script"
-    Column("source_id", String(255), nullable=False),  # user_id, tool_name, script_id
+    Column(
+        "source_type", String(20), nullable=False
+    ),  # "user", "tool", "script", "email"
+    Column(
+        "source_id", Text, nullable=False
+    ),  # user_id, tool_name, script_id, email Message-Id
     Column("mime_type", String(100), nullable=False),
     Column("description", Text, nullable=True),
     Column("size", Integer, nullable=False),
     Column("content_url", Text, nullable=True),  # URL for retrieval
     Column("storage_path", Text, nullable=True),  # File system path
+    # Bounded SHA-256 hex digest of ``f"{source_id}\0{storage_path}"`` used
+    # to uniquely identify an email attachment regardless of how long the
+    # Message-Id or path is. Only populated for ``source_type="email"``.
+    Column("email_identity_hash", String(64), nullable=True),
     Column("conversation_id", String(255), nullable=True),
     Column(
         "message_id", Integer, ForeignKey("message_history.internal_id"), nullable=True
@@ -158,7 +167,30 @@ attachment_metadata_table = Table(
     Column("metadata", JSON, nullable=True),
     # Indexes for common queries
     Index("idx_attachment_conversation", "conversation_id"),
-    Index("idx_attachment_source", "source_type", "source_id"),
+    # ``idx_attachment_source`` excludes email rows — long ``Message-Id``
+    # headers stored in ``source_id`` can blow past the Postgres btree
+    # index-row size limit. Email lookups are served by the partial
+    # unique index on ``email_identity_hash`` below instead.
+    Index(
+        "idx_attachment_source",
+        "source_type",
+        "source_id",
+        postgresql_where=text("source_type <> 'email'"),
+        sqlite_where=text("source_type <> 'email'"),
+    ),
     Index("idx_attachment_created", "created_at"),
+    # Partial unique index: email attachments (source_type="email") must be
+    # unique on the bounded ``email_identity_hash``. Indexing the raw
+    # ``(source_id, storage_path)`` Text columns risks exceeding Postgres'
+    # btree index-row size limit for long Message-Ids / paths.
+    Index(
+        "uix_attachment_metadata_email_identity",
+        "email_identity_hash",
+        unique=True,
+        postgresql_where=text(
+            "source_type = 'email' AND email_identity_hash IS NOT NULL"
+        ),
+        sqlite_where=text("source_type = 'email' AND email_identity_hash IS NOT NULL"),
+    ),
     extend_existing=True,
 )

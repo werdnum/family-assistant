@@ -502,10 +502,23 @@ class Assistant:
             AttachmentRegistryConfig,
         )
 
+        # Include the mailbox base so legacy email attachments with a
+        # relative ``storage_path`` resolve against a stable directory
+        # instead of the worker process's cwd. ``AppConfig`` normalizes
+        # ``attachment_storage_path`` to an absolute path at load time
+        # (see the field validator), so by the time it reaches us here
+        # it's already stable across restarts regardless of cwd.
+        registry_config_payload = cast(
+            "AttachmentRegistryConfig", attachment_config.model_dump()
+        )
+        if self.config.attachment_storage_path:
+            registry_config_payload["email_attachment_base_path"] = (
+                self.config.attachment_storage_path
+            )
         self.attachment_registry = AttachmentRegistry(
             storage_path=attachment_storage_path,
             db_engine=self.database_engine,
-            config=cast("AttachmentRegistryConfig", attachment_config.model_dump()),
+            config=registry_config_payload,
         )
 
         # Store in FastAPI app state for web access
@@ -1026,7 +1039,10 @@ class Assistant:
             embedding_generator=self.embedding_generator,
             scraper=self.scraper_instance,
         )
-        self.email_indexer = EmailIndexer(pipeline=self.document_indexer.pipeline)
+        self.email_indexer = EmailIndexer(
+            pipeline=self.document_indexer.pipeline,
+            attachment_registry=self.attachment_registry,
+        )
         self.notes_indexer = NotesIndexer(pipeline=self.document_indexer.pipeline)
         logger.info("DocumentIndexer, EmailIndexer, and NotesIndexer initialized.")
 

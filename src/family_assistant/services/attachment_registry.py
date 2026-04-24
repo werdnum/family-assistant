@@ -23,6 +23,10 @@ from sqlalchemy import and_, delete, insert, select, update
 
 from family_assistant.storage.base import attachment_metadata_table
 from family_assistant.storage.context import DatabaseContext
+from family_assistant.storage.email import (
+    parse_attachment_infos_with_raw,
+    received_emails_table,
+)
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncEngine
@@ -34,6 +38,12 @@ class AttachmentRegistryConfig(TypedDict, total=False):
     max_file_size: int
     max_multimodal_size: int
     storage_path: str
+    # Stable base directory for externally-managed email attachments.
+    # When set, a relative ``storage_path`` on an email row is resolved
+    # against this base (instead of the worker's cwd), so legacy rows
+    # from installs that configured ``attachment_storage_path``
+    # relatively still resolve after a restart.
+    email_attachment_base_path: str
     large_tool_result_threshold_kb: int
     allowed_mime_types: list[str]
 
@@ -49,12 +59,25 @@ class AttachmentRowDict(TypedDict):
     size: int
     content_url: str | None
     storage_path: str | None
+    email_identity_hash: str | None
     conversation_id: str | None
     message_id: int | None
     created_at: datetime
     accessed_at: datetime | None
     # ast-grep-ignore: no-dict-any - Free-form JSON metadata column stored in DB
     metadata: dict[str, Any] | None
+
+
+def compute_email_identity_hash(source_id: str, storage_path: str) -> str:
+    """Return the bounded SHA-256 hex digest used to dedup email attachments.
+
+    Email registrations key their partial unique index on this digest of
+    ``f"{source_id}\\0{storage_path}"`` so that arbitrarily long
+    ``Message-Id`` headers or external paths cannot exceed Postgres'
+    btree index-row size limit. Call sites outside email ingestion do
+    not populate this column; it remains ``NULL``.
+    """
+    return hashlib.sha256(f"{source_id}\0{storage_path}".encode()).hexdigest()
 
 
 class AttachmentMetadataDict(TypedDict):
@@ -115,6 +138,7 @@ class AttachmentMetadata:
         size: int,
         content_url: str | None = None,
         storage_path: str | None = None,
+        email_identity_hash: str | None = None,
         conversation_id: str | None = None,
         message_id: int | None = None,
         created_at: datetime | None = None,
@@ -123,13 +147,14 @@ class AttachmentMetadata:
         metadata: dict[str, Any] | None = None,
     ) -> None:
         self.attachment_id = attachment_id
-        self.source_type = source_type  # "user", "tool", "script"
-        self.source_id = source_id  # user_id, tool_name, script_id
+        self.source_type = source_type  # "user", "tool", "script", "email"
+        self.source_id = source_id  # user_id, tool_name, script_id, email Message-Id
         self.mime_type = mime_type
         self.description = description
         self.size = size
         self.content_url = content_url
         self.storage_path = storage_path
+        self.email_identity_hash = email_identity_hash
         self.conversation_id = conversation_id
         self.message_id = message_id
         self.created_at = created_at or datetime.now(UTC)
@@ -137,7 +162,18 @@ class AttachmentMetadata:
         self.metadata = metadata or {}
 
     def to_dict(self) -> AttachmentMetadataDict:
-        """Convert to dictionary representation."""
+        """Convert to dictionary representation.
+
+        ``storage_path`` is redacted for externally-managed sources (for
+        example, email attachments living under the mailbox directory) to
+        avoid leaking absolute server filesystem paths through tool output
+        like ``get_attachment_info`` or HTTP metadata responses. Only the
+        basename is returned in that case; registry-managed attachments
+        keep their (already-relative) sharded path.
+        """
+        path = self.storage_path
+        if path is not None and self.source_type == "email":
+            path = Path(path).name
         return {
             "attachment_id": self.attachment_id,
             "source_type": self.source_type,
@@ -146,7 +182,7 @@ class AttachmentMetadata:
             "description": self.description,
             "size": self.size,
             "content_url": self.content_url,
-            "storage_path": self.storage_path,
+            "storage_path": path,
             "conversation_id": self.conversation_id,
             "message_id": self.message_id,
             "created_at": self.created_at.isoformat() if self.created_at else None,
@@ -166,11 +202,60 @@ class AttachmentMetadata:
             size=row["size"],
             content_url=row["content_url"],
             storage_path=row["storage_path"],
+            email_identity_hash=row.get("email_identity_hash"),
             conversation_id=row["conversation_id"],
             message_id=row["message_id"],
             created_at=row["created_at"],
             accessed_at=row["accessed_at"],
             metadata=row["metadata"],
+        )
+
+
+async def _clear_email_attachment_id(
+    *,
+    db_context: DatabaseContext,
+    message_id_header: str,
+    attachment_id: str,
+) -> None:
+    """Clear the given ``attachment_id`` from ``received_emails.attachment_info``.
+
+    Called from ``delete_attachment`` when an email-sourced attachment is
+    removed from the registry. The external mailbox file stays on disk, but
+    the email row must no longer advertise the now-dangling registry ID, or
+    ``get_full_document_content`` would surface a broken handle that 404s.
+    """
+    row = await db_context.fetch_one(
+        select(
+            received_emails_table.c.id,
+            received_emails_table.c.attachment_info,
+        ).where(received_emails_table.c.message_id_header == message_id_header)
+    )
+    if not row or not row.get("attachment_info"):
+        return
+
+    # Per-entry validation: a malformed legacy sibling entry must not
+    # make the post-delete cleanup raise (the registry row is already
+    # gone, so a 500 here would leave a broken-but-advertised id in the
+    # email row). Preserve the raw bytes for entries we don't touch so
+    # we don't accidentally drop data we can't regenerate.
+    pairs = parse_attachment_infos_with_raw(
+        row["attachment_info"], context=f"message_id={message_id_header}"
+    )
+    updated = False
+    new_entries: list[Any] = []
+    for raw, parsed in pairs:
+        if parsed is not None and parsed.attachment_id == attachment_id:
+            parsed.attachment_id = None
+            new_entries.append(parsed.model_dump())
+            updated = True
+        else:
+            new_entries.append(raw)
+
+    if updated:
+        await db_context.execute_with_retry(
+            update(received_emails_table)
+            .where(received_emails_table.c.id == row["id"])
+            .values(attachment_info=new_entries)
         )
 
 
@@ -209,6 +294,11 @@ class AttachmentRegistry:
         else:
             self.allowed_mime_types = DEFAULT_ALLOWED_MIME_TYPES
 
+        email_base = attachment_config.get("email_attachment_base_path")
+        self.email_attachment_base_path: Path | None = (
+            Path(email_base).resolve() if email_base else None
+        )
+
         logger.info(
             f"AttachmentRegistry initialized with storage path: {self.storage_path}, "
             f"max_file_size: {self.max_file_size // (1024 * 1024)}MB, "
@@ -238,8 +328,9 @@ class AttachmentRegistry:
         Args:
             db_context: Database context
             attachment_id: Unique attachment identifier
-            source_type: Source of attachment ("user", "tool", "script")
-            source_id: Source identifier (user_id, tool_name, etc.)
+            source_type: Source of attachment ("user", "tool", "script", "email")
+            source_id: Source identifier (user_id, tool_name, email message-id,
+                etc.)
             mime_type: MIME type of the attachment
             description: Human-readable description
             size: Size in bytes
@@ -252,6 +343,14 @@ class AttachmentRegistry:
         Returns:
             AttachmentMetadata object
         """
+        # Email attachments uniquely identify themselves by a bounded hash
+        # of ``(source_id, storage_path)``; see
+        # ``uix_attachment_metadata_email_identity``. Other source types
+        # leave the hash NULL.
+        email_identity_hash: str | None = None
+        if source_type == "email" and storage_path is not None:
+            email_identity_hash = compute_email_identity_hash(source_id, storage_path)
+
         attachment_metadata = AttachmentMetadata(
             attachment_id=attachment_id,
             source_type=source_type,
@@ -261,6 +360,7 @@ class AttachmentRegistry:
             size=size,
             content_url=content_url,
             storage_path=storage_path,
+            email_identity_hash=email_identity_hash,
             conversation_id=conversation_id,
             message_id=message_id,
             metadata=metadata,
@@ -276,6 +376,7 @@ class AttachmentRegistry:
             size=attachment_metadata.size,
             content_url=attachment_metadata.content_url,
             storage_path=attachment_metadata.storage_path,
+            email_identity_hash=attachment_metadata.email_identity_hash,
             conversation_id=attachment_metadata.conversation_id,
             message_id=attachment_metadata.message_id,
             created_at=attachment_metadata.created_at,
@@ -501,7 +602,11 @@ class AttachmentRegistry:
             return None
 
         # Get content from file system
-        file_path = self.get_attachment_path(attachment_id)
+        file_path = self.get_attachment_path(
+            attachment_id,
+            stored_path=metadata.storage_path,
+            source_type=metadata.source_type,
+        )
         if not file_path or not file_path.exists():
             logger.warning(f"Attachment file not found: {attachment_id}")
             return None
@@ -528,6 +633,13 @@ class AttachmentRegistry:
         Returns:
             True if deleted, False if not found
         """
+        # Load metadata before deletion so we can locate the file (including
+        # external paths like email attachments) after the row is gone.
+        metadata = await self.get_attachment(db_context, attachment_id)
+        stored_path = metadata.storage_path if metadata else None
+        source_type = metadata.source_type if metadata else None
+        source_id = metadata.source_id if metadata else None
+
         conditions = [attachment_metadata_table.c.attachment_id == attachment_id]
 
         # Atomic delete
@@ -539,7 +651,22 @@ class AttachmentRegistry:
 
         if success:
             # Only delete file if database deletion succeeded
-            file_deleted = self._delete_attachment_file(attachment_id)
+            file_deleted = self._delete_attachment_file(
+                attachment_id,
+                stored_path=stored_path,
+                source_type=source_type,
+            )
+            # For email attachments the file is externally owned and the
+            # ``received_emails.attachment_info`` JSON still references the
+            # deleted ``attachment_id``. Clear that reference so subsequent
+            # reads/downloads no longer surface a broken ID. A later reindex
+            # will re-register the attachment with a fresh ID.
+            if source_type == "email" and source_id:
+                await _clear_email_attachment_id(
+                    db_context=db_context,
+                    message_id_header=source_id,
+                    attachment_id=attachment_id,
+                )
             logger.info(
                 f"Deleted attachment {attachment_id} (db: {success}, file: {file_deleted})"
             )
@@ -1052,24 +1179,96 @@ class AttachmentRegistry:
                 status_code=500, detail=f"Failed to store attachment: {str(e)}"
             ) from e
 
-    def get_attachment_path(self, attachment_id: str) -> Path | None:
+    async def resolve_attachment_path(
+        self,
+        attachment_id: str,
+        db_context: DatabaseContext | None = None,
+    ) -> Path | None:
+        """Async counterpart of ``get_attachment_path`` that resolves the
+        ``storage_path`` column internally.
+
+        Use this from call sites that don't already have the attachment
+        metadata handy (for example, URL→data-URI conversion in the
+        processing layer). External-path attachments such as email files
+        are surfaced transparently without the caller needing to pre-fetch
+        metadata.
+        """
+        metadata: AttachmentMetadata | None = None
+        if db_context is None:
+            async with DatabaseContext(engine=self.db_engine) as own_db_context:
+                metadata = await self.get_attachment(own_db_context, attachment_id)
+        else:
+            metadata = await self.get_attachment(db_context, attachment_id)
+
+        stored_path = metadata.storage_path if metadata else None
+        source_type = metadata.source_type if metadata else None
+        return self.get_attachment_path(
+            attachment_id,
+            stored_path=stored_path,
+            source_type=source_type,
+        )
+
+    def get_attachment_path(
+        self,
+        attachment_id: str,
+        stored_path: str | None = None,
+        source_type: str | None = None,
+    ) -> Path | None:
         """
         Get the file system path for an attachment by ID.
 
         Args:
             attachment_id: The attachment UUID
+            stored_path: Optional externally-managed file path taken from
+                ``attachment_metadata.storage_path``. When provided and the file
+                exists, it is returned directly. This supports attachments whose
+                files live outside the registry's sharded storage (for example,
+                email attachments saved to the mailbox directory). For call
+                sites without pre-fetched metadata, use
+                :meth:`resolve_attachment_path` instead, which performs the
+                lookup internally.
+            source_type: Optional ``attachment_metadata.source_type``. The
+                ``stored_path`` fast-path is gated to ``"email"`` only:
+                those attachments live in an externally-managed mailbox
+                directory. For every other source type (``"user"``,
+                ``"tool"``, ``"script"``), ``stored_path`` is ignored
+                here and we fall through to the sharded
+                ``{self.storage_path}/{prefix}/{id}.*`` lookup so rows
+                containing arbitrary absolute paths can't serve files
+                from outside the registry-managed directory.
 
         Returns:
             Path to the attachment file, or None if not found
         """
+        # Only honor ``stored_path`` for email attachments — every other
+        # caller is managed by the sharded storage layout below, and
+        # trusting ``stored_path`` for them would let a poisoned
+        # ``attachment_metadata.storage_path`` serve arbitrary files
+        # through ``/api/attachments/{id}`` / ``get_attachment_content``.
+        if stored_path and source_type == "email":
+            candidate = Path(stored_path)
+            # Current email rows persist absolute paths; legacy rows
+            # from deployments that configured ``attachment_storage_path``
+            # relatively may still be relative. Resolve those against
+            # ``email_attachment_base_path`` (which ``AppConfig`` pins to
+            # an absolute path at load time) so restarts from a different
+            # cwd don't break them. When no base is configured we fall
+            # back to using the relative path as-is, preserving pre-PR
+            # behavior.
+            if (
+                not candidate.is_absolute()
+                and self.email_attachment_base_path is not None
+            ):
+                candidate = self.email_attachment_base_path / candidate
+            if candidate.is_file():
+                return candidate
+
         try:
-            # Parse as UUID to validate format
             uuid.UUID(attachment_id)
         except ValueError:
             logger.warning(f"Invalid attachment ID format: {attachment_id}")
             return None
 
-        # Use hash prefix to directly locate the file
         hash_prefix = attachment_id[:2]
         hash_dir = self.storage_path / hash_prefix
 
@@ -1077,8 +1276,6 @@ class AttachmentRegistry:
             logger.info(f"Attachment file not found: {attachment_id}")
             return None
 
-        # Look for files starting with the attachment ID in the hash directory
-        # Use attachment_id* to find both files with and without extensions
         for file_path in hash_dir.glob(f"{attachment_id}*"):
             if file_path.is_file():
                 return file_path
@@ -1099,16 +1296,50 @@ class AttachmentRegistry:
         content_type, _ = mimetypes.guess_type(str(file_path))
         return content_type or "application/octet-stream"
 
-    def _delete_attachment_file(self, attachment_id: str) -> bool:
+    def _delete_attachment_file(
+        self,
+        attachment_id: str,
+        stored_path: str | None = None,
+        source_type: str | None = None,
+    ) -> bool:
         """
         Delete an attachment file (private method).
 
+        Only unlinks files the registry owns. Files for externally-managed
+        sources stay on disk so the producer can keep using them — for
+        example, an email attachment lives under the mailbox directory and
+        the ``received_emails.attachment_info`` record still references it,
+        so the registry must not remove it here.
+
+        Ownership is decided from ``source_type`` (the authoritative
+        producer marker) with a defensive path-containment fallback: even
+        if some future ``source_type`` is flagged as registry-owned, we
+        still refuse to unlink a file outside ``self.storage_path``.
+
         Args:
             attachment_id: The attachment UUID
+            stored_path: Optional ``storage_path`` from the attachment
+                metadata.
+            source_type: Optional ``attachment_metadata.source_type``. When
+                this is ``"email"`` the file is externally owned and the
+                unlink is skipped regardless of where it lives.
 
         Returns:
-            True if file was deleted, False if not found
+            True if a registry-managed file was deleted, False otherwise.
         """
+        if source_type == "email":
+            logger.info(
+                f"Skipping file unlink for email attachment {attachment_id} "
+                f"(externally owned by received_emails; storage_path={stored_path})"
+            )
+            return False
+        if stored_path and not self._path_is_managed(stored_path):
+            logger.info(
+                f"Skipping file unlink for externally-managed attachment "
+                f"{attachment_id} (storage_path={stored_path})"
+            )
+            return False
+
         file_path = self.get_attachment_path(attachment_id)
         if file_path and file_path.exists():
             try:
@@ -1119,6 +1350,30 @@ class AttachmentRegistry:
                 logger.error(f"Failed to delete attachment {attachment_id}: {e}")
                 return False
         return False
+
+    def _path_is_managed(self, candidate: str) -> bool:
+        """Return True when ``candidate`` is inside the registry's storage dir.
+
+        ``_store_file_only`` writes ``storage_path`` as a relative path (e.g.
+        ``"c7/<uuid>.txt"``) for registry-managed uploads, while email
+        attachments are registered with an absolute external path (e.g.
+        ``"/mnt/data/mailbox/attachments/..."``). Treat relative paths as
+        managed by convention; resolve absolute paths against
+        ``self.storage_path`` to decide.
+        """
+        path = Path(candidate)
+        if not path.is_absolute():
+            return True
+        try:
+            resolved = path.resolve()
+            base = self.storage_path.resolve()
+        except (OSError, ValueError):
+            return False
+        try:
+            resolved.relative_to(base)
+        except ValueError:
+            return False
+        return True
 
     def _cleanup_orphaned_files(self, referenced_attachment_ids: set[str]) -> int:
         """

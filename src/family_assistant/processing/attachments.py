@@ -173,8 +173,11 @@ class AttachmentProcessor:
 
                     attachment_id = match.group(1)
 
-                    # Use AttachmentRegistry to get the file path
-                    file_path = self.attachment_registry.get_attachment_path(
+                    # Use AttachmentRegistry to resolve the file path. The
+                    # async variant looks up ``attachment_metadata.storage_path``
+                    # internally so externally-managed files (e.g. email
+                    # attachments in the mailbox directory) resolve too.
+                    file_path = await self.attachment_registry.resolve_attachment_path(
                         attachment_id
                     )
                     if not file_path or not file_path.exists():

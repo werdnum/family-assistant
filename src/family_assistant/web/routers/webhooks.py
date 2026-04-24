@@ -14,7 +14,6 @@ from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from pydantic import BaseModel, ValidationError
 from starlette.datastructures import UploadFile as StarletteUploadFile
 
-from family_assistant.config_models import EmailIntakeConfig
 from family_assistant.email_intake.security import (
     EmailIntakePayloadTooLargeError,
     EmailIntakeSecurityError,
@@ -37,11 +36,6 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 webhooks_router = APIRouter()
-
-# Default path if not found in config, though __main__ should set a default.
-DEFAULT_ATTACHMENT_STORAGE_PATH = "/mnt/data/mailbox/attachments_fallback"
-# Fallback for raw webhook dir if not in app config
-DEFAULT_MAILBOX_RAW_DIR_FALLBACK = "/mnt/data/mailbox/raw_requests_fallback"
 
 
 async def _save_raw_mail_webhook(
@@ -87,9 +81,34 @@ async def handle_mail_webhook(
     """
     logger.info("Received POST request on /webhook/mail")
 
-    mailbox_raw_dir_to_use: str = DEFAULT_MAILBOX_RAW_DIR_FALLBACK
+    # ``Assistant.setup_dependencies()`` attaches ``config`` to
+    # ``app.state`` before the HTTP server starts accepting traffic. A
+    # request arriving without it is a boot-order / misconfiguration bug:
+    # reject it outright rather than silently accepting it under
+    # defaults, which would bypass Mailgun signature verification
+    # (no signing key configured) and persist attachments under a
+    # directory the runtime registry doesn't know about.
     config: AppConfig | None = getattr(request.app.state, "config", None)
-    email_intake_config = config.email_intake if config else EmailIntakeConfig()
+    if config is None:
+        logger.error(
+            "/webhook/mail received a request before app.state.config "
+            "was attached; rejecting with 503."
+        )
+        raise HTTPException(
+            status_code=503,
+            detail="Email webhook not ready: application config unavailable",
+        )
+    email_intake_config = config.email_intake
+    # ``mailbox_raw_dir`` is optional — it only drives raw-request
+    # archiving for debugging/replay. When unset we skip the archive
+    # step but still accept the email; the core intake path doesn't
+    # depend on it.
+    mailbox_raw_dir_to_use: str | None = config.mailbox_raw_dir
+    # ``attachment_storage_path`` is only needed when the email has
+    # attachments — the check is deferred into the attachment loop
+    # below so attachment-free mail still gets accepted even in the
+    # unusual case where this field is unset.
+    attachment_storage_path: str | None = config.attachment_storage_path
 
     content_length = request.headers.get("content-length")
     if content_length:
@@ -114,13 +133,6 @@ async def handle_mail_webhook(
     except EmailIntakePayloadTooLargeError as exc:
         logger.warning("Rejecting oversized inbound email webhook: %s", exc)
         raise HTTPException(status_code=413, detail=str(exc)) from exc
-
-    if config and config.mailbox_raw_dir:
-        mailbox_raw_dir_to_use = config.mailbox_raw_dir
-    if mailbox_raw_dir_to_use == DEFAULT_MAILBOX_RAW_DIR_FALLBACK:
-        logger.warning(
-            f"mailbox_raw_dir not found in app.state.config, using fallback: {DEFAULT_MAILBOX_RAW_DIR_FALLBACK}"
-        )
 
     try:
         # FastAPI's request.form() will parse multipart/form-data
@@ -158,13 +170,14 @@ async def handle_mail_webhook(
                 authentication.dkim_domain,
             )
         target_user_id = resolve_target_user_id(form_data, email_intake_config)
-        await _save_raw_mail_webhook(
-            raw_body_content=raw_body_content,
-            mailbox_raw_dir=mailbox_raw_dir_to_use,
-            content_type_header=request.headers.get(
-                "content-type", "unknown_content_type"
-            ),
-        )
+        if mailbox_raw_dir_to_use is not None:
+            await _save_raw_mail_webhook(
+                raw_body_content=raw_body_content,
+                mailbox_raw_dir=mailbox_raw_dir_to_use,
+                content_type_header=request.headers.get(
+                    "content-type", "unknown_content_type"
+                ),
+            )
 
         # --- Parse Email Date ---
         email_date_parsed: datetime | None = None
@@ -189,20 +202,46 @@ async def handle_mail_webhook(
                 logger.warning(f"Could not decode message-headers JSON: {e}")
 
         # --- Process Attachments ---
+        # The webhook saves attachments to disk and records their metadata on
+        # the email row. Registration with ``AttachmentRegistry`` happens later
+        # in ``EmailIndexer.handle_index_email`` — a single-writer write path
+        # that avoids race conditions.
         processed_attachments: list[AttachmentData] = []
         attachment_count_str = form_data.get("attachment-count")
-        if isinstance(attachment_count_str, str) and attachment_count_str.isdigit():
+        if (
+            isinstance(attachment_count_str, str)
+            and attachment_count_str.isdigit()
+            and int(attachment_count_str) > 0
+        ):
+            if not attachment_storage_path:
+                # Only required when the email has attachments; attachment-
+                # free mail goes through without needing a mailbox dir.
+                logger.error(
+                    "/webhook/mail: attachment-count=%s but "
+                    "config.attachment_storage_path is not set; refusing "
+                    "to accept inbound email with attachments without a "
+                    "configured attachment directory.",
+                    attachment_count_str,
+                )
+                raise HTTPException(
+                    status_code=503,
+                    detail=(
+                        "Email webhook not ready: attachment_storage_path "
+                        "unconfigured but email has attachments"
+                    ),
+                )
             attachment_count = int(attachment_count_str)
             # Generate a single UUID for this email's attachments directory
             email_attachment_batch_id = str(uuid.uuid4())
             total_attachment_size = 0
 
-            # Get attachment storage path from app config
-            attachment_storage_path = DEFAULT_ATTACHMENT_STORAGE_PATH
-            app_config: AppConfig | None = getattr(request.app.state, "config", None)
-            if app_config and app_config.attachment_storage_path:
-                attachment_storage_path = app_config.attachment_storage_path
-
+            # On-disk write location for the batch: resolved against the
+            # configured mailbox base (validated non-empty just above).
+            # We persist a path *relative* to that base so environment
+            # moves (mounts, restores) stay portable:
+            # ``AttachmentRegistry.get_attachment_path`` rejoins the
+            # relative path against ``email_attachment_base_path`` at
+            # read time.
             base_attachment_dir = os.path.join(
                 attachment_storage_path, email_attachment_batch_id
             )
@@ -216,8 +255,23 @@ async def handle_mail_webhook(
                         os.makedirs(base_attachment_dir, exist_ok=True)
                         # Sanitize filename (basic)
                         safe_filename = os.path.basename(form_item.filename)
-                        final_file_path = os.path.join(
-                            base_attachment_dir, safe_filename
+                        # Prefix the saved filename with the attachment index
+                        # so that two parts sharing the same filename don't
+                        # overwrite each other on disk and don't collapse to
+                        # the same email-attachment dedup key
+                        # (message_id, storage_path).
+                        persisted_filename = f"{i}-{safe_filename}"
+                        # Disk I/O happens at the absolute path; the
+                        # registry row stores the relative path so
+                        # environment moves (mounts, restores) stay
+                        # portable. ``AttachmentRegistry`` rejoins it
+                        # against ``email_attachment_base_path`` at read
+                        # time.
+                        disk_path = os.path.join(
+                            base_attachment_dir, persisted_filename
+                        )
+                        persisted_storage_path = os.path.join(
+                            email_attachment_batch_id, persisted_filename
                         )
 
                         # Save the uploaded file
@@ -231,20 +285,23 @@ async def handle_mail_webhook(
                             total_attachment_size=total_attachment_size,
                             config=email_intake_config,
                         )
-                        async with aiofiles.open(final_file_path, "wb") as f_out:
+                        async with aiofiles.open(disk_path, "wb") as f_out:
                             await f_out.write(content)
 
+                        attachment_mime_type = (
+                            form_item.content_type or "application/octet-stream"
+                        )
                         processed_attachments.append(
                             AttachmentData(
                                 filename=safe_filename,
-                                content_type=form_item.content_type
-                                or "application/octet-stream",
+                                content_type=attachment_mime_type,
                                 size=size,
-                                storage_path=final_file_path,
+                                storage_path=persisted_storage_path,
                             )
                         )
                         logger.info(
-                            f"Saved attachment '{safe_filename}' to {final_file_path}"
+                            f"Saved attachment '{safe_filename}' to {disk_path} "
+                            f"(stored path: {persisted_storage_path})"
                         )
                     except EmailIntakePayloadTooLargeError:
                         raise

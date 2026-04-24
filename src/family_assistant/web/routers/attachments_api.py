@@ -2,13 +2,19 @@
 
 import logging
 import uuid
+from pathlib import Path
 from typing import Annotated
 
 from fastapi import APIRouter, BackgroundTasks, Depends, File, HTTPException, UploadFile
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
 
-from family_assistant.services.attachment_registry import AttachmentRegistry
+from family_assistant.services.attachment_registry import (
+    AttachmentMetadata as RegistryAttachmentMetadata,
+)
+from family_assistant.services.attachment_registry import (
+    AttachmentRegistry,
+)
 from family_assistant.storage.context import DatabaseContext
 from family_assistant.web.dependencies import (
     get_attachment_registry,
@@ -149,19 +155,29 @@ async def serve_attachment(
         attachment_registry.update_access_time_background, attachment_id
     )
 
-    # Get file path
-    file_path = attachment_registry.get_attachment_path(attachment_id)
+    # Get file path (honoring externally-managed storage_path for e.g. email attachments)
+    file_path = attachment_registry.get_attachment_path(
+        attachment_id,
+        stored_path=attachment_metadata.storage_path,
+        source_type=attachment_metadata.source_type,
+    )
     if not file_path or not file_path.exists():
         raise HTTPException(status_code=404, detail="Attachment file not found")
 
     # Get content type
     content_type = attachment_registry.get_content_type(file_path)
 
+    # Prefer the original filename from metadata over the on-disk name:
+    # the mailbox write path deliberately prefixes the index to
+    # disambiguate duplicates (``1-image.png``), but clients asked for
+    # the attachment by ID and expect the original name back.
+    display_filename = _display_filename(attachment_metadata, file_path)
+
     # Return file response with proper headers
     return FileResponse(
         path=str(file_path),
         media_type=content_type,
-        filename=file_path.name,
+        filename=display_filename,
         headers={
             "Cache-Control": "public, max-age=31536000, immutable",  # Cache for 1 year (files are immutable)
             "ETag": f'"{attachment_id}"',  # Use attachment ID as ETag
@@ -221,6 +237,7 @@ async def get_attachment_metadata(
     attachment_registry: Annotated[
         AttachmentRegistry, Depends(get_attachment_registry)
     ],
+    db_context: Annotated[DatabaseContext, Depends(get_db)],
 ) -> AttachmentMetadata:
     """
     Get metadata for an attachment.
@@ -245,8 +262,17 @@ async def get_attachment_metadata(
             status_code=400, detail="Invalid attachment ID format"
         ) from e
 
-    # Get file path
-    file_path = attachment_registry.get_attachment_path(attachment_id)
+    # Look up the registry row so we honor externally-managed ``storage_path``
+    # (for example, email attachments saved to the mailbox directory).
+    registry_metadata = await attachment_registry.get_attachment(
+        db_context, attachment_id
+    )
+
+    file_path = attachment_registry.get_attachment_path(
+        attachment_id,
+        stored_path=registry_metadata.storage_path if registry_metadata else None,
+        source_type=registry_metadata.source_type if registry_metadata else None,
+    )
     if not file_path or not file_path.exists():
         raise HTTPException(status_code=404, detail="Attachment not found")
 
@@ -257,10 +283,43 @@ async def get_attachment_metadata(
     # Return basic metadata (in production, this would come from database)
     return AttachmentMetadata(
         id=attachment_id,
-        name=file_path.name,
+        name=_display_filename(registry_metadata, file_path),
         type=content_type,
         size=stat.st_size,
         hash="unknown",  # Would need to recalculate or store in DB
-        storage_path=str(file_path.relative_to(attachment_registry.storage_path)),
+        storage_path=_format_storage_path(file_path, attachment_registry.storage_path),
         uploaded_at="unknown",  # Would need to be stored in DB
     )
+
+
+def _display_filename(
+    registry_metadata: RegistryAttachmentMetadata | None,
+    file_path: Path,
+) -> str:
+    """Return the client-facing filename for an attachment.
+
+    Prefers ``metadata.metadata["original_filename"]`` so downloads/
+    metadata responses surface the name the user uploaded (e.g.
+    ``image.png``) rather than the internal disambiguated on-disk name
+    (e.g. ``1-image.png``). Falls back to the basename when the
+    original name isn't stored.
+    """
+    if registry_metadata is not None:
+        original = registry_metadata.metadata.get("original_filename")
+        if isinstance(original, str) and original:
+            return original
+    return file_path.name
+
+
+def _format_storage_path(file_path: Path, base_path: Path) -> str:
+    """Return a relative path for registry-managed files; redact others.
+
+    Registry-managed uploads are written inside ``base_path`` and expose a
+    sharded relative path. For externally-managed files (for example, email
+    attachments stored under the mailbox directory), the absolute server
+    path must not be leaked over the public API — return just the basename.
+    """
+    try:
+        return str(file_path.relative_to(base_path))
+    except ValueError:
+        return file_path.name

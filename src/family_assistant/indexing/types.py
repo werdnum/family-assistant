@@ -2,7 +2,7 @@
 Typed data structures for the indexing subsystem.
 """
 
-from typing import TypedDict
+from typing import NotRequired, TypedDict
 
 
 class EmailMetadata(TypedDict, total=False):
@@ -24,6 +24,7 @@ class EmailAttachmentInfo(TypedDict):
     content_type: str
     size: int
     storage_path: str
+    attachment_id: NotRequired[str | None]
 
 
 class ChunkMetadata(TypedDict, total=False):

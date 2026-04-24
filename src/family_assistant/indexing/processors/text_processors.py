@@ -146,14 +146,24 @@ class TextChunker(ContentProcessor):
                     item.embedding_type, f"{item.embedding_type}_chunk"
                 )
                 chunks = self._chunk_text_natively(item.content)
+                # Honor an upstream chunk_index offset so multiple logical
+                # sub-documents sharing the same document_id / embedding_type
+                # (e.g. each attachment on an email) don't collide on the
+                # (document_id, chunk_index, embedding_type) unique constraint.
+                # The offset is consumed here and not propagated further.
+                raw_offset = item.metadata.get("chunk_index_offset", 0)
+                chunk_index_offset = raw_offset if isinstance(raw_offset, int) else 0
+                inherited_metadata = {
+                    k: v for k, v in item.metadata.items() if k != "chunk_index_offset"
+                }
                 for i, chunk_text in enumerate(chunks):
                     new_metadata: ChunkMetadata = {
-                        "chunk_index": i,
+                        "chunk_index": chunk_index_offset + i,
                         "original_embedding_type": item.embedding_type,
                         "original_content_length": len(item.content),
                         "chunk_content_length": len(chunk_text),
                     }
-                    new_metadata.update(item.metadata)  # type: ignore
+                    new_metadata.update(inherited_metadata)  # type: ignore
                     chunk_item = IndexableContent(
                         embedding_type=output_embedding_type,
                         source_processor=self.name,
