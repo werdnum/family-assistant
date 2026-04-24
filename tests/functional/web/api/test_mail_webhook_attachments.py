@@ -1183,3 +1183,29 @@ async def test_delete_email_attachment_tolerates_malformed_sibling(
         assert entries[0] == malformed_entry  # raw preserved
         assert entries[1]["filename"] == "to-delete.pdf"
         assert entries[1].get("attachment_id") is None
+
+
+@pytest.mark.asyncio
+@pytest.mark.postgres
+async def test_webhook_rejects_request_when_app_config_is_missing(
+    api_client: httpx.AsyncClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """When ``app.state.config`` is absent, the webhook must fail loudly.
+
+    Silently accepting the request under default values would bypass
+    Mailgun signature verification (no signing key configured) and
+    persist attachments to a fallback directory the runtime registry
+    doesn't know about, so any saved attachment would become unreadable.
+    Reject with 503 instead.
+    """
+    # Deliberately skip ``_configure_app`` so ``app.state.config`` is unset.
+    monkeypatch.delattr(fastapi_app.state, "config", raising=False)
+
+    message_id = f"<mailgun-{uuid.uuid4()}@example.com>"
+    form = _mailgun_form(message_id=message_id)
+
+    response = await api_client.post("/webhook/mail", data=form)
+
+    assert response.status_code == 503, response.text
+    assert "config" in response.text.lower()

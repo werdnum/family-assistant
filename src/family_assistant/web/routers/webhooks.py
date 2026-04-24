@@ -14,7 +14,6 @@ from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from pydantic import BaseModel, ValidationError
 from starlette.datastructures import UploadFile as StarletteUploadFile
 
-from family_assistant.config_models import AppConfig, EmailIntakeConfig
 from family_assistant.email_intake.security import (
     EmailIntakePayloadTooLargeError,
     EmailIntakeSecurityError,
@@ -32,40 +31,11 @@ from family_assistant.web.dependencies import get_db
 from family_assistant.web.models import WebhookEventPayload
 
 if TYPE_CHECKING:
+    from family_assistant.config_models import AppConfig
     from family_assistant.events.webhook_source import WebhookEventSource
 
 logger = logging.getLogger(__name__)
 webhooks_router = APIRouter()
-
-# Default path if not found in config, though __main__ should set a default.
-DEFAULT_ATTACHMENT_STORAGE_PATH = "/mnt/data/mailbox/attachments_fallback"
-# Fallback for raw webhook dir if not in app config
-DEFAULT_MAILBOX_RAW_DIR_FALLBACK = "/mnt/data/mailbox/raw_requests_fallback"
-
-
-def select_email_attachment_base(
-    app_config: AppConfig | None,
-) -> tuple[str, bool]:
-    """Pick the on-disk base directory for saving an inbound email batch.
-
-    Returns ``(base_dir, persist_absolute_storage_path)``:
-
-    - If ``app_config.attachment_storage_path`` is set, use it as the base
-      and tell the caller to persist a path **relative** to that base on
-      ``received_emails.attachment_info.storage_path``. The runtime
-      registry rejoins the relative path against its configured
-      ``email_attachment_base_path`` at read time, which keeps the
-      stored row portable across environment moves.
-    - When no app config is attached to the request (bootstrap race,
-      misconfiguration), fall back to ``DEFAULT_ATTACHMENT_STORAGE_PATH``
-      and signal that the caller must persist the **absolute** disk path.
-      The runtime registry that later reads the attachment may be
-      configured with a different base than the fallback we wrote to, so
-      a relative path would point at the wrong mailbox root and 404.
-    """
-    if app_config and app_config.attachment_storage_path:
-        return app_config.attachment_storage_path, False
-    return DEFAULT_ATTACHMENT_STORAGE_PATH, True
 
 
 async def _save_raw_mail_webhook(
@@ -111,9 +81,45 @@ async def handle_mail_webhook(
     """
     logger.info("Received POST request on /webhook/mail")
 
-    mailbox_raw_dir_to_use: str = DEFAULT_MAILBOX_RAW_DIR_FALLBACK
+    # ``Assistant.setup_dependencies()`` attaches ``config`` to
+    # ``app.state`` before the HTTP server starts accepting traffic. A
+    # request arriving without it is a boot-order / misconfiguration bug:
+    # reject it outright rather than silently accepting it under
+    # defaults, which would bypass Mailgun signature verification
+    # (no signing key configured) and persist attachments under a
+    # directory the runtime registry doesn't know about.
     config: AppConfig | None = getattr(request.app.state, "config", None)
-    email_intake_config = config.email_intake if config else EmailIntakeConfig()
+    if config is None:
+        logger.error(
+            "/webhook/mail received a request before app.state.config "
+            "was attached; rejecting with 503."
+        )
+        raise HTTPException(
+            status_code=503,
+            detail="Email webhook not ready: application config unavailable",
+        )
+    email_intake_config = config.email_intake
+    if not config.mailbox_raw_dir:
+        logger.error(
+            "/webhook/mail: config.mailbox_raw_dir is not set; refusing to "
+            "accept inbound email without a configured raw-archive location."
+        )
+        raise HTTPException(
+            status_code=503,
+            detail="Email webhook not ready: mailbox_raw_dir unconfigured",
+        )
+    if not config.attachment_storage_path:
+        logger.error(
+            "/webhook/mail: config.attachment_storage_path is not set; "
+            "refusing to accept inbound email without a configured "
+            "attachment directory."
+        )
+        raise HTTPException(
+            status_code=503,
+            detail=("Email webhook not ready: attachment_storage_path unconfigured"),
+        )
+    mailbox_raw_dir_to_use: str = config.mailbox_raw_dir
+    attachment_storage_path: str = config.attachment_storage_path
 
     content_length = request.headers.get("content-length")
     if content_length:
@@ -138,13 +144,6 @@ async def handle_mail_webhook(
     except EmailIntakePayloadTooLargeError as exc:
         logger.warning("Rejecting oversized inbound email webhook: %s", exc)
         raise HTTPException(status_code=413, detail=str(exc)) from exc
-
-    if config and config.mailbox_raw_dir:
-        mailbox_raw_dir_to_use = config.mailbox_raw_dir
-    if mailbox_raw_dir_to_use == DEFAULT_MAILBOX_RAW_DIR_FALLBACK:
-        logger.warning(
-            f"mailbox_raw_dir not found in app.state.config, using fallback: {DEFAULT_MAILBOX_RAW_DIR_FALLBACK}"
-        )
 
     try:
         # FastAPI's request.form() will parse multipart/form-data
@@ -225,18 +224,13 @@ async def handle_mail_webhook(
             email_attachment_batch_id = str(uuid.uuid4())
             total_attachment_size = 0
 
-            # Get attachment storage path from app config (or fallback).
-            app_config: AppConfig | None = getattr(request.app.state, "config", None)
-            attachment_storage_path, persist_absolute_storage_path = (
-                select_email_attachment_base(app_config)
-            )
-
             # On-disk write location for the batch: resolved against the
-            # current mailbox base. When config is present we persist a
-            # relative path so environment moves (mounts, restores) stay
-            # portable: ``AttachmentRegistry.get_attachment_path`` rejoins
-            # the relative path against the configured
-            # ``email_attachment_base_path`` at read time.
+            # configured mailbox base (already validated non-empty at the
+            # top of the handler). We persist a path *relative* to that
+            # base so environment moves (mounts, restores) stay portable:
+            # ``AttachmentRegistry.get_attachment_path`` rejoins the
+            # relative path against ``email_attachment_base_path`` at
+            # read time.
             base_attachment_dir = os.path.join(
                 attachment_storage_path, email_attachment_batch_id
             )
@@ -257,23 +251,16 @@ async def handle_mail_webhook(
                         # (message_id, storage_path).
                         persisted_filename = f"{i}-{safe_filename}"
                         # Disk I/O happens at the absolute path; the
-                        # registry row stores a relative path when we
-                        # have an app config (the stable mailbox base is
-                        # known, so reads rejoin it safely), or the
-                        # absolute disk path otherwise (no stable base →
-                        # persist the fully-qualified path so later
-                        # reads can find the file regardless of whatever
-                        # base the runtime registry is configured with).
+                        # registry row stores the relative path so
+                        # environment moves (mounts, restores) stay
+                        # portable. ``AttachmentRegistry`` rejoins it
+                        # against ``email_attachment_base_path`` at read
+                        # time.
                         disk_path = os.path.join(
                             base_attachment_dir, persisted_filename
                         )
-                        relative_storage_path = os.path.join(
+                        persisted_storage_path = os.path.join(
                             email_attachment_batch_id, persisted_filename
-                        )
-                        persisted_storage_path = (
-                            disk_path
-                            if persist_absolute_storage_path
-                            else relative_storage_path
                         )
 
                         # Save the uploaded file
