@@ -502,10 +502,20 @@ class Assistant:
             AttachmentRegistryConfig,
         )
 
+        # Include the mailbox base so legacy email attachments with a
+        # relative ``storage_path`` resolve against a stable directory
+        # instead of the worker process's cwd.
+        registry_config_payload = cast(
+            "AttachmentRegistryConfig", attachment_config.model_dump()
+        )
+        if self.config.attachment_storage_path:
+            registry_config_payload["email_attachment_base_path"] = (
+                self.config.attachment_storage_path
+            )
         self.attachment_registry = AttachmentRegistry(
             storage_path=attachment_storage_path,
             db_engine=self.database_engine,
-            config=cast("AttachmentRegistryConfig", attachment_config.model_dump()),
+            config=registry_config_payload,
         )
 
         # Store in FastAPI app state for web access

@@ -438,6 +438,7 @@ async def get_full_document_content_tool(
                 db_context=db_context,
                 message_id_header=source_id,
             )
+        registry_available = exec_context.attachment_registry is not None
 
         # Try to return original file if available
         if file_path and await asyncio.to_thread(pathlib.Path(file_path).exists):
@@ -488,7 +489,8 @@ async def get_full_document_content_tool(
                     )
                     if email_attachments_summary:
                         summary_text = _format_email_attachments_text(
-                            email_attachments_summary
+                            email_attachments_summary,
+                            registry_available=registry_available,
                         )
                         if summary_text:
                             display_text = (
@@ -521,7 +523,10 @@ async def get_full_document_content_tool(
 
         if email_attachments_summary:
             body_text = text_content or ""
-            summary_text = _format_email_attachments_text(email_attachments_summary)
+            summary_text = _format_email_attachments_text(
+                email_attachments_summary,
+                registry_available=registry_available,
+            )
             display_text = (
                 f"{body_text}\n\nAttachments:\n{summary_text}"
                 if summary_text
@@ -665,12 +670,16 @@ async def reindex_email_tool(
 
 def _format_email_attachments_text(
     attachments: list[EmailAttachmentSummary],
+    *,
+    registry_available: bool,
 ) -> str:
     """Format an email's attachment summary as a human-readable list.
 
-    Attachments without an ``attachment_id`` are rendered with a hint that
-    they need reindexing before they can be opened with
-    ``read_text_attachment`` or ``get_attachment_info``.
+    Attachments without an ``attachment_id`` are rendered with a hint so
+    the caller knows what to do next. The hint is only actionable when
+    an ``AttachmentRegistry`` is configured — otherwise ``reindex_email``
+    would hard-fail — so we reword it to describe the operator action
+    needed instead.
     """
     lines: list[str] = []
     for att in attachments:
@@ -681,11 +690,18 @@ def _format_email_attachments_text(
                 f"- {att['filename']} ({att['mime_type']}, {size_label}) "
                 f"— attachment_id: {att['attachment_id']}"
             )
-        else:
+        elif registry_available:
             lines.append(
                 f"- {att['filename']} ({att['mime_type']}, {size_label}) "
                 "— attachment_id not yet assigned; call `reindex_email` on "
                 "this document to register it, then call this tool again."
+            )
+        else:
+            lines.append(
+                f"- {att['filename']} ({att['mime_type']}, {size_label}) "
+                "— attachment_id not available: this deployment has no "
+                "AttachmentRegistry configured, so attachments cannot be "
+                "registered. Contact the operator to enable the registry."
             )
     return "\n".join(lines)
 

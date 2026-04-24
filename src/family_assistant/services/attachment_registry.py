@@ -35,6 +35,12 @@ class AttachmentRegistryConfig(TypedDict, total=False):
     max_file_size: int
     max_multimodal_size: int
     storage_path: str
+    # Stable base directory for externally-managed email attachments.
+    # When set, a relative ``storage_path`` on an email row is resolved
+    # against this base (instead of the worker's cwd), so legacy rows
+    # from installs that configured ``attachment_storage_path``
+    # relatively still resolve after a restart.
+    email_attachment_base_path: str
     large_tool_result_threshold_kb: int
     allowed_mime_types: list[str]
 
@@ -275,6 +281,11 @@ class AttachmentRegistry:
             self.allowed_mime_types = set(allowed_types)
         else:
             self.allowed_mime_types = DEFAULT_ALLOWED_MIME_TYPES
+
+        email_base = attachment_config.get("email_attachment_base_path")
+        self.email_attachment_base_path: Path | None = (
+            Path(email_base).resolve() if email_base else None
+        )
 
         logger.info(
             f"AttachmentRegistry initialized with storage path: {self.storage_path}, "
@@ -1214,16 +1225,25 @@ class AttachmentRegistry:
         """
         if stored_path:
             candidate = Path(stored_path)
-            # For non-email sources, registry-managed uploads persist
-            # ``storage_path`` as a relative shard path (e.g.
-            # ``ab/<uuid>...``); resolve those against ``self.storage_path``
-            # so lookup is not cwd-dependent and cannot escape the managed
-            # directory. Email attachments live in an externally-managed
-            # mailbox directory and the path is used verbatim — current
-            # rows are absolute, legacy rows may be relative to the
-            # mailbox configuration.
-            if source_type != "email" and not candidate.is_absolute():
-                candidate = self.storage_path / candidate
+            # Non-email sources keep ``storage_path`` as a relative shard
+            # path (e.g. ``ab/<uuid>...``); resolve against the
+            # registry's managed ``self.storage_path`` so lookups are
+            # cwd-independent and cannot escape the managed directory.
+            #
+            # Email attachments live in an externally-managed mailbox
+            # directory. Current rows are absolute; legacy rows from
+            # deployments that configured ``attachment_storage_path``
+            # relatively may still be relative. Resolve those against
+            # ``email_attachment_base_path`` (if configured) so restarts
+            # from a different cwd don't break them. When no base is
+            # configured we fall back to using the relative path as-is,
+            # preserving pre-PR behavior.
+            if not candidate.is_absolute():
+                if source_type == "email":
+                    if self.email_attachment_base_path is not None:
+                        candidate = self.email_attachment_base_path / candidate
+                else:
+                    candidate = self.storage_path / candidate
             if candidate.is_file():
                 return candidate
 
