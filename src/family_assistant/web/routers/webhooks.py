@@ -99,22 +99,16 @@ async def handle_mail_webhook(
             detail="Email webhook not ready: application config unavailable",
         )
     email_intake_config = config.email_intake
-    if not config.attachment_storage_path:
-        logger.error(
-            "/webhook/mail: config.attachment_storage_path is not set; "
-            "refusing to accept inbound email without a configured "
-            "attachment directory."
-        )
-        raise HTTPException(
-            status_code=503,
-            detail=("Email webhook not ready: attachment_storage_path unconfigured"),
-        )
     # ``mailbox_raw_dir`` is optional — it only drives raw-request
     # archiving for debugging/replay. When unset we skip the archive
     # step but still accept the email; the core intake path doesn't
     # depend on it.
     mailbox_raw_dir_to_use: str | None = config.mailbox_raw_dir
-    attachment_storage_path: str = config.attachment_storage_path
+    # ``attachment_storage_path`` is only needed when the email has
+    # attachments — the check is deferred into the attachment loop
+    # below so attachment-free mail still gets accepted even in the
+    # unusual case where this field is unset.
+    attachment_storage_path: str | None = config.attachment_storage_path
 
     content_length = request.headers.get("content-length")
     if content_length:
@@ -214,16 +208,37 @@ async def handle_mail_webhook(
         # that avoids race conditions.
         processed_attachments: list[AttachmentData] = []
         attachment_count_str = form_data.get("attachment-count")
-        if isinstance(attachment_count_str, str) and attachment_count_str.isdigit():
+        if (
+            isinstance(attachment_count_str, str)
+            and attachment_count_str.isdigit()
+            and int(attachment_count_str) > 0
+        ):
+            if not attachment_storage_path:
+                # Only required when the email has attachments; attachment-
+                # free mail goes through without needing a mailbox dir.
+                logger.error(
+                    "/webhook/mail: attachment-count=%s but "
+                    "config.attachment_storage_path is not set; refusing "
+                    "to accept inbound email with attachments without a "
+                    "configured attachment directory.",
+                    attachment_count_str,
+                )
+                raise HTTPException(
+                    status_code=503,
+                    detail=(
+                        "Email webhook not ready: attachment_storage_path "
+                        "unconfigured but email has attachments"
+                    ),
+                )
             attachment_count = int(attachment_count_str)
             # Generate a single UUID for this email's attachments directory
             email_attachment_batch_id = str(uuid.uuid4())
             total_attachment_size = 0
 
             # On-disk write location for the batch: resolved against the
-            # configured mailbox base (already validated non-empty at the
-            # top of the handler). We persist a path *relative* to that
-            # base so environment moves (mounts, restores) stay portable:
+            # configured mailbox base (validated non-empty just above).
+            # We persist a path *relative* to that base so environment
+            # moves (mounts, restores) stay portable:
             # ``AttachmentRegistry.get_attachment_path`` rejoins the
             # relative path against ``email_attachment_base_path`` at
             # read time.

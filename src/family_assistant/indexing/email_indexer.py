@@ -511,9 +511,40 @@ class EmailIndexer:
                         attachment_info_dirty = True
                     continue
 
-                # Now that the file is confirmed on disk, register (or reuse)
-                # the registry row and persist the canonical ``attachment_id``
-                # back to ``received_emails.attachment_info``.
+                # If the email row already carries an ``attachment_id``,
+                # verify the registry row still exists before trusting
+                # it: a prior delete (or partial write-back failure) can
+                # leave the email pointing at a dangling id that
+                # ``read_text_attachment`` / ``/api/attachments/{id}``
+                # would 404 forever. Clear dangling ids so the
+                # ``attachment_id is None`` branch below re-registers
+                # the attachment on this same pass.
+                if att.attachment_id is not None:
+                    existing_metadata = await attachment_registry.get_attachment(
+                        db_context, att.attachment_id
+                    )
+                    if existing_metadata is None:
+                        logger.warning(
+                            "Clearing stale attachment_id %s for email %s "
+                            "attachment '%s' — no matching "
+                            "attachment_metadata row; will re-register.",
+                            att.attachment_id,
+                            email_db_id,
+                            att.filename,
+                        )
+                        att.attachment_id = None
+                        # Write the cleared value back to the slot now
+                        # (the re-register below will overwrite it again
+                        # on success; if re-registration fails, the row
+                        # still ends up with the stale id removed rather
+                        # than persisted).
+                        new_attachment_info[attachment_index] = att.model_dump()
+                        attachment_info_dirty = True
+
+                # Now that the file is confirmed on disk and any stale
+                # id is cleared, register (or reuse) the registry row
+                # and persist the canonical ``attachment_id`` back to
+                # ``received_emails.attachment_info``.
                 if att.attachment_id is None:
                     resolved_id = await _register_resolvable_email_attachment(
                         db_context=db_context,

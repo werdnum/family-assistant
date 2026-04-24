@@ -1345,3 +1345,124 @@ async def test_reindex_email_tool_does_not_match_similar_email_ids(
             )
         )
         assert fresh is not None
+
+
+@pytest.mark.asyncio
+@pytest.mark.postgres
+async def test_webhook_accepts_attachment_free_email_without_attachment_storage_path(
+    api_client: httpx.AsyncClient,
+    db_engine: AsyncEngine,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """``attachment_storage_path`` is only needed for emails with
+    attachments. An attachment-free email must still be accepted even
+    when the config field is empty — the check is deferred into the
+    attachment loop and gated on ``attachment-count > 0``.
+    """
+    monkeypatch.setattr(
+        fastapi_app.state,
+        "config",
+        AppConfig(
+            attachment_storage_path="",
+            mailbox_raw_dir=str(tmp_path / "raw"),
+            email_intake=EmailIntakeConfig(
+                mailgun_webhook_signing_key=SIGNING_KEY,
+                allowed_sender_addresses=[SENDER],
+                allowed_recipient_addresses=[RECIPIENT],
+                require_authenticated_sender=False,
+            ),
+        ),
+        raising=False,
+    )
+    monkeypatch.setattr(
+        fastapi_app.state,
+        "email_intake_dns_resolver",
+        build_dns_for(domain=SENDER_DOMAIN),
+        raising=False,
+    )
+
+    message_id = f"<mailgun-{uuid.uuid4()}@example.com>"
+    form = _mailgun_form(message_id=message_id)
+    # No attachment-count set → attachment-free email.
+
+    response = await api_client.post("/webhook/mail", data=form)
+    assert response.status_code == 200, response.text
+
+    async with DatabaseContext(engine=db_engine) as db_context:
+        row = await db_context.fetch_one(
+            select(received_emails_table.c.message_id_header).where(
+                received_emails_table.c.message_id_header == message_id
+            )
+        )
+        assert row is not None
+
+
+@pytest.mark.asyncio
+@pytest.mark.postgres
+async def test_email_indexer_reregisters_when_stored_id_is_dangling(
+    db_engine: AsyncEngine,
+    tmp_path: Path,
+) -> None:
+    """If the email row carries an ``attachment_id`` whose registry row
+    has since been deleted (or never existed due to a partial write-back
+    failure), reindexing must detect that the id is dangling and
+    re-register instead of trusting it and surfacing a handle that
+    perpetually 404s via ``read_text_attachment`` /
+    ``/api/attachments/{id}``.
+    """
+    external_file = tmp_path / "doc.pdf"
+    external_file.write_bytes(b"PDF bytes")
+
+    registry = AttachmentRegistry(
+        storage_path=str(tmp_path / "registry"),
+        db_engine=db_engine,
+        config=None,
+    )
+    pipeline = MagicMock(spec=IndexingPipeline)
+    pipeline.run = AsyncMock(return_value=None)
+    indexer = EmailIndexer(pipeline=pipeline, attachment_registry=registry)
+
+    dangling_id = str(uuid.uuid4())
+    message_id = f"<mailgun-{uuid.uuid4()}@example.com>"
+    async with DatabaseContext(engine=db_engine) as db_context:
+        insert_result = await db_context.execute_with_retry(
+            insert(received_emails_table)
+            .values(
+                message_id_header=message_id,
+                sender_address=SENDER,
+                recipient_address=RECIPIENT,
+                subject="Dangling",
+                stripped_text="body",
+                attachment_info=[
+                    {
+                        "filename": "doc.pdf",
+                        "content_type": "application/pdf",
+                        "size": external_file.stat().st_size,
+                        "storage_path": str(external_file),
+                        "attachment_id": dangling_id,
+                    }
+                ],
+            )
+            .returning(received_emails_table.c.id)
+        )
+        email_db_id = insert_result.scalar_one()
+
+        exec_context = _build_indexer_context(db_context, registry)
+        await indexer.handle_index_email(exec_context, {"email_db_id": email_db_id})
+
+        refreshed = await db_context.fetch_one(
+            select(received_emails_table.c.attachment_info).where(
+                received_emails_table.c.id == email_db_id
+            )
+        )
+        assert refreshed is not None
+        attachments = [
+            AttachmentData.model_validate(item) for item in refreshed["attachment_info"]
+        ]
+        new_id = attachments[0].attachment_id
+        assert new_id is not None
+        # Row was replaced, not retained.
+        assert new_id != dangling_id
+        # The new id resolves in the registry.
+        assert await registry.get_attachment(db_context, new_id) is not None
