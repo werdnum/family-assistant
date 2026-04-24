@@ -1209,3 +1209,139 @@ async def test_webhook_rejects_request_when_app_config_is_missing(
 
     assert response.status_code == 503, response.text
     assert "config" in response.text.lower()
+
+
+@pytest.mark.asyncio
+@pytest.mark.postgres
+async def test_webhook_accepts_email_when_mailbox_raw_dir_is_unset(
+    api_client: httpx.AsyncClient,
+    db_engine: AsyncEngine,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """``mailbox_raw_dir`` is optional — it drives only raw-request
+    archiving for debug/replay. Deployments that don't set it must still
+    be able to receive email; the webhook should skip the archive step
+    instead of rejecting the request.
+    """
+    # Configure the app with mailbox_raw_dir deliberately unset.
+    monkeypatch.setattr(
+        fastapi_app.state,
+        "config",
+        AppConfig(
+            attachment_storage_path=str(tmp_path / "mailbox"),
+            mailbox_raw_dir=None,
+            email_intake=EmailIntakeConfig(
+                mailgun_webhook_signing_key=SIGNING_KEY,
+                allowed_sender_addresses=[SENDER],
+                allowed_recipient_addresses=[RECIPIENT],
+                require_authenticated_sender=False,
+            ),
+        ),
+        raising=False,
+    )
+    monkeypatch.setattr(
+        fastapi_app.state,
+        "email_intake_dns_resolver",
+        build_dns_for(domain=SENDER_DOMAIN),
+        raising=False,
+    )
+
+    message_id = f"<mailgun-{uuid.uuid4()}@example.com>"
+    form = _mailgun_form(message_id=message_id)
+
+    response = await api_client.post("/webhook/mail", data=form)
+
+    assert response.status_code == 200, response.text
+    # The email still lands in the database — only the raw-archive step
+    # was skipped.
+    async with DatabaseContext(engine=db_engine) as db_context:
+        row = await db_context.fetch_one(
+            select(received_emails_table.c.message_id_header).where(
+                received_emails_table.c.message_id_header == message_id
+            )
+        )
+        assert row is not None
+
+
+@pytest.mark.asyncio
+@pytest.mark.postgres
+async def test_reindex_email_tool_does_not_match_similar_email_ids(
+    db_engine: AsyncEngine,
+    tmp_path: Path,
+) -> None:
+    """``reindex_email`` must not be fooled by the SQL LIKE wildcards in
+    ``task_id.startswith("index_email_{email_db_id}_")``: without
+    ``autoescape``, the prefix for email ``1`` also matches tasks for
+    emails ``12`` / ``100`` / etc., so ``already_in_flight`` would
+    report another email's task and overwrite ``indexing_task_id`` on
+    the wrong row.
+    """
+    async with DatabaseContext(engine=db_engine) as db_context:
+        # Target email: id=1 (no in-flight task of its own).
+        target_id_insert = await db_context.execute_with_retry(
+            insert(received_emails_table)
+            .values(
+                message_id_header=f"<target-{uuid.uuid4()}@example.com>",
+                sender_address=SENDER,
+                recipient_address=RECIPIENT,
+                subject="Target",
+                stripped_text="body",
+                attachment_info=[],
+                indexing_task_id=None,
+            )
+            .returning(received_emails_table.c.id)
+        )
+        target_email_id = target_id_insert.scalar_one()
+
+        # Sibling task for an email with a related numeric id (the LIKE
+        # predicate ``index_email_{id}_%`` would otherwise match this).
+        sibling_id = int(f"{target_email_id}9")
+        sibling_task_id = f"index_email_{sibling_id}_{uuid.uuid4()}"
+        await db_context.tasks.enqueue(
+            task_id=sibling_task_id,
+            task_type="index_email",
+            payload={"email_db_id": sibling_id},
+        )
+
+        # Register a document row for the target email so
+        # ``reindex_email_tool`` can resolve it.
+        target_row = await db_context.fetch_one(
+            select(received_emails_table.c.message_id_header).where(
+                received_emails_table.c.id == target_email_id
+            )
+        )
+        assert target_row is not None
+        message_id_header = target_row["message_id_header"]
+        doc_row = await db_context.execute_with_retry(
+            sa_text(
+                "INSERT INTO documents (source_type, source_id, visibility_labels) "
+                "VALUES ('email', :sid, '[]') RETURNING id"
+            ),
+            {"sid": message_id_header},
+        )
+        target_document_id = doc_row.scalar_one()
+
+        registry = AttachmentRegistry(
+            storage_path=str(tmp_path / "registry"),
+            db_engine=db_engine,
+            config=None,
+        )
+        exec_context = _build_indexer_context(db_context, registry)
+
+        result = await reindex_email_tool(
+            exec_context=exec_context, document_id=target_document_id
+        )
+
+        data = result.get_data()
+        assert isinstance(data, dict)
+        # We must *not* be told the sibling's task is in flight for us.
+        assert data.get("status") != "already_in_flight"
+        assert data.get("task_id") != sibling_task_id
+        # A fresh reindex task was enqueued for our own email.
+        fresh = await db_context.fetch_one(
+            select(tasks_table.c.task_id).where(
+                tasks_table.c.task_id == data["task_id"]
+            )
+        )
+        assert fresh is not None

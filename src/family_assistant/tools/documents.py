@@ -627,10 +627,17 @@ async def reindex_email_tool(
     email_db_id = email_row["id"]
 
     task_prefix = f"index_email_{email_db_id}_"
+    # ``startswith`` compiles to a SQL ``LIKE`` predicate, and the
+    # underscores in ``index_email_{email_db_id}_`` are LIKE wildcards
+    # — without ``autoescape`` the prefix for email ``1`` would also
+    # match ``index_email_12_...``, ``index_email_100_...``, etc. and
+    # cause ``reindex_email`` to report ``already_in_flight`` for the
+    # wrong email (and overwrite ``received_emails.indexing_task_id``
+    # with another email's task).
     existing_task = await db_context.fetch_one(
         select(tasks_table.c.task_id)
         .where(tasks_table.c.task_type == "index_email")
-        .where(tasks_table.c.task_id.startswith(task_prefix))
+        .where(tasks_table.c.task_id.startswith(task_prefix, autoescape=True))
         .where(tasks_table.c.status.in_(("pending", "processing")))
         .limit(1)
     )

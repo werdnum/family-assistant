@@ -99,15 +99,6 @@ async def handle_mail_webhook(
             detail="Email webhook not ready: application config unavailable",
         )
     email_intake_config = config.email_intake
-    if not config.mailbox_raw_dir:
-        logger.error(
-            "/webhook/mail: config.mailbox_raw_dir is not set; refusing to "
-            "accept inbound email without a configured raw-archive location."
-        )
-        raise HTTPException(
-            status_code=503,
-            detail="Email webhook not ready: mailbox_raw_dir unconfigured",
-        )
     if not config.attachment_storage_path:
         logger.error(
             "/webhook/mail: config.attachment_storage_path is not set; "
@@ -118,7 +109,11 @@ async def handle_mail_webhook(
             status_code=503,
             detail=("Email webhook not ready: attachment_storage_path unconfigured"),
         )
-    mailbox_raw_dir_to_use: str = config.mailbox_raw_dir
+    # ``mailbox_raw_dir`` is optional — it only drives raw-request
+    # archiving for debugging/replay. When unset we skip the archive
+    # step but still accept the email; the core intake path doesn't
+    # depend on it.
+    mailbox_raw_dir_to_use: str | None = config.mailbox_raw_dir
     attachment_storage_path: str = config.attachment_storage_path
 
     content_length = request.headers.get("content-length")
@@ -181,13 +176,14 @@ async def handle_mail_webhook(
                 authentication.dkim_domain,
             )
         target_user_id = resolve_target_user_id(form_data, email_intake_config)
-        await _save_raw_mail_webhook(
-            raw_body_content=raw_body_content,
-            mailbox_raw_dir=mailbox_raw_dir_to_use,
-            content_type_header=request.headers.get(
-                "content-type", "unknown_content_type"
-            ),
-        )
+        if mailbox_raw_dir_to_use is not None:
+            await _save_raw_mail_webhook(
+                raw_body_content=raw_body_content,
+                mailbox_raw_dir=mailbox_raw_dir_to_use,
+                content_type_header=request.headers.get(
+                    "content-type", "unknown_content_type"
+                ),
+            )
 
         # --- Parse Email Date ---
         email_date_parsed: datetime | None = None
