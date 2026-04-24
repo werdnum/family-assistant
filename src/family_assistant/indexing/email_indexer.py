@@ -482,11 +482,13 @@ class EmailIndexer:
                 # ``att.storage_path`` is stored relative to the configured
                 # mailbox base for portability across mounts/restores. The
                 # downstream pipeline (e.g. PDFTextExtractor) reads ``ref``
-                # as a direct file path, so resolve to absolute here via
-                # the registry — which rejoins against
-                # ``email_attachment_base_path``. This also transparently
-                # handles pre-PR absolute paths (registry leaves them
-                # as-is).
+                # as a direct file path, so resolve to a concrete absolute
+                # path here. Prefer the registry (which knows
+                # ``email_attachment_base_path`` and checks existence); if
+                # no registry is available, rejoin against our own
+                # constructor-configured base. Anything we can't reliably
+                # resolve is logged loudly and skipped — we never pass a
+                # cwd-relative path through to the pipeline.
                 resolved_path: str | None = None
                 if exec_context.attachment_registry is not None:
                     resolved = exec_context.attachment_registry.get_attachment_path(
@@ -494,21 +496,34 @@ class EmailIndexer:
                         stored_path=att.storage_path,
                         source_type="email",
                     )
-                    if resolved is not None:
-                        resolved_path = str(resolved)
-                if resolved_path is None:
-                    # No registry (or file missing there). Rejoin a
-                    # relative ``storage_path`` against our own configured
-                    # mailbox base so the pipeline still sees a concrete
-                    # absolute path even on registry-less deployments.
-                    # Absolute paths (pre-PR rows) are used verbatim.
+                    if resolved is None:
+                        logger.warning(
+                            "Email attachment %s for email %s is registered "
+                            "but the file could not be located on disk "
+                            "(stored_path=%s); skipping attachment extraction.",
+                            att.filename,
+                            email_db_id,
+                            att.storage_path,
+                        )
+                        continue
+                    resolved_path = str(resolved)
+                else:
                     candidate = Path(att.storage_path)
-                    if (
-                        not candidate.is_absolute()
-                        and self.email_attachment_base_path is not None
-                    ):
-                        candidate = self.email_attachment_base_path / candidate
-                    resolved_path = str(candidate)
+                    if candidate.is_absolute():
+                        resolved_path = str(candidate)
+                    elif self.email_attachment_base_path is not None:
+                        resolved_path = str(self.email_attachment_base_path / candidate)
+                    else:
+                        logger.warning(
+                            "Cannot resolve relative email attachment "
+                            "storage_path=%s for email %s: no "
+                            "AttachmentRegistry is configured and no "
+                            "email_attachment_base_path was passed to "
+                            "EmailIndexer. Skipping attachment extraction.",
+                            att.storage_path,
+                            email_db_id,
+                        )
+                        continue
 
                 logger.info(
                     f"Preparing attachment for pipeline: {att.filename} "
