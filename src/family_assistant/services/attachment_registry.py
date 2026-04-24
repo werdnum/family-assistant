@@ -640,7 +640,9 @@ class AttachmentRegistry:
         if success:
             # Only delete file if database deletion succeeded
             file_deleted = self._delete_attachment_file(
-                attachment_id, stored_path=stored_path
+                attachment_id,
+                stored_path=stored_path,
+                source_type=source_type,
             )
             # For email attachments the file is externally owned and the
             # ``received_emails.attachment_info`` JSON still references the
@@ -1284,26 +1286,39 @@ class AttachmentRegistry:
         self,
         attachment_id: str,
         stored_path: str | None = None,
+        source_type: str | None = None,
     ) -> bool:
         """
         Delete an attachment file (private method).
 
-        Unlinks files the registry manages (i.e. files inside its own
-        ``storage_path`` directory). Skips the unlink when ``stored_path``
-        points at an externally-managed location (for example, an email
-        attachment in the mailbox directory); that file's lifecycle is owned
-        by the producer (the ``received_emails.attachment_info`` record still
-        references it), so the registry must not remove it here.
+        Only unlinks files the registry owns. Files for externally-managed
+        sources stay on disk so the producer can keep using them — for
+        example, an email attachment lives under the mailbox directory and
+        the ``received_emails.attachment_info`` record still references it,
+        so the registry must not remove it here.
+
+        Ownership is decided from ``source_type`` (the authoritative
+        producer marker) with a defensive path-containment fallback: even
+        if some future ``source_type`` is flagged as registry-owned, we
+        still refuse to unlink a file outside ``self.storage_path``.
 
         Args:
             attachment_id: The attachment UUID
             stored_path: Optional ``storage_path`` from the attachment
-                metadata. If the path lies outside the registry's managed
-                storage directory, file deletion is skipped.
+                metadata.
+            source_type: Optional ``attachment_metadata.source_type``. When
+                this is ``"email"`` the file is externally owned and the
+                unlink is skipped regardless of where it lives.
 
         Returns:
             True if a registry-managed file was deleted, False otherwise.
         """
+        if source_type == "email":
+            logger.info(
+                f"Skipping file unlink for email attachment {attachment_id} "
+                f"(externally owned by received_emails; storage_path={stored_path})"
+            )
+            return False
         if stored_path and not self._path_is_managed(stored_path):
             logger.info(
                 f"Skipping file unlink for externally-managed attachment "

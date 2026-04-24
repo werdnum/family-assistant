@@ -33,10 +33,11 @@ from family_assistant.storage.context import DatabaseContext
 from family_assistant.storage.email import AttachmentData, received_emails_table
 from family_assistant.storage.tasks import tasks_table
 from family_assistant.tools.documents import (
+    get_full_document_content_tool,
     reindex_email_tool,
     resolve_email_attachments,
 )
-from family_assistant.tools.types import ToolExecutionContext
+from family_assistant.tools.types import ToolExecutionContext, ToolResult
 from family_assistant.web.app_creator import app as fastapi_app
 from tests.mocks.email_auth import build_dns_for
 
@@ -525,6 +526,134 @@ async def test_email_indexer_applies_chunk_index_offset_per_attachment(
     # Offsets must be large enough that no realistic per-attachment chunk
     # count could bridge them.
     assert abs(offsets[0] - offsets[1]) >= 1_000_000
+
+
+@pytest.mark.asyncio
+@pytest.mark.postgres
+async def test_reindex_email_then_get_full_document_content_populates_ids(
+    db_engine: AsyncEngine,
+    tmp_path: Path,
+) -> None:
+    """Happy-path end-to-end: a legacy email surfaces null attachment_ids;
+    ``reindex_email`` enqueues a task; running the indexer populates the
+    IDs; the next ``get_full_document_content`` call surfaces them.
+
+    Exercises the public contract shipped to the LLM — reindex_email is
+    the LLM's entry point for registering legacy attachments, and
+    get_full_document_content is how they read the results.
+    """
+    external_file = tmp_path / "ticket.pdf"
+    external_file.write_bytes(b"PDF body")
+
+    registry = AttachmentRegistry(
+        storage_path=str(tmp_path / "registry"),
+        db_engine=db_engine,
+        config=None,
+    )
+    pipeline = MagicMock(spec=IndexingPipeline)
+    pipeline.run = AsyncMock(return_value=None)
+    indexer = EmailIndexer(pipeline=pipeline)
+
+    message_id = f"<mailgun-{uuid.uuid4()}@example.com>"
+
+    async with DatabaseContext(engine=db_engine) as db_context:
+        email_insert = await db_context.execute_with_retry(
+            insert(received_emails_table)
+            .values(
+                message_id_header=message_id,
+                sender_address=SENDER,
+                recipient_address=RECIPIENT,
+                subject="Legacy ticket",
+                stripped_text="Body",
+                attachment_info=[
+                    {
+                        "filename": "ticket.pdf",
+                        "content_type": "application/pdf",
+                        "size": external_file.stat().st_size,
+                        "storage_path": str(external_file),
+                    }
+                ],
+            )
+            .returning(received_emails_table.c.id)
+        )
+        email_db_id = email_insert.scalar_one()
+
+        await db_context.execute_with_retry(
+            sa_text(
+                "INSERT INTO documents (source_type, source_id, title, "
+                "visibility_labels) VALUES ('email', :sid, :title, '[]')"
+            ),
+            {"sid": message_id, "title": "Legacy ticket"},
+        )
+        doc_row = await db_context.fetch_one(
+            sa_text(
+                "SELECT id FROM documents WHERE source_type = 'email' "
+                "AND source_id = :sid"
+            ),
+            {"sid": message_id},
+        )
+        assert doc_row is not None
+        document_id = doc_row["id"]
+
+        exec_context = _build_indexer_context(db_context, registry)
+
+        # 1. Reading the email before any reindex surfaces attachment_id=null.
+        pre_result = await get_full_document_content_tool(
+            exec_context=exec_context, document_id=document_id
+        )
+        assert isinstance(pre_result, ToolResult)
+        pre_data = pre_result.get_data()
+        assert isinstance(pre_data, dict)
+        assert pre_data["attachments"][0]["attachment_id"] is None
+
+        # 2. reindex_email enqueues an index_email task and records it.
+        reindex_result = await reindex_email_tool(
+            exec_context=exec_context, document_id=document_id
+        )
+        reindex_data = reindex_result.get_data()
+        assert isinstance(reindex_data, dict)
+        assert reindex_data["status"] == "enqueued"
+        assert reindex_data["email_db_id"] == email_db_id
+        enqueued_task_id = reindex_data["task_id"]
+
+        task_row = await db_context.fetch_one(
+            select(
+                tasks_table.c.task_id,
+                tasks_table.c.task_type,
+                tasks_table.c.status,
+            ).where(tasks_table.c.task_id == enqueued_task_id)
+        )
+        assert task_row is not None
+        assert task_row["task_type"] == "index_email"
+        assert task_row["status"] == "pending"
+
+        email_row = await db_context.fetch_one(
+            select(received_emails_table.c.indexing_task_id).where(
+                received_emails_table.c.id == email_db_id
+            )
+        )
+        assert email_row is not None
+        assert email_row["indexing_task_id"] == enqueued_task_id
+
+        # 3. Simulate the task worker by running the indexer directly.
+        await indexer.handle_index_email(
+            exec_context=exec_context,
+            payload={"email_db_id": email_db_id},
+        )
+
+        # 4. Reading the email again surfaces the registered attachment_id.
+        post_result = await get_full_document_content_tool(
+            exec_context=exec_context, document_id=document_id
+        )
+        assert isinstance(post_result, ToolResult)
+        post_data = post_result.get_data()
+        assert isinstance(post_data, dict)
+        populated_id = post_data["attachments"][0]["attachment_id"]
+        assert populated_id is not None
+
+        # The populated ID resolves back to the external mailbox file.
+        content = await registry.get_attachment_content(db_context, populated_id)
+        assert content == b"PDF body"
 
 
 @pytest.mark.asyncio

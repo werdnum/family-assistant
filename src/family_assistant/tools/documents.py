@@ -16,7 +16,7 @@ from typing import TYPE_CHECKING, Any, TypedDict
 
 import aiofiles
 import filetype  # type: ignore[import-untyped]
-from sqlalchemy import select, text
+from sqlalchemy import select, text, update
 
 from family_assistant.indexing.ingestion import process_document_ingestion_request
 from family_assistant.storage.email import AttachmentData, received_emails_table
@@ -658,6 +658,15 @@ async def reindex_email_tool(
             f"Failed to enqueue email reindex task for email {email_db_id}: {err}"
         )
         return ToolResult(data={"error": f"Failed to enqueue reindex: {err}"})
+
+    # Keep ``received_emails.indexing_task_id`` in sync with the newly
+    # enqueued job so any status/debugging code that reads it sees the
+    # currently-active task rather than a stale or NULL reference.
+    await db_context.execute_with_retry(
+        update(received_emails_table)
+        .where(received_emails_table.c.id == email_db_id)
+        .values(indexing_task_id=task_id)
+    )
 
     return ToolResult(
         data={
