@@ -3,6 +3,58 @@
 This document defines the severity levels and review criteria used by the automated code review
 system. When reviewing code changes, issues are categorized by their potential impact.
 
+## Review Comment Policy
+
+Every comment you post must be **actionable**. A comment is actionable only if it identifies a
+concrete problem in the changed code and tells the author what to do differently. The following are
+**forbidden** and should never be posted — if you catch yourself writing one, drop it:
+
+- Praise, approval, or "looks good" / "nice work" / "LGTM" style remarks.
+- Observations that only restate or explain what the code does.
+- "Please confirm", "please verify", "make sure", "consider whether" style prompts that push the
+  work back onto the author without identifying a specific defect.
+- Comments hedged with "might", "could potentially", "in some cases" when you have no concrete
+  failure mode in mind.
+- Questions unless you already know the answer and are using the question form rhetorically to point
+  out a defect.
+
+If there are no actionable findings for a file, say nothing about that file.
+
+## Core Principle: Fail Fast, Never Mask Errors
+
+**Always prefer throwing an error to a graceful fallback.** This is one of the most important
+principles to enforce during review — graceful fallbacks routinely mask real bugs, produce confusing
+downstream symptoms, and cause more problems than they solve. See
+[docs/development/error-handling.md](docs/development/error-handling.md) for the full rationale.
+
+**Block** the following patterns as `ERROR_HANDLING_ISSUE` or `LOGIC_ERROR`:
+
+- Catching an exception and returning `None`, `[]`, `{}`, `False`, `""`, or any other "empty"
+  sentinel in place of the real result.
+- `try / except Exception:` (or bare `except:`) wrapping logic whose failure modes have not been
+  individually considered. Catch only the specific exceptions you know how to handle.
+- Logging an error and continuing as if nothing happened. Logging is not handling — the caller still
+  gets a wrong result.
+- `if thing is None: return` guards inserted to suppress an error rather than to model a genuine
+  optional case.
+- "Graceful degradation" that silently swaps in a default value when the real value could not be
+  produced.
+- Re-raising without `from e`, which discards the original error chain.
+
+**Require instead**:
+
+- Let the exception propagate to a layer that actually has the context to handle it, or raise a more
+  specific exception that preserves `__cause__` via `raise NewError(...) from e`.
+- Validate inputs at system boundaries (HTTP handlers, message handlers, CLI entry points) and
+  reject bad input with a clear error — do not paper over it deeper in the stack.
+- Ask "is it **correct** to continue?" not "is it **possible** to continue?" If continuing produces
+  a wrong answer, stop.
+
+When a PR introduces a fallback the author argues is intentional, the burden of proof is on the
+fallback: the review comment should demand a specific justification (what failure mode, why is a
+wrong answer better than an exception, how will the caller know degradation occurred) and block the
+change until that justification exists in the code or commit message.
+
 ## Severity Levels
 
 ### BREAKS_BUILD

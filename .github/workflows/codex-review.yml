@@ -1,15 +1,23 @@
 name: '🧠 Codex Review'
 
 on:
-  pull_request:
+  workflow_run:
+    workflows:
+      - 'CI with Dev Container'
     types:
-      - 'opened'
-      - 'reopened'
-      - 'ready_for_review'
-      - 'synchronize'
+      - 'completed'
+  issue_comment:
+    types:
+      - 'created'
+  workflow_dispatch:
+    inputs:
+      pr_number:
+        description: 'Pull request number to review'
+        required: true
+        type: 'string'
 
 concurrency:
-  group: '${{ github.workflow }}-${{ github.event.pull_request.number }}'
+  group: '${{ github.workflow }}-${{ github.event.workflow_run.pull_requests[0].number || github.event.issue.number || inputs.pr_number }}'
   cancel-in-progress: true
 
 defaults:
@@ -17,9 +25,107 @@ defaults:
     shell: 'bash'
 
 jobs:
-  review:
+  resolve:
     if: |-
-      github.event.pull_request.head.repo.fork == false && !github.event.pull_request.draft && github.actor != 'dependabot[bot]'
+      (
+        github.event_name == 'workflow_run' &&
+        github.event.workflow_run.event == 'pull_request' &&
+        github.event.workflow_run.conclusion != 'cancelled' &&
+        github.event.workflow_run.head_repository.fork == false
+      ) || (
+        github.event_name == 'issue_comment' &&
+        github.event.issue.pull_request != null &&
+        github.event.sender.type == 'User' &&
+        github.event.sender.login != 'dependabot[bot]' &&
+        startsWith(github.event.comment.body, '@codex /review') &&
+        contains(fromJSON('["OWNER", "MEMBER", "COLLABORATOR"]'), github.event.comment.author_association)
+      ) || (
+        github.event_name == 'workflow_dispatch'
+      )
+    runs-on: 'ubuntu-latest'
+    permissions:
+      contents: 'read'
+      pull-requests: 'read'
+      issues: 'write'
+    outputs:
+      skip: '${{ steps.resolve.outputs.skip }}'
+      pr_number: '${{ steps.resolve.outputs.pr_number }}'
+      head_sha: '${{ steps.resolve.outputs.head_sha }}'
+      base_sha: '${{ steps.resolve.outputs.base_sha }}'
+      base_ref: '${{ steps.resolve.outputs.base_ref }}'
+      pr_title: '${{ steps.resolve.outputs.pr_title }}'
+      pr_body: '${{ steps.resolve.outputs.pr_body }}'
+    steps:
+      - name: 'Resolve pull request context'
+        id: 'resolve'
+        uses: 'actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd' # ratchet:actions/github-script@v7
+        env:
+          EVENT_NAME: '${{ github.event_name }}'
+          DISPATCH_PR_NUMBER: '${{ inputs.pr_number }}'
+        with:
+          script: |
+            let prNumber;
+            if (process.env.EVENT_NAME === 'workflow_run') {
+              const prs = context.payload.workflow_run.pull_requests || [];
+              if (prs.length === 0) {
+                core.notice('workflow_run has no associated pull request; skipping.');
+                core.setOutput('skip', 'true');
+                return;
+              }
+              prNumber = prs[0].number;
+            } else if (process.env.EVENT_NAME === 'issue_comment') {
+              prNumber = context.payload.issue.number;
+            } else {
+              prNumber = Number(process.env.DISPATCH_PR_NUMBER);
+            }
+
+            const { data: pr } = await github.rest.pulls.get({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              pull_number: prNumber,
+            });
+
+            if (pr.draft) {
+              core.notice(`PR #${prNumber} is a draft; skipping.`);
+              core.setOutput('skip', 'true');
+              return;
+            }
+            if (pr.head.repo.fork) {
+              core.notice(`PR #${prNumber} is from a fork; skipping.`);
+              core.setOutput('skip', 'true');
+              return;
+            }
+            if (pr.user && pr.user.login === 'dependabot[bot]') {
+              core.notice(`PR #${prNumber} is from dependabot; skipping.`);
+              core.setOutput('skip', 'true');
+              return;
+            }
+
+            core.setOutput('pr_number', String(prNumber));
+            core.setOutput('head_sha', pr.head.sha);
+            core.setOutput('base_sha', pr.base.sha);
+            core.setOutput('base_ref', pr.base.ref);
+            core.setOutput('pr_title', pr.title || '');
+            core.setOutput('pr_body', pr.body || '');
+
+      - name: 'Acknowledge on-demand request'
+        if: |-
+          steps.resolve.outputs.skip != 'true' && github.event_name == 'issue_comment'
+        env:
+          GITHUB_TOKEN: '${{ github.token }}'
+          ISSUE_NUMBER: '${{ steps.resolve.outputs.pr_number }}'
+          MESSAGE: |-
+            🧠 Hi @${{ github.actor }}, I've received your Codex review request and I'm working on it now. You can track progress [in the logs](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}).
+          REPOSITORY: '${{ github.repository }}'
+        run: |-
+          gh issue comment "${ISSUE_NUMBER}" \
+            --body "${MESSAGE}" \
+            --repo "${REPOSITORY}"
+
+  review:
+    needs: 'resolve'
+    if: |-
+      needs.resolve.outputs.skip != 'true'
     runs-on: 'ubuntu-latest'
     timeout-minutes: 30
     permissions:
@@ -32,25 +138,39 @@ jobs:
       - name: 'Checkout repository'
         uses: 'actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd' # ratchet:actions/checkout@v6
         with:
-          ref: 'refs/pull/${{ github.event.pull_request.number }}/merge'
+          ref: 'refs/pull/${{ needs.resolve.outputs.pr_number }}/merge'
           fetch-depth: 0
 
       - name: 'Pre-fetch base and head refs for the pull request'
         env:
-          BASE_REF: '${{ github.event.pull_request.base.ref }}'
-          PR_NUMBER: '${{ github.event.pull_request.number }}'
+          BASE_REF: '${{ needs.resolve.outputs.base_ref }}'
+          PR_NUMBER: '${{ needs.resolve.outputs.pr_number }}'
         run: |-
           git fetch --no-tags origin \
             "${BASE_REF}" \
             "+refs/pull/${PR_NUMBER}/head"
 
+      - name: 'Read project review guidelines'
+        id: 'read_guidelines'
+        run: |-
+          {
+            echo 'REVIEW_GUIDELINES<<CODEX_REVIEW_GUIDELINES_EOF'
+            if [ -f REVIEW_GUIDELINES.md ]; then
+              cat REVIEW_GUIDELINES.md
+            else
+              echo 'No project-specific review guidelines found.'
+            fi
+            echo 'CODEX_REVIEW_GUIDELINES_EOF'
+          } >> "${GITHUB_ENV}"
+
       - name: 'Build Codex review prompt'
         env:
-          BASE_SHA: '${{ github.event.pull_request.base.sha }}'
-          HEAD_SHA: '${{ github.event.pull_request.head.sha }}'
-          PR_NUMBER: '${{ github.event.pull_request.number }}'
-          PR_TITLE: '${{ github.event.pull_request.title }}'
-          PR_BODY: '${{ github.event.pull_request.body }}'
+          BASE_SHA: '${{ needs.resolve.outputs.base_sha }}'
+          HEAD_SHA: '${{ needs.resolve.outputs.head_sha }}'
+          PR_NUMBER: '${{ needs.resolve.outputs.pr_number }}'
+          PR_TITLE: '${{ needs.resolve.outputs.pr_title }}'
+          PR_BODY: '${{ needs.resolve.outputs.pr_body }}'
+          REVIEW_GUIDELINES: '${{ env.REVIEW_GUIDELINES }}'
         run: |-
           {
             echo "This is PR #${PR_NUMBER} for ${GITHUB_REPOSITORY}."
@@ -58,13 +178,29 @@ jobs:
             echo "Review ONLY the changes introduced by this pull request."
             echo "Focus on correctness issues, regressions, missing tests, and maintainability concerns."
             echo "Return strict JSON that matches the provided output schema."
+            echo
+            echo "Comment policy (STRICT):"
+            echo "- Every comment MUST be actionable: identify a concrete defect and tell the author what to change."
+            echo "- DO NOT post praise, approval, 'looks good', or 'LGTM' style remarks."
+            echo "- DO NOT post comments that only describe or restate what the code does."
+            echo "- DO NOT ask the author to 'check', 'verify', 'confirm', or 'consider' something — if you do not have a specific defect, say nothing."
+            echo "- DO NOT include rhetorical questions or hedged 'might/could' speculation without a concrete failure mode."
+            echo "- An empty inline_comments array is the correct output when you have no actionable findings."
+            echo
+            echo "Pay particular attention to error handling: prefer throwing / propagating errors over graceful fallbacks."
+            echo "Flag any new try/except that returns None, empty collections, or default sentinels instead of raising."
+            echo "Flag broad 'except Exception:' blocks, silent logging-and-continuing, and any pattern that masks a real failure."
+            echo
             echo "For inline_comments, include only high-confidence findings tied to changed files and exact line numbers in the head revision."
-            echo "Do not include praise-only comments."
             echo
             echo "Pull request title and body:"
             echo "----"
             echo "${PR_TITLE}"
             echo "${PR_BODY}"
+            echo
+            echo "Project review guidelines (authoritative — apply these severities and rules):"
+            echo "----"
+            echo "${REVIEW_GUIDELINES}"
             echo
             echo "Unified diff for this pull request:"
             echo "----"
@@ -86,7 +222,7 @@ jobs:
               "properties": {
                 "summary": {
                   "type": "string",
-                  "description": "High-level review summary for the PR."
+                  "description": "High-level review summary. Must describe concrete issues or state that none were found — no praise."
                 },
                 "inline_comments": {
                   "type": "array",
@@ -107,7 +243,7 @@ jobs:
                       },
                       "body": {
                         "type": "string",
-                        "description": "Concise, actionable review comment."
+                        "description": "Actionable review comment identifying a concrete defect and the fix. No praise, no 'please verify'."
                       }
                     }
                   }
@@ -116,7 +252,9 @@ jobs:
             }
 
   post_feedback:
-    needs: 'review'
+    needs:
+      - 'resolve'
+      - 'review'
     if: |-
       needs.review.outputs.final_message != ''
     runs-on: 'ubuntu-latest'
@@ -141,8 +279,8 @@ jobs:
         uses: 'actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd' # ratchet:actions/github-script@v7
         env:
           CODEX_FINAL_MESSAGE: '${{ needs.review.outputs.final_message }}'
-          PR_NUMBER: '${{ github.event.pull_request.number }}'
-          HEAD_SHA: '${{ github.event.pull_request.head.sha }}'
+          PR_NUMBER: '${{ needs.resolve.outputs.pr_number }}'
+          HEAD_SHA: '${{ needs.resolve.outputs.head_sha }}'
         with:
           github-token: '${{ steps.mint_identity_token.outputs.token || github.token }}'
           script: |-
@@ -224,4 +362,3 @@ jobs:
               issue_number: issueNumber,
               body,
             });
-

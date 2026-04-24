@@ -10,6 +10,9 @@ on:
   pull_request:
     types:
       - 'opened'
+      - 'reopened'
+      - 'ready_for_review'
+      - 'synchronize'
   issues:
     types:
       - 'opened'
@@ -50,6 +53,7 @@ jobs:
       (
         github.event_name == 'pull_request' &&
         github.event.pull_request.head.repo.fork == false &&
+        github.event.pull_request.draft == false &&
         github.event.pull_request.user.login != 'dependabot[bot]'
       ) || (
         github.event_name == 'issues' &&
@@ -96,7 +100,13 @@ jobs:
             const request = process.env.REQUEST;
             core.setOutput('request', request);
 
-            if (eventType === 'pull_request.opened') {
+            const pullRequestReviewEvents = [
+              'pull_request.opened',
+              'pull_request.reopened',
+              'pull_request.ready_for_review',
+              'pull_request.synchronize',
+            ];
+            if (pullRequestReviewEvents.includes(eventType)) {
               core.setOutput('command', 'review');
             } else if (['issues.opened', 'issues.reopened'].includes(eventType)) {
               core.setOutput('command', 'triage');
@@ -117,6 +127,8 @@ jobs:
             }
 
       - name: 'Acknowledge request'
+        if: |-
+          github.event_name != 'pull_request'
         env:
           GITHUB_TOKEN: '${{ steps.mint_identity_token.outputs.token || secrets.GITHUB_TOKEN || github.token }}'
           ISSUE_NUMBER: '${{ github.event.pull_request.number || github.event.issue.number }}'
