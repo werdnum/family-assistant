@@ -893,3 +893,153 @@ async def test_delete_email_attachment_clears_email_row(
             AttachmentData.model_validate(item) for item in refreshed["attachment_info"]
         ]
         assert refreshed_atts[0].attachment_id is None
+
+
+@pytest.mark.asyncio
+@pytest.mark.postgres
+async def test_email_indexer_clears_stale_attachment_id_when_file_missing(
+    db_engine: AsyncEngine,
+    tmp_path: Path,
+) -> None:
+    """If a previously-registered attachment's file is gone, the indexer
+    must clear the stale ``attachment_id`` from
+    ``received_emails.attachment_info`` — otherwise
+    ``get_full_document_content`` keeps surfacing a handle that 404s on
+    every download/read_text_attachment call.
+    """
+    external_file = tmp_path / "gone.pdf"
+    external_file.write_bytes(b"PDF bytes")
+
+    registry = AttachmentRegistry(
+        storage_path=str(tmp_path / "registry"),
+        db_engine=db_engine,
+        config=None,
+    )
+    pipeline = MagicMock(spec=IndexingPipeline)
+    pipeline.run = AsyncMock(return_value=None)
+    indexer = EmailIndexer(pipeline=pipeline, attachment_registry=registry)
+
+    message_id = f"<mailgun-{uuid.uuid4()}@example.com>"
+    async with DatabaseContext(engine=db_engine) as db_context:
+        insert_result = await db_context.execute_with_retry(
+            insert(received_emails_table)
+            .values(
+                message_id_header=message_id,
+                sender_address=SENDER,
+                recipient_address=RECIPIENT,
+                subject="Missing file",
+                stripped_text="body",
+                attachment_info=[
+                    {
+                        "filename": "gone.pdf",
+                        "content_type": "application/pdf",
+                        "size": external_file.stat().st_size,
+                        "storage_path": str(external_file),
+                    }
+                ],
+            )
+            .returning(received_emails_table.c.id)
+        )
+        email_db_id = insert_result.scalar_one()
+
+        # First run: register the attachment while the file exists.
+        exec_context = _build_indexer_context(db_context, registry)
+        await indexer.handle_index_email(exec_context, {"email_db_id": email_db_id})
+
+        first_pass = await db_context.fetch_one(
+            select(received_emails_table.c.attachment_info).where(
+                received_emails_table.c.id == email_db_id
+            )
+        )
+        assert first_pass is not None
+        first_atts = [
+            AttachmentData.model_validate(item)
+            for item in first_pass["attachment_info"]
+        ]
+        stale_id = first_atts[0].attachment_id
+        assert stale_id is not None
+
+        # Simulate the file disappearing between reindex runs, then re-run.
+        external_file.unlink()
+        await indexer.handle_index_email(exec_context, {"email_db_id": email_db_id})
+
+        refreshed = await db_context.fetch_one(
+            select(received_emails_table.c.attachment_info).where(
+                received_emails_table.c.id == email_db_id
+            )
+        )
+        assert refreshed is not None
+        refreshed_atts = [
+            AttachmentData.model_validate(item) for item in refreshed["attachment_info"]
+        ]
+        assert refreshed_atts[0].attachment_id is None
+
+
+@pytest.mark.asyncio
+@pytest.mark.postgres
+async def test_reindex_email_tool_syncs_indexing_task_id_when_already_in_flight(
+    db_engine: AsyncEngine,
+    tmp_path: Path,
+) -> None:
+    """When an ``index_email_*`` task is already pending (e.g. queued by
+    the backfill migration without touching ``received_emails.indexing_task_id``),
+    ``reindex_email`` must sync the email row's ``indexing_task_id`` to
+    the in-flight task rather than leaving it NULL/stale.
+    """
+    message_id = f"<mailgun-{uuid.uuid4()}@example.com>"
+    async with DatabaseContext(engine=db_engine) as db_context:
+        email_insert = await db_context.execute_with_retry(
+            insert(received_emails_table)
+            .values(
+                message_id_header=message_id,
+                sender_address=SENDER,
+                recipient_address=RECIPIENT,
+                subject="Backfilled",
+                stripped_text="Body",
+                attachment_info=[],
+                indexing_task_id=None,
+            )
+            .returning(received_emails_table.c.id)
+        )
+        email_db_id = email_insert.scalar_one()
+
+        doc_row = await db_context.execute_with_retry(
+            sa_text(
+                "INSERT INTO documents (source_type, source_id, visibility_labels) "
+                "VALUES ('email', :sid, '[]') RETURNING id"
+            ),
+            {"sid": message_id},
+        )
+        document_id = doc_row.scalar_one()
+
+        # Backfill-style direct enqueue: task row created, email row not updated.
+        in_flight_task_id = f"index_email_{email_db_id}_{uuid.uuid4()}"
+        await db_context.tasks.enqueue(
+            task_id=in_flight_task_id,
+            task_type="index_email",
+            payload={"email_db_id": email_db_id},
+        )
+
+        registry = AttachmentRegistry(
+            storage_path=str(tmp_path / "registry"),
+            db_engine=db_engine,
+            config=None,
+        )
+        exec_context = _build_indexer_context(db_context, registry)
+
+        result = await reindex_email_tool(
+            exec_context=exec_context, document_id=document_id
+        )
+
+        data = result.get_data()
+        assert isinstance(data, dict)
+        assert data.get("status") == "already_in_flight"
+        assert data.get("task_id") == in_flight_task_id
+
+        refreshed = await db_context.fetch_one(
+            select(received_emails_table.c.indexing_task_id).where(
+                received_emails_table.c.id == email_db_id
+            )
+        )
+        assert refreshed is not None
+        assert refreshed["indexing_task_id"] == in_flight_task_id

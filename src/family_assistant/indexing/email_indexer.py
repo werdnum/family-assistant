@@ -473,6 +473,25 @@ class EmailIndexer:
                 # lockstep.
                 resolved_path = self._resolve_email_attachment_path(att, email_db_id)
                 if resolved_path is None:
+                    # File is gone. If we previously registered an
+                    # ``attachment_id`` for it, clear it from the email
+                    # row so ``get_full_document_content`` stops surfacing
+                    # a stale handle that would 404 on every
+                    # ``read_text_attachment`` / ``/api/attachments/{id}``
+                    # lookup. The registry row itself is left alone — it
+                    # may still be referenced elsewhere and orphan cleanup
+                    # is handled separately.
+                    if att.attachment_id is not None:
+                        logger.warning(
+                            "Clearing stale attachment_id %s for email %s "
+                            "attachment '%s' — the backing file is no "
+                            "longer on disk.",
+                            att.attachment_id,
+                            email_db_id,
+                            att.filename,
+                        )
+                        att.attachment_id = None
+                        attachment_info_dirty = True
                     continue
 
                 # Now that the file is confirmed on disk, register (or reuse)

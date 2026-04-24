@@ -638,6 +638,16 @@ async def reindex_email_tool(
         .limit(1)
     )
     if existing_task:
+        # The backfill migration enqueues ``index_email_*`` tasks directly
+        # without updating ``received_emails.indexing_task_id``, so the
+        # email row may still point at a stale/NULL task id even though a
+        # fresh indexing job is already pending. Repair the link here so
+        # callers always see the task that's actually in flight.
+        await db_context.execute_with_retry(
+            update(received_emails_table)
+            .where(received_emails_table.c.id == email_db_id)
+            .values(indexing_task_id=existing_task["task_id"])
+        )
         return ToolResult(
             data={
                 "status": "already_in_flight",
