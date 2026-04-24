@@ -1227,37 +1227,39 @@ class AttachmentRegistry:
                 sites without pre-fetched metadata, use
                 :meth:`resolve_attachment_path` instead, which performs the
                 lookup internally.
-            source_type: Optional ``attachment_metadata.source_type``. When
-                ``"email"``, ``stored_path`` is used as-is (absolute or, for
-                legacy rows persisted before paths were normalized, relative
-                to the worker cwd / mailbox config). For other source types
-                a relative ``stored_path`` is resolved against
-                ``self.storage_path`` (the registry-managed sharded layout).
+            source_type: Optional ``attachment_metadata.source_type``. The
+                ``stored_path`` fast-path is gated to ``"email"`` only:
+                those attachments live in an externally-managed mailbox
+                directory. For every other source type (``"user"``,
+                ``"tool"``, ``"script"``), ``stored_path`` is ignored
+                here and we fall through to the sharded
+                ``{self.storage_path}/{prefix}/{id}.*`` lookup so rows
+                containing arbitrary absolute paths can't serve files
+                from outside the registry-managed directory.
 
         Returns:
             Path to the attachment file, or None if not found
         """
-        if stored_path:
+        # Only honor ``stored_path`` for email attachments — every other
+        # caller is managed by the sharded storage layout below, and
+        # trusting ``stored_path`` for them would let a poisoned
+        # ``attachment_metadata.storage_path`` serve arbitrary files
+        # through ``/api/attachments/{id}`` / ``get_attachment_content``.
+        if stored_path and source_type == "email":
             candidate = Path(stored_path)
-            # Non-email sources keep ``storage_path`` as a relative shard
-            # path (e.g. ``ab/<uuid>...``); resolve against the
-            # registry's managed ``self.storage_path`` so lookups are
-            # cwd-independent and cannot escape the managed directory.
-            #
-            # Email attachments live in an externally-managed mailbox
-            # directory. Current rows are absolute; legacy rows from
-            # deployments that configured ``attachment_storage_path``
+            # Current email rows persist absolute paths; legacy rows
+            # from deployments that configured ``attachment_storage_path``
             # relatively may still be relative. Resolve those against
-            # ``email_attachment_base_path`` (if configured) so restarts
-            # from a different cwd don't break them. When no base is
-            # configured we fall back to using the relative path as-is,
-            # preserving pre-PR behavior.
-            if not candidate.is_absolute():
-                if source_type == "email":
-                    if self.email_attachment_base_path is not None:
-                        candidate = self.email_attachment_base_path / candidate
-                else:
-                    candidate = self.storage_path / candidate
+            # ``email_attachment_base_path`` (which ``AppConfig`` pins to
+            # an absolute path at load time) so restarts from a different
+            # cwd don't break them. When no base is configured we fall
+            # back to using the relative path as-is, preserving pre-PR
+            # behavior.
+            if (
+                not candidate.is_absolute()
+                and self.email_attachment_base_path is not None
+            ):
+                candidate = self.email_attachment_base_path / candidate
             if candidate.is_file():
                 return candidate
 

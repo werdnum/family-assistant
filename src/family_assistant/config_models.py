@@ -16,6 +16,7 @@ Configuration priority (lowest to highest):
 from __future__ import annotations
 
 import contextlib
+import os
 import zoneinfo
 from contextvars import ContextVar
 from email.utils import parseaddr
@@ -1008,3 +1009,22 @@ class AppConfig(BaseSettings):
     # Attachment selection thresholds (global)
     attachment_selection_threshold: int = 3  # Trigger selection when > this many
     max_response_attachments: int = 6  # Max attachments per response
+
+    @field_validator("attachment_storage_path", "document_storage_path")
+    @classmethod
+    def _normalize_storage_path(cls, value: str) -> str:
+        """Anchor storage paths to an absolute path at config load time.
+
+        Email-attachment ``storage_path`` values are persisted relative to
+        ``attachment_storage_path``. If the config value were relative,
+        ``AttachmentRegistry`` would resolve it against whatever cwd the
+        worker process had at startup — a later restart from a different
+        directory would re-anchor the mailbox root and all stored relative
+        paths would point to the wrong place. Pin it to an absolute path
+        here so it's stable across restarts. ``os.path.abspath`` is pure
+        string normalization against ``os.getcwd()`` — no filesystem IO
+        beyond the cwd lookup.
+        """
+        if not value:
+            return value
+        return os.path.abspath(value)

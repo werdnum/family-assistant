@@ -504,7 +504,10 @@ class Assistant:
 
         # Include the mailbox base so legacy email attachments with a
         # relative ``storage_path`` resolve against a stable directory
-        # instead of the worker process's cwd.
+        # instead of the worker process's cwd. ``AppConfig`` normalizes
+        # ``attachment_storage_path`` to an absolute path at load time
+        # (see the field validator), so by the time it reaches us here
+        # it's already stable across restarts regardless of cwd.
         registry_config_payload = cast(
             "AttachmentRegistryConfig", attachment_config.model_dump()
         )

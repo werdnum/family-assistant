@@ -40,7 +40,9 @@ class TestGetAttachmentPathExternal:
             attachment_id = str(uuid.uuid4())
 
             resolved = registry.get_attachment_path(
-                attachment_id, stored_path=str(external_file)
+                attachment_id,
+                stored_path=str(external_file),
+                source_type="email",
             )
 
             assert resolved == external_file
@@ -49,7 +51,7 @@ class TestGetAttachmentPathExternal:
     async def test_falls_back_to_sharded_when_stored_path_missing(
         self, db_engine: AsyncEngine
     ) -> None:
-        """When the external file does not exist, fall back to sharded lookup."""
+        """When the external email file does not exist, fall back to sharded lookup."""
         with tempfile.TemporaryDirectory() as registry_dir:
             registry = AttachmentRegistry(
                 storage_path=registry_dir, db_engine=db_engine, config=None
@@ -62,10 +64,49 @@ class TestGetAttachmentPathExternal:
             sharded_file.write_bytes(b"sharded bytes")
 
             resolved = registry.get_attachment_path(
-                attachment_id, stored_path="/nonexistent/file.bin"
+                attachment_id,
+                stored_path="/nonexistent/file.bin",
+                source_type="email",
             )
 
             assert resolved == sharded_file
+
+    @pytest.mark.asyncio
+    async def test_non_email_source_ignores_stored_path(
+        self,
+        db_engine: AsyncEngine,
+        tmp_path: Path,
+    ) -> None:
+        """Non-email rows must not serve files via ``stored_path``.
+
+        A poisoned ``attachment_metadata.storage_path`` pointing at an
+        arbitrary absolute path would otherwise let ``get_attachment_content``
+        and ``/api/attachments/{id}`` read files from outside the managed
+        directory for ``source_type`` values like ``"user"`` / ``"tool"`` /
+        ``"script"``.
+        """
+        outside_file = tmp_path / "outside" / "secret.txt"
+        outside_file.parent.mkdir()
+        outside_file.write_bytes(b"should not be served")
+
+        with tempfile.TemporaryDirectory() as registry_dir:
+            registry = AttachmentRegistry(
+                storage_path=registry_dir, db_engine=db_engine, config=None
+            )
+            attachment_id = str(uuid.uuid4())
+
+            # No sharded file exists, so the sharded lookup returns None.
+            # The external ``stored_path`` must also be rejected for
+            # non-email source types.
+            for source_type in (None, "user", "tool", "script"):
+                resolved = registry.get_attachment_path(
+                    attachment_id,
+                    stored_path=str(outside_file),
+                    source_type=source_type,
+                )
+                assert resolved is None, (
+                    f"source_type={source_type!r} unexpectedly resolved"
+                )
 
     @pytest.mark.asyncio
     async def test_get_attachment_content_reads_external_file(
