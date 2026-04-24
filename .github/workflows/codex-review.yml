@@ -37,7 +37,7 @@ jobs:
         github.event.issue.pull_request != null &&
         github.event.sender.type == 'User' &&
         github.event.sender.login != 'dependabot[bot]' &&
-        startsWith(github.event.comment.body, '@codex /review') &&
+        startsWith(github.event.comment.body, '/codex-review') &&
         contains(fromJSON('["OWNER", "MEMBER", "COLLABORATOR"]'), github.event.comment.author_association)
       ) || (
         github.event_name == 'workflow_dispatch'
@@ -65,6 +65,7 @@ jobs:
         with:
           script: |
             let prNumber;
+            let workflowRunHeadSha;
             if (process.env.EVENT_NAME === 'workflow_run') {
               const prs = context.payload.workflow_run.pull_requests || [];
               if (prs.length === 0) {
@@ -73,6 +74,7 @@ jobs:
                 return;
               }
               prNumber = prs[0].number;
+              workflowRunHeadSha = context.payload.workflow_run.head_sha;
             } else if (process.env.EVENT_NAME === 'issue_comment') {
               prNumber = context.payload.issue.number;
             } else {
@@ -101,8 +103,13 @@ jobs:
               return;
             }
 
+            const headSha = workflowRunHeadSha || pr.head.sha;
+            if (workflowRunHeadSha && workflowRunHeadSha !== pr.head.sha) {
+              core.notice(`Reviewing the SHA that completed CI (${workflowRunHeadSha}); PR head has since moved to ${pr.head.sha}.`);
+            }
+
             core.setOutput('pr_number', String(prNumber));
-            core.setOutput('head_sha', pr.head.sha);
+            core.setOutput('head_sha', headSha);
             core.setOutput('base_sha', pr.base.sha);
             core.setOutput('base_ref', pr.base.ref);
             core.setOutput('pr_title', pr.title || '');
