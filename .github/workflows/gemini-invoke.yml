@@ -24,6 +24,8 @@ jobs:
       id-token: 'write'
       issues: 'write'
       pull-requests: 'write'
+    env:
+      GEMINI_CLI_TRUST_WORKSPACE: 'true'
     steps:
       - name: 'Mint identity token'
         id: 'mint_identity_token'

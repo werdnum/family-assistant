@@ -28,6 +28,8 @@ jobs:
       id-token: 'write'
       issues: 'read'
       pull-requests: 'read'
+    env:
+      GEMINI_CLI_TRUST_WORKSPACE: 'true'
     steps:
       - name: 'Get repository labels'
         id: 'get_labels'
