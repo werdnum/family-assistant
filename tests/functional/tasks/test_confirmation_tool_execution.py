@@ -150,15 +150,21 @@ class FailingChatInterface(RecordingChatInterface):
 
 
 def _processing_service(provider: object) -> ProcessingService:
+    service_config = SimpleNamespace(
+        id="test-profile",
+        timezone=ZoneInfo("UTC"),
+        visibility_grants=None,
+        default_note_visibility_labels=None,
+        note_registry=None,
+    )
     service = SimpleNamespace(
+        kind="local",
         tools_provider=provider,
-        service_config=SimpleNamespace(
-            id="test-profile",
-            visibility_grants=None,
-            default_note_visibility_labels=None,
-        ),
+        service_config=service_config,
         attachment_registry=None,
         home_assistant_client=None,
+        camera_backend=None,
+        processing_services_registry=None,
     )
     return cast("ProcessingService", service)
 
@@ -169,7 +175,11 @@ def _confirmation_service(db_engine: AsyncEngine) -> ConfirmationService:
     )
 
 
-async def _create_source_message(db_engine: AsyncEngine) -> int:
+async def _create_source_message(
+    db_engine: AsyncEngine,
+    *,
+    processing_profile_id: str = "test-profile",
+) -> int:
     async with DatabaseContext(engine=db_engine) as db:
         internal_id = await db.message_history.add_message(
             UserMessage(content="Please run the confirmed tool."),
@@ -177,7 +187,7 @@ async def _create_source_message(db_engine: AsyncEngine) -> int:
             conversation_id="web-conversation-1",
             interface_message_id="web-message-1",
             timestamp=datetime_now_utc(),
-            processing_profile_id="test-profile",
+            processing_profile_id=processing_profile_id,
             user_id="user-1",
         )
     assert internal_id is not None
@@ -271,6 +281,18 @@ async def _task_status(db_engine: AsyncEngine, task_id: str) -> tuple[str, str |
         )
     assert row is not None
     return str(row["status"]), cast("str | None", row["error"])
+
+
+def _processing_service_with_registry(
+    *,
+    provider: object,
+    service_id: str,
+    registry: dict[str, object] | None = None,
+) -> ProcessingService:
+    service = cast("SimpleNamespace", _processing_service(provider))
+    service.service_config.id = service_id
+    service.processing_services_registry = registry
+    return cast("ProcessingService", service)
 
 
 @pytest.mark.asyncio
@@ -498,3 +520,114 @@ async def test_approved_confirmation_satisfies_current_confirm_policy_once(
     assert len(chat_interface.messages) == 1
     assert "executed:requires-confirm" in chat_interface.messages[0][1]
     assert await _task_status(db_engine, task_id) == ("done", None)
+
+
+@pytest.mark.asyncio
+async def test_confirmation_task_uses_processing_service_from_source_profile(
+    db_engine: AsyncEngine,
+) -> None:
+    source_message_id = await _create_source_message(
+        db_engine,
+        processing_profile_id="secondary-profile",
+    )
+    request_id = await _create_request(
+        db_engine,
+        source_message_internal_id=source_message_id,
+    )
+    task_id = await _approve_request(db_engine, request_id)
+
+    default_provider = RecordingDescriptorToolsProvider({ToolTag.STATE_CHANGING})
+    default_policy_provider = PolicyEnforcingToolsProvider(
+        wrapped_provider=default_provider,
+        policy_engine=PolicyEngine.from_policy_config(
+            ToolPolicyConfig(
+                default_decision=ToolPolicyDecision.DENY,
+                rules=[],
+            )
+        ),
+    )
+    secondary_provider = RecordingToolsProvider()
+
+    default_service = _processing_service_with_registry(
+        provider=default_policy_provider,
+        service_id="test-profile",
+    )
+    secondary_service = _processing_service_with_registry(
+        provider=secondary_provider,
+        service_id="secondary-profile",
+    )
+    registry = {
+        "test-profile": default_service,
+        "secondary-profile": secondary_service,
+    }
+    cast("SimpleNamespace", default_service).processing_services_registry = registry
+    cast("SimpleNamespace", secondary_service).processing_services_registry = registry
+
+    chat_interface = RecordingChatInterface()
+
+    await _run_worker_until_task_finishes(
+        db_engine,
+        processing_service=default_service,
+        chat_interface=chat_interface,
+        task_id=task_id,
+    )
+
+    assert default_provider.calls == []
+    assert secondary_provider.calls == [
+        (
+            "record_tool",
+            {"value": "payload"},
+            "call-record-tool",
+            "user-1",
+            "web",
+        )
+    ]
+    assert await _task_status(db_engine, task_id) == ("done", None)
+
+
+@pytest.mark.asyncio
+async def test_confirmation_task_fails_when_source_profile_is_missing(
+    db_engine: AsyncEngine,
+) -> None:
+    source_message_id = await _create_source_message(
+        db_engine,
+        processing_profile_id="secondary-profile",
+    )
+    request_id = await _create_request(
+        db_engine,
+        source_message_internal_id=source_message_id,
+    )
+    task_id = await _approve_request(db_engine, request_id)
+    provider = RecordingToolsProvider()
+    default_service_in_registry = _processing_service_with_registry(
+        provider=provider,
+        service_id="test-profile",
+    )
+    processing_service = _processing_service_with_registry(
+        provider=provider,
+        service_id="test-profile",
+        registry={"test-profile": default_service_in_registry},
+    )
+    chat_interface = RecordingChatInterface()
+
+    async with DatabaseContext(engine=db_engine) as db:
+        await db.execute_with_retry(
+            update(tasks_table)
+            .where(tasks_table.c.task_id == task_id)
+            .values(max_retries=0)
+        )
+
+    await _run_worker_until_task_finishes(
+        db_engine,
+        processing_service=processing_service,
+        chat_interface=chat_interface,
+        task_id=task_id,
+        allow_failures=True,
+    )
+
+    status, error = await _task_status(db_engine, task_id)
+    assert status == "failed"
+    assert error is not None
+    assert "secondary-profile" in error
+    assert provider.calls == []
+    assert chat_interface.messages == []

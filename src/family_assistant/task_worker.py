@@ -13,7 +13,7 @@ import traceback
 import uuid
 from datetime import UTC, datetime, timedelta  # Added Union
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Required, TypedDict
+from typing import TYPE_CHECKING, Any, Required, TypedDict, cast
 
 import aiofiles.os
 from dateutil import rrule
@@ -1739,6 +1739,7 @@ async def _build_confirmation_execution_context(
     exec_context: ToolExecutionContext,
     request: ConfirmationRequestRow,
     source_row: MessageHistoryRow | None,
+    processing_service: ProcessingService,
 ) -> ToolExecutionContext:
     """Reconstruct the best available context for deferred tool execution."""
     interface_type = (
@@ -1775,7 +1776,7 @@ async def _build_confirmation_execution_context(
             interface_type, chat_interface
         )
 
-    tools_provider = _get_processing_tools_provider(exec_context)
+    tools_provider = processing_service.tools_provider
 
     async def approved_confirmation_callback(
         interface_type: str,
@@ -1817,15 +1818,15 @@ async def _build_confirmation_execution_context(
         user_id=request["target_user_id"],
         turn_id=turn_id,
         db_context=exec_context.db_context,
-        processing_service=exec_context.processing_service,
+        processing_service=processing_service,
         clock=exec_context.clock,
-        home_assistant_client=exec_context.home_assistant_client,
+        home_assistant_client=processing_service.home_assistant_client,
         event_sources=exec_context.event_sources,
-        attachment_registry=exec_context.attachment_registry,
-        camera_backend=exec_context.camera_backend,
+        attachment_registry=processing_service.attachment_registry,
+        camera_backend=processing_service.camera_backend,
         chat_interface=chat_interface,
         chat_interfaces=exec_context.chat_interfaces,
-        timezone=exec_context.timezone,
+        timezone=processing_service.service_config.timezone,
         processing_profile_id=processing_profile_id,
         subconversation_id=subconversation_id,
         request_confirmation_callback=approved_confirmation_callback,
@@ -1833,9 +1834,11 @@ async def _build_confirmation_execution_context(
         embedding_generator=exec_context.embedding_generator,
         indexing_source=exec_context.indexing_source,
         tools_provider=tools_provider,
-        visibility_grants=exec_context.visibility_grants,
-        default_note_visibility_labels=exec_context.default_note_visibility_labels,
-        note_registry=exec_context.note_registry,
+        visibility_grants=processing_service.service_config.visibility_grants,
+        default_note_visibility_labels=(
+            processing_service.service_config.default_note_visibility_labels
+        ),
+        note_registry=processing_service.service_config.note_registry,
     )
 
 
@@ -1845,6 +1848,51 @@ def _get_processing_tools_provider(exec_context: ToolExecutionContext) -> ToolsP
     if processing_service is None:
         raise RuntimeError("Confirmation execution requires a processing service")
     return processing_service.tools_provider
+
+
+def _resolve_confirmation_processing_service(
+    exec_context: ToolExecutionContext,
+    source_row: MessageHistoryRow | None,
+) -> ProcessingService:
+    """Resolve the local processing service that originally created the confirmation."""
+    default_processing_service = exec_context.processing_service
+    if default_processing_service is None:
+        raise RuntimeError("Confirmation execution requires a processing service")
+
+    profile_id = (
+        str(source_row["processing_profile_id"])
+        if source_row is not None
+        and source_row.get("processing_profile_id") is not None
+        else None
+    )
+    if profile_id is None or profile_id == default_processing_service.service_config.id:
+        return default_processing_service
+
+    registry = default_processing_service.processing_services_registry
+    if registry is None:
+        raise RuntimeError(
+            "Confirmation execution cannot resolve non-default profile "
+            f"'{profile_id}' without a processing service registry"
+        )
+
+    candidate = registry.get(profile_id)
+    if candidate is None:
+        raise RuntimeError(
+            f"Confirmation execution profile '{profile_id}' is no longer available"
+        )
+    if getattr(candidate, "kind", None) != "local":
+        raise RuntimeError(
+            "Confirmation execution requires a local processing profile, got "
+            f"'{profile_id}' of kind '{getattr(candidate, 'kind', None)}'"
+        )
+    if not hasattr(candidate, "tools_provider") or not hasattr(
+        candidate, "service_config"
+    ):
+        raise RuntimeError(
+            "Confirmation execution resolved an unsupported local profile object "
+            f"for '{profile_id}'"
+        )
+    return cast("ProcessingService", candidate)
 
 
 async def _notify_confirmation_execution_result(
@@ -1921,10 +1969,15 @@ async def handle_confirmation_tool_execution(
             )
         )
 
+    processing_service = _resolve_confirmation_processing_service(
+        exec_context,
+        source_row,
+    )
     execution_context = await _build_confirmation_execution_context(
         exec_context,
         request,
         source_row,
+        processing_service,
     )
     tools_provider = _get_processing_tools_provider(execution_context)
     call_id = request["tool_call_id"] or request["id"]
