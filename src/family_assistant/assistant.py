@@ -667,11 +667,23 @@ class Assistant:
         )
 
         # Initialize and store for UI/API access
-        await self.root_tools_provider.get_tool_definitions()
         self.fastapi_app.state.tools_provider = self.root_tools_provider
         self.fastapi_app.state.tool_definitions = (
             await self.root_tools_provider.get_tool_definitions()
         )
+        duplicate_conflicts = self.root_tools_provider.duplicate_tool_conflicts
+        if duplicate_conflicts:
+            conflict_summary = "; ".join(
+                f"'{name}' from {', '.join(providers)}"
+                for name, providers in sorted(duplicate_conflicts.items())
+            )
+            logger.error(
+                "Duplicate tool name(s) detected at startup; only the first occurrence "
+                "for each name is exposed to LLMs. Conflicts: %s. "
+                "Rename, unregister, or filter one of the conflicting tools "
+                "(e.g. disable the local tool or remove the MCP server that exposes it).",
+                conflict_summary,
+            )
         logger.info(
             f"Root ToolsProvider initialized with {len(self.fastapi_app.state.tool_definitions)} tools"
         )

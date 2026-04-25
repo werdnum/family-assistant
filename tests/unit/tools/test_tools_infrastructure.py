@@ -13,6 +13,7 @@ import pytest
 
 from family_assistant.storage.context import DatabaseContext
 from family_assistant.tools.infrastructure import (
+    CompositeToolsProvider,
     ConfirmingToolsProvider,
     LocalToolsProvider,
     PolicyEnforcingToolsProvider,
@@ -593,6 +594,105 @@ class TestLocalToolsProvider:
             assert received_db[0] is mock_db_context
         finally:
             del sys.modules["fake_tool_module"]
+
+
+class _StaticToolsProvider:
+    """Minimal ToolsProvider stub returning fixed definitions."""
+
+    def __init__(self, definitions: list[ToolDefinition]) -> None:
+        self._definitions = definitions
+
+    async def get_tool_definitions(self) -> list[ToolDefinition]:
+        return list(self._definitions)
+
+    async def execute_tool(
+        self,
+        name: str,  # noqa: ARG002
+        # ast-grep-ignore: no-dict-any - Matches ToolsProvider protocol signature
+        arguments: dict[str, Any],  # noqa: ARG002
+        context: ToolExecutionContext,  # noqa: ARG002
+        call_id: str | None = None,  # noqa: ARG002
+    ) -> str:
+        raise NotImplementedError
+
+    async def close(self) -> None:
+        return None
+
+
+class TestCompositeToolsProviderDeduplication:
+    """Deduplication and conflict reporting for CompositeToolsProvider."""
+
+    @staticmethod
+    def _definition(name: str, description: str = "") -> ToolDefinition:
+        return {
+            "type": "function",
+            "function": {
+                "name": name,
+                "description": description or f"{name} description",
+                "parameters": {"type": "object", "properties": {}},
+            },
+        }
+
+    @pytest.mark.asyncio
+    async def test_drops_duplicate_tool_names_keeping_first_provider(self) -> None:
+        first = _StaticToolsProvider([
+            self._definition("browser_snapshot", "local browser snapshot"),
+            self._definition("local_only"),
+        ])
+        second = _StaticToolsProvider([
+            self._definition("browser_snapshot", "mcp browser snapshot"),
+            self._definition("mcp_only"),
+        ])
+        composite = CompositeToolsProvider(providers=[first, second])
+
+        definitions = await composite.get_tool_definitions()
+
+        names = [d["function"]["name"] for d in definitions]
+        assert names == ["browser_snapshot", "local_only", "mcp_only"]
+        # First occurrence wins - description is from the local provider.
+        kept = next(
+            d for d in definitions if d["function"]["name"] == "browser_snapshot"
+        )
+        assert kept["function"]["description"] == "local browser snapshot"
+
+    @pytest.mark.asyncio
+    async def test_records_conflicts_with_provider_names(self) -> None:
+        first = _StaticToolsProvider([self._definition("browser_snapshot")])
+        second = _StaticToolsProvider([self._definition("browser_snapshot")])
+        composite = CompositeToolsProvider(providers=[first, second])
+
+        await composite.get_tool_definitions()
+
+        assert composite.duplicate_tool_conflicts == {
+            "browser_snapshot": ["_StaticToolsProvider", "_StaticToolsProvider"],
+        }
+
+    @pytest.mark.asyncio
+    async def test_no_conflicts_when_names_are_unique(self) -> None:
+        first = _StaticToolsProvider([self._definition("a")])
+        second = _StaticToolsProvider([self._definition("b")])
+        composite = CompositeToolsProvider(providers=[first, second])
+
+        definitions = await composite.get_tool_definitions()
+
+        assert [d["function"]["name"] for d in definitions] == ["a", "b"]
+        assert composite.duplicate_tool_conflicts == {}
+
+    @pytest.mark.asyncio
+    async def test_conflicts_reset_on_subsequent_call(self) -> None:
+        first = _StaticToolsProvider([self._definition("dup")])
+        second = _StaticToolsProvider([self._definition("dup")])
+        composite = CompositeToolsProvider(providers=[first, second])
+
+        await composite.get_tool_definitions()
+        assert composite.duplicate_tool_conflicts != {}
+
+        # Replace providers' definitions to remove the conflict and re-fetch.
+        first._definitions = [self._definition("dup")]  # noqa: SLF001
+        second._definitions = [self._definition("other")]  # noqa: SLF001
+        await composite.get_tool_definitions()
+
+        assert composite.duplicate_tool_conflicts == {}
 
 
 class TestConfirmingToolsProvider:
