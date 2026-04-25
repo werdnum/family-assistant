@@ -607,60 +607,23 @@ class CompositeToolsProvider(ToolsProvider):
 
     def __init__(self, providers: list[ToolsProvider]) -> None:
         self._providers = providers
-        self._duplicate_tool_conflicts: dict[str, list[str]] = {}
         logger.info(
             f"CompositeToolsProvider initialized with {len(providers)} providers"
         )
 
     async def get_tool_definitions(self) -> list[ToolDefinition]:
-        """Returns combined tool definitions from all providers.
-
-        When multiple providers expose a tool with the same name, only the
-        first occurrence is kept. The conflict is recorded so that startup
-        validation can surface a prominent error to operators. LLM APIs such
-        as Gemini reject requests containing duplicate function declarations,
-        so deduplication here keeps the tool list valid downstream.
-        """
-        deduped_definitions: list[ToolDefinition] = []
-        seen_tool_names: dict[str, str] = {}
-        conflicts: dict[str, list[str]] = {}
+        """Returns combined tool definitions from all providers."""
+        all_definitions: list[ToolDefinition] = []
         for provider in self._providers:
-            provider_label = type(provider).__name__
             try:
                 definitions = await provider.get_tool_definitions()
+                all_definitions.extend(definitions)
             except Exception as e:
                 logger.error(
-                    f"Error getting tool definitions from {provider_label}: {e}",
+                    f"Error getting tool definitions from {type(provider).__name__}: {e}",
                     exc_info=True,
                 )
-                continue
-            for definition in definitions:
-                name = definition.get("function", {}).get("name", "")
-                if not name:
-                    deduped_definitions.append(definition)
-                    continue
-                if name in seen_tool_names:
-                    first_provider = seen_tool_names[name]
-                    logger.error(
-                        f"Duplicate tool definition '{name}': already provided by "
-                        f"{first_provider}, ignoring duplicate from {provider_label}. "
-                        f"Rename, unregister, or filter one of them to silence this error."
-                    )
-                    conflicts.setdefault(name, [first_provider]).append(provider_label)
-                    continue
-                seen_tool_names[name] = provider_label
-                deduped_definitions.append(definition)
-        self._duplicate_tool_conflicts = conflicts
-        return deduped_definitions
-
-    @property
-    def duplicate_tool_conflicts(self) -> dict[str, list[str]]:
-        """Tool-name conflicts detected during the last get_tool_definitions call.
-
-        Maps tool name to the ordered list of provider class names that
-        declared it. Empty when there are no conflicts.
-        """
-        return self._duplicate_tool_conflicts
+        return all_definitions
 
     async def get_tool_descriptors(self) -> list[ToolDescriptor]:
         """Return combined descriptors from providers that expose them."""
