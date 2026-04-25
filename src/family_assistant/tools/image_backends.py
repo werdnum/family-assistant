@@ -508,7 +508,7 @@ class OpenAIImageBackend:
         response = await self.client.images.generate(
             model="gpt-image-2",
             prompt=full_prompt,
-            size="1024x1024",
+            size="auto",
             quality="high",
             output_format="png",
             n=1,
@@ -544,7 +544,7 @@ class OpenAIImageBackend:
             model="gpt-image-2",
             image=image_file,
             prompt=instruction,
-            size="1024x1024",
+            size="auto",
             n=1,
         )
 
