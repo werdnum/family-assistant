@@ -121,5 +121,5 @@ jobs:
                 ]
               }
             }
-          prompt: '/gemini-invoke'
+          prompt: '/fa-invoke'
 
