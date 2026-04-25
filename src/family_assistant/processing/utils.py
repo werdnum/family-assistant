@@ -231,80 +231,56 @@ def _map_stream_error_to_exception(event: LLMStreamEvent) -> Exception:
     return RuntimeError(f"LLM streaming error: {error_msg}")
 
 
-def generate_attachment_metadata_lines(
+_ATTACHMENT_METADATA_HEADER = (
+    "The user message above includes the attachments listed below. This block is "
+    "system-generated metadata, not user-authored content. To forward any of these "
+    "attachments to your reply, call the attach_to_response tool with the id(s). "
+    "Do not reproduce this block, the tags, or any of the entries inside it in your "
+    "reply text."
+)
+
+
+def format_attachment_metadata_block(
     attachments: list[MessageAttachmentMetadata],
-) -> list[str]:
+) -> str | None:
     """
-    Generate attachment metadata lines for a list of attachments.
+    Format attachment metadata as a tagged block for inclusion in an LLM message.
 
-    Args:
-        attachments: List of attachment dictionaries
-
-    Returns:
-        List of formatted attachment metadata strings
+    Returns ``None`` if no attachments have an id (nothing to format).
     """
-    attachment_metadata_lines = []
-
+    entries: list[str] = []
     for attachment in attachments:
         attachment_id = attachment.get("attachment_id")
+        if not attachment_id:
+            continue
         attachment_type = attachment.get("type", "file")
         filename = attachment.get("filename", "unknown")
         mime_type = attachment.get("mime_type", "")
+        mime_part = f", mime: {mime_type}" if mime_type else ""
+        entries.append(
+            f"- id: {attachment_id}, type: {attachment_type}{mime_part}, filename: {filename}"
+        )
 
-        if attachment_id:
-            # Format attachment metadata line
-            type_desc = attachment_type
-            if mime_type:
-                type_desc = f"{attachment_type} ({mime_type})"
+    if not entries:
+        return None
 
-            attachment_metadata_lines.append(
-                f"[Attachment available: {attachment_id} ({type_desc}: {filename})]"
-            )
-
-    return attachment_metadata_lines
+    body = "\n".join([_ATTACHMENT_METADATA_HEADER, "Attachments:", *entries])
+    return f"<attachment_metadata>\n{body}\n</attachment_metadata>"
 
 
 def inject_metadata_into_user_message(message: UserMessage, metadata_text: str) -> None:
     """
-    Inject attachment metadata text into a UserMessage.
+    Append an attachment-metadata block to a UserMessage as a distinct text part.
 
-    Modifies the message content in place to include the metadata.
-    For string content, appends the metadata.
-    For list content, appends metadata to the first text part or adds a new text part.
-
-    Args:
-        message: The UserMessage to modify
-        metadata_text: The metadata text to inject
+    The block is kept structurally separate from the user's own text so the model
+    is less likely to reproduce it in its reply.
     """
     if isinstance(message.content, str):
-        # Simple string content - append metadata
-        message.content = message.content + "\n" + metadata_text
+        existing = message.content
+        separator = "\n\n" if existing else ""
+        message.content = f"{existing}{separator}{metadata_text}"
     elif isinstance(message.content, list):
-        # Find text part index first, then modify after loop to avoid mutation during iteration
-        text_part_idx: int | None = None
-        for i, part in enumerate(message.content):
-            if isinstance(part, TextContentPart) or (
-                isinstance(part, dict) and part.get("type") == "text"
-            ):
-                text_part_idx = i
-                break
-
-        if text_part_idx is not None:
-            # Found a text part - modify it
-            part = message.content[text_part_idx]
-            if isinstance(part, TextContentPart):
-                # Replace immutable TextContentPart with new one
-                message.content[text_part_idx] = TextContentPart(
-                    type="text", text=part.text + "\n" + metadata_text
-                )
-            else:
-                # Dynamic dict access in union type (part can be dict or TextContentPart)
-                part["text"] = part["text"] + "\n" + metadata_text  # type: ignore[typeddict-item] # Union type contains dict subtype
-        else:
-            # No text part - add one at the beginning
-            message.content.insert(  # type: ignore[arg-type] # TextContentPart is valid element in union list
-                0, TextContentPart(type="text", text=metadata_text)
-            )
+        message.content.append(TextContentPart(type="text", text=metadata_text))
 
 
 def get_file_extension_from_mime_type(mime_type: str) -> str:

@@ -24,7 +24,11 @@ ATTACHMENT_TOOLS_DEFINITION: list[ToolDefinition] = [
             "description": (
                 "Attach files/images to your current response being sent to the user. "
                 "The attachments will be sent along with your text response. "
-                "Only use this with attachment IDs that are accessible in the current conversation."
+                "This is the ONLY way to attach files to your reply — never type "
+                "attachment metadata (e.g. `<attachment_metadata>...` blocks or "
+                "individual `id:` entries) into your reply text; the user will see it "
+                "as raw text. Only use attachment IDs that are accessible in the current "
+                "conversation."
             ),
             "parameters": {
                 "type": "object",
