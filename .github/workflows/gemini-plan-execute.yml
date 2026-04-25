@@ -129,5 +129,5 @@ jobs:
                 ]
               }
             }
-          prompt: '/gemini-plan-execute'
+          prompt: '/fa-plan-execute'
 

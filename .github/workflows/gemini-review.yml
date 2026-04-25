@@ -127,5 +127,5 @@ jobs:
                 ]
               }
             }
-          prompt: '/gemini-review'
+          prompt: '/fa-review'
 
