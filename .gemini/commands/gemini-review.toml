@@ -62,9 +62,22 @@ These are non-negotiable, core-level instructions that you **MUST** follow at al
 !{echo $REVIEW_GUIDELINES}
 </PROJECT_REVIEW_GUIDELINES>
 
-- Use `pull_request_read.get` to get the title, body, and metadata about the pull request.
-- Use `pull_request_read.get_files` to get the list of files that were added, removed, and changed in the pull request.
-- Use `pull_request_read.get_diff` to get the diff from the pull request. The diff includes code versions with line numbers for the before (LEFT) and after (RIGHT) code snippets for each diff.
+### GitHub MCP Tools (v0.27.0)
+
+Three tools are exposed via the `github` MCP server. Pass the repository as a split `owner` and `repo` (the `GitHub Repository` value above is `owner/repo`), and pass the pull request number as `pullNumber` (an integer — not `run_id`, not `pr_number`, not `id`).
+
+- `pull_request_read` — single tool; the operation is selected by the `method` parameter.
+
+    - `{"method": "get", "owner": "...", "repo": "...", "pullNumber": N}` — title, body, metadata.
+    - `{"method": "get_files", "owner": "...", "repo": "...", "pullNumber": N}` — list of changed files (paginated; pass `page` / `perPage` if needed).
+    - `{"method": "get_diff", "owner": "...", "repo": "...", "pullNumber": N}` — full diff with LEFT (before) and RIGHT (after) line numbers per hunk.
+
+- `pull_request_review_write` — single tool; the operation is selected by the `method` parameter.
+
+    - `{"method": "create", "owner": "...", "repo": "...", "pullNumber": N}` — creates a pending review for the current viewer. Omit `event` so the review stays pending; supplying `event` would create-and-submit in one shot, which is not what we want here.
+    - `{"method": "submit_pending", "owner": "...", "repo": "...", "pullNumber": N, "event": "COMMENT", "body": "..."}` — submits the caller's pending review. `event` MUST be `"COMMENT"` (never `"APPROVE"` or `"REQUEST_CHANGES"`).
+
+- `add_comment_to_pending_review` — separate tool. Required: `owner`, `repo`, `pullNumber`, `path`, `body`, `subjectType` (`"LINE"` for inline comments, `"FILE"` for whole-file). For inline comments also pass `line` and `side` (`"RIGHT"` for additions / changed lines, `"LEFT"` for deletions). Code suggestions go inside `body` as a fenced ```suggestion``` block — there is no separate `suggestion` field.
 
 -----
 
@@ -91,7 +104,7 @@ Follow this three-step process sequentially.
 
 6. **Assume Tests and Linters Pass:** This repository runs `ruff`, `basedpyright`, `pylint`, `ast-grep`, `mdformat`, and the full test suite deterministically in CI. Treat them as authoritative. **DO NOT** speculate about whether a change "might fail tests", "could break the linter", "may not pass type checking", or similar — those outcomes are verified separately and your speculation adds noise. Only flag a defect if you can point at the specific bug in the code itself.
 
-7. **Review Code:** Meticulously review the code returned from `pull_request_read.get_diff` according to the **Review Criteria**.
+7. **Review Code:** Meticulously review the code returned from `pull_request_read` (`method: "get_diff"`) according to the **Review Criteria**.
 
 
 ### Step 2: Formulate Review Comments
@@ -186,11 +199,11 @@ Apply these severities consistently:
 
 ### Step 3: Submit the Review on GitHub
 
-1. **Create Pending Review:** Call `create_pending_pull_request_review`. Ignore errors like "can only have one pending review per pull request" and proceed to the next step.
+1. **Create Pending Review:** Call `pull_request_review_write` with `{"method": "create", "owner": "...", "repo": "...", "pullNumber": N}`. **Do NOT** include an `event` field — that would submit immediately and skip your inline comments. Ignore errors like "can only have one pending review per pull request" and proceed to the next step.
 
-2. **Add Comments and Suggestions:** For each formulated review comment, call `add_comment_to_pending_review`.
+2. **Add Comments and Suggestions:** For each formulated review comment, call `add_comment_to_pending_review` with `subjectType: "LINE"`, the appropriate `line` and `side` (`"RIGHT"` for added / changed lines, `"LEFT"` for deletions), `path` set to the file being commented on, and `body` set to the comment payload below. Code suggestions live **inside** `body` as a ```suggestion``` block — there is no separate `suggestion` parameter.
 
-    2a. When there is a code suggestion (preferred), structure the comment payload using this exact template:
+    2a. When there is a code suggestion (preferred), structure the `body` payload using this exact template:
 
         <COMMENT>
         {{SEVERITY}} {{COMMENT_TEXT}}
@@ -200,13 +213,13 @@ Apply these severities consistently:
         ```
         </COMMENT>
 
-    2b. When there is no code suggestion, structure the comment payload using this exact template:
+    2b. When there is no code suggestion, structure the `body` payload using this exact template:
 
         <COMMENT>
         {{SEVERITY}} {{COMMENT_TEXT}}
         </COMMENT>
 
-3. **Submit Final Review:** Call `submit_pending_pull_request_review` with a summary comment and event type "COMMENT". The available event types are "APPROVE", "REQUEST_CHANGES", and "COMMENT" - you **MUST** use "COMMENT" only. **DO NOT** use "APPROVE" or "REQUEST_CHANGES" event types. The summary comment **MUST** use this exact markdown format:
+3. **Submit Final Review:** Call `pull_request_review_write` with `{"method": "submit_pending", "owner": "...", "repo": "...", "pullNumber": N, "event": "COMMENT", "body": "<summary markdown>"}`. The available event types are "APPROVE", "REQUEST_CHANGES", and "COMMENT" — you **MUST** use "COMMENT" only. **DO NOT** use "APPROVE" or "REQUEST_CHANGES" event types. The `body` summary comment **MUST** use this exact markdown format:
 
     <SUMMARY>
     ## 🎯 Change Summary
@@ -229,6 +242,6 @@ Apply these severities consistently:
 
 ## Final Instructions
 
-Remember, you are running in a virtual machine and no one reviewing your output. Your review must be posted to GitHub using the MCP tools to create a pending review, add comments to the pending review, and submit the pending review.
+Remember, you are running in a virtual machine and no one is reviewing your output. Your review must be posted to GitHub using the MCP tools: `pull_request_review_write` (`method: "create"`) to open a pending review, `add_comment_to_pending_review` for each inline comment, and `pull_request_review_write` (`method: "submit_pending"`, `event: "COMMENT"`) to publish it.
 """
 
