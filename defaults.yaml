@@ -192,15 +192,6 @@ mcp_config:
     time:
       command: "uvx"
       args: ["mcp-server-time", "--local-timezone=Australia/Sydney"]
-    browser:
-      command: "deno"
-      args:
-        - "run"
-        - "-A"
-        - "npm:@playwright/mcp@latest"
-        - "--headless"
-        - "--browser"
-        - "chromium"
     brave:
       command: "deno"
       args:
@@ -368,7 +359,6 @@ default_profile_settings:
       - "brave"
       - "homeassistant"
       - "google-maps"
-      # The "browser" mcp server is intentionally excluded here.
     # Tools requiring explicit user confirmation before execution for this default profile.
     # This list is overridden by the TOOLS_REQUIRING_CONFIRMATION environment variable if set.
     confirm_tools:

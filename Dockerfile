@@ -80,8 +80,7 @@ RUN uv tool install mcp-server-time
 RUN uv tool install mcp-server-fetch
 
 # Install Node.js MCP tools globally using Deno, providing explicit names
-RUN deno install --global -A --name playwright-mcp npm:@playwright/mcp@latest && \
-    deno install --global -A --name brave-search-mcp-server npm:@modelcontextprotocol/server-brave-search
+RUN deno install --global -A --name brave-search-mcp-server npm:@modelcontextprotocol/server-brave-search
 
 # Switch back to root for remaining system-level operations
 USER root

@@ -7,6 +7,7 @@ import logging
 import os
 import sys
 from asyncio import subprocess as asyncio_subprocess
+from collections import Counter
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
@@ -667,11 +668,29 @@ class Assistant:
         )
 
         # Initialize and store for UI/API access
-        await self.root_tools_provider.get_tool_definitions()
         self.fastapi_app.state.tools_provider = self.root_tools_provider
         self.fastapi_app.state.tool_definitions = (
             await self.root_tools_provider.get_tool_definitions()
         )
+        name_counts = Counter(
+            d.get("function", {}).get("name", "")
+            for d in self.fastapi_app.state.tool_definitions
+        )
+        duplicates = sorted(
+            name for name, count in name_counts.items() if name and count > 1
+        )
+        if duplicates:
+            message = (
+                "Duplicate tool name(s) detected at startup. Gemini and other "
+                "LLM providers reject tool lists containing duplicate function "
+                f"declarations. Duplicates: {', '.join(duplicates)}. Rename, "
+                "unregister, or filter one of the conflicting tools "
+                "(e.g. disable the local tool or remove the MCP server that "
+                "exposes it)."
+            )
+            logger.error(message)
+            await self.root_tools_provider.close()
+            raise RuntimeError(message)
         logger.info(
             f"Root ToolsProvider initialized with {len(self.fastapi_app.state.tool_definitions)} tools"
         )
