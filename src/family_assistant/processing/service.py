@@ -35,7 +35,7 @@ from .types import (
 )
 from .utils import (
     _user_friendly_error_message,
-    generate_attachment_metadata_lines,
+    format_attachment_metadata_block,
     inject_metadata_into_user_message,
 )
 
@@ -362,13 +362,10 @@ class ProcessingService:
         if not trigger_attachments:
             return
 
-        attachment_metadata_lines = generate_attachment_metadata_lines(
-            trigger_attachments
-        )
-        if not attachment_metadata_lines:
+        metadata_text = format_attachment_metadata_block(trigger_attachments)
+        if not metadata_text:
             return
 
-        metadata_text = "\n".join(attachment_metadata_lines)
         for i in range(len(messages_for_llm) - 1, -1, -1):
             msg = messages_for_llm[i]
             if isinstance(msg, UserMessage):
