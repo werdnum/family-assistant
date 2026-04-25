@@ -128,6 +128,27 @@ class RecordingChatInterface:
         return f"chat-message-{len(self.messages)}"
 
 
+class FailingChatInterface(RecordingChatInterface):
+    """Fake chat interface that raises on outbound send."""
+
+    async def send_message(
+        self,
+        conversation_id: str,
+        text: str,
+        parse_mode: str | None = None,
+        reply_to_interface_id: str | None = None,
+        attachment_ids: list[str] | None = None,
+    ) -> str | None:
+        await super().send_message(
+            conversation_id=conversation_id,
+            text=text,
+            parse_mode=parse_mode,
+            reply_to_interface_id=reply_to_interface_id,
+            attachment_ids=attachment_ids,
+        )
+        raise RuntimeError("chat send failed")
+
+
 def _processing_service(provider: object) -> ProcessingService:
     service = SimpleNamespace(
         tools_provider=provider,
@@ -290,6 +311,68 @@ async def test_approved_confirmation_task_executes_stored_tool(
             "web-message-1",
         )
     ]
+    assert await _task_status(db_engine, task_id) == ("done", None)
+
+
+@pytest.mark.asyncio
+async def test_approved_confirmation_without_source_message_skips_notification(
+    db_engine: AsyncEngine,
+) -> None:
+    request_id = await _create_request(db_engine, source_message_internal_id=None)
+    task_id = await _approve_request(db_engine, request_id)
+    provider = RecordingToolsProvider()
+    chat_interface = RecordingChatInterface()
+
+    await _run_worker_until_task_finishes(
+        db_engine,
+        processing_service=_processing_service(provider),
+        chat_interface=chat_interface,
+        task_id=task_id,
+    )
+
+    assert provider.calls == [
+        (
+            "record_tool",
+            {"value": "payload"},
+            "call-record-tool",
+            "user-1",
+            "unknown_interface",
+        )
+    ]
+    assert chat_interface.messages == []
+    assert await _task_status(db_engine, task_id) == ("done", None)
+
+
+@pytest.mark.asyncio
+async def test_notification_failure_does_not_retry_confirmed_tool_execution(
+    db_engine: AsyncEngine,
+) -> None:
+    source_message_id = await _create_source_message(db_engine)
+    request_id = await _create_request(
+        db_engine,
+        source_message_internal_id=source_message_id,
+    )
+    task_id = await _approve_request(db_engine, request_id)
+    provider = RecordingToolsProvider()
+    chat_interface = FailingChatInterface()
+
+    await _run_worker_until_task_finishes(
+        db_engine,
+        processing_service=_processing_service(provider),
+        chat_interface=chat_interface,
+        task_id=task_id,
+    )
+
+    assert provider.calls == [
+        (
+            "record_tool",
+            {"value": "payload"},
+            "call-record-tool",
+            "user-1",
+            "web",
+        )
+    ]
+    assert len(chat_interface.messages) == 1
     assert await _task_status(db_engine, task_id) == ("done", None)
 
 

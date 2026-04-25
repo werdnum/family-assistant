@@ -45,7 +45,7 @@ if TYPE_CHECKING:
     from family_assistant.storage.repositories.confirmation_requests import (
         ConfirmationRequestRow,
     )
-    from family_assistant.storage.types import TaskDict
+    from family_assistant.storage.types import MessageHistoryRow, TaskDict
     from family_assistant.tools import ToolsProvider
 
 # handle_index_email is now a method of EmailIndexer and registered in __main__.py
@@ -1738,17 +1738,9 @@ def _tool_result_text(result: str | ToolResult) -> str:
 async def _build_confirmation_execution_context(
     exec_context: ToolExecutionContext,
     request: ConfirmationRequestRow,
+    source_row: MessageHistoryRow | None,
 ) -> ToolExecutionContext:
     """Reconstruct the best available context for deferred tool execution."""
-    source_row = None
-    source_message_internal_id = request["source_message_internal_id"]
-    if source_message_internal_id is not None:
-        source_row = (
-            await exec_context.db_context.message_history.get_row_by_internal_id(
-                source_message_internal_id,
-            )
-        )
-
     interface_type = (
         str(source_row["interface_type"])
         if source_row is not None
@@ -1859,6 +1851,7 @@ async def _notify_confirmation_execution_result(
     context: ToolExecutionContext,
     request: ConfirmationRequestRow,
     result_text: str,
+    source_row: MessageHistoryRow | None,
 ) -> None:
     """Send a deterministic result notification when no live waiter consumes it."""
     if context.chat_interface is None:
@@ -1868,17 +1861,18 @@ async def _notify_confirmation_execution_result(
         )
         return
 
-    reply_to_interface_id: str | None = None
-    source_message_internal_id = request["source_message_internal_id"]
-    if source_message_internal_id is not None:
-        source_row = await context.db_context.message_history.get_row_by_internal_id(
-            source_message_internal_id,
+    if source_row is None:
+        logger.info(
+            "Confirmation %s completed without a source message; skipping result notification",
+            request["id"],
         )
-        if (
-            source_row is not None
-            and source_row.get("interface_message_id") is not None
-        ):
-            reply_to_interface_id = str(source_row["interface_message_id"])
+        return
+
+    reply_to_interface_id = (
+        str(source_row["interface_message_id"])
+        if source_row.get("interface_message_id") is not None
+        else None
+    )
 
     message = (
         "Approved action completed.\n\n"
@@ -1918,9 +1912,19 @@ async def handle_confirmation_tool_execution(
         )
         return
 
+    source_row = None
+    source_message_internal_id = request["source_message_internal_id"]
+    if source_message_internal_id is not None:
+        source_row = (
+            await exec_context.db_context.message_history.get_row_by_internal_id(
+                source_message_internal_id,
+            )
+        )
+
     execution_context = await _build_confirmation_execution_context(
         exec_context,
         request,
+        source_row,
     )
     tools_provider = _get_processing_tools_provider(execution_context)
     call_id = request["tool_call_id"] or request["id"]
@@ -1937,11 +1941,18 @@ async def handle_confirmation_tool_execution(
         call_id,
     )
 
-    await _notify_confirmation_execution_result(
-        execution_context,
-        request,
-        _tool_result_text(result),
-    )
+    try:
+        await _notify_confirmation_execution_result(
+            execution_context,
+            request,
+            _tool_result_text(result),
+            source_row,
+        )
+    except Exception:
+        logger.exception(
+            "Confirmation %s executed successfully but result notification failed",
+            request_id,
+        )
 
 
 async def handle_reindex_document(
