@@ -677,13 +677,17 @@ class Assistant:
                 f"'{name}' from {', '.join(providers)}"
                 for name, providers in sorted(duplicate_conflicts.items())
             )
-            logger.error(
-                "Duplicate tool name(s) detected at startup; only the first occurrence "
-                "for each name is exposed to LLMs. Conflicts: %s. "
-                "Rename, unregister, or filter one of the conflicting tools "
-                "(e.g. disable the local tool or remove the MCP server that exposes it).",
-                conflict_summary,
+            message = (
+                "Duplicate tool name(s) detected at startup. Gemini and other "
+                "LLM providers reject tool lists containing duplicate function "
+                f"declarations. Conflicts: {conflict_summary}. Rename, "
+                "unregister, or filter one of the conflicting tools "
+                "(e.g. disable the local tool or remove the MCP server that "
+                "exposes it)."
             )
+            logger.error(message)
+            await self.root_tools_provider.close()
+            raise RuntimeError(message)
         logger.info(
             f"Root ToolsProvider initialized with {len(self.fastapi_app.state.tool_definitions)} tools"
         )
