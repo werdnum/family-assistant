@@ -119,6 +119,7 @@ from family_assistant.tools.execute_script import (
 )
 from family_assistant.tools.home_assistant import (
     HOME_ASSISTANT_TOOLS_DEFINITION,
+    call_home_assistant_action_tool,
     download_state_history_tool,
     get_camera_snapshot_tool,
     list_home_assistant_entities_tool,
@@ -350,6 +351,7 @@ __all__ = [
     "transform_image_tool",
     "download_state_history_tool",
     "list_home_assistant_entities_tool",
+    "call_home_assistant_action_tool",
     "DATA_VISUALIZATION_TOOLS_DEFINITION",
     "create_vega_chart_tool",
     "DATA_MANIPULATION_TOOLS_DEFINITION",
@@ -516,6 +518,7 @@ _LOCAL_TOOL_IMPLEMENTATIONS: dict[str, ToolImplementation] = {
     "get_camera_snapshot": get_camera_snapshot_tool,
     "download_state_history": download_state_history_tool,
     "list_home_assistant_entities": list_home_assistant_entities_tool,
+    "call_home_assistant_action": call_home_assistant_action_tool,
     # Camera tools (Reolink/Frigate backend)
     "list_cameras": list_cameras_tool,
     "search_camera_events": search_camera_events_tool,
@@ -783,6 +786,12 @@ LOCAL_TOOL_METADATA_BY_NAME: dict[str, LocalToolMetadata] = {
         ToolTag.READ_ONLY,
         ToolTag.SENSITIVE_DATA,
         ToolTag.HOME_AUTOMATION,
+        ToolTag.OUTPUT_TRUSTED,
+    ),
+    "call_home_assistant_action": _metadata(
+        ToolTag.STATE_CHANGING,
+        ToolTag.HOME_AUTOMATION,
+        ToolTag.EXTERNAL_COMM,
         ToolTag.OUTPUT_TRUSTED,
     ),
     "list_cameras": _metadata(

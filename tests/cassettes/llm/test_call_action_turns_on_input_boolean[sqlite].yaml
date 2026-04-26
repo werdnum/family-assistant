@@ -1,0 +1,124 @@
+interactions:
+  - request:
+      body:
+        entity_id: input_boolean.test_switch
+      headers:
+        Content-Type:
+          - application/json
+      method: POST
+      uri: http://localhost:47897/api/services/input_boolean/turn_off
+    response:
+      body:
+        string: '[]'
+      headers:
+        Content-Encoding:
+          - deflate
+        Content-Length:
+          - '10'
+        Content-Type:
+          - application/json
+        Date:
+          - Sun, 26 Apr 2026 09:25:06 GMT
+        Referrer-Policy:
+          - no-referrer
+        Server:
+          - ''
+        X-Content-Type-Options:
+          - nosniff
+        X-Frame-Options:
+          - SAMEORIGIN
+      status:
+        code: 200
+        message: OK
+  - request:
+      body:
+        entity_id: input_boolean.test_switch
+      headers:
+        Content-Type:
+          - application/json
+      method: POST
+      uri: http://localhost:47897/api/services/input_boolean/turn_on
+    response:
+      body:
+        string: '[{"entity_id":"input_boolean.test_switch","state":"on","attributes":{"editable":false,"friendly_name":"Test Switch"},"last_changed":"2026-04-26T09:25:06.740163+00:00","last_reported":"2026-04-26T09:25:06.740163+00:00","last_updated":"2026-04-26T09:25:06.740163+00:00","context":{"id":"01KQ4HPQ1KJPT3STCJQ17XVRZK","parent_id":null,"user_id":"3b4a12b29e75498f99d783ef7626da63"}}]'
+      headers:
+        Content-Encoding:
+          - deflate
+        Content-Length:
+          - '244'
+        Content-Type:
+          - application/json
+        Date:
+          - Sun, 26 Apr 2026 09:25:06 GMT
+        Referrer-Policy:
+          - no-referrer
+        Server:
+          - ''
+        X-Content-Type-Options:
+          - nosniff
+        X-Frame-Options:
+          - SAMEORIGIN
+      status:
+        code: 200
+        message: OK
+  - request:
+      body:
+        template: '{{ states(''input_boolean.test_switch'') }}'
+      headers:
+        Content-Type:
+          - application/json
+      method: POST
+      uri: http://localhost:47897/api/template
+    response:
+      body:
+        string: 'on'
+      headers:
+        Content-Length:
+          - '2'
+        Content-Type:
+          - text/plain; charset=utf-8
+        Date:
+          - Sun, 26 Apr 2026 09:25:06 GMT
+        Referrer-Policy:
+          - no-referrer
+        Server:
+          - ''
+        X-Content-Type-Options:
+          - nosniff
+        X-Frame-Options:
+          - SAMEORIGIN
+      status:
+        code: 200
+        message: OK
+  - request:
+      body:
+        entity_id: input_boolean.test_switch
+      headers:
+        Content-Type:
+          - application/json
+      method: POST
+      uri: http://localhost:47897/api/services/input_boolean/turn_off
+    response:
+      body:
+        string: '[{"entity_id":"input_boolean.test_switch","state":"off","attributes":{"editable":false,"friendly_name":"Test Switch"},"last_changed":"2026-04-26T09:25:06.750797+00:00","last_reported":"2026-04-26T09:25:06.750797+00:00","last_updated":"2026-04-26T09:25:06.750797+00:00","context":{"id":"01KQ4HPQ1Y8HZBF1E276EF78J4","parent_id":null,"user_id":"3b4a12b29e75498f99d783ef7626da63"}}]'
+      headers:
+        Content-Encoding:
+          - deflate
+        Content-Length:
+          - '244'
+        Content-Type:
+          - application/json
+        Date:
+          - Sun, 26 Apr 2026 09:25:06 GMT
+        Referrer-Policy:
+          - no-referrer
+        Server:
+          - ''
+        X-Content-Type-Options:
+          - nosniff
+        X-Frame-Options:
+          - SAMEORIGIN
+      status:
+        code: 200
+        message: OK
+version: 1

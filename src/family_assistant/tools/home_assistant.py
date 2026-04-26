@@ -19,6 +19,7 @@ from family_assistant.tools.types import (
 )
 
 if TYPE_CHECKING:
+    from family_assistant.home_assistant_wrapper import ActionPayload
     from family_assistant.tools.types import ToolExecutionContext
 
 logger = logging.getLogger(__name__)
@@ -181,6 +182,83 @@ HOME_ASSISTANT_TOOLS_DEFINITION: list[ToolDefinition] = [
                     },
                 },
                 "required": [],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "call_home_assistant_action",
+            "description": (
+                "Execute an arbitrary Home Assistant action (formerly known as a "
+                "'service call'). Use this to control devices and trigger automations: "
+                "turn lights on/off, lock/unlock doors, set climate temperatures, "
+                "play media, send notifications via HA, etc.\n\n"
+                "An action is identified by a `domain` and an `action` name. The action "
+                "name corresponds to what Home Assistant historically called the "
+                "'service' (e.g. domain='light', action='turn_on'). Use "
+                "`list_home_assistant_entities` first to discover entity IDs if you are "
+                "not sure of them.\n\n"
+                "Common examples:\n"
+                "- Turn on a light: domain='light', action='turn_on', "
+                "service_data={'entity_id': 'light.kitchen', 'brightness_pct': 75}\n"
+                "- Turn off a switch: domain='switch', action='turn_off', "
+                "service_data={'entity_id': 'switch.fan'}\n"
+                "- Set thermostat: domain='climate', action='set_temperature', "
+                "service_data={'entity_id': 'climate.living_room', 'temperature': 21}\n"
+                "- Activate a scene: domain='scene', action='turn_on', "
+                "service_data={'entity_id': 'scene.movie_night'}\n"
+                "- Trigger a script: domain='script', action='turn_on', "
+                "service_data={'entity_id': 'script.bedtime'}\n\n"
+                "Returns: A summary of state changes that occurred during the action, "
+                "including each affected entity and its new state. If "
+                "`return_response=true`, also includes the action's response payload "
+                "(only supported by actions that declare `supports_response`). On "
+                "errors, returns a descriptive error message."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "domain": {
+                        "type": "string",
+                        "description": (
+                            "The Home Assistant action domain (also the entity domain "
+                            "for most actions), e.g. 'light', 'switch', 'climate', "
+                            "'scene', 'script', 'media_player', 'notify'."
+                        ),
+                    },
+                    "action": {
+                        "type": "string",
+                        "description": (
+                            "The action name within the domain (this is what HA "
+                            "previously called the 'service'), e.g. 'turn_on', "
+                            "'turn_off', 'toggle', 'set_temperature', 'lock', 'unlock'."
+                        ),
+                    },
+                    "service_data": {
+                        "type": "object",
+                        "description": (
+                            "Optional payload for the action. Typically includes "
+                            "`entity_id` (a string or list of strings) identifying the "
+                            "target entity/entities, plus any action-specific fields "
+                            "(e.g. `brightness_pct`, `temperature`, `message`). May "
+                            "also use the HA `target` block (with `entity_id`, "
+                            "`device_id`, or `area_id`)."
+                        ),
+                        "additionalProperties": True,
+                    },
+                    "return_response": {
+                        "type": "boolean",
+                        "description": (
+                            "If true, request the action's response payload. Only "
+                            "supported for actions declared with `supports_response` in "
+                            "Home Assistant (e.g. some `calendar.*` and `weather.*` "
+                            "actions). Defaults to false."
+                        ),
+                        "default": False,
+                    },
+                },
+                "required": ["domain", "action"],
             },
         },
     },
@@ -578,6 +656,117 @@ async def download_state_history_tool(
     except Exception as e:
         logger.error(f"Error retrieving state history: {e}", exc_info=True)
         return ToolResult(text=f"Error: Failed to retrieve state history: {str(e)}")
+
+
+async def call_home_assistant_action_tool(
+    exec_context: ToolExecutionContext,
+    domain: str,
+    action: str,
+    service_data: ActionPayload | None = None,
+    return_response: bool = False,
+) -> ToolResult:
+    """
+    Execute a Home Assistant action (formerly known as a "service call").
+
+    Args:
+        exec_context: The tool execution context containing the HA client.
+        domain: The action domain (e.g., 'light', 'switch', 'climate').
+        action: The action name within the domain (e.g., 'turn_on').
+        service_data: Optional dict with the action payload (entity_id, target,
+            and any action-specific fields).
+        return_response: If true, request the action's response payload.
+
+    Returns:
+        ToolResult with structured data describing the changed states and any
+        action response payload, or an error message.
+    """
+    logger.info(
+        "Calling Home Assistant action: %s.%s data=%s return_response=%s",
+        domain,
+        action,
+        service_data,
+        return_response,
+    )
+
+    if (
+        not hasattr(exec_context, "home_assistant_client")
+        or not exec_context.home_assistant_client
+    ):
+        logger.error("Home Assistant client not available in execution context")
+        return ToolResult(
+            text="Error: Home Assistant integration is not configured or available."
+        )
+
+    ha_client = exec_context.home_assistant_client
+
+    try:
+        from homeassistant_api.errors import (  # noqa: PLC0415
+            HomeassistantAPIError,
+        )
+    except ImportError:
+        logger.error("homeassistant_api library is not installed")
+        return ToolResult(text="Error: Home Assistant API library is not installed.")
+
+    try:
+        result = await ha_client.async_call_action(
+            domain=domain,
+            action=action,
+            service_data=service_data,
+            return_response=return_response,
+        )
+    except HomeassistantAPIError as e:
+        logger.error(
+            "Home Assistant API error calling %s.%s: %s",
+            domain,
+            action,
+            e,
+            exc_info=True,
+        )
+        return ToolResult(
+            text=f"Error: Home Assistant API error calling {domain}.{action} - {str(e)}"
+        )
+    except Exception as e:
+        logger.error(
+            "Unexpected error calling Home Assistant action %s.%s: %s",
+            domain,
+            action,
+            e,
+            exc_info=True,
+        )
+        return ToolResult(
+            text=f"Error: Failed to call Home Assistant action {domain}.{action} - {str(e)}"
+        )
+
+    changed_states = result.get("changed_states", [])
+    response_payload = result.get("response", {})
+
+    summary_parts = [f"Called {domain}.{action}"]
+    if changed_states:
+        summary_parts.append(
+            f"{len(changed_states)} state change(s): "
+            + ", ".join(
+                f"{state.get('entity_id', '?')}={state.get('state', '?')}"
+                for state in changed_states
+            )
+        )
+    else:
+        summary_parts.append("no state changes reported")
+
+    if return_response:
+        summary_parts.append(f"response={json.dumps(response_payload)}")
+
+    summary = "; ".join(summary_parts)
+
+    # ast-grep-ignore: no-dict-any - tool result data structure
+    data: dict[str, Any] = {
+        "domain": domain,
+        "action": action,
+        "changed_states": changed_states,
+    }
+    if return_response:
+        data["response"] = response_payload
+
+    return ToolResult(text=summary, data=data)
 
 
 async def list_home_assistant_entities_tool(

@@ -28,6 +28,23 @@ class EntityMetadata(TypedDict):
     device_name: str | None
 
 
+# Home Assistant action payloads and entity state dicts have arbitrary,
+# action-specific shapes (any HA service or response field). We expose them
+# as plain JSON-compatible dicts because the LLM constructs them dynamically
+# and we just pass them through to/from the HA API.
+# ast-grep-ignore: no-dict-any - HA action payloads are action-specific
+ActionPayload = dict[str, Any]
+# ast-grep-ignore: no-dict-any - HA state dicts have arbitrary attribute payloads
+HAStateDict = dict[str, Any]
+
+
+class ActionCallResult(TypedDict):
+    """Result of a Home Assistant action (service) call."""
+
+    changed_states: list[HAStateDict]
+    response: ActionPayload
+
+
 class HomeAssistantClientWrapper:
     """
     Wrapper around homeassistant_api.Client that provides additional functionality.
@@ -178,6 +195,55 @@ class HomeAssistantClientWrapper:
             )
 
             return entities
+
+    async def async_call_action(
+        self,
+        domain: str,
+        action: str,
+        service_data: ActionPayload | None = None,
+        *,
+        return_response: bool = False,
+    ) -> ActionCallResult:
+        """
+        Call a Home Assistant action (formerly known as a "service call").
+
+        Args:
+            domain: The action domain (e.g., "light", "switch", "climate").
+            action: The action name within the domain (e.g., "turn_on").
+            service_data: Optional payload for the action. May include
+                ``entity_id`` (str or list), a ``target`` block, and any
+                action-specific fields.
+            return_response: If True, request the action's response payload
+                from Home Assistant (only supported for actions that declare
+                ``supports_response``).
+
+        Returns:
+            A dict with keys:
+              - ``changed_states``: list of entity state dicts that changed
+              - ``response``: the action response payload (only when
+                ``return_response`` is True; otherwise an empty dict).
+        """
+        payload = dict(service_data) if service_data else {}
+
+        if return_response:
+            states, response = await self._client.async_trigger_service_with_response(
+                domain=domain,
+                service=action,
+                **payload,
+            )
+        else:
+            states = await self._client.async_trigger_service(
+                domain=domain,
+                service=action,
+                **payload,
+            )
+            response = {}
+
+        changed_states = [json.loads(state.model_dump_json()) for state in states]
+        return ActionCallResult(
+            changed_states=changed_states,
+            response=dict(response),
+        )
 
     async def async_get_camera_snapshot(self, camera_entity_id: str) -> bytes:
         """

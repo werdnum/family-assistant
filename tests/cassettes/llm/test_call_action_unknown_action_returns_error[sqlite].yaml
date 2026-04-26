@@ -1,0 +1,31 @@
+interactions:
+  - request:
+      body:
+        entity_id: input_boolean.test_switch
+      headers:
+        Content-Type:
+          - application/json
+      method: POST
+      uri: http://localhost:47859/api/services/input_boolean/bogus_action_does_not_exist
+    response:
+      body:
+        string: '400: Bad Request'
+      headers:
+        Content-Length:
+          - '16'
+        Content-Type:
+          - text/plain; charset=utf-8
+        Date:
+          - Sun, 26 Apr 2026 09:25:06 GMT
+        Referrer-Policy:
+          - no-referrer
+        Server:
+          - ''
+        X-Content-Type-Options:
+          - nosniff
+        X-Frame-Options:
+          - SAMEORIGIN
+      status:
+        code: 400
+        message: Bad Request
+version: 1

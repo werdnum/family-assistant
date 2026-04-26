@@ -314,6 +314,7 @@ default_profile_settings:
       - "query_recent_events" # Event system tool
       - "render_home_assistant_template" # Home Assistant template rendering
       - "get_camera_snapshot" # Get camera snapshots from Home Assistant
+      - "call_home_assistant_action" # Execute Home Assistant actions (fka service calls)
       # On-demand tools (catalog only until activated - saves context tokens)
       - name: "execute_script"
         loading: "on_demand"
@@ -407,6 +408,7 @@ default_profile_settings:
             - "get_camera_snapshot"
             - "download_state_history"
             - "list_home_assistant_entities"
+            - "call_home_assistant_action"
             - "list_automations"
             - "get_automation"
             - "get_automation_stats"
@@ -1511,6 +1513,7 @@ service_profiles:
         - "get_camera_snapshot"
         - "download_state_history"
         - "list_home_assistant_entities"
+        - "call_home_assistant_action"
         - "list_automations"
         - "get_automation"
         - "get_automation_stats"
@@ -1572,6 +1575,7 @@ service_profiles:
               - "get_camera_snapshot"
               - "download_state_history"
               - "list_home_assistant_entities"
+              - "call_home_assistant_action"
               - "list_automations"
               - "get_automation"
               - "get_automation_stats"
