@@ -376,7 +376,7 @@ async def test_dump_profiles_runtime_info_for_retrying_llm_client(
 
         def __init__(self) -> None:
             self.primary_client = _InnerClient()
-            self.primary_model = "anthropic/claude-sonnet-4"
+            self.primary_model = "anthropic/claude-sonnet-4-6"
             self.fallback_client = _InnerClient()
             self.fallback_model = "models/gemini-2.5-flash"
 
@@ -395,7 +395,7 @@ async def test_dump_profiles_runtime_info_for_retrying_llm_client(
         trusted = next(p for p in response.json()["profiles"] if p["id"] == "trusted")
         runtime = trusted["runtime"]
         assert runtime["kind"] == "local"
-        assert runtime["llm_model"] == "anthropic/claude-sonnet-4"
+        assert runtime["llm_model"] == "anthropic/claude-sonnet-4-6"
         # Fallback's "models/" prefix is normalized too.
         assert runtime["llm_fallback_model"] == "gemini-2.5-flash"
         assert runtime["llm_client_class"] == "_RetryingLikeClient"
@@ -419,7 +419,7 @@ async def test_dump_profiles_retrying_llm_client_without_fallback_reports_no_fal
     class _PrimaryOnlyRetrying:
         def __init__(self) -> None:
             self.primary_client = object()
-            self.primary_model = "anthropic/claude-sonnet-4"
+            self.primary_model = "anthropic/claude-sonnet-4-6"
             # Mirrors RetryingLLMClient: fallback_client=None but
             # fallback_model retains its default string because of the
             # ``fallback_model or "openai/gpt-5.2"`` constructor logic.
@@ -441,7 +441,7 @@ async def test_dump_profiles_retrying_llm_client_without_fallback_reports_no_fal
         runtime = next(p for p in response.json()["profiles"] if p["id"] == "trusted")[
             "runtime"
         ]
-        assert runtime["llm_model"] == "anthropic/claude-sonnet-4"
+        assert runtime["llm_model"] == "anthropic/claude-sonnet-4-6"
         assert runtime["llm_fallback_model"] is None
         # Sanity: the default fallback string must not leak into the response
         # anywhere, since no fallback_client is configured.

@@ -88,10 +88,10 @@ def test_resolve_live_llm_model_reads_primary_model_on_retrying_client() -> None
     """
 
     class _RetryingLike:
-        primary_model = "anthropic/claude-sonnet-4"
+        primary_model = "anthropic/claude-sonnet-4-6"
         fallback_model = "openai/gpt-5.2"
 
-    assert resolve_live_llm_model(_RetryingLike()) == "anthropic/claude-sonnet-4"
+    assert resolve_live_llm_model(_RetryingLike()) == "anthropic/claude-sonnet-4-6"
 
 
 def test_resolve_live_llm_model_prefers_primary_model_over_plain_model() -> None:
