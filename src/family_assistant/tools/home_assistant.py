@@ -11,6 +11,8 @@ import logging
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Any
 
+from homeassistant_api.errors import HomeassistantAPIError
+
 from family_assistant.tools.types import (
     ToolAttachment,
     ToolDefinition,
@@ -700,14 +702,6 @@ async def call_home_assistant_action_tool(
     ha_client = exec_context.home_assistant_client
 
     try:
-        from homeassistant_api.errors import (  # noqa: PLC0415
-            HomeassistantAPIError,
-        )
-    except ImportError:
-        logger.error("homeassistant_api library is not installed")
-        return ToolResult(text="Error: Home Assistant API library is not installed.")
-
-    try:
         result = await ha_client.async_call_action(
             domain=domain,
             action=action,
@@ -724,17 +718,6 @@ async def call_home_assistant_action_tool(
         )
         return ToolResult(
             text=f"Error: Home Assistant API error calling {domain}.{action} - {str(e)}"
-        )
-    except Exception as e:
-        logger.error(
-            "Unexpected error calling Home Assistant action %s.%s: %s",
-            domain,
-            action,
-            e,
-            exc_info=True,
-        )
-        return ToolResult(
-            text=f"Error: Failed to call Home Assistant action {domain}.{action} - {str(e)}"
         )
 
     changed_states = result.get("changed_states", [])

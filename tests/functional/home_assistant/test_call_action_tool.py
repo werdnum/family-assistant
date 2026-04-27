@@ -3,6 +3,7 @@
 import json
 import logging
 import uuid
+from typing import cast
 from unittest.mock import AsyncMock, MagicMock
 from zoneinfo import ZoneInfo
 
@@ -12,6 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncEngine
 
 from family_assistant.config_models import AppConfig, ToolsConfig
 from family_assistant.delegation_security import DelegationSecurityLevel
+from family_assistant.home_assistant_wrapper import HomeAssistantClientWrapper
 from family_assistant.llm import LLMInterface, ToolCallFunction, ToolCallItem
 from family_assistant.processing import ProcessingService, ProcessingServiceConfig
 from family_assistant.storage.context import DatabaseContext
@@ -45,8 +47,9 @@ TEST_TIMEZONE_STR = "UTC"
 
 
 def _make_exec_context(
-    ha_client: object | None,
-    db_context: DatabaseContext | None = None,
+    *,
+    db_context: DatabaseContext,
+    ha_client: HomeAssistantClientWrapper | None,
 ) -> ToolExecutionContext:
     """Build a minimal ToolExecutionContext for direct tool invocation."""
     return ToolExecutionContext(
@@ -54,10 +57,10 @@ def _make_exec_context(
         conversation_id=TEST_CHAT_ID,
         user_name=TEST_USER_NAME,
         turn_id=None,
-        db_context=db_context,  # type: ignore[arg-type]
+        db_context=db_context,
         processing_service=None,
         clock=None,
-        home_assistant_client=ha_client,  # type: ignore[arg-type]
+        home_assistant_client=ha_client,
         event_sources=None,
         attachment_registry=None,
         camera_backend=None,
@@ -65,11 +68,30 @@ def _make_exec_context(
     )
 
 
+def _make_mock_ha_client(
+    *,
+    return_value: object | None = None,
+    side_effect: BaseException | None = None,
+) -> tuple[HomeAssistantClientWrapper, AsyncMock]:
+    """Build a MagicMock that quacks like a HomeAssistantClientWrapper for tests.
+
+    Returns ``(wrapper, async_call_action_mock)``. The first value is type-cast
+    to ``HomeAssistantClientWrapper`` so it can be passed where the wrapper is
+    expected. The second is the underlying ``AsyncMock`` for ``await`` /
+    assertion access (which the wrapper's static type does not expose).
+    """
+    mock = MagicMock(spec=HomeAssistantClientWrapper)
+    call_mock = AsyncMock(return_value=return_value, side_effect=side_effect)
+    mock.async_call_action = call_mock
+    return cast("HomeAssistantClientWrapper", mock), call_mock
+
+
 @pytest.mark.asyncio
-async def test_call_action_tool_invokes_wrapper_with_service_data() -> None:
+async def test_call_action_tool_invokes_wrapper_with_service_data(
+    db_engine: AsyncEngine,
+) -> None:
     """Direct tool call passes domain/action/service_data through to the wrapper."""
-    mock_ha_client = MagicMock()
-    mock_ha_client.async_call_action = AsyncMock(
+    ha_client, call_action_mock = _make_mock_ha_client(
         return_value={
             "changed_states": [
                 {
@@ -82,13 +104,14 @@ async def test_call_action_tool_invokes_wrapper_with_service_data() -> None:
         }
     )
 
-    exec_context = _make_exec_context(mock_ha_client)
-    result = await call_home_assistant_action_tool(
-        exec_context=exec_context,
-        domain="light",
-        action="turn_on",
-        service_data={"entity_id": "light.kitchen", "brightness_pct": 75},
-    )
+    async with DatabaseContext(engine=db_engine) as db_context:
+        exec_context = _make_exec_context(db_context=db_context, ha_client=ha_client)
+        result = await call_home_assistant_action_tool(
+            exec_context=exec_context,
+            domain="light",
+            action="turn_on",
+            service_data={"entity_id": "light.kitchen", "brightness_pct": 75},
+        )
 
     assert isinstance(result, ToolResult)
     assert result.text is not None
@@ -102,7 +125,7 @@ async def test_call_action_tool_invokes_wrapper_with_service_data() -> None:
     assert data["changed_states"][0]["entity_id"] == "light.kitchen"
     assert "response" not in data  # not requested
 
-    mock_ha_client.async_call_action.assert_awaited_once_with(
+    call_action_mock.assert_awaited_once_with(
         domain="light",
         action="turn_on",
         service_data={"entity_id": "light.kitchen", "brightness_pct": 75},
@@ -111,24 +134,26 @@ async def test_call_action_tool_invokes_wrapper_with_service_data() -> None:
 
 
 @pytest.mark.asyncio
-async def test_call_action_tool_returns_response_when_requested() -> None:
+async def test_call_action_tool_returns_response_when_requested(
+    db_engine: AsyncEngine,
+) -> None:
     """When return_response=True, the action response payload is included."""
-    mock_ha_client = MagicMock()
-    mock_ha_client.async_call_action = AsyncMock(
+    ha_client, call_action_mock = _make_mock_ha_client(
         return_value={
             "changed_states": [],
             "response": {"events": [{"summary": "Dentist", "start": "10:00"}]},
         }
     )
 
-    exec_context = _make_exec_context(mock_ha_client)
-    result = await call_home_assistant_action_tool(
-        exec_context=exec_context,
-        domain="calendar",
-        action="get_events",
-        service_data={"entity_id": "calendar.family"},
-        return_response=True,
-    )
+    async with DatabaseContext(engine=db_engine) as db_context:
+        exec_context = _make_exec_context(db_context=db_context, ha_client=ha_client)
+        result = await call_home_assistant_action_tool(
+            exec_context=exec_context,
+            domain="calendar",
+            action="get_events",
+            service_data={"entity_id": "calendar.family"},
+            return_response=True,
+        )
 
     assert isinstance(result, ToolResult)
     data = result.get_data()
@@ -136,7 +161,7 @@ async def test_call_action_tool_returns_response_when_requested() -> None:
     assert data["response"] == {"events": [{"summary": "Dentist", "start": "10:00"}]}
     assert "no state changes reported" in (result.text or "")
 
-    mock_ha_client.async_call_action.assert_awaited_once_with(
+    call_action_mock.assert_awaited_once_with(
         domain="calendar",
         action="get_events",
         service_data={"entity_id": "calendar.family"},
@@ -145,15 +170,18 @@ async def test_call_action_tool_returns_response_when_requested() -> None:
 
 
 @pytest.mark.asyncio
-async def test_call_action_tool_without_ha_client_returns_error() -> None:
+async def test_call_action_tool_without_ha_client_returns_error(
+    db_engine: AsyncEngine,
+) -> None:
     """If no HA client is configured, return a descriptive error."""
-    exec_context = _make_exec_context(ha_client=None)
-    result = await call_home_assistant_action_tool(
-        exec_context=exec_context,
-        domain="light",
-        action="turn_on",
-        service_data={"entity_id": "light.kitchen"},
-    )
+    async with DatabaseContext(engine=db_engine) as db_context:
+        exec_context = _make_exec_context(db_context=db_context, ha_client=None)
+        result = await call_home_assistant_action_tool(
+            exec_context=exec_context,
+            domain="light",
+            action="turn_on",
+            service_data={"entity_id": "light.kitchen"},
+        )
 
     assert isinstance(result, ToolResult)
     assert result.text is not None
@@ -161,26 +189,48 @@ async def test_call_action_tool_without_ha_client_returns_error() -> None:
 
 
 @pytest.mark.asyncio
-async def test_call_action_tool_handles_api_error() -> None:
+async def test_call_action_tool_handles_api_error(
+    db_engine: AsyncEngine,
+) -> None:
     """API errors from Home Assistant are surfaced in the tool result."""
-    mock_ha_client = MagicMock()
-    mock_ha_client.async_call_action = AsyncMock(
-        side_effect=HomeassistantAPIError("Bad Request: unknown action")
+    ha_client, _call_action_mock = _make_mock_ha_client(
+        side_effect=HomeassistantAPIError("Bad Request: unknown action"),
     )
 
-    exec_context = _make_exec_context(mock_ha_client)
-    result = await call_home_assistant_action_tool(
-        exec_context=exec_context,
-        domain="light",
-        action="bogus_action",
-        service_data={"entity_id": "light.kitchen"},
-    )
+    async with DatabaseContext(engine=db_engine) as db_context:
+        exec_context = _make_exec_context(db_context=db_context, ha_client=ha_client)
+        result = await call_home_assistant_action_tool(
+            exec_context=exec_context,
+            domain="light",
+            action="bogus_action",
+            service_data={"entity_id": "light.kitchen"},
+        )
 
     assert isinstance(result, ToolResult)
     assert result.text is not None
     assert "Error" in result.text
     assert "light.bogus_action" in result.text
     assert "unknown action" in result.text
+
+
+@pytest.mark.asyncio
+async def test_call_action_tool_propagates_unexpected_exceptions(
+    db_engine: AsyncEngine,
+) -> None:
+    """Unexpected (non-HA) exceptions from the wrapper propagate to the caller."""
+    ha_client, _call_action_mock = _make_mock_ha_client(
+        side_effect=RuntimeError("boom — wrapper bug"),
+    )
+
+    async with DatabaseContext(engine=db_engine) as db_context:
+        exec_context = _make_exec_context(db_context=db_context, ha_client=ha_client)
+        with pytest.raises(RuntimeError, match="boom — wrapper bug"):
+            await call_home_assistant_action_tool(
+                exec_context=exec_context,
+                domain="light",
+                action="turn_on",
+                service_data={"entity_id": "light.kitchen"},
+            )
 
 
 @pytest.mark.asyncio
@@ -192,8 +242,7 @@ async def test_call_home_assistant_action_via_llm_flow(
     """
     logger.info("\n--- Test: Call Home Assistant Action via LLM Flow ---")
 
-    mock_ha_client = MagicMock()
-    mock_ha_client.async_call_action = AsyncMock(
+    ha_client, call_action_mock = _make_mock_ha_client(
         return_value={
             "changed_states": [
                 {
@@ -304,7 +353,7 @@ async def test_call_home_assistant_action_via_llm_flow(
         app_config=AppConfig(),
     )
 
-    processing_service.home_assistant_client = mock_ha_client
+    processing_service.home_assistant_client = ha_client
 
     user_message = "Turn on the kitchen light at 75% brightness"
     async with DatabaseContext(engine=db_engine) as db_context:
@@ -325,7 +374,7 @@ async def test_call_home_assistant_action_via_llm_flow(
         f"Expected confirmation in reply: '{final_reply}'"
     )
 
-    mock_ha_client.async_call_action.assert_awaited_once_with(
+    call_action_mock.assert_awaited_once_with(
         domain="light",
         action="turn_on",
         service_data={"entity_id": "light.kitchen", "brightness_pct": 75},
