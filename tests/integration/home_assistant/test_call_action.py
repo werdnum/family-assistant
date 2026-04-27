@@ -10,6 +10,7 @@ from family_assistant.home_assistant_wrapper import HomeAssistantClientWrapper
 from family_assistant.storage.context import DatabaseContext
 from family_assistant.tools.home_assistant import (
     call_home_assistant_action_tool,
+    list_home_assistant_actions_tool,
     render_home_assistant_template_tool,
 )
 from family_assistant.tools.types import ToolExecutionContext
@@ -101,6 +102,56 @@ async def test_call_action_turns_on_input_boolean(
                 action="turn_off",
                 service_data={"entity_id": "input_boolean.test_switch"},
             )
+            await ha_lib_client.async_cache_session.close()
+
+
+@pytest.mark.integration
+@pytest.mark.vcr
+async def test_list_actions_returns_live_catalog(
+    home_assistant_service: tuple[str, str | None],
+    db_engine: AsyncEngine,
+) -> None:
+    """The discovery tool returns the actions HA actually exposes.
+
+    This proves the discovery path is wired to ``GET /api/services`` against a
+    real HA, so the LLM can rely on it to find action names that match the
+    user's installation rather than guessing from training data.
+    """
+    base_url, token = home_assistant_service
+
+    ha_lib_client = homeassistant_api.Client(
+        api_url=f"{base_url}/api",
+        token=token or "test",
+        use_async=True,
+    )
+    wrapper = HomeAssistantClientWrapper(
+        api_url=base_url,
+        token=token or "test",
+        client=ha_lib_client,
+    )
+
+    async with DatabaseContext(engine=db_engine) as db_context:
+        exec_context = _make_exec_context(wrapper, db_context)
+        try:
+            result = await list_home_assistant_actions_tool(exec_context)
+            data = result.get_data()
+            assert isinstance(data, dict)
+            actions = data["actions"]
+
+            # Catalog includes the input_boolean domain that the test fixture
+            # configures, and entries carry the field schemas HA returns.
+            keys = {(entry["domain"], entry["action"]) for entry in actions}
+            assert ("input_boolean", "turn_on") in keys
+            assert ("input_boolean", "turn_off") in keys
+
+            input_boolean_entries = [
+                entry for entry in actions if entry["domain"] == "input_boolean"
+            ]
+            assert input_boolean_entries
+            for entry in input_boolean_entries:
+                assert "fields" in entry
+                assert "supports_response" in entry
+        finally:
             await ha_lib_client.async_cache_session.close()
 
 

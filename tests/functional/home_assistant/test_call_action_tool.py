@@ -28,7 +28,10 @@ from family_assistant.tools import (
     LocalToolsProvider,
     MCPToolsProvider,
 )
-from family_assistant.tools.home_assistant import call_home_assistant_action_tool
+from family_assistant.tools.home_assistant import (
+    call_home_assistant_action_tool,
+    list_home_assistant_actions_tool,
+)
 from family_assistant.tools.types import ToolExecutionContext, ToolResult
 from tests.mocks.mock_llm import (
     LLMOutput as MockLLMOutput,
@@ -84,6 +87,125 @@ def _make_mock_ha_client(
     call_mock = AsyncMock(return_value=return_value, side_effect=side_effect)
     mock.async_call_action = call_mock
     return cast("HomeAssistantClientWrapper", mock), call_mock
+
+
+def _make_mock_ha_client_for_catalog(
+    *,
+    return_value: list[dict[str, object]] | None = None,
+    side_effect: BaseException | None = None,
+) -> tuple[HomeAssistantClientWrapper, AsyncMock]:
+    """Same as ``_make_mock_ha_client`` but stubs ``async_get_action_catalog``."""
+    mock = MagicMock(spec=HomeAssistantClientWrapper)
+    catalog_mock = AsyncMock(return_value=return_value, side_effect=side_effect)
+    mock.async_get_action_catalog = catalog_mock
+    return cast("HomeAssistantClientWrapper", mock), catalog_mock
+
+
+@pytest.mark.asyncio
+async def test_list_actions_tool_filters_and_summarizes(
+    db_engine: AsyncEngine,
+) -> None:
+    """The discovery tool forwards ``domain`` to the wrapper and applies
+    ``action_filter`` client-side to the returned catalog.
+    """
+    catalog = [
+        {
+            "domain": "light",
+            "action": "turn_on",
+            "name": "Turn on",
+            "description": "Turn the light on",
+            "fields": {"brightness_pct": {"selector": {"number": {}}}},
+            "target": {"entity": [{"domain": ["light"]}]},
+            "supports_response": False,
+        },
+        {
+            "domain": "light",
+            "action": "turn_off",
+            "name": "Turn off",
+            "description": "Turn the light off",
+            "fields": {},
+            "target": None,
+            "supports_response": False,
+        },
+        {
+            "domain": "light",
+            "action": "toggle",
+            "name": "Toggle",
+            "description": None,
+            "fields": {},
+            "target": None,
+            "supports_response": False,
+        },
+    ]
+    ha_client, catalog_mock = _make_mock_ha_client_for_catalog(return_value=catalog)
+
+    async with DatabaseContext(engine=db_engine) as db_context:
+        exec_context = _make_exec_context(db_context=db_context, ha_client=ha_client)
+        result = await list_home_assistant_actions_tool(
+            exec_context=exec_context,
+            domain="light",
+            action_filter="turn_",
+        )
+
+    catalog_mock.assert_awaited_once_with(domain="light")
+    data = result.get_data()
+    assert isinstance(data, dict)
+    assert data["total_matches"] == 2
+    returned = {(e["domain"], e["action"]) for e in data["actions"]}
+    assert returned == {("light", "turn_on"), ("light", "turn_off")}
+    assert data["filters_applied"] == {"domain": "light", "action_filter": "turn_"}
+
+    assert result.text is not None
+    assert "light.turn_on" in result.text
+    assert "light.turn_off" in result.text
+    assert "light.toggle" not in result.text
+
+
+@pytest.mark.asyncio
+async def test_list_actions_tool_marks_response_supporting_actions(
+    db_engine: AsyncEngine,
+) -> None:
+    """Catalog entries with ``supports_response=True`` are flagged in the text
+    summary so the LLM knows to set ``return_response=true`` when calling.
+    """
+    catalog = [
+        {
+            "domain": "calendar",
+            "action": "get_events",
+            "name": "Get events",
+            "description": "Fetch calendar events",
+            "fields": {},
+            "target": None,
+            "supports_response": True,
+        }
+    ]
+    ha_client, _ = _make_mock_ha_client_for_catalog(return_value=catalog)
+
+    async with DatabaseContext(engine=db_engine) as db_context:
+        exec_context = _make_exec_context(db_context=db_context, ha_client=ha_client)
+        result = await list_home_assistant_actions_tool(
+            exec_context=exec_context,
+            domain="calendar",
+        )
+
+    assert result.text is not None
+    assert "calendar.get_events" in result.text
+    assert "[supports response]" in result.text
+
+
+@pytest.mark.asyncio
+async def test_list_actions_tool_without_ha_client_returns_error(
+    db_engine: AsyncEngine,
+) -> None:
+    """Without an HA client the discovery tool returns the same error string
+    as ``call_home_assistant_action`` so the LLM can recover identically.
+    """
+    async with DatabaseContext(engine=db_engine) as db_context:
+        exec_context = _make_exec_context(db_context=db_context, ha_client=None)
+        result = await list_home_assistant_actions_tool(exec_context=exec_context)
+
+    assert result.text is not None
+    assert "not configured" in result.text
 
 
 @pytest.mark.asyncio

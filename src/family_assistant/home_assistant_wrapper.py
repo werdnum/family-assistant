@@ -45,6 +45,24 @@ class ActionCallResult(TypedDict):
     response: ActionPayload
 
 
+class ActionCatalogEntry(TypedDict):
+    """A single available action discovered from Home Assistant.
+
+    Sourced live from ``GET /api/services``, so it always matches the
+    integrations currently installed on the connected HA instance.
+    """
+
+    domain: str
+    action: str
+    name: str | None
+    description: str | None
+    # ast-grep-ignore: no-dict-any - HA action field schemas are action-specific
+    fields: dict[str, Any]
+    # ast-grep-ignore: no-dict-any - HA target selector block is action-specific
+    target: dict[str, Any] | None
+    supports_response: bool
+
+
 class HomeAssistantClientWrapper:
     """
     Wrapper around homeassistant_api.Client that provides additional functionality.
@@ -244,6 +262,65 @@ class HomeAssistantClientWrapper:
             changed_states=changed_states,
             response=dict(response),
         )
+
+    async def async_get_action_catalog(
+        self, *, domain: str | None = None
+    ) -> list[ActionCatalogEntry]:
+        """Fetch the live catalog of available actions from Home Assistant.
+
+        The catalog is sourced directly from ``GET /api/services`` so it always
+        reflects the integrations currently installed on the connected HA
+        instance — there is no static schema to keep in sync.
+
+        Args:
+            domain: Optional domain to narrow the result (e.g. ``"light"``).
+                When omitted, every domain on the HA instance is returned.
+
+        Returns:
+            A list of :py:class:`ActionCatalogEntry` dicts. Each entry includes
+            the action's ``domain``, ``action`` (a.k.a. service id),
+            ``description``, the ``fields`` schema (the per-parameter selectors
+            HA exposes), the optional ``target`` selector block, and a
+            ``supports_response`` flag indicating whether ``return_response``
+            is meaningful for this action.
+        """
+        domains = await self._client.async_get_domains()
+        entries: list[ActionCatalogEntry] = []
+        for domain_obj in domains.values():
+            if domain is not None and domain_obj.domain_id != domain:
+                continue
+            for service in domain_obj.services.values():
+                # ast-grep-ignore: no-dict-any - HA action field schemas are action-specific JSON payloads
+                fields_dump: dict[str, Any] = {}
+                if service.fields:
+                    for field_name, field_value in service.fields.items():
+                        fields_dump[field_name] = json.loads(
+                            field_value.model_dump_json(exclude_none=True)
+                        )
+                # ast-grep-ignore: no-dict-any - HA target selector block is action-specific JSON
+                target_dump: dict[str, Any] | None = None
+                if service.target is not None:
+                    target_dump = json.loads(
+                        service.target.model_dump_json(exclude_none=True)
+                    )
+                response_dump = (
+                    json.loads(service.response.model_dump_json(exclude_none=True))
+                    if service.response is not None
+                    else None
+                )
+                entries.append(
+                    ActionCatalogEntry(
+                        domain=domain_obj.domain_id,
+                        action=service.service_id,
+                        name=service.name,
+                        description=service.description,
+                        fields=fields_dump,
+                        target=target_dump,
+                        supports_response=response_dump is not None,
+                    )
+                )
+        entries.sort(key=lambda e: (e["domain"], e["action"]))
+        return entries
 
     async def async_get_camera_snapshot(self, camera_entity_id: str) -> bytes:
         """

@@ -318,6 +318,62 @@ HOME_ASSISTANT_TOOLS_DEFINITION: list[ToolDefinition] = [
             },
         },
     },
+    {
+        "type": "function",
+        "function": {
+            "name": "list_home_assistant_actions",
+            "description": (
+                "Discover the actions (formerly 'services') currently exposed by "
+                "the connected Home Assistant instance. The catalog is fetched "
+                "live from HA's `GET /api/services` endpoint, so it always "
+                "matches the integrations actually installed — there is no "
+                "static list to keep in sync with the HA version.\n\n"
+                "Use this BEFORE calling `call_home_assistant_action` so you "
+                "know which `domain` / `action` names exist and which fields "
+                "they accept. Workflow:\n"
+                "  1. Call without arguments to see all available domains and actions.\n"
+                "  2. Call with `domain='light'` (or whatever domain you need) "
+                "to see the field schema for each action in that domain.\n"
+                "  3. Optionally narrow further with `action_filter` to find "
+                "actions whose name contains a substring (e.g. 'turn_on').\n\n"
+                "Each entry returns the `domain`, `action` (service id), human "
+                "`name`/`description`, the `fields` schema (per-parameter HA "
+                "selectors describing accepted values), the optional `target` "
+                "selector block, and `supports_response` (whether the action "
+                "supports `return_response=true`)."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "domain": {
+                        "type": "string",
+                        "description": (
+                            "Optional HA domain to narrow results, e.g. "
+                            "'light', 'switch', 'climate', 'scene', 'script'. "
+                            "Omit to list every domain."
+                        ),
+                    },
+                    "action_filter": {
+                        "type": "string",
+                        "description": (
+                            "Optional case-insensitive substring matched against "
+                            "the action name (e.g. 'turn_on', 'set_'). Combine "
+                            "with `domain` to narrow further."
+                        ),
+                    },
+                    "max_results": {
+                        "type": "integer",
+                        "description": (
+                            "Maximum number of catalog entries to return. "
+                            "Defaults to 100. Use filters to narrow results."
+                        ),
+                        "default": 100,
+                    },
+                },
+                "required": [],
+            },
+        },
+    },
 ]
 
 
@@ -750,6 +806,107 @@ async def call_home_assistant_action_tool(
         data["response"] = response_payload
 
     return ToolResult(text=summary, data=data)
+
+
+async def list_home_assistant_actions_tool(
+    exec_context: ToolExecutionContext,
+    domain: str | None = None,
+    action_filter: str | None = None,
+    max_results: int = 100,
+) -> ToolResult:
+    """List the actions currently exposed by the connected HA instance.
+
+    The catalog is fetched live from HA's ``/api/services`` endpoint so it
+    always matches the integrations actually installed on the user's HA —
+    there is no static mapping to drift out of sync with the HA version.
+
+    Args:
+        exec_context: The tool execution context containing the HA client.
+        domain: Optional HA domain to narrow results (e.g. ``"light"``).
+        action_filter: Optional case-insensitive substring matched against
+            the action name.
+        max_results: Cap on the number of catalog entries returned (default
+            100, hard cap 500).
+
+    Returns:
+        ToolResult with structured data: ``{"actions": [...], "total_matches": N}``.
+        Each entry includes ``domain``, ``action``, ``name``, ``description``,
+        ``fields``, ``target``, and ``supports_response``.
+    """
+    logger.info(
+        "Listing HA actions: domain=%s action_filter=%s max=%d",
+        domain,
+        action_filter,
+        max_results,
+    )
+
+    if (
+        not hasattr(exec_context, "home_assistant_client")
+        or not exec_context.home_assistant_client
+    ):
+        logger.error("Home Assistant client not available in execution context")
+        return ToolResult(
+            text="Error: Home Assistant integration is not configured or available."
+        )
+
+    ha_client = exec_context.home_assistant_client
+    max_results = min(max_results, 500)
+
+    try:
+        catalog = await ha_client.async_get_action_catalog(domain=domain)
+    except HomeassistantAPIError as e:
+        logger.error("Home Assistant API error fetching action catalog: %s", e)
+        return ToolResult(
+            text=f"Error: Home Assistant API error fetching action catalog - {str(e)}"
+        )
+
+    filtered = catalog
+    if action_filter:
+        needle = action_filter.lower()
+        filtered = [entry for entry in filtered if needle in entry["action"].lower()]
+
+    total_matches = len(filtered)
+    result_entries = filtered[:max_results]
+
+    # ast-grep-ignore: no-dict-any - tool result data structure mirrors HA's action catalog
+    result_data: dict[str, Any] = {
+        "actions": result_entries,
+        "total_matches": total_matches,
+    }
+    # ast-grep-ignore: no-dict-any - filter info dict mirrors arguments
+    filters_applied: dict[str, Any] = {}
+    if domain:
+        filters_applied["domain"] = domain
+    if action_filter:
+        filters_applied["action_filter"] = action_filter
+    if filters_applied:
+        result_data["filters_applied"] = filters_applied
+
+    if total_matches == 0:
+        text = (
+            "No matching Home Assistant actions found"
+            + (f" for domain={domain!r}" if domain else "")
+            + (f" matching {action_filter!r}" if action_filter else "")
+            + "."
+        )
+    else:
+        header = (
+            f"Found {total_matches} Home Assistant action(s)"
+            if total_matches <= max_results
+            else f"Found {total_matches} Home Assistant action(s); showing first {max_results}"
+        )
+        lines = [header + ":"]
+        for entry in result_entries:
+            line = f"- {entry['domain']}.{entry['action']}"
+            description = entry.get("description")
+            if description:
+                line += f" — {description}"
+            if entry.get("supports_response"):
+                line += " [supports response]"
+            lines.append(line)
+        text = "\n".join(lines)
+
+    return ToolResult(text=text, data=result_data)
 
 
 async def list_home_assistant_entities_tool(
