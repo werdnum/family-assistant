@@ -262,14 +262,43 @@ class HomeAssistantClientWrapper:
             json=payload,
         )
 
+        # Validate the shape HA actually returned. Letting an unexpected
+        # response slip through as an "empty result" would silently turn
+        # HA/library bugs into apparently-successful tool calls.
         if return_response:
-            # HA returns {"changed_states": [...], "service_response": {...}}
-            raw_dict = raw if isinstance(raw, dict) else {}
-            changed_states_raw = raw_dict.get("changed_states") or []
-            response_payload = raw_dict.get("service_response") or {}
+            # HA returns {"changed_states": [...], "service_response": {...}}.
+            if not isinstance(raw, dict):
+                msg = (
+                    f"Home Assistant {domain}.{action} (return_response=True) "
+                    f"returned {type(raw).__name__}, expected dict with "
+                    "'changed_states' and 'service_response' keys"
+                )
+                raise TypeError(msg)
+            changed_states_raw = raw.get("changed_states", [])
+            response_payload = raw.get("service_response", {})
+            if not isinstance(changed_states_raw, list):
+                msg = (
+                    f"Home Assistant {domain}.{action} response "
+                    f"'changed_states' is {type(changed_states_raw).__name__}, "
+                    "expected list"
+                )
+                raise TypeError(msg)
+            if not isinstance(response_payload, dict):
+                msg = (
+                    f"Home Assistant {domain}.{action} response "
+                    f"'service_response' is {type(response_payload).__name__}, "
+                    "expected dict"
+                )
+                raise TypeError(msg)
         else:
             # HA returns a list of changed state dicts directly.
-            changed_states_raw = raw if isinstance(raw, list) else []
+            if not isinstance(raw, list):
+                msg = (
+                    f"Home Assistant {domain}.{action} returned "
+                    f"{type(raw).__name__}, expected list of state dicts"
+                )
+                raise TypeError(msg)
+            changed_states_raw = raw
             response_payload = {}
 
         return ActionCallResult(
