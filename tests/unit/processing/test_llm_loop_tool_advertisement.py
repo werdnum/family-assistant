@@ -13,7 +13,7 @@ from family_assistant.llm.messages import ToolMessage
 from family_assistant.llm.tool_call import ToolCallFunction, ToolCallItem
 from family_assistant.processing import ProcessingService, ProcessingServiceConfig
 from family_assistant.processing.llm_loop import (
-    _extract_activate_tools_from_result,  # noqa: PLC2701 - note: reach into private helper to unit-test its trust gate directly; public re-export is not warranted
+    _extract_activations_from_result,  # noqa: PLC2701 - note: reach into private helper to unit-test its trust gate directly; public re-export is not warranted
 )
 from family_assistant.storage.context import get_db_context
 from family_assistant.tools.infrastructure import LocalToolsProvider
@@ -475,7 +475,7 @@ def test_extract_activate_tools_prefers_structured_tool_result() -> None:
         ),
     )
 
-    assert _extract_activate_tools_from_result(tool_msg) == ["lazy_b", "lazy_c"]
+    assert _extract_activations_from_result(tool_msg) == (["lazy_b", "lazy_c"], [])
 
 
 def test_extract_activate_tools_falls_back_to_content_json() -> None:
@@ -490,7 +490,7 @@ def test_extract_activate_tools_falls_back_to_content_json() -> None:
         tool_result=None,
     )
 
-    assert _extract_activate_tools_from_result(tool_msg) == ["lazy_b"]
+    assert _extract_activations_from_result(tool_msg) == (["lazy_b"], [])
 
 
 def test_extract_activate_tools_ignores_non_get_note_even_with_structured_data() -> (
@@ -504,4 +504,38 @@ def test_extract_activate_tools_ignores_non_get_note_even_with_structured_data()
         tool_result=ToolResult(data={"activate_tools": ["lazy_b"]}),
     )
 
-    assert _extract_activate_tools_from_result(tool_msg) == []
+    assert _extract_activations_from_result(tool_msg) == ([], [])
+
+
+def test_extract_activations_returns_mcp_server_ids() -> None:
+    """Skills that gate a whole MCP server propagate activate_mcp_servers."""
+    tool_msg = ToolMessage(
+        tool_call_id="call_1",
+        name="get_note",
+        content="",
+        tool_result=ToolResult(
+            data={
+                "title": "skill_note",
+                "content": "...",
+                "activate_tools": ["lazy_b"],
+                "activate_mcp_servers": ["homeassistant"],
+            }
+        ),
+    )
+
+    assert _extract_activations_from_result(tool_msg) == (
+        ["lazy_b"],
+        ["homeassistant"],
+    )
+
+
+def test_extract_activations_ignores_mcp_servers_from_untrusted_tool() -> None:
+    """The trust gate also filters activate_mcp_servers from non-get_note results."""
+    tool_msg = ToolMessage(
+        tool_call_id="call_1",
+        name="some_other_tool",
+        content="",
+        tool_result=ToolResult(data={"activate_mcp_servers": ["homeassistant"]}),
+    )
+
+    assert _extract_activations_from_result(tool_msg) == ([], [])

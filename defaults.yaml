@@ -365,8 +365,10 @@ default_profile_settings:
     enable_mcp_server_ids: # Explicitly define MCP servers for the default profile
       - "time"
       - "brave"
-      - "homeassistant"
       - "google-maps"
+      # Gated behind the "Home Assistant" skill, which auto-activates the
+      # whole server alongside the local HA tools when loaded via get_note.
+      - {id: "homeassistant", loading: "on_demand"}
     # Tools requiring explicit user confirmation before execution for this default profile.
     # This list is overridden by the TOOLS_REQUIRING_CONFIRMATION environment variable if set.
     confirm_tools:
@@ -1547,8 +1549,10 @@ service_profiles:
       enable_mcp_server_ids:
         - "time"
         - "brave"
-        - "homeassistant"
         - "google-maps"
+        # Gated behind the "Home Assistant" skill, which auto-activates the
+        # whole server alongside the local HA tools when loaded via get_note.
+        - {id: "homeassistant", loading: "on_demand"}
       confirm_tools:
         - delete_calendar_event
         - modify_calendar_event

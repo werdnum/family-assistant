@@ -8,6 +8,8 @@ activate_tools:
   - call_home_assistant_action
   - get_camera_snapshot
   - download_state_history
+activate_mcp_servers:
+  - homeassistant
 ---
 
 # Home Assistant

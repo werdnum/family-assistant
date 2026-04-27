@@ -14,3 +14,4 @@ class ParsedSkill:
     source_path: Path
     visibility_labels: frozenset[str] = frozenset()
     activate_tools: tuple[str, ...] = ()
+    activate_mcp_servers: tuple[str, ...] = ()

@@ -93,8 +93,8 @@ ACTIVATE_TOOLS_DEFINITION: ToolDefinition = {
         "name": "activate_tools",
         "description": (
             "Activate on-demand tools so you can use them in this conversation. "
-            "Call with specific tool names from the on-demand catalog, or use "
-            "the search parameter to find tools by keyword."
+            "Call with specific tool names from the on-demand catalog, search "
+            "by keyword, or activate every on-demand tool on a given MCP server."
         ),
         "parameters": {
             "type": "object",
@@ -109,6 +109,14 @@ ACTIVATE_TOOLS_DEFINITION: ToolDefinition = {
                     "description": (
                         "Search keyword to find and activate matching tools. "
                         "Searches tool names and summaries."
+                    ),
+                },
+                "mcp_server_ids": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": (
+                        "IDs of on-demand MCP servers to activate. Activates "
+                        "every on-demand tool exposed by each listed server."
                     ),
                 },
             },
@@ -365,10 +373,11 @@ class OnDemandAwareToolsProvider:
         *,
         names: list[str] | None = None,
         search: str | None = None,
+        mcp_server_ids: list[str] | None = None,
         can_confirm: bool = True,
         activated: Iterable[str] | None = None,
     ) -> OnDemandActivationResult:
-        """Activate on-demand tools by name or search keyword.
+        """Activate on-demand tools by name, search keyword, or MCP server id.
 
         Returns the set of newly activated names and the corresponding tool
         definitions, without mutating provider state. Only descriptors that
@@ -406,6 +415,28 @@ class OnDemandAwareToolsProvider:
                     or search_lower in summary.lower()
                 ):
                     candidates.add(descriptor.name)
+
+        # Direct activation by MCP server id. Skills that wrap a whole server
+        # use this so they don't have to enumerate the server's tool names
+        # (which depend on the operator's installed MCP server).
+        requested_servers = set(mcp_server_ids) if mcp_server_ids else set()
+        if requested_servers:
+            seen_servers: set[str] = set()
+            for descriptor in descriptors:
+                server_id = descriptor.mcp_server_id
+                if (
+                    server_id is not None
+                    and server_id in requested_servers
+                    and self._is_on_demand(descriptor, activated_frozen)
+                ):
+                    candidates.add(descriptor.name)
+                    seen_servers.add(server_id)
+            unknown_servers = requested_servers - seen_servers
+            for server_id in unknown_servers:
+                logger.warning(
+                    "activate_tools: unknown or non-on-demand MCP server %r",
+                    server_id,
+                )
 
         # Expand to other on-demand tools on the same MCP server so the LLM
         # gets the whole server in one shot. Eager tools on the same server
