@@ -264,7 +264,8 @@ class HomeAssistantClientWrapper:
 
         # Validate the shape HA actually returned. Letting an unexpected
         # response slip through as an "empty result" would silently turn
-        # HA/library bugs into apparently-successful tool calls.
+        # HA/library bugs into apparently-successful tool calls, so missing
+        # keys, wrong types, and non-dict state entries all raise instead.
         if return_response:
             # HA returns {"changed_states": [...], "service_response": {...}}.
             if not isinstance(raw, dict):
@@ -274,8 +275,15 @@ class HomeAssistantClientWrapper:
                     "'changed_states' and 'service_response' keys"
                 )
                 raise TypeError(msg)
-            changed_states_raw = raw.get("changed_states", [])
-            response_payload = raw.get("service_response", {})
+            missing = {"changed_states", "service_response"} - raw.keys()
+            if missing:
+                msg = (
+                    f"Home Assistant {domain}.{action} response is missing "
+                    f"required key(s) {sorted(missing)}; got keys {sorted(raw.keys())}"
+                )
+                raise TypeError(msg)
+            changed_states_raw = raw["changed_states"]
+            response_payload = raw["service_response"]
             if not isinstance(changed_states_raw, list):
                 msg = (
                     f"Home Assistant {domain}.{action} response "
@@ -301,13 +309,17 @@ class HomeAssistantClientWrapper:
             changed_states_raw = raw
             response_payload = {}
 
+        for index, state in enumerate(changed_states_raw):
+            if not isinstance(state, dict):
+                msg = (
+                    f"Home Assistant {domain}.{action} changed_states[{index}] "
+                    f"is {type(state).__name__}, expected dict"
+                )
+                raise TypeError(msg)
+
         return ActionCallResult(
-            changed_states=[
-                state for state in changed_states_raw if isinstance(state, dict)
-            ],
-            response=dict(response_payload)
-            if isinstance(response_payload, dict)
-            else {},
+            changed_states=list(changed_states_raw),
+            response=dict(response_payload),
         )
 
     async def async_get_action_catalog(
