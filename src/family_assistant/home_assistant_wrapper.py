@@ -225,12 +225,22 @@ class HomeAssistantClientWrapper:
         """
         Call a Home Assistant action (formerly known as a "service call").
 
+        We bypass ``homeassistant_api``'s ``async_trigger_service`` /
+        ``async_trigger_service_with_response`` because both expand
+        ``service_data`` via ``**kwargs``, which collides with their own
+        ``domain=`` / ``service=`` parameters. That collision would silently
+        block any HA action whose field schema includes a field literally
+        named ``domain`` or ``service``. Posting the payload as a JSON body
+        through ``async_request`` keeps the wire format identical without the
+        keyword collision.
+
         Args:
             domain: The action domain (e.g., "light", "switch", "climate").
             action: The action name within the domain (e.g., "turn_on").
             service_data: Optional payload for the action. May include
                 ``entity_id`` (str or list), a ``target`` block, and any
-                action-specific fields.
+                action-specific fields — including fields named ``domain`` or
+                ``service`` if the action defines them.
             return_response: If True, request the action's response payload
                 from Home Assistant (only supported for actions that declare
                 ``supports_response``).
@@ -241,26 +251,34 @@ class HomeAssistantClientWrapper:
               - ``response``: the action response payload (only when
                 ``return_response`` is True; otherwise an empty dict).
         """
-        payload = dict(service_data) if service_data else {}
+        payload: ActionPayload = dict(service_data) if service_data else {}
+        path = f"services/{domain}/{action}"
+        if return_response:
+            path = f"{path}?return_response"
+
+        raw = await self._client.async_request(
+            path,
+            method="POST",
+            json=payload,
+        )
 
         if return_response:
-            states, response = await self._client.async_trigger_service_with_response(
-                domain=domain,
-                service=action,
-                **payload,
-            )
+            # HA returns {"changed_states": [...], "service_response": {...}}
+            raw_dict = raw if isinstance(raw, dict) else {}
+            changed_states_raw = raw_dict.get("changed_states") or []
+            response_payload = raw_dict.get("service_response") or {}
         else:
-            states = await self._client.async_trigger_service(
-                domain=domain,
-                service=action,
-                **payload,
-            )
-            response = {}
+            # HA returns a list of changed state dicts directly.
+            changed_states_raw = raw if isinstance(raw, list) else []
+            response_payload = {}
 
-        changed_states = [json.loads(state.model_dump_json()) for state in states]
         return ActionCallResult(
-            changed_states=changed_states,
-            response=dict(response),
+            changed_states=[
+                state for state in changed_states_raw if isinstance(state, dict)
+            ],
+            response=dict(response_payload)
+            if isinstance(response_payload, dict)
+            else {},
         )
 
     async def async_get_action_catalog(

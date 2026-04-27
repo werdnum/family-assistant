@@ -850,7 +850,7 @@ async def list_home_assistant_actions_tool(
         )
 
     ha_client = exec_context.home_assistant_client
-    max_results = min(max_results, 500)
+    max_results = max(1, min(max_results, 500))
 
     try:
         catalog = await ha_client.async_get_action_catalog(domain=domain)
