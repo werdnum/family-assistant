@@ -265,6 +265,10 @@ async def get_note_tool(
                 }
                 if skill.activate_tools:
                     result_data["activate_tools"] = list(skill.activate_tools)
+                if skill.activate_mcp_servers:
+                    result_data["activate_mcp_servers"] = list(
+                        skill.activate_mcp_servers
+                    )
                 return ToolResult(data=result_data)
 
         return ToolResult(

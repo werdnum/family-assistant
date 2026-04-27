@@ -11,6 +11,8 @@ import logging
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Any
 
+from homeassistant_api.errors import HomeassistantAPIError
+
 from family_assistant.tools.types import (
     ToolAttachment,
     ToolDefinition,
@@ -19,6 +21,7 @@ from family_assistant.tools.types import (
 )
 
 if TYPE_CHECKING:
+    from family_assistant.home_assistant_wrapper import ActionPayload
     from family_assistant.tools.types import ToolExecutionContext
 
 logger = logging.getLogger(__name__)
@@ -187,6 +190,83 @@ HOME_ASSISTANT_TOOLS_DEFINITION: list[ToolDefinition] = [
     {
         "type": "function",
         "function": {
+            "name": "call_home_assistant_action",
+            "description": (
+                "Execute an arbitrary Home Assistant action (formerly known as a "
+                "'service call'). Use this to control devices and trigger automations: "
+                "turn lights on/off, lock/unlock doors, set climate temperatures, "
+                "play media, send notifications via HA, etc.\n\n"
+                "An action is identified by a `domain` and an `action` name. The action "
+                "name corresponds to what Home Assistant historically called the "
+                "'service' (e.g. domain='light', action='turn_on'). Use "
+                "`list_home_assistant_entities` first to discover entity IDs if you are "
+                "not sure of them.\n\n"
+                "Common examples:\n"
+                "- Turn on a light: domain='light', action='turn_on', "
+                "service_data={'entity_id': 'light.kitchen', 'brightness_pct': 75}\n"
+                "- Turn off a switch: domain='switch', action='turn_off', "
+                "service_data={'entity_id': 'switch.fan'}\n"
+                "- Set thermostat: domain='climate', action='set_temperature', "
+                "service_data={'entity_id': 'climate.living_room', 'temperature': 21}\n"
+                "- Activate a scene: domain='scene', action='turn_on', "
+                "service_data={'entity_id': 'scene.movie_night'}\n"
+                "- Trigger a script: domain='script', action='turn_on', "
+                "service_data={'entity_id': 'script.bedtime'}\n\n"
+                "Returns: A summary of state changes that occurred during the action, "
+                "including each affected entity and its new state. If "
+                "`return_response=true`, also includes the action's response payload "
+                "(only supported by actions that declare `supports_response`). On "
+                "errors, returns a descriptive error message."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "domain": {
+                        "type": "string",
+                        "description": (
+                            "The Home Assistant action domain (also the entity domain "
+                            "for most actions), e.g. 'light', 'switch', 'climate', "
+                            "'scene', 'script', 'media_player', 'notify'."
+                        ),
+                    },
+                    "action": {
+                        "type": "string",
+                        "description": (
+                            "The action name within the domain (this is what HA "
+                            "previously called the 'service'), e.g. 'turn_on', "
+                            "'turn_off', 'toggle', 'set_temperature', 'lock', 'unlock'."
+                        ),
+                    },
+                    "service_data": {
+                        "type": "object",
+                        "description": (
+                            "Optional payload for the action. Typically includes "
+                            "`entity_id` (a string or list of strings) identifying the "
+                            "target entity/entities, plus any action-specific fields "
+                            "(e.g. `brightness_pct`, `temperature`, `message`). May "
+                            "also use the HA `target` block (with `entity_id`, "
+                            "`device_id`, or `area_id`)."
+                        ),
+                        "additionalProperties": True,
+                    },
+                    "return_response": {
+                        "type": "boolean",
+                        "description": (
+                            "If true, request the action's response payload. Only "
+                            "supported for actions declared with `supports_response` in "
+                            "Home Assistant (e.g. some `calendar.*` and `weather.*` "
+                            "actions). Defaults to false."
+                        ),
+                        "default": False,
+                    },
+                },
+                "required": ["domain", "action"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
             "name": "list_home_assistant_entities",
             "description": (
                 "List and search Home Assistant entities by ID, name, or area. "
@@ -232,6 +312,62 @@ HOME_ASSISTANT_TOOLS_DEFINITION: list[ToolDefinition] = [
                             "Maximum allowed is 200. Use filters to narrow results if needed."
                         ),
                         "default": 50,
+                    },
+                },
+                "required": [],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "list_home_assistant_actions",
+            "description": (
+                "Discover the actions (formerly 'services') currently exposed by "
+                "the connected Home Assistant instance. The catalog is fetched "
+                "live from HA's `GET /api/services` endpoint, so it always "
+                "matches the integrations actually installed — there is no "
+                "static list to keep in sync with the HA version.\n\n"
+                "Use this BEFORE calling `call_home_assistant_action` so you "
+                "know which `domain` / `action` names exist and which fields "
+                "they accept. Workflow:\n"
+                "  1. Call without arguments to see all available domains and actions.\n"
+                "  2. Call with `domain='light'` (or whatever domain you need) "
+                "to see the field schema for each action in that domain.\n"
+                "  3. Optionally narrow further with `action_filter` to find "
+                "actions whose name contains a substring (e.g. 'turn_on').\n\n"
+                "Each entry returns the `domain`, `action` (service id), human "
+                "`name`/`description`, the `fields` schema (per-parameter HA "
+                "selectors describing accepted values), the optional `target` "
+                "selector block, and `supports_response` (whether the action "
+                "supports `return_response=true`)."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "domain": {
+                        "type": "string",
+                        "description": (
+                            "Optional HA domain to narrow results, e.g. "
+                            "'light', 'switch', 'climate', 'scene', 'script'. "
+                            "Omit to list every domain."
+                        ),
+                    },
+                    "action_filter": {
+                        "type": "string",
+                        "description": (
+                            "Optional case-insensitive substring matched against "
+                            "the action name (e.g. 'turn_on', 'set_'). Combine "
+                            "with `domain` to narrow further."
+                        ),
+                    },
+                    "max_results": {
+                        "type": "integer",
+                        "description": (
+                            "Maximum number of catalog entries to return. "
+                            "Defaults to 100. Use filters to narrow results."
+                        ),
+                        "default": 100,
                     },
                 },
                 "required": [],
@@ -578,6 +714,199 @@ async def download_state_history_tool(
     except Exception as e:
         logger.error(f"Error retrieving state history: {e}", exc_info=True)
         return ToolResult(text=f"Error: Failed to retrieve state history: {str(e)}")
+
+
+async def call_home_assistant_action_tool(
+    exec_context: ToolExecutionContext,
+    domain: str,
+    action: str,
+    service_data: ActionPayload | None = None,
+    return_response: bool = False,
+) -> ToolResult:
+    """
+    Execute a Home Assistant action (formerly known as a "service call").
+
+    Args:
+        exec_context: The tool execution context containing the HA client.
+        domain: The action domain (e.g., 'light', 'switch', 'climate').
+        action: The action name within the domain (e.g., 'turn_on').
+        service_data: Optional dict with the action payload (entity_id, target,
+            and any action-specific fields).
+        return_response: If true, request the action's response payload.
+
+    Returns:
+        ToolResult with structured data describing the changed states and any
+        action response payload, or an error message.
+    """
+    logger.info(
+        "Calling Home Assistant action: %s.%s data=%s return_response=%s",
+        domain,
+        action,
+        service_data,
+        return_response,
+    )
+
+    if (
+        not hasattr(exec_context, "home_assistant_client")
+        or not exec_context.home_assistant_client
+    ):
+        logger.error("Home Assistant client not available in execution context")
+        return ToolResult(
+            text="Error: Home Assistant integration is not configured or available."
+        )
+
+    ha_client = exec_context.home_assistant_client
+
+    try:
+        result = await ha_client.async_call_action(
+            domain=domain,
+            action=action,
+            service_data=service_data,
+            return_response=return_response,
+        )
+    except HomeassistantAPIError as e:
+        logger.error(
+            "Home Assistant API error calling %s.%s: %s",
+            domain,
+            action,
+            e,
+            exc_info=True,
+        )
+        return ToolResult(
+            text=f"Error: Home Assistant API error calling {domain}.{action} - {str(e)}"
+        )
+
+    changed_states = result.get("changed_states", [])
+    response_payload = result.get("response", {})
+
+    summary_parts = [f"Called {domain}.{action}"]
+    if changed_states:
+        summary_parts.append(
+            f"{len(changed_states)} state change(s): "
+            + ", ".join(
+                f"{state.get('entity_id', '?')}={state.get('state', '?')}"
+                for state in changed_states
+            )
+        )
+    else:
+        summary_parts.append("no state changes reported")
+
+    if return_response:
+        summary_parts.append(f"response={json.dumps(response_payload)}")
+
+    summary = "; ".join(summary_parts)
+
+    # ast-grep-ignore: no-dict-any - tool result data structure
+    data: dict[str, Any] = {
+        "domain": domain,
+        "action": action,
+        "changed_states": changed_states,
+    }
+    if return_response:
+        data["response"] = response_payload
+
+    return ToolResult(text=summary, data=data)
+
+
+async def list_home_assistant_actions_tool(
+    exec_context: ToolExecutionContext,
+    domain: str | None = None,
+    action_filter: str | None = None,
+    max_results: int = 100,
+) -> ToolResult:
+    """List the actions currently exposed by the connected HA instance.
+
+    The catalog is fetched live from HA's ``/api/services`` endpoint so it
+    always matches the integrations actually installed on the user's HA —
+    there is no static mapping to drift out of sync with the HA version.
+
+    Args:
+        exec_context: The tool execution context containing the HA client.
+        domain: Optional HA domain to narrow results (e.g. ``"light"``).
+        action_filter: Optional case-insensitive substring matched against
+            the action name.
+        max_results: Cap on the number of catalog entries returned (default
+            100, hard cap 500).
+
+    Returns:
+        ToolResult with structured data: ``{"actions": [...], "total_matches": N}``.
+        Each entry includes ``domain``, ``action``, ``name``, ``description``,
+        ``fields``, ``target``, and ``supports_response``.
+    """
+    logger.info(
+        "Listing HA actions: domain=%s action_filter=%s max=%d",
+        domain,
+        action_filter,
+        max_results,
+    )
+
+    if (
+        not hasattr(exec_context, "home_assistant_client")
+        or not exec_context.home_assistant_client
+    ):
+        logger.error("Home Assistant client not available in execution context")
+        return ToolResult(
+            text="Error: Home Assistant integration is not configured or available."
+        )
+
+    ha_client = exec_context.home_assistant_client
+    max_results = max(1, min(max_results, 500))
+
+    try:
+        catalog = await ha_client.async_get_action_catalog(domain=domain)
+    except HomeassistantAPIError as e:
+        logger.error("Home Assistant API error fetching action catalog: %s", e)
+        return ToolResult(
+            text=f"Error: Home Assistant API error fetching action catalog - {str(e)}"
+        )
+
+    filtered = catalog
+    if action_filter:
+        needle = action_filter.lower()
+        filtered = [entry for entry in filtered if needle in entry["action"].lower()]
+
+    total_matches = len(filtered)
+    result_entries = filtered[:max_results]
+
+    # ast-grep-ignore: no-dict-any - tool result data structure mirrors HA's action catalog
+    result_data: dict[str, Any] = {
+        "actions": result_entries,
+        "total_matches": total_matches,
+    }
+    # ast-grep-ignore: no-dict-any - filter info dict mirrors arguments
+    filters_applied: dict[str, Any] = {}
+    if domain:
+        filters_applied["domain"] = domain
+    if action_filter:
+        filters_applied["action_filter"] = action_filter
+    if filters_applied:
+        result_data["filters_applied"] = filters_applied
+
+    if total_matches == 0:
+        text = (
+            "No matching Home Assistant actions found"
+            + (f" for domain={domain!r}" if domain else "")
+            + (f" matching {action_filter!r}" if action_filter else "")
+            + "."
+        )
+    else:
+        header = (
+            f"Found {total_matches} Home Assistant action(s)"
+            if total_matches <= max_results
+            else f"Found {total_matches} Home Assistant action(s); showing first {max_results}"
+        )
+        lines = [header + ":"]
+        for entry in result_entries:
+            line = f"- {entry['domain']}.{entry['action']}"
+            description = entry.get("description")
+            if description:
+                line += f" — {description}"
+            if entry.get("supports_response"):
+                line += " [supports response]"
+            lines.append(line)
+        text = "\n".join(lines)
+
+    return ToolResult(text=text, data=result_data)
 
 
 async def list_home_assistant_entities_tool(

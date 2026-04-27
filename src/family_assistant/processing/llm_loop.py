@@ -53,42 +53,58 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-def _extract_activate_tools_from_result(tool_msg: ToolMessage) -> list[str]:
-    """Extract activate_tools names from a trusted skill-loading tool result.
+def _extract_activations_from_result(
+    tool_msg: ToolMessage,
+) -> tuple[list[str], list[str]]:
+    """Extract activation directives from a trusted skill-loading tool result.
 
-    Skills loaded via ``get_note`` can declare tools in their frontmatter, and
-    that frontmatter is propagated through the tool result as an
-    ``activate_tools`` key. Restrict parsing to ``get_note`` results so
-    arbitrary tools cannot expand the active tool surface by emitting that key
-    in their output.
+    Skills loaded via ``get_note`` can declare tools and/or whole MCP servers
+    in their frontmatter, and that frontmatter is propagated through the tool
+    result as ``activate_tools`` and ``activate_mcp_servers`` keys. Parsing is
+    restricted to ``get_note`` results so arbitrary tools cannot expand the
+    active tool surface by emitting those keys in their output.
 
     Prefer reading the structured ``tool_result.data`` payload when it is
     available: ``tool_msg.content`` is the LLM-facing string, which the
     large-result handling path can rewrite with attachment hints, at which
     point it is no longer parseable JSON. Fall back to JSON-decoding the
     content only for tool results that never set ``tool_result``.
+
+    Returns:
+        ``(tool_names, mcp_server_ids)`` — either may be empty.
     """
     if tool_msg.name != "get_note":
-        return []
+        return [], []
 
     data: object = None
     if tool_msg.tool_result is not None and tool_msg.tool_result.data is not None:
         data = tool_msg.tool_result.data
     else:
         content = tool_msg.content
-        if not isinstance(content, str) or "activate_tools" not in content:
-            return []
+        if not isinstance(content, str) or (
+            "activate_tools" not in content and "activate_mcp_servers" not in content
+        ):
+            return [], []
         try:
             data = json.loads(content)
         except (ValueError, TypeError):
-            return []
+            return [], []
 
     if not isinstance(data, dict):
-        return []
-    tool_names = data.get("activate_tools")
-    if not isinstance(tool_names, list):
-        return []
-    return [n for n in tool_names if isinstance(n, str)]
+        return [], []
+    raw_tools = data.get("activate_tools")
+    raw_servers = data.get("activate_mcp_servers")
+    tool_names = (
+        [n for n in raw_tools if isinstance(n, str)]
+        if isinstance(raw_tools, list)
+        else []
+    )
+    mcp_server_ids = (
+        [s for s in raw_servers if isinstance(s, str)]
+        if isinstance(raw_servers, list)
+        else []
+    )
+    return tool_names, mcp_server_ids
 
 
 class LLMStreamingLoop:
@@ -606,12 +622,16 @@ class LLMStreamingLoop:
                     args = parsed_args if isinstance(parsed_args, dict) else {}
                     requested_names = args.get("tool_names")
                     requested_search = args.get("search")
+                    requested_mcp = args.get("mcp_server_ids")
                     activation = await on_demand_provider.activate_tools(
                         names=requested_names
                         if isinstance(requested_names, list)
                         else None,
                         search=requested_search
                         if isinstance(requested_search, str)
+                        else None,
+                        mcp_server_ids=requested_mcp
+                        if isinstance(requested_mcp, list)
                         else None,
                         can_confirm=can_confirm,
                         activated=activated_on_demand,
@@ -693,15 +713,19 @@ class LLMStreamingLoop:
                 if tool_execution_tasks:
                     await asyncio.gather(*tool_execution_tasks, return_exceptions=True)
 
-            # Auto-activate tools from skill results (e.g., get_note returning a skill
-            # with activate_tools in its frontmatter)
+            # Auto-activate tools / MCP servers from skill results (e.g.,
+            # get_note returning a skill with activate_tools or
+            # activate_mcp_servers in its frontmatter).
             if on_demand_provider:
                 for tool_msg in tool_response_messages_for_llm:
-                    auto_names = _extract_activate_tools_from_result(tool_msg)
-                    if not auto_names:
+                    auto_names, auto_mcp_servers = _extract_activations_from_result(
+                        tool_msg
+                    )
+                    if not auto_names and not auto_mcp_servers:
                         continue
                     activation = await on_demand_provider.activate_tools(
-                        names=auto_names,
+                        names=auto_names or None,
+                        mcp_server_ids=auto_mcp_servers or None,
                         can_confirm=can_confirm,
                         activated=activated_on_demand,
                     )

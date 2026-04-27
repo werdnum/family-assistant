@@ -28,6 +28,41 @@ class EntityMetadata(TypedDict):
     device_name: str | None
 
 
+# Home Assistant action payloads and entity state dicts have arbitrary,
+# action-specific shapes (any HA service or response field). We expose them
+# as plain JSON-compatible dicts because the LLM constructs them dynamically
+# and we just pass them through to/from the HA API.
+# ast-grep-ignore: no-dict-any - HA action payloads are action-specific
+ActionPayload = dict[str, Any]
+# ast-grep-ignore: no-dict-any - HA state dicts have arbitrary attribute payloads
+HAStateDict = dict[str, Any]
+
+
+class ActionCallResult(TypedDict):
+    """Result of a Home Assistant action (service) call."""
+
+    changed_states: list[HAStateDict]
+    response: ActionPayload
+
+
+class ActionCatalogEntry(TypedDict):
+    """A single available action discovered from Home Assistant.
+
+    Sourced live from ``GET /api/services``, so it always matches the
+    integrations currently installed on the connected HA instance.
+    """
+
+    domain: str
+    action: str
+    name: str | None
+    description: str | None
+    # ast-grep-ignore: no-dict-any - HA action field schemas are action-specific
+    fields: dict[str, Any]
+    # ast-grep-ignore: no-dict-any - HA target selector block is action-specific
+    target: dict[str, Any] | None
+    supports_response: bool
+
+
 class HomeAssistantClientWrapper:
     """
     Wrapper around homeassistant_api.Client that provides additional functionality.
@@ -178,6 +213,173 @@ class HomeAssistantClientWrapper:
             )
 
             return entities
+
+    async def async_call_action(
+        self,
+        domain: str,
+        action: str,
+        service_data: ActionPayload | None = None,
+        *,
+        return_response: bool = False,
+    ) -> ActionCallResult:
+        """
+        Call a Home Assistant action (formerly known as a "service call").
+
+        We bypass ``homeassistant_api``'s ``async_trigger_service`` /
+        ``async_trigger_service_with_response`` because both expand
+        ``service_data`` via ``**kwargs``, which collides with their own
+        ``domain=`` / ``service=`` parameters. That collision would silently
+        block any HA action whose field schema includes a field literally
+        named ``domain`` or ``service``. Posting the payload as a JSON body
+        through ``async_request`` keeps the wire format identical without the
+        keyword collision.
+
+        Args:
+            domain: The action domain (e.g., "light", "switch", "climate").
+            action: The action name within the domain (e.g., "turn_on").
+            service_data: Optional payload for the action. May include
+                ``entity_id`` (str or list), a ``target`` block, and any
+                action-specific fields — including fields named ``domain`` or
+                ``service`` if the action defines them.
+            return_response: If True, request the action's response payload
+                from Home Assistant (only supported for actions that declare
+                ``supports_response``).
+
+        Returns:
+            A dict with keys:
+              - ``changed_states``: list of entity state dicts that changed
+              - ``response``: the action response payload (only when
+                ``return_response`` is True; otherwise an empty dict).
+        """
+        payload: ActionPayload = dict(service_data) if service_data else {}
+        path = f"services/{domain}/{action}"
+        if return_response:
+            path = f"{path}?return_response"
+
+        raw = await self._client.async_request(
+            path,
+            method="POST",
+            json=payload,
+        )
+
+        # Validate the shape HA actually returned. Letting an unexpected
+        # response slip through as an "empty result" would silently turn
+        # HA/library bugs into apparently-successful tool calls, so missing
+        # keys, wrong types, and non-dict state entries all raise instead.
+        if return_response:
+            # HA returns {"changed_states": [...], "service_response": {...}}.
+            if not isinstance(raw, dict):
+                msg = (
+                    f"Home Assistant {domain}.{action} (return_response=True) "
+                    f"returned {type(raw).__name__}, expected dict with "
+                    "'changed_states' and 'service_response' keys"
+                )
+                raise TypeError(msg)
+            missing = {"changed_states", "service_response"} - raw.keys()
+            if missing:
+                msg = (
+                    f"Home Assistant {domain}.{action} response is missing "
+                    f"required key(s) {sorted(missing)}; got keys {sorted(raw.keys())}"
+                )
+                raise TypeError(msg)
+            changed_states_raw = raw["changed_states"]
+            response_payload = raw["service_response"]
+            if not isinstance(changed_states_raw, list):
+                msg = (
+                    f"Home Assistant {domain}.{action} response "
+                    f"'changed_states' is {type(changed_states_raw).__name__}, "
+                    "expected list"
+                )
+                raise TypeError(msg)
+            if not isinstance(response_payload, dict):
+                msg = (
+                    f"Home Assistant {domain}.{action} response "
+                    f"'service_response' is {type(response_payload).__name__}, "
+                    "expected dict"
+                )
+                raise TypeError(msg)
+        else:
+            # HA returns a list of changed state dicts directly.
+            if not isinstance(raw, list):
+                msg = (
+                    f"Home Assistant {domain}.{action} returned "
+                    f"{type(raw).__name__}, expected list of state dicts"
+                )
+                raise TypeError(msg)
+            changed_states_raw = raw
+            response_payload = {}
+
+        for index, state in enumerate(changed_states_raw):
+            if not isinstance(state, dict):
+                msg = (
+                    f"Home Assistant {domain}.{action} changed_states[{index}] "
+                    f"is {type(state).__name__}, expected dict"
+                )
+                raise TypeError(msg)
+
+        return ActionCallResult(
+            changed_states=list(changed_states_raw),
+            response=dict(response_payload),
+        )
+
+    async def async_get_action_catalog(
+        self, *, domain: str | None = None
+    ) -> list[ActionCatalogEntry]:
+        """Fetch the live catalog of available actions from Home Assistant.
+
+        The catalog is sourced directly from ``GET /api/services`` so it always
+        reflects the integrations currently installed on the connected HA
+        instance — there is no static schema to keep in sync.
+
+        Args:
+            domain: Optional domain to narrow the result (e.g. ``"light"``).
+                When omitted, every domain on the HA instance is returned.
+
+        Returns:
+            A list of :py:class:`ActionCatalogEntry` dicts. Each entry includes
+            the action's ``domain``, ``action`` (a.k.a. service id),
+            ``description``, the ``fields`` schema (the per-parameter selectors
+            HA exposes), the optional ``target`` selector block, and a
+            ``supports_response`` flag indicating whether ``return_response``
+            is meaningful for this action.
+        """
+        domains = await self._client.async_get_domains()
+        entries: list[ActionCatalogEntry] = []
+        for domain_obj in domains.values():
+            if domain is not None and domain_obj.domain_id != domain:
+                continue
+            for service in domain_obj.services.values():
+                # ast-grep-ignore: no-dict-any - HA action field schemas are action-specific JSON payloads
+                fields_dump: dict[str, Any] = {}
+                if service.fields:
+                    for field_name, field_value in service.fields.items():
+                        fields_dump[field_name] = json.loads(
+                            field_value.model_dump_json(exclude_none=True)
+                        )
+                # ast-grep-ignore: no-dict-any - HA target selector block is action-specific JSON
+                target_dump: dict[str, Any] | None = None
+                if service.target is not None:
+                    target_dump = json.loads(
+                        service.target.model_dump_json(exclude_none=True)
+                    )
+                response_dump = (
+                    json.loads(service.response.model_dump_json(exclude_none=True))
+                    if service.response is not None
+                    else None
+                )
+                entries.append(
+                    ActionCatalogEntry(
+                        domain=domain_obj.domain_id,
+                        action=service.service_id,
+                        name=service.name,
+                        description=service.description,
+                        fields=fields_dump,
+                        target=target_dump,
+                        supports_response=response_dump is not None,
+                    )
+                )
+        entries.sort(key=lambda e: (e["domain"], e["action"]))
+        return entries
 
     async def async_get_camera_snapshot(self, camera_entity_id: str) -> bytes:
         """

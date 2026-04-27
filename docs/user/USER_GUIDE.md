@@ -222,6 +222,10 @@ You can ask the assistant a wide variety of things:
   temperature in the baby's room?" \*The assistant now knows your location and can provide
   context-aware responses: \*It knows who is home and who is away \*It can tell you distances to
   known locations (like work or school) \*It tracks detailed location information when available
+  \*Under the hood the assistant can run any Home Assistant action (formerly called a "service
+  call"), so it can do things like activating scenes ("activate movie night"), running scripts ("run
+  my bedtime script"), playing media, or sending HA notifications — anything Home Assistant itself
+  can do.
 
   - \*Note:\*This depends on how Home Assistant is set up. You'll need to use the names of your
     lights, switches, sensors, etc., as they are defined in your Home Assistant configuration.

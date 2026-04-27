@@ -312,8 +312,6 @@ default_profile_settings:
       - "delete_calendar_event"
       - "delegate_to_service"
       - "query_recent_events" # Event system tool
-      - "render_home_assistant_template" # Home Assistant template rendering
-      - "get_camera_snapshot" # Get camera snapshots from Home Assistant
       # On-demand tools (catalog only until activated - saves context tokens)
       - name: "execute_script"
         loading: "on_demand"
@@ -324,9 +322,19 @@ default_profile_settings:
       - "list_scripts"
       - "get_script"
       - "delete_script"
+      # Home Assistant tools: gated behind the "Home Assistant" built-in
+      # skill, which auto-activates the full set when loaded via get_note.
+      - name: "render_home_assistant_template"
+        loading: "on_demand"
+      - name: "get_camera_snapshot"
+        loading: "on_demand"
       - name: "download_state_history"
         loading: "on_demand"
       - name: "list_home_assistant_entities"
+        loading: "on_demand"
+      - name: "list_home_assistant_actions"
+        loading: "on_demand"
+      - name: "call_home_assistant_action"
         loading: "on_demand"
       - name: "list_automations"
         loading: "on_demand"
@@ -357,8 +365,10 @@ default_profile_settings:
     enable_mcp_server_ids: # Explicitly define MCP servers for the default profile
       - "time"
       - "brave"
-      - "homeassistant"
       - "google-maps"
+      # Gated behind the "Home Assistant" skill, which auto-activates the
+      # whole server alongside the local HA tools when loaded via get_note.
+      - {id: "homeassistant", loading: "on_demand"}
     # Tools requiring explicit user confirmation before execution for this default profile.
     # This list is overridden by the TOOLS_REQUIRING_CONFIRMATION environment variable if set.
     confirm_tools:
@@ -407,6 +417,8 @@ default_profile_settings:
             - "get_camera_snapshot"
             - "download_state_history"
             - "list_home_assistant_entities"
+            - "list_home_assistant_actions"
+            - "call_home_assistant_action"
             - "list_automations"
             - "get_automation"
             - "get_automation_stats"
@@ -1507,10 +1519,20 @@ service_profiles:
         - "delete_calendar_event"
         - "delegate_to_service"
         - "query_recent_events"
-        - "render_home_assistant_template"
-        - "get_camera_snapshot"
-        - "download_state_history"
-        - "list_home_assistant_entities"
+        # Home Assistant tools: gated behind the "Home Assistant" built-in
+        # skill, which auto-activates the full set when loaded via get_note.
+        - name: "render_home_assistant_template"
+          loading: "on_demand"
+        - name: "get_camera_snapshot"
+          loading: "on_demand"
+        - name: "download_state_history"
+          loading: "on_demand"
+        - name: "list_home_assistant_entities"
+          loading: "on_demand"
+        - name: "list_home_assistant_actions"
+          loading: "on_demand"
+        - name: "call_home_assistant_action"
+          loading: "on_demand"
         - "list_automations"
         - "get_automation"
         - "get_automation_stats"
@@ -1527,8 +1549,10 @@ service_profiles:
       enable_mcp_server_ids:
         - "time"
         - "brave"
-        - "homeassistant"
         - "google-maps"
+        # Gated behind the "Home Assistant" skill, which auto-activates the
+        # whole server alongside the local HA tools when loaded via get_note.
+        - {id: "homeassistant", loading: "on_demand"}
       confirm_tools:
         - delete_calendar_event
         - modify_calendar_event
@@ -1572,6 +1596,8 @@ service_profiles:
               - "get_camera_snapshot"
               - "download_state_history"
               - "list_home_assistant_entities"
+              - "list_home_assistant_actions"
+              - "call_home_assistant_action"
               - "list_automations"
               - "get_automation"
               - "get_automation_stats"

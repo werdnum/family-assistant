@@ -45,6 +45,11 @@ def load_skills_from_directory(directory: Path) -> list[ParsedSkill]:
         raw_activate = frontmatter.get("activate_tools", [])
         activate_tools = tuple(raw_activate) if isinstance(raw_activate, list) else ()
 
+        raw_activate_mcp = frontmatter.get("activate_mcp_servers", [])
+        activate_mcp_servers = (
+            tuple(raw_activate_mcp) if isinstance(raw_activate_mcp, list) else ()
+        )
+
         skills.append(
             ParsedSkill(
                 name=name,
@@ -53,6 +58,7 @@ def load_skills_from_directory(directory: Path) -> list[ParsedSkill]:
                 source_path=md_file,
                 visibility_labels=visibility_labels,
                 activate_tools=activate_tools,
+                activate_mcp_servers=activate_mcp_servers,
             )
         )
         logger.debug("Loaded skill '%s' from %s", name, md_file)
