@@ -36,7 +36,7 @@ class TestThoughtSignatureConversion:
     def google_client(self) -> GoogleGenAIClient:
         """Create a GoogleGenAIClient instance for testing."""
         return GoogleGenAIClient(
-            api_key="test_key_for_unit_tests", model="gemini-2.5-pro"
+            api_key="test_key_for_unit_tests", model="gemini-3.1-pro-preview"
         )
 
     def test_thought_signature_attached_to_function_call_part(
