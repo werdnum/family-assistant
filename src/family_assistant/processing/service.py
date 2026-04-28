@@ -51,7 +51,7 @@ if TYPE_CHECKING:
     from family_assistant.processing.protocol import DelegatableService
     from family_assistant.services.attachment_registry import AttachmentRegistry
     from family_assistant.storage.context import DatabaseContext
-    from family_assistant.tools import ToolsProvider
+    from family_assistant.tools import OnDemandToolsView, ToolsProvider
     from family_assistant.tools.types import EventSourcesById
 
 logger = logging.getLogger(__name__)
@@ -81,9 +81,11 @@ class ProcessingService:
         processing_services_registry: Mapping[str, DelegatableService] | None = None,
         home_assistant_client: HomeAssistantClientWrapper | None = None,
         camera_backend: CameraBackend | None = None,
+        on_demand_view: OnDemandToolsView | None = None,
     ) -> None:
         self._llm_client = llm_client
         self.tools_provider = tools_provider
+        self.on_demand_view = on_demand_view
         self.service_config = service_config
         self.context_providers = context_providers
         self.server_url = server_url or "http://localhost:8000"
