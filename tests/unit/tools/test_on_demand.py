@@ -3,8 +3,6 @@
 from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
-from unittest.mock import MagicMock
-from zoneinfo import ZoneInfo
 
 import pytest
 
@@ -13,7 +11,6 @@ from family_assistant.config_models import (
     ToolLoadingEntry,
     ToolsConfig,
 )
-from family_assistant.storage.context import DatabaseContext
 from family_assistant.tools.infrastructure import LocalToolsProvider
 from family_assistant.tools.metadata import (
     ToolDescriptor,
@@ -23,14 +20,13 @@ from family_assistant.tools.metadata import (
     make_local_tool_metadata,
 )
 from family_assistant.tools.on_demand import (
-    OnDemandAwareToolsProvider,
     OnDemandCatalogEntry,
     OnDemandToolCatalog,
+    OnDemandToolsView,
 )
-from family_assistant.tools.types import ToolExecutionContext
 
 if TYPE_CHECKING:
-    from family_assistant.tools.types import ToolDefinition
+    from family_assistant.tools.types import ToolDefinition, ToolExecutionContext
 
 
 def _make_tool_def(name: str, description: str = "A test tool.") -> ToolDefinition:
@@ -175,13 +171,13 @@ class TestOnDemandToolCatalog:
         assert "activate_tools" in text
 
 
-class TestOnDemandAwareToolsProvider:
-    """Test OnDemandAwareToolsProvider behavior."""
+class TestOnDemandToolsView:
+    """Test OnDemandToolsView behavior."""
 
     @pytest.mark.asyncio
     async def test_eager_tools_returned_on_demand_excluded(self) -> None:
         provider = _make_provider(["eager_a", "eager_b", "lazy_c", "lazy_d"])
-        on_demand = OnDemandAwareToolsProvider(
+        on_demand = OnDemandToolsView(
             wrapped_provider=provider,
             on_demand_tool_names={"lazy_c", "lazy_d"},
         )
@@ -193,7 +189,7 @@ class TestOnDemandAwareToolsProvider:
     @pytest.mark.asyncio
     async def test_on_demand_catalog_contains_only_on_demand(self) -> None:
         provider = _make_provider(["eager_a", "lazy_b"])
-        on_demand = OnDemandAwareToolsProvider(
+        on_demand = OnDemandToolsView(
             wrapped_provider=provider,
             on_demand_tool_names={"lazy_b"},
         )
@@ -205,7 +201,7 @@ class TestOnDemandAwareToolsProvider:
     @pytest.mark.asyncio
     async def test_activate_by_name(self) -> None:
         provider = _make_provider(["eager_a", "lazy_b", "lazy_c"])
-        on_demand = OnDemandAwareToolsProvider(
+        on_demand = OnDemandToolsView(
             wrapped_provider=provider,
             on_demand_tool_names={"lazy_b", "lazy_c"},
         )
@@ -229,7 +225,7 @@ class TestOnDemandAwareToolsProvider:
     @pytest.mark.asyncio
     async def test_activate_by_search(self) -> None:
         provider = _make_provider(["notes_tool", "camera_tool", "automation_tool"])
-        on_demand = OnDemandAwareToolsProvider(
+        on_demand = OnDemandToolsView(
             wrapped_provider=provider,
             on_demand_tool_names={"camera_tool", "automation_tool"},
         )
@@ -240,42 +236,13 @@ class TestOnDemandAwareToolsProvider:
         assert result.definitions[0]["function"]["name"] == "camera_tool"
 
     @pytest.mark.asyncio
-    async def test_on_demand_tools_still_executable(self) -> None:
-        """On-demand tools should be executable even before activation."""
-
-        provider = _make_provider(["eager_a", "lazy_b"])
-        on_demand = OnDemandAwareToolsProvider(
-            wrapped_provider=provider,
-            on_demand_tool_names={"lazy_b"},
-        )
-
-        mock_db = MagicMock(spec=DatabaseContext)
-        context = ToolExecutionContext(
-            conversation_id="test",
-            user_name="test",
-            turn_id=None,
-            interface_type="test",
-            db_context=mock_db,
-            processing_service=MagicMock(),
-            clock=MagicMock(),
-            home_assistant_client=MagicMock(),
-            event_sources={},
-            attachment_registry=MagicMock(),
-            camera_backend=MagicMock(),
-            timezone=ZoneInfo("UTC"),
-        )
-
-        result = await on_demand.execute_tool("lazy_b", {}, context)
-        assert result == "ok"
-
-    @pytest.mark.asyncio
     async def test_has_on_demand_tools(self) -> None:
         provider = _make_provider(["a"])
-        on_demand_yes = OnDemandAwareToolsProvider(
+        on_demand_yes = OnDemandToolsView(
             wrapped_provider=provider,
             on_demand_tool_names={"a"},
         )
-        on_demand_no = OnDemandAwareToolsProvider(
+        on_demand_no = OnDemandToolsView(
             wrapped_provider=provider,
             on_demand_tool_names=set(),
         )
@@ -283,23 +250,10 @@ class TestOnDemandAwareToolsProvider:
         assert on_demand_no.has_on_demand_tools() is False
 
     @pytest.mark.asyncio
-    async def test_all_descriptors_returned(self) -> None:
-        """get_tool_descriptors should return ALL descriptors (eager + on-demand)."""
-        provider = _make_provider(["eager_a", "lazy_b"])
-        on_demand = OnDemandAwareToolsProvider(
-            wrapped_provider=provider,
-            on_demand_tool_names={"lazy_b"},
-        )
-
-        descriptors = await on_demand.get_tool_descriptors()
-        names = {d.name for d in descriptors}
-        assert names == {"eager_a", "lazy_b"}
-
-    @pytest.mark.asyncio
     async def test_activation_state_is_turn_local(self) -> None:
         """Provider holds no activation state; callers pass activated per turn."""
         provider = _make_provider(["eager_a", "lazy_b"])
-        on_demand = OnDemandAwareToolsProvider(
+        on_demand = OnDemandToolsView(
             wrapped_provider=provider,
             on_demand_tool_names={"lazy_b"},
         )
@@ -325,7 +279,7 @@ class TestOnDemandAwareToolsProvider:
 class _StubMCPDescriptorProvider:
     """Minimal ToolsProvider whose descriptors carry mcp_server_id values.
 
-    Used to exercise the OnDemandAwareToolsProvider's MCP server expansion
+    Used to exercise the OnDemandToolsView's MCP server expansion
     behavior, which the LocalToolsProvider helper does not cover because
     LocalToolsProvider produces local-origin descriptors with no server id.
     """
@@ -387,7 +341,7 @@ class TestOnDemandMCPServerExpansion:
             _make_mcp_descriptor("brave_search", "brave"),
         ]
         wrapped = _StubMCPDescriptorProvider(descriptors)
-        on_demand = OnDemandAwareToolsProvider(
+        on_demand = OnDemandToolsView(
             wrapped_provider=wrapped,
             on_demand_tool_names=set(),
             on_demand_mcp_server_ids={"homeassistant"},
@@ -419,7 +373,7 @@ class TestOnDemandMCPServerExpansion:
             _make_mcp_descriptor("ha_eager", "homeassistant"),
         ]
         wrapped = _StubMCPDescriptorProvider(descriptors)
-        on_demand = OnDemandAwareToolsProvider(
+        on_demand = OnDemandToolsView(
             wrapped_provider=wrapped,
             # Only ha_lazy_one and ha_lazy_two are on-demand. ha_eager lives on
             # the same MCP server but is eager — server-id-based on-demand is
@@ -450,7 +404,7 @@ class TestOnDemandActivateToolsCollision:
             _make_mcp_descriptor("activate_tools", "homeassistant"),
         ]
         wrapped = _StubMCPDescriptorProvider(descriptors)
-        on_demand = OnDemandAwareToolsProvider(
+        on_demand = OnDemandToolsView(
             wrapped_provider=wrapped,
             on_demand_tool_names=set(),
             on_demand_mcp_server_ids={"homeassistant"},

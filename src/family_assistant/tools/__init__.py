@@ -183,9 +183,9 @@ from family_assistant.tools.notes import (
 )
 from family_assistant.tools.on_demand import (
     ACTIVATE_TOOLS_DEFINITION,
-    OnDemandAwareToolsProvider,
     OnDemandCatalogEntry,
     OnDemandToolCatalog,
+    OnDemandToolsView,
 )
 from family_assistant.tools.policy import (
     DEFAULT_POLICY_PRIORITY_OFFSET,
@@ -415,9 +415,9 @@ __all__ = [
     "get_llm_request_history",
     # On-demand tool activation
     "ACTIVATE_TOOLS_DEFINITION",
-    "OnDemandAwareToolsProvider",
     "OnDemandCatalogEntry",
     "OnDemandToolCatalog",
+    "OnDemandToolsView",
     # Stored scripts
     "STORED_SCRIPTS_TOOLS_DEFINITION",
     "save_script_tool",

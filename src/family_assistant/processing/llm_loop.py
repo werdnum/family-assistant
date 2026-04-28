@@ -17,9 +17,7 @@ from family_assistant.llm.messages import (
     UserMessage,
 )
 from family_assistant.tools import (
-    OnDemandAwareToolsProvider,
     collect_system_prompt_addition,
-    find_provider_by_type,
     get_tool_definitions_for_advertisement,
 )
 
@@ -238,11 +236,13 @@ class LLMStreamingLoop:
 
         can_confirm = request_confirmation_callback is not None
 
-        # The on-demand provider is long-lived per profile and shared across
+        # The on-demand view is long-lived per profile and shared across
         # concurrent turns, so all activation state is kept turn-local here.
         tools_provider = self.tool_executor.tools_provider
-        on_demand_provider = find_provider_by_type(
-            tools_provider, OnDemandAwareToolsProvider
+        on_demand_view = (
+            processing_service.on_demand_view
+            if processing_service is not None
+            else None
         )
         activated_on_demand: frozenset[str] = frozenset()
 
@@ -250,14 +250,13 @@ class LLMStreamingLoop:
             """Re-compute the tool list and system prompt addition for this turn.
 
             On-demand tool definitions are sourced directly from the on-demand
-            provider (when present) so the activate_tools meta-tool and the
+            view (when present) so the activate_tools meta-tool and the
             turn-local activation set are honored. The system prompt addition
-            always goes through the generic ``collect_system_prompt_addition``
-            walker so contributions from any other ``SystemPromptContributingProvider``
-            in the chain are preserved alongside the on-demand catalog.
+            walks the provider chain for any ``SystemPromptContributingProvider``
+            contributions and appends the on-demand catalog from the view.
             """
-            if on_demand_provider is not None:
-                defs = await on_demand_provider.get_tool_definitions(
+            if on_demand_view is not None:
+                defs = await on_demand_view.get_tool_definitions(
                     can_confirm=can_confirm, activated=activated_on_demand
                 )
             else:
@@ -265,11 +264,22 @@ class LLMStreamingLoop:
                     tools_provider,
                     can_confirm=can_confirm,
                 )
-            addition = await collect_system_prompt_addition(
+            additions: list[str] = []
+            chain_addition = await collect_system_prompt_addition(
                 tools_provider,
                 can_confirm=can_confirm,
                 activated=activated_on_demand,
             )
+            if chain_addition:
+                additions.append(chain_addition)
+            if on_demand_view is not None:
+                view_addition = await on_demand_view.get_system_prompt_addition(
+                    can_confirm=can_confirm,
+                    activated=activated_on_demand,
+                )
+                if view_addition:
+                    additions.append(view_addition)
+            addition = "\n\n".join(additions) if additions else None
             return defs, addition
 
         tools_for_llm, system_prompt_addition = await refresh_on_demand_tools()
@@ -599,7 +609,7 @@ class LLMStreamingLoop:
 
             # Handle activate_tools meta-tool calls before regular execution
             regular_tool_calls = tool_calls_from_stream
-            if on_demand_provider:
+            if on_demand_view:
                 activate_calls = [
                     tc
                     for tc in tool_calls_from_stream
@@ -623,7 +633,7 @@ class LLMStreamingLoop:
                     requested_names = args.get("tool_names")
                     requested_search = args.get("search")
                     requested_mcp = args.get("mcp_server_ids")
-                    activation = await on_demand_provider.activate_tools(
+                    activation = await on_demand_view.activate_tools(
                         names=requested_names
                         if isinstance(requested_names, list)
                         else None,
@@ -716,14 +726,14 @@ class LLMStreamingLoop:
             # Auto-activate tools / MCP servers from skill results (e.g.,
             # get_note returning a skill with activate_tools or
             # activate_mcp_servers in its frontmatter).
-            if on_demand_provider:
+            if on_demand_view:
                 for tool_msg in tool_response_messages_for_llm:
                     auto_names, auto_mcp_servers = _extract_activations_from_result(
                         tool_msg
                     )
                     if not auto_names and not auto_mcp_servers:
                         continue
-                    activation = await on_demand_provider.activate_tools(
+                    activation = await on_demand_view.activate_tools(
                         names=auto_names or None,
                         mcp_server_ids=auto_mcp_servers or None,
                         can_confirm=can_confirm,

@@ -1,11 +1,19 @@
 """On-demand tool activation support.
 
-Provides the ``OnDemandAwareToolsProvider`` wrapper that splits tools into
-eager (always-loaded) and on-demand (catalog-only until activated) sets, plus
-the ``activate_tools`` meta-tool definition handled by the LLM loop.
+Provides the ``OnDemandToolsView``: an LLM-loop-only view over a real
+``ToolsProvider`` that:
 
-Activation state is *not* stored on the provider. The provider is long-lived
-per profile and shared across concurrent conversations, so mutable activation
+* hides on-demand tools from ``get_tool_definitions`` until the LLM activates
+  them via the synthetic ``activate_tools`` meta-tool, and
+* renders an on-demand catalog into the system prompt.
+
+The view is not itself a ``ToolsProvider``. On-demand gating is a concern of
+the LLM loop (which has a context window to protect); other consumers — most
+notably the script engine — talk to the underlying provider directly and see
+all tools that pass policy.
+
+Activation state is *not* stored on the view. The view is long-lived per
+profile and shared across concurrent conversations, so mutable activation
 state would race between turns. Callers (the LLM loop) keep a turn-local
 ``activated`` set and pass it in to every method that needs to know which
 tools are currently unlocked.
@@ -27,11 +35,7 @@ from family_assistant.tools.metadata import ToolDescriptor, extract_tool_summary
 if TYPE_CHECKING:
     from collections.abc import Iterable
 
-    from family_assistant.tools.types import (
-        ToolDefinition,
-        ToolExecutionContext,
-        ToolResult,
-    )
+    from family_assistant.tools.types import ToolDefinition
 
 logger = logging.getLogger(__name__)
 
@@ -126,23 +130,23 @@ ACTIVATE_TOOLS_DEFINITION: ToolDefinition = {
 
 
 # ---------------------------------------------------------------------------
-# OnDemandAwareToolsProvider
+# OnDemandToolsView
 # ---------------------------------------------------------------------------
 
 
-class OnDemandAwareToolsProvider:
-    """Wraps a provider to split tools into eager (always-loaded) and on-demand sets.
+class OnDemandToolsView:
+    """LLM-loop view that hides on-demand tools from the LLM until activated.
 
-    On-demand tools are fully executable at all times — activation only controls
-    whether their full JSON schema is included in the LLM tool list. This keeps
-    context usage low while allowing the agent to activate tools when needed.
+    Not a ``ToolsProvider``. Holds a reference to a real provider — typically
+    a ``PolicyEnforcingToolsProvider`` — and exposes only the LLM-loop-facing
+    operations: filtered tool-definition listing, system-prompt catalog
+    rendering, and ``activate_tools``. Tool execution and descriptor access
+    go through the underlying provider directly; on-demand gating only
+    controls what the LLM sees in its tool list.
 
-    The provider itself holds no activation state. The LLM loop keeps a
+    The view itself holds no activation state. The LLM loop keeps a
     turn-local ``activated`` set and threads it through every call; that way
-    concurrent turns on a shared provider do not race on a common mutable set.
-
-    This provider implements ``ToolDescriptorProvider`` so it can be wrapped by
-    ``PolicyEnforcingToolsProvider``.
+    concurrent turns on a shared view do not race on a common mutable set.
     """
 
     def __init__(
@@ -153,7 +157,7 @@ class OnDemandAwareToolsProvider:
     ) -> None:
         if not isinstance(wrapped_provider, ToolDescriptorProvider):
             msg = (
-                "OnDemandAwareToolsProvider requires a wrapped provider that "
+                "OnDemandToolsView requires a wrapped provider that "
                 "supports tool descriptors."
             )
             raise ValueError(msg)
@@ -176,7 +180,7 @@ class OnDemandAwareToolsProvider:
 
     @property
     def wrapped_provider(self) -> ToolsProvider:
-        """Return the wrapped provider."""
+        """Return the underlying provider this view filters."""
         return self._wrapped_provider
 
     def has_on_demand_tools(self) -> bool:
@@ -198,7 +202,7 @@ class OnDemandAwareToolsProvider:
             collisions = [d for d in descriptors if d.name == "activate_tools"]
             if collisions:
                 msg = (
-                    "OnDemandAwareToolsProvider cannot wrap a provider that "
+                    "OnDemandToolsView cannot wrap a provider that "
                     "already exposes a tool named 'activate_tools'; this name "
                     "is reserved for the on-demand meta-tool."
                 )
@@ -240,7 +244,7 @@ class OnDemandAwareToolsProvider:
             return activated
         return frozenset(activated)
 
-    # --- ToolsProvider interface ---
+    # --- LLM-loop-facing API ---
 
     async def get_tool_definitions(
         self,
@@ -303,35 +307,6 @@ class OnDemandAwareToolsProvider:
             return None
         return catalog.render_for_system_prompt()
 
-    async def execute_tool(
-        self,
-        name: str,
-        # ast-grep-ignore: no-dict-any - Tool arguments are dynamic JSON from LLM
-        arguments: dict[str, Any],
-        context: ToolExecutionContext,
-        call_id: str | None = None,
-    ) -> str | ToolResult:
-        """Execute any tool (eager or on-demand). On-demand tools work without activation."""
-        return await self._wrapped_provider.execute_tool(
-            name, arguments, context, call_id
-        )
-
-    async def close(self) -> None:
-        """Clean up resources."""
-        await self._wrapped_provider.close()
-
-    # --- ToolDescriptorProvider interface ---
-
-    async def get_tool_descriptors(self) -> list[ToolDescriptor]:
-        """Return ALL tool descriptors (eager + on-demand). Policy layer uses these."""
-        return await self._ensure_descriptors()
-
-    async def get_tool_descriptor(self, name: str) -> ToolDescriptor | None:
-        """Return descriptor by name."""
-        return await self._descriptor_provider.get_tool_descriptor(name)
-
-    # --- On-demand specific ---
-
     async def get_on_demand_catalog(
         self,
         *,
@@ -380,7 +355,7 @@ class OnDemandAwareToolsProvider:
         """Activate on-demand tools by name, search keyword, or MCP server id.
 
         Returns the set of newly activated names and the corresponding tool
-        definitions, without mutating provider state. Only descriptors that
+        definitions, without mutating view state. Only descriptors that
         are currently on-demand (relative to the caller's ``activated`` set)
         AND that the wrapped policy provider would actually advertise for
         ``can_confirm`` are eligible. This avoids marking a tool as activated

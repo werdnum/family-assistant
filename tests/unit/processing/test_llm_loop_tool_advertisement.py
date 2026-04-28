@@ -23,7 +23,7 @@ from family_assistant.tools.metadata import (
     ToolTag,
     make_local_tool_metadata,
 )
-from family_assistant.tools.on_demand import OnDemandAwareToolsProvider
+from family_assistant.tools.on_demand import OnDemandToolsView
 from family_assistant.tools.types import ToolResult
 from tests.mocks.mock_llm import (  # pylint: disable=no-name-in-module - note: pylint cannot resolve the implicit `tests` namespace package
     MatcherArgs,
@@ -202,8 +202,9 @@ async def test_llm_loop_executes_activate_tools_call_end_to_end(
     ``function.arguments`` (which may be a JSON string from the model) before
     reading ``tool_names``/``search``.
     """
-    on_demand_provider = OnDemandAwareToolsProvider(
-        wrapped_provider=_make_local_provider(["eager_a", "lazy_b"]),
+    local_provider = _make_local_provider(["eager_a", "lazy_b"])
+    on_demand_view = OnDemandToolsView(
+        wrapped_provider=local_provider,
         on_demand_tool_names={"lazy_b"},
     )
 
@@ -236,7 +237,7 @@ async def test_llm_loop_executes_activate_tools_call_end_to_end(
     )
     service = ProcessingService(
         llm_client=llm_client,
-        tools_provider=on_demand_provider,
+        tools_provider=local_provider,
         service_config=ProcessingServiceConfig(
             prompts={"system_prompt": "You are a test assistant."},
             timezone=ZoneInfo("UTC"),
@@ -249,6 +250,7 @@ async def test_llm_loop_executes_activate_tools_call_end_to_end(
         context_providers=[],
         server_url="http://testserver",
         app_config=AppConfig(),
+        on_demand_view=on_demand_view,
     )
 
     async with get_db_context(db_engine) as db_context:
@@ -297,8 +299,9 @@ async def test_llm_loop_auto_activates_tools_from_get_note_result(
         _build_registration("lazy_b", _noop_tool),
         _build_registration("get_note", _get_note_with_skill),
     ]
-    on_demand_provider = OnDemandAwareToolsProvider(
-        wrapped_provider=LocalToolsProvider(registrations=registrations),
+    local_provider = LocalToolsProvider(registrations=registrations)
+    on_demand_view = OnDemandToolsView(
+        wrapped_provider=local_provider,
         on_demand_tool_names={"lazy_b"},
     )
 
@@ -331,7 +334,7 @@ async def test_llm_loop_auto_activates_tools_from_get_note_result(
     )
     service = ProcessingService(
         llm_client=llm_client,
-        tools_provider=on_demand_provider,
+        tools_provider=local_provider,
         service_config=ProcessingServiceConfig(
             prompts={"system_prompt": "You are a test assistant."},
             timezone=ZoneInfo("UTC"),
@@ -344,6 +347,7 @@ async def test_llm_loop_auto_activates_tools_from_get_note_result(
         context_providers=[],
         server_url="http://testserver",
         app_config=AppConfig(),
+        on_demand_view=on_demand_view,
     )
 
     async with get_db_context(db_engine) as db_context:
@@ -382,8 +386,9 @@ async def test_llm_loop_ignores_activate_tools_key_from_non_get_note_tools(
         _build_registration("lazy_b", _noop_tool),
         _build_registration("untrusted_tool", _untrusted_tool),
     ]
-    on_demand_provider = OnDemandAwareToolsProvider(
-        wrapped_provider=LocalToolsProvider(registrations=registrations),
+    local_provider = LocalToolsProvider(registrations=registrations)
+    on_demand_view = OnDemandToolsView(
+        wrapped_provider=local_provider,
         on_demand_tool_names={"lazy_b"},
     )
 
@@ -416,7 +421,7 @@ async def test_llm_loop_ignores_activate_tools_key_from_non_get_note_tools(
     )
     service = ProcessingService(
         llm_client=llm_client,
-        tools_provider=on_demand_provider,
+        tools_provider=local_provider,
         service_config=ProcessingServiceConfig(
             prompts={"system_prompt": "You are a test assistant."},
             timezone=ZoneInfo("UTC"),
@@ -429,6 +434,7 @@ async def test_llm_loop_ignores_activate_tools_key_from_non_get_note_tools(
         context_providers=[],
         server_url="http://testserver",
         app_config=AppConfig(),
+        on_demand_view=on_demand_view,
     )
 
     async with get_db_context(db_engine) as db_context:
