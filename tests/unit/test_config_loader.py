@@ -444,7 +444,7 @@ class TestAppConfigBackwardCompat:
     def test_no_args_gives_field_defaults(self) -> None:
         """AppConfig() with no args produces field defaults only."""
         config = AppConfig()
-        assert config.model == "gemini/gemini-2.5-pro"
+        assert config.model == "gemini/gemini-3.1-pro-preview"
         assert config.database_url == "sqlite+aiosqlite:///family_assistant.db"
         assert config.telegram_token is None
 
@@ -452,7 +452,7 @@ class TestAppConfigBackwardCompat:
         """AppConfig(field=value) overrides field defaults."""
         config = AppConfig(telegram_token="test-token")
         assert config.telegram_token == "test-token"
-        assert config.model == "gemini/gemini-2.5-pro"
+        assert config.model == "gemini/gemini-3.1-pro-preview"
 
     def test_model_validate(self) -> None:
         """AppConfig.model_validate({...}) works as before."""
@@ -863,7 +863,7 @@ class TestResolveServiceProfile:
                         "provider": "google",
                         "model": "gemini-3.1-pro-preview",
                     },
-                    "fallback": {"provider": "openai", "model": "gpt-5.2"},
+                    "fallback": {"provider": "openai", "model": "gpt-5.5"},
                 },
             },
             "tools_config": {},
@@ -903,7 +903,7 @@ class TestResolveServiceProfile:
                         "provider": "google",
                         "model": "gemini-3.1-pro-preview",
                     },
-                    "fallback": {"provider": "openai", "model": "gpt-5.2"},
+                    "fallback": {"provider": "openai", "model": "gpt-5.5"},
                 },
             },
             "tools_config": {},
@@ -1002,7 +1002,7 @@ class TestLoadConfig:
                 load_dotenv_file=False,
             )
 
-        assert config.model == "gemini/gemini-2.5-pro"
+        assert config.model == "gemini/gemini-3.1-pro-preview"
         assert config.database_url == "sqlite+aiosqlite:///family_assistant.db"
 
     def test_defaults_yaml_overrides_field_defaults(self, tmp_path: Path) -> None:

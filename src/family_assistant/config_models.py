@@ -952,7 +952,7 @@ class AppConfig(BaseSettings):
     image_generation_backend: Literal["openai", "gemini", "mock"] | None = None
 
     # Model configuration
-    model: str = "gemini/gemini-2.5-pro"
+    model: str = "gemini/gemini-3.1-pro-preview"
     embedding_model: str = "gemini/gemini-embedding-001"
     embedding_dimensions: int = 1536
 

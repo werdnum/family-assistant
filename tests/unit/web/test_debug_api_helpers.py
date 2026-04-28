@@ -56,9 +56,9 @@ def test_resolve_live_llm_model_reads_model_name_and_strips_prefix() -> None:
     """GoogleGenAIClient shape: ``self.model_name`` with ``models/`` prefix."""
 
     class _GoogleLike:
-        model_name = "models/gemini-2.5-pro"
+        model_name = "models/gemini-3.1-pro-preview"
 
-    assert resolve_live_llm_model(_GoogleLike()) == "gemini-2.5-pro"
+    assert resolve_live_llm_model(_GoogleLike()) == "gemini-3.1-pro-preview"
 
 
 def test_resolve_live_llm_model_returns_none_when_no_attribute() -> None:
@@ -74,7 +74,7 @@ def test_resolve_live_llm_model_prefers_model_over_model_name() -> None:
 
     class _Both:
         model = "gpt-5-turbo"
-        model_name = "models/gemini-2.5-pro"
+        model_name = "models/gemini-3.1-pro-preview"
 
     assert resolve_live_llm_model(_Both()) == "gpt-5-turbo"
 
@@ -88,10 +88,10 @@ def test_resolve_live_llm_model_reads_primary_model_on_retrying_client() -> None
     """
 
     class _RetryingLike:
-        primary_model = "anthropic/claude-sonnet-4"
-        fallback_model = "openai/gpt-5.2"
+        primary_model = "anthropic/claude-sonnet-4-6"
+        fallback_model = "openai/gpt-5.5"
 
-    assert resolve_live_llm_model(_RetryingLike()) == "anthropic/claude-sonnet-4"
+    assert resolve_live_llm_model(_RetryingLike()) == "anthropic/claude-sonnet-4-6"
 
 
 def test_resolve_live_llm_model_prefers_primary_model_over_plain_model() -> None:
@@ -108,9 +108,9 @@ def test_resolve_live_llm_model_strips_google_prefix_from_primary_model() -> Non
     """The ``models/`` prefix normalization also applies to primary_model."""
 
     class _RetryingGoogle:
-        primary_model = "models/gemini-2.5-pro"
+        primary_model = "models/gemini-3.1-pro-preview"
 
-    assert resolve_live_llm_model(_RetryingGoogle()) == "gemini-2.5-pro"
+    assert resolve_live_llm_model(_RetryingGoogle()) == "gemini-3.1-pro-preview"
 
 
 def test_resolve_live_llm_fallback_model_returns_configured_fallback() -> None:
@@ -118,18 +118,19 @@ def test_resolve_live_llm_fallback_model_returns_configured_fallback() -> None:
 
     class _RetryingLike:
         fallback_client = object()  # truthy = fallback is real
-        fallback_model = "openai/gpt-5.2"
+        fallback_model = "openai/gpt-5.5"
 
-    assert resolve_live_llm_fallback_model(_RetryingLike()) == "openai/gpt-5.2"
+    assert resolve_live_llm_fallback_model(_RetryingLike()) == "openai/gpt-5.5"
 
 
 def test_resolve_live_llm_fallback_model_strips_google_prefix() -> None:
     class _RetryingGoogleFallback:
         fallback_client = object()
-        fallback_model = "models/gemini-2.5-flash"
+        fallback_model = "models/gemini-3-flash-preview"
 
     assert (
-        resolve_live_llm_fallback_model(_RetryingGoogleFallback()) == "gemini-2.5-flash"
+        resolve_live_llm_fallback_model(_RetryingGoogleFallback())
+        == "gemini-3-flash-preview"
     )
 
 
@@ -139,7 +140,7 @@ def test_resolve_live_llm_fallback_model_returns_none_when_no_fallback_client() 
 
     class _PrimaryOnlyRetrying:
         fallback_client = None  # no real fallback is wired
-        fallback_model = "openai/gpt-5.2"  # default from RetryingLLMClient.__init__
+        fallback_model = "openai/gpt-5.5"  # default from RetryingLLMClient.__init__
 
     assert resolve_live_llm_fallback_model(_PrimaryOnlyRetrying()) is None
 

@@ -46,7 +46,7 @@ def _make_sample_config() -> AppConfig:
         id="trusted",
         description="Trusted profile with full tool access.",
         processing_config=ProcessingConfig(
-            llm_model="gemini/gemini-2.5-pro",
+            llm_model="gemini/gemini-3.1-pro-preview",
             provider="google",
             max_iterations=7,
             home_assistant_token="super-secret-ha-token",  # should be redacted
@@ -87,7 +87,7 @@ def _make_sample_config() -> AppConfig:
         id="readonly",
         description="Read-only analysis profile.",
         processing_config=ProcessingConfig(
-            llm_model="gemini/gemini-2.5-flash",
+            llm_model="gemini/gemini-3-flash-preview",
             provider="google",
             max_iterations=3,
         ),
@@ -155,7 +155,7 @@ async def test_dump_profiles_returns_full_config(
         trusted = data["profiles"][0]
         assert trusted["description"] == "Trusted profile with full tool access."
         processing = trusted["config"]["processing_config"]
-        assert processing["llm_model"] == "gemini/gemini-2.5-pro"
+        assert processing["llm_model"] == "gemini/gemini-3.1-pro-preview"
         assert processing["max_iterations"] == 7
         assert (
             processing["prompts"]["system_prompt"]
@@ -296,7 +296,7 @@ async def test_dump_profiles_includes_runtime_info(
         """Mirrors GoogleGenAIClient — sets ``self.model_name`` with ``models/`` prefix."""
 
         def __init__(self) -> None:
-            self.model_name = "models/gemini-2.5-pro"
+            self.model_name = "models/gemini-3.1-pro-preview"
 
     class _FakeContextProvider:
         name = "notes"
@@ -339,7 +339,7 @@ async def test_dump_profiles_includes_runtime_info(
         readonly = next(p for p in data["profiles"] if p["id"] == "readonly")
         # Google-like client: model_name with "models/" prefix is normalized.
         assert readonly["runtime"]["kind"] == "local"
-        assert readonly["runtime"]["llm_model"] == "gemini-2.5-pro"
+        assert readonly["runtime"]["llm_model"] == "gemini-3.1-pro-preview"
         assert readonly["runtime"]["llm_fallback_model"] is None
         assert readonly["runtime"]["llm_client_class"] == "_GoogleLikeClient"
     finally:
@@ -376,9 +376,9 @@ async def test_dump_profiles_runtime_info_for_retrying_llm_client(
 
         def __init__(self) -> None:
             self.primary_client = _InnerClient()
-            self.primary_model = "anthropic/claude-sonnet-4"
+            self.primary_model = "anthropic/claude-sonnet-4-6"
             self.fallback_client = _InnerClient()
-            self.fallback_model = "models/gemini-2.5-flash"
+            self.fallback_model = "models/gemini-3-flash-preview"
 
     class _RetryingLocalService:
         kind = "local"
@@ -395,9 +395,9 @@ async def test_dump_profiles_runtime_info_for_retrying_llm_client(
         trusted = next(p for p in response.json()["profiles"] if p["id"] == "trusted")
         runtime = trusted["runtime"]
         assert runtime["kind"] == "local"
-        assert runtime["llm_model"] == "anthropic/claude-sonnet-4"
+        assert runtime["llm_model"] == "anthropic/claude-sonnet-4-6"
         # Fallback's "models/" prefix is normalized too.
-        assert runtime["llm_fallback_model"] == "gemini-2.5-flash"
+        assert runtime["llm_fallback_model"] == "gemini-3-flash-preview"
         assert runtime["llm_client_class"] == "_RetryingLikeClient"
     finally:
         _restore_registry(original_registry)
@@ -411,7 +411,7 @@ async def test_dump_profiles_retrying_llm_client_without_fallback_reports_no_fal
     """Primary-only retry_config profiles must not falsely advertise a fallback.
 
     ``RetryingLLMClient.__init__`` always stores a default string on
-    ``self.fallback_model`` (currently ``"openai/gpt-5.2"``) even when
+    ``self.fallback_model`` (currently ``"openai/gpt-5.5"``) even when
     ``fallback_client=None``, so a naive read of ``fallback_model`` would
     misrepresent every primary-only retry profile as having a fallback.
     """
@@ -419,12 +419,12 @@ async def test_dump_profiles_retrying_llm_client_without_fallback_reports_no_fal
     class _PrimaryOnlyRetrying:
         def __init__(self) -> None:
             self.primary_client = object()
-            self.primary_model = "anthropic/claude-sonnet-4"
+            self.primary_model = "anthropic/claude-sonnet-4-6"
             # Mirrors RetryingLLMClient: fallback_client=None but
             # fallback_model retains its default string because of the
-            # ``fallback_model or "openai/gpt-5.2"`` constructor logic.
+            # ``fallback_model or "openai/gpt-5.5"`` constructor logic.
             self.fallback_client = None
-            self.fallback_model = "openai/gpt-5.2"
+            self.fallback_model = "openai/gpt-5.5"
 
     class _PrimaryOnlyService:
         kind = "local"
@@ -441,11 +441,11 @@ async def test_dump_profiles_retrying_llm_client_without_fallback_reports_no_fal
         runtime = next(p for p in response.json()["profiles"] if p["id"] == "trusted")[
             "runtime"
         ]
-        assert runtime["llm_model"] == "anthropic/claude-sonnet-4"
+        assert runtime["llm_model"] == "anthropic/claude-sonnet-4-6"
         assert runtime["llm_fallback_model"] is None
         # Sanity: the default fallback string must not leak into the response
         # anywhere, since no fallback_client is configured.
-        assert "openai/gpt-5.2" not in response.text
+        assert "openai/gpt-5.5" not in response.text
     finally:
         _restore_registry(original_registry)
         _restore_config(original_config)
@@ -487,7 +487,7 @@ async def test_dump_profiles_includes_operator_layer(
     profile = ServiceProfile(
         id="with_operator_overrides",
         description="Profile with operator-layer policy overrides.",
-        processing_config=ProcessingConfig(llm_model="gemini/gemini-2.5-flash"),
+        processing_config=ProcessingConfig(llm_model="gemini/gemini-3-flash-preview"),
         tools_policy=ToolPolicyConfig(
             rules=[
                 PolicyRule(

@@ -519,10 +519,10 @@ dynamically adjusting available tools and supervision requirements based on inpu
    - Used via `/engineer` slash command
    - Example: "Why isn't my daily brief firing?" - reads DB state, error logs, source code
 
-5. **Complex Tasks Profile [BC]**: Advanced reasoning with Claude Opus 4.6 for complex tasks
+5. **Complex Tasks Profile [BC]**: Advanced reasoning with Claude Opus 4.7 for complex tasks
 
    - Full tool access (same as Trusted Profile) for comprehensive task handling
-   - Uses Claude Opus 4.6 (`claude-opus-4-6`) for superior multi-step reasoning
+   - Uses Claude Opus 4.7 (`claude-opus-4-7`) for superior multi-step reasoning
    - Higher iteration limit (25) for deep analysis workflows
    - Used via `/complex` slash command or delegation from default assistant
    - Example: "Plan a detailed family vacation itinerary considering everyone's preferences"
