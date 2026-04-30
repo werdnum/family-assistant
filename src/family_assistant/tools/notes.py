@@ -22,7 +22,7 @@ async def add_or_update_note_tool(
     exec_context: ToolExecutionContext,
     title: str,
     content: str,
-    include_in_prompt: bool = True,
+    include_in_prompt: bool = False,
     append: bool = False,
     attachment_ids: list[str] | None = None,
     visibility_labels: list[str] | None = None,
@@ -114,8 +114,15 @@ NOTE_TOOLS_DEFINITION: list[ToolDefinition] = [
             "name": "add_or_update_note",
             "description": (
                 "Add a new note or update an existing note with the given title. Use this to remember information provided by the user. "
-                "You can control whether the note appears in your system prompt with the include_in_prompt parameter. "
                 "Notes can have attachments (images, documents) associated with them by providing attachment UUIDs.\n\n"
+                "Prompt inclusion (`include_in_prompt`):\n"
+                "- Default is `false`: the note is stored, indexed, and its title is surfaced in the 'Other available notes' "
+                "section of your system prompt — you can load its full content on demand via `get_note`.\n"
+                "- Set `true` ONLY for short, evergreen context that should be auto-loaded on every turn (e.g. durable user "
+                "preferences, household policies, identity facts about the user). Every `true` note grows the system prompt "
+                "for every future turn, so be selective.\n"
+                "- Specific facts, one-off details, lists, lookup tables, references, and anything you'd retrieve only when "
+                "relevant should stay at the default `false`.\n\n"
                 "To create a skill instead of a regular note, include YAML frontmatter with `name` and `description` fields "
                 "at the top of the content (between `---` delimiters). Skills appear in the Available Skills catalog "
                 "instead of the regular notes section and are loaded on demand via `get_note`.\n\n"
@@ -136,8 +143,8 @@ NOTE_TOOLS_DEFINITION: list[ToolDefinition] = [
                     },
                     "include_in_prompt": {
                         "type": "boolean",
-                        "description": "Whether to include this note in the system prompt context. Default is true. Set to false for notes that should be searchable but not always visible.",
-                        "default": True,
+                        "description": "Whether to auto-load the full note into every system prompt. Default is false — the note is still stored, searchable, and its title is listed in the system prompt so you can load it on demand via `get_note`. Set to true ONLY for short evergreen context (durable user preferences, household policies, persistent identity facts) that you want present every turn.",
+                        "default": False,
                     },
                     "append": {
                         "type": "boolean",
