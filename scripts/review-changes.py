@@ -2,7 +2,7 @@
 # /// script
 # dependencies = [
 #   "llm>=0.27",
-#   "llm-gemini",
+#   "llm-gemini>=0.30",
 #   "llm-openrouter>=0.5",
 # ]
 # ///
@@ -740,7 +740,7 @@ def review_changes(
     # releases — same cadence as everywhere else in the repo (see commits "Update default
     # model from gemini-2.5-pro to gemini-3-pro-preview").
     if model_name is None:
-        model_name = "gemini-3-pro-preview"
+        model_name = "gemini-3.1-pro-preview"
 
     # Get repo root
     try:
