@@ -181,7 +181,12 @@ async def delegate_to_service_tool(
                     tool_args={
                         "target_service_id": target_service_id,
                         "user_request": user_request,
-                        "confirm_delegation": False,
+                        "confirm_delegation": actual_confirm_delegation,
+                        **(
+                            {"attachment_ids": attachment_ids}
+                            if attachment_ids is not None
+                            else {}
+                        ),
                     },
                     timeout_seconds=confirmation_timeout_seconds,
                     context=exec_context,

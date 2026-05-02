@@ -1806,11 +1806,15 @@ async def _build_confirmation_execution_context(
         _ = context
 
         expected_call_id = request["tool_call_id"] or request["id"]
-        if (
-            tool_name == request["tool_name"]
-            and call_id == expected_call_id
-            and tool_args == request["tool_args_json"]
-        ):
+        if tool_name == request["tool_name"] and tool_args == request["tool_args_json"]:
+            if call_id != expected_call_id:
+                logger.info(
+                    "Approved confirmation %s accepted nested confirmation "
+                    "callback %s for tool %s",
+                    request["id"],
+                    call_id,
+                    tool_name,
+                )
             return True
 
         logger.warning(
