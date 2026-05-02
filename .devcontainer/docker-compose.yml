@@ -79,7 +79,7 @@ services:
         limits:
           cpus: '2.0'
           memory: 4G
-  # Claude Code container (runs happy)
+  # Claude Code container
   claude:
     restart: always
     build:

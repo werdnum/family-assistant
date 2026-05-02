@@ -65,7 +65,7 @@ if mountpoint -q /home/claude 2>/dev/null || [ -n "$(findmnt -n -o SOURCE --targ
 fi
 
 # Install npm tools if they don't exist (e.g., when home is mounted)
-if [ "$HOME_IS_MOUNTED" = "true" ] && ( ! which claude >/dev/null 2>&1 || ! which happy >/dev/null 2>&1 ); then
+if [ "$HOME_IS_MOUNTED" = "true" ] && ! which claude >/dev/null 2>&1; then
     echo "Installing npm tools in mounted home directory..."
     
     # Ensure npm global directory exists
@@ -76,8 +76,7 @@ if [ "$HOME_IS_MOUNTED" = "true" ] && ( ! which claude >/dev/null 2>&1 || ! whic
     npm install -g @anthropic-ai/claude-code
     npm install -g @google/gemini-cli@nightly
     npm install -g playwright
-    npm install -g happy-coder
-    
+
     # Install Playwright browsers
     if [ -n "$PLAYWRIGHT_BROWSERS_PATH" ]; then
         npx playwright install chromium
@@ -385,8 +384,6 @@ if [ "$RUNNING_AS_ROOT" = "true" ]; then
 fi
 
 echo "Workspace setup complete!"
-
-happy doctor clean
 
 # Execute the command passed to the container
 exec "$@"
