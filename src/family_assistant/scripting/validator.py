@@ -407,20 +407,11 @@ class ScriptValidator:
         """
         diagnostics: list[ValidationDiagnostic] = []
 
-        # Collect all external function names for Monty
-        ext_fn_names = self._collect_external_function_names(
-            input_names,
-            extra_external_functions,
-            include_tools_api=include_tools_api,
-            include_attachment_api=include_attachment_api,
-        )
-
         # Build the Monty instance (catches syntax errors)
         try:
             m = pydantic_monty.Monty(
                 script,
                 inputs=input_names or [],
-                external_functions=ext_fn_names,
             )
         except pydantic_monty.MontySyntaxError as e:
             line = None
@@ -450,7 +441,7 @@ class ScriptValidator:
 
         # Run type checking — let infrastructure errors (RuntimeError) propagate
         try:
-            m.type_check(prefix_code=prefix_code)
+            m.type_check(type_check_stubs=prefix_code)
         except pydantic_monty.MontyTypingError as e:
             diagnostics.extend(_parse_typing_error(e))
             return ValidationResult(is_valid=False, diagnostics=diagnostics)
@@ -469,84 +460,6 @@ class ScriptValidator:
             )
 
         return ValidationResult(is_valid=True, diagnostics=diagnostics)
-
-    def _collect_external_function_names(
-        self,
-        input_names: list[str] | None,
-        extra_external_functions: list[str] | None = None,
-        include_tools_api: bool = True,
-        include_attachment_api: bool = True,
-    ) -> list[str]:
-        """Collect all external function names that Monty should know about."""
-        names: list[str] = []
-
-        # wake_llm is always available
-        names.append("wake_llm")
-
-        if self.config.enable_json_api:
-            names.extend(["json_encode", "json_decode"])
-        names.extend(["base64_encode", "base64_decode", "base64_decode_bytes"])
-        if self.config.enable_llm_api:
-            names.extend(["llm", "llm_json"])
-        if self.config.enable_time_api:
-            names.extend([
-                "time_now",
-                "time_now_utc",
-                "time_create",
-                "time_from_timestamp",
-                "time_parse",
-                "time_in_location",
-                "time_format",
-                "time_add",
-                "time_add_duration",
-                "time_year",
-                "time_month",
-                "time_day",
-                "time_hour",
-                "time_minute",
-                "time_second",
-                "time_weekday",
-                "time_before",
-                "time_after",
-                "time_equal",
-                "time_diff",
-                "duration_parse",
-                "duration_human",
-                "timezone_is_valid",
-                "timezone_offset",
-                "is_between",
-                "is_weekend",
-            ])
-        if include_attachment_api:
-            names.extend([
-                "attachment_get",
-                "attachment_read",
-                "attachment_read_bytes",
-                "attachment_create",
-            ])
-        if include_tools_api:
-            names.extend([
-                "tools_list",
-                "tools_get",
-                "tools_execute",
-                "tools_execute_json",
-            ])
-
-        # Tool names (direct and tool_-prefixed)
-        if self.tool_definitions:
-            for tool_def in self.tool_definitions:
-                name = tool_def.get("function", {}).get("name", "")
-                if name:
-                    names.append(name)
-                    names.append(f"tool_{name}")
-
-        # Extra callable names provided by the caller (e.g. callable globals)
-        if extra_external_functions:
-            names.extend(extra_external_functions)
-
-        # Filter out any input names (they're inputs, not functions)
-        input_set = set(input_names or [])
-        return [n for n in names if n not in input_set]
 
 
 def _parse_typing_error(

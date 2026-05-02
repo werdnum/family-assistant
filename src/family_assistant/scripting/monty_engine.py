@@ -175,18 +175,13 @@ class MontyEngine:
             self._wake_llm_contexts.clear()
             self._script_globals = globals_dict or {}
 
-            (
-                ext_fn_names,
-                ext_fn_impls,
-                inputs,
-            ) = await self._build_execution_context_async(
+            ext_fn_impls, inputs = await self._build_execution_context_async(
                 globals_dict, execution_context
             )
 
             m = pydantic_monty.Monty(
                 script,
                 inputs=list(inputs.keys()) if inputs else [],
-                external_functions=ext_fn_names,
             )
 
             limits = self._build_resource_limits()
@@ -206,7 +201,7 @@ class MontyEngine:
 
             # Resume loop: handle external function calls
             while not isinstance(progress, pydantic_monty.MontyComplete):
-                if not isinstance(progress, pydantic_monty.MontySnapshot):
+                if not isinstance(progress, pydantic_monty.FunctionSnapshot):
                     raise ScriptExecutionError(
                         f"Unexpected Monty progress type: {type(progress)}"
                     )
@@ -219,7 +214,11 @@ class MontyEngine:
                         None,
                         partial(
                             progress.resume,
-                            exception=NameError(f"name '{fn_name}' is not defined"),
+                            {
+                                "exception": NameError(
+                                    f"name '{fn_name}' is not defined"
+                                )
+                            },
                         ),
                     )
                     continue
@@ -232,12 +231,12 @@ class MontyEngine:
                 except Exception as e:
                     progress = await loop.run_in_executor(
                         None,
-                        partial(progress.resume, exception=e),
+                        partial(progress.resume, {"exception": e}),
                     )
                 else:
                     progress = await loop.run_in_executor(
                         None,
-                        partial(progress.resume, return_value=result),
+                        partial(progress.resume, {"return_value": result}),
                     )
 
             self._pending_wake_contexts = self._wake_llm_contexts.copy()
@@ -271,9 +270,9 @@ class MontyEngine:
         globals_dict: dict[str, Any] | None,
         execution_context: "ToolExecutionContext | None",
         # ast-grep-ignore: no-dict-any - Inputs dict carries user-provided Python values keyed by name
-    ) -> tuple[list[str], dict[str, Callable[..., Any]], dict[str, Any]]:
+    ) -> tuple[dict[str, Callable[..., Any]], dict[str, Any]]:
         """
-        Build external function names, implementations, and inputs for async evaluation.
+        Build external function implementations and inputs for async evaluation.
 
         Unlike _build_execution_context, this creates async tool wrapper functions
         that directly await the ToolsProvider, bypassing the sync/async bridge
@@ -282,9 +281,8 @@ class MontyEngine:
         execution directly without thread pools or event loop bridging.
 
         Returns:
-            Tuple of (external_function_names, function_implementations, inputs)
+            Tuple of (function_implementations, inputs)
         """
-        ext_fn_names: list[str] = []
         ext_fn_impls: dict[str, Callable[..., Any]] = {}
         # ast-grep-ignore: no-dict-any - Inputs carry user-provided Python values keyed by name
         inputs: dict[str, Any] = {}
@@ -292,40 +290,34 @@ class MontyEngine:
         if globals_dict:
             for key, value in globals_dict.items():
                 if callable(value):
-                    ext_fn_names.append(key)
                     ext_fn_impls[key] = value
                 else:
                     inputs[key] = value
 
-        wake_fn = self._create_wake_llm_function()
-        ext_fn_names.append("wake_llm")
-        ext_fn_impls["wake_llm"] = wake_fn
+        ext_fn_impls["wake_llm"] = self._create_wake_llm_function()
 
         if self.config.enable_json_api:
-            self._add_json_api(ext_fn_names, ext_fn_impls)
-        self._add_base64_api(ext_fn_names, ext_fn_impls)
+            self._add_json_api(ext_fn_impls)
+        self._add_base64_api(ext_fn_impls)
         if self.config.enable_time_api:
-            self._add_time_api(ext_fn_names, ext_fn_impls, inputs, execution_context)
+            self._add_time_api(ext_fn_impls, inputs, execution_context)
         if self.config.enable_llm_api:
-            self._add_llm_api(ext_fn_names, ext_fn_impls)
+            self._add_llm_api(ext_fn_impls)
 
         if execution_context and execution_context.attachment_registry:
             try:
-                self._add_attachment_api_async(
-                    ext_fn_names, ext_fn_impls, execution_context
-                )
+                self._add_attachment_api_async(ext_fn_impls, execution_context)
                 logger.debug("Added async attachment API to Monty engine")
             except Exception as e:
                 logger.warning(f"Failed to add attachment API: {e}")
 
         if self.tools_provider and execution_context:
-            await self._add_tools_async(ext_fn_names, ext_fn_impls, execution_context)
+            await self._add_tools_async(ext_fn_impls, execution_context)
 
-        return ext_fn_names, ext_fn_impls, inputs
+        return ext_fn_impls, inputs
 
     async def _add_tools_async(
         self,
-        names: list[str],
         impls: dict[str, Callable[..., Any]],
         execution_context: "ToolExecutionContext",
     ) -> None:
@@ -347,9 +339,7 @@ class MontyEngine:
             return True
 
         if self.config.deny_all_tools:
-            names.append("tools_list")
             impls["tools_list"] = lambda: []
-            names.append("tools_get")
             impls["tools_get"] = lambda name: None
             logger.debug("All tools denied - added empty tool stubs")
             return
@@ -371,13 +361,11 @@ class MontyEngine:
         def tools_list() -> list[ToolInfo]:
             return list(tool_info_map.values())
 
-        names.append("tools_list")
         impls["tools_list"] = tools_list
 
         def tools_get(tool_name: str) -> ToolInfo | None:
             return tool_info_map.get(tool_name)
 
-        names.append("tools_get")
         impls["tools_get"] = tools_get
 
         raw_definitions = self._get_raw_tool_definitions_sync()
@@ -435,7 +423,6 @@ class MontyEngine:
         ) -> Any:  # noqa: ANN401
             return await execute_tool_async(tool_name, *args, **kwargs)
 
-        names.append("tools_execute")
         impls["tools_execute"] = tools_execute
 
         async def tools_execute_json(
@@ -449,7 +436,6 @@ class MontyEngine:
                 )
             return await execute_tool_async(tool_name, **parsed_args)
 
-        names.append("tools_execute_json")
         impls["tools_execute_json"] = tools_execute_json
 
         for tool_name in tool_info_map:
@@ -465,12 +451,8 @@ class MontyEngine:
 
                 return tool_wrapper
 
-            names.append(tool_name)
             impls[tool_name] = make_async_tool_wrapper(tool_name)
-
-            prefixed = f"tool_{tool_name}"
-            names.append(prefixed)
-            impls[prefixed] = make_async_tool_wrapper(tool_name)
+            impls[f"tool_{tool_name}"] = make_async_tool_wrapper(tool_name)
 
         logger.debug(
             "Added async tools API to Monty engine (allowed_tools=%s, "
@@ -482,7 +464,6 @@ class MontyEngine:
 
     def _add_attachment_api_async(
         self,
-        names: list[str],
         impls: dict[str, Callable[..., Any]],
         execution_context: "ToolExecutionContext",
     ) -> None:
@@ -530,7 +511,6 @@ class MontyEngine:
             ("attachment_read_bytes", attachment_read_bytes),
             ("attachment_create", attachment_create),
         ]:
-            names.append(name)
             impls[name] = fn
 
     async def _format_tool_result_async(
@@ -679,7 +659,6 @@ class MontyEngine:
 
     def _add_json_api(
         self,
-        names: list[str],
         impls: dict[str, Callable[..., Any]],
     ) -> None:
         """Add JSON encode/decode functions."""
@@ -687,12 +666,10 @@ class MontyEngine:
             ("json_encode", json.dumps),
             ("json_decode", _safe_json_decode),
         ]:
-            names.append(name)
             impls[name] = fn
 
     def _add_base64_api(
         self,
-        names: list[str],
         impls: dict[str, Callable[..., Any]],
     ) -> None:
         """Add base64 encode/decode functions."""
@@ -701,12 +678,10 @@ class MontyEngine:
             ("base64_decode", _base64_decode),
             ("base64_decode_bytes", _base64_decode_bytes),
         ]:
-            names.append(name)
             impls[name] = fn
 
     def _add_time_api(
         self,
-        names: list[str],
         impls: dict[str, Callable[..., Any]],
         # ast-grep-ignore: no-dict-any - Inputs carry user-provided Python values keyed by name
         inputs: dict[str, Any],
@@ -819,7 +794,6 @@ class MontyEngine:
         ]
 
         for name, fn in time_functions:
-            names.append(name)
             impls[name] = fn
 
         # Duration constants as inputs
@@ -836,15 +810,12 @@ class MontyEngine:
 
     def _add_llm_api(
         self,
-        names: list[str],
         impls: dict[str, Callable[..., Any]],
     ) -> None:
         """Add LLM API functions (llm, llm_json)."""
         from .apis.llm import llm_call_async, llm_call_json_async  # noqa: PLC0415
 
-        names.append("llm")
         impls["llm"] = llm_call_async
-        names.append("llm_json")
         impls["llm_json"] = llm_call_json_async
 
     def _build_resource_limits(self) -> pydantic_monty.ResourceLimits:
