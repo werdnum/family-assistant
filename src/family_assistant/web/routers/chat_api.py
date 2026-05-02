@@ -25,6 +25,8 @@ from family_assistant.llm.messages import (
 )
 from family_assistant.processing import DelegatableService, ProcessingService
 from family_assistant.services.confirmation_service import (
+    DURABLE_CONFIRMATION_EXECUTION_WAIT_SECONDS,
+    DURABLE_CONFIRMATION_STATUS_POLL_SECONDS,
     ConfirmationAlreadyResolvedError,
     ConfirmationAuthorizationError,
     ConfirmationError,
@@ -954,47 +956,177 @@ async def api_chat_send_message_stream(
                 expires_at=expires_at,
             )
             request_id = durable_request["id"]
-            future = confirmation_result_waiters.register(request_id)
-            await web_confirmation_manager.request_confirmation(
-                request_id=request_id,
-                future=future,
-                conversation_id=conversation_id,
-                interface_type=interface_type,
-                tool_name=tool_name,
-                tool_args=tool_args,
-                confirmation_prompt=confirmation_prompt,
-                timeout_seconds=timeout_seconds,
-            )
+            execution_future = confirmation_result_waiters.register(request_id)
 
-            # Queue confirmation request event for client
-            await confirmation_queue.put({
-                "type": "confirmation_request",
-                "request_id": request_id,
-                "tool_name": tool_name,
-                "tool_call_id": call_id,
-                "confirmation_prompt": confirmation_prompt,
-                "timeout_seconds": timeout_seconds,
-                "args": tool_args,
-            })
+            async def get_durable_request_status() -> str | None:
+                try:
+                    refreshed_request = await confirmation_service.get_for_user(
+                        request_id=request_id,
+                        user_id=current_user["user_identifier"],
+                    )
+                except ConfirmationNotFoundError:
+                    logger.warning(
+                        "Durable confirmation %s disappeared while waiting",
+                        request_id,
+                    )
+                    return "missing"
+                except ConfirmationAuthorizationError:
+                    logger.warning(
+                        "User lost access to durable confirmation %s while waiting",
+                        request_id,
+                    )
+                    return "unauthorized"
+                except ConfirmationError as exc:
+                    logger.warning(
+                        "Could not read durable confirmation %s while waiting: %s",
+                        request_id,
+                        exc,
+                    )
+                    return "error"
+                return refreshed_request["status"]
 
-            # Wait for user response
+            async def wait_for_execution_result() -> ConfirmationOutcome:
+                try:
+                    return await asyncio.wait_for(
+                        asyncio.shield(execution_future),
+                        timeout=DURABLE_CONFIRMATION_EXECUTION_WAIT_SECONDS,
+                    )
+                except TimeoutError:
+                    return ConfirmationOutcome(
+                        kind="failed",
+                        result=(
+                            f"Error executing approved tool '{tool_name}': "
+                            "background execution did not complete in time."
+                        ),
+                    )
+
             try:
-                outcome = await asyncio.wait_for(
-                    asyncio.shield(future),
-                    timeout=timeout_seconds,
+                decision_future = await web_confirmation_manager.request_confirmation(
+                    request_id=request_id,
+                    conversation_id=conversation_id,
+                    interface_type=interface_type,
+                    tool_name=tool_name,
+                    tool_args=tool_args,
+                    confirmation_prompt=confirmation_prompt,
+                    timeout_seconds=timeout_seconds,
                 )
-                if outcome.kind == "timed_out":
-                    await confirmation_service.mark_expired(now=datetime.now(UTC))
 
-                # Queue confirmation result event
+                # Queue confirmation request event for client
                 await confirmation_queue.put({
-                    "type": "confirmation_result",
+                    "type": "confirmation_request",
                     "request_id": request_id,
-                    "approved": outcome.kind == "completed",
+                    "tool_name": tool_name,
+                    "tool_call_id": call_id,
+                    "confirmation_prompt": confirmation_prompt,
+                    "timeout_seconds": timeout_seconds,
+                    "args": tool_args,
                 })
 
-                return outcome
-            except TimeoutError:
+                deadline = asyncio.get_running_loop().time() + timeout_seconds
+                while True:
+                    remaining = deadline - asyncio.get_running_loop().time()
+                    if remaining <= 0:
+                        break
+
+                    done, _ = await asyncio.wait(
+                        {decision_future, execution_future},
+                        timeout=min(
+                            DURABLE_CONFIRMATION_STATUS_POLL_SECONDS,
+                            remaining,
+                        ),
+                        return_when=asyncio.FIRST_COMPLETED,
+                    )
+                    if decision_future in done:
+                        decision_outcome = decision_future.result()
+                        if decision_outcome.kind == "timed_out":
+                            await confirmation_service.mark_expired(
+                                now=datetime.now(UTC)
+                            )
+
+                        # Queue confirmation result event
+                        await confirmation_queue.put({
+                            "type": "confirmation_result",
+                            "request_id": request_id,
+                            "approved": decision_outcome.kind == "completed",
+                        })
+
+                        if decision_outcome.kind != "completed":
+                            return decision_outcome
+
+                        web_confirmation_manager.remove_confirmation(request_id)
+                        return await wait_for_execution_result()
+                    if execution_future in done:
+                        execution_outcome = execution_future.result()
+                        await confirmation_queue.put({
+                            "type": "confirmation_result",
+                            "request_id": request_id,
+                            "approved": execution_outcome.kind
+                            in {"completed", "failed"},
+                        })
+                        return execution_outcome
+
+                    durable_status = await get_durable_request_status()
+                    if durable_status == "approved":
+                        await confirmation_queue.put({
+                            "type": "confirmation_result",
+                            "request_id": request_id,
+                            "approved": True,
+                        })
+                        web_confirmation_manager.remove_confirmation(request_id)
+                        return await wait_for_execution_result()
+                    if durable_status == "rejected":
+                        outcome = ConfirmationOutcome(kind="rejected")
+                        await confirmation_queue.put({
+                            "type": "confirmation_result",
+                            "request_id": request_id,
+                            "approved": False,
+                        })
+                        return outcome
+                    if durable_status in {
+                        "expired",
+                        "missing",
+                        "unauthorized",
+                        "error",
+                    }:
+                        outcome = ConfirmationOutcome(
+                            kind="failed",
+                            result="Confirmation request could not be resolved.",
+                        )
+                        await confirmation_queue.put({
+                            "type": "confirmation_result",
+                            "request_id": request_id,
+                            "approved": False,
+                        })
+                        return outcome
+
+                final_status = await get_durable_request_status()
+                if final_status == "approved":
+                    await confirmation_queue.put({
+                        "type": "confirmation_result",
+                        "request_id": request_id,
+                        "approved": True,
+                    })
+                    web_confirmation_manager.remove_confirmation(request_id)
+                    return await wait_for_execution_result()
+                if final_status == "rejected":
+                    outcome = ConfirmationOutcome(kind="rejected")
+                    await confirmation_queue.put({
+                        "type": "confirmation_result",
+                        "request_id": request_id,
+                        "approved": False,
+                    })
+                    return outcome
+                if final_status in {"missing", "unauthorized", "error"}:
+                    outcome = ConfirmationOutcome(
+                        kind="failed",
+                        result="Confirmation request could not be resolved.",
+                    )
+                    await confirmation_queue.put({
+                        "type": "confirmation_result",
+                        "request_id": request_id,
+                        "approved": False,
+                    })
+                    return outcome
                 await confirmation_service.mark_expired(now=datetime.now(UTC))
                 outcome = ConfirmationOutcome(kind="timed_out")
                 await confirmation_queue.put({
@@ -1005,7 +1137,7 @@ async def api_chat_send_message_stream(
                 return outcome
             finally:
                 web_confirmation_manager.remove_confirmation(request_id)
-                confirmation_result_waiters.unregister(request_id, future)
+                confirmation_result_waiters.unregister(request_id, execution_future)
 
         # Create task to process the interaction stream
         # Get chat_interfaces registry from app state for cross-interface messaging
@@ -1298,6 +1430,7 @@ async def confirm_tool_execution(
                 approving_user_id=current_user["user_identifier"],
                 approving_interface="web",
             )
+            web_confirmation_manager.resolve_approved(payload.request_id)
             message = "Tool execution approved"
         else:
             await confirmation_service.reject(
@@ -1305,6 +1438,7 @@ async def confirm_tool_execution(
                 rejecting_user_id=current_user["user_identifier"],
                 rejecting_interface="web",
             )
+            web_confirmation_manager.resolve_rejected(payload.request_id)
             confirmation_result_waiters.resolve_rejected(payload.request_id)
             message = "Tool execution rejected"
         success = True

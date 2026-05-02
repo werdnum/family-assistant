@@ -28,7 +28,7 @@ class PendingConfirmation:
     # ast-grep-ignore: no-dict-any - Tool arguments vary per tool and cannot be statically typed
     tool_args: dict[str, Any]
     confirmation_prompt: str
-    future: asyncio.Future[ConfirmationOutcome]
+    decision_future: asyncio.Future[ConfirmationOutcome]
     created_at: datetime
     timeout_seconds: float
     conversation_id: str
@@ -52,8 +52,8 @@ class WebConfirmationManager:
         """Stop the confirmation manager and cleanup task."""
         # Cancel all pending confirmation futures
         for request_id, confirmation in list(self.pending_confirmations.items()):
-            if not confirmation.future.done():
-                confirmation.future.cancel()
+            if not confirmation.decision_future.done():
+                confirmation.decision_future.cancel()
                 logger.info(
                     f"Cancelled pending confirmation request {request_id} for tool '{confirmation.tool_name}'"
                 )
@@ -82,8 +82,8 @@ class WebConfirmationManager:
 
                 for request_id in expired_ids:
                     confirmation = self.pending_confirmations.pop(request_id)
-                    if not confirmation.future.done():
-                        confirmation.future.set_result(
+                    if not confirmation.decision_future.done():
+                        confirmation.decision_future.set_result(
                             ConfirmationOutcome(kind="timed_out")
                         )
                         logger.info(
@@ -97,7 +97,6 @@ class WebConfirmationManager:
     async def request_confirmation(
         self,
         request_id: str,
-        future: asyncio.Future[ConfirmationOutcome],
         conversation_id: str,
         interface_type: str,
         tool_name: str,
@@ -106,27 +105,29 @@ class WebConfirmationManager:
         confirmation_prompt: str,
         timeout_seconds: float = 3600.0,
     ) -> asyncio.Future[ConfirmationOutcome]:
-        """Track a live confirmation request for a tool execution.
+        """Track a live confirmation request until the user decides.
 
         Args:
             request_id: Durable confirmation request ID
-            future: Future resolved by the durable execution worker or rejection path
             conversation_id: The conversation ID
             interface_type: The interface type (should be "web")
             tool_name: Name of the tool requiring confirmation
             tool_args: Arguments passed to the tool
             confirmation_prompt: Formatted prompt to show to the user
-            timeout_seconds: Timeout for the confirmation request
+            timeout_seconds: Timeout for the user decision
 
         Returns:
-            Future that resolves to the terminal confirmation outcome
+            Future that resolves when the user approves, rejects, or times out
         """
+        decision_future: asyncio.Future[ConfirmationOutcome] = (
+            asyncio.get_running_loop().create_future()
+        )
         confirmation = PendingConfirmation(
             request_id=request_id,
             tool_name=tool_name,
             tool_args=tool_args,
             confirmation_prompt=confirmation_prompt,
-            future=future,
+            decision_future=decision_future,
             created_at=datetime.now(UTC),
             timeout_seconds=timeout_seconds,
             conversation_id=conversation_id,
@@ -140,7 +141,26 @@ class WebConfirmationManager:
             f"in conversation {conversation_id}"
         )
 
-        return future
+        return decision_future
+
+    def resolve_approved(self, request_id: str) -> bool:
+        """Resolve the live user-decision future as approved."""
+        return self._resolve_decision(request_id, ConfirmationOutcome(kind="completed"))
+
+    def resolve_rejected(self, request_id: str) -> bool:
+        """Resolve the live user-decision future as rejected."""
+        return self._resolve_decision(request_id, ConfirmationOutcome(kind="rejected"))
+
+    def _resolve_decision(
+        self,
+        request_id: str,
+        outcome: ConfirmationOutcome,
+    ) -> bool:
+        confirmation = self.pending_confirmations.get(request_id)
+        if confirmation is None or confirmation.decision_future.done():
+            return False
+        confirmation.decision_future.set_result(outcome)
+        return True
 
     def remove_confirmation(self, request_id: str) -> None:
         """Remove a process-local pending confirmation."""
