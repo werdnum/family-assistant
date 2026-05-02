@@ -120,6 +120,7 @@ class ConfirmationService:
                 task_type=CONFIRMATION_TOOL_EXECUTION_TASK_TYPE,
                 payload={"confirmation_request_id": request_id},
                 original_task_id=execution_task_id,
+                max_retries_override=0,
             )
             return approved
 

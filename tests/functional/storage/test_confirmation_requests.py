@@ -297,6 +297,7 @@ async def test_approval_enqueues_execution_task_atomically(
     assert len(tasks) == 1
     assert tasks[0]["task_id"] == expected_task_id
     assert tasks[0]["payload"] == {"confirmation_request_id": request_id}
+    assert tasks[0]["max_retries"] == 0
 
 
 @pytest.mark.asyncio

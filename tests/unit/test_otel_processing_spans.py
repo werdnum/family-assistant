@@ -652,6 +652,7 @@ def _make_task_worker_mock(
     worker.clock = MagicMock()
     worker.clock.now.return_value = datetime.now(UTC)
     worker.indexing_source = None
+    worker.confirmation_result_waiters = None
     worker.handler_timeout = 300.0
     worker._handle_recurrence = AsyncMock()
     worker._handle_task_failure = AsyncMock()

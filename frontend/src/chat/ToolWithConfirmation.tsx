@@ -29,6 +29,7 @@ export const ToolWithConfirmation: React.FC<ToolWithConfirmationProps> = ({
 }) => {
   const context = useContext(ToolConfirmationContext);
   const [timeRemaining, setTimeRemaining] = useState<number | null>(null);
+  const [isResolving, setIsResolving] = useState(false);
 
   // Get the confirmation by tool_call_id
   const pendingConfirmation = toolCallId
@@ -36,17 +37,20 @@ export const ToolWithConfirmation: React.FC<ToolWithConfirmationProps> = ({
     : undefined;
 
   useEffect(() => {
-    if (
-      typeof pendingConfirmation?.timeout_seconds === 'number' &&
-      pendingConfirmation.created_at
-    ) {
-      const createdAt = new Date((pendingConfirmation.created_at as string | number) || Date.now());
-      const expiresAt = new Date(createdAt.getTime() + pendingConfirmation.timeout_seconds * 1000);
+    if (typeof pendingConfirmation?.timeout_seconds === 'number') {
+      const createdAt = pendingConfirmation.created_at;
+      // created_at is assigned when this client receives the SSE event, so the
+      // countdown is not affected by server/client clock skew.
+      const parsedStartedAt =
+        typeof createdAt === 'string' || typeof createdAt === 'number'
+          ? new Date(createdAt).getTime()
+          : Number.NaN;
+      const startedAt = Number.isNaN(parsedStartedAt) ? Date.now() : parsedStartedAt;
+      const timeoutMs = pendingConfirmation.timeout_seconds * 1000;
 
-      // Calculate initial time remaining immediately
       const calculateTimeRemaining = () => {
-        const now = new Date();
-        return Math.max(0, Math.floor((expiresAt.getTime() - now.getTime()) / 1000));
+        const elapsedMs = Date.now() - startedAt;
+        return Math.max(0, Math.floor((timeoutMs - elapsedMs) / 1000));
       };
 
       // Set initial value immediately
@@ -71,15 +75,31 @@ export const ToolWithConfirmation: React.FC<ToolWithConfirmationProps> = ({
     }
   }, [pendingConfirmation]);
 
+  useEffect(() => {
+    setIsResolving(false);
+  }, [pendingConfirmation?.request_id]);
+
   const handleApprove = async () => {
-    if (context?.handleConfirmation && pendingConfirmation && toolCallId) {
-      await context.handleConfirmation(toolCallId, pendingConfirmation.request_id, true);
+    if (context?.handleConfirmation && pendingConfirmation && toolCallId && !isResolving) {
+      setIsResolving(true);
+      try {
+        await context.handleConfirmation(toolCallId, pendingConfirmation.request_id, true);
+      } catch (error) {
+        console.error('Failed to approve tool confirmation:', error);
+        setIsResolving(false);
+      }
     }
   };
 
   const handleReject = async () => {
-    if (context?.handleConfirmation && pendingConfirmation && toolCallId) {
-      await context.handleConfirmation(toolCallId, pendingConfirmation.request_id, false);
+    if (context?.handleConfirmation && pendingConfirmation && toolCallId && !isResolving) {
+      setIsResolving(true);
+      try {
+        await context.handleConfirmation(toolCallId, pendingConfirmation.request_id, false);
+      } catch (error) {
+        console.error('Failed to reject tool confirmation:', error);
+        setIsResolving(false);
+      }
     }
   };
 
@@ -101,21 +121,26 @@ export const ToolWithConfirmation: React.FC<ToolWithConfirmationProps> = ({
         <div className="tool-confirmation-container mt-4 p-4 bg-amber-50 border border-amber-200 rounded-lg">
           <div className="prose prose-sm max-w-none mb-4">
             <strong>Confirmation Required:</strong>
-            <div
-              dangerouslySetInnerHTML={{
-                __html: pendingConfirmation.confirmation_prompt as string,
-              }}
-            />
+            <div className="whitespace-pre-wrap">
+              {String(pendingConfirmation.confirmation_prompt ?? '')}
+            </div>
           </div>
           <div className="flex gap-2 items-center">
             <Button
               onClick={handleApprove}
               size="sm"
               className="bg-green-600 hover:bg-green-700 text-white"
+              disabled={isResolving}
             >
               Approve
             </Button>
-            <Button onClick={handleReject} size="sm" variant="outline" className="text-red-600">
+            <Button
+              onClick={handleReject}
+              size="sm"
+              variant="outline"
+              className="text-red-600"
+              disabled={isResolving}
+            >
               Reject
             </Button>
             {timeRemaining !== null && (

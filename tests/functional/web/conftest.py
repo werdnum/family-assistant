@@ -1165,23 +1165,17 @@ def api_test_processing_service(
     api_mock_llm_client: RuleBasedMockLLMClient,
     api_test_tools_provider: ToolsProvider,
     api_mock_processing_service_config: ProcessingServiceConfig,
-    api_db_context: DatabaseContext,
+    db_engine: AsyncEngine,
     attachment_registry_fixture: AttachmentRegistry,
 ) -> ProcessingService:
     """Creates a ProcessingService instance with mock/test components."""
-
-    # NotesContextProvider expects get_db_context_func to be Callable[[], Awaitable[DatabaseContext]]
-    # This means it wants a function that, when called and awaited, returns an *entered* DatabaseContext.
-    # The db_context fixture provides an already entered DatabaseContext instance.
-    # We need its engine to create new contexts for the provider if it manages its own lifecycle.
-    captured_engine = api_db_context.engine
 
     async def get_entered_db_context_for_provider() -> DatabaseContext:
         """
         Returns an awaitable that resolves to an entered DatabaseContext.
         This matches the expected type for NotesContextProvider's get_db_context_func.
         """
-        async with get_db_context(engine=captured_engine) as new_ctx:
+        async with get_db_context(engine=db_engine) as new_ctx:
             return new_ctx
 
     # Create mock context providers

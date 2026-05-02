@@ -176,10 +176,11 @@ const ChatApp: React.FC<ChatAppProps> = ({ profileId = 'default_assistant' }) =>
         });
 
         if (!response.ok) {
-          console.error('Failed to send confirmation:', response.status);
+          throw new Error(`Failed to send confirmation: ${response.status}`);
         }
       } catch (error) {
         console.error('Error sending confirmation:', error);
+        throw error;
       }
     },
     [conversationId]

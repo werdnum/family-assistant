@@ -25,6 +25,12 @@ if [ "$1" = "--fast" ]; then
     shift # Remove --fast from arguments
 fi
 
+VENV_BIN="${VIRTUAL_ENV:-.venv}/bin"
+PYTHON_BIN="${VENV_BIN}/python"
+if [ ! -x "$PYTHON_BIN" ]; then
+    PYTHON_BIN="python3"
+fi
+
 # Separate files by type
 PYTHON_FILES=()
 JS_TS_FILES=()
@@ -69,7 +75,7 @@ if [ $# -eq 0 ]; then
     # Find markdown files in common locations
     while IFS= read -r -d '' file; do
         MARKDOWN_FILES+=("$file")
-    done < <(find . -name "*.md" -not -path "./.venv/*" -not -path "./venv/*" -not -path "./.git/*" -not -path "*/node_modules/*" -print0 2>/dev/null)
+    done < <(find . -name "*.md" -not -path "./.venv/*" -not -path "./venv/*" -not -path "./.git/*" -not -path "*/node_modules/*" -not -path "./scratch/*" -not -path "./.claude/*" -print0 2>/dev/null)
 else
     categorize_files "$@"
 fi
@@ -151,12 +157,12 @@ if [ ${#PYTHON_FILES[@]} -gt 0 ]; then
     if [ $HAS_ERRORS -eq 0 ]; then
         echo -n "${BLUE}  ▸ Running code conformance check...${NC}"
         timer_start
-        if ! .ast-grep/check-conformance.py "${PYTHON_FILES[@]}" >/dev/null 2>&1; then
+        if ! "$PYTHON_BIN" .ast-grep/check-conformance.py "${PYTHON_FILES[@]}" >/dev/null 2>&1; then
             timer_end
             echo ""
             echo "${RED}❌ Code conformance violations found${NC}"
             echo ""
-            .ast-grep/check-conformance.py "${PYTHON_FILES[@]}"
+            "$PYTHON_BIN" .ast-grep/check-conformance.py "${PYTHON_FILES[@]}"
             HAS_ERRORS=1
         else
             echo -n "${GREEN} ✓${NC}"
@@ -351,4 +357,3 @@ else
     echo "${RED}❌ Some format and lint checks failed. Please fix the issues above. (${OVERALL_ELAPSED}s total)${NC}"
     exit 1
 fi
-

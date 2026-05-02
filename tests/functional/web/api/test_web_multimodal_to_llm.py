@@ -268,14 +268,13 @@ def test_processing_service(
     mock_llm_client: RuleBasedMockLLMClient,
     test_tools_provider: ToolsProvider,
     mock_processing_service_config: ProcessingServiceConfig,
-    db_context: DatabaseContext,
+    db_engine: AsyncEngine,
     test_attachment_registry: AttachmentRegistry,
 ) -> ProcessingService:
     """Creates a ProcessingService instance with mock/test components."""
-    captured_engine = db_context.engine
 
     async def get_entered_db_context_for_provider() -> DatabaseContext:
-        async with get_db_context(engine=captured_engine) as new_ctx:
+        async with get_db_context(engine=db_engine) as new_ctx:
             return new_ctx
 
     notes_provider = NotesContextProvider(

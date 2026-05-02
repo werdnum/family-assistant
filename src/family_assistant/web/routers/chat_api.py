@@ -24,10 +24,21 @@ from family_assistant.llm.messages import (
     text_content,
 )
 from family_assistant.processing import DelegatableService, ProcessingService
+from family_assistant.services.confirmation_service import (
+    ConfirmationAlreadyResolvedError,
+    ConfirmationAuthorizationError,
+    ConfirmationError,
+    ConfirmationExpiredError,
+    ConfirmationNotFoundError,
+    ConfirmationService,
+)
+from family_assistant.services.confirmation_waiters import (
+    ConfirmationResultWaiterRegistry,
+)
 from family_assistant.storage.context import DatabaseContext, get_db_context
 from family_assistant.tools import MCPToolsProvider, find_provider_by_type
 from family_assistant.tools.infrastructure import ToolDescriptorProvider
-from family_assistant.tools.types import ToolExecutionContext
+from family_assistant.tools.types import ConfirmationOutcome, ToolExecutionContext
 from family_assistant.web.confirmation_manager import web_confirmation_manager
 from family_assistant.web.dependencies import (
     get_attachment_registry,
@@ -71,6 +82,28 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 chat_api_router = APIRouter()
+
+
+def _get_confirmation_service(request: Request) -> ConfirmationService:
+    service = getattr(request.app.state, "confirmation_service", None)
+    if isinstance(service, ConfirmationService):
+        return service
+    service = ConfirmationService(
+        db_context_factory=lambda: get_db_context(request.app.state.database_engine)
+    )
+    request.app.state.confirmation_service = service
+    return service
+
+
+def _get_confirmation_result_waiters(
+    request: Request,
+) -> ConfirmationResultWaiterRegistry:
+    waiters = getattr(request.app.state, "confirmation_result_waiters", None)
+    if isinstance(waiters, ConfirmationResultWaiterRegistry):
+        return waiters
+    waiters = ConfirmationResultWaiterRegistry()
+    request.app.state.confirmation_result_waiters = waiters
+    return waiters
 
 
 async def _process_user_attachments(
@@ -144,6 +177,14 @@ async def _process_user_attachments(
                             raise HTTPException(
                                 status_code=status.HTTP_404_NOT_FOUND,
                                 detail="Attachment not found or missing content URL",
+                            )
+                        if (
+                            attachment_record.source_id != user_id
+                            and attachment_record.conversation_id != conversation_id
+                        ):
+                            raise HTTPException(
+                                status_code=status.HTTP_404_NOT_FOUND,
+                                detail="Attachment not found",
                             )
 
                         # Add image content for LLM processing using the content_url
@@ -877,7 +918,7 @@ async def api_chat_send_message_stream(
             tool_args: dict[str, Any],
             timeout_seconds: float,
             context: ToolExecutionContext,
-        ) -> bool:
+        ) -> bool | ConfirmationOutcome:
             """Request confirmation from the user via SSE."""
             # For the web UI, we don't use text renderers like Telegram does.
             # Instead, we pass the tool information directly to the frontend
@@ -890,11 +931,33 @@ async def api_chat_send_message_stream(
                 f"Do you want to execute '{tool_name}' with these parameters?"
             )
 
-            # Create confirmation request
-            (
-                request_id,
-                future,
-            ) = await web_confirmation_manager.request_confirmation(
+            source_message_internal_id = None
+            if turn_id is not None:
+                source_row = (
+                    await context.db_context.message_history.get_user_row_by_turn_id(
+                        turn_id
+                    )
+                )
+                if source_row is not None:
+                    source_message_internal_id = source_row["internal_id"]
+
+            confirmation_service = _get_confirmation_service(request)
+            confirmation_result_waiters = _get_confirmation_result_waiters(request)
+            expires_at = datetime.now(UTC) + timedelta(seconds=timeout_seconds)
+            durable_request = await confirmation_service.create_request(
+                target_user_id=current_user["user_identifier"],
+                tool_name=tool_name,
+                tool_args=tool_args,
+                tool_call_id=call_id,
+                source_message_internal_id=source_message_internal_id,
+                confirmation_prompt=confirmation_prompt,
+                expires_at=expires_at,
+            )
+            request_id = durable_request["id"]
+            future = confirmation_result_waiters.register(request_id)
+            await web_confirmation_manager.request_confirmation(
+                request_id=request_id,
+                future=future,
                 conversation_id=conversation_id,
                 interface_type=interface_type,
                 tool_name=tool_name,
@@ -902,9 +965,6 @@ async def api_chat_send_message_stream(
                 confirmation_prompt=confirmation_prompt,
                 timeout_seconds=timeout_seconds,
             )
-
-            _ = turn_id
-            _ = context
 
             # Queue confirmation request event for client
             await confirmation_queue.put({
@@ -919,23 +979,33 @@ async def api_chat_send_message_stream(
 
             # Wait for user response
             try:
-                approved = await future
+                outcome = await asyncio.wait_for(
+                    asyncio.shield(future),
+                    timeout=timeout_seconds,
+                )
+                if outcome.kind == "timed_out":
+                    await confirmation_service.mark_expired(now=datetime.now(UTC))
 
                 # Queue confirmation result event
                 await confirmation_queue.put({
                     "type": "confirmation_result",
                     "request_id": request_id,
-                    "approved": approved,
+                    "approved": outcome.kind == "completed",
                 })
 
-                return approved
-            except asyncio.CancelledError:
-                # Handle cancellation
-                return False
-            except Exception as e:
-                # Handle any other exceptions
-                logger.error(f"Error waiting for confirmation {request_id}: {e}")
-                return False
+                return outcome
+            except TimeoutError:
+                await confirmation_service.mark_expired(now=datetime.now(UTC))
+                outcome = ConfirmationOutcome(kind="timed_out")
+                await confirmation_queue.put({
+                    "type": "confirmation_result",
+                    "request_id": request_id,
+                    "approved": False,
+                })
+                return outcome
+            finally:
+                web_confirmation_manager.remove_confirmation(request_id)
+                confirmation_result_waiters.unregister(request_id, future)
 
         # Create task to process the interaction stream
         # Get chat_interfaces registry from app state for cross-interface messaging
@@ -999,6 +1069,7 @@ async def api_chat_send_message_stream(
         stream_task = asyncio.create_task(process_stream())
 
         last_reasoning_info: MessageReasoningInfo | None = None
+        send_close_event = True
 
         try:
             # Process events from queue and yield SSE events
@@ -1141,6 +1212,9 @@ async def api_chat_send_message_stream(
                     yield f"event: error\ndata: {json.dumps({'error': queue_event['error'], 'error_id': error_id})}\n\n"
                     break
 
+        except asyncio.CancelledError:
+            send_close_event = False
+            raise
         except Exception as e:
             error_id = str(uuid.uuid4())
             logger.error(f"Streaming error {error_id}: {e}", exc_info=True)
@@ -1150,8 +1224,13 @@ async def api_chat_send_message_stream(
                 error_msg = str(e)
             yield f"event: error\ndata: {json.dumps({'error': error_msg, 'error_id': error_id})}\n\n"
         finally:
-            # Send a final close event to ensure client knows stream is done
-            yield f"event: close\ndata: {json.dumps({})}\n\n"
+            if not stream_task.done():
+                stream_task.cancel()
+                with contextlib.suppress(asyncio.CancelledError):
+                    await stream_task
+            if send_close_event:
+                # Send a final close event to ensure client knows stream is done
+                yield f"event: close\ndata: {json.dumps({})}\n\n"
 
     response = StreamingResponse(
         event_generator(),
@@ -1195,6 +1274,8 @@ async def debug_test_stream() -> StreamingResponse:
 @chat_api_router.post("/v1/chat/confirm_tool")
 async def confirm_tool_execution(
     payload: ToolConfirmationRequest,
+    request: Request,
+    current_user: Annotated[dict, Depends(get_current_user)],
 ) -> ToolConfirmationResponse:
     """
     Handle confirmation response for a tool execution request.
@@ -1208,18 +1289,39 @@ async def confirm_tool_execution(
     Returns:
         Response indicating whether the confirmation was processed successfully
     """
-    success = await web_confirmation_manager.handle_confirmation_response(
-        request_id=payload.request_id,
-        approved=payload.approved,
-        conversation_id=payload.conversation_id,
-    )
-
-    if success:
-        message = f"Tool execution {'approved' if payload.approved else 'rejected'}"
+    confirmation_service = _get_confirmation_service(request)
+    confirmation_result_waiters = _get_confirmation_result_waiters(request)
+    try:
+        if payload.approved:
+            await confirmation_service.approve_and_enqueue_execution(
+                request_id=payload.request_id,
+                approving_user_id=current_user["user_identifier"],
+                approving_interface="web",
+            )
+            message = "Tool execution approved"
+        else:
+            await confirmation_service.reject(
+                request_id=payload.request_id,
+                rejecting_user_id=current_user["user_identifier"],
+                rejecting_interface="web",
+            )
+            confirmation_result_waiters.resolve_rejected(payload.request_id)
+            message = "Tool execution rejected"
+        success = True
         logger.info(f"Confirmation {payload.request_id}: {message}")
-    else:
+    except (
+        ConfirmationAuthorizationError,
+        ConfirmationExpiredError,
+        ConfirmationNotFoundError,
+        ConfirmationAlreadyResolvedError,
+    ) as exc:
+        success = False
         message = "Confirmation request not found or already processed"
-        logger.warning(f"Failed to process confirmation {payload.request_id}")
+        logger.warning("Failed to process confirmation %s: %s", payload.request_id, exc)
+    except ConfirmationError as exc:
+        success = False
+        message = "Failed to process confirmation request"
+        logger.error("Failed to process confirmation %s: %s", payload.request_id, exc)
 
     return ToolConfirmationResponse(
         success=success,

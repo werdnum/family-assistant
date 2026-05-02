@@ -1,4 +1,5 @@
 import asyncio
+import contextlib
 import json
 import logging
 import uuid
@@ -11,6 +12,11 @@ from telegram import Update
 
 # Import mock LLM helpers
 from family_assistant.llm import ToolCallFunction, ToolCallItem
+from family_assistant.services.confirmation_service import (
+    CONFIRMATION_TOOL_EXECUTION_TASK_TYPE,
+)
+from family_assistant.task_worker import TaskWorker, handle_confirmation_tool_execution
+from family_assistant.telegram.ui import TelegramConfirmationUIManager
 from family_assistant.tools import PolicyEngine, ToolPolicyConfig, ToolPolicyDecision
 from family_assistant.tools.infrastructure import (
     PolicyEnforcingToolsProvider,
@@ -21,6 +27,7 @@ from tests.functional.telegram.test_telegram_handler import (
     create_context,
     create_mock_update,
 )
+from tests.helpers import wait_for_condition
 from tests.mocks.mock_llm import (
     LLMOutput as MockLLMOutput,  # Use alias for clarity
 )
@@ -46,6 +53,56 @@ USER_CHAT_ID = 123
 USER_ID = 12345
 # Use add_or_update_note, but configure it dynamically in tests
 TOOL_NAME_SENSITIVE = "add_or_update_note"
+
+
+class RecordingConfirmationService:
+    """Fake confirmation service that records durable resolution calls."""
+
+    def __init__(self) -> None:
+        self.approve_calls: list[tuple[str, str, str]] = []
+        self.reject_calls: list[tuple[str, str, str]] = []
+
+    async def approve_and_enqueue_execution(
+        self,
+        *,
+        request_id: str,
+        approving_user_id: str,
+        approving_interface: str,
+    ) -> None:
+        self.approve_calls.append((request_id, approving_user_id, approving_interface))
+
+    async def reject(
+        self,
+        *,
+        request_id: str,
+        rejecting_user_id: str,
+        rejecting_interface: str,
+    ) -> None:
+        self.reject_calls.append((request_id, rejecting_user_id, rejecting_interface))
+
+
+@pytest.mark.asyncio
+async def test_non_durable_telegram_confirmation_uses_local_future_with_service() -> (
+    None
+):
+    """Non-durable Telegram confirmations should not be resolved through storage."""
+    confirmation_service = RecordingConfirmationService()
+    manager = TelegramConfirmationUIManager(
+        application=cast("Any", None),
+        confirmation_service=cast("Any", confirmation_service),
+    )
+
+    approve_future = asyncio.get_running_loop().create_future()
+    await manager._approve_confirmation(str(uuid.uuid4()), USER_ID, approve_future)
+    approve_outcome = await approve_future
+    assert approve_outcome.kind == "completed"
+    assert confirmation_service.approve_calls == []
+
+    reject_future = asyncio.get_running_loop().create_future()
+    await manager._reject_confirmation(str(uuid.uuid4()), USER_ID, reject_future)
+    reject_outcome = await reject_future
+    assert reject_outcome.kind == "rejected"
+    assert confirmation_service.reject_calls == []
 
 
 def _require_confirmation_for_test_tool(
@@ -530,6 +587,30 @@ async def test_confirmation_via_inline_keyboard_does_not_deadlock(
     # --- 4. Initialise Application for process_update() ---
     app = fix.application
     await app.initialize()
+    assert fix.assistant.database_engine is not None
+    assert fix.assistant.embedding_generator is not None
+    assert fix.assistant.telegram_service is not None
+    assert fix.assistant.confirmation_result_waiters is not None
+    assert fix.assistant.fastapi_app is not None
+    shutdown_event = asyncio.Event()
+    wake_event = asyncio.Event()
+    worker = TaskWorker(
+        processing_service=fix.processing_service,
+        chat_interface=fix.assistant.telegram_service.chat_interface,
+        calendar_config={},
+        timezone=fix.processing_service.service_config.timezone,
+        embedding_generator=fix.assistant.embedding_generator,
+        shutdown_event_instance=shutdown_event,
+        engine=fix.assistant.database_engine,
+        chat_interfaces=fix.assistant.fastapi_app.state.chat_interfaces,
+        handler_timeout=10.0,
+        confirmation_result_waiters=fix.assistant.confirmation_result_waiters,
+    )
+    worker.register_task_handler(
+        CONFIRMATION_TOOL_EXECUTION_TASK_TYPE,
+        handle_confirmation_tool_execution,
+    )
+    worker_task = asyncio.create_task(worker.run(wake_event))
 
     try:
         # --- 5. Send user message and push through Application pipeline ---
@@ -557,12 +638,21 @@ async def test_confirmation_via_inline_keyboard_does_not_deadlock(
         # With concurrent_updates=True the callback handler runs immediately;
         # with False this would deadlock.
         callback_task = asyncio.create_task(app.process_update(cb_update))
-
-        # --- 8. Both tasks must complete (timeout = deadlock detector) ---
-        await asyncio.wait_for(
-            asyncio.gather(message_task, callback_task),
-            timeout=30.0,
+        await wait_for_condition(
+            lambda: callback_task.done(),
+            timeout=10.0,
+            description="Telegram callback task to finish",
         )
+        callback_task.result()
+        wake_event.set()
+
+        # --- 8. The waiting message task must complete after worker execution ---
+        await wait_for_condition(
+            lambda: message_task.done(),
+            timeout=30.0,
+            description="Telegram message task to finish after confirmation",
+        )
+        message_task.result()
 
         # --- 9. Verify final response was sent ---
         all_updates = await wait_for_bot_response(
@@ -575,4 +665,16 @@ async def test_confirmation_via_inline_keyboard_does_not_deadlock(
 
     finally:
         policy_provider._policy_engine.evaluate_for_execution = original_eval  # type: ignore[assignment]
+        shutdown_event.set()
+        wake_event.set()
+        with contextlib.suppress(TimeoutError):
+            await wait_for_condition(
+                lambda: worker_task.done(),
+                timeout=2.0,
+                description="Telegram confirmation worker task to stop",
+            )
+        if not worker_task.done():
+            worker_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await worker_task
         await app.shutdown()

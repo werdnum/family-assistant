@@ -1,14 +1,26 @@
 """Test for tool confirmation timeout behavior in the web UI."""
 
-import asyncio
 import json
 
 import pytest
+from playwright.async_api import Page
 
 from family_assistant.llm import LLMOutput, ToolCallFunction, ToolCallItem
 from tests.functional.web.conftest import WebTestFixture
 from tests.functional.web.pages.chat_page import ChatPage
+from tests.helpers import wait_for_condition
 from tests.mocks.mock_llm import RuleBasedMockLLMClient
+
+
+async def _wait_for_no_confirmations(page: Page) -> None:
+    async def confirmations_are_cleared() -> bool:
+        return await page.locator(".tool-confirmation-container").count() == 0
+
+    await wait_for_condition(
+        confirmations_are_cleared,
+        timeout=30.0,
+        description="tool confirmations to clear",
+    )
 
 
 @pytest.mark.playwright
@@ -70,17 +82,23 @@ async def test_tool_confirmation_timeout_flow(
     # The test timeout is 10s (overridden from default 1hr). Since we can't wait that long in tests,
     # let's just verify the dialog appears and has the timeout countdown.
     # Check that the UI shows a countdown timer
-    timer_element = await page.query_selector(
-        '.tool-confirmation-container span:has-text("Expires in")'
+    timer_element = await page.wait_for_selector(
+        '.tool-confirmation-container span:has-text("Expires in")',
+        state="visible",
+        timeout=5000,
     )
     assert timer_element is not None, "Confirmation should show countdown timer"
 
     # Verify the confirmation buttons are present and enabled
-    approve_button = await page.query_selector(
-        '.tool-confirmation-container button:has-text("Approve")'
+    approve_button = await page.wait_for_selector(
+        '.tool-confirmation-container button:has-text("Approve")',
+        state="visible",
+        timeout=5000,
     )
-    reject_button = await page.query_selector(
-        '.tool-confirmation-container button:has-text("Reject")'
+    reject_button = await page.wait_for_selector(
+        '.tool-confirmation-container button:has-text("Reject")',
+        state="visible",
+        timeout=5000,
     )
     assert approve_button is not None, "Approve button should be visible"
     assert reject_button is not None, "Reject button should be visible"
@@ -139,23 +157,15 @@ async def test_tool_confirmation_approval_flow(
     await chat_page.wait_for_confirmation_dialog()
 
     # Approve the tool
-    approve_button = await page.query_selector(
-        '.tool-confirmation-container button:has-text("Approve")'
+    approve_button = await page.wait_for_selector(
+        '.tool-confirmation-container button:has-text("Approve")',
+        state="visible",
+        timeout=5000,
     )
     assert approve_button is not None, "Approve button should be visible"
     await approve_button.click()
 
-    # Wait for the assistant's final response
-    # ast-grep-ignore: no-asyncio-sleep-in-tests - Waiting for UI processing after tool approval
-    await asyncio.sleep(2)  # Allow time for processing
-
-    # Verify confirmation UI is no longer visible
-    remaining_confirmations = await page.query_selector_all(
-        ".tool-confirmation-container"
-    )
-    assert len(remaining_confirmations) == 0, (
-        "Confirmation should be cleared after approval"
-    )
+    await _wait_for_no_confirmations(page)
 
 
 @pytest.mark.playwright
@@ -215,23 +225,15 @@ async def test_tool_confirmation_rejection_flow(
     await chat_page.wait_for_confirmation_dialog()
 
     # Reject the tool
-    reject_button = await page.query_selector(
-        '.tool-confirmation-container button:has-text("Reject")'
+    reject_button = await page.wait_for_selector(
+        '.tool-confirmation-container button:has-text("Reject")',
+        state="visible",
+        timeout=5000,
     )
     assert reject_button is not None, "Reject button should be visible"
     await reject_button.click()
 
-    # Wait for the assistant's final response
-    # ast-grep-ignore: no-asyncio-sleep-in-tests - Waiting for UI processing after tool rejection
-    await asyncio.sleep(2)  # Allow time for processing
-
-    # Verify confirmation UI is no longer visible
-    remaining_confirmations = await page.query_selector_all(
-        ".tool-confirmation-container"
-    )
-    assert len(remaining_confirmations) == 0, (
-        "Confirmation should be cleared after rejection"
-    )
+    await _wait_for_no_confirmations(page)
 
 
 @pytest.mark.playwright
@@ -299,8 +301,10 @@ async def test_multiple_tool_confirmations(
     )
 
     # Immediately approve the first tool (before it times out)
-    first_approve = await page.query_selector(
-        '.tool-confirmation-container button:has-text("Approve"):not([disabled])'
+    first_approve = await page.wait_for_selector(
+        '.tool-confirmation-container button:has-text("Approve"):not([disabled])',
+        state="visible",
+        timeout=10000,
     )
     assert first_approve is not None, (
         "Approve button should be visible and enabled for first tool"
@@ -313,22 +317,14 @@ async def test_multiple_tool_confirmations(
     )
 
     # Immediately reject the second tool (before it times out)
-    second_reject = await page.query_selector(
-        '.tool-confirmation-container button:has-text("Reject"):not([disabled])'
+    second_reject = await page.wait_for_selector(
+        '.tool-confirmation-container button:has-text("Reject"):not([disabled])',
+        state="visible",
+        timeout=10000,
     )
     assert second_reject is not None, (
         "Reject button should be visible and enabled for second tool"
     )
     await second_reject.click()
 
-    # Wait for the UI to update and confirmations to be removed
-    # ast-grep-ignore: no-asyncio-sleep-in-tests - Waiting for UI to update after processing multiple tools
-    await asyncio.sleep(2)
-
-    # Verify confirmations are no longer visible after both actions
-    remaining_confirmations = await page.query_selector_all(
-        ".tool-confirmation-container"
-    )
-    assert len(remaining_confirmations) == 0, (
-        "All confirmations should be cleared after processing both tools"
-    )
+    await _wait_for_no_confirmations(page)
