@@ -122,10 +122,6 @@ RUN --mount=type=cache,target=/home/claude/.npm,sharing=locked,uid=1001,gid=1001
 RUN --mount=type=cache,target=/home/claude/.cache/uv,sharing=locked,uid=1001,gid=1001 \
     uv tool install --with llm-gemini --with llm-openrouter --with llm-fragments-github llm
 
-# Install happy-coder
-RUN --mount=type=cache,target=/home/claude/.npm,sharing=locked,uid=1001,gid=1001 \
-    npm install -g happy-coder
-
 # Application-specific setup
 USER root
 RUN mkdir -p /opt/claude-settings
@@ -148,4 +144,4 @@ RUN chmod +x /usr/local/bin/setup-workspace.sh \
 # Final user and entrypoint
 USER claude
 ENTRYPOINT ["/usr/local/bin/setup-workspace.sh"]
-CMD ["sh", "-c", "happy daemon start-sync"]
+CMD ["sleep", "infinity"]
