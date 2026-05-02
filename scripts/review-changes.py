@@ -23,9 +23,30 @@ import os
 import subprocess
 import sys
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal, NotRequired, TypedDict
 
 import llm
+
+
+class Issue(TypedDict):
+    """Single review issue. Closed schema so it works with strict-tool LLM APIs (e.g. Gemini)."""
+
+    severity: Literal[
+        "BREAKS_BUILD",
+        "RUNTIME_ERROR",
+        "SECURITY_RISK",
+        "LOGIC_ERROR",
+        "DESIGN_FLAW_MAJOR",
+        "DESIGN_FLAW_MINOR",
+        "BEST_PRACTICE",
+        "STYLE",
+        "SUGGESTION",
+    ]
+    file: str
+    description: str
+    suggestion: str
+    line: NotRequired[int]
+
 
 # Configure logger
 logger = logging.getLogger(__name__)
@@ -230,8 +251,7 @@ class CodeReviewToolbox(llm.Toolbox):
     def submit_review(
         self,
         summary: str,
-        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
-        issues: list[dict[str, Any]] | None = None,
+        issues: list[Issue] | None = None,
         positive_aspects: list[str] | None = None,
     ) -> str:
         """
@@ -716,9 +736,14 @@ def review_changes(
         Tuple of (exit_code, review_data)
     """
 
-    # Default to OpenRouter model if OPENROUTER_KEY is available and no model specified
-    # Note: OpenRouter models require the openrouter/ prefix
-    if model_name is None and os.getenv("OPENROUTER_KEY"):
+    # Default to OpenRouter Gemini Pro if any OpenRouter key is available and no model specified.
+    # llm-openrouter reads OPENROUTER_KEY; many devcontainers set OPENROUTER_API_KEY for parity
+    # with other tooling (codex, gemini-cli). Accept either, and bridge to OPENROUTER_KEY so the
+    # llm plugin picks it up.
+    openrouter_key = os.getenv("OPENROUTER_KEY") or os.getenv("OPENROUTER_API_KEY")
+    if openrouter_key and not os.getenv("OPENROUTER_KEY"):
+        os.environ["OPENROUTER_KEY"] = openrouter_key
+    if model_name is None and openrouter_key:
         model_name = "openrouter/google/gemini-3.1-pro-preview"
 
     # Get repo root
