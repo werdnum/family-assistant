@@ -2,7 +2,7 @@
 # /// script
 # dependencies = [
 #   "llm>=0.27",
-#   "llm-gemini",
+#   "llm-gemini>=0.30",
 #   "llm-openrouter>=0.5",
 # ]
 # ///
@@ -19,13 +19,33 @@ import argparse
 import hashlib
 import json
 import logging
-import os
 import subprocess
 import sys
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal, NotRequired, TypedDict
 
 import llm
+
+
+class Issue(TypedDict):
+    """Single review issue. Closed schema so it works with strict-tool LLM APIs (e.g. Gemini)."""
+
+    severity: Literal[
+        "BREAKS_BUILD",
+        "RUNTIME_ERROR",
+        "SECURITY_RISK",
+        "LOGIC_ERROR",
+        "DESIGN_FLAW_MAJOR",
+        "DESIGN_FLAW_MINOR",
+        "BEST_PRACTICE",
+        "STYLE",
+        "SUGGESTION",
+    ]
+    file: str
+    description: str
+    suggestion: str
+    line: NotRequired[int]
+
 
 # Configure logger
 logger = logging.getLogger(__name__)
@@ -230,8 +250,7 @@ class CodeReviewToolbox(llm.Toolbox):
     def submit_review(
         self,
         summary: str,
-        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
-        issues: list[dict[str, Any]] | None = None,
+        issues: list[Issue] | None = None,
         positive_aspects: list[str] | None = None,
     ) -> str:
         """
@@ -716,10 +735,12 @@ def review_changes(
         Tuple of (exit_code, review_data)
     """
 
-    # Default to OpenRouter model if OPENROUTER_KEY is available and no model specified
-    # Note: OpenRouter models require the openrouter/ prefix
-    if model_name is None and os.getenv("OPENROUTER_KEY"):
-        model_name = "openrouter/google/gemini-3.1-pro-preview"
+    # Default to the current Gemini Pro via the native Google API. llm-gemini only accepts
+    # models from its hardcoded list, so we pin to the latest known one and bump on model
+    # releases — same cadence as everywhere else in the repo (see commits "Update default
+    # model from gemini-2.5-pro to gemini-3-pro-preview").
+    if model_name is None:
+        model_name = "gemini-3.1-pro-preview"
 
     # Get repo root
     try:
