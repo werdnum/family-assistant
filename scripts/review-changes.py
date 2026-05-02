@@ -19,7 +19,6 @@ import argparse
 import hashlib
 import json
 import logging
-import os
 import subprocess
 import sys
 from pathlib import Path
@@ -736,16 +735,12 @@ def review_changes(
         Tuple of (exit_code, review_data)
     """
 
-    # Default to OpenRouter Gemini Pro if any OpenRouter key is available and no model specified.
-    # llm-openrouter reads OPENROUTER_KEY; many devcontainers set OPENROUTER_API_KEY for parity
-    # with other tooling (codex, gemini-cli). Accept either, and bridge to OPENROUTER_KEY so the
-    # llm plugin picks it up.
-    openrouter_key = os.getenv("OPENROUTER_KEY") or os.getenv("OPENROUTER_API_KEY")
-    if openrouter_key and not os.getenv("OPENROUTER_KEY"):
-        os.environ["OPENROUTER_KEY"] = openrouter_key
-    if model_name is None and openrouter_key:
-        # `~` prefix is OpenRouter's auto-tracking alias — always points at the latest Gemini Pro.
-        model_name = "openrouter/~google/gemini-pro-latest"
+    # Default to the current Gemini Pro via the native Google API. llm-gemini only accepts
+    # models from its hardcoded list, so we pin to the latest known one and bump on model
+    # releases — same cadence as everywhere else in the repo (see commits "Update default
+    # model from gemini-2.5-pro to gemini-3-pro-preview").
+    if model_name is None:
+        model_name = "gemini-3-pro-preview"
 
     # Get repo root
     try:
