@@ -744,7 +744,8 @@ def review_changes(
     if openrouter_key and not os.getenv("OPENROUTER_KEY"):
         os.environ["OPENROUTER_KEY"] = openrouter_key
     if model_name is None and openrouter_key:
-        model_name = "openrouter/google/gemini-3.1-pro-preview"
+        # `~` prefix is OpenRouter's auto-tracking alias — always points at the latest Gemini Pro.
+        model_name = "openrouter/~google/gemini-pro-latest"
 
     # Get repo root
     try:
