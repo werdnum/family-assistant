@@ -138,7 +138,7 @@ dev = [
     "fastapi-sso>=0.18.0",
     "pytest",
     "pytest-asyncio>=0.26.0",
-    "pytest-cov>=6.1.1",
+    "pytest-cov>=7.1.0",
     "pytest-flakefinder>=1.1.0",
     "pytest-recording>=0.13.0", # VCR.py integration for pytest
     "pytest-xdist>=3.8.0", # Parallel test execution
