@@ -119,9 +119,7 @@ def parse_event(
         summary = vevent.summary.value if hasattr(vevent, "summary") else "No Title"  # type: ignore[union-attr]
         dtstart = vevent.dtstart.value if hasattr(vevent, "dtstart") else None  # type: ignore[union-attr]
         dtend = vevent.dtend.value if hasattr(vevent, "dtend") else None  # type: ignore[union-attr]
-        uid = (
-            vevent.uid.value if hasattr(vevent, "uid") else None
-        )  # Extract UID # type: ignore[union-attr]
+        uid = vevent.uid.value if hasattr(vevent, "uid") else None  # Extract UID # type: ignore[union-attr]
 
         # Basic check for valid event data (UID is mandatory in iCal standard)
         if not summary or not dtstart or not uid:  # `uid` can be str or None here

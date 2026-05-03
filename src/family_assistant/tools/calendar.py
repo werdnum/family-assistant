@@ -532,12 +532,8 @@ async def add_calendar_event_tool(
         # Attributes like summary, dtstart are ContentLine objects after being added.
         vevent.add("uid").value = str(uuid.uuid4())  # type: ignore[union-attr]
         vevent.add("summary").value = summary  # type: ignore[union-attr]
-        vevent.add(
-            "dtstart"
-        ).value = dtstart  # vobject handles date vs datetime # type: ignore[union-attr]
-        vevent.add(
-            "dtend"
-        ).value = dtend  # vobject handles date vs datetime # type: ignore[union-attr]
+        vevent.add("dtstart").value = dtstart  # vobject handles date vs datetime # type: ignore[union-attr]
+        vevent.add("dtend").value = dtend  # vobject handles date vs datetime # type: ignore[union-attr]
         vevent.add("dtstamp").value = datetime.now(  # type: ignore[union-attr]
             ZoneInfo("UTC")
         )  # Use ZoneInfo for UTC
