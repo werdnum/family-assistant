@@ -205,38 +205,39 @@ class MontyEngine:
                     raise ScriptExecutionError(
                         f"Unexpected Monty progress type: {type(progress)}"
                     )
+                snapshot: pydantic_monty.FunctionSnapshot = progress
 
-                fn_name = progress.function_name
+                fn_name = snapshot.function_name
                 fn = ext_fn_impls.get(fn_name)
 
                 if fn is None:
+                    name_error_result: pydantic_monty.ExternalResult = {
+                        "exception": NameError(f"name '{fn_name}' is not defined")
+                    }
                     progress = await loop.run_in_executor(
                         None,
-                        partial(
-                            progress.resume,
-                            {
-                                "exception": NameError(
-                                    f"name '{fn_name}' is not defined"
-                                )
-                            },
-                        ),
+                        partial(snapshot.resume, name_error_result),
                     )
                     continue
 
                 try:
                     if asyncio.iscoroutinefunction(fn):
-                        result = await fn(*progress.args, **progress.kwargs)
+                        result = await fn(*snapshot.args, **snapshot.kwargs)
                     else:
-                        result = fn(*progress.args, **progress.kwargs)
+                        result = fn(*snapshot.args, **snapshot.kwargs)
                 except Exception as e:
+                    exception_result: pydantic_monty.ExternalResult = {"exception": e}
                     progress = await loop.run_in_executor(
                         None,
-                        partial(progress.resume, {"exception": e}),
+                        partial(snapshot.resume, exception_result),
                     )
                 else:
+                    return_result: pydantic_monty.ExternalResult = {
+                        "return_value": result
+                    }
                     progress = await loop.run_in_executor(
                         None,
-                        partial(progress.resume, {"return_value": result}),
+                        partial(snapshot.resume, return_result),
                     )
 
             self._pending_wake_contexts = self._wake_llm_contexts.copy()
