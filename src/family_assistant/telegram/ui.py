@@ -89,7 +89,7 @@ class TelegramConfirmationUIManager(ConfirmationUIManager):
         target_user_id: str | None = None,
         tool_call_id: str | None = None,
         source_message_internal_id: int | None = None,
-    ) -> bool | ConfirmationOutcome:
+    ) -> ConfirmationOutcome:
         """Sends confirmation message and waits for user response or timeout."""
         effective_timeout = min(timeout, self.confirmation_timeout)
         confirmation_result_waiters = self.confirmation_result_waiters
@@ -108,7 +108,10 @@ class TelegramConfirmationUIManager(ConfirmationUIManager):
             logger.error(
                 f"Invalid conversation_id for Telegram confirmation: '{conversation_id}'. Must be integer convertible."
             )
-            return False
+            return ConfirmationOutcome(
+                kind="failed",
+                result="Invalid Telegram conversation id for confirmation.",
+            )
 
         if durable_confirmation:
             if target_user_id is None or tool_call_id is None:
@@ -255,21 +258,30 @@ class TelegramConfirmationUIManager(ConfirmationUIManager):
                             exc_info=True,
                         )
                         await reject_unsent_confirmation()
-                        return False
+                        return ConfirmationOutcome(
+                            kind="failed",
+                            result="Failed to send confirmation message.",
+                        )
                 else:
                     logger.error(
                         f"Failed to send confirmation message to chat {chat_id_int}: {parse_err}",
                         exc_info=True,
                     )
                     await reject_unsent_confirmation()
-                    return False
+                    return ConfirmationOutcome(
+                        kind="failed",
+                        result="Failed to send confirmation message.",
+                    )
             except TelegramError as send_err:
                 logger.error(
                     f"Failed to send confirmation message to chat {chat_id_int}: {send_err}",
                     exc_info=True,
                 )
                 await reject_unsent_confirmation()
-                return False
+                return ConfirmationOutcome(
+                    kind="failed",
+                    result="Failed to send confirmation message.",
+                )
 
             self.pending_confirmations[confirm_uuid] = PendingTelegramConfirmation(
                 decision_future=decision_future,
@@ -316,8 +328,8 @@ class TelegramConfirmationUIManager(ConfirmationUIManager):
                         f"Confirmation response received for {confirm_uuid}: {decision_outcome.kind}"
                     )
                     if not durable_confirmation:
-                        return decision_outcome.kind == "completed"
-                    if decision_outcome.kind != "completed":
+                        return decision_outcome
+                    if decision_outcome.kind != "approved":
                         return decision_outcome
                     self.pending_confirmations.pop(confirm_uuid, None)
                     return await wait_for_execution_result()
@@ -383,9 +395,7 @@ class TelegramConfirmationUIManager(ConfirmationUIManager):
                 logger.warning(
                     f"Failed to edit confirmation message {sent_message.message_id} on timeout: {edit_err}"
                 )
-            return (
-                ConfirmationOutcome(kind="timed_out") if durable_confirmation else False
-            )
+            return ConfirmationOutcome(kind="timed_out")
         finally:
             self.pending_confirmations.pop(confirm_uuid, None)
             if durable_confirmation and execution_future is not None:
@@ -517,7 +527,7 @@ class TelegramConfirmationUIManager(ConfirmationUIManager):
             request_id
         ):
             if decision_future and not decision_future.done():
-                decision_future.set_result(ConfirmationOutcome(kind="completed"))
+                decision_future.set_result(ConfirmationOutcome(kind="approved"))
             return
         if telegram_user_id is None:
             raise ConfirmationAuthorizationError(
@@ -529,7 +539,7 @@ class TelegramConfirmationUIManager(ConfirmationUIManager):
             approving_interface="telegram",
         )
         if decision_future and not decision_future.done():
-            decision_future.set_result(ConfirmationOutcome(kind="completed"))
+            decision_future.set_result(ConfirmationOutcome(kind="approved"))
 
     async def _reject_confirmation(
         self,

@@ -26,7 +26,11 @@ from family_assistant.tools.policy import (
     ToolPolicyConfig,
     ToolPolicyDecision,
 )
-from family_assistant.tools.types import ToolDefinition, ToolExecutionContext
+from family_assistant.tools.types import (
+    ConfirmationOutcome,
+    ToolDefinition,
+    ToolExecutionContext,
+)
 
 
 class TestLocalToolsProvider:
@@ -651,7 +655,7 @@ class TestConfirmingToolsProvider:
             tool_args: dict[str, object],
             timeout_seconds: float,
             context: ToolExecutionContext,
-        ) -> bool:
+        ) -> ConfirmationOutcome:
             captured["interface_type"] = interface_type
             captured["conversation_id"] = conversation_id
             captured["turn_id"] = turn_id
@@ -660,7 +664,7 @@ class TestConfirmingToolsProvider:
             captured["tool_args"] = tool_args
             captured["timeout_seconds"] = timeout_seconds
             captured["context"] = context
-            return True
+            return ConfirmationOutcome(kind="approved")
 
         mock_db_context = MagicMock(spec=DatabaseContext)
         exec_context = ToolExecutionContext(
@@ -1010,7 +1014,7 @@ class TestPolicyEnforcingToolsProvider:
             tool_args: dict[str, object],
             timeout_seconds: float,
             context: ToolExecutionContext,
-        ) -> bool:
+        ) -> ConfirmationOutcome:
             captured["interface_type"] = interface_type
             captured["conversation_id"] = conversation_id
             captured["turn_id"] = turn_id
@@ -1019,7 +1023,7 @@ class TestPolicyEnforcingToolsProvider:
             captured["tool_args"] = tool_args
             captured["timeout_seconds"] = timeout_seconds
             captured["context"] = context
-            return True
+            return ConfirmationOutcome(kind="approved")
 
         exec_context = self._make_context(
             request_confirmation_callback=confirmation_callback

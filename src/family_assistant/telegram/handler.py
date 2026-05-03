@@ -532,7 +532,7 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
                             tool_args: dict[str, Any],
                             timeout_seconds: float,
                             context: ToolExecutionContext,
-                        ) -> bool | ConfirmationOutcome:
+                        ) -> ConfirmationOutcome:
                             logger.debug("confirmation_callback_wrapper called!")
                             # Allow custom renderers to override the prompt_text if available
                             renderer = TOOL_CONFIRMATION_RENDERERS.get(tool_name)
@@ -999,7 +999,7 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
                     tool_args: dict[str, Any],
                     timeout_seconds: float,
                     context: ToolExecutionContext,
-                ) -> bool | ConfirmationOutcome:
+                ) -> ConfirmationOutcome:
                     renderer = TOOL_CONFIRMATION_RENDERERS.get(tool_name)
                     if renderer:
                         # Async renderer that fetches its own data from context

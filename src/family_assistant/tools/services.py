@@ -31,6 +31,14 @@ def _delegation_confirmation_outcome_result(
     outcome: ConfirmationOutcome,
 ) -> ToolResult:
     """Convert a durable delegation confirmation outcome into a tool result."""
+    if outcome.kind == "approved":
+        return ToolResult(
+            text=(
+                f"Error: Confirmation for delegation to service "
+                f"'{target_service_id}' was approved but not executed."
+            ),
+            attachments=None,
+        )
     if outcome.kind == "completed":
         if isinstance(outcome.result, ToolResult):
             return outcome.result
@@ -172,7 +180,7 @@ async def delegate_to_service_tool(
             )
         else:
             try:
-                user_confirmed = await exec_context.request_confirmation_callback(
+                confirmation_outcome = await exec_context.request_confirmation_callback(
                     interface_type=exec_context.interface_type,
                     conversation_id=exec_context.conversation_id,
                     turn_id=exec_context.turn_id,
@@ -191,18 +199,10 @@ async def delegate_to_service_tool(
                     timeout_seconds=confirmation_timeout_seconds,
                     context=exec_context,
                 )
-                if isinstance(user_confirmed, ConfirmationOutcome):
+                if confirmation_outcome.kind != "approved":
                     return _delegation_confirmation_outcome_result(
                         target_service_id,
-                        user_confirmed,
-                    )
-                if not user_confirmed:
-                    logger.info(
-                        f"User cancelled delegation to service '{target_service_id}'."
-                    )
-                    return ToolResult(
-                        text=f"OK. Delegation to service '{target_service_id}' cancelled by user.",
-                        attachments=None,
+                        confirmation_outcome,
                     )
             except TimeoutError:
                 logger.warning(

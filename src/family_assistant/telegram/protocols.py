@@ -55,10 +55,10 @@ class ConfirmationUIManager(Protocol):
         target_user_id: str | None = None,
         tool_call_id: str | None = None,
         source_message_internal_id: int | None = None,
-    ) -> bool | ConfirmationOutcome:
+    ) -> ConfirmationOutcome:
         """
         Requests confirmation from the user via the UI.
 
-        Returns True if confirmed, False if denied or timed out.
+        Returns an approved outcome if confirmed, or a terminal outcome otherwise.
         """
         ...

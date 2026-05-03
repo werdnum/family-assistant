@@ -920,7 +920,7 @@ async def api_chat_send_message_stream(
             tool_args: dict[str, Any],
             timeout_seconds: float,
             context: ToolExecutionContext,
-        ) -> bool | ConfirmationOutcome:
+        ) -> ConfirmationOutcome:
             """Request confirmation from the user via SSE."""
             # For the web UI, we don't use text renderers like Telegram does.
             # Instead, we pass the tool information directly to the frontend
@@ -1047,10 +1047,10 @@ async def api_chat_send_message_stream(
                         await confirmation_queue.put({
                             "type": "confirmation_result",
                             "request_id": request_id,
-                            "approved": decision_outcome.kind == "completed",
+                            "approved": decision_outcome.kind == "approved",
                         })
 
-                        if decision_outcome.kind != "completed":
+                        if decision_outcome.kind != "approved":
                             return decision_outcome
 
                         web_confirmation_manager.remove_confirmation(request_id)

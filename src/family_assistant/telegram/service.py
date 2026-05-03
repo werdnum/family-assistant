@@ -208,7 +208,7 @@ class TelegramService:
         target_user_id: str | None = None,
         tool_call_id: str | None = None,
         source_message_internal_id: int | None = None,
-    ) -> bool | ConfirmationOutcome:
+    ) -> ConfirmationOutcome:
         """Public method to request confirmation, called by ConfirmingToolsProvider."""
         # Delegate directly to the confirmation manager
         if self.confirmation_manager:

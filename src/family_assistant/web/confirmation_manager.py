@@ -145,7 +145,7 @@ class WebConfirmationManager:
 
     def resolve_approved(self, request_id: str) -> bool:
         """Resolve the live user-decision future as approved."""
-        return self._resolve_decision(request_id, ConfirmationOutcome(kind="completed"))
+        return self._resolve_decision(request_id, ConfirmationOutcome(kind="approved"))
 
     def resolve_rejected(self, request_id: str) -> bool:
         """Resolve the live user-decision future as rejected."""

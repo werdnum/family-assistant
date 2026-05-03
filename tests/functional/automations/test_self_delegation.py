@@ -40,6 +40,7 @@ from family_assistant.tools import (
     ToolPolicyConfig,
     ToolPolicyDecision,
 )
+from family_assistant.tools.types import ConfirmationOutcome
 from tests.mocks.mock_llm import (
     LLMOutput as MockLLMOutput,
 )
@@ -181,8 +182,8 @@ def _make_service_config(profile_id: str) -> ProcessingServiceConfig:
 
 @pytest_asyncio.fixture
 async def mock_confirmation_callback() -> AsyncMock:
-    callback = AsyncMock(spec=Callable[..., Awaitable[bool]])
-    callback.return_value = True
+    callback = AsyncMock(spec=Callable[..., Awaitable[ConfirmationOutcome]])
+    callback.return_value = ConfirmationOutcome(kind="approved")
     return callback
 
 

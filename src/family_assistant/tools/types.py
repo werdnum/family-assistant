@@ -192,7 +192,14 @@ type EventSourcesById = Mapping[str, EventSource]
 class ConfirmationOutcome:
     """Terminal result of a user confirmation request."""
 
-    kind: Literal["completed", "rejected", "timed_out", "cancelled", "failed"]
+    kind: Literal[
+        "approved",
+        "completed",
+        "rejected",
+        "timed_out",
+        "cancelled",
+        "failed",
+    ]
     result: str | ToolResult | None = None
 
 
@@ -210,7 +217,7 @@ class RequestConfirmationCallback(Protocol):
         tool_args: dict[str, Any],
         timeout_seconds: float,
         context: ToolExecutionContext,
-    ) -> bool | ConfirmationOutcome:
+    ) -> ConfirmationOutcome:
         """Request confirmation for a tool action."""
         ...
 
@@ -251,7 +258,7 @@ class ToolExecutionContext:
             (interface_type: str, conversation_id: str, turn_id: str | None,
              tool_name: str, call_id: str, tool_args: dict[str, Any],
              timeout_seconds: float, context: ToolExecutionContext)
-            -> Awaitable[bool | ConfirmationOutcome]
+            -> Awaitable[ConfirmationOutcome]
         update_activity_callback: Optional callback to update task worker activity timestamp.
             Used by long-running tasks to prevent worker from being marked as stuck.
         processing_service: Service for core processing logic (REQUIRED - no default).

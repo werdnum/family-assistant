@@ -130,6 +130,8 @@ def _confirmation_outcome_to_tool_result(
     outcome: ConfirmationOutcome,
 ) -> str | ToolResult:
     """Convert a terminal confirmation outcome into a tool execution result."""
+    if outcome.kind == "approved":
+        return f"Error: Confirmation for tool '{name}' was approved but not executed."
     if outcome.kind == "completed":
         return outcome.result if outcome.result is not None else ""
     if outcome.kind == "timed_out":
@@ -904,23 +906,18 @@ class ConfirmingToolsProvider(ToolsProvider):
                     context=context,
                 )
 
-                if isinstance(confirmation_result, ConfirmationOutcome):
-                    return _confirmation_outcome_to_tool_result(
-                        name=name,
-                        outcome=confirmation_result,
-                    )
-
-                if confirmation_result:
+                if confirmation_result.kind == "approved":
                     logger.info(
                         f"User confirmed execution for tool '{name}'. Proceeding."
                     )
-                    # Execute the tool using the wrapped provider
                     return await self.wrapped_provider.execute_tool(
                         name, arguments, context, call_id
                     )
-                else:
-                    logger.info(f"User cancelled execution for tool '{name}'.")
-                    return f"OK. Action cancelled by user for tool '{name}'."
+
+                return _confirmation_outcome_to_tool_result(
+                    name=name,
+                    outcome=confirmation_result,
+                )
 
             except TimeoutError:
                 logger.warning(f"Confirmation request for tool '{name}' timed out.")
@@ -1069,15 +1066,11 @@ class PolicyEnforcingToolsProvider(ToolsProvider):
                     context=context,
                 )
 
-                if isinstance(confirmation_result, ConfirmationOutcome):
+                if confirmation_result.kind != "approved":
                     return _confirmation_outcome_to_tool_result(
                         name=name,
                         outcome=confirmation_result,
                     )
-
-                if not confirmation_result:
-                    logger.info("User cancelled execution for tool '%s'.", name)
-                    return f"OK. Action cancelled by user for tool '{name}'."
             except TimeoutError:
                 logger.warning("Confirmation request for tool '%s' timed out.", name)
                 return f"Action cancelled: Confirmation request for tool '{name}' timed out."

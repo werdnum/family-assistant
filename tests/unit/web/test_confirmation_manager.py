@@ -33,7 +33,7 @@ async def test_web_confirmation_decision_future_is_separate_from_execution_futur
     assert manager.resolve_approved("confirm_test")
     decision_outcome = await decision_future
 
-    assert decision_outcome.kind == "completed"
+    assert decision_outcome.kind == "approved"
     assert not execution_future.done()
 
     manager.remove_confirmation("confirm_test")

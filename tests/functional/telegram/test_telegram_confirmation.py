@@ -205,7 +205,7 @@ async def test_non_durable_telegram_confirmation_uses_local_future_with_service(
     )
     await manager._approve_confirmation(str(uuid.uuid4()), USER_ID, approve_pending)
     approve_outcome = await approve_future
-    assert approve_outcome.kind == "completed"
+    assert approve_outcome.kind == "approved"
     assert confirmation_service.approve_calls == []
 
     reject_future = asyncio.get_running_loop().create_future()
@@ -475,7 +475,7 @@ async def test_confirmation_accepted(
     # --- Mock Confirmation Manager ---
     # Simulate user ACCEPTING the confirmation prompt
     # fix.mock_confirmation_manager is the AsyncMock that replaced request_confirmation
-    fix.mock_confirmation_manager.return_value = True
+    fix.mock_confirmation_manager.return_value = ConfirmationOutcome(kind="approved")
 
     # --- No need to mock tool execution ---
     # The actual add_or_update_note tool will execute after confirmation
@@ -600,7 +600,7 @@ async def test_confirmation_rejected(
 
     # --- Mock Confirmation Manager ---
     # Simulate user REJECTING the confirmation prompt
-    fix.mock_confirmation_manager.return_value = False
+    fix.mock_confirmation_manager.return_value = ConfirmationOutcome(kind="rejected")
 
     # --- Create Mock Update/Context ---
     update = create_mock_update(

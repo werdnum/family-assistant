@@ -58,7 +58,7 @@ from family_assistant.storage.message_history import message_history_table
 from family_assistant.storage.tasks import enqueue_task, get_task_event
 from family_assistant.tools import ToolExecutionContext
 from family_assistant.tools.stored_scripts import AUTOMATION_RUNTIME_GLOBALS
-from family_assistant.tools.types import ToolResult
+from family_assistant.tools.types import ConfirmationOutcome, ToolResult
 from family_assistant.utils.clock import Clock, SystemClock
 
 logger = logging.getLogger(__name__)
@@ -1799,7 +1799,7 @@ async def _build_confirmation_execution_context(
         tool_args: dict[str, Any],
         timeout_seconds: float,
         context: ToolExecutionContext,
-    ) -> bool:
+    ) -> ConfirmationOutcome:
         _ = interface_type
         _ = conversation_id
         _ = turn_id
@@ -1816,7 +1816,7 @@ async def _build_confirmation_execution_context(
                     call_id,
                     tool_name,
                 )
-            return True
+            return ConfirmationOutcome(kind="approved")
 
         logger.warning(
             "Approved confirmation %s did not satisfy nested or mismatched "
@@ -1824,7 +1824,7 @@ async def _build_confirmation_execution_context(
             request["id"],
             tool_name,
         )
-        return False
+        return ConfirmationOutcome(kind="rejected")
 
     return ToolExecutionContext(
         interface_type=interface_type,
