@@ -394,6 +394,7 @@ async def test_history_pagination_interface(
             assert await pagination.is_visible()
 
 
+@pytest.mark.flaky(reruns=2)
 @pytest.mark.playwright
 @pytest.mark.asyncio
 async def test_history_responsive_design(

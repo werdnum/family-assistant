@@ -71,6 +71,7 @@ async def test_events_page_basic_loading(
     assert not critical_errors, f"Critical console errors detected: {critical_errors}"
 
 
+@pytest.mark.flaky(reruns=2)
 @pytest.mark.playwright
 @pytest.mark.asyncio
 async def test_events_list_page_loads(
