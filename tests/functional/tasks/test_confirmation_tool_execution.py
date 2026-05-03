@@ -12,6 +12,7 @@ from zoneinfo import ZoneInfo
 import pytest
 from sqlalchemy import select, update
 
+from family_assistant import task_worker as task_worker_module
 from family_assistant.embeddings import MockEmbeddingGenerator
 from family_assistant.llm.messages import UserMessage
 from family_assistant.services.confirmation_service import (
@@ -132,6 +133,39 @@ class FailingToolsProvider(RecordingToolsProvider):
         raise RuntimeError("tool exploded")
 
 
+class BlockingToolsProvider(RecordingToolsProvider):
+    """Fake tool provider that waits until cancelled."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.started = asyncio.Event()
+        self.cancelled = asyncio.Event()
+        self._release = asyncio.Event()
+
+    async def execute_tool(
+        self,
+        name: str,
+        # ast-grep-ignore: no-dict-any - tool provider protocol accepts arbitrary JSON arguments
+        arguments: dict[str, Any],
+        context: ToolExecutionContext,
+        call_id: str | None = None,
+    ) -> str:
+        self.calls.append((
+            name,
+            dict(arguments),
+            call_id,
+            context.user_id,
+            context.interface_type,
+        ))
+        self.started.set()
+        try:
+            await self._release.wait()
+        except asyncio.CancelledError:
+            self.cancelled.set()
+            raise
+        return "unexpected-release"
+
+
 class RecordingChatInterface:
     """Fake chat interface that records outbound messages."""
 
@@ -146,6 +180,8 @@ class RecordingChatInterface:
         reply_to_interface_id: str | None = None,
         attachment_ids: list[str] | None = None,
     ) -> str | None:
+        # ast-grep-ignore: no-asyncio-sleep-in-tests - fake chat I/O must yield to exercise cancellation cleanup
+        await asyncio.sleep(0)
         _ = parse_mode
         _ = attachment_ids
         self.messages.append((conversation_id, text, reply_to_interface_id))
@@ -171,6 +207,37 @@ class FailingChatInterface(RecordingChatInterface):
             attachment_ids=attachment_ids,
         )
         raise RuntimeError("chat send failed")
+
+
+class BlockingChatInterface(RecordingChatInterface):
+    """Fake chat interface that waits until cancelled."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.started = asyncio.Event()
+        self.cancelled = asyncio.Event()
+        self._release = asyncio.Event()
+
+    async def send_message(
+        self,
+        conversation_id: str,
+        text: str,
+        parse_mode: str | None = None,
+        reply_to_interface_id: str | None = None,
+        attachment_ids: list[str] | None = None,
+    ) -> str | None:
+        _ = conversation_id
+        _ = text
+        _ = parse_mode
+        _ = reply_to_interface_id
+        _ = attachment_ids
+        self.started.set()
+        try:
+            await self._release.wait()
+        except asyncio.CancelledError:
+            self.cancelled.set()
+            raise
+        return "unexpected-release"
 
 
 def _processing_service(provider: object) -> ProcessingService:
@@ -259,6 +326,7 @@ async def _run_worker_until_task_finishes(
     task_id: str,
     allow_failures: bool = False,
     confirmation_result_waiters: ConfirmationResultWaiterRegistry | None = None,
+    handler_timeout: float = 5.0,
 ) -> None:
     shutdown_event = asyncio.Event()
     wake_event = asyncio.Event()
@@ -271,7 +339,7 @@ async def _run_worker_until_task_finishes(
         shutdown_event_instance=shutdown_event,
         engine=db_engine,
         chat_interfaces={"web": cast("ChatInterface", chat_interface)},
-        handler_timeout=5.0,
+        handler_timeout=handler_timeout,
         confirmation_result_waiters=confirmation_result_waiters,
     )
     worker.register_task_handler(
@@ -501,6 +569,129 @@ async def test_confirmation_execution_failure_notifies_without_live_waiter(
     assert status == "failed"
     assert error is not None
     assert "tool exploded" in error
+
+
+@pytest.mark.asyncio
+async def test_confirmation_execution_timeout_resolves_live_waiter(
+    db_engine: AsyncEngine,
+) -> None:
+    source_message_id = await _create_source_message(db_engine)
+    request_id = await _create_request(
+        db_engine,
+        source_message_internal_id=source_message_id,
+    )
+    confirmation_result_waiters = ConfirmationResultWaiterRegistry()
+    waiter = confirmation_result_waiters.register(request_id)
+    task_id = await _approve_request(db_engine, request_id)
+    provider = BlockingToolsProvider()
+    chat_interface = RecordingChatInterface()
+
+    await _run_worker_until_task_finishes(
+        db_engine,
+        processing_service=_processing_service(provider),
+        chat_interface=chat_interface,
+        task_id=task_id,
+        allow_failures=True,
+        confirmation_result_waiters=confirmation_result_waiters,
+        handler_timeout=1.0,
+    )
+
+    assert provider.started.is_set()
+    assert provider.cancelled.is_set()
+    await wait_for_condition(
+        lambda: waiter.done(),
+        timeout=1.0,
+        description="live confirmation waiter to resolve after timeout",
+    )
+    outcome = waiter.result()
+    assert outcome.kind == "failed"
+    assert (
+        outcome.result
+        == "Error executing approved tool 'record_tool': execution was cancelled"
+    )
+    assert chat_interface.messages == []
+    status, error = await _task_status(db_engine, task_id)
+    assert status == "failed"
+    assert error is not None
+    assert "TimeoutError" in error
+
+
+@pytest.mark.asyncio
+async def test_confirmation_execution_timeout_notifies_without_live_waiter(
+    db_engine: AsyncEngine,
+) -> None:
+    source_message_id = await _create_source_message(db_engine)
+    request_id = await _create_request(
+        db_engine,
+        source_message_internal_id=source_message_id,
+    )
+    task_id = await _approve_request(db_engine, request_id)
+    provider = BlockingToolsProvider()
+    chat_interface = RecordingChatInterface()
+
+    await _run_worker_until_task_finishes(
+        db_engine,
+        processing_service=_processing_service(provider),
+        chat_interface=chat_interface,
+        task_id=task_id,
+        allow_failures=True,
+        handler_timeout=1.0,
+    )
+
+    assert provider.started.is_set()
+    assert provider.cancelled.is_set()
+    assert chat_interface.messages == [
+        (
+            "web-conversation-1",
+            "Approved action failed.\n\n"
+            "Tool: record_tool\n\n"
+            "Error:\nError executing approved tool 'record_tool': "
+            "execution was cancelled",
+            "web-message-1",
+        )
+    ]
+    status, error = await _task_status(db_engine, task_id)
+    assert status == "failed"
+    assert error is not None
+    assert "TimeoutError" in error
+
+
+@pytest.mark.asyncio
+async def test_confirmation_execution_timeout_bounds_notification_cleanup(
+    db_engine: AsyncEngine,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        task_worker_module,
+        "CONFIRMATION_CANCELLATION_CLEANUP_TIMEOUT",
+        0.05,
+    )
+    source_message_id = await _create_source_message(db_engine)
+    request_id = await _create_request(
+        db_engine,
+        source_message_internal_id=source_message_id,
+    )
+    task_id = await _approve_request(db_engine, request_id)
+    provider = BlockingToolsProvider()
+    chat_interface = BlockingChatInterface()
+
+    await _run_worker_until_task_finishes(
+        db_engine,
+        processing_service=_processing_service(provider),
+        chat_interface=chat_interface,
+        task_id=task_id,
+        allow_failures=True,
+        handler_timeout=1.0,
+    )
+
+    assert provider.started.is_set()
+    assert provider.cancelled.is_set()
+    assert chat_interface.started.is_set()
+    assert chat_interface.cancelled.is_set()
+    status, error = await _task_status(db_engine, task_id)
+    assert status == "failed"
+    assert error is not None
+    assert "TimeoutError" in error
 
 
 @pytest.mark.asyncio

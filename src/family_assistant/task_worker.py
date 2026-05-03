@@ -267,6 +267,7 @@ async def _schedule_reminder_follow_up(
 # --- Constants ---
 TASK_POLLING_INTERVAL = 5  # Seconds to wait between polling for tasks
 TASK_HANDLER_TIMEOUT = 300  # Seconds to wait for task handler execution (5 minutes)
+CONFIRMATION_CANCELLATION_CLEANUP_TIMEOUT = 5.0
 
 # --- Events for coordination (can remain module-level) ---
 # Note: shutdown_event removed - each TaskWorker instance now has its own
@@ -1999,6 +2000,32 @@ async def handle_confirmation_tool_execution(
         )
 
     execution_context = exec_context
+
+    async def deliver_execution_failure(error_result: str) -> None:
+        delivered_to_waiter = False
+        if execution_context.confirmation_result_waiters is not None:
+            delivered_to_waiter = (
+                execution_context.confirmation_result_waiters.resolve_failed(
+                    request_id,
+                    error_result,
+                )
+            )
+        if not delivered_to_waiter:
+            try:
+                await _notify_confirmation_execution_result(
+                    execution_context,
+                    request,
+                    error_result,
+                    source_row,
+                    succeeded=False,
+                )
+            except ConfirmationNotificationError as notification_exc:
+                logger.exception(
+                    "Confirmation %s failed and failure notification could not be sent: %s",
+                    request_id,
+                    notification_exc,
+                )
+
     try:
         processing_service = _resolve_confirmation_processing_service(
             exec_context,
@@ -2024,31 +2051,29 @@ async def handle_confirmation_tool_execution(
             execution_context,
             call_id,
         )
+    except asyncio.CancelledError:
+        current_task = asyncio.current_task()
+        if current_task is not None:
+            # wait_for() cancels the handler coroutine on timeout. Clear that
+            # cancellation while delivering the deterministic failure outcome,
+            # then re-raise so the worker still records the task timeout.
+            current_task.uncancel()
+        try:
+            async with asyncio.timeout(CONFIRMATION_CANCELLATION_CLEANUP_TIMEOUT):
+                await deliver_execution_failure(
+                    f"Error executing approved tool '{request['tool_name']}': "
+                    "execution was cancelled"
+                )
+        except TimeoutError:
+            logger.warning(
+                "Timed out while delivering failure outcome for cancelled "
+                "confirmation %s",
+                request_id,
+            )
+        raise
     except Exception as exc:
         error_result = f"Error executing approved tool '{request['tool_name']}': {exc}"
-        delivered_to_waiter = False
-        if execution_context.confirmation_result_waiters is not None:
-            delivered_to_waiter = (
-                execution_context.confirmation_result_waiters.resolve_failed(
-                    request_id,
-                    error_result,
-                )
-            )
-        if not delivered_to_waiter:
-            try:
-                await _notify_confirmation_execution_result(
-                    execution_context,
-                    request,
-                    error_result,
-                    source_row,
-                    succeeded=False,
-                )
-            except ConfirmationNotificationError as notification_exc:
-                logger.exception(
-                    "Confirmation %s failed and failure notification could not be sent: %s",
-                    request_id,
-                    notification_exc,
-                )
+        await deliver_execution_failure(error_result)
         raise
 
     if (
