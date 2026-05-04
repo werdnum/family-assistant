@@ -8,7 +8,6 @@ import io
 import logging
 import os
 import traceback
-from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any, cast
 
 from opentelemetry import trace
@@ -35,7 +34,6 @@ from telegram.ext import (
 from family_assistant.indexing.processors.text_processors import TextChunker
 from family_assistant.llm.messages import (
     ContentPartDict,
-    UserMessage,
     image_url_content,
     text_content,
 )
@@ -55,7 +53,7 @@ if TYPE_CHECKING:
     from family_assistant.telegram.protocols import MessageBatcher
     from family_assistant.telegram.service import TelegramService
     from family_assistant.telegram.ui import TelegramConfirmationUIManager
-    from family_assistant.tools.types import ToolExecutionContext
+    from family_assistant.tools.types import ConfirmationOutcome, ToolExecutionContext
 
 logger = logging.getLogger(__name__)
 tracer = trace.get_tracer(__name__)
@@ -510,31 +508,13 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
                         )
 
                     trigger_interface_message_id: str | None = None
-                    history_user_content = combined_text.strip()
-                    if all_attachments:
-                        history_user_content += (
-                            f" [{len(all_attachments)} Attachment(s)]"
-                        )
 
                     user_message_id = (
                         last_update.message.message_id if last_update.message else None
                     )
-                    user_message_timestamp = (
-                        last_update.message.date
-                        if last_update.message
-                        else datetime.now(UTC)
-                    )
 
                     if user_message_id:
                         trigger_interface_message_id = str(user_message_id)
-                        await db_context.message_history.add_message(
-                            UserMessage(content=history_user_content),
-                            interface_type=interface_type,
-                            conversation_id=conversation_id,
-                            interface_message_id=str(user_message_id),
-                            thread_root_id=thread_root_id_for_turn,
-                            timestamp=user_message_timestamp,
-                        )
                     else:
                         logger.warning(
                             f"Could not get user message ID for chat {chat_id} to save to history."
@@ -552,7 +532,7 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
                             tool_args: dict[str, Any],
                             timeout_seconds: float,
                             context: ToolExecutionContext,
-                        ) -> bool:
+                        ) -> ConfirmationOutcome:
                             logger.debug("confirmation_callback_wrapper called!")
                             # Allow custom renderers to override the prompt_text if available
                             renderer = TOOL_CONFIRMATION_RENDERERS.get(tool_name)
@@ -562,18 +542,29 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
                             else:
                                 prompt_text = f"Confirm execution of tool: {tool_name}"
 
-                            _ = call_id
-
-                            result = (
-                                await self.confirmation_manager.request_confirmation(
-                                    conversation_id=conversation_id,
-                                    interface_type=interface_type,
-                                    turn_id=turn_id,
-                                    prompt_text=prompt_text,
-                                    tool_name=tool_name,
-                                    tool_args=tool_args,
-                                    timeout=timeout_seconds,
+                            source_message_internal_id = None
+                            if turn_id is not None:
+                                source_row = await context.db_context.message_history.get_user_row_by_turn_id(
+                                    turn_id
                                 )
+                                if source_row is not None:
+                                    source_message_internal_id = source_row[
+                                        "internal_id"
+                                    ]
+
+                            result = await self.confirmation_manager.request_confirmation(
+                                conversation_id=conversation_id,
+                                interface_type=interface_type,
+                                turn_id=turn_id,
+                                prompt_text=prompt_text,
+                                tool_name=tool_name,
+                                tool_args=tool_args,
+                                timeout=timeout_seconds,
+                                target_user_id=str(last_update.effective_user.id)
+                                if last_update.effective_user
+                                else None,
+                                tool_call_id=call_id,
+                                source_message_internal_id=source_message_internal_id,
                             )
                             return result
 
@@ -1008,7 +999,7 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
                     tool_args: dict[str, Any],
                     timeout_seconds: float,
                     context: ToolExecutionContext,
-                ) -> bool:
+                ) -> ConfirmationOutcome:
                     renderer = TOOL_CONFIRMATION_RENDERERS.get(tool_name)
                     if renderer:
                         # Async renderer that fetches its own data from context
@@ -1016,7 +1007,13 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
                     else:
                         prompt_text = f"Confirm execution of tool: {tool_name}"
 
-                    _ = call_id
+                    source_message_internal_id = None
+                    if turn_id is not None:
+                        source_row = await context.db_context.message_history.get_user_row_by_turn_id(
+                            turn_id
+                        )
+                        if source_row is not None:
+                            source_message_internal_id = source_row["internal_id"]
 
                     return await self.confirmation_manager.request_confirmation(
                         conversation_id=conversation_id,
@@ -1026,6 +1023,11 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
                         tool_name=tool_name,
                         tool_args=tool_args,
                         timeout=timeout_seconds,
+                        target_user_id=str(update.effective_user.id)
+                        if update.effective_user
+                        else None,
+                        tool_call_id=call_id,
+                        source_message_internal_id=source_message_internal_id,
                     )
 
                 chat_interfaces = self._get_chat_interfaces()

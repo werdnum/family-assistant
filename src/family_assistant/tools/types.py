@@ -175,6 +175,9 @@ if TYPE_CHECKING:
     from family_assistant.interfaces import ChatInterface  # Import the new interface
     from family_assistant.processing import ProcessingService
     from family_assistant.services.attachment_registry import AttachmentRegistry
+    from family_assistant.services.confirmation_waiters import (
+        ConfirmationResultWaiterRegistry,
+    )
     from family_assistant.skills.registry import NoteRegistry
     from family_assistant.storage.context import DatabaseContext
     from family_assistant.tools.infrastructure import ToolsProvider
@@ -183,6 +186,21 @@ if TYPE_CHECKING:
 
 # Maps event source IDs to their corresponding EventSource instances.
 type EventSourcesById = Mapping[str, EventSource]
+
+
+@dataclass(frozen=True)
+class ConfirmationOutcome:
+    """Terminal result of a user confirmation request."""
+
+    kind: Literal[
+        "approved",
+        "completed",
+        "rejected",
+        "timed_out",
+        "cancelled",
+        "failed",
+    ]
+    result: str | ToolResult | None = None
 
 
 class RequestConfirmationCallback(Protocol):
@@ -199,7 +217,7 @@ class RequestConfirmationCallback(Protocol):
         tool_args: dict[str, Any],
         timeout_seconds: float,
         context: ToolExecutionContext,
-    ) -> bool:
+    ) -> ConfirmationOutcome:
         """Request confirmation for a tool action."""
         ...
 
@@ -240,7 +258,7 @@ class ToolExecutionContext:
             (interface_type: str, conversation_id: str, turn_id: str | None,
              tool_name: str, call_id: str, tool_args: dict[str, Any],
              timeout_seconds: float, context: ToolExecutionContext)
-            -> Awaitable[bool]
+            -> Awaitable[ConfirmationOutcome]
         update_activity_callback: Optional callback to update task worker activity timestamp.
             Used by long-running tasks to prevent worker from being marked as stuck.
         processing_service: Service for core processing logic (REQUIRED - no default).
@@ -295,6 +313,7 @@ class ToolExecutionContext:
     visibility_grants: set[str] | None = None
     default_note_visibility_labels: list[str] | None = None
     note_registry: NoteRegistry | None = None
+    confirmation_result_waiters: ConfirmationResultWaiterRegistry | None = None
 
 
 @dataclass

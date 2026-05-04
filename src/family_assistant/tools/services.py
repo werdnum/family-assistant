@@ -11,7 +11,12 @@ import uuid
 from typing import TYPE_CHECKING
 
 from family_assistant.llm.content_parts import text_content
-from family_assistant.tools.types import ToolAttachment, ToolDefinition, ToolResult
+from family_assistant.tools.types import (
+    ConfirmationOutcome,
+    ToolAttachment,
+    ToolDefinition,
+    ToolResult,
+)
 
 if TYPE_CHECKING:
     from family_assistant.llm.content_parts import ContentPartDict
@@ -19,6 +24,45 @@ if TYPE_CHECKING:
 
 
 logger = logging.getLogger(__name__)
+
+
+def _delegation_confirmation_outcome_result(
+    target_service_id: str,
+    outcome: ConfirmationOutcome,
+) -> ToolResult:
+    """Convert a durable delegation confirmation outcome into a tool result."""
+    if outcome.kind == "approved":
+        return ToolResult(
+            text=(
+                f"Error: Confirmation for delegation to service "
+                f"'{target_service_id}' was approved but not executed."
+            ),
+            attachments=None,
+        )
+    if outcome.kind == "completed":
+        if isinstance(outcome.result, ToolResult):
+            return outcome.result
+        return ToolResult(text=str(outcome.result or ""), attachments=None)
+    if outcome.kind == "failed":
+        if isinstance(outcome.result, ToolResult):
+            return outcome.result
+        return ToolResult(
+            text=str(
+                outcome.result
+                or f"Error: Failed to delegate task to service '{target_service_id}'."
+            ),
+            attachments=None,
+        )
+    if outcome.kind == "timed_out":
+        return ToolResult(
+            text=f"Error: Confirmation timed out for delegating to '{target_service_id}'.",
+            attachments=None,
+        )
+    return ToolResult(
+        text=f"OK. Delegation to service '{target_service_id}' cancelled by user.",
+        attachments=None,
+    )
+
 
 # Tool Definitions
 SERVICE_TOOLS_DEFINITION: list[ToolDefinition] = [
@@ -136,7 +180,7 @@ async def delegate_to_service_tool(
             )
         else:
             try:
-                user_confirmed = await exec_context.request_confirmation_callback(
+                confirmation_outcome = await exec_context.request_confirmation_callback(
                     interface_type=exec_context.interface_type,
                     conversation_id=exec_context.conversation_id,
                     turn_id=exec_context.turn_id,
@@ -146,17 +190,19 @@ async def delegate_to_service_tool(
                         "target_service_id": target_service_id,
                         "user_request": user_request,
                         "confirm_delegation": actual_confirm_delegation,
+                        **(
+                            {"attachment_ids": attachment_ids}
+                            if attachment_ids is not None
+                            else {}
+                        ),
                     },
                     timeout_seconds=confirmation_timeout_seconds,
                     context=exec_context,
                 )
-                if not user_confirmed:
-                    logger.info(
-                        f"User cancelled delegation to service '{target_service_id}'."
-                    )
-                    return ToolResult(
-                        text=f"OK. Delegation to service '{target_service_id}' cancelled by user.",
-                        attachments=None,
+                if confirmation_outcome.kind != "approved":
+                    return _delegation_confirmation_outcome_result(
+                        target_service_id,
+                        confirmation_outcome,
                     )
             except TimeoutError:
                 logger.warning(

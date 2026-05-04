@@ -52,6 +52,13 @@ from family_assistant.processing import (
     ProcessingService,
     ProcessingServiceConfig,
 )
+from family_assistant.services.confirmation_service import (
+    CONFIRMATION_TOOL_EXECUTION_TASK_TYPE,
+    ConfirmationService,
+)
+from family_assistant.services.confirmation_waiters import (
+    ConfirmationResultWaiterRegistry,
+)
 from family_assistant.services.push_notification import PushNotificationService
 from family_assistant.services.worker_backend import get_worker_backend
 from family_assistant.skills import NoteRegistry, load_skills_from_directory
@@ -65,6 +72,7 @@ from family_assistant.task_worker import (
     ReindexDocumentPayload,
     TaskWorker,
     handle_completed_automation_cleanup,
+    handle_confirmation_tool_execution,
     handle_llm_callback,
     handle_reindex_document,
     handle_script_execution,
@@ -260,6 +268,8 @@ class Assistant:
         self.notes_indexer: NotesIndexer | None = None
         self.telegram_service: TelegramService | None = None
         self.push_notification_service: PushNotificationService | None = None
+        self.confirmation_service: ConfirmationService | None = None
+        self.confirmation_result_waiters: ConfirmationResultWaiterRegistry | None = None
         self.task_worker_instance: TaskWorker | None = None
         self.task_worker_task: asyncio.Task | None = None  # Track the worker task
         self.uvicorn_server_task: asyncio.Task | None = None
@@ -483,6 +493,17 @@ class Assistant:
 
         # Store engine in FastAPI app state for web dependencies
         self.fastapi_app.state.database_engine = self.database_engine
+
+        database_engine = self.database_engine
+        assert database_engine is not None
+        self.confirmation_service = ConfirmationService(
+            db_context_factory=lambda: get_db_context(database_engine)
+        )
+        self.confirmation_result_waiters = ConfirmationResultWaiterRegistry()
+        self.fastapi_app.state.confirmation_service = self.confirmation_service
+        self.fastapi_app.state.confirmation_result_waiters = (
+            self.confirmation_result_waiters
+        )
 
         # Configure authentication with the database engine
         configure_app_auth(self.fastapi_app, self.database_engine)
@@ -1089,6 +1110,8 @@ class Assistant:
                 app_config=self.config,
                 attachment_registry=self.attachment_registry,
                 get_db_context_func=self._get_db_context_for_telegram,
+                confirmation_service=self.confirmation_service,
+                confirmation_result_waiters=self.confirmation_result_waiters,
                 fastapi_app=self.fastapi_app,  # Pass FastAPI app for chat_interfaces access
                 # use_batching argument removed
             )
@@ -1286,6 +1309,7 @@ class Assistant:
             else None,
             engine=self.database_engine,  # Pass the database engine
             chat_interfaces=self.fastapi_app.state.chat_interfaces,
+            confirmation_result_waiters=self.confirmation_result_waiters,
         )
         self.task_worker_instance.register_task_handler(
             "log_message", task_wrapper_handle_log_message
@@ -1316,6 +1340,10 @@ class Assistant:
         )
         self.task_worker_instance.register_task_handler(
             "script_execution", handle_script_execution
+        )
+        self.task_worker_instance.register_task_handler(
+            CONFIRMATION_TOOL_EXECUTION_TASK_TYPE,
+            handle_confirmation_tool_execution,
         )
         self.task_worker_instance.register_task_handler(
             "worker_task_cleanup", handle_worker_task_cleanup

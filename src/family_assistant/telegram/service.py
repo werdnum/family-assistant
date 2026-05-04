@@ -26,7 +26,12 @@ if TYPE_CHECKING:
     from family_assistant.config_models import AppConfig
     from family_assistant.processing import DelegatableService, ProcessingService
     from family_assistant.services.attachment_registry import AttachmentRegistry
+    from family_assistant.services.confirmation_service import ConfirmationService
+    from family_assistant.services.confirmation_waiters import (
+        ConfirmationResultWaiterRegistry,
+    )
     from family_assistant.storage.context import DatabaseContext
+    from family_assistant.tools.types import ConfirmationOutcome
 
 
 logger = logging.getLogger(__name__)
@@ -51,6 +56,8 @@ class TelegramService:
         get_db_context_func: Callable[
             ..., contextlib.AbstractAsyncContextManager[DatabaseContext]
         ],
+        confirmation_service: ConfirmationService | None = None,
+        confirmation_result_waiters: ConfirmationResultWaiterRegistry | None = None,
         fastapi_app: FastAPI | None = None,  # FastAPI app for accessing app.state
     ) -> None:
         """
@@ -105,6 +112,8 @@ class TelegramService:
             processing_services_registry  # Store registry
         )
         self.app_config = app_config  # Store app_config
+        self.confirmation_service = confirmation_service
+        self.confirmation_result_waiters = confirmation_result_waiters
         self.fastapi_app = (
             fastapi_app  # Store FastAPI app for accessing chat_interfaces
         )
@@ -138,7 +147,9 @@ class TelegramService:
 
         # Instantiate Confirmation Manager
         self.confirmation_manager = TelegramConfirmationUIManager(
-            application=self.application
+            application=self.application,
+            confirmation_service=confirmation_service,
+            confirmation_result_waiters=confirmation_result_waiters,
         )
 
         # Instantiate the handler class, passing self (the service instance)
@@ -194,7 +205,10 @@ class TelegramService:
         # ast-grep-ignore: no-dict-any - tool args have varying keys per tool
         tool_args: dict[str, Any],
         timeout: float,
-    ) -> bool:
+        target_user_id: str | None = None,
+        tool_call_id: str | None = None,
+        source_message_internal_id: int | None = None,
+    ) -> ConfirmationOutcome:
         """Public method to request confirmation, called by ConfirmingToolsProvider."""
         # Delegate directly to the confirmation manager
         if self.confirmation_manager:
@@ -206,6 +220,9 @@ class TelegramService:
                 tool_name=tool_name,
                 tool_args=tool_args,
                 timeout=timeout,
+                target_user_id=target_user_id,
+                tool_call_id=tool_call_id,
+                source_message_internal_id=source_message_internal_id,
             )
         else:
             logger.error(

@@ -14,13 +14,14 @@ import pytest
 from httpx import AsyncClient
 from PIL import Image
 from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncEngine
 
 from family_assistant.services.attachment_registry import (
     AttachmentMetadata,
     AttachmentRegistry,
 )
 from family_assistant.storage.base import attachment_metadata_table
-from family_assistant.storage.context import DatabaseContext
+from family_assistant.storage.context import get_db_context
 
 
 @pytest.fixture
@@ -69,7 +70,6 @@ class TestUserAttachmentProcessing:
         self,
         api_test_client: AsyncClient,
         sample_image_base64: str,
-        api_db_context: DatabaseContext,
     ) -> None:
         """Test uploading a base64 image via non-streaming endpoint."""
         payload = {
@@ -102,7 +102,6 @@ class TestUserAttachmentProcessing:
         self,
         api_test_client: AsyncClient,
         sample_image_data_url: str,
-        api_db_context: DatabaseContext,
     ) -> None:
         """Test uploading a data URL image via non-streaming endpoint."""
         payload = {
@@ -129,7 +128,6 @@ class TestUserAttachmentProcessing:
         self,
         api_test_client: AsyncClient,
         sample_image_base64: str,
-        api_db_context: DatabaseContext,
     ) -> None:
         """Test uploading a base64 image via streaming endpoint."""
         payload = {
@@ -174,7 +172,6 @@ class TestUserAttachmentProcessing:
         self,
         api_test_client: AsyncClient,
         sample_image_base64: str,
-        api_db_context: DatabaseContext,
     ) -> None:
         """Test uploading multiple attachments in one request."""
         payload = {
@@ -206,9 +203,7 @@ class TestUserAttachmentProcessing:
         assert len(set(attachment_ids)) == 2
 
     @pytest.mark.asyncio
-    async def test_invalid_base64_content(
-        self, api_test_client: AsyncClient, api_db_context: DatabaseContext
-    ) -> None:
+    async def test_invalid_base64_content(self, api_test_client: AsyncClient) -> None:
         """Test handling of invalid base64 content."""
         payload = {
             "prompt": "This should fail",
@@ -231,7 +226,7 @@ class TestUserAttachmentProcessing:
 
     @pytest.mark.asyncio
     async def test_missing_attachment_content(
-        self, api_test_client: AsyncClient, api_db_context: DatabaseContext
+        self, api_test_client: AsyncClient
     ) -> None:
         """Test handling of attachment without content."""
         payload = {
@@ -253,9 +248,7 @@ class TestUserAttachmentProcessing:
         assert "detail" in result
 
     @pytest.mark.asyncio
-    async def test_empty_attachment_content(
-        self, api_test_client: AsyncClient, api_db_context: DatabaseContext
-    ) -> None:
+    async def test_empty_attachment_content(self, api_test_client: AsyncClient) -> None:
         """Test handling of empty attachment content."""
         payload = {
             "prompt": "Empty content",
@@ -274,7 +267,7 @@ class TestUserAttachmentProcessing:
         self,
         api_test_client: AsyncClient,
         sample_image_base64: str,
-        api_db_context: DatabaseContext,
+        db_engine: AsyncEngine,
     ) -> None:
         """Test that attachments are properly stored in database."""
         conversation_id = "test-conv-db-storage"
@@ -301,7 +294,8 @@ class TestUserAttachmentProcessing:
         query = select(attachment_metadata_table).where(
             attachment_metadata_table.c.attachment_id == attachment_id
         )
-        metadata_row = await api_db_context.fetch_one(query)
+        async with get_db_context(engine=db_engine) as db_context:
+            metadata_row = await db_context.fetch_one(query)
 
         assert metadata_row is not None, (
             "Attachment metadata should be stored in database"
@@ -319,7 +313,6 @@ class TestUserAttachmentProcessing:
         self,
         api_test_client: AsyncClient,
         sample_image_base64: str,
-        api_db_context: DatabaseContext,
     ) -> None:
         """Test conversation-scoped attachment access control."""
         # Upload attachment in one conversation
@@ -347,7 +340,7 @@ class TestUserAttachmentProcessing:
 
     @pytest.mark.asyncio
     async def test_data_url_mime_type_detection(
-        self, api_test_client: AsyncClient, api_db_context: DatabaseContext
+        self, api_test_client: AsyncClient
     ) -> None:
         """Test MIME type detection from data URLs."""
         # JPEG data URL

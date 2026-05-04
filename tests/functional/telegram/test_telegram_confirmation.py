@@ -1,7 +1,10 @@
 import asyncio
+import contextlib
 import json
 import logging
 import uuid
+from datetime import datetime
+from types import SimpleNamespace
 from typing import Any, cast
 
 import pytest
@@ -11,16 +14,29 @@ from telegram import Update
 
 # Import mock LLM helpers
 from family_assistant.llm import ToolCallFunction, ToolCallItem
+from family_assistant.services.confirmation_service import (
+    CONFIRMATION_TOOL_EXECUTION_TASK_TYPE,
+)
+from family_assistant.services.confirmation_waiters import (
+    ConfirmationResultWaiterRegistry,
+)
+from family_assistant.task_worker import TaskWorker, handle_confirmation_tool_execution
+from family_assistant.telegram.ui import (
+    PendingTelegramConfirmation,
+    TelegramConfirmationUIManager,
+)
 from family_assistant.tools import PolicyEngine, ToolPolicyConfig, ToolPolicyDecision
 from family_assistant.tools.infrastructure import (
     PolicyEnforcingToolsProvider,
     find_provider_by_type,
 )
 from family_assistant.tools.policy import PolicyEvaluation
+from family_assistant.tools.types import ConfirmationOutcome
 from tests.functional.telegram.test_telegram_handler import (
     create_context,
     create_mock_update,
 )
+from tests.helpers import wait_for_condition
 from tests.mocks.mock_llm import (
     LLMOutput as MockLLMOutput,  # Use alias for clarity
 )
@@ -46,6 +62,292 @@ USER_CHAT_ID = 123
 USER_ID = 12345
 # Use add_or_update_note, but configure it dynamically in tests
 TOOL_NAME_SENSITIVE = "add_or_update_note"
+
+
+class RecordingConfirmationService:
+    """Fake confirmation service that records durable resolution calls."""
+
+    def __init__(self) -> None:
+        self.created_request_id = f"confirm_{uuid.uuid4().hex[:12]}"
+        self.status = "pending"
+        self.approve_calls: list[tuple[str, str, str]] = []
+        self.reject_calls: list[tuple[str, str, str]] = []
+        self.expire_calls = 0
+
+    async def create_request(
+        self,
+        *,
+        target_user_id: str,
+        tool_name: str,
+        # ast-grep-ignore: no-dict-any - fake service records arbitrary tool arguments
+        tool_args: dict[str, Any],
+        tool_call_id: str | None,
+        source_message_internal_id: int | None,
+        confirmation_prompt: str,
+        expires_at: datetime,
+    ) -> dict[str, object]:
+        _ = (
+            target_user_id,
+            tool_name,
+            tool_args,
+            tool_call_id,
+            source_message_internal_id,
+            confirmation_prompt,
+            expires_at,
+        )
+        return {"id": self.created_request_id}
+
+    async def approve_and_enqueue_execution(
+        self,
+        *,
+        request_id: str,
+        approving_user_id: str,
+        approving_interface: str,
+    ) -> None:
+        self.status = "approved"
+        self.approve_calls.append((request_id, approving_user_id, approving_interface))
+
+    async def reject(
+        self,
+        *,
+        request_id: str,
+        rejecting_user_id: str,
+        rejecting_interface: str,
+    ) -> None:
+        self.status = "rejected"
+        self.reject_calls.append((request_id, rejecting_user_id, rejecting_interface))
+
+    async def get_for_user(
+        self,
+        *,
+        request_id: str,
+        user_id: str,
+    ) -> dict[str, object]:
+        _ = request_id, user_id
+        return {"status": self.status}
+
+    async def mark_expired(self, *, now: datetime) -> int:
+        _ = now
+        self.expire_calls += 1
+        return self.expire_calls
+
+
+class RecordingTelegramBot:
+    """Small fake Telegram bot for confirmation UI tests."""
+
+    def __init__(self) -> None:
+        self.sent_messages: list[dict[str, object]] = []
+        self.edited_texts: list[dict[str, object]] = []
+        self.edited_markups: list[dict[str, object]] = []
+
+    async def send_message(
+        self,
+        *,
+        chat_id: int,
+        text: str,
+        parse_mode: str | None,
+        reply_markup: object,
+    ) -> SimpleNamespace:
+        self.sent_messages.append({
+            "chat_id": chat_id,
+            "text": text,
+            "parse_mode": parse_mode,
+            "reply_markup": reply_markup,
+        })
+        return SimpleNamespace(message_id=1)
+
+    async def edit_message_reply_markup(
+        self,
+        *,
+        chat_id: int,
+        message_id: int,
+        reply_markup: object,
+    ) -> None:
+        self.edited_markups.append({
+            "chat_id": chat_id,
+            "message_id": message_id,
+            "reply_markup": reply_markup,
+        })
+
+    async def edit_message_text(
+        self,
+        *,
+        chat_id: int,
+        message_id: int,
+        text: str,
+        parse_mode: str | None,
+        reply_markup: object = None,
+    ) -> None:
+        self.edited_texts.append({
+            "chat_id": chat_id,
+            "message_id": message_id,
+            "text": text,
+            "parse_mode": parse_mode,
+            "reply_markup": reply_markup,
+        })
+
+
+@pytest.mark.asyncio
+async def test_non_durable_telegram_confirmation_uses_local_future_with_service() -> (
+    None
+):
+    """Non-durable Telegram confirmations should not be resolved through storage."""
+    confirmation_service = RecordingConfirmationService()
+    manager = TelegramConfirmationUIManager(
+        application=cast("Any", None),
+        confirmation_service=cast("Any", confirmation_service),
+    )
+
+    approve_future = asyncio.get_running_loop().create_future()
+    approve_pending = PendingTelegramConfirmation(
+        decision_future=approve_future,
+        execution_future=None,
+    )
+    await manager._approve_confirmation(str(uuid.uuid4()), USER_ID, approve_pending)
+    approve_outcome = await approve_future
+    assert approve_outcome.kind == "approved"
+    assert confirmation_service.approve_calls == []
+
+    reject_future = asyncio.get_running_loop().create_future()
+    reject_pending = PendingTelegramConfirmation(
+        decision_future=reject_future,
+        execution_future=None,
+    )
+    await manager._reject_confirmation(str(uuid.uuid4()), USER_ID, reject_pending)
+    reject_outcome = await reject_future
+    assert reject_outcome.kind == "rejected"
+    assert confirmation_service.reject_calls == []
+
+
+@pytest.mark.asyncio
+async def test_durable_telegram_confirmation_timeout_stops_after_approval() -> None:
+    """Once approved, the confirmation timeout no longer covers tool execution."""
+    confirmation_service = RecordingConfirmationService()
+    confirmation_waiters = ConfirmationResultWaiterRegistry()
+    bot = RecordingTelegramBot()
+    manager = TelegramConfirmationUIManager(
+        application=cast("Any", SimpleNamespace(bot=bot)),
+        confirmation_timeout=0.2,
+        confirmation_service=cast("Any", confirmation_service),
+        confirmation_result_waiters=confirmation_waiters,
+    )
+
+    confirmation_task = asyncio.create_task(
+        manager.request_confirmation(
+            conversation_id=str(USER_CHAT_ID),
+            interface_type="telegram",
+            turn_id="turn-id",
+            prompt_text="Confirm test action",
+            tool_name="record_tool",
+            tool_args={"value": "test"},
+            timeout=0.2,
+            target_user_id=str(USER_ID),
+            tool_call_id="call-id",
+            source_message_internal_id=1,
+        )
+    )
+
+    await wait_for_condition(
+        lambda: (
+            confirmation_service.created_request_id in manager.pending_confirmations
+        ),
+        timeout=2.0,
+        description="durable Telegram confirmation to be pending",
+    )
+    pending = manager.pending_confirmations[confirmation_service.created_request_id]
+
+    await manager._approve_confirmation(
+        confirmation_service.created_request_id,
+        USER_ID,
+        pending,
+    )
+
+    assert confirmation_service.approve_calls == [
+        (confirmation_service.created_request_id, str(USER_ID), "telegram")
+    ]
+    await wait_for_condition(
+        lambda: (
+            confirmation_service.created_request_id not in manager.pending_confirmations
+        ),
+        timeout=2.0,
+        description="approved Telegram confirmation to leave pending state",
+    )
+    assert confirmation_service.expire_calls == 0
+    assert not confirmation_task.done()
+
+    assert confirmation_waiters.resolve_completed(
+        confirmation_service.created_request_id,
+        "executed:test",
+    )
+    outcome = await asyncio.wait_for(confirmation_task, timeout=2.0)
+
+    assert isinstance(outcome, ConfirmationOutcome)
+    assert outcome.kind == "completed"
+    assert outcome.result == "executed:test"
+
+
+@pytest.mark.asyncio
+async def test_durable_telegram_external_approval_timeout_waits_for_execution() -> None:
+    """An approval from another interface should prevent local timeout expiry."""
+    confirmation_service = RecordingConfirmationService()
+    confirmation_waiters = ConfirmationResultWaiterRegistry()
+    bot = RecordingTelegramBot()
+    manager = TelegramConfirmationUIManager(
+        application=cast("Any", SimpleNamespace(bot=bot)),
+        confirmation_timeout=0.1,
+        confirmation_service=cast("Any", confirmation_service),
+        confirmation_result_waiters=confirmation_waiters,
+    )
+
+    confirmation_task = asyncio.create_task(
+        manager.request_confirmation(
+            conversation_id=str(USER_CHAT_ID),
+            interface_type="telegram",
+            turn_id="turn-id",
+            prompt_text="Confirm test action",
+            tool_name="record_tool",
+            tool_args={"value": "test"},
+            timeout=0.1,
+            target_user_id=str(USER_ID),
+            tool_call_id="call-id",
+            source_message_internal_id=1,
+        )
+    )
+
+    await wait_for_condition(
+        lambda: (
+            confirmation_service.created_request_id in manager.pending_confirmations
+        ),
+        timeout=2.0,
+        description="durable Telegram confirmation to be pending",
+    )
+
+    confirmation_service.status = "approved"
+
+    await wait_for_condition(
+        lambda: bool(bot.edited_texts),
+        timeout=2.0,
+        description="externally approved Telegram confirmation message to be edited",
+    )
+    await wait_for_condition(
+        lambda: (
+            confirmation_service.created_request_id not in manager.pending_confirmations
+        ),
+        timeout=2.0,
+        description="externally approved Telegram confirmation to leave pending state",
+    )
+    assert confirmation_service.expire_calls == 0
+    assert not confirmation_task.done()
+
+    assert confirmation_waiters.resolve_completed(
+        confirmation_service.created_request_id,
+        "executed:external",
+    )
+    outcome = await asyncio.wait_for(confirmation_task, timeout=2.0)
+
+    assert isinstance(outcome, ConfirmationOutcome)
+    assert outcome.kind == "completed"
+    assert outcome.result == "executed:external"
 
 
 def _require_confirmation_for_test_tool(
@@ -173,7 +475,7 @@ async def test_confirmation_accepted(
     # --- Mock Confirmation Manager ---
     # Simulate user ACCEPTING the confirmation prompt
     # fix.mock_confirmation_manager is the AsyncMock that replaced request_confirmation
-    fix.mock_confirmation_manager.return_value = True
+    fix.mock_confirmation_manager.return_value = ConfirmationOutcome(kind="approved")
 
     # --- No need to mock tool execution ---
     # The actual add_or_update_note tool will execute after confirmation
@@ -298,7 +600,7 @@ async def test_confirmation_rejected(
 
     # --- Mock Confirmation Manager ---
     # Simulate user REJECTING the confirmation prompt
-    fix.mock_confirmation_manager.return_value = False
+    fix.mock_confirmation_manager.return_value = ConfirmationOutcome(kind="rejected")
 
     # --- Create Mock Update/Context ---
     update = create_mock_update(
@@ -530,6 +832,30 @@ async def test_confirmation_via_inline_keyboard_does_not_deadlock(
     # --- 4. Initialise Application for process_update() ---
     app = fix.application
     await app.initialize()
+    assert fix.assistant.database_engine is not None
+    assert fix.assistant.embedding_generator is not None
+    assert fix.assistant.telegram_service is not None
+    assert fix.assistant.confirmation_result_waiters is not None
+    assert fix.assistant.fastapi_app is not None
+    shutdown_event = asyncio.Event()
+    wake_event = asyncio.Event()
+    worker = TaskWorker(
+        processing_service=fix.processing_service,
+        chat_interface=fix.assistant.telegram_service.chat_interface,
+        calendar_config={},
+        timezone=fix.processing_service.service_config.timezone,
+        embedding_generator=fix.assistant.embedding_generator,
+        shutdown_event_instance=shutdown_event,
+        engine=fix.assistant.database_engine,
+        chat_interfaces=fix.assistant.fastapi_app.state.chat_interfaces,
+        handler_timeout=10.0,
+        confirmation_result_waiters=fix.assistant.confirmation_result_waiters,
+    )
+    worker.register_task_handler(
+        CONFIRMATION_TOOL_EXECUTION_TASK_TYPE,
+        handle_confirmation_tool_execution,
+    )
+    worker_task = asyncio.create_task(worker.run(wake_event))
 
     try:
         # --- 5. Send user message and push through Application pipeline ---
@@ -557,12 +883,21 @@ async def test_confirmation_via_inline_keyboard_does_not_deadlock(
         # With concurrent_updates=True the callback handler runs immediately;
         # with False this would deadlock.
         callback_task = asyncio.create_task(app.process_update(cb_update))
-
-        # --- 8. Both tasks must complete (timeout = deadlock detector) ---
-        await asyncio.wait_for(
-            asyncio.gather(message_task, callback_task),
-            timeout=30.0,
+        await wait_for_condition(
+            lambda: callback_task.done(),
+            timeout=10.0,
+            description="Telegram callback task to finish",
         )
+        callback_task.result()
+        wake_event.set()
+
+        # --- 8. The waiting message task must complete after worker execution ---
+        await wait_for_condition(
+            lambda: message_task.done(),
+            timeout=30.0,
+            description="Telegram message task to finish after confirmation",
+        )
+        message_task.result()
 
         # --- 9. Verify final response was sent ---
         all_updates = await wait_for_bot_response(
@@ -575,4 +910,16 @@ async def test_confirmation_via_inline_keyboard_does_not_deadlock(
 
     finally:
         policy_provider._policy_engine.evaluate_for_execution = original_eval  # type: ignore[assignment]
+        shutdown_event.set()
+        wake_event.set()
+        with contextlib.suppress(TimeoutError):
+            await wait_for_condition(
+                lambda: worker_task.done(),
+                timeout=2.0,
+                description="Telegram confirmation worker task to stop",
+            )
+        if not worker_task.done():
+            worker_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await worker_task
         await app.shutdown()

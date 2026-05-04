@@ -30,6 +30,7 @@ from family_assistant.tools.metadata import (
 from family_assistant.tools.policy import PolicyEngine, ToolPolicyDecision
 from family_assistant.tools.types import (
     CalendarConfig,
+    ConfirmationOutcome,
     RequestConfirmationCallback,
     ToolDefinition,
     ToolExecutionContext,
@@ -121,6 +122,29 @@ def translate_attachment_schemas_for_llm(
 
 # Backwards-compatible alias for public API exports.
 ConfirmationCallbackProtocol = RequestConfirmationCallback
+
+
+def _confirmation_outcome_to_tool_result(
+    *,
+    name: str,
+    outcome: ConfirmationOutcome,
+) -> str | ToolResult:
+    """Convert a terminal confirmation outcome into a tool execution result."""
+    if outcome.kind == "approved":
+        return f"Error: Confirmation for tool '{name}' was approved but not executed."
+    if outcome.kind == "completed":
+        return outcome.result if outcome.result is not None else ""
+    if outcome.kind == "timed_out":
+        return f"Action cancelled: Confirmation request for tool '{name}' timed out."
+    if outcome.kind == "cancelled":
+        return (
+            f"Action cancelled: Confirmation request for tool '{name}' was cancelled."
+        )
+    if outcome.kind == "failed":
+        if outcome.result is not None:
+            return outcome.result
+        return f"Error executing approved tool '{name}'."
+    return f"OK. Action cancelled by user for tool '{name}'."
 
 
 class ToolConfirmationRequired(Exception):
@@ -871,7 +895,7 @@ class ConfirmingToolsProvider(ToolsProvider):
 
                 # The callback is expected to handle the timeout internally via asyncio.wait_for
                 # Pass context so renderers can fetch event details, timezone, etc.
-                user_confirmed = await typed_callback(
+                confirmation_result = await typed_callback(
                     interface_type=context.interface_type,
                     conversation_id=context.conversation_id,
                     turn_id=context.turn_id,
@@ -882,17 +906,18 @@ class ConfirmingToolsProvider(ToolsProvider):
                     context=context,
                 )
 
-                if user_confirmed:
+                if confirmation_result.kind == "approved":
                     logger.info(
                         f"User confirmed execution for tool '{name}'. Proceeding."
                     )
-                    # Execute the tool using the wrapped provider
                     return await self.wrapped_provider.execute_tool(
                         name, arguments, context, call_id
                     )
-                else:
-                    logger.info(f"User cancelled execution for tool '{name}'.")
-                    return f"OK. Action cancelled by user for tool '{name}'."
+
+                return _confirmation_outcome_to_tool_result(
+                    name=name,
+                    outcome=confirmation_result,
+                )
 
             except TimeoutError:
                 logger.warning(f"Confirmation request for tool '{name}' timed out.")
@@ -1030,7 +1055,7 @@ class PolicyEnforcingToolsProvider(ToolsProvider):
                 if context.tools_provider is None:
                     context.tools_provider = self
 
-                user_confirmed = await typed_callback(
+                confirmation_result = await typed_callback(
                     interface_type=context.interface_type,
                     conversation_id=context.conversation_id,
                     turn_id=context.turn_id,
@@ -1041,9 +1066,11 @@ class PolicyEnforcingToolsProvider(ToolsProvider):
                     context=context,
                 )
 
-                if not user_confirmed:
-                    logger.info("User cancelled execution for tool '%s'.", name)
-                    return f"OK. Action cancelled by user for tool '{name}'."
+                if confirmation_result.kind != "approved":
+                    return _confirmation_outcome_to_tool_result(
+                        name=name,
+                        outcome=confirmation_result,
+                    )
             except TimeoutError:
                 logger.warning("Confirmation request for tool '%s' timed out.", name)
                 return f"Action cancelled: Confirmation request for tool '{name}' timed out."

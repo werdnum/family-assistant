@@ -7,6 +7,7 @@ if TYPE_CHECKING:
     from telegram.ext import ContextTypes
 
     from family_assistant.telegram.types import AttachmentData
+    from family_assistant.tools.types import ConfirmationOutcome
 
 
 @runtime_checkable
@@ -51,10 +52,13 @@ class ConfirmationUIManager(Protocol):
         # ast-grep-ignore: no-dict-any - tool args have varying keys per tool
         tool_args: dict[str, Any],
         timeout: float,
-    ) -> bool:
+        target_user_id: str | None = None,
+        tool_call_id: str | None = None,
+        source_message_internal_id: int | None = None,
+    ) -> ConfirmationOutcome:
         """
         Requests confirmation from the user via the UI.
 
-        Returns True if confirmed, False if denied or timed out.
+        Returns an approved outcome if confirmed, or a terminal outcome otherwise.
         """
         ...

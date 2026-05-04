@@ -17,6 +17,8 @@ if TYPE_CHECKING:
     )
 
 CONFIRMATION_TOOL_EXECUTION_TASK_TYPE = "confirmation_tool_execution"
+DURABLE_CONFIRMATION_STATUS_POLL_SECONDS = 5.0
+DURABLE_CONFIRMATION_EXECUTION_WAIT_SECONDS = 1800.0
 
 
 class ConfirmationError(Exception):
@@ -120,6 +122,7 @@ class ConfirmationService:
                 task_type=CONFIRMATION_TOOL_EXECUTION_TASK_TYPE,
                 payload={"confirmation_request_id": request_id},
                 original_task_id=execution_task_id,
+                max_retries_override=0,
             )
             return approved
 
@@ -171,6 +174,20 @@ class ConfirmationService:
         """List pending requests for a user."""
         async with self._db_context_factory() as db:
             return await db.confirmation_requests.list_pending_for_user(user_id)
+
+    async def get_for_user(
+        self,
+        *,
+        request_id: str,
+        user_id: str,
+    ) -> ConfirmationRequestRow:
+        """Get a confirmation request after checking target-user authorization."""
+        async with self._db_context_factory() as db:
+            return await self._get_authorized_request(
+                db=db,
+                request_id=request_id,
+                user_id=user_id,
+            )
 
     async def mark_expired(self, *, now: datetime) -> int:
         """Expire pending requests whose deadline has passed."""

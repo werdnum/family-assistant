@@ -7,8 +7,11 @@ import json
 import pytest
 from httpx import AsyncClient
 from PIL import Image
+from sqlalchemy.ext.asyncio import AsyncEngine
 
 from family_assistant.llm import LLMOutput, ToolCallFunction, ToolCallItem
+from family_assistant.services.attachment_registry import AttachmentRegistry
+from family_assistant.storage.context import get_db_context
 from tests.mocks.mock_llm import (
     RuleBasedMockLLMClient,
     extract_text_from_content,
@@ -233,6 +236,41 @@ async def test_chat_api_attachment_format_validation(
         "/api/v1/chat/send_message_stream", json=payload
     )
     assert response.status_code == 400
+
+
+@pytest.mark.asyncio
+async def test_chat_api_rejects_other_user_attachment_reference(
+    api_test_client: AsyncClient,
+    attachment_registry_fixture: AttachmentRegistry,
+    db_engine: AsyncEngine,
+) -> None:
+    async with get_db_context(engine=db_engine) as db_context:
+        attachment = await attachment_registry_fixture.register_user_attachment(
+            db_context=db_context,
+            content=b"not an image",
+            filename="private.txt",
+            mime_type="text/plain",
+            conversation_id="other-conversation",
+            user_id="other_user",
+        )
+
+    response = await api_test_client.post(
+        "/api/v1/chat/send_message_stream",
+        json={
+            "prompt": "Use this attachment",
+            "conversation_id": "current-conversation",
+            "attachments": [
+                {
+                    "type": "image",
+                    "content": f"/api/attachments/{attachment.attachment_id}",
+                    "name": "private.txt",
+                }
+            ],
+        },
+    )
+
+    assert response.status_code == 404
+    assert response.json()["detail"] == "Attachment not found"
 
 
 @pytest.mark.asyncio

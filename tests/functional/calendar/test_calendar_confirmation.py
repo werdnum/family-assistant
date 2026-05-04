@@ -41,6 +41,7 @@ from family_assistant.tools.confirmation import (
 )
 from family_assistant.tools.types import (
     CalendarConfig,
+    ConfirmationOutcome,
     ToolExecutionContext,
     ToolResult,
 )
@@ -394,12 +395,12 @@ async def test_confirming_tools_provider_with_calendar_events(
         tool_args: dict[str, Any],
         timeout_seconds: float,
         context: ToolExecutionContext,
-    ) -> bool:
+    ) -> ConfirmationOutcome:
         """Capture the confirmation prompt and accept it."""
         # For testing, we just capture that the callback was called with the right tool
         # We don't need to render the actual prompt here
         confirmation_prompts_shown.append(f"{tool_name} called with args: {tool_args}")
-        return True  # Accept confirmation
+        return ConfirmationOutcome(kind="approved")
 
     confirming_provider = ConfirmingToolsProvider(
         wrapped_provider=local_provider,
@@ -522,13 +523,13 @@ async def test_confirming_provider_sets_tools_provider_for_renderer(
         tool_args: dict[str, Any],
         timeout_seconds: float,
         context: ToolExecutionContext,
-    ) -> bool:
+    ) -> ConfirmationOutcome:
         """Callback that uses the actual confirmation renderer, like production."""
         renderer = TOOL_CONFIRMATION_RENDERERS.get(tool_name)
         if renderer:
             prompt_text = await renderer(tool_args, context)
             rendered_prompts.append(prompt_text)
-        return True
+        return ConfirmationOutcome(kind="approved")
 
     confirming_provider = ConfirmingToolsProvider(
         wrapped_provider=local_provider,

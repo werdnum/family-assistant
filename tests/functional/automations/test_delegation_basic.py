@@ -44,6 +44,7 @@ from family_assistant.tools import (
     ToolPolicyDecision,
     ToolsProvider,
 )
+from family_assistant.tools.types import ConfirmationOutcome
 from tests.mocks.mock_llm import (
     LLMOutput as MockLLMOutput,
 )
@@ -300,7 +301,7 @@ def specialized_llm_mock() -> RuleBasedMockLLMClient:
 
 @pytest_asyncio.fixture
 async def mock_confirmation_callback() -> AsyncMock:
-    return AsyncMock(spec=Callable[..., Awaitable[bool]])
+    return AsyncMock(spec=Callable[..., Awaitable[ConfirmationOutcome]])
 
 
 def create_tools_provider(
@@ -602,7 +603,9 @@ async def test_delegation_confirm_target_granted(
     awaited_primary_service.llm_client = primary_llm_mock_factory(
         False
     )  # Explicitly set confirm_delegation=False
-    awaited_mock_confirmation_callback.return_value = True  # User confirms
+    awaited_mock_confirmation_callback.return_value = ConfirmationOutcome(
+        kind="approved"
+    )
     awaited_primary_service.service_config.tools_config.confirmation_timeout_seconds = (
         123.0
     )
@@ -676,7 +679,9 @@ async def test_delegation_confirm_target_denied(
     awaited_specialized_processing_service_factory = specialized_processing_service
 
     awaited_primary_service.llm_client = primary_llm_mock_factory(False)
-    awaited_mock_confirmation_callback.return_value = False  # User denies
+    awaited_mock_confirmation_callback.return_value = ConfirmationOutcome(
+        kind="rejected"
+    )
 
     target_service = await awaited_specialized_processing_service_factory(
         DelegationSecurityLevel.CONFIRM
@@ -805,7 +810,9 @@ async def test_delegation_unrestricted_confirm_arg_granted(
     awaited_primary_service.llm_client = primary_llm_mock_factory(
         True
     )  # confirm_delegation=True in tool call
-    awaited_mock_confirmation_callback.return_value = True  # User confirms
+    awaited_mock_confirmation_callback.return_value = ConfirmationOutcome(
+        kind="approved"
+    )
 
     target_service = await awaited_specialized_processing_service_factory(
         DelegationSecurityLevel.UNRESTRICTED

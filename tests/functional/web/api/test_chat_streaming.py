@@ -159,18 +159,16 @@ def test_processing_service(
     mock_llm_client: RuleBasedMockLLMClient,
     test_tools_provider: ToolsProvider,
     mock_processing_service_config: ProcessingServiceConfig,
-    db_context: DatabaseContext,
+    db_engine: AsyncEngine,
 ) -> ProcessingService:
     """Creates a ProcessingService instance with mock/test components."""
-
-    captured_engine = db_context.engine
 
     async def get_entered_db_context_for_provider() -> DatabaseContext:
         """
         Returns an awaitable that resolves to an entered DatabaseContext.
         This matches the expected type for NotesContextProvider's get_db_context_func.
         """
-        async with get_db_context(engine=captured_engine) as new_ctx:
+        async with get_db_context(engine=db_engine) as new_ctx:
             return new_ctx
 
     notes_provider = NotesContextProvider(
@@ -250,7 +248,7 @@ async def test_client(app_fixture: FastAPI) -> AsyncGenerator[AsyncClient]:
 async def test_api_chat_send_message_stream_minimal(
     test_client: AsyncClient,
     mock_llm_client: RuleBasedMockLLMClient,
-    db_context: DatabaseContext,
+    db_engine: AsyncEngine,
 ) -> None:
     """Test the streaming chat API endpoint with a minimal conversation."""
     # Arrange
@@ -306,9 +304,10 @@ async def test_api_chat_send_message_stream_minimal(
     # Check database state - messages should be saved
     # Need to extract conversation_id from the stream (it's generated)
     # Since we don't have it in the response, we'll check for any recent messages
-    recent_conversations = await db_context.message_history.get_all_grouped(
-        interface_type="api"
-    )
+    async with get_db_context(engine=db_engine) as fresh_ctx:
+        recent_conversations = await fresh_ctx.message_history.get_all_grouped(
+            interface_type="api"
+        )
 
     # Should have at least one conversation
     assert len(recent_conversations) > 0
