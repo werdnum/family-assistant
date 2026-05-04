@@ -553,6 +553,12 @@ not protect against other AI agent vulnerabilities such as:
 The Rule of Two complements—rather than replaces—traditional security practices like least-privilege
 access, input validation, and defense-in-depth approaches.
 
+## Native Codex PR Review Policy
+
+- If you are performing a PR review (including native Codex review), read and follow
+  `REVIEW_GUIDELINES.md` before writing feedback.
+- Use native Codex GitHub review (`@codex review`).
+
 ## Development Guidelines
 
 - ALWAYS make a plan before you make any nontrivial changes.
