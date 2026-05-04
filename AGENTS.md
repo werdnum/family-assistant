@@ -556,9 +556,11 @@ access, input validation, and defense-in-depth approaches.
 ## Development Guidelines
 
 - ALWAYS make a plan before you make any nontrivial changes.
-- ALWAYS ask the user to approve the plan before you start work. In particular, you MUST stop and
-  ask for approval before doing major rearchitecture or reimplementations, or making technical
-  decisions that may require judgement calls.
+- Ask for plan approval when there are significant decisions, tradeoffs, or ambiguity that require
+  user input (for example: major rearchitecture, reimplementation, or technical decisions that may
+  require judgement calls).
+- If the plan is just restating a clear user request with no meaningful choices to make, do not
+  pause for approval—proceed directly with the requested implementation.
 - Significant changes should have the plan written to docs/design for approval and future
   documentation.
 - When completing a user-visible feature, always update docs/user/USER_GUIDE.md and tell the
