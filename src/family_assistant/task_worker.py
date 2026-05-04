@@ -53,6 +53,7 @@ if TYPE_CHECKING:
 
 # handle_index_email is now a method of EmailIndexer and registered in __main__.py
 from family_assistant.processing import ProcessingService
+from family_assistant.processing.utils import get_file_extension_from_mime_type
 from family_assistant.storage.context import DatabaseContext, get_db_context
 from family_assistant.storage.message_history import message_history_table
 from family_assistant.storage.tasks import enqueue_task, get_task_event
@@ -1746,6 +1747,54 @@ def _tool_result_text(result: str | ToolResult) -> str:
     return str(result)
 
 
+async def _register_confirmation_result_attachments(
+    context: ToolExecutionContext,
+    request: ConfirmationRequestRow,
+    result: str | ToolResult,
+) -> list[str] | None:
+    """Register tool result attachments for fallback chat delivery."""
+    if not isinstance(result, ToolResult) or not result.attachments:
+        return None
+
+    attachment_ids: list[str] = []
+    for attachment in result.attachments:
+        if attachment.attachment_id is not None:
+            attachment_ids.append(attachment.attachment_id)
+            continue
+
+        if attachment.content is None:
+            continue
+
+        if context.attachment_registry is None:
+            raise ConfirmationNotificationError(
+                f"Confirmation {request['id']} result has attachments but no "
+                "attachment registry is available"
+            )
+
+        file_extension = get_file_extension_from_mime_type(attachment.mime_type)
+        registered_metadata = (
+            await context.attachment_registry.store_and_register_tool_attachment(
+                file_content=attachment.content,
+                filename=f"confirmation_result_{uuid.uuid4()}{file_extension}",
+                content_type=attachment.mime_type,
+                tool_name=request["tool_name"],
+                description=attachment.description
+                or f"Output from {request['tool_name']}",
+                conversation_id=context.conversation_id,
+                metadata={
+                    "tool_call_id": request["tool_call_id"] or request["id"],
+                    "confirmation_request_id": request["id"],
+                    "auto_display": True,
+                },
+                db_context=context.db_context,
+            )
+        )
+        attachment.attachment_id = registered_metadata.attachment_id
+        attachment_ids.append(registered_metadata.attachment_id)
+
+    return attachment_ids or None
+
+
 async def _build_confirmation_execution_context(
     exec_context: ToolExecutionContext,
     request: ConfirmationRequestRow,
@@ -1914,7 +1963,7 @@ def _resolve_confirmation_processing_service(
 async def _notify_confirmation_execution_result(
     context: ToolExecutionContext,
     request: ConfirmationRequestRow,
-    result_text: str,
+    result: str | ToolResult,
     source_row: MessageHistoryRow | None,
     *,
     succeeded: bool = True,
@@ -1940,33 +1989,42 @@ async def _notify_confirmation_execution_result(
         else None
     )
 
-    if succeeded:
-        message = (
-            "Approved action completed.\n\n"
-            f"Tool: {request['tool_name']}\n\n"
-            f"Result:\n{result_text}"
-        )
-    else:
-        message = (
-            "Approved action failed.\n\n"
-            f"Tool: {request['tool_name']}\n\n"
-            f"Error:\n{result_text}"
-        )
     try:
+        result_text = _tool_result_text(result)
+        attachment_ids = await _register_confirmation_result_attachments(
+            context,
+            request,
+            result,
+        )
+
+        if succeeded:
+            message = (
+                "Approved action completed.\n\n"
+                f"Tool: {request['tool_name']}\n\n"
+                f"Result:\n{result_text}"
+            )
+        else:
+            message = (
+                "Approved action failed.\n\n"
+                f"Tool: {request['tool_name']}\n\n"
+                f"Error:\n{result_text}"
+            )
         sent_message_id = await context.chat_interface.send_message(
             conversation_id=context.conversation_id,
             text=message,
             reply_to_interface_id=reply_to_interface_id,
+            attachment_ids=attachment_ids,
         )
+        if sent_message_id is None:
+            raise ConfirmationNotificationError(
+                f"Confirmation {request['id']} result notification was not delivered"
+            )
+    except ConfirmationNotificationError:
+        raise
     except Exception as exc:
         raise ConfirmationNotificationError(
             f"Confirmation {request['id']} result notification failed"
         ) from exc
-    if sent_message_id is None:
-        logger.warning(
-            "Confirmation %s completed but result notification could not be sent",
-            request["id"],
-        )
 
 
 async def handle_confirmation_tool_execution(
@@ -2093,7 +2151,7 @@ async def handle_confirmation_tool_execution(
         await _notify_confirmation_execution_result(
             execution_context,
             request,
-            _tool_result_text(result),
+            result,
             source_row,
         )
     except ConfirmationNotificationError as notification_exc:
@@ -2102,6 +2160,7 @@ async def handle_confirmation_tool_execution(
             request_id,
             notification_exc,
         )
+        raise
 
 
 async def handle_reindex_document(

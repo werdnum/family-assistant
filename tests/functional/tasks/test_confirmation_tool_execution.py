@@ -15,6 +15,7 @@ from sqlalchemy import select, update
 from family_assistant import task_worker as task_worker_module
 from family_assistant.embeddings import MockEmbeddingGenerator
 from family_assistant.llm.messages import UserMessage
+from family_assistant.services.attachment_registry import AttachmentRegistry
 from family_assistant.services.confirmation_service import (
     CONFIRMATION_TOOL_EXECUTION_TASK_TYPE,
     ConfirmationService,
@@ -34,9 +35,12 @@ from family_assistant.tools.policy import (
     ToolPolicyConfig,
     ToolPolicyDecision,
 )
+from family_assistant.tools.types import ToolAttachment, ToolResult
 from tests.helpers import wait_for_condition, wait_for_tasks_to_complete
 
 if TYPE_CHECKING:
+    from pathlib import Path
+
     from sqlalchemy.ext.asyncio import AsyncEngine
 
     from family_assistant.interfaces import ChatInterface
@@ -133,6 +137,36 @@ class FailingToolsProvider(RecordingToolsProvider):
         raise RuntimeError("tool exploded")
 
 
+class AttachmentToolsProvider(RecordingToolsProvider):
+    """Fake tool provider that returns a result attachment."""
+
+    async def execute_tool(
+        self,
+        name: str,
+        # ast-grep-ignore: no-dict-any - tool provider protocol accepts arbitrary JSON arguments
+        arguments: dict[str, Any],
+        context: ToolExecutionContext,
+        call_id: str | None = None,
+    ) -> ToolResult:
+        self.calls.append((
+            name,
+            dict(arguments),
+            call_id,
+            context.user_id,
+            context.interface_type,
+        ))
+        return ToolResult(
+            text="created attachment",
+            attachments=[
+                ToolAttachment(
+                    mime_type="text/plain",
+                    content=b"confirmation attachment",
+                    description="Confirmation output",
+                )
+            ],
+        )
+
+
 class BlockingToolsProvider(RecordingToolsProvider):
     """Fake tool provider that waits until cancelled."""
 
@@ -171,6 +205,7 @@ class RecordingChatInterface:
 
     def __init__(self) -> None:
         self.messages: list[tuple[str, str, str | None]] = []
+        self.attachment_ids: list[list[str] | None] = []
 
     async def send_message(
         self,
@@ -183,8 +218,8 @@ class RecordingChatInterface:
         # ast-grep-ignore: no-asyncio-sleep-in-tests - fake chat I/O must yield to exercise cancellation cleanup
         await asyncio.sleep(0)
         _ = parse_mode
-        _ = attachment_ids
         self.messages.append((conversation_id, text, reply_to_interface_id))
+        self.attachment_ids.append(attachment_ids)
         return f"chat-message-{len(self.messages)}"
 
 
@@ -207,6 +242,27 @@ class FailingChatInterface(RecordingChatInterface):
             attachment_ids=attachment_ids,
         )
         raise RuntimeError("chat send failed")
+
+
+class UndeliveredChatInterface(RecordingChatInterface):
+    """Fake chat interface that reports send failure with no exception."""
+
+    async def send_message(
+        self,
+        conversation_id: str,
+        text: str,
+        parse_mode: str | None = None,
+        reply_to_interface_id: str | None = None,
+        attachment_ids: list[str] | None = None,
+    ) -> str | None:
+        await super().send_message(
+            conversation_id=conversation_id,
+            text=text,
+            parse_mode=parse_mode,
+            reply_to_interface_id=reply_to_interface_id,
+            attachment_ids=attachment_ids,
+        )
+        return None
 
 
 class BlockingChatInterface(RecordingChatInterface):
@@ -240,7 +296,11 @@ class BlockingChatInterface(RecordingChatInterface):
         return "unexpected-release"
 
 
-def _processing_service(provider: object) -> ProcessingService:
+def _processing_service(
+    provider: object,
+    *,
+    attachment_registry: object | None = None,
+) -> ProcessingService:
     service_config = SimpleNamespace(
         id="test-profile",
         timezone=ZoneInfo("UTC"),
@@ -252,7 +312,7 @@ def _processing_service(provider: object) -> ProcessingService:
         kind="local",
         tools_provider=provider,
         service_config=service_config,
-        attachment_registry=None,
+        attachment_registry=attachment_registry,
         home_assistant_client=None,
         camera_backend=None,
         processing_services_registry=None,
@@ -741,6 +801,7 @@ async def test_notification_failure_does_not_retry_confirmed_tool_execution(
         processing_service=_processing_service(provider),
         chat_interface=chat_interface,
         task_id=task_id,
+        allow_failures=True,
     )
 
     assert provider.calls == [
@@ -753,6 +814,105 @@ async def test_notification_failure_does_not_retry_confirmed_tool_execution(
         )
     ]
     assert len(chat_interface.messages) == 1
+    status, error = await _task_status(db_engine, task_id)
+    assert status == "failed"
+    assert error is not None
+    assert "ConfirmationNotificationError" in error
+
+
+@pytest.mark.asyncio
+async def test_undelivered_notification_fails_confirmed_tool_execution(
+    db_engine: AsyncEngine,
+) -> None:
+    source_message_id = await _create_source_message(db_engine)
+    request_id = await _create_request(
+        db_engine,
+        source_message_internal_id=source_message_id,
+    )
+    task_id = await _approve_request(db_engine, request_id)
+    provider = RecordingToolsProvider()
+    chat_interface = UndeliveredChatInterface()
+
+    await _run_worker_until_task_finishes(
+        db_engine,
+        processing_service=_processing_service(provider),
+        chat_interface=chat_interface,
+        task_id=task_id,
+        allow_failures=True,
+    )
+
+    assert provider.calls == [
+        (
+            "record_tool",
+            {"value": "payload"},
+            "call-record-tool",
+            "user-1",
+            "web",
+        )
+    ]
+    assert len(chat_interface.messages) == 1
+    status, error = await _task_status(db_engine, task_id)
+    assert status == "failed"
+    assert error is not None
+    assert "ConfirmationNotificationError" in error
+
+
+@pytest.mark.asyncio
+async def test_fallback_notification_preserves_tool_result_attachments(
+    db_engine: AsyncEngine,
+    tmp_path: Path,
+) -> None:
+    attachment_registry = AttachmentRegistry(
+        storage_path=str(tmp_path),
+        db_engine=db_engine,
+        config=None,
+    )
+    source_message_id = await _create_source_message(db_engine)
+    request_id = await _create_request(
+        db_engine,
+        source_message_internal_id=source_message_id,
+    )
+    task_id = await _approve_request(db_engine, request_id)
+    provider = AttachmentToolsProvider()
+    chat_interface = RecordingChatInterface()
+
+    await _run_worker_until_task_finishes(
+        db_engine,
+        processing_service=_processing_service(
+            provider,
+            attachment_registry=attachment_registry,
+        ),
+        chat_interface=chat_interface,
+        task_id=task_id,
+    )
+
+    assert provider.calls == [
+        (
+            "record_tool",
+            {"value": "payload"},
+            "call-record-tool",
+            "user-1",
+            "web",
+        )
+    ]
+    assert chat_interface.messages == [
+        (
+            "web-conversation-1",
+            "Approved action completed.\n\n"
+            "Tool: record_tool\n\n"
+            "Result:\ncreated attachment",
+            "web-message-1",
+        )
+    ]
+    attachment_ids = chat_interface.attachment_ids[0]
+    assert attachment_ids is not None
+    assert len(attachment_ids) == 1
+    attachment = await attachment_registry.get_attachment_with_context(
+        attachment_ids[0]
+    )
+    assert attachment is not None
+    assert attachment.mime_type == "text/plain"
+    assert attachment.conversation_id == "web-conversation-1"
     assert await _task_status(db_engine, task_id) == ("done", None)
 
 

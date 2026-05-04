@@ -178,6 +178,19 @@ const ChatApp: React.FC<ChatAppProps> = ({ profileId = 'default_assistant' }) =>
         if (!response.ok) {
           throw new Error(`Failed to send confirmation: ${response.status}`);
         }
+
+        const responseBody = (await response.json()) as {
+          success?: boolean;
+          error?: string;
+          message?: string;
+        };
+        if (responseBody.success === false) {
+          throw new Error(
+            responseBody.error ??
+              responseBody.message ??
+              'Confirmation request was rejected by the server'
+          );
+        }
       } catch (error) {
         console.error('Error sending confirmation:', error);
         throw error;
