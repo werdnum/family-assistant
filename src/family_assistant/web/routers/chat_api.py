@@ -399,6 +399,33 @@ class ToolConfirmationResponse(BaseModel):
     message: str | None = Field(None, description="Optional status message")
 
 
+class PendingToolConfirmation(BaseModel):
+    """Pending durable tool confirmation visible to the current user."""
+
+    request_id: str = Field(..., description="Confirmation request ID")
+    tool_name: str = Field(..., description="Tool awaiting approval")
+    tool_call_id: str | None = Field(None, description="Associated LLM tool call ID")
+    confirmation_prompt: str = Field(..., description="Prompt shown to the user")
+    # ast-grep-ignore: no-dict-any - Tool arguments vary per tool and cannot be statically typed
+    args: dict[str, Any] = Field(..., description="Tool arguments awaiting approval")
+    created_at: datetime = Field(..., description="Request creation timestamp")
+    expires_at: datetime = Field(..., description="Request expiration timestamp")
+    timeout_seconds: float = Field(
+        ..., description="Seconds from creation until expiration"
+    )
+    time_remaining_seconds: float = Field(
+        ..., description="Seconds from response generation until expiration"
+    )
+
+
+class PendingToolConfirmationsResponse(BaseModel):
+    """Response containing pending durable tool confirmations."""
+
+    confirmations: list[PendingToolConfirmation] = Field(
+        ..., description="Pending confirmations for the current user"
+    )
+
+
 class ServiceProfile(BaseModel):
     """Information about an available service profile."""
 
@@ -1463,6 +1490,34 @@ async def confirm_tool_execution(
         success=success,
         message=message,
     )
+
+
+@chat_api_router.get("/v1/chat/confirmations/pending")
+async def list_pending_tool_confirmations(
+    request: Request,
+    current_user: Annotated[dict, Depends(get_current_user)],
+) -> PendingToolConfirmationsResponse:
+    """List pending durable tool confirmations for the current user."""
+    confirmation_service = _get_confirmation_service(request)
+    now = datetime.now(UTC)
+    rows = await confirmation_service.list_pending_for_user(
+        user_id=current_user["user_identifier"]
+    )
+    confirmations = [
+        PendingToolConfirmation(
+            request_id=row["id"],
+            tool_name=row["tool_name"],
+            tool_call_id=row["tool_call_id"],
+            confirmation_prompt=row["confirmation_prompt"],
+            args=row["tool_args_json"],
+            created_at=row["created_at"],
+            expires_at=row["expires_at"],
+            timeout_seconds=(row["expires_at"] - row["created_at"]).total_seconds(),
+            time_remaining_seconds=max(0.0, (row["expires_at"] - now).total_seconds()),
+        )
+        for row in rows
+    ]
+    return PendingToolConfirmationsResponse(confirmations=confirmations)
 
 
 @chat_api_router.get("/v1/chat/events")

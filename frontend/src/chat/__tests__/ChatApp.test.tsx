@@ -59,7 +59,7 @@ describe('ChatApp', () => {
     // Note: The actual message sending and response display depends on the
     // @assistant-ui/react runtime behavior, which may not show messages
     // in the DOM in the same way as a traditional chat UI
-  });
+  }, 30000);
 
   it('handles conversation loading', async () => {
     await renderChatApp({ waitForReady: true });

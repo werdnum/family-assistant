@@ -392,6 +392,9 @@ When the assistant needs to perform important actions, you'll be asked to confir
   - In Telegram: You'll see inline buttons to "Approve" or "Deny" the action
   - In the Web Interface: A dialog box will appear with details about the action and options to
     approve or deny
+  - Pending web approvals are stored durably. If you reload the page or the assistant process
+    restarts, the web interface can show the pending approval again and your approval still uses the
+    background task queue for execution.
   - The assistant will wait for your response before proceeding
 - **Why this matters:** This gives you full control over what the assistant does and prevents
   unintended actions

@@ -1,6 +1,6 @@
 import { AssistantRuntimeProvider, useExternalStoreRuntime } from '@assistant-ui/react';
 import { ArrowLeft, Menu, PanelLeftClose, PanelLeftOpen } from 'lucide-react';
-import React, { Component, useCallback, useEffect, useRef, useState } from 'react';
+import React, { Component, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { ErrorInfo, ReactNode } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
@@ -13,10 +13,12 @@ import { defaultAttachmentAdapter } from './attachmentAdapter';
 import ConversationSidebar from './ConversationSidebar';
 import { LOADING_MARKER } from './constants';
 import { NotificationSettings } from './NotificationSettings';
+import { PendingConfirmationsTray } from './PendingConfirmationsTray';
 import ProfileSelector from './ProfileSelector';
 import { PushNotificationButton } from './PushNotificationButton';
 import { Thread } from './Thread';
 import { ToolConfirmationProvider } from './ToolConfirmationContext';
+import type { PendingToolConfirmation } from './ToolConfirmationContext';
 import {
   BackendAttachment,
   BackendConversationMessage,
@@ -67,6 +69,70 @@ class ThreadErrorBoundary extends Component<{ children: ReactNode }, ThreadError
   }
 }
 
+const LIVE_CONFIRMATION_POLL_RACE_GRACE_MS = 30000;
+
+function parseConfirmationTimestamp(value: unknown): number | null {
+  if (typeof value !== 'string' && typeof value !== 'number') {
+    return null;
+  }
+  const timestamp = new Date(value).getTime();
+  return Number.isNaN(timestamp) ? null : timestamp;
+}
+
+function localConfirmationExpiry(confirmation: PendingToolConfirmation): number | null {
+  const durationSeconds = confirmation.time_remaining_seconds ?? confirmation.timeout_seconds;
+  if (typeof durationSeconds !== 'number') {
+    return null;
+  }
+  const receivedAt = parseConfirmationTimestamp(confirmation.received_at);
+  if (receivedAt === null) {
+    return null;
+  }
+  return receivedAt + durationSeconds * 1000;
+}
+
+function isFreshLiveConfirmation(confirmation: PendingToolConfirmation): boolean {
+  const receivedAt = parseConfirmationTimestamp(confirmation.received_at);
+  if (receivedAt === null) {
+    return false;
+  }
+  const now = Date.now();
+  const expiresAt = localConfirmationExpiry(confirmation);
+  return (
+    (expiresAt === null || expiresAt > now) &&
+    now - receivedAt < LIVE_CONFIRMATION_POLL_RACE_GRACE_MS
+  );
+}
+
+function confirmationFingerprint(confirmation: PendingToolConfirmation): string {
+  return JSON.stringify({
+    request_id: confirmation.request_id,
+    tool_name: confirmation.tool_name,
+    tool_call_id: confirmation.tool_call_id,
+    confirmation_prompt: confirmation.confirmation_prompt,
+    args: confirmation.args,
+    created_at: confirmation.created_at,
+    expires_at: confirmation.expires_at,
+    timeout_seconds: confirmation.timeout_seconds,
+  });
+}
+
+function confirmationMapsEqual(
+  left: Map<string, PendingToolConfirmation>,
+  right: Map<string, PendingToolConfirmation>
+): boolean {
+  if (left.size !== right.size) {
+    return false;
+  }
+  for (const [key, leftValue] of left.entries()) {
+    const rightValue = right.get(key);
+    if (!rightValue || confirmationFingerprint(leftValue) !== confirmationFingerprint(rightValue)) {
+      return false;
+    }
+  }
+  return true;
+}
+
 const ChatApp: React.FC<ChatAppProps> = ({ profileId = 'default_assistant' }) => {
   const [messages, setMessages] = useState<Message[]>([]);
   const [isLoading, setIsLoading] = useState<boolean>(false);
@@ -92,6 +158,7 @@ const ChatApp: React.FC<ChatAppProps> = ({ profileId = 'default_assistant' }) =>
   const initialPromptProcessedRef = useRef(false);
   const abortControllerRef = useRef<AbortController | null>(null);
   const messagesAbortControllerRef = useRef<AbortController | null>(null);
+  const resolvedConfirmationIdsRef = useRef<Set<string>>(new Set());
   const [searchParams, setSearchParams] = useSearchParams();
 
   // Fetch conversations list
@@ -124,34 +191,41 @@ const ChatApp: React.FC<ChatAppProps> = ({ profileId = 'default_assistant' }) =>
     }
   }, []);
 
-  // Track pending confirmations by tool call ID
+  const confirmationKey = useCallback((confirmation: PendingToolConfirmation) => {
+    return confirmation.tool_call_id || confirmation.request_id;
+  }, []);
+
+  // Track pending confirmations by tool call ID when available, otherwise request ID.
   const [pendingConfirmations, setPendingConfirmations] = useState<
-    Map<string, { request_id: string; [key: string]: unknown }>
+    Map<string, PendingToolConfirmation>
   >(new Map());
 
   const handleConfirmationRequest = useCallback(
-    (request: { tool_call_id: string; request_id: string; [key: string]: unknown }) => {
-      // Add to pending confirmations map
+    (request: PendingToolConfirmation) => {
+      resolvedConfirmationIdsRef.current.delete(request.request_id);
       setPendingConfirmations((prev) => {
+        const receivedAt = Date.now();
         const newMap = new Map(prev);
-        // Store by tool_call_id for matching
-        newMap.set(request.tool_call_id, request);
+        newMap.set(confirmationKey(request), {
+          ...request,
+          created_at: request.created_at ?? receivedAt,
+          received_at: receivedAt,
+          received_via_sse: true,
+        });
         return newMap;
       });
     },
-    []
+    [confirmationKey]
   );
 
   const handleConfirmationResult = useCallback(
     (result: { request_id: string; [key: string]: unknown }) => {
-      // Remove from pending confirmations
+      resolvedConfirmationIdsRef.current.add(result.request_id);
       setPendingConfirmations((prev) => {
         const newMap = new Map(prev);
-        // Find and remove the confirmation by matching request_id
         for (const [key, value] of newMap.entries()) {
           if (value.request_id === result.request_id) {
             newMap.delete(key);
-            break;
           }
         }
         return newMap;
@@ -191,13 +265,63 @@ const ChatApp: React.FC<ChatAppProps> = ({ profileId = 'default_assistant' }) =>
               'Confirmation request was rejected by the server'
           );
         }
+        handleConfirmationResult({ request_id: requestId });
       } catch (error) {
         console.error('Error sending confirmation:', error);
         throw error;
       }
     },
-    [conversationId]
+    [conversationId, handleConfirmationResult]
   );
+
+  const fetchPendingConfirmations = useCallback(async () => {
+    try {
+      const response = await fetch('/api/v1/chat/confirmations/pending');
+      if (!response.ok) {
+        throw new Error(`Failed to fetch pending confirmations: ${response.status}`);
+      }
+      const data = (await response.json()) as {
+        confirmations?: PendingToolConfirmation[];
+      };
+      const confirmations = (data.confirmations ?? []).filter(
+        (confirmation) => !resolvedConfirmationIdsRef.current.has(confirmation.request_id)
+      );
+      setPendingConfirmations((prev) => {
+        const receivedAt = Date.now();
+        const newMap = new Map<string, PendingToolConfirmation>();
+        for (const confirmation of confirmations) {
+          newMap.set(confirmationKey(confirmation), {
+            ...confirmation,
+            received_at: receivedAt,
+          });
+        }
+        for (const [key, confirmation] of prev.entries()) {
+          if (
+            !newMap.has(key) &&
+            !resolvedConfirmationIdsRef.current.has(confirmation.request_id) &&
+            confirmation.received_via_sse === true &&
+            isFreshLiveConfirmation(confirmation)
+          ) {
+            newMap.set(key, confirmation);
+          }
+        }
+        if (confirmationMapsEqual(prev, newMap)) {
+          return prev;
+        }
+        return newMap;
+      });
+    } catch (error) {
+      console.error('Error fetching pending confirmations:', error);
+    }
+  }, [confirmationKey]);
+
+  useEffect(() => {
+    void fetchPendingConfirmations();
+    const interval = window.setInterval(() => {
+      void fetchPendingConfirmations();
+    }, 15000);
+    return () => window.clearInterval(interval);
+  }, [fetchPendingConfirmations]);
 
   // Streaming callbacks
   const handleStreamingMessage = useCallback((content: string) => {
@@ -1057,6 +1181,22 @@ const ChatApp: React.FC<ChatAppProps> = ({ profileId = 'default_assistant' }) =>
     };
   }, [runtime, conversationsLoading, profilesLoading]);
 
+  const trayConfirmations = useMemo(() => {
+    const visibleToolCallIds = new Set(
+      messages.flatMap((message) =>
+        message.content
+          .filter((part) => part.type === 'tool-call' && part.toolCallId)
+          .map((part) => part.toolCallId as string)
+      )
+    );
+    return Array.from(pendingConfirmations.values()).filter(
+      (confirmation) =>
+        !confirmation.tool_call_id || !visibleToolCallIds.has(confirmation.tool_call_id)
+    );
+  }, [messages, pendingConfirmations]);
+  const handleTrayConfirmation = (requestId: string, approved: boolean) =>
+    handleConfirmation(requestId, requestId, approved);
+
   return (
     <TooltipProvider>
       <div className="flex h-screen flex-col bg-background">
@@ -1118,6 +1258,10 @@ const ChatApp: React.FC<ChatAppProps> = ({ profileId = 'default_assistant' }) =>
             </div>
 
             <div className="flex min-w-0 min-h-0 flex-1 flex-col">
+              <PendingConfirmationsTray
+                confirmations={trayConfirmations}
+                onConfirm={handleTrayConfirmation}
+              />
               <main className="flex flex-1 flex-col min-h-0">
                 <AssistantRuntimeProvider runtime={runtime}>
                   <ThreadErrorBoundary>
@@ -1190,6 +1334,10 @@ const ChatApp: React.FC<ChatAppProps> = ({ profileId = 'default_assistant' }) =>
               />
 
               <div className="flex min-w-0 flex-1 flex-col">
+                <PendingConfirmationsTray
+                  confirmations={trayConfirmations}
+                  onConfirm={handleTrayConfirmation}
+                />
                 <main className="flex flex-1 flex-col min-h-0">
                   <AssistantRuntimeProvider runtime={runtime}>
                     <ThreadErrorBoundary>

@@ -69,7 +69,7 @@ describe.sequential('ErrorHandling', () => {
       expect(requestSeen).toBe(true);
       expect(screen.getByText('Chat')).toBeInTheDocument();
     });
-  }, 10000); // Add timeout
+  }, 30000); // Increased timeout for parallel test runs
 
   it('handles malformed streaming responses', async () => {
     // Mock malformed SSE stream

@@ -37,16 +37,16 @@ export const ToolWithConfirmation: React.FC<ToolWithConfirmationProps> = ({
     : undefined;
 
   useEffect(() => {
-    if (typeof pendingConfirmation?.timeout_seconds === 'number') {
-      const createdAt = pendingConfirmation.created_at;
-      // created_at is assigned when this client receives the SSE event, so the
-      // countdown is not affected by server/client clock skew.
+    const durationSeconds =
+      pendingConfirmation?.time_remaining_seconds ?? pendingConfirmation?.timeout_seconds;
+    if (typeof durationSeconds === 'number') {
+      const anchorTimestamp = pendingConfirmation?.received_at ?? pendingConfirmation?.created_at;
       const parsedStartedAt =
-        typeof createdAt === 'string' || typeof createdAt === 'number'
-          ? new Date(createdAt).getTime()
+        typeof anchorTimestamp === 'string' || typeof anchorTimestamp === 'number'
+          ? new Date(anchorTimestamp).getTime()
           : Number.NaN;
       const startedAt = Number.isNaN(parsedStartedAt) ? Date.now() : parsedStartedAt;
-      const timeoutMs = pendingConfirmation.timeout_seconds * 1000;
+      const timeoutMs = durationSeconds * 1000;
 
       const calculateTimeRemaining = () => {
         const elapsedMs = Date.now() - startedAt;

@@ -137,6 +137,11 @@ export const handlers = [
     });
   }),
 
+  // Mock pending durable confirmations endpoint
+  http.get('/api/v1/chat/confirmations/pending', () => {
+    return HttpResponse.json({ confirmations: [] });
+  }),
+
   // Mock context profiles endpoint
   http.get('/api/v1/context/profiles', () => {
     return HttpResponse.json({
