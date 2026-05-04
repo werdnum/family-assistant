@@ -114,10 +114,11 @@ function confirmationFingerprint(confirmation: PendingToolConfirmation): string 
     created_at: confirmation.created_at,
     expires_at: confirmation.expires_at,
     timeout_seconds: confirmation.timeout_seconds,
+    time_remaining_seconds: confirmation.time_remaining_seconds,
   });
 }
 
-function confirmationMapsEqual(
+export function confirmationMapsEqual(
   left: Map<string, PendingToolConfirmation>,
   right: Map<string, PendingToolConfirmation>
 ): boolean {
