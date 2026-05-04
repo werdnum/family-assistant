@@ -78,6 +78,21 @@ describe('PendingConfirmationsTray', () => {
     ).toBeInTheDocument();
   }, 30000);
 
+  it('shows a tray error when durable pending confirmations response is malformed', async () => {
+    server.use(
+      http.get('/api/v1/chat/confirmations/pending', () => {
+        return HttpResponse.json({ status: 'ok' });
+      })
+    );
+
+    await renderChatApp({ waitForReady: true });
+
+    expect(await screen.findByTestId('pending-confirmations-tray')).toBeInTheDocument();
+    expect(
+      screen.getByText('Could not load pending approvals. Refresh or try again.')
+    ).toBeInTheDocument();
+  }, 30000);
+
   it('treats refreshed server-side countdown timing as a changed pending confirmation', () => {
     const confirmation = {
       request_id: 'confirm_refresh',

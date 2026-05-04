@@ -287,15 +287,14 @@ const ChatApp: React.FC<ChatAppProps> = ({ profileId = 'default_assistant' }) =>
         throw new Error('Pending confirmations response did not contain an object');
       }
       const pendingConfirmationsResponse = data as { confirmations?: unknown };
-      if (
-        pendingConfirmationsResponse.confirmations !== undefined &&
-        !Array.isArray(pendingConfirmationsResponse.confirmations)
-      ) {
+      if (!Array.isArray(pendingConfirmationsResponse.confirmations)) {
         throw new Error('Pending confirmations response did not contain a confirmation list');
       }
-      const confirmations = (
-        (pendingConfirmationsResponse.confirmations ?? []) as PendingToolConfirmation[]
-      ).filter((confirmation) => !resolvedConfirmationIdsRef.current.has(confirmation.request_id));
+      const fetchedConfirmations =
+        pendingConfirmationsResponse.confirmations as PendingToolConfirmation[];
+      const confirmations = fetchedConfirmations.filter(
+        (confirmation) => !resolvedConfirmationIdsRef.current.has(confirmation.request_id)
+      );
       setPendingConfirmationsError(null);
       setPendingConfirmations((prev) => {
         const receivedAt = Date.now();
