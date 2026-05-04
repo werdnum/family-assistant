@@ -5,6 +5,7 @@ import type { PendingToolConfirmation } from './ToolConfirmationContext';
 
 interface PendingConfirmationsTrayProps {
   confirmations: PendingToolConfirmation[];
+  loadError?: string | null;
   onConfirm: (requestId: string, approved: boolean) => Promise<void>;
 }
 
@@ -36,6 +37,7 @@ function secondsUntilExpiry(confirmation: PendingToolConfirmation): number | nul
 
 export const PendingConfirmationsTray: React.FC<PendingConfirmationsTrayProps> = ({
   confirmations,
+  loadError,
   onConfirm,
 }) => {
   const [resolvingRequestIds, setResolvingRequestIds] = useState<Set<string>>(new Set());
@@ -79,7 +81,7 @@ export const PendingConfirmationsTray: React.FC<PendingConfirmationsTrayProps> =
     }
   };
 
-  if (confirmations.length === 0) {
+  if (confirmations.length === 0 && !loadError) {
     return null;
   }
 
@@ -91,6 +93,14 @@ export const PendingConfirmationsTray: React.FC<PendingConfirmationsTrayProps> =
     >
       <div className="mx-auto flex w-full max-w-5xl flex-col gap-3">
         <h3 className="text-sm font-semibold text-amber-950">Pending approvals</h3>
+        {loadError && (
+          <div
+            role="alert"
+            className="rounded-md border border-red-200 bg-red-50 p-3 text-sm font-medium text-red-700"
+          >
+            {loadError}
+          </div>
+        )}
         <div className="flex flex-col gap-2">
           {confirmations.map((confirmation) => {
             const argsText = formatToolArgs(confirmation.args);

@@ -200,6 +200,7 @@ const ChatApp: React.FC<ChatAppProps> = ({ profileId = 'default_assistant' }) =>
   const [pendingConfirmations, setPendingConfirmations] = useState<
     Map<string, PendingToolConfirmation>
   >(new Map());
+  const [pendingConfirmationsError, setPendingConfirmationsError] = useState<string | null>(null);
 
   const handleConfirmationRequest = useCallback(
     (request: PendingToolConfirmation) => {
@@ -281,12 +282,21 @@ const ChatApp: React.FC<ChatAppProps> = ({ profileId = 'default_assistant' }) =>
       if (!response.ok) {
         throw new Error(`Failed to fetch pending confirmations: ${response.status}`);
       }
-      const data = (await response.json()) as {
-        confirmations?: PendingToolConfirmation[];
-      };
-      const confirmations = (data.confirmations ?? []).filter(
-        (confirmation) => !resolvedConfirmationIdsRef.current.has(confirmation.request_id)
-      );
+      const data = (await response.json()) as unknown;
+      if (!data || typeof data !== 'object') {
+        throw new Error('Pending confirmations response did not contain an object');
+      }
+      const pendingConfirmationsResponse = data as { confirmations?: unknown };
+      if (
+        pendingConfirmationsResponse.confirmations !== undefined &&
+        !Array.isArray(pendingConfirmationsResponse.confirmations)
+      ) {
+        throw new Error('Pending confirmations response did not contain a confirmation list');
+      }
+      const confirmations = (
+        (pendingConfirmationsResponse.confirmations ?? []) as PendingToolConfirmation[]
+      ).filter((confirmation) => !resolvedConfirmationIdsRef.current.has(confirmation.request_id));
+      setPendingConfirmationsError(null);
       setPendingConfirmations((prev) => {
         const receivedAt = Date.now();
         const newMap = new Map<string, PendingToolConfirmation>();
@@ -313,6 +323,7 @@ const ChatApp: React.FC<ChatAppProps> = ({ profileId = 'default_assistant' }) =>
       });
     } catch (error) {
       console.error('Error fetching pending confirmations:', error);
+      setPendingConfirmationsError('Could not load pending approvals. Refresh or try again.');
     }
   }, [confirmationKey]);
 
@@ -1261,6 +1272,7 @@ const ChatApp: React.FC<ChatAppProps> = ({ profileId = 'default_assistant' }) =>
             <div className="flex min-w-0 min-h-0 flex-1 flex-col">
               <PendingConfirmationsTray
                 confirmations={trayConfirmations}
+                loadError={pendingConfirmationsError}
                 onConfirm={handleTrayConfirmation}
               />
               <main className="flex flex-1 flex-col min-h-0">
@@ -1337,6 +1349,7 @@ const ChatApp: React.FC<ChatAppProps> = ({ profileId = 'default_assistant' }) =>
               <div className="flex min-w-0 flex-1 flex-col">
                 <PendingConfirmationsTray
                   confirmations={trayConfirmations}
+                  loadError={pendingConfirmationsError}
                   onConfirm={handleTrayConfirmation}
                 />
                 <main className="flex flex-1 flex-col min-h-0">
