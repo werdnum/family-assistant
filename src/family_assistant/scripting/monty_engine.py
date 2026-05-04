@@ -210,16 +210,12 @@ class MontyEngine:
                 fn = ext_fn_impls.get(fn_name)
 
                 if fn is None:
+                    undefined_function: pydantic_monty.ExternalException = {
+                        "exception": NameError(f"name '{fn_name}' is not defined")
+                    }
                     progress = await loop.run_in_executor(
                         None,
-                        partial(
-                            progress.resume,
-                            {
-                                "exception": NameError(
-                                    f"name '{fn_name}' is not defined"
-                                )
-                            },
-                        ),
+                        partial(progress.resume, undefined_function),
                     )
                     continue
 
@@ -229,9 +225,12 @@ class MontyEngine:
                     else:
                         result = fn(*progress.args, **progress.kwargs)
                 except Exception as e:
+                    exception_result: pydantic_monty.ExternalException = {
+                        "exception": e
+                    }
                     progress = await loop.run_in_executor(
                         None,
-                        partial(progress.resume, {"exception": e}),
+                        partial(progress.resume, exception_result),
                     )
                 else:
                     progress = await loop.run_in_executor(
