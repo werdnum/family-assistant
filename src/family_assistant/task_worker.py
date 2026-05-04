@@ -11,6 +11,7 @@ import random
 import shutil
 import traceback
 import uuid
+from dataclasses import replace
 from datetime import UTC, datetime, timedelta  # Added Union
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Required, TypedDict, cast
@@ -1907,6 +1908,47 @@ async def _build_confirmation_execution_context(
     )
 
 
+def _build_confirmation_notification_context(
+    exec_context: ToolExecutionContext,
+    request: ConfirmationRequestRow,
+    source_row: MessageHistoryRow | None,
+) -> ToolExecutionContext:
+    """Reconstruct enough context to notify the original conversation."""
+    if source_row is None:
+        return exec_context
+
+    interface_type = str(source_row["interface_type"])
+    chat_interface = exec_context.chat_interface
+    if exec_context.chat_interfaces is not None:
+        chat_interface = exec_context.chat_interfaces.get(
+            interface_type,
+            chat_interface,
+        )
+
+    return replace(
+        exec_context,
+        interface_type=interface_type,
+        conversation_id=str(source_row["conversation_id"]),
+        turn_id=(
+            str(source_row["turn_id"])
+            if source_row.get("turn_id") is not None
+            else exec_context.turn_id
+        ),
+        user_id=request["target_user_id"],
+        chat_interface=chat_interface,
+        processing_profile_id=(
+            str(source_row["processing_profile_id"])
+            if source_row.get("processing_profile_id") is not None
+            else exec_context.processing_profile_id
+        ),
+        subconversation_id=(
+            str(source_row["subconversation_id"])
+            if source_row.get("subconversation_id") is not None
+            else exec_context.subconversation_id
+        ),
+    )
+
+
 def _get_processing_tools_provider(exec_context: ToolExecutionContext) -> ToolsProvider:
     """Return the current tool provider from the processing service."""
     processing_service = exec_context.processing_service
@@ -2057,21 +2099,26 @@ async def handle_confirmation_tool_execution(
             )
         )
 
-    execution_context = exec_context
+    execution_context = _build_confirmation_notification_context(
+        exec_context,
+        request,
+        source_row,
+    )
 
-    async def deliver_execution_failure(error_result: str) -> None:
+    async def deliver_execution_failure(
+        context: ToolExecutionContext,
+        error_result: str,
+    ) -> None:
         delivered_to_waiter = False
-        if execution_context.confirmation_result_waiters is not None:
-            delivered_to_waiter = (
-                execution_context.confirmation_result_waiters.resolve_failed(
-                    request_id,
-                    error_result,
-                )
+        if context.confirmation_result_waiters is not None:
+            delivered_to_waiter = context.confirmation_result_waiters.resolve_failed(
+                request_id,
+                error_result,
             )
         if not delivered_to_waiter:
             try:
                 await _notify_confirmation_execution_result(
-                    execution_context,
+                    context,
                     request,
                     error_result,
                     source_row,
@@ -2119,8 +2166,9 @@ async def handle_confirmation_tool_execution(
         try:
             async with asyncio.timeout(CONFIRMATION_CANCELLATION_CLEANUP_TIMEOUT):
                 await deliver_execution_failure(
+                    execution_context,
                     f"Error executing approved tool '{request['tool_name']}': "
-                    "execution was cancelled"
+                    "execution was cancelled",
                 )
         except TimeoutError:
             logger.warning(
@@ -2131,7 +2179,7 @@ async def handle_confirmation_tool_execution(
         raise
     except Exception as exc:
         error_result = f"Error executing approved tool '{request['tool_name']}': {exc}"
-        await deliver_execution_failure(error_result)
+        await deliver_execution_failure(execution_context, error_result)
         raise
 
     if (

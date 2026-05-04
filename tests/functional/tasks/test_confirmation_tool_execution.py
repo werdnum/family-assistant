@@ -1170,3 +1170,49 @@ async def test_confirmation_task_fails_when_source_profile_is_missing(
     assert "secondary-profile" in error
     assert provider.calls == []
     assert chat_interface.messages == []
+
+
+@pytest.mark.asyncio
+async def test_context_failure_notifies_original_conversation_without_live_waiter(
+    db_engine: AsyncEngine,
+) -> None:
+    source_message_id = await _create_source_message(
+        db_engine,
+        processing_profile_id="secondary-profile",
+    )
+    request_id = await _create_request(
+        db_engine,
+        source_message_internal_id=source_message_id,
+    )
+    task_id = await _approve_request(db_engine, request_id)
+    provider = RecordingToolsProvider()
+    default_service_in_registry = _processing_service_with_registry(
+        provider=provider,
+        service_id="test-profile",
+    )
+    processing_service = _processing_service_with_registry(
+        provider=provider,
+        service_id="test-profile",
+        registry={"test-profile": default_service_in_registry},
+    )
+    chat_interface = RecordingChatInterface()
+
+    await _run_worker_until_task_finishes(
+        db_engine,
+        processing_service=processing_service,
+        chat_interface=chat_interface,
+        task_id=task_id,
+        allow_failures=True,
+    )
+
+    assert provider.calls == []
+    assert len(chat_interface.messages) == 1
+    conversation_id, message, reply_to_interface_id = chat_interface.messages[0]
+    assert conversation_id == "web-conversation-1"
+    assert reply_to_interface_id == "web-message-1"
+    assert "Approved action failed." in message
+    assert "secondary-profile" in message
+    status, error = await _task_status(db_engine, task_id)
+    assert status == "failed"
+    assert error is not None
+    assert "secondary-profile" in error
