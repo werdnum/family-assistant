@@ -7,7 +7,6 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import os
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -36,10 +35,7 @@ async def wait_for_bot_response(
         List of updates from the bot.
     """
     loop = asyncio.get_running_loop()
-    effective_timeout = timeout
-    if os.environ.get("PYTEST_XDIST_WORKER") and effective_timeout < 10.0:
-        effective_timeout = 30.0
-    deadline = loop.time() + effective_timeout
+    deadline = loop.time() + timeout
 
     while loop.time() < deadline:
         updates = await client.get_updates(
@@ -48,10 +44,6 @@ async def wait_for_bot_response(
         )
         if len(updates) >= min_messages:
             return updates
-
-        history_updates = await client.get_updates_history()
-        if len(history_updates) >= min_messages:
-            return history_updates
 
         # ast-grep-ignore: no-asyncio-sleep-in-tests - Polling for bot responses requires delay
         await asyncio.sleep(poll_interval)
@@ -64,6 +56,7 @@ async def assert_bot_sent_message(
     expected_text: str,
     timeout: float = 5.0,
     partial_match: bool = True,
+    poll_interval: float = 0.1,
 ) -> TestServerUpdate:
     """Assert bot sent a message containing expected text.
 
@@ -73,6 +66,7 @@ async def assert_bot_sent_message(
         timeout: Maximum time to wait.
         partial_match: If True, check if expected_text is contained in message.
                        If False, require exact match.
+        poll_interval: Time between poll attempts.
 
     Returns:
         The matching update/message.
@@ -80,15 +74,24 @@ async def assert_bot_sent_message(
     Raises:
         AssertionError: If no matching message is found.
     """
-    updates = await wait_for_bot_response(client, timeout)
+    loop = asyncio.get_running_loop()
+    deadline = loop.time() + timeout
+    updates: list[TestServerUpdate] = []
 
-    for update in updates:
-        message_text = update.get("message", {}).get("text", "")
-        if partial_match:
-            if expected_text in message_text:
+    while loop.time() < deadline:
+        updates = await client.get_updates(
+            timeout=max(0.5, poll_interval),
+            poll_interval=poll_interval,
+        )
+        for update in updates:
+            message_text = update.get("message", {}).get("text", "")
+            if partial_match and expected_text in message_text:
                 return update
-        elif message_text == expected_text:
-            return update
+            if not partial_match and message_text == expected_text:
+                return update
+
+        # ast-grep-ignore: no-asyncio-sleep-in-tests - Polling for a specific Telegram message
+        await asyncio.sleep(poll_interval)
 
     actual_texts = [u.get("message", {}).get("text", "") for u in updates]
     raise AssertionError(
@@ -99,12 +102,14 @@ async def assert_bot_sent_message(
 async def assert_bot_sent_message_with_keyboard(
     client: TelegramTestClient,
     timeout: float = 5.0,
+    poll_interval: float = 0.1,
 ) -> TestServerUpdate:
     """Assert bot sent a message with an inline keyboard.
 
     Args:
         client: The TelegramTestClient to poll.
         timeout: Maximum time to wait.
+        poll_interval: Time between poll attempts.
 
     Returns:
         The matching update/message with keyboard.
@@ -112,13 +117,23 @@ async def assert_bot_sent_message_with_keyboard(
     Raises:
         AssertionError: If no message with keyboard is found.
     """
-    updates = await wait_for_bot_response(client, timeout)
+    loop = asyncio.get_running_loop()
+    deadline = loop.time() + timeout
+    updates: list[TestServerUpdate] = []
 
-    for update in updates:
-        message = update.get("message") or {}
-        reply_markup = message.get("reply_markup") or {}
-        if reply_markup.get("inline_keyboard"):
-            return update
+    while loop.time() < deadline:
+        updates = await client.get_updates(
+            timeout=max(0.5, poll_interval),
+            poll_interval=poll_interval,
+        )
+        for update in updates:
+            message = update.get("message") or {}
+            reply_markup = message.get("reply_markup") or {}
+            if reply_markup.get("inline_keyboard"):
+                return update
+
+        # ast-grep-ignore: no-asyncio-sleep-in-tests - Polling for a specific Telegram keyboard update
+        await asyncio.sleep(poll_interval)
 
     raise AssertionError(
         f"Expected message with inline keyboard, got {len(updates)} messages without keyboards"

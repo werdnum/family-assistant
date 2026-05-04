@@ -177,6 +177,7 @@ async def test_sidebar_functionality(
 
     # Wait for conversation to be saved
     await chat_page.wait_for_conversation_saved()
+    await chat_page.wait_for_conversation_in_sidebar()
 
     # Check conversation appears in list
     conversations = await chat_page.get_conversation_list()

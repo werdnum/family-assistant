@@ -638,8 +638,6 @@ class TelegramTestClient:
         """
         loop = asyncio.get_running_loop()
         deadline = loop.time() + timeout
-        initial_count = 0  # Track initial message count to detect new messages
-
         while loop.time() < deadline:
             remaining_time = deadline - loop.time()
             request_timeout_seconds = min(
@@ -663,11 +661,8 @@ class TelegramTestClient:
                         f"getUpdates returned {len(result)} items for token {self.token}"
                     )
 
-                    if result and len(result) > initial_count:
+                    if result:
                         return result
-
-                    if initial_count == 0:
-                        initial_count = len(result)
             except (TimeoutError, aiohttp.ClientError) as exc:
                 logger.debug(
                     "Retrying getUpdates after transient polling error: %s", exc

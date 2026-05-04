@@ -442,6 +442,25 @@ class ChatPage(BasePage):
 
         return conversations
 
+    async def wait_for_conversation_in_sidebar(
+        self, conversation_id: str | None = None, timeout: int = 10000
+    ) -> None:
+        """Wait for a saved conversation to be rendered in the sidebar."""
+        if not await self.is_sidebar_open():
+            await self.toggle_sidebar()
+
+        target_conversation_id = (
+            conversation_id or await self.get_current_conversation_id()
+        )
+        if not target_conversation_id:
+            raise RuntimeError("No conversation ID available for sidebar wait")
+
+        await self.page.wait_for_selector(
+            f'[data-conversation-id="{target_conversation_id}"]',
+            state="visible",
+            timeout=timeout,
+        )
+
     async def select_conversation(self, conversation_id: str) -> None:
         """Select a conversation from the sidebar.
 
