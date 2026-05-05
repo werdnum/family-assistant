@@ -339,49 +339,40 @@ def _diff_command(mode: str, base: str | None, extra: list[str]) -> list[str]:
 
 
 def get_diff(mode: str = "staged", base: str | None = None) -> str:
-    """Get the git diff based on mode."""
-    try:
-        result = subprocess.run(
-            _diff_command(mode, base, []),
-            capture_output=True,
-            text=True,
-            check=True,
-        )
-    except subprocess.CalledProcessError:
-        return ""
+    """Get the git diff based on mode. Raises CalledProcessError on git failure."""
+    result = subprocess.run(
+        _diff_command(mode, base, []),
+        capture_output=True,
+        text=True,
+        check=True,
+    )
     return result.stdout
 
 
 def get_diff_stat(mode: str = "staged", base: str | None = None) -> str:
-    """Get the git diff statistics."""
-    try:
-        result = subprocess.run(
-            _diff_command(mode, base, ["--stat"]),
-            capture_output=True,
-            text=True,
-            check=True,
-        )
-    except subprocess.CalledProcessError:
-        return ""
+    """Get the git diff statistics. Raises CalledProcessError on git failure."""
+    result = subprocess.run(
+        _diff_command(mode, base, ["--stat"]),
+        capture_output=True,
+        text=True,
+        check=True,
+    )
     return result.stdout
 
 
 def get_changed_files(mode: str = "staged", base: str | None = None) -> list[str]:
-    """Get list of changed files."""
+    """Get list of changed files. Raises CalledProcessError on git failure."""
     if mode == "commit":
         cmd = ["git", "show", "HEAD", "--name-only", "--pretty=format:"]
     else:
         cmd = _diff_command(mode, base, ["--name-only"])
 
-    try:
-        result = subprocess.run(
-            cmd,
-            capture_output=True,
-            text=True,
-            check=True,
-        )
-    except subprocess.CalledProcessError:
-        return []
+    result = subprocess.run(
+        cmd,
+        capture_output=True,
+        text=True,
+        check=True,
+    )
     return [f for f in result.stdout.splitlines() if f]
 
 
@@ -808,7 +799,20 @@ def review_changes(
             sys.exit(1)
 
     # Get diff and check if there are changes
-    diff = get_diff(mode, base)
+    try:
+        diff = get_diff(mode, base)
+        diff_stat = get_diff_stat(mode, base)
+        changed_files = get_changed_files(mode, base)
+    except subprocess.CalledProcessError as err:
+        stderr_text = (err.stderr or "").strip()
+        cmd_text = " ".join(err.cmd) if isinstance(err.cmd, list) else str(err.cmd)
+        print(
+            f"Error: git command failed (exit {err.returncode}): {cmd_text}\n{stderr_text}",
+            file=sys.stderr,
+        )
+        if output_json:
+            sys.stdout = original_stdout
+        sys.exit(1)
     if not diff.strip():
         no_changes_label = {
             "staged": "staged",
@@ -830,10 +834,6 @@ def review_changes(
                 })
             )
         return 0, {}
-
-    # Get diff statistics and file list
-    diff_stat = get_diff_stat(mode, base)
-    changed_files = get_changed_files(mode, base)
 
     if mode == "branch":
         print(f"Reviewing branch changes (vs {base})...", file=sys.stderr)
