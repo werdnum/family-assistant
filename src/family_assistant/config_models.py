@@ -559,6 +559,47 @@ class AttachmentConfig(BaseModel):
     )
 
 
+def _normalize_string_set(values: object, label: str) -> set[str]:
+    if values is None:
+        return set()
+    if not isinstance(values, (list, set, tuple)):
+        msg = f"{label} values must be a list or set"
+        raise TypeError(msg)
+
+    normalized_values: set[str] = set()
+    for value in values:
+        if not isinstance(value, str):
+            msg = f"{label} values must be strings"
+            raise TypeError(msg)
+        normalized = value.strip()
+        if not normalized:
+            msg = f"Invalid {label}: {value!r}"
+            raise ValueError(msg)
+        normalized_values.add(normalized)
+    return normalized_values
+
+
+def _normalize_email_address_set(values: object, label: str) -> set[str]:
+    if values is None:
+        return set()
+    if not isinstance(values, (list, set, tuple)):
+        msg = f"{label} values must be a list or set"
+        raise TypeError(msg)
+
+    normalized_addresses: set[str] = set()
+    for value in values:
+        if not isinstance(value, str):
+            msg = f"{label} values must be strings"
+            raise TypeError(msg)
+        _, parsed_address = parseaddr(value)
+        normalized = parsed_address.strip().lower()
+        if not normalized:
+            msg = f"Invalid {label}: {value!r}"
+            raise ValueError(msg)
+        normalized_addresses.add(normalized)
+    return normalized_addresses
+
+
 class EmailIntakeUserMapping(BaseModel):
     """Maps authorized inbound email addresses to an application user."""
 
@@ -594,6 +635,85 @@ class EmailIntakeUserMapping(BaseModel):
     def require_at_least_one_address(self) -> EmailIntakeUserMapping:
         if not self.sender_addresses and not self.recipient_addresses:
             msg = "Email intake user mappings require at least one sender or recipient address"
+            raise ValueError(msg)
+        return self
+
+
+class OIDCUserIdentityConfig(BaseModel):
+    """OIDC identities associated with a canonical application user."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    emails: set[str] = Field(default_factory=set)
+    subjects: set[str] = Field(default_factory=set)
+
+    @field_validator("emails", mode="before")
+    @classmethod
+    def normalize_emails(cls, values: object) -> set[str]:
+        return _normalize_email_address_set(values, "OIDC email")
+
+    @field_validator("subjects", mode="before")
+    @classmethod
+    def normalize_subjects(cls, values: object) -> set[str]:
+        return _normalize_string_set(values, "OIDC subject")
+
+
+class TelegramUserIdentityConfig(BaseModel):
+    """Telegram identities associated with a canonical application user."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    user_ids: set[int] = Field(default_factory=set)
+    developer: bool = False
+
+
+class EmailIntakeIdentityConfig(BaseModel):
+    """Inbound email identities associated with a canonical application user."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    sender_addresses: set[str] = Field(default_factory=set)
+    recipient_addresses: set[str] = Field(default_factory=set)
+
+    @field_validator("sender_addresses", "recipient_addresses", mode="before")
+    @classmethod
+    def normalize_addresses(cls, values: object) -> set[str]:
+        return _normalize_email_address_set(values, "email intake address")
+
+
+class UserIdentityConfig(BaseModel):
+    """Canonical application user and the external identities that resolve to it."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    id: str = Field(min_length=1)
+    oidc: OIDCUserIdentityConfig = Field(default_factory=OIDCUserIdentityConfig)
+    telegram: TelegramUserIdentityConfig = Field(
+        default_factory=TelegramUserIdentityConfig
+    )
+    email_intake: EmailIntakeIdentityConfig = Field(
+        default_factory=EmailIntakeIdentityConfig
+    )
+
+    @field_validator("id")
+    @classmethod
+    def normalize_id(cls, value: str) -> str:
+        normalized = value.strip()
+        if not normalized:
+            msg = "User id must not be empty"
+            raise ValueError(msg)
+        return normalized
+
+    @model_validator(mode="after")
+    def require_identity(self) -> UserIdentityConfig:
+        if (
+            not self.oidc.emails
+            and not self.oidc.subjects
+            and not self.telegram.user_ids
+            and not self.email_intake.sender_addresses
+            and not self.email_intake.recipient_addresses
+        ):
+            msg = f"User {self.id!r} must configure at least one external identity"
             raise ValueError(msg)
         return self
 
@@ -945,6 +1065,7 @@ class AppConfig(BaseSettings):
     openai_api_key: str | None = None
 
     # User access control
+    users: list[UserIdentityConfig] = Field(default_factory=list)
     allowed_user_ids: list[int] = Field(default_factory=list)
     developer_chat_id: int | None = None
 
@@ -1019,6 +1140,53 @@ class AppConfig(BaseSettings):
     # Attachment selection thresholds (global)
     attachment_selection_threshold: int = 3  # Trigger selection when > this many
     max_response_attachments: int = 6  # Max attachments per response
+
+    @model_validator(mode="after")
+    def validate_user_identity_uniqueness(self) -> AppConfig:
+        user_ids: set[str] = set()
+        oidc_emails: dict[str, str] = {}
+        oidc_subjects: dict[str, str] = {}
+        telegram_user_ids: dict[int, str] = {}
+        email_senders: dict[str, str] = {}
+        email_recipients: dict[str, str] = {}
+
+        def add_unique(
+            mapping: dict[Any, str],
+            value: Any,  # noqa: ANN401 - helper validates heterogeneous identity keys
+            user_id: str,
+            label: str,
+        ) -> None:
+            existing_user_id = mapping.get(value)
+            if existing_user_id is not None and existing_user_id != user_id:
+                msg = (
+                    f"{label} {value!r} is configured for both "
+                    f"{existing_user_id!r} and {user_id!r}"
+                )
+                raise ValueError(msg)
+            mapping[value] = user_id
+
+        for user in self.users:
+            if user.id in user_ids:
+                msg = f"Duplicate user id {user.id!r}"
+                raise ValueError(msg)
+            user_ids.add(user.id)
+            for email in user.oidc.emails:
+                add_unique(oidc_emails, email, user.id, "OIDC email")
+            for subject in user.oidc.subjects:
+                add_unique(oidc_subjects, subject, user.id, "OIDC subject")
+            for telegram_user_id in user.telegram.user_ids:
+                add_unique(
+                    telegram_user_ids,
+                    telegram_user_id,
+                    user.id,
+                    "Telegram user id",
+                )
+            for sender in user.email_intake.sender_addresses:
+                add_unique(email_senders, sender, user.id, "Email sender")
+            for recipient in user.email_intake.recipient_addresses:
+                add_unique(email_recipients, recipient, user.id, "Email recipient")
+
+        return self
 
     @field_validator("attachment_storage_path", "document_storage_path")
     @classmethod

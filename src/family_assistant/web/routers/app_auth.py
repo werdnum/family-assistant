@@ -25,10 +25,15 @@ from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi.responses import HTMLResponse, JSONResponse, Response
 from sqlalchemy import update as sa_update
 
+from family_assistant.services.user_identity import UserIdentityResolutionError
 from family_assistant.storage import api_tokens as api_tokens_storage
 from family_assistant.storage.base import api_tokens_table
 from family_assistant.storage.context import DatabaseContext
-from family_assistant.web.dependencies import get_current_user, get_db
+from family_assistant.web.dependencies import (
+    get_current_user,
+    get_db,
+    get_user_identity_resolver,
+)
 from family_assistant.web.models import (
     CodeExchangeRequest,
     CodeExchangeResponse,
@@ -239,6 +244,7 @@ async def app_auth_oidc_callback(request: Request) -> HTMLResponse:
 
 @api_auth_router.post("/exchange")
 async def exchange_code(
+    request: Request,
     payload: CodeExchangeRequest,
     db_context: Annotated[DatabaseContext, Depends(get_db)],
 ) -> CodeExchangeResponse:
@@ -271,7 +277,19 @@ async def exchange_code(
         )
 
     user_info = code_data["user_info"]
-    user_identifier = user_info.get("sub", user_info.get("email", "unknown"))
+    resolver = get_user_identity_resolver(request)
+    try:
+        user_identifier = (
+            resolver.resolve_oidc_user(user_info).user_id
+            if resolver is not None
+            else user_info.get("sub", user_info.get("email", "unknown"))
+        )
+    except UserIdentityResolutionError as exc:
+        logger.warning("App auth exchange rejected unmapped OIDC user: %s", exc)
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=str(exc),
+        ) from exc
 
     # Create API token (30-day expiry)
     api_token_expires = datetime.now(UTC) + timedelta(days=API_TOKEN_EXPIRY_DAYS)
@@ -389,6 +407,22 @@ async def token_session(
     )
 
     return TokenSessionResponse(ok=True)
+
+
+@api_auth_router.get("/me")
+async def auth_me(
+    current_user: Annotated[dict[str, object], Depends(get_current_user)],
+) -> dict[str, object | None]:
+    """Return the authenticated application user for auth-oriented clients."""
+    return {
+        "user_identifier": current_user.get("user_identifier"),
+        "raw_user_identifier": current_user.get("raw_user_identifier"),
+        "identity_source": current_user.get("identity_source"),
+        "identity_source_identifier": current_user.get("identity_source_identifier"),
+        "email": current_user.get("email"),
+        "sub": current_user.get("sub"),
+        "source": current_user.get("source"),
+    }
 
 
 # --- Well-known endpoint ---

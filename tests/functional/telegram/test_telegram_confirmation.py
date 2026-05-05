@@ -13,6 +13,7 @@ from assertpy import assert_that, soft_assertions
 from telegram import Update
 
 # Import mock LLM helpers
+from family_assistant.config_models import AppConfig
 from family_assistant.llm import ToolCallFunction, ToolCallItem
 from family_assistant.services.confirmation_service import (
     CONFIRMATION_TOOL_EXECUTION_TASK_TYPE,
@@ -20,6 +21,7 @@ from family_assistant.services.confirmation_service import (
 from family_assistant.services.confirmation_waiters import (
     ConfirmationResultWaiterRegistry,
 )
+from family_assistant.services.user_identity import UserIdentityResolver
 from family_assistant.task_worker import TaskWorker, handle_confirmation_tool_execution
 from family_assistant.telegram.ui import (
     PendingTelegramConfirmation,
@@ -284,6 +286,41 @@ async def test_durable_telegram_confirmation_timeout_stops_after_approval() -> N
     assert isinstance(outcome, ConfirmationOutcome)
     assert outcome.kind == "completed"
     assert outcome.result == "executed:test"
+
+
+@pytest.mark.asyncio
+async def test_durable_telegram_confirmation_approval_uses_canonical_user_id() -> None:
+    """Telegram callback authorization should use the same canonical id as storage."""
+    canonical_user_id = "andrew@example.com"
+    confirmation_service = RecordingConfirmationService()
+    manager = TelegramConfirmationUIManager(
+        application=cast("Any", SimpleNamespace(bot=RecordingTelegramBot())),
+        confirmation_service=cast("Any", confirmation_service),
+        user_identity_resolver=UserIdentityResolver(
+            AppConfig.model_validate({
+                "users": [
+                    {
+                        "id": canonical_user_id,
+                        "oidc": {"emails": [canonical_user_id]},
+                        "telegram": {"user_ids": [USER_ID]},
+                    }
+                ]
+            })
+        ),
+    )
+
+    await manager._approve_confirmation(
+        "confirm_test",
+        USER_ID,
+        PendingTelegramConfirmation(
+            decision_future=asyncio.get_running_loop().create_future(),
+            execution_future=None,
+        ),
+    )
+
+    assert confirmation_service.approve_calls == [
+        ("confirm_test", canonical_user_id, "telegram")
+    ]
 
 
 @pytest.mark.asyncio

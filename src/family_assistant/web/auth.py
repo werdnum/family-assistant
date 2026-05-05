@@ -14,6 +14,10 @@ from sqlalchemy.ext.asyncio import AsyncEngine
 from starlette.config import Config
 from starlette.types import ASGIApp, Receive, Scope, Send
 
+from family_assistant.services.user_identity import (
+    UserIdentityResolutionError,
+    UserIdentityResolver,
+)
 from family_assistant.storage.base import api_tokens_table
 from family_assistant.storage.context import get_db_context
 
@@ -257,6 +261,23 @@ class AuthService:
                             status_code=status.HTTP_403_FORBIDDEN,
                             detail=f"Access denied: Email '{email}' is not in the allowlist.",
                         )
+
+                config_from_state = getattr(request.app.state, "config", None)
+                if config_from_state is not None:
+                    resolver = getattr(
+                        request.app.state, "user_identity_resolver", None
+                    )
+                    if resolver is None:
+                        resolver = UserIdentityResolver(config_from_state)
+                        request.app.state.user_identity_resolver = resolver
+                    try:
+                        resolver.resolve_oidc_user(dict(user_info))
+                    except UserIdentityResolutionError as exc:
+                        logger.warning("Unmapped OIDC login rejected: %s", exc)
+                        raise HTTPException(
+                            status_code=status.HTTP_403_FORBIDDEN,
+                            detail=str(exc),
+                        ) from exc
 
                 request.session["user"] = dict(user_info)
                 logger.info(

@@ -9,6 +9,7 @@ from telegram.ext import (
     CallbackQueryHandler,
 )
 
+from family_assistant.services.user_identity import UserIdentityResolver
 from family_assistant.telegram.batching import (
     DefaultMessageBatcher,
     NoBatchMessageBatcher,
@@ -45,8 +46,6 @@ class TelegramService:
     def __init__(
         self,
         telegram_token: str,
-        allowed_user_ids: list[int],
-        developer_chat_id: int | None,
         processing_service: ProcessingService,  # Default processing service
         processing_services_registry: dict[
             str, DelegatableService
@@ -65,8 +64,6 @@ class TelegramService:
 
         Args:
             telegram_token: The Telegram Bot API token.
-            allowed_user_ids: List of chat IDs allowed to interact with the bot.
-            developer_chat_id: Optional chat ID for sending error notifications.
             processing_service: The Default ProcessingService instance.
             processing_services_registry: Dictionary of all ProcessingService instances.
             app_config: The main application configuration (typed AppConfig model).
@@ -112,6 +109,7 @@ class TelegramService:
             processing_services_registry  # Store registry
         )
         self.app_config = app_config  # Store app_config
+        self.user_identity_resolver = UserIdentityResolver(app_config)
         self.confirmation_service = confirmation_service
         self.confirmation_result_waiters = confirmation_result_waiters
         self.fastapi_app = (
@@ -150,14 +148,14 @@ class TelegramService:
             application=self.application,
             confirmation_service=confirmation_service,
             confirmation_result_waiters=confirmation_result_waiters,
+            user_identity_resolver=self.user_identity_resolver,
         )
 
         # Instantiate the handler class, passing self (the service instance)
         # The handler will use self.processing_service (the default one) for batched messages.
         self.update_handler = TelegramUpdateHandler(
             telegram_service=self,
-            allowed_user_ids=allowed_user_ids,
-            developer_chat_id=developer_chat_id,
+            user_identity_resolver=self.user_identity_resolver,
             processing_service=processing_service,  # Pass default service to handler
             get_db_context_func=get_db_context_func,
             message_batcher=None,

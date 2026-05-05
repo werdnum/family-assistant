@@ -134,6 +134,51 @@ Directory containing user documentation files.
 
 ______________________________________________________________________
 
+## User Identities
+
+Use top-level `users` to map each human to a canonical application user id across web/OIDC,
+Telegram, and email intake. This is the id stored on durable confirmations and other user-scoped
+records.
+
+```yaml
+users:
+  - id: "alice@example.com"
+    oidc:
+      emails:
+        - "alice@example.com"
+      subjects: []
+    telegram:
+      user_ids:
+        - 123456789
+      developer: true
+    email_intake:
+      sender_addresses:
+        - "alice@gmail.com"
+      recipient_addresses:
+        - "assistant+alice@mg.example.com"
+```
+
+Use the stable Keycloak/OIDC email as `id` unless you have a stronger local convention. Telegram
+`user_ids` are Telegram user IDs, not chat IDs.
+
+When `users` is configured, unknown OIDC users, Telegram users, and required email mappings are
+rejected at the interface boundary. When it is empty, the app keeps the legacy behavior:
+`allowed_user_ids`, `developer_chat_id`, and `email_intake.user_mappings`.
+
+### Migration From Legacy Identity Settings
+
+| Legacy field                                       | New field                                  |
+| -------------------------------------------------- | ------------------------------------------ |
+| `allowed_user_ids`                                 | `users[].telegram.user_ids`                |
+| `developer_chat_id`                                | `users[].telegram.developer: true`         |
+| `email_intake.user_mappings[].user_id`             | `users[].id`                               |
+| `email_intake.user_mappings[].sender_addresses`    | `users[].email_intake.sender_addresses`    |
+| `email_intake.user_mappings[].recipient_addresses` | `users[].email_intake.recipient_addresses` |
+
+`email_intake.allowed_sender_addresses` and `allowed_recipient_addresses` are still security
+allowlists. They answer "which inbound addresses are accepted at all"; `users[].email_intake`
+answers "which canonical user owns this accepted email".
+
 ## Email Intake Security
 
 The `/webhook/mail` endpoint accepts Mailgun inbound email webhooks. Use this configuration when
@@ -156,17 +201,6 @@ email_intake:
   require_authenticated_sender: true
 
   require_user_mapping: true
-  user_mappings:
-    - user_id: "alice"
-      sender_addresses:
-        - "alice@gmail.com"
-      recipient_addresses:
-        - "assistant+alice@mg.example.com"
-    - user_id: "bob"
-      sender_addresses:
-        - "bob@gmail.com"
-      recipient_addresses:
-        - "assistant+bob@mg.example.com"
 
   max_raw_request_bytes: 26214400
   max_attachment_bytes: 10485760
@@ -235,25 +269,28 @@ If this list is non-empty, the Mailgun signing key must also be set.
 
 ### User Mapping
 
-`user_mappings` resolve accepted inbound email to an application `user_id`. The resolved value is
-stored on the received email as `target_user_id`, so later action-processing and confirmation flows
-can deterministically choose the right user context.
+`users[].email_intake` resolves accepted inbound email to a canonical application user id. The
+resolved value is stored on the received email as `target_user_id`, so later action-processing and
+confirmation flows can deterministically choose the right user context.
 
 Mappings can match by authorized forwarding sender, by Mailgun recipient alias, or by both:
 
 ```yaml
-email_intake:
-  require_user_mapping: true
-  user_mappings:
-    - user_id: "alice"
+users:
+  - id: "alice@example.com"
+    oidc:
+      emails: ["alice@example.com"]
+    email_intake:
       sender_addresses: ["alice@gmail.com"]
       recipient_addresses: ["assistant+alice@mg.example.com"]
+
+email_intake:
+  require_user_mapping: true
 ```
 
 When `require_user_mapping` is true, accepted email must map to exactly one configured user. If no
 mapping matches, the webhook returns `401`. If sender and recipient mappings point to different
-users, the webhook also returns `401` rather than guessing. If multiple mapping entries match the
-same `user_id`, that is accepted.
+users, the webhook also returns `401` rather than guessing.
 
 For the least operational friction, map each user's stable forwarding address in `sender_addresses`.
 For stronger routing and clearer confirmation behavior, also give each user a Mailgun inbound alias
@@ -262,10 +299,10 @@ and include it in `recipient_addresses`.
 | Option                 | Default | Recommended for actions |
 | ---------------------- | ------- | ----------------------- |
 | `require_user_mapping` | `false` | `true`                  |
-| `user_mappings`        | `[]`    | One entry per user      |
+| `users[].email_intake` | `[]`    | One entry per user      |
 
-If `require_user_mapping` is true or `user_mappings` is non-empty, the Mailgun signing key must also
-be set.
+If `require_user_mapping` is true or `users[].email_intake` is non-empty, the Mailgun signing key
+must also be set.
 
 ### Sender Authentication Policy
 

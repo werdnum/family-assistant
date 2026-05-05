@@ -395,6 +395,8 @@ When the assistant needs to perform important actions, you'll be asked to confir
   - Pending web approvals are stored durably. If you reload the page or the assistant process
     restarts, the web interface can show the pending approval again and your approval still uses the
     background task queue for execution.
+  - If the operator has linked your Telegram and web login to the same account, an action requested
+    from Telegram can also appear in the web interface for approval.
   - The assistant will wait for your response before proceeding
 - **Why this matters:** This gives you full control over what the assistant does and prevents
   unintended actions

@@ -14,6 +14,26 @@
 # 4. Environment variables
 # 5. CLI arguments
 
+# --- Users ---
+# Canonical application users. Configure this when the same human can use more
+# than one interface (for example Telegram plus the web UI) so durable
+# confirmations, API tokens, push subscriptions, and email ownership use the
+# same user identifier everywhere.
+#
+# Use the stable Keycloak/OIDC email as `id` unless you have a stronger local
+# convention. Telegram `user_ids` are Telegram user IDs, not chat IDs.
+# users:
+#   - id: "alice@example.com"
+#     oidc:
+#       emails: ["alice@example.com"]
+#       subjects: []  # Optional Keycloak/OIDC subject IDs.
+#     telegram:
+#       user_ids: [123456789]
+#       developer: true
+#     email_intake:
+#       sender_addresses: ["alice@gmail.com"]
+#       recipient_addresses: ["assistant+alice@mg.example.com"]
+
 # --- Timezone ---
 # Override the default timezone for the application
 # default_profile_settings:
