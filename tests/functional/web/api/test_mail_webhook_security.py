@@ -22,6 +22,7 @@ from family_assistant.config_models import (
     EmailIntakeConfig,
     EmailIntakeUserMapping,
 )
+from family_assistant.services.user_identity import UserIdentityResolver
 from family_assistant.storage.context import DatabaseContext
 from family_assistant.storage.email import received_emails_table
 from family_assistant.web.app_creator import app as fastapi_app
@@ -112,14 +113,21 @@ def _configure_email_intake(
     *,
     dns_resolver: FakeDnsResolver | None = None,
 ) -> None:
+    config = AppConfig(
+        attachment_storage_path=str(tmp_path / "attachments"),
+        mailbox_raw_dir=str(tmp_path / "raw"),
+        email_intake=email_intake,
+    )
     monkeypatch.setattr(
         fastapi_app.state,
         "config",
-        AppConfig(
-            attachment_storage_path=str(tmp_path / "attachments"),
-            mailbox_raw_dir=str(tmp_path / "raw"),
-            email_intake=email_intake,
-        ),
+        config,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        fastapi_app.state,
+        "user_identity_resolver",
+        UserIdentityResolver(config),
         raising=False,
     )
     monkeypatch.setattr(
@@ -203,6 +211,59 @@ async def test_mail_webhook_accepts_signed_authorized_authenticated_sender(
     assert await _email_target_user_id(db_engine, form["Message-Id"]) == "alice"
     assert await _email_dmarc_result(db_engine, form["Message-Id"]) == "pass"
     assert _raw_mail_files(tmp_path)
+
+
+@pytest.mark.asyncio
+@pytest.mark.postgres
+async def test_mail_webhook_maps_target_user_from_unified_users_config(
+    api_client: httpx.AsyncClient,
+    db_engine: AsyncEngine,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    email_intake = EmailIntakeConfig(
+        mailgun_webhook_signing_key=SIGNING_KEY,
+        allowed_sender_addresses=[SENDER],
+        allowed_recipient_addresses=[RECIPIENT],
+        require_authenticated_sender=True,
+        require_user_mapping=True,
+    )
+    config = AppConfig.model_validate({
+        "attachment_storage_path": str(tmp_path / "attachments"),
+        "mailbox_raw_dir": str(tmp_path / "raw"),
+        "email_intake": email_intake.model_dump(),
+        "users": [
+            {
+                "id": "andrew@example.com",
+                "oidc": {"emails": ["andrew@example.com"]},
+                "email_intake": {
+                    "sender_addresses": [SENDER],
+                    "recipient_addresses": [RECIPIENT],
+                },
+            }
+        ],
+    })
+    monkeypatch.setattr(fastapi_app.state, "config", config, raising=False)
+    monkeypatch.setattr(
+        fastapi_app.state,
+        "user_identity_resolver",
+        UserIdentityResolver(config),
+        raising=False,
+    )
+    monkeypatch.setattr(
+        fastapi_app.state,
+        "email_intake_dns_resolver",
+        build_dns_for(domain=SENDER_DOMAIN),
+        raising=False,
+    )
+    form = _mailgun_form()
+
+    response = await api_client.post("/webhook/mail", data=form)
+
+    assert response.status_code == 200, response.text
+    assert await _email_target_user_id(db_engine, form["Message-Id"]) == (
+        "andrew@example.com"
+    )
 
 
 @pytest.mark.asyncio

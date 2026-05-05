@@ -60,6 +60,7 @@ from family_assistant.services.confirmation_waiters import (
     ConfirmationResultWaiterRegistry,
 )
 from family_assistant.services.push_notification import PushNotificationService
+from family_assistant.services.user_identity import UserIdentityResolver
 from family_assistant.services.worker_backend import get_worker_backend
 from family_assistant.skills import NoteRegistry, load_skills_from_directory
 from family_assistant.storage import init_db
@@ -388,6 +389,9 @@ class Assistant:
 
         # Store config in FastAPI app state for access by routes
         self.fastapi_app.state.config = self.config
+        self.fastapi_app.state.user_identity_resolver = UserIdentityResolver(
+            self.config
+        )
         logger.info("Stored configuration in FastAPI app state.")
 
         # Create MessageNotifier for live message updates
@@ -1103,8 +1107,6 @@ class Assistant:
             assert self.config.telegram_token is not None
             self.telegram_service = TelegramService(
                 telegram_token=self.config.telegram_token,
-                allowed_user_ids=self.config.allowed_user_ids,
-                developer_chat_id=self.config.developer_chat_id,
                 processing_service=self.default_processing_service,
                 processing_services_registry=self.processing_services_registry,
                 app_config=self.config,

@@ -21,9 +21,12 @@ from family_assistant.email_intake.security import (
     enforce_raw_request_size,
     extract_raw_mime,
     get_security_fields,
-    resolve_target_user_id,
     verify_mailgun_signature,
     verify_sender_authorization,
+)
+from family_assistant.services.user_identity import (
+    UserIdentityResolutionError,
+    UserIdentityResolver,
 )
 from family_assistant.storage.context import DatabaseContext
 from family_assistant.storage.email import AttachmentData, ParsedEmailData
@@ -169,7 +172,16 @@ async def handle_mail_webhook(
                 authentication.from_domain,
                 authentication.dkim_domain,
             )
-        target_user_id = resolve_target_user_id(form_data, email_intake_config)
+        user_identity_resolver = getattr(
+            request.app.state, "user_identity_resolver", None
+        )
+        if user_identity_resolver is None:
+            user_identity_resolver = UserIdentityResolver(config)
+            request.app.state.user_identity_resolver = user_identity_resolver
+        try:
+            target_user_id = user_identity_resolver.resolve_email_intake_user(form_data)
+        except UserIdentityResolutionError as exc:
+            raise EmailIntakeSecurityError(str(exc)) from exc
         if mailbox_raw_dir_to_use is not None:
             await _save_raw_mail_webhook(
                 raw_body_content=raw_body_content,

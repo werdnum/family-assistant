@@ -38,6 +38,11 @@ from family_assistant.llm.messages import (
     text_content,
 )
 from family_assistant.processing import ProcessingService
+from family_assistant.services.user_identity import (
+    ResolvedUserIdentity,
+    UserIdentityResolutionError,
+    UserIdentityResolver,
+)
 from family_assistant.storage.message_history import (
     message_history_table,  # For error handling db update
 )
@@ -67,8 +72,7 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
     def __init__(
         self,
         telegram_service: TelegramService,  # Accept the service instance
-        allowed_user_ids: list[int],
-        developer_chat_id: int | None,
+        user_identity_resolver: UserIdentityResolver,
         processing_service: ProcessingService,  # Use string quote for forward reference
         get_db_context_func: Callable[
             ..., contextlib.AbstractAsyncContextManager[DatabaseContext]
@@ -81,8 +85,7 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
 
         Args:
             telegram_service: The parent TelegramService instance.
-            allowed_user_ids: List of chat IDs allowed to interact with the bot.
-            developer_chat_id: Chat ID for developer notifications.
+            user_identity_resolver: Resolver for Telegram user authorization.
             processing_service: The processing service for handling interactions.
             get_db_context_func: Function to get database context.
             message_batcher: Message batcher for grouping messages.
@@ -98,8 +101,7 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
         self.telegram_service = telegram_service  # Store the service instance
 
         # application is accessed via telegram_service.application if needed
-        self.allowed_user_ids = allowed_user_ids
-        self.developer_chat_id = developer_chat_id
+        self.user_identity_resolver = user_identity_resolver
         self.processing_service = processing_service  # Store the service instance
         self.get_db_context = get_db_context_func
         self.message_batcher = message_batcher  # Store the injected batcher
@@ -114,6 +116,15 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
             chunk_overlap=50,  # Small overlap to maintain context across messages
             separators=("\n\n", "\n", ". ", " ", ""),
         )
+
+    def _resolve_telegram_user(
+        self, telegram_user_id: int
+    ) -> ResolvedUserIdentity | None:
+        try:
+            return self.user_identity_resolver.resolve_telegram_user(telegram_user_id)
+        except UserIdentityResolutionError as exc:
+            logger.warning("Unauthorized Telegram user %s: %s", telegram_user_id, exc)
+            return None
 
     def _get_chat_interfaces(self) -> dict[str, ChatInterface] | None:
         """Get chat_interfaces registry from FastAPI app state for cross-interface messaging.
@@ -221,7 +232,7 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
             logger.warning("Update has no message, cannot reply to /start.")
             return
 
-        if self.allowed_user_ids and user_id not in self.allowed_user_ids:
+        if self._resolve_telegram_user(user_id) is None:
             logger.warning(f"Unauthorized /start command from chat_id {user_id}")
             await update.message.reply_text(
                 f"You're not authorized to use this bot. Give your user ID `{user_id}` to the person who runs this bot."
@@ -265,6 +276,12 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
         last_update, _ = batch[-1]
         user = last_update.effective_user
         user_name = user.first_name if user else "Unknown User"
+        resolved_user = (
+            self._resolve_telegram_user(user.id) if user is not None else None
+        )
+        if resolved_user is None:
+            logger.warning("Ignoring batch from unauthorized Telegram user")
+            return
 
         with tracer.start_as_current_span(
             "telegram.process_batch",
@@ -341,7 +358,7 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
 
                 # Register user attachments with database record for cross-turn access
                 async with self.get_db_context() as db_context:
-                    user_id_str = str(user.id) if user else "unknown"
+                    user_id_str = resolved_user.user_id
 
                     for attachment in all_attachments:
                         try:
@@ -560,9 +577,7 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
                                 tool_name=tool_name,
                                 tool_args=tool_args,
                                 timeout=timeout_seconds,
-                                target_user_id=str(last_update.effective_user.id)
-                                if last_update.effective_user
-                                else None,
+                                target_user_id=resolved_user.user_id,
                                 tool_call_id=call_id,
                                 source_message_internal_id=source_message_internal_id,
                             )
@@ -577,6 +592,7 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
                             trigger_content_parts=trigger_content_parts,
                             trigger_interface_message_id=trigger_interface_message_id,
                             user_name=user_name,
+                            user_id=resolved_user.user_id,
                             replied_to_interface_id=replied_to_interface_id,
                             chat_interface=self.telegram_service.chat_interface,
                             chat_interfaces=chat_interfaces,
@@ -815,7 +831,7 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
             logger.warning("Unknown command: Update has no message.")
             return
 
-        if self.allowed_user_ids and user_id not in self.allowed_user_ids:
+        if self._resolve_telegram_user(user_id) is None:
             logger.warning(
                 f"Unauthorized unknown command from chat_id {user_id}: {update.message.text}"
             )
@@ -884,7 +900,8 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
             logger.warning("Slash command: Update has no message or message text.")
             return
 
-        if self.allowed_user_ids and user_id not in self.allowed_user_ids:
+        resolved_user = self._resolve_telegram_user(user_id)
+        if resolved_user is None:
             logger.warning(f"Unauthorized slash command from user {user_id}")
             await update.message.reply_text(
                 f"You're not authorized to use this command. User ID: `{user_id}`"
@@ -1023,9 +1040,7 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
                         tool_name=tool_name,
                         tool_args=tool_args,
                         timeout=timeout_seconds,
-                        target_user_id=str(update.effective_user.id)
-                        if update.effective_user
-                        else None,
+                        target_user_id=resolved_user.user_id,
                         tool_call_id=call_id,
                         source_message_internal_id=source_message_internal_id,
                     )
@@ -1042,6 +1057,7 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
                         user_name=update.effective_user.full_name
                         if update.effective_user
                         else "Unknown User",
+                        user_id=resolved_user.user_id,
                         replied_to_interface_id=reply_to_interface_id_str,
                         chat_interface=self.telegram_service.chat_interface,
                         chat_interfaces=chat_interfaces,
@@ -1228,7 +1244,7 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
         attachments: list[AttachmentData] = []
         max_file_size = self.telegram_service.attachment_registry.max_file_size
 
-        if self.allowed_user_ids and user_id not in self.allowed_user_ids:
+        if self._resolve_telegram_user(user_id) is None:
             logger.warning(f"Ignoring message from unauthorized user {user_id}")
             return
 

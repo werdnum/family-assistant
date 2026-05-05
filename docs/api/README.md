@@ -63,6 +63,17 @@ For programmatic access, use Bearer token authentication:
 Authorization: Bearer <your-api-token>
 ```
 
+**Check the resolved application user:**
+
+```bash
+curl "https://your-domain.com/api/me" \
+  -H "Authorization: Bearer <your-api-token>"
+```
+
+`/api/auth/me` returns the same payload for clients that are already using the auth API namespace.
+The response includes `user_identifier`, the canonical application user id after OIDC/API-token
+identity mapping.
+
 #### Obtaining API Tokens
 
 API tokens can be created through:

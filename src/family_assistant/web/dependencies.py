@@ -7,6 +7,10 @@ from fastapi import HTTPException, Request, WebSocket, status
 
 from family_assistant.embeddings import EmbeddingGenerator
 from family_assistant.services.attachment_registry import AttachmentRegistry
+from family_assistant.services.user_identity import (
+    UserIdentityResolutionError,
+    UserIdentityResolver,
+)
 from family_assistant.storage.context import DatabaseContext, get_db_context
 from family_assistant.tools import ToolsProvider
 from family_assistant.web.models import GeminiLiveConfig
@@ -17,6 +21,63 @@ if TYPE_CHECKING:
     from family_assistant.web.web_chat_interface import WebChatInterface
 
 logger = logging.getLogger(__name__)
+
+
+def get_user_identity_resolver(request: Request) -> UserIdentityResolver | None:
+    """Return the configured user identity resolver, if application config is available."""
+    resolver = getattr(request.app.state, "user_identity_resolver", None)
+    if resolver is not None:
+        if not isinstance(resolver, UserIdentityResolver):
+            logger.error(
+                "Invalid user_identity_resolver in app.state: %s",
+                type(resolver),
+            )
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Invalid user identity resolver configuration.",
+            )
+        return resolver
+
+    config = getattr(request.app.state, "config", None)
+    if config is None:
+        return None
+    resolver = UserIdentityResolver(config)
+    request.app.state.user_identity_resolver = resolver
+    return resolver
+
+
+def resolve_current_user_payload(request: Request, user: dict) -> dict:
+    """Add canonical user identity fields to a session or API-token user payload."""
+    resolver = get_user_identity_resolver(request)
+    if resolver is None:
+        return {
+            "user_identifier": user.get("sub", user.get("email", "session_user")),
+            **user,
+        }
+
+    try:
+        if user.get("source") in {"api_token", "app_token_session"}:
+            resolved = resolver.resolve_api_token_user(
+                str(user.get("sub", user.get("user_identifier", "")))
+            )
+        else:
+            resolved = resolver.resolve_oidc_user(user)
+    except UserIdentityResolutionError as exc:
+        logger.warning("User identity resolution failed: %s", exc)
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=str(exc),
+        ) from exc
+
+    raw_user_identifier = user.get("sub", user.get("email", resolved.user_id))
+    return {
+        **user,
+        "raw_user_identifier": raw_user_identifier,
+        "user_identifier": resolved.user_id,
+        "sub": resolved.user_id,
+        "identity_source": resolved.source,
+        "identity_source_identifier": resolved.source_identifier,
+    }
 
 
 async def get_embedding_generator_dependency(request: Request) -> EmbeddingGenerator:
@@ -106,12 +167,7 @@ async def get_current_user(request: Request) -> dict:
         session_user = request.session.get("user")
         if session_user:
             logger.debug("User authenticated via session.")
-            return {
-                "user_identifier": session_user.get(
-                    "sub", session_user.get("email", "session_user")
-                ),
-                **session_user,
-            }
+            return resolve_current_user_payload(request, session_user)
     except AssertionError:
         # Session middleware not available
         pass
@@ -156,10 +212,7 @@ async def get_current_user(request: Request) -> dict:
         )
 
     logger.info(f"API user authenticated: {api_user.get('sub')}")
-    return {
-        "user_identifier": api_user.get("sub", "api_user"),
-        **api_user,
-    }
+    return resolve_current_user_payload(request, api_user)
 
 
 async def get_current_api_user(request: Request) -> dict:
@@ -230,8 +283,9 @@ async def get_current_active_user(request: Request) -> dict:
         )
 
     # User is authenticated via OIDC (or another primary method)
-    logger.debug("Current active user (OIDC): %s", user.get("sub"))
-    return user
+    resolved_user = resolve_current_user_payload(request, user)
+    logger.debug("Current active user (OIDC): %s", resolved_user.get("sub"))
+    return resolved_user
 
 
 async def get_attachment_registry(request: Request) -> AttachmentRegistry:

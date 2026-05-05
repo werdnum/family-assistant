@@ -6,13 +6,15 @@ from typing import TYPE_CHECKING
 import pytest
 from sqlalchemy import select
 
+from family_assistant.config_models import AppConfig
 from family_assistant.services.confirmation_service import ConfirmationService
+from family_assistant.services.user_identity import UserIdentityResolver
 from family_assistant.storage.context import get_db_context
 from family_assistant.storage.tasks import tasks_table
 from family_assistant.web.dependencies import get_current_user
 
 if TYPE_CHECKING:
-    from fastapi import FastAPI
+    from fastapi import FastAPI, Request
     from httpx import AsyncClient
     from sqlalchemy.ext.asyncio import AsyncEngine
 
@@ -44,6 +46,24 @@ async def _task_exists(db_engine: AsyncEngine, task_id: str) -> bool:
             select(tasks_table.c.id).where(tasks_table.c.original_task_id == task_id)
         )
     return row is not None
+
+
+class _TokenAuthService:
+    auth_enabled = True
+
+    async def get_user_from_api_token(
+        self,
+        auth_header: str,
+        request: Request,
+    ) -> dict[str, object] | None:
+        if auth_header == "Bearer test-token":
+            return {
+                "sub": "keycloak-subject",
+                "email": "andrew@example.com",
+                "source": "api_token",
+                "token_id": 1,
+            }
+        return None
 
 
 @pytest.mark.asyncio
@@ -141,6 +161,64 @@ async def test_other_web_user_cannot_list_or_resolve_confirmation(
     assert confirm_response.status_code == 200
     assert confirm_response.json()["success"] is False
     assert not await _task_exists(
+        db_engine,
+        f"confirmation_tool_execution:{request_id}",
+    )
+
+
+@pytest.mark.asyncio
+async def test_web_can_approve_confirmation_created_for_matching_telegram_user(
+    app_fixture: FastAPI,
+    api_test_client: AsyncClient,
+    db_engine: AsyncEngine,
+) -> None:
+    canonical_user_id = "andrew@example.com"
+    app_fixture.state.config = AppConfig.model_validate({
+        "users": [
+            {
+                "id": canonical_user_id,
+                "oidc": {
+                    "emails": ["andrew@example.com"],
+                    "subjects": ["keycloak-subject"],
+                },
+                "telegram": {"user_ids": [123456789]},
+            }
+        ]
+    })
+    app_fixture.state.user_identity_resolver = UserIdentityResolver(
+        app_fixture.state.config
+    )
+    app_fixture.state.auth_service = _TokenAuthService()
+
+    request_id = await _create_confirmation(
+        db_engine,
+        request_user_id=canonical_user_id,
+    )
+
+    headers = {"Authorization": "Bearer test-token"}
+    pending_response = await api_test_client.get(
+        "/api/v1/chat/confirmations/pending",
+        headers=headers,
+    )
+    me_response = await api_test_client.get("/api/me", headers=headers)
+    auth_me_response = await api_test_client.get("/api/auth/me", headers=headers)
+    approve_response = await api_test_client.post(
+        "/api/v1/chat/confirm_tool",
+        json={"request_id": request_id, "approved": True},
+        headers=headers,
+    )
+
+    assert pending_response.status_code == 200
+    assert [
+        item["request_id"] for item in pending_response.json()["confirmations"]
+    ] == [request_id]
+    assert me_response.status_code == 200
+    assert me_response.json()["user_identifier"] == canonical_user_id
+    assert auth_me_response.status_code == 200
+    assert auth_me_response.json()["user_identifier"] == canonical_user_id
+    assert approve_response.status_code == 200
+    assert approve_response.json()["success"] is True
+    assert await _task_exists(
         db_engine,
         f"confirmation_tool_execution:{request_id}",
     )

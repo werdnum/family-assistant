@@ -13,6 +13,7 @@ from .diagnostics_api import diagnostics_api_router
 from .documents_api import documents_api_router
 from .errors_api import errors_api_router
 from .events_api import events_api_router
+from .me_api import me_router
 from .notes_api import notes_api_router
 from .tasks_api import tasks_api_router
 from .tools_api import tools_api_router
@@ -49,5 +50,6 @@ api_router.include_router(
     diagnostics_api_router, prefix="/diagnostics", tags=["Diagnostics"]
 )
 api_router.include_router(version_router, tags=["Version"])
+api_router.include_router(me_router, tags=["Identity"])
 api_router.include_router(a2a_router, prefix="/a2a", tags=["A2A Protocol"])
 api_router.include_router(api_auth_router, tags=["App Auth API"])

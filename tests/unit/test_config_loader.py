@@ -22,8 +22,10 @@ from pydantic import ValidationError
 
 from family_assistant.config_loader import (
     ENV_VAR_MAPPINGS,
+    USER_IDENTITIES_FILE_ENV_VAR,
     apply_calendar_env_vars,
     apply_env_var_overrides,
+    apply_user_identity_file,
     get_nested_value,
     load_config,
     parse_env_value,
@@ -551,6 +553,148 @@ class TestApplyEnvVarOverrides:
         )
 
 
+class TestApplyUserIdentityFile:
+    """Tests for user identity file overlays."""
+
+    def test_overlays_identity_file_on_configured_users(self, tmp_path: Path) -> None:
+        config: dict[str, Any] = {
+            "users": [
+                {
+                    "id": "alice@example.com",
+                    "oidc": {"emails": ["alice@example.com"]},
+                },
+                {
+                    "id": "bob@example.com",
+                    "email_intake": {"sender_addresses": ["bob@gmail.com"]},
+                },
+            ]
+        }
+        identities_file = tmp_path / "users.yaml"
+        identities_file.write_text(
+            yaml.dump({
+                "users": [
+                    {
+                        "id": "alice@example.com",
+                        "telegram": {"user_ids": [123], "developer": True},
+                    },
+                    {
+                        "id": "bob@example.com",
+                        "telegram": {"user_ids": [456]},
+                    },
+                ]
+            })
+        )
+
+        with mock.patch.dict(
+            os.environ,
+            {USER_IDENTITIES_FILE_ENV_VAR: str(identities_file)},
+            clear=False,
+        ):
+            apply_user_identity_file(config)
+
+        assert config["users"][0]["oidc"] == {"emails": ["alice@example.com"]}
+        assert config["users"][0]["telegram"] == {
+            "user_ids": [123],
+            "developer": True,
+        }
+        assert config["users"][1]["email_intake"] == {
+            "sender_addresses": ["bob@gmail.com"]
+        }
+        assert config["users"][1]["telegram"] == {"user_ids": [456]}
+
+    def test_deep_merges_with_existing_user(self, tmp_path: Path) -> None:
+        config: dict[str, Any] = {
+            "users": [
+                {
+                    "id": "alice@example.com",
+                    "telegram": {"user_ids": [123], "developer": False},
+                    "email_intake": {"sender_addresses": ["alice@example.com"]},
+                }
+            ]
+        }
+        identities_file = tmp_path / "users.yaml"
+        identities_file.write_text(
+            yaml.dump([
+                {
+                    "id": "alice@example.com",
+                    "telegram": {"developer": True},
+                }
+            ])
+        )
+
+        with mock.patch.dict(
+            os.environ,
+            {USER_IDENTITIES_FILE_ENV_VAR: str(identities_file)},
+            clear=False,
+        ):
+            apply_user_identity_file(config)
+
+        assert config["users"][0]["telegram"] == {
+            "user_ids": [123],
+            "developer": True,
+        }
+        assert config["users"][0]["email_intake"] == {
+            "sender_addresses": ["alice@example.com"]
+        }
+
+    def test_can_create_user_from_bare_list_file(self, tmp_path: Path) -> None:
+        config: dict[str, Any] = {"users": []}
+        identities_file = tmp_path / "users.yaml"
+        identities_file.write_text(
+            yaml.dump([{"id": "alice@example.com", "telegram": {"user_ids": [123]}}])
+        )
+
+        with mock.patch.dict(
+            os.environ,
+            {USER_IDENTITIES_FILE_ENV_VAR: str(identities_file)},
+            clear=False,
+        ):
+            apply_user_identity_file(config)
+
+        assert config["users"] == [
+            {"id": "alice@example.com", "telegram": {"user_ids": [123]}}
+        ]
+
+    def test_empty_env_var_is_ignored(self) -> None:
+        config: dict[str, Any] = {"users": []}
+
+        with mock.patch.dict(
+            os.environ, {USER_IDENTITIES_FILE_ENV_VAR: "   "}, clear=False
+        ):
+            apply_user_identity_file(config)
+
+        assert config == {"users": []}
+
+    def test_missing_file_raises(self, tmp_path: Path) -> None:
+        config: dict[str, Any] = {"users": []}
+        identities_file = tmp_path / "missing.yaml"
+
+        with (
+            mock.patch.dict(
+                os.environ,
+                {USER_IDENTITIES_FILE_ENV_VAR: str(identities_file)},
+                clear=False,
+            ),
+            pytest.raises(ValueError, match="file not found"),
+        ):
+            apply_user_identity_file(config)
+
+    def test_invalid_users_shape_raises(self, tmp_path: Path) -> None:
+        config: dict[str, Any] = {"users": []}
+        identities_file = tmp_path / "users.yaml"
+        identities_file.write_text(yaml.dump({"users": {"alice": {}}}))
+
+        with (
+            mock.patch.dict(
+                os.environ,
+                {USER_IDENTITIES_FILE_ENV_VAR: str(identities_file)},
+                clear=False,
+            ),
+            pytest.raises(ValueError, match="users must be a list"),
+        ):
+            apply_user_identity_file(config)
+
+
 class TestApplyCalendarEnvVars:
     """Tests for apply_calendar_env_vars function."""
 
@@ -1039,6 +1183,60 @@ class TestLoadConfig:
 
         assert config.model == "defaults-model"
         assert config.server_url == "http://defaults.example.com"
+
+    def test_load_config_applies_user_identities_file(self, tmp_path: Path) -> None:
+        """Test loading user identity overlays from a configured file."""
+        defaults_file = tmp_path / "defaults.yaml"
+        defaults_file.write_text(yaml.dump({}))
+        config_file = tmp_path / "config.yaml"
+        config_file.write_text(
+            yaml.dump({
+                "users": [
+                    {
+                        "id": "alice@example.com",
+                        "oidc": {"emails": ["alice@example.com"]},
+                    }
+                ]
+            })
+        )
+        prompts_file = tmp_path / "prompts.yaml"
+        prompts_file.write_text(yaml.dump({}))
+        identities_file = tmp_path / "users.yaml"
+        identities_file.write_text(
+            yaml.dump({
+                "users": [
+                    {
+                        "id": "alice@example.com",
+                        "telegram": {"user_ids": [123], "developer": True},
+                    }
+                ]
+            })
+        )
+
+        env_to_clear = [m.env_var for m in ENV_VAR_MAPPINGS]
+        env_to_clear.extend([
+            "CALDAV_USERNAME",
+            "CALDAV_PASSWORD",
+            "CALDAV_CALENDAR_URLS",
+            "ICAL_URLS",
+            "MCP_CONFIG_PATH",
+            "INDEXING_PIPELINE_CONFIG_JSON",
+            USER_IDENTITIES_FILE_ENV_VAR,
+        ])
+        clean_env = {k: v for k, v in os.environ.items() if k not in env_to_clear}
+        clean_env[USER_IDENTITIES_FILE_ENV_VAR] = str(identities_file)
+
+        with mock.patch.dict(os.environ, clean_env, clear=True):
+            config = load_config(
+                defaults_file_path=str(defaults_file),
+                config_file_path=str(config_file),
+                prompts_file_path=str(prompts_file),
+                load_dotenv_file=False,
+            )
+
+        assert len(config.users) == 1
+        assert config.users[0].telegram.user_ids == {123}
+        assert config.users[0].telegram.developer is True
 
     def test_config_yaml_overrides_defaults_yaml(self, tmp_path: Path) -> None:
         """Test that config.yaml (operator) overrides defaults.yaml (shipped)."""

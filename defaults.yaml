@@ -1,4 +1,9 @@
 # Configuration for Family Assistant
+# Canonical application users. Leave empty for legacy single-interface local
+# development; production deployments should configure one entry per human user
+# so Telegram, web/OIDC, and email all resolve to the same user id.
+users: []
+
 # LLM Provider Configuration
 # Each service profile can specify a 'provider' in its processing_config.
 # Available providers: 'openai', 'google', 'anthropic'
@@ -242,7 +247,7 @@ email_intake:
   require_authenticated_sender: false
   # Require accepted emails to resolve to exactly one configured application user.
   require_user_mapping: false
-  # Map authorized forwarding senders and/or Mailgun inbound aliases to app users.
+  # Legacy email-only mappings. Prefer top-level users[].email_intake for new deployments.
   user_mappings: []
   # Application-level limits in bytes, independent of any reverse proxy limits.
   max_raw_request_bytes: 26214400
@@ -1822,4 +1827,3 @@ otel:
 
 # Secrets (telegram_token, api_keys, database_url) are primarily from env.
 # Model, embedding_model, server_url, storage_paths are also top-level or env.
-

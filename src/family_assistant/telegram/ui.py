@@ -20,6 +20,10 @@ from family_assistant.services.confirmation_service import (
     ConfirmationExpiredError,
     ConfirmationNotFoundError,
 )
+from family_assistant.services.user_identity import (
+    UserIdentityResolutionError,
+    UserIdentityResolver,
+)
 from family_assistant.telegram.markdown_utils import convert_to_telegram_markdown
 from family_assistant.telegram.protocols import ConfirmationUIManager
 from family_assistant.tools.types import ConfirmationOutcome
@@ -58,11 +62,13 @@ class TelegramConfirmationUIManager(ConfirmationUIManager):
         confirmation_timeout: float = 3600.0,
         confirmation_service: ConfirmationService | None = None,
         confirmation_result_waiters: ConfirmationResultWaiterRegistry | None = None,
+        user_identity_resolver: UserIdentityResolver | None = None,
     ) -> None:
         self.application = application
         self.confirmation_timeout = confirmation_timeout
         self.confirmation_service = confirmation_service
         self.confirmation_result_waiters = confirmation_result_waiters
+        self.user_identity_resolver = user_identity_resolver
         self.pending_confirmations: dict[str, PendingTelegramConfirmation] = {}
 
     def _unregister_execution_future(
@@ -75,6 +81,18 @@ class TelegramConfirmationUIManager(ConfirmationUIManager):
             and execution_future is not None
         ):
             self.confirmation_result_waiters.unregister(request_id, execution_future)
+
+    def _resolve_callback_user_id(self, telegram_user_id: int | None) -> str:
+        if telegram_user_id is None:
+            raise ConfirmationAuthorizationError("Telegram callback has no user")
+        if self.user_identity_resolver is None:
+            return str(telegram_user_id)
+        try:
+            return self.user_identity_resolver.resolve_telegram_user(
+                telegram_user_id
+            ).user_id
+        except UserIdentityResolutionError as exc:
+            raise ConfirmationAuthorizationError(str(exc)) from exc
 
     async def request_confirmation(
         self,
@@ -529,13 +547,9 @@ class TelegramConfirmationUIManager(ConfirmationUIManager):
             if decision_future and not decision_future.done():
                 decision_future.set_result(ConfirmationOutcome(kind="approved"))
             return
-        if telegram_user_id is None:
-            raise ConfirmationAuthorizationError(
-                f"Telegram confirmation {request_id} has no approving user"
-            )
         await self.confirmation_service.approve_and_enqueue_execution(
             request_id=request_id,
-            approving_user_id=str(telegram_user_id),
+            approving_user_id=self._resolve_callback_user_id(telegram_user_id),
             approving_interface="telegram",
         )
         if decision_future and not decision_future.done():
@@ -554,13 +568,9 @@ class TelegramConfirmationUIManager(ConfirmationUIManager):
             if decision_future and not decision_future.done():
                 decision_future.set_result(ConfirmationOutcome(kind="rejected"))
             return
-        if telegram_user_id is None:
-            raise ConfirmationAuthorizationError(
-                f"Telegram confirmation {request_id} has no rejecting user"
-            )
         await self.confirmation_service.reject(
             request_id=request_id,
-            rejecting_user_id=str(telegram_user_id),
+            rejecting_user_id=self._resolve_callback_user_id(telegram_user_id),
             rejecting_interface="telegram",
         )
         if decision_future and not decision_future.done():
