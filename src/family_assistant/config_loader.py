@@ -151,6 +151,8 @@ ENV_VAR_MAPPINGS: list[EnvVarMapping] = [
     EnvVarMapping("OTEL_DEBUG_CONSOLE_EXPORTER", "otel.debug_console_exporter", bool),
 ]
 
+USER_TELEGRAM_IDENTITIES_ENV_VAR = "USER_TELEGRAM_IDENTITIES_JSON"
+
 
 def set_nested_value(
     data: dict[str, Any],  # noqa: ANN401
@@ -416,6 +418,120 @@ def apply_env_var_overrides(
             config_data["allowed_user_ids"] = ids
         except ValueError:
             logger.error("Invalid ALLOWED_CHAT_IDS format. Using previous value.")
+
+
+def _parse_telegram_user_ids(value: object, user_id: str) -> list[int]:
+    if not isinstance(value, list):
+        msg = (
+            f"{USER_TELEGRAM_IDENTITIES_ENV_VAR} entry for {user_id!r} "
+            "must set user_ids to a list"
+        )
+        raise ValueError(msg)
+
+    telegram_user_ids: list[int] = []
+    for item in value:
+        try:
+            telegram_user_ids.append(int(item))
+        except (TypeError, ValueError) as exc:
+            msg = (
+                f"{USER_TELEGRAM_IDENTITIES_ENV_VAR} entry for {user_id!r} "
+                f"contains non-integer Telegram user id {item!r}"
+            )
+            raise ValueError(msg) from exc
+
+    if not telegram_user_ids:
+        msg = (
+            f"{USER_TELEGRAM_IDENTITIES_ENV_VAR} entry for {user_id!r} "
+            "must include at least one Telegram user id"
+        )
+        raise ValueError(msg)
+    return telegram_user_ids
+
+
+def apply_user_identity_env_vars(
+    config_data: dict[str, Any],  # noqa: ANN401 - config_data is parsed YAML/JSON
+) -> None:
+    """Overlay sensitive user identity fields from environment variables."""
+    raw_telegram_identities = os.getenv(USER_TELEGRAM_IDENTITIES_ENV_VAR)
+    if raw_telegram_identities is None:
+        return
+
+    try:
+        parsed = json.loads(raw_telegram_identities)
+    except json.JSONDecodeError as exc:
+        msg = f"{USER_TELEGRAM_IDENTITIES_ENV_VAR} must be valid JSON"
+        raise ValueError(msg) from exc
+
+    if not isinstance(parsed, dict):
+        msg = f"{USER_TELEGRAM_IDENTITIES_ENV_VAR} must be a JSON object"
+        raise ValueError(msg)
+
+    users = config_data.setdefault("users", [])
+    if not isinstance(users, list):
+        msg = "Config field users must be a list before applying env overrides"
+        raise ValueError(msg)
+
+    users_by_id: dict[str, dict[str, Any]] = {}
+    for user in users:
+        if not isinstance(user, dict):
+            msg = (
+                "Config field users must contain objects before applying env overrides"
+            )
+            raise ValueError(msg)
+        configured_user_id = user.get("id")
+        if not isinstance(configured_user_id, str):
+            msg = "Config field users entries must have string id values"
+            raise ValueError(msg)
+        users_by_id[configured_user_id] = user
+
+    for user_id, identity_data in parsed.items():
+        if not isinstance(user_id, str) or not user_id.strip():
+            msg = f"{USER_TELEGRAM_IDENTITIES_ENV_VAR} keys must be non-empty strings"
+            raise ValueError(msg)
+        if not isinstance(identity_data, dict):
+            msg = (
+                f"{USER_TELEGRAM_IDENTITIES_ENV_VAR} entry for {user_id!r} "
+                "must be an object"
+            )
+            raise ValueError(msg)
+
+        telegram_user_ids = _parse_telegram_user_ids(
+            identity_data.get("user_ids"), user_id
+        )
+        developer_value = identity_data.get("developer")
+        if developer_value is not None and not isinstance(developer_value, bool):
+            msg = (
+                f"{USER_TELEGRAM_IDENTITIES_ENV_VAR} entry for {user_id!r} "
+                "must set developer to a boolean when present"
+            )
+            raise ValueError(msg)
+
+        user: dict[str, Any] | None = users_by_id.get(user_id)
+        if user is None:
+            user = {"id": user_id}
+            users.append(user)
+            users_by_id[user_id] = user
+
+        telegram_config = user.get("telegram")
+        if telegram_config is None:
+            telegram_config = {}
+            user["telegram"] = telegram_config
+        if not isinstance(telegram_config, dict):
+            msg = f"Config field users entry {user_id!r} has non-object telegram config"
+            raise ValueError(msg)
+
+        existing_ids = telegram_config.get("user_ids", [])
+        if not isinstance(existing_ids, (list, set, tuple)):
+            msg = f"Config field users entry {user_id!r} has invalid telegram.user_ids"
+            raise ValueError(msg)
+        merged_ids = [int(item) for item in existing_ids]
+        for telegram_user_id in telegram_user_ids:
+            if telegram_user_id not in merged_ids:
+                merged_ids.append(telegram_user_id)
+        telegram_config["user_ids"] = merged_ids
+
+        if developer_value is not None:
+            telegram_config["developer"] = developer_value
 
 
 def apply_calendar_env_vars(
@@ -968,6 +1084,7 @@ def load_config(
         load_dotenv()
 
     apply_env_var_overrides(config_data)
+    apply_user_identity_env_vars(config_data)
     apply_calendar_env_vars(config_data)
     config_data["telegram_enabled"] = bool(config_data.get("telegram_token"))
 

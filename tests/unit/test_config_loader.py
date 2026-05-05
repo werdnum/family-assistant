@@ -22,8 +22,10 @@ from pydantic import ValidationError
 
 from family_assistant.config_loader import (
     ENV_VAR_MAPPINGS,
+    USER_TELEGRAM_IDENTITIES_ENV_VAR,
     apply_calendar_env_vars,
     apply_env_var_overrides,
+    apply_user_identity_env_vars,
     get_nested_value,
     load_config,
     parse_env_value,
@@ -549,6 +551,98 @@ class TestApplyEnvVarOverrides:
         assert (
             config["email_intake"]["mailgun_webhook_signing_key"] == "test-signing-key"
         )
+
+
+class TestApplyUserIdentityEnvVars:
+    """Tests for user identity environment overlays."""
+
+    def test_overlays_telegram_identities_on_configured_users(self) -> None:
+        config: dict[str, Any] = {
+            "users": [
+                {
+                    "id": "alice@example.com",
+                    "oidc": {"emails": ["alice@example.com"]},
+                },
+                {
+                    "id": "bob@example.com",
+                    "email_intake": {"sender_addresses": ["bob@gmail.com"]},
+                },
+            ]
+        }
+        env_value = (
+            '{"alice@example.com":{"user_ids":[123],"developer":true},'
+            '"bob@example.com":{"user_ids":["456"]}}'
+        )
+
+        with mock.patch.dict(
+            os.environ, {USER_TELEGRAM_IDENTITIES_ENV_VAR: env_value}, clear=False
+        ):
+            apply_user_identity_env_vars(config)
+
+        assert config["users"][0]["telegram"] == {
+            "user_ids": [123],
+            "developer": True,
+        }
+        assert config["users"][1]["telegram"] == {"user_ids": [456]}
+
+    def test_merges_with_existing_telegram_ids(self) -> None:
+        config: dict[str, Any] = {
+            "users": [
+                {
+                    "id": "alice@example.com",
+                    "telegram": {"user_ids": [123], "developer": False},
+                }
+            ]
+        }
+        env_value = '{"alice@example.com":{"user_ids":[123,456]}}'
+
+        with mock.patch.dict(
+            os.environ, {USER_TELEGRAM_IDENTITIES_ENV_VAR: env_value}, clear=False
+        ):
+            apply_user_identity_env_vars(config)
+
+        assert config["users"][0]["telegram"] == {
+            "user_ids": [123, 456],
+            "developer": False,
+        }
+
+    def test_can_create_telegram_only_user(self) -> None:
+        config: dict[str, Any] = {"users": []}
+        env_value = '{"alice@example.com":{"user_ids":[123]}}'
+
+        with mock.patch.dict(
+            os.environ, {USER_TELEGRAM_IDENTITIES_ENV_VAR: env_value}, clear=False
+        ):
+            apply_user_identity_env_vars(config)
+
+        assert config["users"] == [
+            {"id": "alice@example.com", "telegram": {"user_ids": [123]}}
+        ]
+
+    def test_invalid_json_raises(self) -> None:
+        config: dict[str, Any] = {"users": []}
+
+        with (
+            mock.patch.dict(
+                os.environ,
+                {USER_TELEGRAM_IDENTITIES_ENV_VAR: "not json"},
+                clear=False,
+            ),
+            pytest.raises(ValueError, match="must be valid JSON"),
+        ):
+            apply_user_identity_env_vars(config)
+
+    def test_empty_user_ids_raise(self) -> None:
+        config: dict[str, Any] = {"users": []}
+        env_value = '{"alice@example.com":{"user_ids":[]}}'
+
+        with (
+            mock.patch.dict(
+                os.environ, {USER_TELEGRAM_IDENTITIES_ENV_VAR: env_value}, clear=False
+            ),
+            pytest.raises(ValueError, match="must include at least one"),
+        ):
+            apply_user_identity_env_vars(config)
 
 
 class TestApplyCalendarEnvVars:

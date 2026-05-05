@@ -134,6 +134,60 @@ Directory containing user documentation files.
 
 ______________________________________________________________________
 
+## User Identities
+
+Use top-level `users` to map each human to a canonical application user id across web/OIDC,
+Telegram, and email intake. This is the id stored on durable confirmations and other user-scoped
+records.
+
+```yaml
+users:
+  - id: "alice@example.com"
+    oidc:
+      emails:
+        - "alice@example.com"
+    telegram:
+      user_ids:
+        - 123456789
+      developer: true
+    email_intake:
+      sender_addresses:
+        - "alice@gmail.com"
+```
+
+Use the stable Keycloak/OIDC email as `id` unless you have a stronger local convention. Telegram
+`user_ids` are Telegram user IDs, not chat IDs.
+
+If you do not want Telegram identifiers in `config.yaml`, keep the non-sensitive user shape in YAML
+and inject Telegram identity details with `USER_TELEGRAM_IDENTITIES_JSON`:
+
+```yaml
+users:
+  - id: "alice@example.com"
+    oidc:
+      emails:
+        - "alice@example.com"
+    email_intake:
+      sender_addresses:
+        - "alice@gmail.com"
+```
+
+```bash
+USER_TELEGRAM_IDENTITIES_JSON='{"alice@example.com":{"user_ids":[123456789],"developer":true}}'
+CHAT_ID_TO_NAME_MAP='123456789:Alice'
+```
+
+The JSON object is keyed by `users[].id`. Each value must contain `user_ids`, a list of Telegram
+user IDs. `developer` is optional and overrides `users[].telegram.developer` when present. This is
+useful for GitOps deployments that keep numeric Telegram IDs and display names in a Kubernetes
+Secret or SealedSecret while leaving email/OIDC mappings editable in the normal config.
+
+`email_intake.allowed_sender_addresses` and `allowed_recipient_addresses` are still security
+allowlists. They answer "which inbound addresses are accepted at all"; `users[].email_intake`
+answers "which canonical user owns this accepted email".
+
+______________________________________________________________________
+
 ## Email Intake Security
 
 The `/webhook/mail` endpoint accepts Mailgun inbound email webhooks. Use this configuration when
@@ -365,6 +419,23 @@ Mapping of Telegram chat IDs to display names.
 | Example   | `123:Alice,456:Bob` |
 
 Format: comma-separated `chat_id:name` pairs.
+
+______________________________________________________________________
+
+### USER_TELEGRAM_IDENTITIES_JSON
+
+JSON object that overlays Telegram identities onto top-level `users`.
+
+| Property  | Value                                                       |
+| --------- | ----------------------------------------------------------- |
+| Required  | No                                                          |
+| Default   | Unset                                                       |
+| Sensitive | Yes, if Telegram user IDs or display names are sensitive    |
+| Example   | `{"alice@example.com":{"user_ids":[123],"developer":true}}` |
+
+Keys are canonical application user ids, normally matching `users[].id`. Values contain `user_ids`
+and optional `developer`. Existing YAML `telegram.user_ids` are preserved and env-provided IDs are
+added.
 
 ______________________________________________________________________
 
