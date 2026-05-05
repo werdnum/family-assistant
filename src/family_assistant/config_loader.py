@@ -151,6 +151,8 @@ ENV_VAR_MAPPINGS: list[EnvVarMapping] = [
     EnvVarMapping("OTEL_DEBUG_CONSOLE_EXPORTER", "otel.debug_console_exporter", bool),
 ]
 
+USER_IDENTITIES_FILE_ENV_VAR = "USER_IDENTITIES_FILE"
+
 
 def set_nested_value(
     data: dict[str, Any],  # noqa: ANN401
@@ -416,6 +418,88 @@ def apply_env_var_overrides(
             config_data["allowed_user_ids"] = ids
         except ValueError:
             logger.error("Invalid ALLOWED_CHAT_IDS format. Using previous value.")
+
+
+def _coerce_user_identity_list(
+    raw_data: object,
+    source_label: str,
+) -> list[dict[str, Any]]:
+    if raw_data is None:
+        return []
+
+    if isinstance(raw_data, dict):
+        users_data = raw_data.get("users")
+        if users_data is None:
+            msg = f"{source_label} must contain a users list"
+            raise ValueError(msg)
+    else:
+        users_data = raw_data
+
+    if not isinstance(users_data, list):
+        msg = f"{source_label} users must be a list"
+        raise ValueError(msg)
+
+    users: list[dict[str, Any]] = []
+    for index, user_data in enumerate(users_data):
+        if not isinstance(user_data, dict):
+            msg = f"{source_label} users[{index}] must be an object"
+            raise ValueError(msg)
+        user_id = user_data.get("id")
+        if not isinstance(user_id, str) or not user_id.strip():
+            msg = f"{source_label} users[{index}].id must be a non-empty string"
+            raise ValueError(msg)
+        users.append(user_data)
+    return users
+
+
+def _merge_user_identity_lists(
+    base_users: list[dict[str, Any]],
+    overlay_users: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    result = copy.deepcopy(base_users)
+    result_by_id = {user["id"]: user for user in result}
+
+    for overlay_user in overlay_users:
+        user_id = overlay_user["id"]
+        base_user = result_by_id.get(user_id)
+        if base_user is None:
+            new_user = copy.deepcopy(overlay_user)
+            result.append(new_user)
+            result_by_id[user_id] = new_user
+        else:
+            merged_user = deep_merge_dicts(base_user, overlay_user)
+            base_user.clear()
+            base_user.update(merged_user)
+
+    return result
+
+
+def apply_user_identity_file(
+    config_data: dict[str, Any],  # noqa: ANN401 - config_data is parsed YAML/JSON
+) -> None:
+    """Overlay user identities from a YAML file named by the environment."""
+    file_path = os.getenv(USER_IDENTITIES_FILE_ENV_VAR)
+    if file_path is None or not file_path.strip():
+        return
+
+    try:
+        with open(file_path, encoding="utf-8") as f:
+            raw_overlay = yaml.safe_load(f)
+    except FileNotFoundError as exc:
+        msg = f"{USER_IDENTITIES_FILE_ENV_VAR} file not found: {file_path}"
+        raise ValueError(msg) from exc
+    except yaml.YAMLError as exc:
+        msg = f"{USER_IDENTITIES_FILE_ENV_VAR} must point to valid YAML: {file_path}"
+        raise ValueError(msg) from exc
+
+    base_users = _coerce_user_identity_list(
+        config_data.get("users", []), "Config field"
+    )
+    overlay_users = _coerce_user_identity_list(
+        raw_overlay,
+        USER_IDENTITIES_FILE_ENV_VAR,
+    )
+    config_data["users"] = _merge_user_identity_lists(base_users, overlay_users)
 
 
 def apply_calendar_env_vars(
@@ -968,6 +1052,7 @@ def load_config(
         load_dotenv()
 
     apply_env_var_overrides(config_data)
+    apply_user_identity_file(config_data)
     apply_calendar_env_vars(config_data)
     config_data["telegram_enabled"] = bool(config_data.get("telegram_token"))
 

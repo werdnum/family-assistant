@@ -165,6 +165,40 @@ When `users` is configured, unknown OIDC users, Telegram users, and required ema
 rejected at the interface boundary. When it is empty, the app keeps the legacy behavior:
 `allowed_user_ids`, `developer_chat_id`, and `email_intake.user_mappings`.
 
+If you do not want Telegram identifiers in `config.yaml`, keep the non-sensitive user shape in YAML
+and inject sensitive identity details with `USER_IDENTITIES_FILE`:
+
+```yaml
+users:
+  - id: "alice@example.com"
+    oidc:
+      emails:
+        - "alice@example.com"
+    email_intake:
+      sender_addresses:
+        - "alice@gmail.com"
+```
+
+```yaml
+# /run/secrets/family-assistant-users.yaml
+users:
+  - id: "alice@example.com"
+    telegram:
+      user_ids:
+        - 123456789
+      developer: true
+```
+
+```bash
+USER_IDENTITIES_FILE=/run/secrets/family-assistant-users.yaml
+CHAT_ID_TO_NAME_MAP='123456789:Alice'
+```
+
+The file can contain either a top-level `users:` list or a bare user list. Entries are merged into
+`config.yaml` by `id`, so secret-backed files can add only the sensitive fields. This is useful for
+GitOps deployments that keep numeric Telegram IDs and display names in a Kubernetes Secret or
+SealedSecret while leaving email/OIDC mappings editable in the normal config.
+
 ### Migration From Legacy Identity Settings
 
 | Legacy field                                       | New field                                  |
@@ -178,6 +212,8 @@ rejected at the interface boundary. When it is empty, the app keeps the legacy b
 `email_intake.allowed_sender_addresses` and `allowed_recipient_addresses` are still security
 allowlists. They answer "which inbound addresses are accepted at all"; `users[].email_intake`
 answers "which canonical user owns this accepted email".
+
+______________________________________________________________________
 
 ## Email Intake Security
 
@@ -402,6 +438,39 @@ Mapping of Telegram chat IDs to display names.
 | Example   | `123:Alice,456:Bob` |
 
 Format: comma-separated `chat_id:name` pairs.
+
+______________________________________________________________________
+
+### USER_IDENTITIES_FILE
+
+Path to a YAML file containing user identity entries to merge into top-level `users`.
+
+| Property  | Value                                                    |
+| --------- | -------------------------------------------------------- |
+| Required  | No                                                       |
+| Default   | Unset                                                    |
+| Sensitive | Yes, if the file contains sensitive identity identifiers |
+| Example   | `/run/secrets/family-assistant-users.yaml`               |
+
+The file can contain either:
+
+```yaml
+users:
+  - id: "alice@example.com"
+    telegram:
+      user_ids: [123]
+```
+
+or:
+
+```yaml
+- id: "alice@example.com"
+  telegram:
+    user_ids: [123]
+```
+
+Entries are merged with configured users by `id`. Nested objects are deep-merged; lists follow
+normal YAML config semantics and are replaced by the overlay value.
 
 ______________________________________________________________________
 
