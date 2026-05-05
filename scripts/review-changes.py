@@ -325,59 +325,54 @@ class CodeReviewToolbox(llm.Toolbox):
             raise ReviewSubmittedException("Review submitted, exiting tool chain")
 
 
-def get_diff(mode: str = "staged") -> str:
-    """Get the git diff based on mode."""
-    cmd = ["git", "diff", "--cached"] if mode == "staged" else ["git", "show", "HEAD"]
+def _diff_command(mode: str, base: str | None, extra: list[str]) -> list[str]:
+    """Build the git command for the given review mode."""
+    if mode == "staged":
+        return ["git", "diff", "--cached", *extra]
+    if mode == "commit":
+        return ["git", "show", "HEAD", *extra]
+    if mode == "branch":
+        if not base:
+            raise ValueError("branch mode requires a base ref")
+        return ["git", "diff", f"{base}...HEAD", *extra]
+    raise ValueError(f"Unknown review mode: {mode}")
 
-    try:
-        result = subprocess.run(
-            cmd,
-            capture_output=True,
-            text=True,
-            check=True,
-        )
-    except subprocess.CalledProcessError:
-        return ""
+
+def get_diff(mode: str = "staged", base: str | None = None) -> str:
+    """Get the git diff based on mode. Raises CalledProcessError on git failure."""
+    result = subprocess.run(
+        _diff_command(mode, base, []),
+        capture_output=True,
+        text=True,
+        check=True,
+    )
     return result.stdout
 
 
-def get_diff_stat(mode: str = "staged") -> str:
-    """Get the git diff statistics."""
-    cmd = (
-        ["git", "diff", "--cached", "--stat"]
-        if mode == "staged"
-        else ["git", "show", "HEAD", "--stat"]
+def get_diff_stat(mode: str = "staged", base: str | None = None) -> str:
+    """Get the git diff statistics. Raises CalledProcessError on git failure."""
+    result = subprocess.run(
+        _diff_command(mode, base, ["--stat"]),
+        capture_output=True,
+        text=True,
+        check=True,
     )
-
-    try:
-        result = subprocess.run(
-            cmd,
-            capture_output=True,
-            text=True,
-            check=True,
-        )
-    except subprocess.CalledProcessError:
-        return ""
     return result.stdout
 
 
-def get_changed_files(mode: str = "staged") -> list[str]:
-    """Get list of changed files."""
-    cmd = (
-        ["git", "diff", "--cached", "--name-only"]
-        if mode == "staged"
-        else ["git", "show", "HEAD", "--name-only", "--pretty=format:"]
-    )
+def get_changed_files(mode: str = "staged", base: str | None = None) -> list[str]:
+    """Get list of changed files. Raises CalledProcessError on git failure."""
+    if mode == "commit":
+        cmd = ["git", "show", "HEAD", "--name-only", "--pretty=format:"]
+    else:
+        cmd = _diff_command(mode, base, ["--name-only"])
 
-    try:
-        result = subprocess.run(
-            cmd,
-            capture_output=True,
-            text=True,
-            check=True,
-        )
-    except subprocess.CalledProcessError:
-        return []
+    result = subprocess.run(
+        cmd,
+        capture_output=True,
+        text=True,
+        check=True,
+    )
     return [f for f in result.stdout.splitlines() if f]
 
 
@@ -521,14 +516,23 @@ def smart_truncate_diff(diff: str, max_chars: int = 50000) -> tuple[str, bool]:
     return "\n".join(result), True
 
 
-def get_baseline_commit(mode: str = "staged") -> str:
+def get_baseline_commit(mode: str = "staged", base: str | None = None) -> str:
     """Get the baseline commit for the diff."""
     if mode == "staged":
         # For staged changes, baseline is HEAD
         cmd = ["git", "rev-parse", "HEAD"]
-    else:
+    elif mode == "commit":
         # For commit mode, baseline is the parent of HEAD
         cmd = ["git", "rev-parse", "HEAD~1"]
+    elif mode == "branch":
+        # For branch mode, baseline is the merge-base with the given base ref.
+        # Using merge-base (not the base tip) keeps the cache key stable when
+        # the base branch advances without affecting our review.
+        if not base:
+            return ""
+        cmd = ["git", "merge-base", base, "HEAD"]
+    else:
+        return ""
 
     try:
         result = subprocess.run(
@@ -720,16 +724,18 @@ def review_changes(
     output_json: bool = False,
     model_name: str | None = None,
     command: str | None = None,
+    base: str | None = None,
     # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
 ) -> tuple[int, dict[str, Any]]:
     """
     Main review function using LLM with tools.
 
     Args:
-        mode: "staged" or "commit"
+        mode: "staged", "commit", or "branch"
         output_json: Whether to output JSON instead of human-readable format
         model_name: Optional model name to use (e.g., 'gpt-4o', 'claude-3.5-sonnet')
         command: Optional git command being executed (for context)
+        base: Base ref for branch mode (e.g., 'origin/main'). Required when mode == 'branch'.
 
     Returns:
         Tuple of (exit_code, review_data)
@@ -769,11 +775,52 @@ def review_changes(
         original_stdout = sys.stdout
         sys.stdout = sys.stderr
 
+    # Validate branch mode has a usable base ref
+    if mode == "branch":
+        if not base:
+            print(
+                "Error: branch mode requires a base ref (e.g. --branch origin/main)",
+                file=sys.stderr,
+            )
+            sys.exit(1)
+        try:
+            subprocess.run(
+                ["git", "rev-parse", "--verify", base],
+                capture_output=True,
+                text=True,
+                check=True,
+            )
+        except subprocess.CalledProcessError:
+            print(
+                f"Error: base ref '{base}' could not be resolved. "
+                "Try fetching it first (e.g. git fetch origin main).",
+                file=sys.stderr,
+            )
+            sys.exit(1)
+
     # Get diff and check if there are changes
-    diff = get_diff(mode)
-    if not diff.strip():
+    try:
+        diff = get_diff(mode, base)
+        diff_stat = get_diff_stat(mode, base)
+        changed_files = get_changed_files(mode, base)
+    except subprocess.CalledProcessError as err:
+        stderr_text = (err.stderr or "").strip()
+        cmd_text = " ".join(err.cmd) if isinstance(err.cmd, list) else str(err.cmd)
         print(
-            f"No {'staged' if mode == 'staged' else 'committed'} changes to review",
+            f"Error: git command failed (exit {err.returncode}): {cmd_text}\n{stderr_text}",
+            file=sys.stderr,
+        )
+        if output_json:
+            sys.stdout = original_stdout
+        sys.exit(1)
+    if not diff.strip():
+        no_changes_label = {
+            "staged": "staged",
+            "commit": "committed",
+            "branch": f"branch (vs {base})",
+        }.get(mode, mode)
+        print(
+            f"No {no_changes_label} changes to review",
             file=sys.stderr,
         )
         if output_json:
@@ -788,11 +835,10 @@ def review_changes(
             )
         return 0, {}
 
-    # Get diff statistics and file list
-    diff_stat = get_diff_stat(mode)
-    changed_files = get_changed_files(mode)
-
-    print(f"Reviewing {mode} changes...", file=sys.stderr)
+    if mode == "branch":
+        print(f"Reviewing branch changes (vs {base})...", file=sys.stderr)
+    else:
+        print(f"Reviewing {mode} changes...", file=sys.stderr)
     print("\nChange Statistics:", file=sys.stderr)
     print(diff_stat, file=sys.stderr)
 
@@ -955,7 +1001,7 @@ submit_review(
 
     # Check cache first
     cache_dir = repo_root / ".review_cache"
-    baseline_commit = get_baseline_commit(mode)
+    baseline_commit = get_baseline_commit(mode, base)
     cache_key = compute_cache_key(diff, baseline_commit)
 
     cached_review = get_cached_review(cache_key, cache_dir)
@@ -1109,10 +1155,22 @@ Exit codes:
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
 
-    parser.add_argument(
+    mode_group = parser.add_mutually_exclusive_group()
+    mode_group.add_argument(
         "--commit",
         action="store_true",
         help="Review the most recent commit (default: review staged changes)",
+    )
+    mode_group.add_argument(
+        "--branch",
+        nargs="?",
+        const="origin/main",
+        default=None,
+        metavar="BASE",
+        help=(
+            "Review the entire current branch versus BASE (default: origin/main). "
+            "Useful as a pre-PR review step covering all commits on the branch."
+        ),
     )
     parser.add_argument(
         "--json",
@@ -1152,13 +1210,23 @@ Exit codes:
             stream=sys.stderr,
         )
 
-    mode = "commit" if args.commit else "staged"
+    if args.commit:
+        mode = "commit"
+        base = None
+    elif args.branch is not None:
+        mode = "branch"
+        base = args.branch
+    else:
+        mode = "staged"
+        base = None
     output_json = args.json
     model_name = args.model
     command = args.command
 
     try:
-        exit_code, _ = review_changes(mode, output_json, model_name, command)
+        exit_code, _ = review_changes(
+            mode, output_json, model_name, command, base=base
+        )
         sys.exit(exit_code)
     except KeyboardInterrupt:
         print("\nReview cancelled by user", file=sys.stderr)

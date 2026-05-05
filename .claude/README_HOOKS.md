@@ -221,5 +221,8 @@ This project was migrated from custom hook scripts to plugins:
 **Kept Scripts**:
 
 - `session-start-hook.sh`: Project-specific workspace setup (not replaced by plugins)
-- `scripts/review-changes.py`: Integrated with guardian plugin's code review workflow
+- `scripts/review-changes.py`: Integrated with guardian plugin's code review workflow.
+  Supports three modes: default (staged changes), `--commit` (last commit),
+  and `--branch [BASE]` (whole branch vs `BASE`, default `origin/main`) for use
+  as a pre-PR review step.
 - `scripts/format-and-lint.sh`: Standalone script for manual use and pre-commit hooks
