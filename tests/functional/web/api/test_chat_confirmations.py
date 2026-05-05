@@ -1,0 +1,146 @@
+from __future__ import annotations
+
+from datetime import UTC, datetime, timedelta
+from typing import TYPE_CHECKING
+
+import pytest
+from sqlalchemy import select
+
+from family_assistant.services.confirmation_service import ConfirmationService
+from family_assistant.storage.context import get_db_context
+from family_assistant.storage.tasks import tasks_table
+from family_assistant.web.dependencies import get_current_user
+
+if TYPE_CHECKING:
+    from fastapi import FastAPI
+    from httpx import AsyncClient
+    from sqlalchemy.ext.asyncio import AsyncEngine
+
+
+async def _create_confirmation(
+    db_engine: AsyncEngine,
+    *,
+    request_user_id: str = "test_user",
+    expires_at: datetime | None = None,
+) -> str:
+    service = ConfirmationService(
+        db_context_factory=lambda: get_db_context(db_engine),
+    )
+    request = await service.create_request(
+        target_user_id=request_user_id,
+        tool_name="add_or_update_note",
+        tool_args={"title": "Trip", "content": "Flight lands at 6pm"},
+        tool_call_id="tool-call-123",
+        source_message_internal_id=None,
+        confirmation_prompt="Create a note for this itinerary?",
+        expires_at=expires_at or datetime.now(UTC) + timedelta(minutes=30),
+    )
+    return request["id"]
+
+
+async def _task_exists(db_engine: AsyncEngine, task_id: str) -> bool:
+    async with get_db_context(db_engine) as db:
+        row = await db.fetch_one(
+            select(tasks_table.c.id).where(tasks_table.c.original_task_id == task_id)
+        )
+    return row is not None
+
+
+@pytest.mark.asyncio
+async def test_pending_confirmations_lists_only_current_user_unexpired_requests(
+    api_test_client: AsyncClient,
+    db_engine: AsyncEngine,
+) -> None:
+    request_id = await _create_confirmation(db_engine)
+    await _create_confirmation(db_engine, request_user_id="other_user")
+    await _create_confirmation(
+        db_engine,
+        expires_at=datetime.now(UTC) - timedelta(seconds=1),
+    )
+
+    response = await api_test_client.get("/api/v1/chat/confirmations/pending")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert [item["request_id"] for item in body["confirmations"]] == [request_id]
+    confirmation = body["confirmations"][0]
+    assert confirmation["tool_name"] == "add_or_update_note"
+    assert confirmation["tool_call_id"] == "tool-call-123"
+    assert confirmation["args"] == {
+        "title": "Trip",
+        "content": "Flight lands at 6pm",
+    }
+
+
+@pytest.mark.asyncio
+async def test_approving_pending_confirmation_via_web_enqueues_execution_task(
+    api_test_client: AsyncClient,
+    db_engine: AsyncEngine,
+) -> None:
+    request_id = await _create_confirmation(db_engine)
+
+    response = await api_test_client.post(
+        "/api/v1/chat/confirm_tool",
+        json={"request_id": request_id, "approved": True},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["success"] is True
+    assert await _task_exists(
+        db_engine,
+        f"confirmation_tool_execution:{request_id}",
+    )
+
+    pending_response = await api_test_client.get("/api/v1/chat/confirmations/pending")
+    assert pending_response.json()["confirmations"] == []
+
+
+@pytest.mark.asyncio
+async def test_rejecting_pending_confirmation_via_web_does_not_enqueue_task(
+    api_test_client: AsyncClient,
+    db_engine: AsyncEngine,
+) -> None:
+    request_id = await _create_confirmation(db_engine)
+
+    response = await api_test_client.post(
+        "/api/v1/chat/confirm_tool",
+        json={"request_id": request_id, "approved": False},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["success"] is True
+    assert not await _task_exists(
+        db_engine,
+        f"confirmation_tool_execution:{request_id}",
+    )
+
+
+@pytest.mark.asyncio
+async def test_other_web_user_cannot_list_or_resolve_confirmation(
+    app_fixture: FastAPI,
+    api_test_client: AsyncClient,
+    db_engine: AsyncEngine,
+) -> None:
+    request_id = await _create_confirmation(db_engine, request_user_id="owner_user")
+
+    async def other_user() -> dict[str, object]:
+        return {"user_identifier": "other_user"}
+
+    app_fixture.dependency_overrides[get_current_user] = other_user
+    try:
+        list_response = await api_test_client.get("/api/v1/chat/confirmations/pending")
+        confirm_response = await api_test_client.post(
+            "/api/v1/chat/confirm_tool",
+            json={"request_id": request_id, "approved": True},
+        )
+    finally:
+        app_fixture.dependency_overrides.pop(get_current_user, None)
+
+    assert list_response.status_code == 200
+    assert list_response.json()["confirmations"] == []
+    assert confirm_response.status_code == 200
+    assert confirm_response.json()["success"] is False
+    assert not await _task_exists(
+        db_engine,
+        f"confirmation_tool_execution:{request_id}",
+    )

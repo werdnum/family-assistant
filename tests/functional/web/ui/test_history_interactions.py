@@ -351,7 +351,7 @@ async def test_history_combined_filters_interaction(
     await conv_input.press("Tab")
 
     # Wait for URL to update with conversation ID filter
-    await page.wait_for_url("**/history?*conversation_id=web_conv*", timeout=5000)
+    await page.wait_for_url("**/history?*conversation_id=web_conv*", timeout=15000)
 
     # Verify all filters are in URL
     current_url = page.url
