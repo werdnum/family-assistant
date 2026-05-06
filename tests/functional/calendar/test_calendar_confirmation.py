@@ -612,3 +612,31 @@ async def test_confirmation_when_event_not_found(
         # Should show error message but still show the changes
         assert "Event details not found" in confirmation_prompt
         assert "This will fail" in confirmation_prompt
+
+
+@pytest.mark.asyncio
+async def test_modify_calendar_confirmation_shows_empty_string_changes(
+    db_engine: AsyncEngine,
+) -> None:
+    """Empty string updates must be visible before the user approves them."""
+    mock_provider = LocalToolsProvider(
+        [], {}, calendar_config=cast("CalendarConfig", {})
+    )
+
+    async with get_db_context(engine=db_engine) as db_ctx:
+        mock_context = create_test_execution_context(
+            db_context=db_ctx, tools_provider=mock_provider
+        )
+
+        confirmation_prompt = await render_modify_calendar_event_confirmation(
+            args={
+                "uid": "event@example.com",
+                "calendar_url": "https://example.com/calendar/",
+                "new_summary": "",
+                "new_description": "",
+            },
+            context=mock_context,
+        )
+
+    assert "Set summary" in confirmation_prompt
+    assert "Set description" in confirmation_prompt

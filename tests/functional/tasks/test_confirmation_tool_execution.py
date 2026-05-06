@@ -46,7 +46,7 @@ if TYPE_CHECKING:
     from family_assistant.interfaces import ChatInterface
     from family_assistant.processing import ProcessingService
     from family_assistant.tools import ToolExecutionContext
-    from family_assistant.tools.types import ToolDefinition
+    from family_assistant.tools.types import ToolArguments, ToolDefinition
 
 TEST_TOOL_DEFINITION: ToolDefinition = {
     "type": "function",
@@ -353,12 +353,15 @@ async def _create_request(
     db_engine: AsyncEngine,
     *,
     source_message_internal_id: int | None,
-    tool_args: dict[str, object] | None = None,
+    tool_args: ToolArguments | None = None,
 ) -> str:
+    resolved_tool_args: ToolArguments = (
+        tool_args if tool_args is not None else {"value": "payload"}
+    )
     request = await _confirmation_service(db_engine).create_request(
         target_user_id="user-1",
         tool_name="record_tool",
-        tool_args=tool_args or {"value": "payload"},
+        tool_args=resolved_tool_args,
         tool_call_id="call-record-tool",
         source_message_internal_id=source_message_internal_id,
         confirmation_prompt="Run record_tool with value payload",

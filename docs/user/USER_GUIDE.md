@@ -36,9 +36,12 @@ services to respond or perform actions.
   ![Landing Page](../../screenshots/desktop/landing-page.png) *The Family Assistant landing page
   provides quick access to all major features*
 
-- **Email (Future):** \*Soon, you might be able to forward emails (like flight confirmations or
-  event invitations) to a special address so the assistant can automatically store the information.
-  Stay tuned!
+- **Email:** If configured by the operator, forward order confirmations, tickets, travel bookings,
+  school notices, or invitations to your assistant email address. The assistant can summarize the
+  email, identify useful actions, and reply by email. Calendar changes, saved notes, reminders, and
+  messages to other Family Assistant users require confirmation in a trusted interface such as
+  Telegram or the Web UI before they execute. Email replies are sent only when your forwarding
+  sender address is mapped to your account by the operator.
 
 ## 3. What Can the Assistant Do For You? (Core Features)
 
@@ -116,6 +119,14 @@ You can ask the assistant a wide variety of things:
     would survive real tool outputs" \*The test harness uses the real tool registry, keeps read-only
     tools real by default, simulates action tools with realistic values, and returns a transcript of
     which calls were real vs simulated.
+
+- **Forward Email for Action:** If email intake actions are enabled, you can forward an order
+  confirmation or ticket purchase and let the assistant extract the relevant details. For example, a
+  soccer ticket email can become a proposed calendar event or note. The assistant treats the email
+  body and forwarded content as untrusted evidence, so it will not follow special instructions
+  embedded in the email. Any state-changing action waits for your confirmation in Telegram or the
+  Web UI. If the email came through a recipient-only alias without a mapped forwarding sender,
+  confirmations can still be created, but the assistant will not email a reply.
 
 - **Remember Things (Notes):** \*Tell it to save information permanently: \*"Remember: The plumber's
   number is 555-1234." \*"Add a note titled 'Vacation Ideas' with the content 'Visit the Grand

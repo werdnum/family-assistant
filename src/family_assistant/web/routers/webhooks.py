@@ -14,6 +14,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from pydantic import BaseModel, ValidationError
 from starlette.datastructures import UploadFile as StarletteUploadFile
 
+from family_assistant.email_intake.actions import EMAIL_INTAKE_ACTION_TASK_TYPE
 from family_assistant.email_intake.security import (
     EmailIntakePayloadTooLargeError,
     EmailIntakeSecurityError,
@@ -362,7 +363,24 @@ async def handle_mail_webhook(
         )
 
         # Pass the Pydantic model instance to the storage function
-        await db_context.email.store_incoming(parsed_email_payload)
+        email_db_id = await db_context.email.store_incoming(parsed_email_payload)
+        if (
+            email_db_id is not None
+            and email_intake_config.enable_actions
+            and target_user_id is not None
+        ):
+            await db_context.tasks.enqueue(
+                task_id=f"email_intake_action_{email_db_id}",
+                task_type=EMAIL_INTAKE_ACTION_TASK_TYPE,
+                payload={
+                    "email_db_id": email_db_id,
+                    "interface_type": "email",
+                    "conversation_id": f"email:{email_db_id}",
+                    "user_name": target_user_id,
+                },
+                original_task_id=f"email_intake_action_{email_db_id}",
+                max_retries_override=0,
+            )
 
         return Response(status_code=200, content="Email received and processed.")
 

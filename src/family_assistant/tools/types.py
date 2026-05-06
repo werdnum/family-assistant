@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import base64
 import json
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Literal, NotRequired, Protocol, TypedDict
 
@@ -186,6 +186,17 @@ if TYPE_CHECKING:
 
 # Maps event source IDs to their corresponding EventSource instances.
 type EventSourcesById = Mapping[str, EventSource]
+type ToolArgumentValue = (
+    str
+    | int
+    | float
+    | bool
+    | None
+    | Sequence[ToolArgumentValue]
+    | Mapping[str, ToolArgumentValue]
+)
+type ToolArguments = dict[str, ToolArgumentValue]
+type ToolArgumentsView = Mapping[str, ToolArgumentValue]
 
 
 @dataclass(frozen=True)
@@ -213,8 +224,7 @@ class RequestConfirmationCallback(Protocol):
         turn_id: str | None,
         tool_name: str,
         call_id: str,
-        # ast-grep-ignore: no-dict-any - tool args have varying keys per tool
-        tool_args: dict[str, Any],
+        tool_args: ToolArguments,
         timeout_seconds: float,
         context: ToolExecutionContext,
     ) -> ConfirmationOutcome:
@@ -256,7 +266,7 @@ class ToolExecutionContext:
             This function is typically called by `ConfirmingToolsProvider`.
             Expected signature:
             (interface_type: str, conversation_id: str, turn_id: str | None,
-             tool_name: str, call_id: str, tool_args: dict[str, Any],
+             tool_name: str, call_id: str, tool_args: ToolArguments,
              timeout_seconds: float, context: ToolExecutionContext)
             -> Awaitable[ConfirmationOutcome]
         update_activity_callback: Optional callback to update task worker activity timestamp.

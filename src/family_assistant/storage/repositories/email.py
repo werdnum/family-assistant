@@ -13,12 +13,15 @@ from family_assistant.storage.repositories.base import BaseRepository
 class EmailRepository(BaseRepository):
     """Repository for managing received emails in the database."""
 
-    async def store_incoming(self, parsed_email: ParsedEmailData) -> None:
+    async def store_incoming(self, parsed_email: ParsedEmailData) -> int | None:
         """
         Stores parsed email data in the `received_emails` table and enqueues an indexing task.
 
         Args:
             parsed_email: A Pydantic model instance containing the parsed email data.
+
+        Returns:
+            The inserted email row id, or None when the email already exists.
         """
         self._logger.info(
             f"Storing parsed email data for Message-ID: {parsed_email.message_id_header}"
@@ -88,6 +91,7 @@ class EmailRepository(BaseRepository):
             self._logger.info(
                 f"Updated email {email_db_id} with indexing task ID {task_id}"
             )
+            return int(email_db_id)
 
         except IntegrityError as e:
             # Handle duplicate emails
@@ -95,6 +99,7 @@ class EmailRepository(BaseRepository):
                 f"Email with Message-ID {parsed_email.message_id_header} already exists: {e}"
             )
             # Don't re-raise - email already exists
+            return None
         except SQLAlchemyError as e:
             self._logger.error(
                 f"Database error storing email {parsed_email.message_id_header}: {e}",

@@ -15,6 +15,7 @@ if TYPE_CHECKING:
         ConfirmationRequestRow,
         ConfirmationStatus,
     )
+    from family_assistant.tools.types import ToolArgumentsView
 
 CONFIRMATION_TOOL_EXECUTION_TASK_TYPE = "confirmation_tool_execution"
 DURABLE_CONFIRMATION_STATUS_POLL_SECONDS = 5.0
@@ -56,7 +57,7 @@ class ConfirmationService:
         *,
         target_user_id: str,
         tool_name: str,
-        tool_args: dict[str, object],
+        tool_args: ToolArgumentsView,
         tool_call_id: str | None,
         source_message_internal_id: int | None,
         confirmation_prompt: str,

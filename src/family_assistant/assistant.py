@@ -32,6 +32,14 @@ from family_assistant.context_providers import (
     NotesContextProvider,
     WeatherContextProvider,
 )
+from family_assistant.email_intake.actions import (
+    EMAIL_INTAKE_ACTION_TASK_TYPE,
+    handle_email_intake_action,
+)
+from family_assistant.email_intake.outbound import (
+    EmailChatInterface,
+    MailgunOutboundEmailClient,
+)
 from family_assistant.embeddings import (
     EmbeddingGenerator,
     GoogleEmbeddingGenerator,
@@ -266,6 +274,7 @@ class Assistant:
         self.attachment_registry: AttachmentRegistry | None = None
         self.document_indexer: DocumentIndexer | None = None
         self.email_indexer: EmailIndexer | None = None
+        self.email_chat_interface: EmailChatInterface | None = None
         self.notes_indexer: NotesIndexer | None = None
         self.telegram_service: TelegramService | None = None
         self.push_notification_service: PushNotificationService | None = None
@@ -389,9 +398,8 @@ class Assistant:
 
         # Store config in FastAPI app state for access by routes
         self.fastapi_app.state.config = self.config
-        self.fastapi_app.state.user_identity_resolver = UserIdentityResolver(
-            self.config
-        )
+        user_identity_resolver = UserIdentityResolver(self.config)
+        self.fastapi_app.state.user_identity_resolver = user_identity_resolver
         logger.info("Stored configuration in FastAPI app state.")
 
         # Create MessageNotifier for live message updates
@@ -508,6 +516,26 @@ class Assistant:
         self.fastapi_app.state.confirmation_result_waiters = (
             self.confirmation_result_waiters
         )
+        outbound_email_client = None
+        email_config = self.config.email_intake
+        if (
+            email_config.outbound_mailgun_api_key
+            and email_config.outbound_mailgun_domain
+            and self.shared_httpx_client is not None
+        ):
+            outbound_email_client = MailgunOutboundEmailClient(
+                api_key=email_config.outbound_mailgun_api_key,
+                domain=email_config.outbound_mailgun_domain,
+                http_client=self.shared_httpx_client,
+                timeout_seconds=email_config.outbound_timeout_seconds,
+            )
+        self.email_chat_interface = EmailChatInterface(
+            database_engine=database_engine,
+            outbound_client=outbound_email_client,
+            config=email_config,
+            user_identity_resolver=user_identity_resolver,
+        )
+        self.fastapi_app.state.chat_interfaces["email"] = self.email_chat_interface
 
         # Configure authentication with the database engine
         configure_app_auth(self.fastapi_app, self.database_engine)
@@ -1324,6 +1352,9 @@ class Assistant:
             self.task_worker_instance.register_task_handler(
                 "index_email", self.email_indexer.handle_index_email
             )
+        self.task_worker_instance.register_task_handler(
+            EMAIL_INTAKE_ACTION_TASK_TYPE, handle_email_intake_action
+        )
         if self.notes_indexer:
             self.task_worker_instance.register_task_handler(
                 "index_note", self.notes_indexer.handle_index_note
