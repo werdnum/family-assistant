@@ -177,6 +177,22 @@ class UserIdentityResolver:
             return telegram_user_id in self._developer_telegram_user_ids
         return self._config.developer_chat_id == telegram_user_id
 
+    def get_primary_telegram_user_id(self, user_id: str) -> int | None:
+        """Return the primary Telegram user id for a canonical user, if configured."""
+        if self._users_configured:
+            for user in self._config.users:
+                if user.id == user_id and user.telegram.user_ids:
+                    return sorted(user.telegram.user_ids)[0]
+            return None
+
+        try:
+            telegram_user_id = int(user_id)
+        except ValueError:
+            return None
+        if self.is_telegram_user_allowed(telegram_user_id):
+            return telegram_user_id
+        return None
+
     def is_email_sender_authorized_for_user(
         self,
         sender_address: str,

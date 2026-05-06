@@ -55,7 +55,10 @@ if TYPE_CHECKING:
 
     from family_assistant.interfaces import ChatInterface
     from family_assistant.storage.context import DatabaseContext
-    from family_assistant.telegram.protocols import MessageBatcher
+    from family_assistant.telegram.protocols import (
+        ConfirmationUIManager,
+        MessageBatcher,
+    )
     from family_assistant.telegram.service import TelegramService
     from family_assistant.telegram.ui import TelegramConfirmationUIManager
     from family_assistant.tools.types import ConfirmationOutcome, ToolExecutionContext
@@ -135,6 +138,18 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
         if self.telegram_service.fastapi_app:
             return getattr(
                 self.telegram_service.fastapi_app.state, "chat_interfaces", None
+            )
+        return None
+
+    def _get_confirmation_ui_managers(
+        self,
+    ) -> dict[str, ConfirmationUIManager] | None:
+        """Get confirmation UI manager registry from FastAPI app state."""
+        if self.telegram_service.fastapi_app:
+            return getattr(
+                self.telegram_service.fastapi_app.state,
+                "confirmation_ui_managers",
+                None,
             )
         return None
 
@@ -584,6 +599,7 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
                             return result
 
                         chat_interfaces = self._get_chat_interfaces()
+                        confirmation_ui_managers = self._get_confirmation_ui_managers()
 
                         result = await selected_processing_service.handle_chat_interaction(
                             db_context=db_context,
@@ -596,6 +612,7 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
                             replied_to_interface_id=replied_to_interface_id,
                             chat_interface=self.telegram_service.chat_interface,
                             chat_interfaces=chat_interfaces,
+                            confirmation_ui_managers=confirmation_ui_managers,
                             request_confirmation_callback=confirmation_callback_wrapper,
                             trigger_attachments=trigger_attachments,  # type: ignore
                         )
@@ -1046,6 +1063,7 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
                     )
 
                 chat_interfaces = self._get_chat_interfaces()
+                confirmation_ui_managers = self._get_confirmation_ui_managers()
 
                 async with self._typing_notifications(context, chat_id):
                     result = await targeted_processing_service.handle_chat_interaction(
@@ -1061,6 +1079,7 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
                         replied_to_interface_id=reply_to_interface_id_str,
                         chat_interface=self.telegram_service.chat_interface,
                         chat_interfaces=chat_interfaces,
+                        confirmation_ui_managers=confirmation_ui_managers,
                         request_confirmation_callback=confirmation_callback_wrapper,
                         trigger_attachments=None,
                     )

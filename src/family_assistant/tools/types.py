@@ -180,6 +180,7 @@ if TYPE_CHECKING:
     )
     from family_assistant.skills.registry import NoteRegistry
     from family_assistant.storage.context import DatabaseContext
+    from family_assistant.telegram.protocols import ConfirmationUIManager
     from family_assistant.tools.infrastructure import ToolsProvider
     from family_assistant.utils.clock import Clock
 
@@ -324,6 +325,7 @@ class ToolExecutionContext:
     default_note_visibility_labels: list[str] | None = None
     note_registry: NoteRegistry | None = None
     confirmation_result_waiters: ConfirmationResultWaiterRegistry | None = None
+    confirmation_ui_managers: dict[str, ConfirmationUIManager] | None = None
 
 
 @dataclass

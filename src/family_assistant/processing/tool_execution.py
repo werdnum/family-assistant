@@ -39,6 +39,7 @@ if TYPE_CHECKING:
     from family_assistant.llm.tool_call import ToolCallItem
     from family_assistant.services.attachment_registry import AttachmentRegistry
     from family_assistant.storage.context import DatabaseContext
+    from family_assistant.telegram.protocols import ConfirmationUIManager
     from family_assistant.tools.types import EventSourcesById
     from family_assistant.utils.clock import Clock
 
@@ -144,6 +145,7 @@ class ToolExecutor:
         db_context: DatabaseContext,
         chat_interface: ChatInterface | None,
         chat_interfaces: dict[str, ChatInterface] | None,
+        confirmation_ui_managers: dict[str, ConfirmationUIManager] | None,
         request_confirmation_callback: RequestConfirmationCallback | None,
         subconversation_id: str | None,
         processing_service: ProcessingService | None,
@@ -164,6 +166,7 @@ class ToolExecutor:
             db_context=db_context,
             chat_interface=chat_interface,
             chat_interfaces=chat_interfaces_dict,
+            confirmation_ui_managers=confirmation_ui_managers,
             timezone=self.config.timezone,
             processing_profile_id=self.config.id,
             subconversation_id=subconversation_id,
@@ -480,6 +483,7 @@ class ToolExecutor:
         chat_interface: ChatInterface | None,
         user_id: str | None = None,
         chat_interfaces: dict[str, ChatInterface] | None = None,
+        confirmation_ui_managers: dict[str, ConfirmationUIManager] | None = None,
         request_confirmation_callback: RequestConfirmationCallback | None = None,
         subconversation_id: str | None = None,
         processing_service: ProcessingService | None = None,
@@ -565,6 +569,7 @@ class ToolExecutor:
                 db_context=db_context,
                 chat_interface=chat_interface,
                 chat_interfaces=chat_interfaces,
+                confirmation_ui_managers=confirmation_ui_managers,
                 request_confirmation_callback=request_confirmation_callback,
                 subconversation_id=subconversation_id,
                 processing_service=processing_service,

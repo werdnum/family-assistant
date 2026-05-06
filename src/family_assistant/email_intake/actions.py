@@ -16,6 +16,7 @@ from family_assistant.email_intake.outbound import (
 )
 from family_assistant.llm.messages import text_content
 from family_assistant.services.confirmation_service import ConfirmationService
+from family_assistant.services.user_identity import UserIdentityResolver
 from family_assistant.storage.context import get_db_context
 from family_assistant.storage.email import received_emails_table
 from family_assistant.tools.confirmation import TOOL_CONFIRMATION_RENDERERS
@@ -181,6 +182,7 @@ async def _create_email_confirmation_callback(
             kind="failed",
             result="Cannot request confirmation without a resolved user id.",
         )
+    target_user_id = context.user_id
 
     source_message_internal_id = None
     if context.turn_id is not None:
@@ -200,7 +202,7 @@ async def _create_email_confirmation_callback(
     )
     now = context.clock.now() if context.clock is not None else datetime.now(UTC)
     request = await confirmation_service.create_request(
-        target_user_id=context.user_id,
+        target_user_id=target_user_id,
         tool_name=tool_name,
         tool_args=tool_args,
         tool_call_id=call_id,
@@ -213,13 +215,86 @@ async def _create_email_confirmation_callback(
         request["id"],
         tool_name,
     )
+    request_id = str(request["id"])
+    notification_warning = await _send_primary_confirmation_request(
+        context=context,
+        target_user_id=target_user_id,
+        request_id=request_id,
+        confirmation_prompt=confirmation_prompt,
+    )
+    result = (
+        f"Action pending confirmation. Confirmation request {request_id} was "
+        "created and the action has not executed. The user has been asked to "
+        "approve or reject it in a trusted interface; it will execute only if "
+        "approved."
+    )
+    if notification_warning is not None:
+        result = f"{result}\n\nWarning: {notification_warning}"
     return ConfirmationOutcome(
         kind="completed",
-        result=(
-            f"Confirmation request {request['id']} was created. The action will "
-            "execute only if the user approves it in a trusted interface."
-        ),
+        result=result,
     )
+
+
+async def _send_primary_confirmation_request(
+    *,
+    context: ToolExecutionContext,
+    target_user_id: str,
+    request_id: str,
+    confirmation_prompt: str,
+) -> str | None:
+    if context.confirmation_ui_managers is None:
+        message = "No confirmation UI manager registry is available."
+        logger.info("%s Email confirmation: %s", message, request_id)
+        return message
+    telegram_confirmation_manager = context.confirmation_ui_managers.get("telegram")
+    if telegram_confirmation_manager is None:
+        message = "No Telegram confirmation UI is available."
+        logger.info("%s Email confirmation: %s", message, request_id)
+        return message
+
+    processing_service = context.processing_service
+    if processing_service is None:
+        message = (
+            "No processing service is available to resolve the user's Telegram "
+            "notification target."
+        )
+        logger.info("%s Email confirmation: %s", message, request_id)
+        return message
+    telegram_user_id = UserIdentityResolver(
+        processing_service.app_config
+    ).get_primary_telegram_user_id(target_user_id)
+    if telegram_user_id is None:
+        message = (
+            f"User {target_user_id!r} has no primary Telegram mapping for "
+            "confirmation delivery."
+        )
+        logger.info("%s Email confirmation: %s", message, request_id)
+        return message
+
+    telegram_conversation_id = str(telegram_user_id)
+    outcome = await telegram_confirmation_manager.send_existing_confirmation_request(
+        conversation_id=telegram_conversation_id,
+        request_id=request_id,
+        prompt_text=confirmation_prompt,
+    )
+    if outcome.kind != "completed":
+        message = (
+            f"Could not send Telegram confirmation UI to user {telegram_user_id}: "
+            f"{outcome.result or outcome.kind}."
+        )
+        logger.warning(
+            "%s Email confirmation: %s",
+            message,
+            request_id,
+        )
+        return message
+    logger.info(
+        "Sent Telegram confirmation UI to user %s for email confirmation %s",
+        telegram_user_id,
+        request_id,
+    )
+    return None
 
 
 async def handle_email_intake_action(
@@ -281,6 +356,7 @@ async def handle_email_intake_action(
         user_id=target_user_id,
         chat_interface=email_interface,
         chat_interfaces=exec_context.chat_interfaces,
+        confirmation_ui_managers=exec_context.confirmation_ui_managers,
         request_confirmation_callback=confirmation_callback,
     )
     if result.text_reply and email_interface is not None:

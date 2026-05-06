@@ -50,6 +50,7 @@ if TYPE_CHECKING:
         ConfirmationRequestRow,
     )
     from family_assistant.storage.types import MessageHistoryRow, TaskDict
+    from family_assistant.telegram.protocols import ConfirmationUIManager
     from family_assistant.tools import ToolsProvider
 
 # handle_index_email is now a method of EmailIndexer and registered in __main__.py
@@ -460,6 +461,8 @@ async def handle_llm_callback(
         result = await processing_service.handle_chat_interaction(
             db_context=db_context,
             chat_interface=chat_interface,
+            chat_interfaces=exec_context.chat_interfaces,
+            confirmation_ui_managers=exec_context.confirmation_ui_managers,
             interface_type=interface_type,
             conversation_id=conversation_id,
             # turn_id is generated within handle_chat_interaction
@@ -612,12 +615,14 @@ class TaskWorker:
         handler_timeout: float = TASK_HANDLER_TIMEOUT,  # Configurable timeout per instance
         chat_interfaces: dict[str, ChatInterface] | None = None,
         confirmation_result_waiters: ConfirmationResultWaiterRegistry | None = None,
+        confirmation_ui_managers: dict[str, ConfirmationUIManager] | None = None,
     ) -> None:
         """Initializes the TaskWorker with its dependencies."""
         self.processing_service = processing_service
         self.chat_interface = chat_interface
         self.chat_interfaces = chat_interfaces
         self.confirmation_result_waiters = confirmation_result_waiters
+        self.confirmation_ui_managers = confirmation_ui_managers
         # Use provided shutdown_event_instance or create a new instance-specific event
         # Don't use the module-level shutdown_event as it persists across test runs
         self.shutdown_event = (
@@ -896,6 +901,11 @@ class TaskWorker:
                         else None
                     ),
                     confirmation_result_waiters=self.confirmation_result_waiters,
+                    confirmation_ui_managers=getattr(
+                        self,
+                        "confirmation_ui_managers",
+                        None,
+                    ),
                 )
                 # --- Execute Handler with Context ---
                 logger.debug(
@@ -1891,6 +1901,7 @@ async def _build_confirmation_execution_context(
         camera_backend=processing_service.camera_backend,
         chat_interface=chat_interface,
         chat_interfaces=exec_context.chat_interfaces,
+        confirmation_ui_managers=exec_context.confirmation_ui_managers,
         timezone=processing_service.service_config.timezone,
         processing_profile_id=processing_profile_id,
         subconversation_id=subconversation_id,

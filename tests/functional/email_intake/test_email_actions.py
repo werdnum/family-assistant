@@ -40,13 +40,16 @@ from family_assistant.tools import (
     ToolPolicyConfig,
     build_local_tool_registrations,
 )
+from family_assistant.tools.types import ConfirmationOutcome
 from family_assistant.utils.clock import SystemClock
 from tests.mocks.mock_llm import MatcherArgs, RuleBasedMockLLMClient
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncEngine
 
+    from family_assistant.interfaces import ChatInterface
     from family_assistant.processing.protocol import DelegatableService
+    from family_assistant.telegram.protocols import ConfirmationUIManager
 
 
 @dataclass
@@ -99,6 +102,47 @@ class FailingOutboundEmailClient:
         _ = text
         _ = in_reply_to
         raise OutboundEmailDeliveryError("delivery failed")
+
+
+@dataclass
+class FakeTelegramConfirmationUIManager:
+    requests: list[tuple[str, str, str]] = field(default_factory=list)
+
+    async def request_confirmation(
+        self,
+        conversation_id: str,
+        interface_type: str,
+        turn_id: str | None,
+        prompt_text: str,
+        tool_name: str,
+        tool_args: dict[str, object],
+        timeout: float,
+        target_user_id: str | None = None,
+        tool_call_id: str | None = None,
+        source_message_internal_id: int | None = None,
+    ) -> ConfirmationOutcome:
+        _ = (
+            conversation_id,
+            interface_type,
+            turn_id,
+            prompt_text,
+            tool_name,
+            tool_args,
+            timeout,
+            target_user_id,
+            tool_call_id,
+            source_message_internal_id,
+        )
+        return ConfirmationOutcome(kind="failed", result="unexpected wait")
+
+    async def send_existing_confirmation_request(
+        self,
+        conversation_id: str,
+        request_id: str,
+        prompt_text: str,
+    ) -> ConfirmationOutcome:
+        self.requests.append((conversation_id, request_id, prompt_text))
+        return ConfirmationOutcome(kind="completed")
 
 
 def _email_policy() -> ToolPolicyConfig:
@@ -163,6 +207,15 @@ def _tool_call(name: str, arguments: dict[str, object]) -> ToolCallItem:
 
 def _contains_tool_result(kwargs: MatcherArgs) -> bool:
     return any(isinstance(message, ToolMessage) for message in kwargs["messages"])
+
+
+def _contains_pending_confirmation_tool_result(kwargs: MatcherArgs) -> bool:
+    return any(
+        isinstance(message, ToolMessage)
+        and "action pending confirmation" in message.content.lower()
+        and "has not executed" in message.content.lower()
+        for message in kwargs["messages"]
+    )
 
 
 def _first_turn(kwargs: MatcherArgs) -> bool:
@@ -287,7 +340,12 @@ def _execution_context(
     service: ProcessingService,
     email_interface: EmailChatInterface,
     email_db_id: int,
+    telegram_confirmation_manager: FakeTelegramConfirmationUIManager | None = None,
 ) -> ToolExecutionContext:
+    chat_interfaces: dict[str, ChatInterface] = {"email": email_interface}
+    confirmation_ui_managers: dict[str, ConfirmationUIManager] = {}
+    if telegram_confirmation_manager is not None:
+        confirmation_ui_managers["telegram"] = telegram_confirmation_manager
     return ToolExecutionContext(
         interface_type="email",
         conversation_id=email_conversation_id(email_db_id),
@@ -303,7 +361,8 @@ def _execution_context(
         camera_backend=None,
         timezone=ZoneInfo("UTC"),
         chat_interface=email_interface,
-        chat_interfaces={"email": email_interface},
+        chat_interfaces=chat_interfaces,
+        confirmation_ui_managers=confirmation_ui_managers,
         processing_profile_id="email_intake",
         visibility_grants={"default"},
     )
@@ -608,21 +667,23 @@ async def test_email_action_creates_durable_confirmation_and_replies_by_email(
     db_engine: AsyncEngine,
 ) -> None:
     outbound_client = FakeOutboundEmailClient()
+    telegram_confirmation_manager = FakeTelegramConfirmationUIManager()
     app_config = AppConfig.model_validate({
         "telegram_enabled": False,
         "model": "mock-model",
         "embedding_model": "mock-deterministic-embedder",
         "embedding_dimensions": 10,
+        "users": [
+            {
+                "id": "buyer@example.com",
+                "telegram": {"user_ids": [123456]},
+                "email_intake": {"sender_addresses": ["buyer@example.com"]},
+            }
+        ],
         "email_intake": {
             "enable_actions": True,
             "action_profile_id": "email_intake",
             "outbound_from_address": "assistant@example.net",
-            "user_mappings": [
-                {
-                    "user_id": "buyer@example.com",
-                    "sender_addresses": ["buyer@example.com"],
-                }
-            ],
         },
     })
     email_interface = _email_chat_interface(
@@ -650,7 +711,7 @@ async def test_email_action_creates_durable_confirmation_and_replies_by_email(
                 ),
             ),
             (
-                _contains_tool_result,
+                _contains_pending_confirmation_tool_result,
                 LLMOutput(
                     content=("I found soccer tickets and prepared a note for approval.")
                 ),
@@ -667,6 +728,7 @@ async def test_email_action_creates_durable_confirmation_and_replies_by_email(
                 service=service,
                 email_interface=email_interface,
                 email_db_id=email_db_id,
+                telegram_confirmation_manager=telegram_confirmation_manager,
             ),
             {"email_db_id": email_db_id},
         )
@@ -692,6 +754,13 @@ async def test_email_action_creates_durable_confirmation_and_replies_by_email(
     assert len(outbound_client.sent) == 1
     assert outbound_client.sent[0].to_address == "buyer@example.com"
     assert "prepared a note for approval" in outbound_client.sent[0].text
+    assert telegram_confirmation_manager.requests == [
+        (
+            "123456",
+            str(request["id"]),
+            str(request["confirmation_prompt"]),
+        )
+    ]
 
 
 @pytest.mark.asyncio

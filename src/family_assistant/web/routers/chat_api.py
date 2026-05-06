@@ -546,6 +546,11 @@ async def api_chat_send_message(
 
     # Get chat_interfaces registry from app state for cross-interface messaging
     chat_interfaces = getattr(request.app.state, "chat_interfaces", None)
+    confirmation_ui_managers = getattr(
+        request.app.state,
+        "confirmation_ui_managers",
+        None,
+    )
 
     result = await selected_processing_service.handle_chat_interaction(
         db_context=db_context,
@@ -558,6 +563,7 @@ async def api_chat_send_message(
         replied_to_interface_id=None,  # payload.replied_to_message_id is not available on ChatPromptRequest
         chat_interface=web_chat_interface,  # Use WebChatInterface for message delivery
         chat_interfaces=chat_interfaces,  # Pass all registered chat interfaces
+        confirmation_ui_managers=confirmation_ui_managers,
         request_confirmation_callback=None,  # No confirmation callback for API (yet)
         trigger_attachments=trigger_attachments,  # Pass attachment metadata
     )
@@ -1171,6 +1177,11 @@ async def api_chat_send_message_stream(
         # Create task to process the interaction stream
         # Get chat_interfaces registry from app state for cross-interface messaging
         chat_interfaces = getattr(request.app.state, "chat_interfaces", None)
+        confirmation_ui_managers = getattr(
+            request.app.state,
+            "confirmation_ui_managers",
+            None,
+        )
 
         async def process_stream() -> None:
             try:
@@ -1194,6 +1205,7 @@ async def api_chat_send_message_stream(
                         replied_to_interface_id=None,
                         chat_interface=web_chat_interface,
                         chat_interfaces=chat_interfaces,
+                        confirmation_ui_managers=confirmation_ui_managers,
                         request_confirmation_callback=web_confirmation_callback,
                         trigger_attachments=attachment_metadata,
                     ):

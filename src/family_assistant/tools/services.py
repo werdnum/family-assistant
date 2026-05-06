@@ -274,6 +274,8 @@ async def delegate_to_service_tool(
             user_name=exec_context.user_name,  # Pass original user's name
             replied_to_interface_id=None,
             chat_interface=exec_context.chat_interface,  # Pass through for nested actions
+            chat_interfaces=exec_context.chat_interfaces,
+            confirmation_ui_managers=exec_context.confirmation_ui_managers,
             request_confirmation_callback=exec_context.request_confirmation_callback,  # Pass through
             subconversation_id=subconversation_id,  # Pass subconversation ID for isolation
         )

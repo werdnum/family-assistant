@@ -62,3 +62,17 @@ class ConfirmationUIManager(Protocol):
         Returns an approved outcome if confirmed, or a terminal outcome otherwise.
         """
         ...
+
+    async def send_existing_confirmation_request(
+        self,
+        conversation_id: str,
+        request_id: str,
+        prompt_text: str,
+    ) -> ConfirmationOutcome:
+        """
+        Presents an existing durable confirmation request without waiting for it.
+
+        Returns a completed outcome once the confirmation UI has been delivered,
+        or a failed outcome if delivery failed.
+        """
+        ...

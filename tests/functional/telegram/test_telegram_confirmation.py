@@ -324,6 +324,52 @@ async def test_durable_telegram_confirmation_approval_uses_canonical_user_id() -
 
 
 @pytest.mark.asyncio
+async def test_existing_durable_confirmation_sends_inline_keyboard() -> None:
+    """Cross-interface durable confirmations should use the standard inline UI."""
+    bot = RecordingTelegramBot()
+    manager = TelegramConfirmationUIManager(
+        application=cast("Any", SimpleNamespace(bot=bot)),
+    )
+
+    outcome = await manager.send_existing_confirmation_request(
+        conversation_id=str(USER_CHAT_ID),
+        request_id="confirm_email123",
+        prompt_text="Confirm this email-originated action",
+    )
+
+    assert outcome.kind == "completed"
+    assert len(bot.sent_messages) == 1
+    sent = bot.sent_messages[0]
+    assert sent["chat_id"] == USER_CHAT_ID
+    reply_markup = sent["reply_markup"]
+    assert reply_markup is not None
+    buttons = cast("Any", reply_markup).inline_keyboard[0]
+    assert buttons[0].callback_data == "confirm:confirm_email123:yes"
+    assert buttons[1].callback_data == "confirm:confirm_email123:no"
+
+
+@pytest.mark.asyncio
+async def test_existing_durable_confirmation_truncates_long_telegram_prompt() -> None:
+    """Long durable confirmation prompts should still produce a sendable message."""
+    bot = RecordingTelegramBot()
+    manager = TelegramConfirmationUIManager(
+        application=cast("Any", SimpleNamespace(bot=bot)),
+    )
+
+    outcome = await manager.send_existing_confirmation_request(
+        conversation_id=str(USER_CHAT_ID),
+        request_id="confirm_long",
+        prompt_text="Email-originated action\n\n" + ("x" * 10000),
+    )
+
+    assert outcome.kind == "completed"
+    sent_text = bot.sent_messages[0]["text"]
+    assert isinstance(sent_text, str)
+    assert len(sent_text) < 4096
+    assert "Confirmation details truncated" in sent_text
+
+
+@pytest.mark.asyncio
 async def test_durable_telegram_external_approval_timeout_waits_for_execution() -> None:
     """An approval from another interface should prevent local timeout expiry."""
     confirmation_service = RecordingConfirmationService()

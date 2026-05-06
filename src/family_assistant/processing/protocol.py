@@ -19,6 +19,7 @@ if TYPE_CHECKING:
         RequestConfirmationCallback,
     )
     from family_assistant.storage.context import DatabaseContext
+    from family_assistant.telegram.protocols import ConfirmationUIManager
 
 
 @runtime_checkable
@@ -47,6 +48,7 @@ class DelegatableService(Protocol):
         replied_to_interface_id: str | None = None,
         chat_interface: ChatInterface | None = None,
         chat_interfaces: dict[str, ChatInterface] | None = None,
+        confirmation_ui_managers: dict[str, ConfirmationUIManager] | None = None,
         request_confirmation_callback: RequestConfirmationCallback | None = None,
         trigger_attachments: list[MessageAttachmentMetadata] | None = None,
         subconversation_id: str | None = None,

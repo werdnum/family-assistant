@@ -68,6 +68,7 @@ if TYPE_CHECKING:
     from family_assistant.events.indexing_source import IndexingSource
     from family_assistant.interfaces import ChatInterface
     from family_assistant.processing import ProcessingService
+    from family_assistant.telegram.protocols import ConfirmationUIManager
 
 logger = logging.getLogger(__name__)
 
@@ -162,12 +163,14 @@ class AsteriskLiveHandler:
         system_instruction: str | None = None,
         tools: ToolListUnion | None = None,
         chat_interfaces: dict[str, ChatInterface] | None = None,
+        confirmation_ui_managers: dict[str, ConfirmationUIManager] | None = None,
     ) -> None:
         self.websocket = websocket
         self.client = client
         self.gemini_live_config = gemini_live_config
         self.processing_service = processing_service
         self.chat_interfaces = chat_interfaces
+        self.confirmation_ui_managers = confirmation_ui_managers
         self.extension = extension  # User identity (like Telegram chat_id)
         self.conversation_id = conversation_id or str(uuid.uuid4())  # For history
         self.system_instruction = system_instruction
@@ -1273,6 +1276,7 @@ class AsteriskLiveHandler:
                         db_context=db_context,
                         chat_interface=None,
                         chat_interfaces=self.chat_interfaces,
+                        confirmation_ui_managers=self.confirmation_ui_managers,
                         timezone=self.processing_service.service_config.timezone,
                         processing_profile_id=self.processing_service.service_config.id,
                         subconversation_id=None,
@@ -1547,6 +1551,11 @@ async def asterisk_live_endpoint(
         )
 
     chat_interfaces = getattr(websocket.app.state, "chat_interfaces", None)
+    confirmation_ui_managers = getattr(
+        websocket.app.state,
+        "confirmation_ui_managers",
+        None,
+    )
     handler = AsteriskLiveHandler(
         websocket,
         client,
@@ -1557,5 +1566,6 @@ async def asterisk_live_endpoint(
         system_instruction=system_instruction,
         tools=tools,
         chat_interfaces=chat_interfaces,
+        confirmation_ui_managers=confirmation_ui_managers,
     )
     await handler.run()
