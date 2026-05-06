@@ -46,6 +46,7 @@ from tests.mocks.mock_llm import MatcherArgs, RuleBasedMockLLMClient
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncEngine
 
+    from family_assistant.interfaces import ChatInterface
     from family_assistant.processing.protocol import DelegatableService
 
 
@@ -99,6 +100,24 @@ class FailingOutboundEmailClient:
         _ = text
         _ = in_reply_to
         raise OutboundEmailDeliveryError("delivery failed")
+
+
+@dataclass
+class FakeTelegramChatInterface:
+    messages: list[tuple[str, str, str | None]] = field(default_factory=list)
+
+    async def send_message(
+        self,
+        conversation_id: str,
+        text: str,
+        parse_mode: str | None = None,
+        reply_to_interface_id: str | None = None,
+        attachment_ids: list[str] | None = None,
+    ) -> str | None:
+        _ = reply_to_interface_id
+        _ = attachment_ids
+        self.messages.append((conversation_id, text, parse_mode))
+        return f"tg-message-{len(self.messages)}"
 
 
 def _email_policy() -> ToolPolicyConfig:
@@ -163,6 +182,15 @@ def _tool_call(name: str, arguments: dict[str, object]) -> ToolCallItem:
 
 def _contains_tool_result(kwargs: MatcherArgs) -> bool:
     return any(isinstance(message, ToolMessage) for message in kwargs["messages"])
+
+
+def _contains_pending_confirmation_tool_result(kwargs: MatcherArgs) -> bool:
+    return any(
+        isinstance(message, ToolMessage)
+        and "action pending confirmation" in message.content.lower()
+        and "has not executed" in message.content.lower()
+        for message in kwargs["messages"]
+    )
 
 
 def _first_turn(kwargs: MatcherArgs) -> bool:
@@ -287,7 +315,11 @@ def _execution_context(
     service: ProcessingService,
     email_interface: EmailChatInterface,
     email_db_id: int,
+    telegram_interface: FakeTelegramChatInterface | None = None,
 ) -> ToolExecutionContext:
+    chat_interfaces: dict[str, ChatInterface] = {"email": email_interface}
+    if telegram_interface is not None:
+        chat_interfaces["telegram"] = telegram_interface
     return ToolExecutionContext(
         interface_type="email",
         conversation_id=email_conversation_id(email_db_id),
@@ -303,7 +335,7 @@ def _execution_context(
         camera_backend=None,
         timezone=ZoneInfo("UTC"),
         chat_interface=email_interface,
-        chat_interfaces={"email": email_interface},
+        chat_interfaces=chat_interfaces,
         processing_profile_id="email_intake",
         visibility_grants={"default"},
     )
@@ -608,21 +640,23 @@ async def test_email_action_creates_durable_confirmation_and_replies_by_email(
     db_engine: AsyncEngine,
 ) -> None:
     outbound_client = FakeOutboundEmailClient()
+    telegram_interface = FakeTelegramChatInterface()
     app_config = AppConfig.model_validate({
         "telegram_enabled": False,
         "model": "mock-model",
         "embedding_model": "mock-deterministic-embedder",
         "embedding_dimensions": 10,
+        "users": [
+            {
+                "id": "buyer@example.com",
+                "telegram": {"user_ids": [123456]},
+                "email_intake": {"sender_addresses": ["buyer@example.com"]},
+            }
+        ],
         "email_intake": {
             "enable_actions": True,
             "action_profile_id": "email_intake",
             "outbound_from_address": "assistant@example.net",
-            "user_mappings": [
-                {
-                    "user_id": "buyer@example.com",
-                    "sender_addresses": ["buyer@example.com"],
-                }
-            ],
         },
     })
     email_interface = _email_chat_interface(
@@ -650,7 +684,7 @@ async def test_email_action_creates_durable_confirmation_and_replies_by_email(
                 ),
             ),
             (
-                _contains_tool_result,
+                _contains_pending_confirmation_tool_result,
                 LLMOutput(
                     content=("I found soccer tickets and prepared a note for approval.")
                 ),
@@ -667,6 +701,7 @@ async def test_email_action_creates_durable_confirmation_and_replies_by_email(
                 service=service,
                 email_interface=email_interface,
                 email_db_id=email_db_id,
+                telegram_interface=telegram_interface,
             ),
             {"email_db_id": email_db_id},
         )
@@ -692,6 +727,18 @@ async def test_email_action_creates_durable_confirmation_and_replies_by_email(
     assert len(outbound_client.sent) == 1
     assert outbound_client.sent[0].to_address == "buyer@example.com"
     assert "prepared a note for approval" in outbound_client.sent[0].text
+    assert telegram_interface.messages == [
+        (
+            "123456",
+            (
+                "An email-originated action is pending confirmation.\n\n"
+                f"Confirmation request: `{request['id']}`\n\n"
+                f"{request['confirmation_prompt']}\n\n"
+                "Approve or reject it from the pending confirmations UI."
+            ),
+            "MarkdownV2",
+        )
+    ]
 
 
 @pytest.mark.asyncio
