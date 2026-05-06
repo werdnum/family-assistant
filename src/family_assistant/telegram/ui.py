@@ -38,6 +38,11 @@ if TYPE_CHECKING:
     )
 
 logger = logging.getLogger(__name__)
+TELEGRAM_CONFIRMATION_MESSAGE_LIMIT = 3800
+TELEGRAM_CONFIRMATION_TRUNCATION_NOTICE = (
+    "\n\n[Confirmation details truncated for Telegram. Review the full "
+    "pending confirmation before approving.]"
+)
 
 
 def _is_durable_confirmation_request_id(request_id: str) -> bool:
@@ -51,6 +56,37 @@ class PendingTelegramConfirmation:
 
     decision_future: asyncio.Future[ConfirmationOutcome]
     execution_future: asyncio.Future[ConfirmationOutcome] | None
+
+
+@dataclass(frozen=True)
+class SentTelegramConfirmationMessage:
+    """Telegram message state needed for later status edits."""
+
+    message: Message
+    text: str
+    parse_mode: str | None
+
+
+@dataclass(frozen=True)
+class TelegramConfirmationSendFailure:
+    """Failure reason from a Telegram confirmation send attempt."""
+
+    message: str
+
+
+type TelegramConfirmationSendResult = (
+    SentTelegramConfirmationMessage | TelegramConfirmationSendFailure
+)
+
+
+def _truncate_confirmation_prompt_for_telegram(prompt_text: str) -> str:
+    """Keep confirmation messages under Telegram's single-message limit."""
+    if len(prompt_text) <= TELEGRAM_CONFIRMATION_MESSAGE_LIMIT:
+        return prompt_text
+    max_prompt_chars = TELEGRAM_CONFIRMATION_MESSAGE_LIMIT - len(
+        TELEGRAM_CONFIRMATION_TRUNCATION_NOTICE
+    )
+    return prompt_text[:max_prompt_chars] + TELEGRAM_CONFIRMATION_TRUNCATION_NOTICE
 
 
 class TelegramConfirmationUIManager(ConfirmationUIManager):
@@ -93,6 +129,137 @@ class TelegramConfirmationUIManager(ConfirmationUIManager):
             ).user_id
         except UserIdentityResolutionError as exc:
             raise ConfirmationAuthorizationError(str(exc)) from exc
+
+    async def _send_confirmation_message(
+        self,
+        *,
+        chat_id: int,
+        request_id: str,
+        prompt_text: str,
+    ) -> TelegramConfirmationSendResult:
+        keyboard = InlineKeyboardMarkup([
+            [
+                InlineKeyboardButton(
+                    "✅ Confirm", callback_data=f"confirm:{request_id}:yes"
+                ),
+                InlineKeyboardButton(
+                    "❌ Cancel", callback_data=f"confirm:{request_id}:no"
+                ),
+            ]
+        ])
+
+        prompt_text_to_send = _truncate_confirmation_prompt_for_telegram(prompt_text)
+        if prompt_text_to_send == prompt_text:
+            text_to_send, parse_mode_str = convert_to_telegram_markdown(
+                prompt_text_to_send
+            )
+            parse_mode = ParseMode.MARKDOWN_V2 if parse_mode_str else None
+        else:
+            text_to_send = prompt_text_to_send
+            parse_mode = None
+
+        try:
+            message = await self.application.bot.send_message(
+                chat_id=chat_id,
+                text=text_to_send,
+                parse_mode=parse_mode,
+                reply_markup=keyboard,
+            )
+            return SentTelegramConfirmationMessage(
+                message=message,
+                text=text_to_send,
+                parse_mode=parse_mode,
+            )
+        except BadRequest as parse_err:
+            if "Can't parse entities" in str(parse_err) and parse_mode is not None:
+                logger.warning(
+                    "Telegram rejected MarkdownV2 confirmation message "
+                    "(parse error): %s. Falling back to plain text.",
+                    parse_err,
+                    exc_info=False,
+                )
+                try:
+                    message = await self.application.bot.send_message(
+                        chat_id=chat_id,
+                        text=prompt_text_to_send,
+                        parse_mode=None,
+                        reply_markup=keyboard,
+                    )
+                    return SentTelegramConfirmationMessage(
+                        message=message,
+                        text=prompt_text_to_send,
+                        parse_mode=None,
+                    )
+                except TelegramError as fallback_err:
+                    message = (
+                        "Failed to send plain text confirmation message: "
+                        f"{fallback_err}"
+                    )
+                    logger.error(
+                        message,
+                        exc_info=True,
+                    )
+                    return TelegramConfirmationSendFailure(message=message)
+            message = (
+                f"Failed to send confirmation message to chat {chat_id}: {parse_err}"
+            )
+            logger.error(
+                message,
+                exc_info=True,
+            )
+            return TelegramConfirmationSendFailure(message=message)
+        except TelegramError as send_err:
+            message = (
+                f"Failed to send confirmation message to chat {chat_id}: {send_err}"
+            )
+            logger.error(
+                message,
+                exc_info=True,
+            )
+            return TelegramConfirmationSendFailure(message=message)
+
+    async def send_existing_confirmation_request(
+        self,
+        conversation_id: str,
+        request_id: str,
+        prompt_text: str,
+    ) -> ConfirmationOutcome:
+        """Send an existing durable confirmation with the standard Telegram UI."""
+        if not self.application or not self.application.bot:
+            raise RuntimeError("Telegram application or bot instance not available.")
+
+        try:
+            chat_id_int = int(conversation_id)
+        except ValueError:
+            logger.error(
+                "Invalid conversation_id for Telegram confirmation: %r. "
+                "Must be integer convertible.",
+                conversation_id,
+            )
+            return ConfirmationOutcome(
+                kind="failed",
+                result="Invalid Telegram conversation id for confirmation.",
+            )
+
+        sent_message = await self._send_confirmation_message(
+            chat_id=chat_id_int,
+            request_id=request_id,
+            prompt_text=prompt_text,
+        )
+        if isinstance(sent_message, TelegramConfirmationSendFailure):
+            return ConfirmationOutcome(
+                kind="failed",
+                result=sent_message.message,
+            )
+        logger.debug(
+            "Existing durable confirmation %s sent to Telegram message %s",
+            request_id,
+            sent_message.message.message_id,
+        )
+        return ConfirmationOutcome(
+            kind="completed",
+            result=f"Confirmation request {request_id} was sent to Telegram.",
+        )
 
     async def request_confirmation(
         self,
@@ -228,78 +395,24 @@ class TelegramConfirmationUIManager(ConfirmationUIManager):
                 f"Requesting confirmation (UUID: {confirm_uuid}) for tool '{tool_name}' in chat {chat_id_int}"
             )
 
-            keyboard = InlineKeyboardMarkup([
-                [
-                    InlineKeyboardButton(
-                        "✅ Confirm", callback_data=f"confirm:{confirm_uuid}:yes"
-                    ),
-                    InlineKeyboardButton(
-                        "❌ Cancel", callback_data=f"confirm:{confirm_uuid}:no"
-                    ),
-                ]
-            ])
-
-            # Convert to Telegram MarkdownV2 with bug fixes
-            text_to_send, parse_mode_str = convert_to_telegram_markdown(prompt_text)
-
-            try:
-                sent_message = await self.application.bot.send_message(
-                    chat_id=chat_id_int,
-                    text=text_to_send,
-                    parse_mode=ParseMode.MARKDOWN_V2 if parse_mode_str else None,
-                    reply_markup=keyboard,
-                )
-                logger.debug(
-                    f"Confirmation message sent (Message ID: {sent_message.message_id})"
-                )
-            except BadRequest as parse_err:
-                # Defense-in-depth: If Telegram still rejects due to parse errors, fall back to plain text
-                if "Can't parse entities" in str(parse_err) and parse_mode_str:
-                    logger.warning(
-                        f"Telegram rejected MarkdownV2 confirmation message (parse error): {parse_err}. Falling back to plain text.",
-                        exc_info=False,
-                    )
-                    try:
-                        sent_message = await self.application.bot.send_message(
-                            chat_id=chat_id_int,
-                            text=prompt_text,
-                            parse_mode=None,
-                            reply_markup=keyboard,
-                        )
-                        text_to_send = prompt_text  # Update for later use
-                        logger.debug(
-                            f"Confirmation message sent in plain text (Message ID: {sent_message.message_id})"
-                        )
-                    except TelegramError as fallback_err:
-                        logger.error(
-                            f"Failed to send plain text confirmation message: {fallback_err}",
-                            exc_info=True,
-                        )
-                        await reject_unsent_confirmation()
-                        return ConfirmationOutcome(
-                            kind="failed",
-                            result="Failed to send confirmation message.",
-                        )
-                else:
-                    logger.error(
-                        f"Failed to send confirmation message to chat {chat_id_int}: {parse_err}",
-                        exc_info=True,
-                    )
-                    await reject_unsent_confirmation()
-                    return ConfirmationOutcome(
-                        kind="failed",
-                        result="Failed to send confirmation message.",
-                    )
-            except TelegramError as send_err:
-                logger.error(
-                    f"Failed to send confirmation message to chat {chat_id_int}: {send_err}",
-                    exc_info=True,
-                )
+            sent_confirmation = await self._send_confirmation_message(
+                chat_id=chat_id_int,
+                request_id=confirm_uuid,
+                prompt_text=prompt_text,
+            )
+            if isinstance(sent_confirmation, TelegramConfirmationSendFailure):
                 await reject_unsent_confirmation()
                 return ConfirmationOutcome(
                     kind="failed",
-                    result="Failed to send confirmation message.",
+                    result=sent_confirmation.message,
                 )
+            sent_message = sent_confirmation.message
+            text_to_send = sent_confirmation.text
+            parse_mode = sent_confirmation.parse_mode
+            logger.debug(
+                "Confirmation message sent (Message ID: %s)",
+                sent_message.message_id,
+            )
 
             self.pending_confirmations[confirm_uuid] = PendingTelegramConfirmation(
                 decision_future=decision_future,
@@ -312,13 +425,19 @@ class TelegramConfirmationUIManager(ConfirmationUIManager):
                         chat_id=chat_id_int,
                         message_id=sent_message.message_id,
                         text=text_to_send + status_text,
-                        parse_mode=ParseMode.MARKDOWN_V2,
+                        parse_mode=parse_mode,
                         reply_markup=None,
                     )
                 except TelegramError as edit_err:
                     logger.warning(
                         f"Failed to edit confirmation message {sent_message.message_id}: {edit_err}"
                     )
+
+            def confirmation_status_suffix(
+                markdown_suffix: str,
+                plain_suffix: str,
+            ) -> str:
+                return markdown_suffix if parse_mode is not None else plain_suffix
 
             logger.debug(
                 f"Waiting for confirmation response (UUID: {confirm_uuid}, Timeout: {effective_timeout}s)"
@@ -354,22 +473,45 @@ class TelegramConfirmationUIManager(ConfirmationUIManager):
                 if execution_future in done:
                     durable_status = await get_durable_request_status()
                     if durable_status == "approved":
-                        await edit_confirmation_status("\n\n*Resolved externally* ✅")
+                        await edit_confirmation_status(
+                            confirmation_status_suffix(
+                                "\n\n*Resolved externally* ✅",
+                                "\n\nResolved externally ✅",
+                            )
+                        )
                     elif durable_status == "rejected":
-                        await edit_confirmation_status("\n\n*Resolved externally* ❌")
+                        await edit_confirmation_status(
+                            confirmation_status_suffix(
+                                "\n\n*Resolved externally* ❌",
+                                "\n\nResolved externally ❌",
+                            )
+                        )
                     return execution_future.result()
 
                 durable_status = await get_durable_request_status()
                 if durable_status == "approved" and execution_future is not None:
-                    await edit_confirmation_status("\n\n*Resolved externally* ✅")
+                    await edit_confirmation_status(
+                        confirmation_status_suffix(
+                            "\n\n*Resolved externally* ✅",
+                            "\n\nResolved externally ✅",
+                        )
+                    )
                     self.pending_confirmations.pop(confirm_uuid, None)
                     return await wait_for_execution_result()
                 if durable_status == "rejected":
-                    await edit_confirmation_status("\n\n*Resolved externally* ❌")
+                    await edit_confirmation_status(
+                        confirmation_status_suffix(
+                            "\n\n*Resolved externally* ❌",
+                            "\n\nResolved externally ❌",
+                        )
+                    )
                     return ConfirmationOutcome(kind="rejected")
                 if durable_status in {"expired", "missing", "unauthorized", "error"}:
                     await edit_confirmation_status(
-                        "\n\n*Error: confirmation could not be resolved*"
+                        confirmation_status_suffix(
+                            "\n\n*Error: confirmation could not be resolved*",
+                            "\n\nError: confirmation could not be resolved",
+                        )
                     )
                     return ConfirmationOutcome(
                         kind="failed",
@@ -381,15 +523,28 @@ class TelegramConfirmationUIManager(ConfirmationUIManager):
             )
             durable_status = await get_durable_request_status()
             if durable_status == "approved" and execution_future is not None:
-                await edit_confirmation_status("\n\n*Resolved externally* ✅")
+                await edit_confirmation_status(
+                    confirmation_status_suffix(
+                        "\n\n*Resolved externally* ✅",
+                        "\n\nResolved externally ✅",
+                    )
+                )
                 self.pending_confirmations.pop(confirm_uuid, None)
                 return await wait_for_execution_result()
             if durable_status == "rejected":
-                await edit_confirmation_status("\n\n*Resolved externally* ❌")
+                await edit_confirmation_status(
+                    confirmation_status_suffix(
+                        "\n\n*Resolved externally* ❌",
+                        "\n\nResolved externally ❌",
+                    )
+                )
                 return ConfirmationOutcome(kind="rejected")
             if durable_status in {"missing", "unauthorized", "error"}:
                 await edit_confirmation_status(
-                    "\n\n*Error: confirmation could not be resolved*"
+                    confirmation_status_suffix(
+                        "\n\n*Error: confirmation could not be resolved*",
+                        "\n\nError: confirmation could not be resolved",
+                    )
                 )
                 return ConfirmationOutcome(
                     kind="failed",
@@ -406,8 +561,12 @@ class TelegramConfirmationUIManager(ConfirmationUIManager):
                 await self.application.bot.edit_message_text(
                     chat_id=chat_id_int,
                     message_id=sent_message.message_id,
-                    text=text_to_send + "\n\n\\(Confirmation timed out\\)",
-                    parse_mode=ParseMode.MARKDOWN_V2,
+                    text=text_to_send
+                    + confirmation_status_suffix(
+                        "\n\n\\(Confirmation timed out\\)",
+                        "\n\n(Confirmation timed out)",
+                    ),
+                    parse_mode=parse_mode,
                 )
             except TelegramError as edit_err:
                 logger.warning(
@@ -464,8 +623,12 @@ class TelegramConfirmationUIManager(ConfirmationUIManager):
                 )
             return
 
-        original_text = query.message.text_markdown_v2_urled or query.message.text or ""
+        original_text_markdown = (
+            query.message.text_markdown_v2_urled or query.message.text or ""
+        )
+        original_text_plain = query.message.text or original_text_markdown
         status_text = ""
+        plain_status_text = ""
         try:
             if action == "yes":
                 logger.debug(f"Approving confirmation result for {confirm_uuid}")
@@ -475,6 +638,7 @@ class TelegramConfirmationUIManager(ConfirmationUIManager):
                     pending_confirmation,
                 )
                 status_text = "\n\n*Confirmed* ✅"
+                plain_status_text = "\n\nConfirmed ✅"
             elif action == "no":
                 logger.debug(f"Rejecting confirmation result for {confirm_uuid}")
                 await self._reject_confirmation(
@@ -483,11 +647,13 @@ class TelegramConfirmationUIManager(ConfirmationUIManager):
                     pending_confirmation,
                 )
                 status_text = "\n\n*Cancelled* ❌"
+                plain_status_text = "\n\nCancelled ❌"
             else:
                 logger.warning(
                     f"Unknown action '{action}' in confirmation callback {confirm_uuid}"
                 )
                 status_text = "\n\n*Error: Unknown action*"
+                plain_status_text = "\n\nError: Unknown action"
                 if (
                     pending_confirmation
                     and not pending_confirmation.decision_future.done()
@@ -501,6 +667,7 @@ class TelegramConfirmationUIManager(ConfirmationUIManager):
         except ConfirmationExpiredError as exc:
             logger.warning("Could not resolve Telegram confirmation: %s", exc)
             status_text = "\n\n*Error: confirmation expired*"
+            plain_status_text = "\n\nError: confirmation expired"
             if pending_confirmation and not pending_confirmation.decision_future.done():
                 pending_confirmation.decision_future.set_result(
                     ConfirmationOutcome(kind="timed_out")
@@ -508,9 +675,11 @@ class TelegramConfirmationUIManager(ConfirmationUIManager):
         except ConfirmationAlreadyResolvedError as exc:
             logger.warning("Could not resolve Telegram confirmation: %s", exc)
             status_text = "\n\n*Notice: confirmation already resolved*"
+            plain_status_text = "\n\nNotice: confirmation already resolved"
         except ConfirmationNotFoundError as exc:
             logger.warning("Could not resolve Telegram confirmation: %s", exc)
             status_text = "\n\n*Error: confirmation could not be resolved*"
+            plain_status_text = "\n\nError: confirmation could not be resolved"
             if pending_confirmation and not pending_confirmation.decision_future.done():
                 pending_confirmation.decision_future.set_result(
                     ConfirmationOutcome(kind="failed", result=str(exc))
@@ -518,6 +687,7 @@ class TelegramConfirmationUIManager(ConfirmationUIManager):
         except ConfirmationError as exc:
             logger.error("Could not resolve Telegram confirmation: %s", exc)
             status_text = "\n\n*Error: confirmation could not be resolved*"
+            plain_status_text = "\n\nError: confirmation could not be resolved"
             if pending_confirmation and not pending_confirmation.decision_future.done():
                 pending_confirmation.decision_future.set_result(
                     ConfirmationOutcome(kind="failed", result=str(exc))
@@ -525,10 +695,30 @@ class TelegramConfirmationUIManager(ConfirmationUIManager):
 
         try:
             await query.edit_message_text(
-                text=original_text + status_text,
+                text=original_text_markdown + status_text,
                 parse_mode=ParseMode.MARKDOWN_V2,
                 reply_markup=None,
             )
+        except BadRequest as edit_err:
+            logger.warning(
+                "Failed to edit confirmation message %s as MarkdownV2 after "
+                "callback: %s. Falling back to plain text.",
+                query.message.message_id,
+                edit_err,
+            )
+            try:
+                await query.edit_message_text(
+                    text=original_text_plain + plain_status_text,
+                    parse_mode=None,
+                    reply_markup=None,
+                )
+            except TelegramError as fallback_edit_err:
+                logger.error(
+                    "Failed to edit confirmation message %s as plain text after "
+                    "callback: %s",
+                    query.message.message_id,
+                    fallback_edit_err,
+                )
         except TelegramError as edit_err:
             logger.error(
                 f"Failed to edit confirmation message {query.message.message_id} after callback: {edit_err}"

@@ -241,6 +241,12 @@ async def _handle_send_message(
     )
 
     # Execute the chat interaction
+    chat_interfaces = getattr(request.app.state, "chat_interfaces", None)
+    confirmation_ui_managers = getattr(
+        request.app.state,
+        "confirmation_ui_managers",
+        None,
+    )
     result = await service.handle_chat_interaction(
         db_context=db_context,
         interface_type="a2a",
@@ -249,6 +255,8 @@ async def _handle_send_message(
         trigger_interface_message_id=message.message_id,
         user_name=user_id,
         user_id=user_id,
+        chat_interfaces=chat_interfaces,
+        confirmation_ui_managers=confirmation_ui_managers,
     )
 
     # Build response

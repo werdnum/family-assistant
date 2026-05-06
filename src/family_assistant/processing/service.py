@@ -51,6 +51,7 @@ if TYPE_CHECKING:
     from family_assistant.processing.protocol import DelegatableService
     from family_assistant.services.attachment_registry import AttachmentRegistry
     from family_assistant.storage.context import DatabaseContext
+    from family_assistant.telegram.protocols import ConfirmationUIManager
     from family_assistant.tools import OnDemandToolsView, ToolsProvider
     from family_assistant.tools.types import EventSourcesById
 
@@ -553,6 +554,7 @@ class ProcessingService:
         chat_interface: ChatInterface | None,
         user_id: str | None = None,
         chat_interfaces: dict[str, ChatInterface] | None = None,
+        confirmation_ui_managers: dict[str, ConfirmationUIManager] | None = None,
         request_confirmation_callback: RequestConfirmationCallback | None = None,
         subconversation_id: str | None = None,
     ) -> tuple[list[LLMMessage], MessageReasoningInfo | None, list[str] | None]:
@@ -575,6 +577,7 @@ class ProcessingService:
             chat_interface=chat_interface,
             user_id=user_id,
             chat_interfaces=chat_interfaces,
+            confirmation_ui_managers=confirmation_ui_managers,
             request_confirmation_callback=request_confirmation_callback,
             subconversation_id=subconversation_id,
             processing_service=self,
@@ -594,6 +597,7 @@ class ProcessingService:
         chat_interface: ChatInterface | None,
         user_id: str | None = None,
         chat_interfaces: dict[str, ChatInterface] | None = None,
+        confirmation_ui_managers: dict[str, ConfirmationUIManager] | None = None,
         request_confirmation_callback: RequestConfirmationCallback | None = None,
         subconversation_id: str | None = None,
     ) -> AsyncIterator[tuple[LLMStreamEvent, LLMMessage | None]]:
@@ -616,6 +620,7 @@ class ProcessingService:
             chat_interface=chat_interface,
             user_id=user_id,
             chat_interfaces=chat_interfaces,
+            confirmation_ui_managers=confirmation_ui_managers,
             request_confirmation_callback=request_confirmation_callback,
             subconversation_id=subconversation_id,
             processing_service=self,
@@ -637,6 +642,7 @@ class ProcessingService:
         replied_to_interface_id: str | None = None,
         chat_interface: ChatInterface | None = None,
         chat_interfaces: dict[str, ChatInterface] | None = None,
+        confirmation_ui_managers: dict[str, ConfirmationUIManager] | None = None,
         request_confirmation_callback: RequestConfirmationCallback | None = None,
         trigger_attachments: list[MessageAttachmentMetadata] | None = None,
         subconversation_id: str | None = None,
@@ -661,6 +667,7 @@ class ProcessingService:
             replied_to_interface_id: ID of message being replied to
             chat_interface: Interface for sending messages
             chat_interfaces: All registered chat interfaces
+            confirmation_ui_managers: Confirmation UI managers by interface
             request_confirmation_callback: Callback for tool confirmations
             trigger_attachments: Attachments from the user
             subconversation_id: Subconversation identifier
@@ -714,6 +721,7 @@ class ProcessingService:
                 turn_id=turn_id,
                 chat_interface=chat_interface,
                 chat_interfaces=chat_interfaces,
+                confirmation_ui_managers=confirmation_ui_managers,
                 request_confirmation_callback=request_confirmation_callback,
                 subconversation_id=subconversation_id,
             )
@@ -797,6 +805,7 @@ class ProcessingService:
         replied_to_interface_id: str | None = None,
         chat_interface: ChatInterface | None = None,
         chat_interfaces: dict[str, ChatInterface] | None = None,
+        confirmation_ui_managers: dict[str, ConfirmationUIManager] | None = None,
         request_confirmation_callback: RequestConfirmationCallback | None = None,
         trigger_attachments: list[MessageAttachmentMetadata] | None = None,
         subconversation_id: str | None = None,
@@ -868,6 +877,7 @@ class ProcessingService:
                         turn_id=turn_id,
                         chat_interface=chat_interface,
                         chat_interfaces=chat_interfaces,
+                        confirmation_ui_managers=confirmation_ui_managers,
                         request_confirmation_callback=request_confirmation_callback,
                         subconversation_id=subconversation_id,
                     ):

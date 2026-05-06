@@ -37,6 +37,7 @@ if TYPE_CHECKING:
     from family_assistant.interfaces import ChatInterface
     from family_assistant.llm.tool_call import ToolCallItem
     from family_assistant.storage.context import DatabaseContext
+    from family_assistant.telegram.protocols import ConfirmationUIManager
     from family_assistant.tools.types import EventSourcesById, ToolDefinition
 
     from .attachments import AttachmentProcessor
@@ -148,6 +149,7 @@ class LLMStreamingLoop:
         chat_interface: ChatInterface | None,
         user_id: str | None = None,
         chat_interfaces: dict[str, ChatInterface] | None = None,
+        confirmation_ui_managers: dict[str, ConfirmationUIManager] | None = None,
         request_confirmation_callback: RequestConfirmationCallback | None = None,
         subconversation_id: str | None = None,
         # Runtime deps passed through to tool_executor
@@ -179,6 +181,7 @@ class LLMStreamingLoop:
             turn_id=turn_id,
             chat_interface=chat_interface,
             chat_interfaces=chat_interfaces,
+            confirmation_ui_managers=confirmation_ui_managers,
             request_confirmation_callback=request_confirmation_callback,
             subconversation_id=subconversation_id,
             processing_service=processing_service,
@@ -208,6 +211,7 @@ class LLMStreamingLoop:
         chat_interface: ChatInterface | None,
         user_id: str | None = None,
         chat_interfaces: dict[str, ChatInterface] | None = None,
+        confirmation_ui_managers: dict[str, ConfirmationUIManager] | None = None,
         request_confirmation_callback: RequestConfirmationCallback | None = None,
         subconversation_id: str | None = None,
         # Runtime deps passed through to tool_executor
@@ -688,6 +692,7 @@ class LLMStreamingLoop:
                     db_context=db_context,
                     chat_interface=chat_interface,
                     chat_interfaces=chat_interfaces,
+                    confirmation_ui_managers=confirmation_ui_managers,
                     request_confirmation_callback=request_confirmation_callback,
                     subconversation_id=subconversation_id,
                     processing_service=processing_service,

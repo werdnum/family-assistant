@@ -23,6 +23,7 @@ if TYPE_CHECKING:
         RequestConfirmationCallback,
     )
     from family_assistant.storage.context import DatabaseContext
+    from family_assistant.telegram.protocols import ConfirmationUIManager
 
 logger = logging.getLogger(__name__)
 
@@ -56,6 +57,7 @@ class RemoteA2AService:
         replied_to_interface_id: str | None = None,
         chat_interface: ChatInterface | None = None,
         chat_interfaces: dict[str, ChatInterface] | None = None,
+        confirmation_ui_managers: dict[str, ConfirmationUIManager] | None = None,
         request_confirmation_callback: RequestConfirmationCallback | None = None,
         trigger_attachments: list[MessageAttachmentMetadata] | None = None,
         subconversation_id: str | None = None,
@@ -76,6 +78,7 @@ class RemoteA2AService:
             self._service_config.id,
             context_id,
         )
+        _ = confirmation_ui_managers
 
         try:
             task = await self._client.send_message(

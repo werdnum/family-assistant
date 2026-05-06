@@ -40,8 +40,10 @@ services to respond or perform actions.
   school notices, or invitations to your assistant email address. The assistant can summarize the
   email, identify useful actions, and reply by email. Calendar changes, saved notes, reminders, and
   messages to other Family Assistant users require confirmation in a trusted interface such as
-  Telegram or the Web UI before they execute. Email replies are sent only when your forwarding
-  sender address is mapped to your account by the operator.
+  Telegram or the Web UI before they execute. When a forwarded email creates a pending confirmation,
+  the assistant sends inline approval buttons to your primary Telegram chat if one is configured.
+  Email replies are sent only when your forwarding sender address is mapped to your account by the
+  operator.
 
 ## 3. What Can the Assistant Do For You? (Core Features)
 
@@ -125,8 +127,9 @@ You can ask the assistant a wide variety of things:
   soccer ticket email can become a proposed calendar event or note. The assistant treats the email
   body and forwarded content as untrusted evidence, so it will not follow special instructions
   embedded in the email. Any state-changing action waits for your confirmation in Telegram or the
-  Web UI. If the email came through a recipient-only alias without a mapped forwarding sender,
-  confirmations can still be created, but the assistant will not email a reply.
+  Web UI, and Telegram shows inline approval buttons when it is your configured primary
+  communication channel. If the email came through a recipient-only alias without a mapped
+  forwarding sender, confirmations can still be created, but the assistant will not email a reply.
 
 - **Remember Things (Notes):** \*Tell it to save information permanently: \*"Remember: The plumber's
   number is 555-1234." \*"Add a note titled 'Vacation Ideas' with the content 'Visit the Grand

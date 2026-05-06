@@ -413,6 +413,8 @@ class Assistant:
         # Initialize chat_interfaces registry for cross-interface messaging
         self.fastapi_app.state.chat_interfaces = {}
         logger.info("Chat interfaces registry initialized")
+        self.fastapi_app.state.confirmation_ui_managers = {}
+        logger.info("Confirmation UI manager registry initialized")
 
         self.shared_httpx_client = httpx.AsyncClient()
         logger.info("Shared httpx.AsyncClient created.")
@@ -1150,6 +1152,9 @@ class Assistant:
             self.fastapi_app.state.chat_interfaces["telegram"] = (
                 self.telegram_service.chat_interface
             )
+            self.fastapi_app.state.confirmation_ui_managers["telegram"] = (
+                self.telegram_service.confirmation_manager
+            )
             logger.info(
                 "TelegramService instantiated and stored in FastAPI app state during setup_dependencies."
             )
@@ -1340,6 +1345,7 @@ class Assistant:
             engine=self.database_engine,  # Pass the database engine
             chat_interfaces=self.fastapi_app.state.chat_interfaces,
             confirmation_result_waiters=self.confirmation_result_waiters,
+            confirmation_ui_managers=self.fastapi_app.state.confirmation_ui_managers,
         )
         self.task_worker_instance.register_task_handler(
             "log_message", task_wrapper_handle_log_message
