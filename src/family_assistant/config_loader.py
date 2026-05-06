@@ -70,6 +70,11 @@ ENV_VAR_MAPPINGS: list[EnvVarMapping] = [
     EnvVarMapping(
         "MAILGUN_WEBHOOK_SIGNING_KEY", "email_intake.mailgun_webhook_signing_key"
     ),
+    EnvVarMapping("EMAIL_INTAKE_ENABLE_ACTIONS", "email_intake.enable_actions", bool),
+    EnvVarMapping("EMAIL_INTAKE_ACTION_PROFILE_ID", "email_intake.action_profile_id"),
+    EnvVarMapping("MAILGUN_OUTBOUND_API_KEY", "email_intake.outbound_mailgun_api_key"),
+    EnvVarMapping("MAILGUN_OUTBOUND_DOMAIN", "email_intake.outbound_mailgun_domain"),
+    EnvVarMapping("EMAIL_OUTBOUND_FROM_ADDRESS", "email_intake.outbound_from_address"),
     EnvVarMapping("GEMINI_API_KEY", "gemini_api_key"),
     EnvVarMapping("OPENAI_API_KEY", "openai_api_key"),
     EnvVarMapping("WILLYWEATHER_API_KEY", "willyweather_api_key"),

@@ -24,6 +24,7 @@ from family_assistant.storage.repositories.confirmation_requests import (
     ConfirmationRequestsRepository,
 )
 from family_assistant.storage.repositories.tasks import TasksRepository
+from family_assistant.tools.types import ToolArgumentsView
 
 RaceMode = Literal[
     "reject_before_approve",
@@ -66,7 +67,7 @@ class _RacingConfirmationRequestsRepository:
         request_id: str,
         target_user_id: str,
         tool_name: str,
-        tool_args: dict[str, object],
+        tool_args: ToolArgumentsView,
         tool_call_id: str | None,
         source_message_internal_id: int | None,
         confirmation_prompt: str,

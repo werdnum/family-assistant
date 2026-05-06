@@ -177,6 +177,22 @@ class UserIdentityResolver:
             return telegram_user_id in self._developer_telegram_user_ids
         return self._config.developer_chat_id == telegram_user_id
 
+    def is_email_sender_authorized_for_user(
+        self,
+        sender_address: str,
+        user_id: str,
+    ) -> bool:
+        """Return whether an email sender is explicitly mapped to a user."""
+        sender = normalize_email_address(sender_address)
+        if sender is None:
+            return False
+        if self._users_configured:
+            return self._email_sender_to_user_id.get(sender) == user_id
+        return any(
+            sender in mapping.sender_addresses and mapping.user_id == user_id
+            for mapping in self._config.email_intake.user_mappings
+        )
+
     def resolve_email_intake_user(self, form_data: FormData) -> str | None:
         """Resolve an accepted inbound email to a canonical user id."""
         sender = normalize_email_address(_string_or_none(form_data.get("sender")))

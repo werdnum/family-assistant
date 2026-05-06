@@ -3,13 +3,16 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
-from typing import Literal, TypedDict, cast
+from typing import TYPE_CHECKING, Literal, TypedDict, cast
 
 from sqlalchemy import insert, select, update
 
 from family_assistant.storage.confirmation_requests import confirmation_requests_table
 from family_assistant.storage.datetime_utils import normalize_datetime
 from family_assistant.storage.repositories.base import BaseRepository
+
+if TYPE_CHECKING:
+    from family_assistant.tools.types import ToolArguments, ToolArgumentsView
 
 ConfirmationStatus = Literal["pending", "approved", "rejected", "expired"]
 
@@ -21,7 +24,7 @@ class ConfirmationRequestRow(TypedDict):
     target_user_id: str
     status: ConfirmationStatus
     tool_name: str
-    tool_args_json: dict[str, object]
+    tool_args_json: ToolArguments
     tool_call_id: str | None
     source_message_internal_id: int | None
     confirmation_prompt: str
@@ -43,7 +46,7 @@ class ConfirmationRequestsRepository(BaseRepository):
         request_id: str,
         target_user_id: str,
         tool_name: str,
-        tool_args: dict[str, object],
+        tool_args: ToolArgumentsView,
         tool_call_id: str | None,
         source_message_internal_id: int | None,
         confirmation_prompt: str,
@@ -61,7 +64,7 @@ class ConfirmationRequestsRepository(BaseRepository):
                 target_user_id=target_user_id,
                 status="pending",
                 tool_name=tool_name,
-                tool_args_json=tool_args,
+                tool_args_json=dict(tool_args),
                 tool_call_id=tool_call_id,
                 source_message_internal_id=source_message_internal_id,
                 confirmation_prompt=confirmation_prompt,

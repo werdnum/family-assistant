@@ -34,6 +34,26 @@
 #       sender_addresses: ["alice@gmail.com"]
 #       recipient_addresses: ["assistant+alice@mg.example.com"]
 
+# --- Email Intake ---
+# Forward Mailgun inbound route webhooks to /webhook/mail/mime so the app can
+# verify DKIM/DMARC from raw MIME. Action processing is off by default; enable it
+# only with signing, authenticated sender checks, and user mapping configured.
+# email_intake:
+#   mailgun_webhook_signing_key: "your-mailgun-http-webhook-signing-key"
+#   allowed_sender_addresses:
+#     - "alice@gmail.com"
+#   allowed_recipient_addresses:
+#     - "assistant+alice@mg.example.com"
+#   require_authenticated_sender: true
+#   require_user_mapping: true
+#   enable_actions: true
+#   action_profile_id: "email_intake"
+#   outbound_mailgun_domain: "mg.example.com"
+#   outbound_from_address: "Family Assistant <assistant@mg.example.com>"
+#   # Outbound replies require the inbound sender to be listed in that user's
+#   # users[].email_intake.sender_addresses mapping.
+# Set MAILGUN_OUTBOUND_API_KEY in the environment or a secret, not in config.yaml.
+
 # --- Timezone ---
 # Override the default timezone for the application
 # default_profile_settings:

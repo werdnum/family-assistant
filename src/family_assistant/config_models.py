@@ -735,10 +735,16 @@ class EmailIntakeConfig(BaseModel):
     allowed_recipient_addresses: list[str] = Field(default_factory=list)
     require_authenticated_sender: bool = False
     require_user_mapping: bool = False
+    enable_actions: bool = False
+    action_profile_id: str = "email_intake"
     user_mappings: list[EmailIntakeUserMapping] = Field(default_factory=list)
     max_raw_request_bytes: int = Field(default=25 * 1024 * 1024, gt=0)
     max_attachment_bytes: int = Field(default=10 * 1024 * 1024, gt=0)
     max_total_attachment_bytes: int = Field(default=25 * 1024 * 1024, gt=0)
+    outbound_mailgun_api_key: str | None = None
+    outbound_mailgun_domain: str | None = None
+    outbound_from_address: str | None = None
+    outbound_timeout_seconds: float = Field(default=10.0, gt=0)
 
 
 class EventStorageConfig(BaseModel):

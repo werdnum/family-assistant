@@ -22,9 +22,11 @@ from family_assistant.config_models import (
     EmailIntakeConfig,
     EmailIntakeUserMapping,
 )
+from family_assistant.email_intake.actions import EMAIL_INTAKE_ACTION_TASK_TYPE
 from family_assistant.services.user_identity import UserIdentityResolver
 from family_assistant.storage.context import DatabaseContext
 from family_assistant.storage.email import received_emails_table
+from family_assistant.storage.tasks import tasks_table
 from family_assistant.web.app_creator import app as fastapi_app
 from tests.mocks.email_auth import (
     FakeDnsResolver,
@@ -211,6 +213,57 @@ async def test_mail_webhook_accepts_signed_authorized_authenticated_sender(
     assert await _email_target_user_id(db_engine, form["Message-Id"]) == "alice"
     assert await _email_dmarc_result(db_engine, form["Message-Id"]) == "pass"
     assert _raw_mail_files(tmp_path)
+
+
+@pytest.mark.asyncio
+@pytest.mark.postgres
+async def test_mail_webhook_enqueues_action_task_for_mapped_email_when_enabled(
+    api_client: httpx.AsyncClient,
+    db_engine: AsyncEngine,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    _configure_email_intake(
+        monkeypatch,
+        tmp_path,
+        EmailIntakeConfig(
+            mailgun_webhook_signing_key=SIGNING_KEY,
+            allowed_sender_addresses=[SENDER],
+            allowed_recipient_addresses=[RECIPIENT],
+            require_authenticated_sender=True,
+            require_user_mapping=True,
+            enable_actions=True,
+            user_mappings=[
+                EmailIntakeUserMapping(
+                    user_id="alice",
+                    sender_addresses={SENDER},
+                )
+            ],
+        ),
+    )
+    form = _mailgun_form()
+
+    response = await api_client.post("/webhook/mail", data=form)
+
+    assert response.status_code == 200, response.text
+    async with DatabaseContext(engine=db_engine) as db_context:
+        email_row = await db_context.fetch_one(
+            select(received_emails_table.c.id).where(
+                received_emails_table.c.message_id_header == form["Message-Id"]
+            )
+        )
+        assert email_row is not None
+        task_row = await db_context.fetch_one(
+            select(tasks_table.c.task_type, tasks_table.c.payload).where(
+                tasks_table.c.task_id == f"email_intake_action_{email_row['id']}"
+            )
+        )
+
+    assert task_row is not None
+    assert task_row["task_type"] == EMAIL_INTAKE_ACTION_TASK_TYPE
+    assert task_row["payload"]["email_db_id"] == email_row["id"]
+    assert task_row["payload"]["conversation_id"] == f"email:{email_row['id']}"
+    assert task_row["payload"]["user_name"] == "alice"
 
 
 @pytest.mark.asyncio

@@ -27,6 +27,7 @@ MCP_SERVER_IDS = (
     "scrape",
     "browser",
 )
+NON_LEGACY_POLICY_PROFILES = {"email_intake"}
 
 
 def _load_defaults_yaml() -> dict[str, object]:
@@ -124,6 +125,8 @@ def test_tools_policy_matches_legacy_defaults_for_shipped_profiles() -> None:
     }
 
     for profile_id, profile in profile_map.items():
+        if profile_id in NON_LEGACY_POLICY_PROFILES:
+            continue
         assert profile.tools_policy is not None, profile_id
         engine = PolicyEngine.from_policy_config(profile.tools_policy)
 

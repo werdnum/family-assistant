@@ -238,9 +238,23 @@ email_intake:
 
   require_user_mapping: true
 
+  enable_actions: true
+  action_profile_id: "email_intake"
+
+  outbound_mailgun_domain: "mg.example.com"
+  outbound_from_address: "Family Assistant <assistant@mg.example.com>"
+
   max_raw_request_bytes: 26214400
   max_attachment_bytes: 10485760
   max_total_attachment_bytes: 26214400
+```
+
+Set secret values with environment variables where possible:
+
+```bash
+MAILGUN_WEBHOOK_SIGNING_KEY=your-mailgun-http-webhook-signing-key
+MAILGUN_OUTBOUND_API_KEY=your-mailgun-messages-api-key
+EMAIL_INTAKE_ENABLE_ACTIONS=true
 ```
 
 ### mailgun_webhook_signing_key
@@ -339,6 +353,54 @@ and include it in `recipient_addresses`.
 
 If `require_user_mapping` is true or `users[].email_intake` is non-empty, the Mailgun signing key
 must also be set.
+
+### Action Processing
+
+`enable_actions` controls whether accepted, mapped inbound emails become assistant turns. When it is
+false, the webhook stores and indexes email only. When it is true, the webhook enqueues an
+`email_intake_action` task for the restricted `action_profile_id` profile.
+
+Action-capable email intake should use all of these controls together:
+
+| Option                         | Recommended    |
+| ------------------------------ | -------------- |
+| `mailgun_webhook_signing_key`  | Set            |
+| `allowed_sender_addresses`     | Set            |
+| `allowed_recipient_addresses`  | Set            |
+| `require_authenticated_sender` | `true`         |
+| `require_user_mapping`         | `true`         |
+| `enable_actions`               | `true`         |
+| `action_profile_id`            | `email_intake` |
+
+The built-in `email_intake` profile treats email body text, forwarded content, HTML, links, and
+attachments as untrusted evidence. Its policy allows bounded reads, blocks destructive/code/browser/
+delegation/worker/automation tools, and requires durable confirmation for calendar writes, note
+writes, reminders, callbacks, and messages to known users. Confirmation is surfaced through trusted
+interfaces such as Telegram or Web, not by trusting the email body.
+
+### Outbound Email Replies
+
+Outbound email support is reply-only. The email interface resolves `email:{received_email_id}` back
+to the stored inbound email and sends text only to the envelope sender address from that row, and
+only when that sender address is explicitly mapped to the resolved user in
+`users[].email_intake.sender_addresses`. Recipient-only mappings can route an inbound email to a
+user for storage and confirmation creation, but they do not authorize emailing assistant responses
+back to arbitrary external senders. This is intentional: the email intake profile may use bounded
+read tools, so outbound replies require a per-user sender mapping to avoid data exfiltration. It is
+not a general-purpose arbitrary-recipient email tool.
+
+| Option                     | Default        | Environment variable             | Sensitive |
+| -------------------------- | -------------- | -------------------------------- | --------- |
+| `outbound_mailgun_api_key` | `null`         | `MAILGUN_OUTBOUND_API_KEY`       | Yes       |
+| `outbound_mailgun_domain`  | `null`         | `MAILGUN_OUTBOUND_DOMAIN`        | No        |
+| `outbound_from_address`    | `null`         | `EMAIL_OUTBOUND_FROM_ADDRESS`    | No        |
+| `outbound_timeout_seconds` | `10.0`         | None                             | No        |
+| `enable_actions`           | `false`        | `EMAIL_INTAKE_ENABLE_ACTIONS`    | No        |
+| `action_profile_id`        | `email_intake` | `EMAIL_INTAKE_ACTION_PROFILE_ID` | No        |
+
+If outbound Mailgun settings are absent, or the inbound sender is not mapped in
+`users[].email_intake.sender_addresses` for the resolved user, email action processing can still
+create confirmations and store conversation history, but final email replies are not delivered.
 
 ### Sender Authentication Policy
 

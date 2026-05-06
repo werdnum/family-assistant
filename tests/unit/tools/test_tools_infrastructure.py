@@ -28,6 +28,7 @@ from family_assistant.tools.policy import (
 )
 from family_assistant.tools.types import (
     ConfirmationOutcome,
+    ToolArguments,
     ToolDefinition,
     ToolExecutionContext,
 )
@@ -652,7 +653,7 @@ class TestConfirmingToolsProvider:
             turn_id: str | None,
             tool_name: str,
             call_id: str,
-            tool_args: dict[str, object],
+            tool_args: ToolArguments,
             timeout_seconds: float,
             context: ToolExecutionContext,
         ) -> ConfirmationOutcome:
