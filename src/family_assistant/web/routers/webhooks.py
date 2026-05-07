@@ -5,7 +5,11 @@ import logging
 import os
 import re
 import uuid
+from collections.abc import MutableMapping
 from datetime import UTC, datetime
+from email import policy
+from email.message import EmailMessage
+from email.parser import BytesParser
 from typing import TYPE_CHECKING, Annotated, Any
 
 import aiofiles
@@ -40,6 +44,78 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 webhooks_router = APIRouter()
+
+
+class MimeBodyContent(BaseModel):
+    """Text bodies extracted from an RFC 822 MIME message."""
+
+    plain: str | None = None
+    html: str | None = None
+
+
+def _extract_mime_body_content(raw_mime: bytes) -> MimeBodyContent:
+    message = BytesParser(policy=policy.default).parsebytes(raw_mime)
+    plain_parts: list[str] = []
+    html_parts: list[str] = []
+
+    candidates = message.walk() if message.is_multipart() else [message]
+    for part in candidates:
+        if not isinstance(part, EmailMessage):
+            continue
+        if part.is_multipart():
+            continue
+        if part.get_content_disposition() == "attachment":
+            continue
+
+        content_type = part.get_content_type()
+        if content_type not in {"text/plain", "text/html"}:
+            continue
+
+        try:
+            content = part.get_content()
+        except (LookupError, UnicodeError):
+            logger.warning(
+                "Skipping undecodable %s MIME part while extracting email body",
+                content_type,
+                exc_info=True,
+            )
+            continue
+        if not isinstance(content, str):
+            continue
+        if content_type == "text/plain":
+            plain_parts.append(content)
+        else:
+            html_parts.append(content)
+
+    return MimeBodyContent(
+        plain="\n".join(plain_parts) if plain_parts else None,
+        html="\n".join(html_parts) if html_parts else None,
+    )
+
+
+def _populate_missing_body_fields_from_mime(
+    form_data_dict: MutableMapping[str, object],
+    raw_mime: bytes | None,
+) -> None:
+    if raw_mime is None:
+        return
+
+    needs_plain = not form_data_dict.get("body-plain")
+    needs_html = not form_data_dict.get("body-html")
+    needs_stripped_text = not form_data_dict.get("stripped-text")
+    needs_stripped_html = not form_data_dict.get("stripped-html")
+    if not any([needs_plain, needs_html, needs_stripped_text, needs_stripped_html]):
+        return
+
+    mime_body = _extract_mime_body_content(raw_mime)
+    if needs_plain and mime_body.plain is not None:
+        form_data_dict["body-plain"] = mime_body.plain
+    if needs_html and mime_body.html is not None:
+        form_data_dict["body-html"] = mime_body.html
+    if needs_stripped_text and mime_body.plain is not None:
+        form_data_dict["stripped-text"] = mime_body.plain
+    if needs_stripped_html and mime_body.html is not None:
+        form_data_dict["stripped-html"] = mime_body.html
 
 
 async def _save_raw_mail_webhook(
@@ -346,6 +422,7 @@ async def handle_mail_webhook(
             key: form_data.get(key)
             for key in form_data  # type: ignore
         }
+        _populate_missing_body_fields_from_mime(form_data_dict, raw_mime)
 
         parsed_email_payload = ParsedEmailData(
             **form_data_dict,  # Pass all form fields, Pydantic will pick what it needs by alias
