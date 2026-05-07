@@ -116,15 +116,26 @@ def _populate_missing_body_fields_from_mime(
 
     mime_body = _extract_mime_body_content(raw_mime)
     plain_body = mime_body.plain
-    if plain_body is None and mime_body.html is not None:
+    if plain_body is None and needs_plain and mime_body.html is not None:
         plain_body = _html_body_to_markdown(mime_body.html)
 
     if needs_plain and plain_body is not None:
         form_data_dict["body-plain"] = plain_body
     if needs_html and mime_body.html is not None:
         form_data_dict["body-html"] = mime_body.html
-    if needs_stripped_text and plain_body is not None:
-        form_data_dict["stripped-text"] = plain_body
+    if needs_stripped_text:
+        stripped_text_body = mime_body.plain
+        existing_body_plain = form_data_dict.get("body-plain")
+        if (
+            stripped_text_body is None
+            and isinstance(existing_body_plain, str)
+            and existing_body_plain
+        ):
+            stripped_text_body = existing_body_plain
+        if stripped_text_body is None and mime_body.html is not None:
+            stripped_text_body = _html_body_to_markdown(mime_body.html)
+        if stripped_text_body is not None:
+            form_data_dict["stripped-text"] = stripped_text_body
     if needs_stripped_html and mime_body.html is not None:
         form_data_dict["stripped-html"] = mime_body.html
 
