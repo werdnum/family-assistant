@@ -15,6 +15,7 @@ from typing import TYPE_CHECKING, Annotated, Any
 import aiofiles
 from dateutil.parser import parse as parse_datetime
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
+from markdownify import markdownify
 from pydantic import BaseModel, ValidationError
 from starlette.datastructures import UploadFile as StarletteUploadFile
 
@@ -93,6 +94,12 @@ def _extract_mime_body_content(raw_mime: bytes) -> MimeBodyContent:
     )
 
 
+def _html_body_to_markdown(html: str) -> str | None:
+    markdown = markdownify(html, heading_style="ATX")
+    markdown = re.sub(r"\n{3,}", "\n\n", markdown).strip()
+    return markdown or None
+
+
 def _populate_missing_body_fields_from_mime(
     form_data_dict: MutableMapping[str, object],
     raw_mime: bytes | None,
@@ -108,12 +115,16 @@ def _populate_missing_body_fields_from_mime(
         return
 
     mime_body = _extract_mime_body_content(raw_mime)
-    if needs_plain and mime_body.plain is not None:
-        form_data_dict["body-plain"] = mime_body.plain
+    plain_body = mime_body.plain
+    if plain_body is None and mime_body.html is not None:
+        plain_body = _html_body_to_markdown(mime_body.html)
+
+    if needs_plain and plain_body is not None:
+        form_data_dict["body-plain"] = plain_body
     if needs_html and mime_body.html is not None:
         form_data_dict["body-html"] = mime_body.html
-    if needs_stripped_text and mime_body.plain is not None:
-        form_data_dict["stripped-text"] = mime_body.plain
+    if needs_stripped_text and plain_body is not None:
+        form_data_dict["stripped-text"] = plain_body
     if needs_stripped_html and mime_body.html is not None:
         form_data_dict["stripped-html"] = mime_body.html
 

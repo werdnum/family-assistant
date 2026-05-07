@@ -64,6 +64,8 @@ dependencies = [
     # For robust datetime parsing (version updated)
     "markdown-it-py>=3.0.0",
     # For rendering Markdown in web server
+    "markdownify>=1.1.0",
+    # For converting HTML email bodies to Markdown
     "mdit-py-plugins>=0.4.0",
     # Common plugins for markdown-it-py
     "linkify-it-py>=2.0.0",
@@ -449,5 +451,4 @@ telegram-bot-api-mock = { git = "https://github.com/werdnum/telegram-bot-api-moc
 [dependency-groups]
 dev = [
 ]
-
 
