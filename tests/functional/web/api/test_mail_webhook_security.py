@@ -9,8 +9,10 @@ from __future__ import annotations
 
 import hashlib
 import hmac
+import json
 import time
 import uuid
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 import pytest
@@ -35,8 +37,6 @@ from tests.mocks.email_auth import (
 )
 
 if TYPE_CHECKING:
-    from pathlib import Path
-
     import httpx
     from sqlalchemy.ext.asyncio import AsyncEngine
 
@@ -45,6 +45,12 @@ SIGNING_KEY = "mailgun-test-key"
 SENDER = "buyer@example.com"
 RECIPIENT = "orders@example.net"
 SENDER_DOMAIN = "example.com"
+MAILGUN_MIME_FORWARDING_FIXTURE = (
+    Path(__file__).parents[3]
+    / "fixtures"
+    / "email_intake"
+    / "mailgun_mime_forwarding_request.json"
+)
 
 
 def _signature(timestamp: str, token: str, signing_key: str) -> str:
@@ -106,6 +112,13 @@ def _mailgun_form(
         )
         form["body-mime"] = mime.decode("utf-8", errors="surrogateescape")
     return form
+
+
+def _mailgun_mime_forwarding_fixture_form() -> dict[str, str]:
+    request_payload = json.loads(MAILGUN_MIME_FORWARDING_FIXTURE.read_text())
+    body = request_payload["body"]
+    assert isinstance(body, dict)
+    return {key: value for key, value in body.items() if isinstance(value, str)}
 
 
 def _configure_email_intake(
@@ -170,6 +183,28 @@ async def _email_dmarc_result(engine: AsyncEngine, message_id: str) -> str | Non
             )
         )
     return row["dmarc_result"] if row else None
+
+
+async def _email_body_fields(
+    engine: AsyncEngine, message_id: str
+) -> tuple[str | None, str | None, str | None, str | None]:
+    async with DatabaseContext(engine=engine) as db_context:
+        row = await db_context.fetch_one(
+            select(
+                received_emails_table.c.body_plain,
+                received_emails_table.c.body_html,
+                received_emails_table.c.stripped_text,
+                received_emails_table.c.stripped_html,
+            ).where(received_emails_table.c.message_id_header == message_id)
+        )
+    if row is None:
+        return None, None, None, None
+    return (
+        row["body_plain"],
+        row["body_html"],
+        row["stripped_text"],
+        row["stripped_html"],
+    )
 
 
 def _raw_mail_files(tmp_path: Path) -> list[Path]:
@@ -351,6 +386,52 @@ async def test_mail_webhook_mime_alias_accepts_same_payload(
     assert response.status_code == 200, response.text
     assert await _email_exists(db_engine, form["Message-Id"])
     assert await _email_dmarc_result(db_engine, form["Message-Id"]) == "pass"
+
+
+@pytest.mark.asyncio
+@pytest.mark.postgres
+async def test_mail_webhook_mime_alias_extracts_missing_body_fields_from_raw_mime(
+    api_client: httpx.AsyncClient,
+    db_engine: AsyncEngine,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    form = _mailgun_mime_forwarding_fixture_form()
+    assert "body-mime" in form
+    assert "body-plain" not in form
+    assert "body-html" not in form
+    assert "stripped-text" not in form
+    assert "stripped-html" not in form
+
+    _configure_email_intake(
+        monkeypatch,
+        tmp_path,
+        EmailIntakeConfig(
+            mailgun_webhook_signing_key=SIGNING_KEY,
+            allowed_sender_addresses=[form["sender"]],
+        ),
+    )
+    form["Message-Id"] = f"<mailgun-mime-body-{uuid.uuid4()}@example.com>"
+    form["timestamp"] = str(int(time.time()))
+    form["token"] = f"token-{uuid.uuid4().hex}"
+    form["signature"] = _signature(form["timestamp"], form["token"], SIGNING_KEY)
+
+    response = await api_client.post("/webhook/mail/mime", data=form)
+
+    assert response.status_code == 200, response.text
+    message_id = form["Message-Id"]
+    body_plain, body_html, stripped_text, stripped_html = await _email_body_fields(
+        db_engine, message_id
+    )
+    assert body_plain is not None
+    assert body_plain.startswith("Hi Alice,\n\nThis is Bob.")
+    assert body_html is not None
+    assert "<html>" in body_html
+    assert "This is Bob." in body_html
+    assert stripped_text is not None
+    assert stripped_text == body_plain
+    assert stripped_html is not None
+    assert stripped_html == body_html
 
 
 @pytest.mark.asyncio
