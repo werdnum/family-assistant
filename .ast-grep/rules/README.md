@@ -69,6 +69,29 @@ await expect(page.locator("#status")).to_have_text("Complete")
 await page.wait_for_load_state("networkidle")
 ```
 
+#### `no-strict-assistant-message-wait`
+
+**Pattern**: `wait_for()` on a Playwright locator that targets `[data-testid="assistant-message"]`
+or `get_by_test_id("assistant-message")`
+
+**Why it's banned**: Chat tests can legitimately render multiple assistant messages, for example an
+initial assistant response followed by a final response after tool calls. Playwright `wait_for()` on
+a locator expects one matching element, so this pattern can fail in strict mode before the test
+reaches its real assertions.
+
+**Replacement**:
+
+```python
+# Wait for expected message content
+await chat_page.wait_for_message_content("I'll add several notes for you.")
+
+# Or wait for the concrete UI under test
+await page.wait_for_selector('[data-testid*="tool-call"]', state="visible")
+
+# If one assistant message is genuinely intended, scope it explicitly
+await page.locator('[data-testid="assistant-message"]').first.wait_for(state="visible")
+```
+
 ### Tool Development Anti-Patterns
 
 #### `toolresult-text-literal-with-data`

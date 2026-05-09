@@ -104,10 +104,6 @@ async def test_multiple_tool_calls_are_grouped(
         "Successfully added all three notes.", timeout=30000
     )
 
-    # Wait for tool calls to appear
-    assistant_message = page.locator('[data-testid="assistant-message"]')
-    await assistant_message.wait_for(state="visible", timeout=10000)
-
     # Wait for tool call summary or details to appear
     await chat_page.wait_for_tool_call_display(timeout=10000)
 
