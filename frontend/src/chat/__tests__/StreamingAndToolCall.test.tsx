@@ -73,7 +73,7 @@ describe('Streaming with Tool Calls', () => {
         { timeout: 5000 }
       );
 
-      // 2. The tool call is wrapped in a ToolGroup that starts expanded
+      // 2. The tool call is wrapped in a ToolGroup that starts collapsed once complete
       // Verify the ToolGroup trigger is present (now shows category-based summary)
       await waitFor(
         () => {
@@ -83,7 +83,13 @@ describe('Streaming with Tool Calls', () => {
         { timeout: 5000 }
       );
 
-      // Check for the attachment UI element (should be visible since ToolGroup starts expanded)
+      const toolGroupContent = screen.getByTestId('tool-group-content');
+      expect(toolGroupContent).toHaveAttribute('data-state', 'closed');
+      expect(screen.queryByText('📎 Attachments')).not.toBeInTheDocument();
+
+      await user.click(screen.getByTestId('tool-group-trigger'));
+
+      // Check for the attachment UI element after expanding the collapsed tool group
       await waitFor(
         () => {
           expect(screen.getByText('📎 Attachments')).toBeInTheDocument();

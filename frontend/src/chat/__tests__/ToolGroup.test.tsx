@@ -31,7 +31,7 @@ describe('ToolGroup', () => {
     expect(screen.getByText('3 tool calls')).toBeInTheDocument();
   });
 
-  it('is initially expanded', () => {
+  it('is initially collapsed', () => {
     render(
       <ToolGroup startIndex={0} endIndex={1}>
         {mockChildren}
@@ -39,10 +39,10 @@ describe('ToolGroup', () => {
     );
 
     const content = screen.getByTestId('tool-group-content');
-    expect(content).toHaveAttribute('data-state', 'open');
+    expect(content).toHaveAttribute('data-state', 'closed');
   });
 
-  it('collapses when clicked', async () => {
+  it('expands when clicked', async () => {
     const user = userEvent.setup();
     render(
       <ToolGroup startIndex={0} endIndex={1}>
@@ -53,14 +53,14 @@ describe('ToolGroup', () => {
     const trigger = screen.getByTestId('tool-group-trigger');
     const content = screen.getByTestId('tool-group-content');
 
-    expect(content).toHaveAttribute('data-state', 'open');
+    expect(content).toHaveAttribute('data-state', 'closed');
 
     await user.click(trigger);
 
-    expect(content).toHaveAttribute('data-state', 'closed');
+    expect(content).toHaveAttribute('data-state', 'open');
   });
 
-  it('expands again when clicked while collapsed', async () => {
+  it('collapses again when clicked while expanded', async () => {
     const user = userEvent.setup();
     render(
       <ToolGroup startIndex={0} endIndex={1}>
@@ -71,13 +71,13 @@ describe('ToolGroup', () => {
     const trigger = screen.getByTestId('tool-group-trigger');
     const content = screen.getByTestId('tool-group-content');
 
-    // First collapse
-    await user.click(trigger);
-    expect(content).toHaveAttribute('data-state', 'closed');
-
-    // Then expand again
+    // First expand
     await user.click(trigger);
     expect(content).toHaveAttribute('data-state', 'open');
+
+    // Then collapse again
+    await user.click(trigger);
+    expect(content).toHaveAttribute('data-state', 'closed');
   });
 
   it('supports keyboard navigation with Enter key', async () => {
@@ -95,12 +95,12 @@ describe('ToolGroup', () => {
     await user.tab();
     expect(trigger).toHaveFocus();
 
-    // Initially expanded
-    expect(content).toHaveAttribute('data-state', 'open');
-
-    // Press Enter to collapse
-    await user.keyboard('{Enter}');
+    // Initially collapsed
     expect(content).toHaveAttribute('data-state', 'closed');
+
+    // Press Enter to expand
+    await user.keyboard('{Enter}');
+    expect(content).toHaveAttribute('data-state', 'open');
   });
 
   it('supports keyboard navigation with Space key', async () => {
@@ -118,12 +118,12 @@ describe('ToolGroup', () => {
     await user.tab();
     expect(trigger).toHaveFocus();
 
-    // Initially expanded
-    expect(content).toHaveAttribute('data-state', 'open');
-
-    // Press Space to collapse
-    await user.keyboard(' ');
+    // Initially collapsed
     expect(content).toHaveAttribute('data-state', 'closed');
+
+    // Press Space to expand
+    await user.keyboard(' ');
+    expect(content).toHaveAttribute('data-state', 'open');
   });
 
   it('renders children content when expanded', async () => {
@@ -137,17 +137,18 @@ describe('ToolGroup', () => {
     const trigger = screen.getByTestId('tool-group-trigger');
     const content = screen.getByTestId('tool-group-content');
 
-    // Initially expanded - content should NOT have hidden attribute
+    // Initially collapsed - content should be unmounted
+    expect(content).toHaveAttribute('hidden');
+    expect(screen.queryByTestId('tool-content')).not.toBeInTheDocument();
+
+    // Expand
+    await user.click(trigger);
+
+    // Content should now be visible
     expect(content).not.toHaveAttribute('hidden');
     expect(screen.getByTestId('tool-content')).toBeInTheDocument();
     expect(screen.getByText('Tool 1')).toBeInTheDocument();
     expect(screen.getByText('Tool 2')).toBeInTheDocument();
-
-    // Collapse
-    await user.click(trigger);
-
-    // Content should now be hidden
-    expect(content).toHaveAttribute('hidden');
   });
 
   it('has proper ARIA attributes', () => {
@@ -160,10 +161,10 @@ describe('ToolGroup', () => {
     const trigger = screen.getByTestId('tool-group-trigger');
 
     expect(trigger).toHaveAttribute('type', 'button');
-    expect(trigger).toHaveAttribute('aria-expanded', 'true'); // Initially expanded
+    expect(trigger).toHaveAttribute('aria-expanded', 'false');
   });
 
-  it('updates ARIA attributes when collapsed', async () => {
+  it('updates ARIA attributes when expanded', async () => {
     const user = userEvent.setup();
     render(
       <ToolGroup startIndex={0} endIndex={1}>
@@ -173,10 +174,10 @@ describe('ToolGroup', () => {
 
     const trigger = screen.getByTestId('tool-group-trigger');
 
-    // Click to collapse
+    // Click to expand
     await user.click(trigger);
 
-    expect(trigger).toHaveAttribute('aria-expanded', 'false');
+    expect(trigger).toHaveAttribute('aria-expanded', 'true');
   });
 
   it('displays category icons', () => {
@@ -205,14 +206,14 @@ describe('ToolGroup', () => {
     const chevron = trigger.querySelector('svg:last-child');
 
     expect(chevron).toBeInTheDocument();
-    // Initially expanded, trigger should have data-state="open"
-    expect(trigger).toHaveAttribute('data-state', 'open');
+    // Initially collapsed, trigger should have data-state="closed"
+    expect(trigger).toHaveAttribute('data-state', 'closed');
 
-    // Click to collapse
+    // Click to expand
     await user.click(trigger);
 
-    // Trigger should have data-state="closed"
-    expect(trigger).toHaveAttribute('data-state', 'closed');
+    // Trigger should have data-state="open"
+    expect(trigger).toHaveAttribute('data-state', 'open');
 
     // Note: The rotation is applied via CSS selector [&[data-state=open]>svg]:rotate-180
     // in the CollapsibleTrigger component, so we don't directly test the rotate-180 class

@@ -288,14 +288,20 @@ describe('ToolWithConfirmation', () => {
         expect(messageInput).toHaveValue('');
       });
 
-      // Wait for the tool result to appear, which indicates the flow has completed
+      // Wait for the final text response, which indicates the flow has completed.
       await waitFor(
         () => {
-          expect(screen.getByText('Note added successfully')).toBeInTheDocument();
+          expect(screen.getByText('Done!')).toBeInTheDocument();
         },
         { timeout: 5000 }
       );
 
+      expect(screen.getByTestId('tool-group-content')).toHaveAttribute('data-state', 'closed');
+      expect(screen.queryByText('Note added successfully')).not.toBeInTheDocument();
+
+      await user.click(screen.getByTestId('tool-group-trigger'));
+
+      expect(screen.getByText('Note added successfully')).toBeInTheDocument();
       expect(screen.getByText('Chat')).toBeInTheDocument();
     },
     { timeout: 30000 }

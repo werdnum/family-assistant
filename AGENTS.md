@@ -620,6 +620,9 @@ Once you've implemented a change, you ALWAYS go through the following algorithm:
 4. Run `poe test` for final verification - this is what runs in CI and it runs all tests and
    linters.
 
+When long-running verification commands such as `poe test` are active, do not provide play-by-play
+progress updates. Let the command run and report only when action is needed or when it finishes.
+
 You NEVER push new changes or make a PR if `poe test` does not pass. We do not merge PRs with
 failing tests or linter errors.
 
