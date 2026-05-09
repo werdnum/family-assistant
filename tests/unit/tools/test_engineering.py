@@ -391,42 +391,33 @@ class TestGetLlmRequestHistory:
 # --- Tool definitions tests ---
 
 
+_ENGINEERING_TOOL_NAMES: frozenset[str] = frozenset({
+    "read_source_file",
+    "search_source_code",
+    "query_database",
+    "read_error_logs",
+    "get_llm_request_history",
+    "create_github_issue",
+    "get_mcp_server_status",
+    "reconnect_mcp_server",
+    "get_resolved_config",
+    "get_profile_config",
+    "get_system_info",
+})
+
+
 class TestToolDefinitions:
     def test_definitions_list_is_complete(self) -> None:
         tool_names = {t["function"]["name"] for t in ENGINEERING_TOOLS_DEFINITION}
-        expected = {
-            "read_source_file",
-            "search_source_code",
-            "query_database",
-            "read_error_logs",
-            "get_llm_request_history",
-            "create_github_issue",
-        }
-        assert tool_names == expected
+        assert tool_names == _ENGINEERING_TOOL_NAMES
 
     def test_tools_registered_in_available_functions(self) -> None:
-        expected_tools = [
-            "read_source_file",
-            "search_source_code",
-            "query_database",
-            "read_error_logs",
-            "get_llm_request_history",
-            "create_github_issue",
-        ]
-        for tool_name in expected_tools:
+        for tool_name in _ENGINEERING_TOOL_NAMES:
             assert tool_name in AVAILABLE_FUNCTIONS, (
                 f"{tool_name} not in AVAILABLE_FUNCTIONS"
             )
 
     def test_tools_in_tools_definition(self) -> None:
         all_tool_names = {t["function"]["name"] for t in TOOLS_DEFINITION}
-        expected_tools = [
-            "read_source_file",
-            "search_source_code",
-            "query_database",
-            "read_error_logs",
-            "get_llm_request_history",
-            "create_github_issue",
-        ]
-        for tool_name in expected_tools:
+        for tool_name in _ENGINEERING_TOOL_NAMES:
             assert tool_name in all_tool_names, f"{tool_name} not in TOOLS_DEFINITION"

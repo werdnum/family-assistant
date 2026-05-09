@@ -1,7 +1,9 @@
 """Engineering tools for debugging and diagnosing the application.
 
 Provides read-only access to source code, database queries, error logs,
-and GitHub issue creation for the engineer processing profile.
+resolved configuration, profile configuration, and live MCP server status,
+plus a confirmation-gated MCP reconnect action and GitHub issue creation
+for the engineer processing profile.
 """
 
 from __future__ import annotations
@@ -9,6 +11,8 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+import platform
+import sys
 from typing import TYPE_CHECKING
 
 import aiofiles
@@ -16,13 +20,20 @@ import httpx
 import sqlparse
 from sqlalchemy import text
 
+from family_assistant.config_inspection import (
+    dump_profile_like,
+    redact_sensitive_config,
+)
 from family_assistant.llm.request_buffer import get_request_buffer
 from family_assistant.paths import PROJECT_ROOT
+from family_assistant.tools.infrastructure import find_provider_by_type
 from family_assistant.tools.types import ToolDefinition, ToolResult
 
 if TYPE_CHECKING:
     from pathlib import Path
 
+    from family_assistant.config_models import AppConfig
+    from family_assistant.tools.mcp import MCPToolsProvider
     from family_assistant.tools.types import ToolExecutionContext
 
 logger = logging.getLogger(__name__)
@@ -425,6 +436,273 @@ async def create_github_issue(
     )
 
 
+def _resolve_mcp_provider(
+    exec_context: ToolExecutionContext,
+) -> MCPToolsProvider | None:
+    """Locate the live MCPToolsProvider in the runtime tools provider tree.
+
+    Returns ``None`` when MCP support is not built in, when no tools provider
+    is wired into the execution context, or when no MCPToolsProvider was
+    configured. Callers should surface a clear diagnostic in that case rather
+    than treating it as a connection failure.
+    """
+    # ``tools.mcp`` depends on the optional ``mcp`` SDK; deployments without
+    # the SDK installed must still be able to import ``engineering.py``, so
+    # we defer the import to call time. ``__init__.py`` already wraps this
+    # import in a try/except and substitutes ``None`` when unavailable, but
+    # we re-import here from the concrete module rather than the package
+    # so static type checkers can resolve the symbol. The function-scope
+    # import is intentional — top-level would break that contract.
+    from family_assistant.tools.mcp import (  # noqa: PLC0415 - lazy import: optional MCP SDK may be absent at module load
+        MCPToolsProvider as _MCPToolsProvider,
+    )
+
+    tools_provider = exec_context.tools_provider
+    if (
+        tools_provider is None
+        and exec_context.processing_service is not None
+        and hasattr(exec_context.processing_service, "tools_provider")
+    ):
+        tools_provider = exec_context.processing_service.tools_provider
+
+    if tools_provider is None:
+        return None
+
+    return find_provider_by_type(tools_provider, _MCPToolsProvider)
+
+
+async def get_mcp_server_status(
+    exec_context: ToolExecutionContext,
+) -> ToolResult:
+    """Return the live connection status of all configured MCP servers.
+
+    Includes per-server status (``connected`` / ``failed`` / ``cancelled`` /
+    ``pending`` / ``connecting``), transport, the discovered tool list, and
+    whether a session is currently active. Tokens are omitted; URLs and stdio
+    commands are included verbatim so the engineer can correlate against the
+    deployment config.
+    """
+    logger.info("get_mcp_server_status: dumping live MCP server statuses")
+
+    mcp_provider = _resolve_mcp_provider(exec_context)
+    if mcp_provider is None:
+        return ToolResult(
+            data={
+                "error": (
+                    "No MCPToolsProvider available in the current tools provider tree. "
+                    "Either MCP support is not installed, no MCP servers are configured, "
+                    "or the tools provider has not been wired into this execution context."
+                ),
+                "servers": {},
+            }
+        )
+
+    statuses = mcp_provider.get_server_statuses()
+    summary = {
+        "total": len(statuses),
+        "connected": sum(
+            1 for entry in statuses.values() if entry["status"] == "connected"
+        ),
+        "failed": sum(1 for entry in statuses.values() if entry["status"] == "failed"),
+        "cancelled": sum(
+            1 for entry in statuses.values() if entry["status"] == "cancelled"
+        ),
+        "pending": sum(
+            1
+            for entry in statuses.values()
+            if entry["status"] in {"pending", "connecting"}
+        ),
+    }
+    return ToolResult(data={"summary": summary, "servers": statuses})
+
+
+async def reconnect_mcp_server(
+    exec_context: ToolExecutionContext,
+    server_id: str,
+) -> ToolResult:
+    """Tear down and re-establish an MCP server's session.
+
+    This is a state-changing diagnostic action: it closes any existing
+    session for ``server_id``, runs the regular discovery flow, and updates
+    the in-memory tool registry. The engineer profile gates this tool with a
+    confirmation policy.
+    """
+    logger.info("reconnect_mcp_server: server_id=%s", server_id)
+
+    mcp_provider = _resolve_mcp_provider(exec_context)
+    if mcp_provider is None:
+        return ToolResult(
+            data={
+                "error": (
+                    "No MCPToolsProvider available; cannot reconnect. "
+                    "Check that MCP support is installed and the tools provider "
+                    "is wired into this execution context."
+                ),
+                "server_id": server_id,
+            }
+        )
+
+    try:
+        success = await mcp_provider.reconnect_server(server_id)
+    except KeyError:
+        return ToolResult(
+            data={
+                "error": f"Unknown MCP server id: {server_id!r}",
+                "configured_servers": sorted(mcp_provider.server_configs.keys()),
+            }
+        )
+
+    statuses = mcp_provider.get_server_statuses()
+    return ToolResult(
+        data={
+            "server_id": server_id,
+            "success": success,
+            "status": statuses.get(server_id, {}),
+        }
+    )
+
+
+def _resolve_app_config(
+    exec_context: ToolExecutionContext,
+) -> AppConfig | None:
+    """Return the ``AppConfig`` instance from the execution context, if any.
+
+    Engineer-profile diagnostic tools rely on ``processing_service.app_config``
+    being available. ``None`` indicates the context is missing infrastructure
+    and the caller should surface a clear error.
+    """
+    processing_service = exec_context.processing_service
+    if processing_service is None:
+        return None
+    return getattr(processing_service, "app_config", None)
+
+
+async def get_resolved_config(
+    exec_context: ToolExecutionContext,
+) -> ToolResult:
+    """Return the live ``AppConfig`` (excluding service profiles) with secrets redacted.
+
+    Service profile and default-profile bodies are omitted because they can
+    be large; use ``get_profile_config`` to retrieve them individually. The
+    profile id list is included so the caller knows what's available.
+    """
+    logger.info("get_resolved_config: dumping live application config")
+
+    app_config = _resolve_app_config(exec_context)
+    if app_config is None:
+        return ToolResult(
+            data={
+                "error": (
+                    "No AppConfig available on the processing service. "
+                    "This tool must be invoked from within a live processing flow."
+                )
+            }
+        )
+
+    full_dump = app_config.model_dump(mode="json")
+    profiles = full_dump.pop("service_profiles", [])
+    full_dump.pop("default_profile_settings", None)
+
+    profile_ids: list[str] = sorted(
+        entry["id"]
+        for entry in profiles
+        if isinstance(entry, dict) and isinstance(entry.get("id"), str)
+    )
+
+    return ToolResult(
+        data={
+            "config": redact_sensitive_config(full_dump),
+            "profile_ids": profile_ids,
+            "profile_count": len(profile_ids),
+            "default_service_profile_id": full_dump.get("default_service_profile_id"),
+        }
+    )
+
+
+async def get_profile_config(
+    exec_context: ToolExecutionContext,
+    profile_id: str | None = None,
+) -> ToolResult:
+    """Return live profile configuration with secrets redacted.
+
+    With ``profile_id``, returns just that profile's config. Without one,
+    returns the profile id list (call again with a specific id to fetch the
+    body) plus the merged ``default_profile_settings``. This avoids dumping
+    every profile in one giant payload.
+    """
+    logger.info("get_profile_config: profile_id=%s", profile_id)
+
+    app_config = _resolve_app_config(exec_context)
+    if app_config is None:
+        return ToolResult(
+            data={
+                "error": (
+                    "No AppConfig available on the processing service. "
+                    "This tool must be invoked from within a live processing flow."
+                )
+            }
+        )
+
+    profiles = list(getattr(app_config, "service_profiles", []) or [])
+
+    if profile_id is None:
+        return ToolResult(
+            data={
+                "profile_ids": sorted(p.id for p in profiles),
+                "default_service_profile_id": getattr(
+                    app_config, "default_service_profile_id", None
+                ),
+                "default_profile_settings": redact_sensitive_config(
+                    dump_profile_like(app_config.default_profile_settings)
+                ),
+            }
+        )
+
+    matched = next((p for p in profiles if p.id == profile_id), None)
+    if matched is None:
+        return ToolResult(
+            data={
+                "error": f"Profile {profile_id!r} not found",
+                "profile_ids": sorted(p.id for p in profiles),
+            }
+        )
+
+    return ToolResult(
+        data={
+            "id": matched.id,
+            "description": matched.description,
+            "config": redact_sensitive_config(dump_profile_like(matched)),
+        }
+    )
+
+
+async def get_system_info(
+    exec_context: ToolExecutionContext,
+) -> ToolResult:
+    """Return runtime environment info (Python, platform, database dialect).
+
+    Mirrors the ``system_info`` block of the ``/api/diagnostics/export``
+    endpoint so the engineer profile can include it in bug reports without
+    leaving the chat.
+    """
+    logger.info("get_system_info: gathering runtime environment info")
+
+    db_dialect = "unknown"
+    db_context = exec_context.db_context
+    engine = getattr(db_context, "engine", None)
+    if engine is not None:
+        dialect = getattr(engine, "dialect", None)
+        db_dialect = getattr(dialect, "name", "unknown")
+
+    return ToolResult(
+        data={
+            "python_version": sys.version.split()[0],
+            "platform": platform.platform(),
+            "database_dialect": db_dialect,
+        }
+    )
+
+
 # Tool Definitions
 
 ENGINEERING_TOOLS_DEFINITION: list[ToolDefinition] = [
@@ -585,6 +863,110 @@ ENGINEERING_TOOLS_DEFINITION: list[ToolDefinition] = [
                     },
                 },
                 "required": ["title", "body"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "get_mcp_server_status",
+            "description": (
+                "Return the live connection status of every configured MCP server, "
+                "including transport, command/url, session activity, and the list "
+                "of tools each server currently provides. Use this when scripts or "
+                "the LLM report that an MCP-backed tool name is undefined, or to "
+                "confirm an MCP server is reachable before depending on it."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {},
+                "required": [],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "reconnect_mcp_server",
+            "description": (
+                "Tear down and re-establish the connection to a single MCP server. "
+                "Useful when a server has dropped to a 'failed' or 'cancelled' "
+                "state and you want to retry without restarting the application. "
+                "This is a state-changing operation; the engineer profile gates "
+                "it behind user confirmation."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "server_id": {
+                        "type": "string",
+                        "description": (
+                            "Configured MCP server id (matches a key in "
+                            "AppConfig.mcp_servers). Use get_mcp_server_status "
+                            "to see available ids."
+                        ),
+                    },
+                },
+                "required": ["server_id"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "get_resolved_config",
+            "description": (
+                "Return the live AppConfig (with secrets redacted), excluding the "
+                "service profile bodies which can be large. Use get_profile_config "
+                "to fetch a profile by id. The response includes the full list of "
+                "configured profile ids so you know what's available."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {},
+                "required": [],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "get_profile_config",
+            "description": (
+                "Return the live configuration of a service profile (with secrets "
+                "redacted). Without profile_id returns the list of available "
+                "profile ids plus the merged default_profile_settings; with "
+                "profile_id returns just that profile's body, including merged "
+                "operator_tools_policy and operator_mcp_server_ids."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "profile_id": {
+                        "type": "string",
+                        "description": (
+                            "Service profile id to dump. Omit to list available "
+                            "profile ids and view default_profile_settings."
+                        ),
+                    },
+                },
+                "required": [],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "get_system_info",
+            "description": (
+                "Return runtime environment info (Python version, OS platform, "
+                "database dialect). Mirrors the system_info block of "
+                "/api/diagnostics/export so it can be included in bug reports."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {},
+                "required": [],
             },
         },
     },

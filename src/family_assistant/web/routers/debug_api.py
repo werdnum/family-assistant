@@ -10,7 +10,12 @@ from typing import Annotated, Any
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from fastapi.responses import Response
 
-from family_assistant.config_models import DefaultProfileSettings, ServiceProfile
+from family_assistant.config_inspection import (
+    SENSITIVE_FIELD_NAMES,
+    dump_profile_like,
+    is_sensitive_field_name,
+    redact_sensitive_config,
+)
 from family_assistant.web.auth import (
     AUTH_ENABLED,
     OIDC_CLIENT_ID,
@@ -22,92 +27,14 @@ from family_assistant.web.dependencies import get_current_user
 logger = logging.getLogger(__name__)
 debug_api_router = APIRouter()
 
-# Fields whose values may leak secrets or per-user credentials. When a key with
-# one of these names appears anywhere in the serialized config (including nested
-# dicts under e.g. ``camera_config`` or ``home_assistant_*``), its value is
-# replaced with "[REDACTED]" in the response.
-SENSITIVE_FIELD_NAMES: frozenset[str] = frozenset({
-    "home_assistant_token",
-    "password",
-    "client_secret",
-    "mailgun_webhook_signing_key",
-    "gemini_api_key",
-    "openai_api_key",
-    "openrouter_api_key",
-    "telegram_token",
-    "vapid_private_key",
-    "session_secret_key",
-    "token_env",  # name of env var, redacted defensively
-})
-
-# Substring patterns used as a defense-in-depth fallback so config fields added
-# in the future with secret-looking names (e.g. ``*_api_key``, ``*_secret``,
-# ``*_token``, ``*_password``) are redacted even if not explicitly allowlisted.
-_SENSITIVE_SUBSTRINGS: tuple[str, ...] = (
-    "api_key",
-    "apikey",
-    "secret",
-    "token",
-    "password",
-    "passwd",
-    "private_key",
-)
-
-
-def is_sensitive_field_name(key: object) -> bool:
-    """Return True if the given dict key looks like it carries a secret."""
-    if not isinstance(key, str):
-        return False
-    if key in SENSITIVE_FIELD_NAMES:
-        return True
-    lowered = key.lower()
-    return any(substring in lowered for substring in _SENSITIVE_SUBSTRINGS)
-
-
-# ast-grep-ignore: no-dict-any - Recursive config redaction handles arbitrary nested structures
-def redact_sensitive_config(obj: Any) -> Any:  # noqa: ANN401 - recursive over arbitrary JSON-like data
-    """Recursively redact sensitive fields in a serialized config structure."""
-    if isinstance(obj, dict):
-        return {
-            key: "[REDACTED]"
-            if is_sensitive_field_name(key) and value
-            else redact_sensitive_config(value)
-            for key, value in obj.items()
-        }
-    if isinstance(obj, list):
-        return [redact_sensitive_config(item) for item in obj]
-    return obj
-
-
-def _dump_profile_like(
-    profile: ServiceProfile | DefaultProfileSettings,
-    # ast-grep-ignore: no-dict-any - Serialized Pydantic model has heterogeneous top-level values
-) -> dict[str, Any]:
-    """Serialize a ServiceProfile/DefaultProfileSettings including excluded operator fields.
-
-    ``operator_tools_policy`` and ``operator_mcp_server_ids`` on both
-    ``ServiceProfile`` and ``DefaultProfileSettings`` are declared with
-    ``exclude=True`` so they do not round-trip through the YAML config, but they
-    ARE merged with the profile/defaults layers at runtime (see
-    ``PolicyEngine.from_layers``). For the debug dump we want the caller to see
-    every layer contributing to the effective policy — including any defaults
-    that apply to every profile — so we serialize them explicitly here.
-    """
-    dumped = profile.model_dump(mode="json")
-
-    if profile.operator_tools_policy is not None:
-        dumped["operator_tools_policy"] = profile.operator_tools_policy.model_dump(
-            mode="json"
-        )
-    else:
-        dumped["operator_tools_policy"] = None
-
-    dumped["operator_mcp_server_ids"] = [
-        entry if isinstance(entry, str) else entry.model_dump(mode="json")
-        for entry in profile.operator_mcp_server_ids
-    ]
-
-    return dumped
+# Re-export shared helpers from config_inspection so existing call sites and
+# tests that imported them from this module keep working.
+__all__ = [
+    "SENSITIVE_FIELD_NAMES",
+    "debug_api_router",
+    "is_sensitive_field_name",
+    "redact_sensitive_config",
+]
 
 
 def _strip_google_prefix(model: str) -> str:
@@ -432,7 +359,7 @@ async def dump_profiles(  # noqa: A002 - FastAPI query param name shadows builti
     for profile in config.service_profiles:
         if profile_id is not None and profile.id != profile_id:
             continue
-        profile_dump = redact_sensitive_config(_dump_profile_like(profile))
+        profile_dump = redact_sensitive_config(dump_profile_like(profile))
         runtime_info = _runtime_info_for(profile.id, processing_services_registry)
         profiles_info.append({
             "id": profile.id,
@@ -448,7 +375,7 @@ async def dump_profiles(  # noqa: A002 - FastAPI query param name shadows builti
         )
 
     default_settings_dump = redact_sensitive_config(
-        _dump_profile_like(config.default_profile_settings)
+        dump_profile_like(config.default_profile_settings)
     )
 
     # ast-grep-ignore: no-dict-any - Debug endpoint returns serialized Pydantic config dicts

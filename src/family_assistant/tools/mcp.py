@@ -7,6 +7,7 @@ import os  # Import os for environment variable resolution
 from typing import (
     TYPE_CHECKING,
     Any,
+    TypedDict,
 )  # Added Tuple
 
 import anyio
@@ -44,6 +45,24 @@ MCP_SERVER_STATUS_CONNECTING = "connecting"
 MCP_SERVER_STATUS_CONNECTED = "connected"
 MCP_SERVER_STATUS_FAILED = "failed"
 MCP_SERVER_STATUS_CANCELLED = "cancelled"
+
+
+class MCPServerStatus(TypedDict):
+    """Diagnostic snapshot describing one MCP server's connection state.
+
+    Used by ``MCPToolsProvider.get_server_statuses`` and surfaced through
+    the engineer-profile ``get_mcp_server_status`` tool. Token-bearing
+    config fields are intentionally omitted.
+    """
+
+    status: str
+    transport: str
+    command: str | None
+    args: list[str]
+    url: str | None
+    session_active: bool
+    tool_count: int
+    tools: list[str]
 
 
 class MCPToolsProvider:
@@ -86,6 +105,40 @@ class MCPToolsProvider:
     def server_configs(self) -> dict[str, MCPServerConfig]:
         """Returns the configured MCP servers."""
         return self._mcp_server_configs
+
+    def get_server_statuses(self) -> dict[str, MCPServerStatus]:
+        """Return a snapshot of MCP server connection status for diagnostics.
+
+        Returns a mapping of ``server_id`` to an ``MCPServerStatus`` describing
+        the current connection state, transport, configured connection
+        details (no tokens), session activity, and the tools currently
+        provided by that server.
+
+        Designed to be called by engineer-profile diagnostic tools without
+        requiring any further reconnection or I/O.
+        """
+        # Invert the tool_map so we can list tools per-server without
+        # touching internal storage in callers.
+        tools_by_server: dict[str, list[str]] = {
+            server_id: [] for server_id in self._mcp_server_configs
+        }
+        for tool_name, server_id in self._tool_map.items():
+            tools_by_server.setdefault(server_id, []).append(tool_name)
+
+        snapshot: dict[str, MCPServerStatus] = {}
+        for server_id, config in self._mcp_server_configs.items():
+            tools = sorted(tools_by_server.get(server_id, []))
+            snapshot[server_id] = MCPServerStatus(
+                status=self._server_statuses.get(server_id, MCP_SERVER_STATUS_PENDING),
+                transport=config.get("transport", "stdio"),
+                command=config.get("command"),
+                args=list(config.get("args", []) or []),
+                url=config.get("url"),
+                session_active=server_id in self._sessions,
+                tool_count=len(tools),
+                tools=tools,
+            )
+        return snapshot
 
     def _build_mcp_descriptors(
         self,
@@ -727,6 +780,17 @@ class MCPToolsProvider:
                 # Continue the loop despite errors
 
         logger.info("Health check loop stopped")
+
+    async def reconnect_server(self, server_id: str) -> bool:
+        """Public wrapper around the internal reconnect routine.
+
+        Used by diagnostic tools (e.g. the engineer profile's
+        ``reconnect_mcp_server``) so callers don't have to reach into a
+        private method.
+        """
+        if server_id not in self._mcp_server_configs:
+            raise KeyError(server_id)
+        return await self._reconnect_server(server_id)
 
     async def _reconnect_server(self, server_id: str) -> bool:
         """Attempts to reconnect a single MCP server."""
