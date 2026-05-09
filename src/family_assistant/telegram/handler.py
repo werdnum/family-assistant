@@ -1267,6 +1267,14 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
             logger.warning(f"Ignoring message from unauthorized user {user_id}")
             return
 
+        if (
+            update.message.media_group_id is not None
+            and self.message_batcher is not None
+        ):
+            await self.message_batcher.notify_pending_media_group(
+                chat_id, update.message.media_group_id, context
+            )
+
         try:
             # Handle Photos
             if update.message.photo:

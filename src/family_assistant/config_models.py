@@ -806,6 +806,7 @@ class MessageBatchingConfig(BaseModel):
 
     strategy: str = "none"
     delay_seconds: float = 0.5
+    media_group_delay_seconds: float = 3.0
 
 
 class DatabaseErrorsLoggingConfig(BaseModel):
