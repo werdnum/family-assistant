@@ -1005,6 +1005,32 @@ class OTelConfig(BaseModel):
     debug_console_exporter: bool = False
 
 
+class OpenAIImageRequestConfig(BaseModel):
+    """Configuration shared by OpenAI image generate/edit requests."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    size: Literal["1024x1024", "1536x1024", "1024x1536", "auto"] = "auto"
+    quality: Literal["low", "medium", "high", "auto"] = "high"
+    input_fidelity: Literal["low", "high"] = "high"
+    output_format: Literal["png", "jpeg", "webp"] = "png"
+    output_compression: int | None = Field(default=None, ge=0, le=100)
+
+
+class OpenAIImageConfig(BaseModel):
+    """OpenAI image configuration for generation and transformation."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    model: str = "gpt-image-2"
+    default_generate: OpenAIImageRequestConfig = Field(
+        default_factory=OpenAIImageRequestConfig
+    )
+    default_edit: OpenAIImageRequestConfig = Field(
+        default_factory=OpenAIImageRequestConfig
+    )
+
+
 class AppConfig(BaseSettings):
     """Main application configuration.
 
@@ -1077,6 +1103,7 @@ class AppConfig(BaseSettings):
 
     # Image generation
     image_generation_backend: Literal["openai", "gemini", "mock"] | None = None
+    openai_image: OpenAIImageConfig = Field(default_factory=OpenAIImageConfig)
 
     # Model configuration
     model: str = "gemini/gemini-3.1-pro-preview"
