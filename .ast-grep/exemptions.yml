@@ -69,6 +69,17 @@ exemptions:
     ticket: "#TBD-refactor-sleep-to-wait-for-condition"
 
   # ===========================================================================
+  # ast-grep rule fixtures - Deliberate positive examples
+  # ===========================================================================
+  - rule: no-strict-assistant-message-wait
+    files:
+      - .ast-grep/tests/conformance/no-strict-assistant-message-wait-positive.py
+    reason: |
+      Positive rule fixture intentionally contains banned Playwright locator waits
+      so .ast-grep/test-rules.py can verify the rule catches them.
+    ticket: null
+
+  # ===========================================================================
   # dict[str, Any] exemptions - Hook scripts with arbitrary JSON
   # ===========================================================================
   - rule: no-dict-any
@@ -80,4 +91,3 @@ exemptions:
       tools have different structures. Creating typed structures for this would be overly
       rigid and doesn't provide value since the hook only extracts specific fields.
     ticket: null
-

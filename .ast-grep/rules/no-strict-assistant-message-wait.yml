@@ -1,0 +1,49 @@
+id: no-strict-assistant-message-wait
+language: python
+severity: error
+message: "Avoid strict Playwright wait_for() on assistant-message locators"
+note: |
+  Chat tests can legitimately render multiple assistant messages, such as an initial
+  assistant response followed by a final response after tool calls. Playwright locator
+  operations like wait_for() require a single matching element and will fail in strict
+  mode if [data-testid="assistant-message"] resolves to multiple elements.
+
+  Prefer waiting for the behavior under test:
+
+    await chat_page.wait_for_message_content("Expected assistant text")
+    await page.wait_for_selector('[data-testid*="tool-call"]', state="visible")
+    await page.locator('[data-testid="assistant-message"]').first.wait_for(...)
+
+  For exemptions, add a comment above the line:
+    # ast-grep-ignore: no-strict-assistant-message-wait - reason
+rule:
+  any:
+    - pattern: await $PAGE.locator($SEL).wait_for($$$)
+    - pattern: await $PAGE.get_by_test_id($TEST_ID).wait_for($$$)
+    - all:
+        - pattern: await $VAR.wait_for($$$)
+        - inside:
+            stopBy: end
+            pattern:
+              context: |
+                async def $FUNC($$$ARGS):
+                    $$$PRE
+                    $VAR = $PAGE.locator($SEL)
+                    $$$POST
+              selector: function_definition
+    - all:
+        - pattern: await $VAR.wait_for($$$)
+        - inside:
+            stopBy: end
+            pattern:
+              context: |
+                async def $FUNC($$$ARGS):
+                    $$$PRE
+                    $VAR = $PAGE.get_by_test_id($TEST_ID)
+                    $$$POST
+              selector: function_definition
+constraints:
+  SEL:
+    regex: assistant-message
+  TEST_ID:
+    regex: assistant-message

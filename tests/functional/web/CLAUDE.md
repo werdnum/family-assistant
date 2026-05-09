@@ -95,6 +95,31 @@ Screenshots are saved to `screenshots/{desktop,mobile}/` and can be used in docu
 End-to-end tests for the web UI are written using Playwright and can be found in
 `tests/functional/web/ui/`. These tests are marked with `@pytest.mark.playwright`.
 
+### Playwright Locator Strictness
+
+Playwright actions and waits on locators run in strict mode when they imply a single target. Do not
+call `wait_for()`, `click()`, `text_content()`, or similar single-element operations on locators
+that can legitimately match multiple elements.
+
+Specific failure mode to avoid: chat tests can have multiple `[data-testid="assistant-message"]`
+elements after an initial assistant response and a later final assistant response. A line like this
+is flaky and can fail before the actual assertion runs:
+
+```python
+assistant_message = page.locator('[data-testid="assistant-message"]')
+await assistant_message.wait_for(state="visible", timeout=10000)
+```
+
+Prefer waiting for the specific behavior under test instead:
+
+- Use `ChatPage.wait_for_message_content(...)` when the expected assistant/user text matters.
+- Use a selector for the concrete UI being asserted, such as `[data-testid*="tool-call"]` or
+  `[data-testid="tool-group"]`, when testing tool-call rendering.
+- If the test genuinely needs one item from a multi-match locator, use `.first`, `.last`, or
+  `.nth(index)` deliberately and document the ordering assumption through the assertion.
+- If the test only needs to prove at least one matching element exists, use `count()` or
+  `expect(locator).to_have_count(...)` rather than a strict single-element wait.
+
 ## Debugging Playwright Tests
 
 When a Playwright test fails, `pytest-playwright` automatically captures screenshots and records a
