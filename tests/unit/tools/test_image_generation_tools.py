@@ -14,6 +14,8 @@ from family_assistant.config_models import (
     OpenAIImageRequestConfig,
 )
 from family_assistant.tools.image_backends import (
+    GeminiImageBackend,
+    ImageReference,
     MockImageBackend,
     OpenAIImageBackend,
 )
@@ -126,9 +128,9 @@ class TestImageGenerationTools:
     async def mock_script_attachment(self) -> AsyncMock:
         """Create a mock ScriptAttachment."""
         attachment = AsyncMock()
-        attachment.get_id.return_value = "test-attachment-id"
-        attachment.get_description.return_value = "Test image"
-        attachment.get_mime_type.return_value = "image/png"
+        attachment.get_id = Mock(return_value="test-attachment-id")
+        attachment.get_description = Mock(return_value="Test image")
+        attachment.get_mime_type = Mock(return_value="image/png")
 
         # Create test image content using mock backend
         mock_backend = MockImageBackend()
@@ -217,6 +219,57 @@ class TestImageGenerationTools:
         mock_script_attachment.get_content_async.assert_called_once()
 
     @pytest.mark.asyncio
+    async def test_transform_image_tool_multiple_references(
+        self, mock_exec_context: Mock
+    ) -> None:
+        """Test transformation with multiple reference images."""
+        mock_backend = Mock()
+        mock_backend.transform_image = AsyncMock(return_value=_make_png_bytes())
+        mock_exec_context.image_backend = mock_backend
+
+        first_attachment = AsyncMock()
+        first_attachment.get_content_async.return_value = b"first image content"
+        first_attachment.get_id = Mock(return_value="first-attachment")
+        first_attachment.get_mime_type = Mock(return_value="image/jpeg")
+
+        second_attachment = AsyncMock()
+        second_attachment.get_content_async.return_value = b"second image content"
+        second_attachment.get_id = Mock(return_value="second-attachment")
+        second_attachment.get_mime_type = Mock(return_value="image/webp")
+
+        result = await transform_image_tool(
+            mock_exec_context,
+            images=[first_attachment, second_attachment],
+            instruction="combine these into one image",
+        )
+
+        assert isinstance(result, ToolResult)
+        assert "Transformed image: combine these into one image" in result.get_text()
+        assert result.attachments and len(result.attachments) > 0
+        mock_backend.transform_image.assert_awaited_once_with(
+            [
+                ImageReference(b"first image content", "image/jpeg"),
+                ImageReference(b"second image content", "image/webp"),
+            ],
+            "combine these into one image",
+        )
+        first_attachment.get_content_async.assert_called_once()
+        second_attachment.get_content_async.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_transform_image_tool_requires_image(
+        self, mock_exec_context: Mock
+    ) -> None:
+        """Test transformation requires at least one image attachment."""
+        result = await transform_image_tool(
+            mock_exec_context, instruction="make it brighter"
+        )
+
+        assert isinstance(result, ToolResult)
+        assert "Provide at least one image to transform" in result.get_text()
+        assert not result.attachments or len(result.attachments) == 0
+
+    @pytest.mark.asyncio
     async def test_transform_image_tool_grayscale(
         self, mock_exec_context: Mock, mock_script_attachment: AsyncMock
     ) -> None:
@@ -283,7 +336,7 @@ class TestImageGenerationTools:
         """Test transformation when attachment has no content."""
         attachment = AsyncMock()
         attachment.get_content_async.return_value = None
-        attachment.get_id.return_value = "empty-attachment"
+        attachment.get_id = Mock(return_value="empty-attachment")
 
         result = await transform_image_tool(
             mock_exec_context, image=attachment, instruction="transform this"
@@ -339,7 +392,7 @@ class TestImageGenerationTools:
         # Mock an exception during attachment access
         attachment = AsyncMock()
         attachment.get_content_async.side_effect = Exception("Attachment error")
-        attachment.get_id.return_value = "error-attachment"
+        attachment.get_id = Mock(return_value="error-attachment")
 
         result = await transform_image_tool(
             mock_exec_context, image=attachment, instruction="transform this"
@@ -362,7 +415,8 @@ class TestImageGenerationTools:
         # Mock attachment that works
         attachment = AsyncMock()
         attachment.get_content_async.return_value = b"fake image content"
-        attachment.get_id.return_value = "test-attachment"
+        attachment.get_id = Mock(return_value="test-attachment")
+        attachment.get_mime_type = Mock(return_value="image/png")
 
         result = await transform_image_tool(
             mock_exec_context, image=attachment, instruction="transform this"
@@ -498,8 +552,65 @@ class TestOpenAIImageBackend:
         assert call_kwargs["model"] == "gpt-image-2"
         assert call_kwargs["prompt"] == "make it red"
         assert call_kwargs["quality"] == "high"
-        assert call_kwargs["input_fidelity"] == "high"
+        assert "input_fidelity" not in call_kwargs
         assert call_kwargs["output_format"] == "png"
+
+    @pytest.mark.asyncio
+    async def test_transform_image_drops_configured_input_fidelity(
+        self,
+    ) -> None:
+        """Test image transformation omits input_fidelity from edit calls."""
+        openai_backend = OpenAIImageBackend(
+            api_key="test-key",
+            model="gpt-image-1",
+            generate_config=OpenAIImageRequestConfig(),
+            edit_config=OpenAIImageRequestConfig(
+                size="auto",
+                quality="high",
+                input_fidelity="high",
+                output_format="png",
+            ),
+        )
+        png_b64 = _make_png_b64()
+        mock_response = Mock()
+        mock_response.data = [Mock(b64_json=png_b64)]
+
+        openai_backend.client.images.edit = AsyncMock(return_value=mock_response)
+
+        result = await openai_backend.transform_image(_make_png_bytes(), "make it red")
+
+        assert isinstance(result, bytes)
+        call_kwargs = openai_backend.client.images.edit.call_args.kwargs
+        assert call_kwargs["model"] == "gpt-image-1"
+        assert "input_fidelity" not in call_kwargs
+
+    @pytest.mark.asyncio
+    async def test_transform_image_multiple_references(
+        self, openai_backend: OpenAIImageBackend
+    ) -> None:
+        """Test image transformation forwards multiple reference files."""
+        png_b64 = _make_png_b64()
+        mock_response = Mock()
+        mock_response.data = [Mock(b64_json=png_b64)]
+
+        openai_backend.client.images.edit = AsyncMock(return_value=mock_response)
+
+        result = await openai_backend.transform_image(
+            [_make_png_bytes(), _make_png_bytes()],
+            "combine these images",
+        )
+
+        assert isinstance(result, bytes)
+        call_kwargs = openai_backend.client.images.edit.call_args.kwargs
+        image_files = call_kwargs["image"]
+        assert isinstance(image_files, list)
+        assert len(image_files) == 2
+        assert [image_file.name for image_file in image_files] == [
+            "image_1.png",
+            "image_2.png",
+        ]
+        assert call_kwargs["prompt"] == "combine these images"
+        assert "input_fidelity" not in call_kwargs
 
     @pytest.mark.asyncio
     async def test_transform_image_no_data_raises(
@@ -551,6 +662,66 @@ class TestOpenAIImageBackend:
 
         auto = OpenAIImageBackend._apply_style_to_prompt("a cat", "auto")
         assert auto == "a cat"
+
+
+class TestGeminiImageBackend:
+    """Test the Gemini image backend."""
+
+    @pytest.fixture
+    def gemini_backend(self) -> GeminiImageBackend:
+        """Create a Gemini backend with a dummy key."""
+        return GeminiImageBackend(api_key="test-key")
+
+    @pytest.mark.asyncio
+    async def test_transform_image_multiple_references(
+        self, gemini_backend: GeminiImageBackend
+    ) -> None:
+        """Test Gemini transformation forwards multiple reference images."""
+        image_part = Mock()
+        image_part.inline_data = Mock(data=_make_png_bytes())
+        mock_response = Mock()
+        mock_response.parts = [image_part]
+        mock_response.candidates = None
+
+        gemini_backend.client.aio.models.generate_content = AsyncMock(
+            return_value=mock_response
+        )
+
+        result = await gemini_backend.transform_image(
+            [
+                ImageReference(b"first image content", "image/jpeg"),
+                ImageReference(b"second image content", "image/webp"),
+            ],
+            "combine these images",
+        )
+
+        assert isinstance(result, bytes)
+        call_kwargs = gemini_backend.client.aio.models.generate_content.call_args.kwargs
+        assert call_kwargs["model"] == "gemini-3-pro-image-preview"
+        contents = call_kwargs["contents"]
+        assert contents[0] == "combine these images"
+        assert contents[1].inline_data.data == b"first image content"
+        assert contents[1].inline_data.mime_type == "image/jpeg"
+        assert contents[2].inline_data.data == b"second image content"
+        assert contents[2].inline_data.mime_type == "image/webp"
+        config = call_kwargs["config"]
+        assert config.response_modalities == ["TEXT", "IMAGE"]
+
+    @pytest.mark.asyncio
+    async def test_transform_image_no_data_raises(
+        self, gemini_backend: GeminiImageBackend
+    ) -> None:
+        """Test error when Gemini transform API returns no image data."""
+        mock_response = Mock()
+        mock_response.parts = []
+        mock_response.candidates = None
+
+        gemini_backend.client.aio.models.generate_content = AsyncMock(
+            return_value=mock_response
+        )
+
+        with pytest.raises(ValueError, match="No image data"):
+            await gemini_backend.transform_image(_make_png_bytes(), "make it red")
 
 
 @pytest.mark.asyncio

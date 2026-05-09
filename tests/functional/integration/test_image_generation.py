@@ -2,7 +2,7 @@
 
 import os
 from dataclasses import dataclass
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, Mock
 
 import pytest
 
@@ -128,9 +128,9 @@ async def test_transform_image_mock_mode() -> None:
 
     # Create mock attachment with test image
     mock_attachment = AsyncMock()
-    mock_attachment.get_id.return_value = "test-attachment-id"
-    mock_attachment.get_description.return_value = "Test image"
-    mock_attachment.get_mime_type.return_value = "image/png"
+    mock_attachment.get_id = Mock(return_value="test-attachment-id")
+    mock_attachment.get_description = Mock(return_value="Test image")
+    mock_attachment.get_mime_type = Mock(return_value="image/png")
 
     # Generate test image content using mock backend
     test_image_bytes = await mock_backend.generate_image("original test image", "auto")

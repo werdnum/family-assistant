@@ -18,6 +18,7 @@ from PIL import Image
 from family_assistant.tools.image_backends import (
     GeminiImageBackend,
     ImageGenerationBackend,
+    ImageReference,
     MockImageBackend,
     OpenAIImageBackend,
 )
@@ -59,20 +60,26 @@ IMAGE_GENERATION_TOOLS_DEFINITION: list[ToolDefinition] = [
         "type": "function",
         "function": {
             "name": "transform_image",
-            "description": "Transform and display an existing image based on text instruction. Works for editing (remove objects), styling (make it look like a painting), or variations (same scene at night).",
+            "description": "Edit, transform, or combine one or more existing reference images based on text instructions. Use this for object removal/addition, style changes, variations, or merging elements from multiple images.",
             "parameters": {
                 "type": "object",
                 "properties": {
                     "image": {
                         "type": "attachment",
-                        "description": "The image to transform",
+                        "description": "Single image to transform. Prefer `images` when using multiple references.",
+                    },
+                    "images": {
+                        "type": "array",
+                        "items": {"type": "attachment"},
+                        "description": "One or more reference images to edit, transform, or combine. When combining images, put the primary image first.",
+                        "minItems": 1,
                     },
                     "instruction": {
                         "type": "string",
                         "description": "Natural language instruction for how to transform the image",
                     },
                 },
-                "required": ["image", "instruction"],
+                "required": ["instruction"],
             },
         },
     },
@@ -188,7 +195,10 @@ async def generate_image_tool(
 
 
 async def transform_image_tool(
-    exec_context: "ToolExecutionContext", image: "ScriptAttachment", instruction: str
+    exec_context: "ToolExecutionContext",
+    instruction: str,
+    image: "ScriptAttachment | None" = None,
+    images: "list[ScriptAttachment] | None" = None,
 ) -> ToolResult:
     """
     Transform an existing image based on text instruction.
@@ -200,8 +210,9 @@ async def transform_image_tool(
 
     Args:
         exec_context: The execution context
-        image: The image to transform
         instruction: Natural language instruction for transformation
+        image: A single image to transform.
+        images: One or more reference images to transform or combine.
 
     Returns:
         ToolResult with transformed image attachment
@@ -209,17 +220,36 @@ async def transform_image_tool(
     logger.info(f"Transforming image with instruction: '{instruction}'")
 
     try:
-        # Get original image content
-        original_content = await image.get_content_async()
-        if not original_content:
-            logger.error(f"Could not retrieve content for attachment {image.get_id()}")
-            return ToolResult(text="Could not access the image content")
+        image_attachments: list[ScriptAttachment] = []
+        if image is not None:
+            image_attachments.append(image)
+        if images:
+            image_attachments.extend(images)
+
+        if not image_attachments:
+            return ToolResult(text="Error: Provide at least one image to transform")
+
+        image_contents: list[ImageReference] = []
+        for image_attachment in image_attachments:
+            content = await image_attachment.get_content_async()
+            if not content:
+                logger.error(
+                    "Could not retrieve content for attachment %s",
+                    image_attachment.get_id(),
+                )
+                return ToolResult(text="Could not access the image content")
+            image_contents.append(
+                ImageReference(
+                    content=content,
+                    mime_type=image_attachment.get_mime_type() or "image/png",
+                )
+            )
 
         # Get the appropriate backend
         backend = _create_image_backend(exec_context)
 
         # Transform the image
-        transformed_bytes = await backend.transform_image(original_content, instruction)
+        transformed_bytes = await backend.transform_image(image_contents, instruction)
 
         # Create attachment
         attachment = ToolAttachment(

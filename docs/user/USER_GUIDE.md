@@ -314,6 +314,13 @@ throughout your conversation. This means:
 - Identify objects, people, or scenes
 - Answer specific questions about the image content
 
+**Image Generation and Editing:** Ask the assistant to create or transform images:
+
+- Generate a new image from a text description
+- Edit one attached image, such as removing an object or changing the style
+- Combine multiple attached images, such as placing a subject from one image into another scene
+- Use one image as the primary image and another as a visual style or reference image
+
 **Document Processing:** Upload documents to have the assistant:
 
 - Summarize the content
