@@ -701,11 +701,7 @@ class TestBackendSelection:
             mock_cls.return_value = mock_backend
 
             await generate_image_tool(context, prompt="test")
-            mock_cls.assert_called_once()
-            call_kwargs = mock_cls.call_args.kwargs
-            assert call_kwargs["model"] == "gpt-image-2"
-            assert call_kwargs["generate_options"]["output_format"] == "png"
-            assert call_kwargs["edit_options"]["output_format"] == "png"
+            mock_cls.assert_called_once_with("test-key")
 
     @pytest.mark.asyncio
     async def test_no_backend_configured_uses_mock(self) -> None:
