@@ -44,6 +44,7 @@ gha-creds-*.json
 frontend/dev-dist
 .claude/settings.local.json
 .claude/worktrees/
+.claude/scheduled_tasks.lock
 
 # UV
 .venv
