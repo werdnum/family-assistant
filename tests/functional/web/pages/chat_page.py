@@ -505,10 +505,8 @@ class ChatPage(BasePage):
         collapsed_triggers = self.page.locator(
             f'{self.TOOL_GROUP_TRIGGER}[aria-expanded="false"]'
         )
-        count = await collapsed_triggers.count()
-
-        for index in range(count):
-            await collapsed_triggers.nth(index).click()
+        while await collapsed_triggers.count() > 0:
+            await collapsed_triggers.first.click()
 
     async def wait_for_attachments_ready(self, timeout: int = 30000) -> None:
         """Wait for attachment tool to be ready with actual attachment content.
