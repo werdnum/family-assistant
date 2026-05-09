@@ -24,11 +24,15 @@ Create images from text descriptions using AI (`generate_image` tool).
 
 ### 2. Transform Existing Images
 
-Send/attach an image with transformation instructions:
+Send or attach one or more images with transformation instructions. Use multiple reference images
+when the request combines subjects, transfers style, or uses one image as the primary scene and
+another as a reference:
 
 - **Edit content**: "Remove the car from this photo", "Add clouds to the sky"
 - **Change style**: "Make this look like a watercolor painting", "Convert to black and white"
 - **Create variations**: "Show this scene at night", "Make the colors more vibrant"
+- **Combine references**: "Put the dog from the first image into the room from the second image",
+  "Use the second image's style for the portrait in the first image"
 
 ### 3. Highlight and Annotate
 

@@ -11,10 +11,13 @@ import asyncio
 import base64
 import io
 import logging
+import mimetypes
 import random
 from abc import abstractmethod
+from collections.abc import Sequence
+from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, Protocol, runtime_checkable
+from typing import TYPE_CHECKING, Protocol, cast, runtime_checkable
 
 from PIL import Image, ImageDraw, ImageFilter, ImageFont, ImageOps
 
@@ -24,6 +27,7 @@ if TYPE_CHECKING:
 # Optional imports for production use
 try:
     from google import genai
+    from google.genai import types as genai_types
 
     GENAI_AVAILABLE = True
 except ImportError:
@@ -39,6 +43,35 @@ except ImportError:
 logger = logging.getLogger(__name__)
 
 
+@dataclass(frozen=True)
+class ImageReference:
+    """Image bytes plus MIME type metadata for provider reference inputs."""
+
+    content: bytes
+    mime_type: str = "image/png"
+
+
+type ImageReferenceInput = bytes | ImageReference
+type ImageReferenceInputs = ImageReferenceInput | Sequence[ImageReferenceInput]
+
+
+def _normalize_image_references(
+    image_bytes: ImageReferenceInputs,
+) -> list[ImageReference]:
+    """Normalize one or more image references to metadata-rich inputs."""
+    image_inputs = (
+        [image_bytes]
+        if isinstance(image_bytes, bytes | ImageReference)
+        else list(image_bytes)
+    )
+    return [
+        image_input
+        if isinstance(image_input, ImageReference)
+        else ImageReference(content=image_input)
+        for image_input in image_inputs
+    ]
+
+
 @runtime_checkable
 class ImageGenerationBackend(Protocol):
     """Protocol for image generation backends."""
@@ -49,8 +82,10 @@ class ImageGenerationBackend(Protocol):
         ...
 
     @abstractmethod
-    async def transform_image(self, image_bytes: bytes, instruction: str) -> bytes:
-        """Transform an existing image based on text instruction."""
+    async def transform_image(
+        self, image_bytes: ImageReferenceInputs, instruction: str
+    ) -> bytes:
+        """Transform existing image references based on text instruction."""
         ...
 
 
@@ -99,11 +134,14 @@ class MockImageBackend:
         img.save(buffer, format="PNG")
         return buffer.getvalue()
 
-    async def transform_image(self, image_bytes: bytes, instruction: str) -> bytes:
+    async def transform_image(
+        self, image_bytes: ImageReferenceInputs, instruction: str
+    ) -> bytes:
         """Apply mock transformation to test image."""
         self.logger.debug(f"Transforming image with instruction: {instruction}")
 
-        img = Image.open(io.BytesIO(image_bytes))
+        image_inputs = _normalize_image_references(image_bytes)
+        img = Image.open(io.BytesIO(image_inputs[0].content))
 
         # Add transformation indicator at top
         draw = ImageDraw.Draw(img)
@@ -322,6 +360,8 @@ class MockImageBackend:
 class GeminiImageBackend:
     """Gemini API backend for production image generation."""
 
+    MODEL = "gemini-3-pro-image-preview"
+
     def __init__(self, api_key: str) -> None:
         """Initialize the Gemini backend with API key."""
         if not GENAI_AVAILABLE:
@@ -357,7 +397,7 @@ class GeminiImageBackend:
 
         # Call Gemini image generation
         response = await self.client.aio.models.generate_content(
-            model="gemini-3-pro-image-preview", contents=full_prompt
+            model=self.MODEL, contents=full_prompt
         )
 
         # Log response structure for debugging
@@ -481,19 +521,59 @@ class GeminiImageBackend:
 
         raise ValueError("No image data found in Gemini API response")
 
-    async def transform_image(self, image_bytes: bytes, instruction: str) -> bytes:
-        """Transform an existing image using Gemini API."""
-        # For now, this would require the Gemini edit/transform endpoint
-        # which may not be available yet. Fall back to mock for now.
-        self.logger.warning(
-            "Gemini image transformation not yet implemented, falling back to mock"
+    async def transform_image(
+        self, image_bytes: ImageReferenceInputs, instruction: str
+    ) -> bytes:
+        """Transform existing image references using Gemini API."""
+        self.logger.debug(f"Calling Gemini image edit with instruction: {instruction}")
+
+        image_inputs = _normalize_image_references(image_bytes)
+        content_parts: list[object] = [instruction]
+        content_parts.extend(
+            genai_types.Part.from_bytes(
+                data=image_input.content, mime_type=image_input.mime_type
+            )
+            for image_input in image_inputs
         )
-        mock_backend = MockImageBackend()
-        return await mock_backend.transform_image(image_bytes, instruction)
+        contents = cast("genai_types.ContentListUnion", content_parts)
+
+        response = await self.client.aio.models.generate_content(
+            model=self.MODEL,
+            contents=contents,
+            config=genai_types.GenerateContentConfig(
+                response_modalities=["TEXT", "IMAGE"]
+            ),
+        )
+
+        if hasattr(response, "parts") and response.parts:
+            for part in response.parts:
+                if part.inline_data is not None:
+                    image_data = part.inline_data.data
+                    if isinstance(image_data, str):
+                        return base64.b64decode(image_data)
+                    if isinstance(image_data, bytes):
+                        return image_data
+
+        if hasattr(response, "candidates") and response.candidates:
+            candidate = response.candidates[0]
+            if (
+                hasattr(candidate, "content")
+                and candidate.content
+                and candidate.content.parts
+            ):
+                for part in candidate.content.parts:
+                    if part.inline_data is not None:
+                        image_data = part.inline_data.data
+                        if isinstance(image_data, str):
+                            return base64.b64decode(image_data)
+                        if isinstance(image_data, bytes):
+                            return image_data
+
+        raise ValueError("No image data found in Gemini edit API response")
 
 
 class OpenAIImageBackend:
-    """OpenAI API backend for image generation using gpt-image-2."""
+    """OpenAI API backend for image generation."""
 
     def __init__(
         self,
@@ -548,23 +628,30 @@ class OpenAIImageBackend:
 
         return image_bytes
 
-    async def transform_image(self, image_bytes: bytes, instruction: str) -> bytes:
-        """Transform an existing image using OpenAI gpt-image-2 edit endpoint."""
+    async def transform_image(
+        self, image_bytes: ImageReferenceInputs, instruction: str
+    ) -> bytes:
+        """Transform existing image references using the OpenAI edit endpoint."""
         self.logger.debug(f"Calling OpenAI image edit with instruction: {instruction}")
 
-        # gpt-image-2 supports mask-free editing
-        image_file = io.BytesIO(image_bytes)
-        image_file.name = "image.png"
+        # The OpenAI SDK accepts either one image file or an ordered list of files.
+        image_inputs = _normalize_image_references(image_bytes)
+        image_files: list[io.BytesIO] = []
+        for index, image_input in enumerate(image_inputs, start=1):
+            image_file = io.BytesIO(image_input.content)
+            extension = mimetypes.guess_extension(image_input.mime_type) or ".png"
+            image_file.name = f"image_{index}{extension}"
+            image_files.append(image_file)
 
+        image_request = image_files[0] if len(image_files) == 1 else image_files
         cfg = self.edit_config
         response = await self.client.images.edit(
             model=self.model,
-            image=image_file,
+            image=image_request,
             prompt=instruction,
             n=1,
             size=cfg.size,
             quality=cfg.quality,
-            input_fidelity=cfg.input_fidelity,
             output_format=cfg.output_format,
             output_compression=cfg.output_compression,
         )
@@ -632,7 +719,9 @@ class FallbackImageBackend:
         self.logger.debug("Using mock backend for generation")
         return await self.mock_backend.generate_image(prompt, style)
 
-    async def transform_image(self, image_bytes: bytes, instruction: str) -> bytes:
+    async def transform_image(
+        self, image_bytes: ImageReferenceInputs, instruction: str
+    ) -> bytes:
         """Transform image with fallback from Gemini to mock."""
         if self.gemini_backend:
             try:
