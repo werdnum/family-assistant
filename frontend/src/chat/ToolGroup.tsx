@@ -1,8 +1,9 @@
 import { useAuiState } from '@assistant-ui/react';
 import { ChevronDownIcon } from 'lucide-react';
-import React, { useMemo, useState } from 'react';
+import React, { useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
 import { cn } from '@/lib/utils';
+import { ToolConfirmationContext } from './ToolConfirmationContext';
 import {
   categoryInfo,
   generateToolGroupSummary,
@@ -16,35 +17,70 @@ interface ToolGroupProps {
   children: React.ReactNode;
 }
 
+interface ToolGroupState {
+  toolNames: string[];
+  toolCallIds: string[];
+  hasUnfinishedTool: boolean;
+}
+
+const DEFAULT_TOOL_GROUP_STATE: ToolGroupState = {
+  toolNames: [],
+  toolCallIds: [],
+  hasUnfinishedTool: false,
+};
+
 // Hook to safely access message state with fallback
-function useSafeToolNames(startIndex: number, endIndex: number): string[] {
+function useSafeToolGroupState(startIndex: number, endIndex: number): ToolGroupState {
   try {
-    // Extract tool names and join to string to ensure stable reference
-    const toolNamesString = useAuiState((s) => {
+    const serializedState = useAuiState((s) => {
       const parts = s.message.parts;
-      const names: string[] = [];
+      const toolNames: string[] = [];
+      const toolCallIds: string[] = [];
+      let hasUnfinishedTool = false;
+
       for (let i = startIndex; i <= endIndex && i < parts.length; i++) {
         const part = parts[i];
         if (part.type === 'tool-call') {
-          names.push(part.toolName);
+          toolNames.push(part.toolName);
+          toolCallIds.push(part.toolCallId);
+
+          if (part.status.type !== 'complete') {
+            hasUnfinishedTool = true;
+          }
         }
       }
-      return names.join(',');
+
+      return JSON.stringify({ toolNames, toolCallIds, hasUnfinishedTool });
     });
 
-    // Memoize the parsed array to avoid recreating on every render
-    return useMemo(() => (toolNamesString ? toolNamesString.split(',') : []), [toolNamesString]);
+    return useMemo(() => JSON.parse(serializedState) as ToolGroupState, [serializedState]);
   } catch {
     // Fallback when message context is not available (e.g., in tests)
-    return [];
+    return DEFAULT_TOOL_GROUP_STATE;
   }
 }
 
 const ToolGroup: React.FC<ToolGroupProps> = ({ startIndex, endIndex, children }) => {
-  const [isExpanded, setIsExpanded] = useState(true); // Start expanded so attachments are immediately visible
+  const context = useContext(ToolConfirmationContext);
 
-  // Extract tool names from the message parts
-  const toolNames = useSafeToolNames(startIndex, endIndex);
+  const { toolNames, toolCallIds, hasUnfinishedTool } = useSafeToolGroupState(startIndex, endIndex);
+  const hasPendingConfirmation = toolCallIds.some((toolCallId) =>
+    context?.pendingConfirmations?.has(toolCallId)
+  );
+  const shouldAutoExpand = hasUnfinishedTool || hasPendingConfirmation;
+  const [isExpanded, setIsExpanded] = useState(shouldAutoExpand);
+  const hasUserToggled = useRef(false);
+
+  useEffect(() => {
+    if (!hasUserToggled.current) {
+      setIsExpanded(shouldAutoExpand);
+    }
+  }, [shouldAutoExpand]);
+
+  const handleOpenChange = (open: boolean) => {
+    hasUserToggled.current = true;
+    setIsExpanded(open);
+  };
 
   const toolCount = endIndex - startIndex + 1;
 
@@ -89,7 +125,7 @@ const ToolGroup: React.FC<ToolGroupProps> = ({ startIndex, endIndex, children })
       )}
       data-testid="tool-group"
     >
-      <Collapsible open={isExpanded} onOpenChange={setIsExpanded}>
+      <Collapsible open={isExpanded} onOpenChange={handleOpenChange}>
         <CollapsibleTrigger
           className={cn(
             'flex w-full items-center justify-between gap-3 py-3 px-4 text-sm font-medium',

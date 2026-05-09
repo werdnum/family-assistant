@@ -49,6 +49,7 @@ Without the flag, screenshot calls are no-ops, so tests run normally.
 Screenshots are currently captured in these tests:
 
 - **test_chat_basic.py**: Chat interface (empty, with messages, sidebar)
+- **test_tool_call_grouping.py**: Chat tool-call grouping (collapsed completed tools)
 - **test_landing_page.py**: Landing page with feature cards
 - More tests will be added over time
 

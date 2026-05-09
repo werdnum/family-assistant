@@ -29,6 +29,8 @@ class ChatPage(BasePage):
     MESSAGE_USER_CONTENT = '[data-testid="user-message-content"]'
     MESSAGE_ASSISTANT_CONTENT = '[data-testid="assistant-message-content"]'
     MESSAGE_TOOL_CALL = '[data-ui="tool-call-content"], .tool-call-content'
+    TOOL_GROUP = '[data-testid="tool-group"]'
+    TOOL_GROUP_TRIGGER = '[data-testid="tool-group-trigger"]'
     THREAD_MESSAGES = ".thread-messages"
     CONVERSATION_TITLE = ".conversation-title"
     CONVERSATION_PREVIEW = ".conversation-preview"
@@ -487,14 +489,24 @@ class ChatPage(BasePage):
         )
 
     async def wait_for_tool_call_display(self, timeout: int = 30000) -> None:
-        """Wait for tool call content to be attached to DOM.
+        """Wait for tool call content or its collapsed group summary to be attached.
 
         Note: This only waits for the element to exist in the DOM, not for it to be visible.
         Use wait_for_attachments_ready() if you need to wait for specific attachment content.
         """
         await self.page.wait_for_selector(
-            self.MESSAGE_TOOL_CALL, state="attached", timeout=timeout
+            f"{self.MESSAGE_TOOL_CALL}, {self.TOOL_GROUP}",
+            state="attached",
+            timeout=timeout,
         )
+
+    async def expand_tool_groups(self) -> None:
+        """Expand any collapsed tool groups so tests can inspect their details."""
+        collapsed_triggers = self.page.locator(
+            f'{self.TOOL_GROUP_TRIGGER}[aria-expanded="false"]'
+        )
+        while await collapsed_triggers.count() > 0:
+            await collapsed_triggers.first.click()
 
     async def wait_for_attachments_ready(self, timeout: int = 30000) -> None:
         """Wait for attachment tool to be ready with actual attachment content.
@@ -508,6 +520,9 @@ class ChatPage(BasePage):
         """
 
         try:
+            await self.wait_for_tool_call_display(timeout=timeout)
+            await self.expand_tool_groups()
+
             # First, wait for either attachment previews OR tool result text
             await self.page.wait_for_selector(
                 '[data-testid="attachment-preview"], [data-testid="tool-result"]',
@@ -547,6 +562,8 @@ class ChatPage(BasePage):
         Returns:
             List of tool call information
         """
+        await self.expand_tool_groups()
+
         tool_calls = []
         tool_elements = await self.page.query_selector_all(self.MESSAGE_TOOL_CALL)
 
@@ -554,6 +571,12 @@ class ChatPage(BasePage):
             # Extract tool name and result from the assistant-ui component
             text = await elem.text_content() or ""
             tool_calls.append({"display_text": text.strip()})
+
+        if not tool_calls:
+            group_triggers = await self.page.query_selector_all(self.TOOL_GROUP_TRIGGER)
+            for elem in group_triggers:
+                text = await elem.text_content() or ""
+                tool_calls.append({"display_text": text.strip()})
 
         return tool_calls
 

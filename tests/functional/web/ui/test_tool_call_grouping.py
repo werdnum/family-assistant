@@ -1,5 +1,8 @@
 """Tests for tool call grouping and collapsible UI functionality."""
 
+from collections.abc import Awaitable, Callable, Iterable, Mapping
+from typing import Any
+
 import pytest
 from playwright.async_api import expect
 
@@ -9,10 +12,23 @@ from tests.functional.web.pages.chat_page import ChatPage
 from tests.mocks.mock_llm import RuleBasedMockLLMClient
 
 
+def _has_tool_message(args: object) -> bool:
+    if not isinstance(args, Mapping):
+        return False
+
+    messages = args.get("messages")
+    if not isinstance(messages, Iterable) or isinstance(messages, str | bytes):
+        return False
+
+    return any(getattr(msg, "role", None) == "tool" for msg in messages)
+
+
 @pytest.mark.playwright
 @pytest.mark.asyncio
 async def test_multiple_tool_calls_are_grouped(
-    web_test_fixture: WebTestFixture, mock_llm_client: RuleBasedMockLLMClient
+    web_test_fixture: WebTestFixture,
+    mock_llm_client: RuleBasedMockLLMClient,
+    take_screenshot: Callable[[Any, str, str], Awaitable[None]],
 ) -> None:
     """Test that multiple consecutive tool calls are grouped in a collapsible section."""
     page = web_test_fixture.page
@@ -21,7 +37,10 @@ async def test_multiple_tool_calls_are_grouped(
     # Configure mock LLM to respond with multiple tool calls
     mock_llm_client.rules = [
         (
-            lambda args: "add multiple notes" in str(args.get("messages", [])).lower(),
+            lambda args: (
+                "add multiple notes" in str(args.get("messages", [])).lower()
+                and not _has_tool_message(args)
+            ),
             LLMOutput(
                 content="I'll add several notes for you.",
                 tool_calls=[
@@ -81,15 +100,16 @@ async def test_multiple_tool_calls_are_grouped(
 
     # Wait for the assistant's response and tool calls
     await chat_page.wait_for_message_content("I'll add several notes for you.")
+    await chat_page.wait_for_message_content(
+        "Successfully added all three notes.", timeout=30000
+    )
 
     # Wait for tool calls to appear
     assistant_message = page.locator('[data-testid="assistant-message"]')
     await assistant_message.wait_for(state="visible", timeout=10000)
 
-    # Wait for tool call elements to be visible
-    await page.wait_for_selector(
-        '[data-testid*="tool-call"]', state="visible", timeout=10000
-    )
+    # Wait for tool call summary or details to appear
+    await chat_page.wait_for_tool_call_display(timeout=10000)
 
     # Check console logs for our ToolGroup debug message
     console_messages = []
@@ -135,15 +155,14 @@ async def test_multiple_tool_calls_are_grouped(
         keyword in tool_count_text.lower() for keyword in ["note", "document", "tool"]
     ), f"Expected tool/category information in trigger text, got: {tool_count_text}"
 
-    # Test that group is initially expanded (so attachments are immediately visible)
+    # Test that completed groups are initially collapsed so intermediate work stays compact
     content = page.locator('[data-testid="tool-group-content"]')
     await content.wait_for(state="attached", timeout=5000)
 
-    # Check if content is initially expanded (no hidden attribute means expanded)
-    is_hidden = await content.get_attribute("hidden")
-    assert is_hidden is None, (
-        "ToolGroup content should be initially expanded so attachments are visible"
-    )
+    await expect(content).not_to_be_visible(timeout=5000)
+
+    for viewport in ["desktop", "mobile"]:
+        await take_screenshot(page, "chat-tool-calls-collapsed", viewport)
 
 
 @pytest.mark.playwright
@@ -158,7 +177,10 @@ async def test_tool_group_expand_collapse_interaction(
     # Configure mock LLM with two tool calls
     mock_llm_client.rules = [
         (
-            lambda args: "search and add" in str(args.get("messages", [])).lower(),
+            lambda args: (
+                "search and add" in str(args.get("messages", [])).lower()
+                and not _has_tool_message(args)
+            ),
             LLMOutput(
                 content="I'll search for information and then add a note.",
                 tool_calls=[
@@ -205,11 +227,12 @@ async def test_tool_group_expand_collapse_interaction(
     await chat_page.wait_for_message_content(
         "I'll search for information and then add a note."
     )
+    await chat_page.wait_for_message_content(
+        "Search completed and note added.", timeout=30000
+    )
 
     # Wait for tool calls to appear
-    await page.wait_for_selector(
-        '[data-testid*="tool-call"]', state="visible", timeout=10000
-    )
+    await chat_page.wait_for_tool_call_display(timeout=10000)
 
     # Check if tool elements are rendered at all
     tool_selectors = [
@@ -252,22 +275,21 @@ async def test_tool_group_expand_collapse_interaction(
         keyword in tool_count_text.lower() for keyword in ["note", "document", "tool"]
     ), f"Expected tool/category information in trigger text, got: {tool_count_text}"
 
-    # Verify initially expanded
+    # Verify initially collapsed
     await content.wait_for(state="attached", timeout=5000)
-    is_hidden = await content.get_attribute("hidden")
-    assert is_hidden is None, "ToolGroup content should be initially expanded"
-
-    # Test collapse functionality
-    await trigger.click()
-
-    # Wait for collapse animation and verify content is hidden
-    await expect(content).not_to_be_visible(timeout=1000)
+    await expect(content).not_to_be_visible(timeout=5000)
 
     # Test expansion functionality
     await trigger.click()
 
-    # Wait for expansion animation and verify content is visible again
+    # Wait for expansion animation and verify content is visible
     await expect(content).to_be_visible(timeout=1000)
+
+    # Test collapse functionality
+    await trigger.click()
+
+    # Wait for collapse animation and verify content is hidden again
+    await expect(content).not_to_be_visible(timeout=1000)
 
 
 @pytest.mark.playwright
@@ -282,7 +304,10 @@ async def test_single_tool_call_uses_toolgroup(
     # Configure mock LLM with a single tool call
     mock_llm_client.rules = [
         (
-            lambda args: "test single note" in str(args.get("messages", [])).lower(),
+            lambda args: (
+                "test single note" in str(args.get("messages", [])).lower()
+                and not _has_tool_message(args)
+            ),
             LLMOutput(
                 content="I'll add a single note for you.",
                 tool_calls=[
@@ -311,11 +336,12 @@ async def test_single_tool_call_uses_toolgroup(
 
     # Wait for assistant message
     await chat_page.wait_for_message_content("I'll add a single note for you.")
+    await chat_page.wait_for_message_content(
+        "Single note added successfully.", timeout=30000
+    )
 
     # Wait for tool call elements to be visible
-    await page.wait_for_selector(
-        '[data-testid*="tool-call"]', state="visible", timeout=10000
-    )
+    await chat_page.wait_for_tool_call_display(timeout=10000)
 
     # Check if tool elements are rendered at all
     tool_selectors = [
@@ -360,10 +386,9 @@ async def test_single_tool_call_uses_toolgroup(
     content = page.locator('[data-testid="tool-group-content"]')
     await content.wait_for(state="attached", timeout=5000)
 
-    # Should be initially expanded
-    is_hidden = await content.get_attribute("hidden")
-    assert is_hidden is None, "Single tool call should also be initially expanded"
+    # Should be initially collapsed
+    await expect(content).not_to_be_visible(timeout=5000)
 
-    # Should be able to collapse
+    # Should be able to expand
     await trigger.click()
-    await expect(content).not_to_be_visible(timeout=1000)
+    await expect(content).to_be_visible(timeout=1000)

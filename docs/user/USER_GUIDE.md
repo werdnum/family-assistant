@@ -426,12 +426,15 @@ various tasks with dark mode support and mobile optimization.
 - **Chat Features:**
 
   - Real-time streaming responses - see the assistant's replies as they're being generated
-  - Live tool usage display - watch what tools are being used during responses
+  - Compact tool usage display - completed tool calls are summarized in collapsible groups
   - Easy conversation management and switching
   - Clear message formatting and display
 
   ![Chat Interface](../../screenshots/desktop/chat-empty.png) *The web chat interface provides
   real-time streaming responses and conversation management*
+
+  ![Collapsed Tool Calls](../../screenshots/desktop/chat-tool-calls-collapsed.png) *Completed tool
+  calls stay collapsed by default while preserving access to the details*
 
 - **Navigation:** The web interface features a dropdown menu organized into clear sections:
 
