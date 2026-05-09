@@ -472,6 +472,9 @@ class TestOpenAIImageBackend:
         call_kwargs = openai_backend.client.images.edit.call_args.kwargs
         assert call_kwargs["model"] == "gpt-image-2"
         assert call_kwargs["prompt"] == "make it red"
+        assert call_kwargs["quality"] == "high"
+        assert call_kwargs["input_fidelity"] == "high"
+        assert call_kwargs["output_format"] == "png"
 
     @pytest.mark.asyncio
     async def test_transform_image_no_data_raises(
@@ -525,6 +528,59 @@ class TestOpenAIImageBackend:
         assert auto == "a cat"
 
 
+@pytest.mark.asyncio
+async def test_openai_image_config_applied_to_backend_selection() -> None:
+    """Configured OpenAI image options are forwarded to backend."""
+    app_config = Mock()
+    app_config.image_generation_backend = "openai"
+    app_config.openai_api_key = "test-openai-key"
+    app_config.gemini_api_key = None
+    app_config.openai_image = Mock()
+    app_config.openai_image.model = "gpt-image-2"
+    app_config.openai_image.default_generate = Mock(
+        size="1024x1024",
+        quality="medium",
+        input_fidelity="low",
+        output_format="jpeg",
+        output_compression=75,
+    )
+    app_config.openai_image.default_edit = Mock(
+        size="auto",
+        quality="high",
+        input_fidelity="high",
+        output_format="png",
+        output_compression=None,
+    )
+
+    context = Mock()
+    context.processing_service = Mock()
+    context.processing_service.app_config = app_config
+    del context.image_backend
+
+    with patch(
+        "family_assistant.tools.image_generation.OpenAIImageBackend"
+    ) as mock_cls:
+        mock_backend = Mock()
+        mock_backend.generate_image = AsyncMock(return_value=_make_png_bytes())
+        mock_cls.return_value = mock_backend
+
+        await generate_image_tool(context, prompt="test")
+
+        call_kwargs = mock_cls.call_args.kwargs
+        assert call_kwargs["generate_options"] == {
+            "size": "1024x1024",
+            "quality": "medium",
+            "output_format": "jpeg",
+            "output_compression": 75,
+        }
+        assert call_kwargs["edit_options"] == {
+            "size": "auto",
+            "quality": "high",
+            "input_fidelity": "high",
+            "output_format": "png",
+        }
+
+
 class TestBackendSelection:
     """Test that the correct backend is selected based on configuration."""
 
@@ -549,7 +605,12 @@ class TestBackendSelection:
             mock_cls.return_value = mock_backend
 
             await generate_image_tool(context, prompt="test")
-            mock_cls.assert_called_once_with("test-openai-key")
+            mock_cls.assert_called_once()
+            call_kwargs = mock_cls.call_args.kwargs
+            assert call_kwargs["model"] == "gpt-image-2"
+            assert call_kwargs["generate_options"]["quality"] == "high"
+            assert call_kwargs["edit_options"]["quality"] == "high"
+            assert call_kwargs["edit_options"]["input_fidelity"] == "high"
 
     @pytest.mark.asyncio
     async def test_gemini_backend_selected(self) -> None:
@@ -613,7 +674,11 @@ class TestBackendSelection:
             mock_cls.return_value = mock_backend
 
             await generate_image_tool(context, prompt="test")
-            mock_cls.assert_called_once_with("test-key")
+            mock_cls.assert_called_once()
+            call_kwargs = mock_cls.call_args.kwargs
+            assert call_kwargs["model"] == "gpt-image-2"
+            assert call_kwargs["generate_options"]["output_format"] == "png"
+            assert call_kwargs["edit_options"]["output_format"] == "png"
 
     @pytest.mark.asyncio
     async def test_no_backend_configured_autodetects_gemini(self) -> None:
@@ -636,7 +701,11 @@ class TestBackendSelection:
             mock_cls.return_value = mock_backend
 
             await generate_image_tool(context, prompt="test")
-            mock_cls.assert_called_once_with("test-key")
+            mock_cls.assert_called_once()
+            call_kwargs = mock_cls.call_args.kwargs
+            assert call_kwargs["model"] == "gpt-image-2"
+            assert call_kwargs["generate_options"]["output_format"] == "png"
+            assert call_kwargs["edit_options"]["output_format"] == "png"
 
     @pytest.mark.asyncio
     async def test_no_backend_configured_uses_mock(self) -> None:
