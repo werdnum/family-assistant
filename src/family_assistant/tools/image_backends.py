@@ -5,6 +5,8 @@ This module defines the protocol for image generation backends and provides
 concrete implementations including mock (PIL-based), Gemini API, and OpenAI API backends.
 """
 
+from __future__ import annotations
+
 import asyncio
 import base64
 import io
@@ -12,9 +14,12 @@ import logging
 import random
 from abc import abstractmethod
 from pathlib import Path
-from typing import Protocol, TypedDict, runtime_checkable
+from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
 from PIL import Image, ImageDraw, ImageFilter, ImageFont, ImageOps
+
+if TYPE_CHECKING:
+    from family_assistant.config_models import OpenAIImageRequestConfig
 
 # Optional imports for production use
 try:
@@ -32,16 +37,6 @@ except ImportError:
     OPENAI_AVAILABLE = False
 
 logger = logging.getLogger(__name__)
-
-
-class OpenAIImageRequestOptions(TypedDict, total=False):
-    """Subset of OpenAI image request options used by this backend."""
-
-    size: str
-    quality: str
-    output_format: str
-    output_compression: int
-    input_fidelity: str
 
 
 @runtime_checkable
@@ -503,9 +498,9 @@ class OpenAIImageBackend:
     def __init__(
         self,
         api_key: str,
+        generate_config: OpenAIImageRequestConfig,
+        edit_config: OpenAIImageRequestConfig,
         model: str = "gpt-image-2",
-        generate_options: OpenAIImageRequestOptions | None = None,
-        edit_options: OpenAIImageRequestOptions | None = None,
     ) -> None:
         """Initialize the OpenAI backend with API key."""
         if not OPENAI_AVAILABLE:
@@ -514,17 +509,8 @@ class OpenAIImageBackend:
         self.api_key = api_key
         self.client = openai.AsyncOpenAI(api_key=api_key)
         self.model = model
-        self.generate_options = generate_options or {
-            "size": "auto",
-            "quality": "high",
-            "output_format": "png",
-        }
-        self.edit_options = edit_options or {
-            "size": "auto",
-            "quality": "high",
-            "input_fidelity": "high",
-            "output_format": "png",
-        }
+        self.generate_config = generate_config
+        self.edit_config = edit_config
         self.logger = logging.getLogger(f"{__name__}.{self.__class__.__name__}")
 
     async def generate_image(self, prompt: str, style: str = "auto") -> bytes:
@@ -533,10 +519,16 @@ class OpenAIImageBackend:
 
         self.logger.debug(f"Calling OpenAI image API with prompt: {full_prompt}")
 
-        request_options = {"model": self.model, "prompt": full_prompt, "n": 1}
-        request_options.update(self.generate_options)
-
-        response = await self.client.images.generate(**request_options)
+        cfg = self.generate_config
+        response = await self.client.images.generate(
+            model=self.model,
+            prompt=full_prompt,
+            n=1,
+            size=cfg.size,
+            quality=cfg.quality,
+            output_format=cfg.output_format,
+            output_compression=cfg.output_compression,
+        )
 
         if not response.data:
             raise ValueError("No image data in OpenAI API response")
@@ -564,15 +556,18 @@ class OpenAIImageBackend:
         image_file = io.BytesIO(image_bytes)
         image_file.name = "image.png"
 
-        request_options = {
-            "model": self.model,
-            "image": image_file,
-            "prompt": instruction,
-            "n": 1,
-        }
-        request_options.update(self.edit_options)
-
-        response = await self.client.images.edit(**request_options)
+        cfg = self.edit_config
+        response = await self.client.images.edit(
+            model=self.model,
+            image=image_file,
+            prompt=instruction,
+            n=1,
+            size=cfg.size,
+            quality=cfg.quality,
+            input_fidelity=cfg.input_fidelity,
+            output_format=cfg.output_format,
+            output_compression=cfg.output_compression,
+        )
 
         if not response.data:
             raise ValueError("No image data in OpenAI edit API response")

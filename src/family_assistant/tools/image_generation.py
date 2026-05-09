@@ -20,12 +20,11 @@ from family_assistant.tools.image_backends import (
     ImageGenerationBackend,
     MockImageBackend,
     OpenAIImageBackend,
-    OpenAIImageRequestOptions,
 )
 from family_assistant.tools.types import ToolAttachment, ToolDefinition, ToolResult
 
 if TYPE_CHECKING:
-    from family_assistant.config_models import AppConfig, OpenAIImageRequestConfig
+    from family_assistant.config_models import AppConfig
     from family_assistant.scripting.apis.attachments import ScriptAttachment
     from family_assistant.tools.types import ToolExecutionContext
 
@@ -80,23 +79,6 @@ IMAGE_GENERATION_TOOLS_DEFINITION: list[ToolDefinition] = [
 ]
 
 
-def _openai_request_options_from_config(
-    config: "OpenAIImageRequestConfig",
-    include_input_fidelity: bool,
-) -> OpenAIImageRequestOptions:
-    """Build OpenAI image request options from a request config object."""
-    options: OpenAIImageRequestOptions = {
-        "size": config.size,
-        "quality": config.quality,
-        "output_format": config.output_format,
-    }
-    if include_input_fidelity:
-        options["input_fidelity"] = config.input_fidelity
-    if config.output_compression is not None:
-        options["output_compression"] = config.output_compression
-    return options
-
-
 def _create_image_backend(
     exec_context: "ToolExecutionContext",
 ) -> ImageGenerationBackend:
@@ -125,14 +107,8 @@ def _create_image_backend(
         return OpenAIImageBackend(
             openai_key,
             model=app_config.openai_image.model,
-            generate_options=_openai_request_options_from_config(
-                app_config.openai_image.default_generate,
-                include_input_fidelity=False,
-            ),
-            edit_options=_openai_request_options_from_config(
-                app_config.openai_image.default_edit,
-                include_input_fidelity=True,
-            ),
+            generate_config=app_config.openai_image.default_generate,
+            edit_config=app_config.openai_image.default_edit,
         )
     elif backend_choice == "gemini":
         if not gemini_key:
@@ -145,20 +121,12 @@ def _create_image_backend(
     # No explicit backend — auto-detect from available API keys
     elif openai_key:
         logger.info("No image_generation_backend configured, auto-selecting OpenAI")
-        if app_config is None:
-            return OpenAIImageBackend(openai_key)
-
+        assert app_config is not None  # openai_key is None when app_config is None
         return OpenAIImageBackend(
             openai_key,
             model=app_config.openai_image.model,
-            generate_options=_openai_request_options_from_config(
-                app_config.openai_image.default_generate,
-                include_input_fidelity=False,
-            ),
-            edit_options=_openai_request_options_from_config(
-                app_config.openai_image.default_edit,
-                include_input_fidelity=True,
-            ),
+            generate_config=app_config.openai_image.default_generate,
+            edit_config=app_config.openai_image.default_edit,
         )
     elif gemini_key:
         logger.info("No image_generation_backend configured, auto-selecting Gemini")
