@@ -662,12 +662,18 @@ create React components in the `frontend/` directory rather than server-side end
 
 - Always make sure you start with a clean working directory. Commit any uncommitted changes.
 
+- Before starting any new work, switch to `main`, pull the latest changes, and create a fresh branch
+  from updated `main`. Do not reuse whatever branch happened to be active from previous work.
+
 - NEVER revert existing changes without the user's explicit permission.
 
 - Always check that linters and tests are happy when you're finished.
 
 - Always commit changes after each major step. Prefer many small self contained commits as long as
   each commit passes lint checks.
+
+- Making a non-draft pull request is a required part of implementation once changes are complete and
+  verified, unless the user explicitly asks not to open a PR.
 
 - **Important**: When adding new imports, add the code that uses the import first, then add the
   import. Otherwise, a linter running in another tab might remove the import as unused before you
