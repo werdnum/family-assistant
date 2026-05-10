@@ -27,13 +27,13 @@ from family_assistant.config_inspection import (
 from family_assistant.llm.request_buffer import get_request_buffer
 from family_assistant.paths import PROJECT_ROOT
 from family_assistant.tools.infrastructure import find_provider_by_type
+from family_assistant.tools.mcp import MCPToolsProvider
 from family_assistant.tools.types import ToolDefinition, ToolResult
 
 if TYPE_CHECKING:
     from pathlib import Path
 
     from family_assistant.config_models import AppConfig
-    from family_assistant.tools.mcp import MCPToolsProvider
     from family_assistant.tools.types import ToolExecutionContext
 
 logger = logging.getLogger(__name__)
@@ -441,22 +441,11 @@ def _resolve_mcp_provider(
 ) -> MCPToolsProvider | None:
     """Locate the live MCPToolsProvider in the runtime tools provider tree.
 
-    Returns ``None`` when MCP support is not built in, when no tools provider
-    is wired into the execution context, or when no MCPToolsProvider was
-    configured. Callers should surface a clear diagnostic in that case rather
-    than treating it as a connection failure.
+    Returns ``None`` when no tools provider is wired into the execution
+    context, or when no MCPToolsProvider was configured. Callers should
+    surface a clear diagnostic in that case rather than treating it as a
+    connection failure.
     """
-    # ``tools.mcp`` depends on the optional ``mcp`` SDK; deployments without
-    # the SDK installed must still be able to import ``engineering.py``, so
-    # we defer the import to call time. ``__init__.py`` already wraps this
-    # import in a try/except and substitutes ``None`` when unavailable, but
-    # we re-import here from the concrete module rather than the package
-    # so static type checkers can resolve the symbol. The function-scope
-    # import is intentional — top-level would break that contract.
-    from family_assistant.tools.mcp import (  # noqa: PLC0415 - lazy import: optional MCP SDK may be absent at module load
-        MCPToolsProvider as _MCPToolsProvider,
-    )
-
     tools_provider = exec_context.tools_provider
     if (
         tools_provider is None
@@ -468,7 +457,7 @@ def _resolve_mcp_provider(
     if tools_provider is None:
         return None
 
-    return find_provider_by_type(tools_provider, _MCPToolsProvider)
+    return find_provider_by_type(tools_provider, MCPToolsProvider)
 
 
 async def get_mcp_server_status(
@@ -490,7 +479,7 @@ async def get_mcp_server_status(
             data={
                 "error": (
                     "No MCPToolsProvider available in the current tools provider tree. "
-                    "Either MCP support is not installed, no MCP servers are configured, "
+                    "Either no MCP servers are configured, "
                     "or the tools provider has not been wired into this execution context."
                 ),
                 "servers": {},
@@ -535,8 +524,7 @@ async def reconnect_mcp_server(
             data={
                 "error": (
                     "No MCPToolsProvider available; cannot reconnect. "
-                    "Check that MCP support is installed and the tools provider "
-                    "is wired into this execution context."
+                    "Check that the tools provider is wired into this execution context."
                 ),
                 "server_id": server_id,
             }

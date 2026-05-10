@@ -1818,7 +1818,7 @@ async def get_available_profiles(
                     "Error fetching tool descriptors for profile %s", profile_id
                 )
 
-        if not mcp_servers_derived and MCPToolsProvider is not None:
+        if not mcp_servers_derived:
             mcp_provider = find_provider_by_type(
                 service.tools_provider, MCPToolsProvider
             )
