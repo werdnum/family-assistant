@@ -37,6 +37,38 @@ class MessageBatcher(Protocol):
         """Adds an update to the batch and triggers processing if necessary."""
         ...
 
+    async def notify_pending_media_group(
+        self,
+        chat_id: int,
+        media_group_id: str,
+        context: ContextTypes.DEFAULT_TYPE,
+    ) -> None:
+        """Pre-arm the batcher to wait for a Telegram media group message.
+
+        Should be called at the very start of update handling—before slow
+        operations like attachment downloads—when ``update.message.media_group_id``
+        is set. This ensures the batcher waits long enough for all members of the
+        album to be added, so the assistant receives them as a single message
+        rather than several fragmented ones.
+        """
+        ...
+
+    async def cancel_pending_media_group(
+        self,
+        chat_id: int,
+        media_group_id: str,
+        context: ContextTypes.DEFAULT_TYPE,
+    ) -> None:
+        """Roll back a previous ``notify_pending_media_group`` call.
+
+        Should be called when the update handler aborts before reaching
+        ``add_to_batch`` (e.g. attachment download failed), so the batcher
+        does not keep treating the chat as having an outstanding album
+        download — which would otherwise extend the next batch's flush
+        delay all the way out to ``media_group_max_wait_seconds``.
+        """
+        ...
+
 
 @runtime_checkable
 class ConfirmationUIManager(Protocol):

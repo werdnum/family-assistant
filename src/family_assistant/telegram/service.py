@@ -165,19 +165,32 @@ class TelegramService:
         batching_config = self.app_config.message_batching_config
         batching_strategy = batching_config.strategy
         batch_delay_seconds = batching_config.delay_seconds
+        media_group_quiet_seconds = batching_config.media_group_quiet_seconds
+        media_group_max_wait_seconds = batching_config.media_group_max_wait_seconds
 
         if batching_strategy == "none":
             self.message_batcher = NoBatchMessageBatcher(
-                batch_processor=self.update_handler
+                batch_processor=self.update_handler,
+                media_group_quiet_seconds=media_group_quiet_seconds,
+                media_group_max_wait_seconds=media_group_max_wait_seconds,
             )
-            logger.info("Using NoBatchMessageBatcher strategy.")
+            logger.info(
+                f"Using NoBatchMessageBatcher strategy with media group quiet "
+                f"delay {media_group_quiet_seconds}s, max wait "
+                f"{media_group_max_wait_seconds}s."
+            )
         else:  # Default to DefaultMessageBatcher
             self.message_batcher = DefaultMessageBatcher(
                 batch_processor=self.update_handler,
                 batch_delay_seconds=batch_delay_seconds,
+                media_group_quiet_seconds=media_group_quiet_seconds,
+                media_group_max_wait_seconds=media_group_max_wait_seconds,
             )
             logger.info(
-                f"Using DefaultMessageBatcher strategy with delay: {batch_delay_seconds}s."
+                f"Using DefaultMessageBatcher strategy with delay "
+                f"{batch_delay_seconds}s, media group quiet delay "
+                f"{media_group_quiet_seconds}s, max wait "
+                f"{media_group_max_wait_seconds}s."
             )
         self.update_handler.message_batcher = self.message_batcher
 

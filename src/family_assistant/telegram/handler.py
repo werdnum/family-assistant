@@ -196,6 +196,26 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
             logger.warning("Unauthorized Telegram user %s: %s", telegram_user_id, exc)
             return None
 
+    async def _cancel_pending_media_group_if_any(
+        self, update: Update, context: ContextTypes.DEFAULT_TYPE
+    ) -> None:
+        """Roll back the matching ``notify_pending_media_group`` call.
+
+        Used by the message handler's exception paths to keep the batcher's
+        outstanding-download counter accurate when attachment processing
+        aborts before reaching ``add_to_batch``.
+        """
+        if (
+            self.message_batcher is None
+            or update.effective_chat is None
+            or update.message is None
+            or update.message.media_group_id is None
+        ):
+            return
+        await self.message_batcher.cancel_pending_media_group(
+            update.effective_chat.id, update.message.media_group_id, context
+        )
+
     def _get_chat_interfaces(self) -> dict[str, ChatInterface] | None:
         """Get chat_interfaces registry from FastAPI app state for cross-interface messaging.
 
@@ -1476,6 +1496,14 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
             logger.warning(f"Ignoring message from unauthorized user {user_id}")
             return
 
+        if (
+            update.message.media_group_id is not None
+            and self.message_batcher is not None
+        ):
+            await self.message_batcher.notify_pending_media_group(
+                chat_id, update.message.media_group_id, context
+            )
+
         try:
             # Handle Photos
             if update.message.photo:
@@ -1648,6 +1676,7 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
                         )
 
         except BadRequest as br_err:
+            await self._cancel_pending_media_group_if_any(update, context)
             error_msg = str(br_err)
             if "file is too big" in error_msg.lower():
                 logger.warning(
@@ -1666,6 +1695,7 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
                 )
             return
         except Exception as img_err:
+            await self._cancel_pending_media_group_if_any(update, context)
             logger.error(
                 f"Failed to process attachments for message {update.message.message_id}: {img_err}",
                 exc_info=True,
