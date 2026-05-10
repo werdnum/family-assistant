@@ -290,18 +290,20 @@ class NoBatchMessageBatcher(MessageBatcher):
         async with self.chat_locks[chat_id]:
             if media_group_id is None:
                 # Non-album message arrived while one or more albums are
-                # buffered for this chat. Flush every active album in arrival
-                # order before processing this message, so the user's send
-                # order is preserved in what the assistant sees.
+                # buffered for this chat. Flush every album that has already
+                # finished downloading; albums with outstanding downloads or
+                # no buffered items yet stay alone so their items still get
+                # delivered as a single batch (abandoning them here would let
+                # late items flush on the short quiet delay and fragment the
+                # album).
                 for active_group in list(self.active_media_group_ids.get(chat_id, [])):
                     key = (chat_id, active_group)
                     if not self.media_group_buffers.get(key):
-                        # Album has been pre-armed via notify_pending but none
-                        # of its messages have arrived yet. Leave its pending
-                        # counter and timer intact so the late items still get
-                        # delivered as a single batch — abandoning them here
-                        # would let them flush on the short quiet delay and
-                        # fragment the album.
+                        # Pre-armed but no items have arrived yet.
+                        continue
+                    if self.media_group_pending_downloads.get(key, 0) > 0:
+                        # Buffered items so far, but more are still
+                        # downloading. Don't fragment the album.
                         continue
                     extracted = self._extract_buffer_locked(chat_id, active_group)
                     pending_flushes.append(extracted)

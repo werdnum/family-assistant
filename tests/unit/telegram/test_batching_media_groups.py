@@ -664,6 +664,68 @@ async def test_no_batch_batcher_text_preserves_pre_armed_album_with_no_buffer() 
 
 
 @pytest.mark.asyncio
+async def test_no_batch_batcher_text_preserves_album_with_partial_buffer_and_pending() -> (
+    None
+):
+    """A plain text message arriving while an album has SOME buffered items
+    AND outstanding downloads must NOT flush the partial buffer. The album
+    must keep its existing items, counter, and timer so when the remaining
+    items download they all flush together as one batch.
+    """
+    processor = AsyncMock()
+    batcher = NoBatchMessageBatcher(
+        batch_processor=processor,
+        media_group_quiet_seconds=0.1,
+        media_group_max_wait_seconds=10.0,
+    )
+    context = _make_context()
+
+    # Album A has 3 items pre-armed; only the first 2 have downloaded so far.
+    for _ in range(3):
+        await batcher.notify_pending_media_group(
+            chat_id=123, media_group_id="album-A", context=context
+        )
+    for i in range(2):
+        update = _make_photo_update(
+            update_id=i + 1, message_id=100 + i, media_group_id="album-A"
+        )
+        await batcher.add_to_batch(update, context, attachments=None)
+
+    # Text arrives before A's third item finishes downloading.
+    text = _make_text_update(update_id=99, message_id=300, text="caption")
+    await batcher.add_to_batch(text, context, attachments=None)
+
+    # Text was processed immediately as its own batch; A's partial buffer
+    # is preserved (NOT flushed as a fragment) along with its pending
+    # counter.
+    assert processor.process_batch.await_count == 1
+    _, text_batch, _ = processor.process_batch.await_args_list[0].args
+    assert [u.update_id for u, _ in text_batch] == [99]
+
+    a_key = (123, "album-A")
+    assert batcher.media_group_pending_downloads[a_key] == 1
+    assert len(batcher.media_group_buffers[a_key]) == 2
+    assert "album-A" in batcher.active_media_group_ids[123]
+
+    # A's third item finally downloads; counter drops to 0 and the album
+    # flushes as a single batch via the quiet timer.
+    update_a3 = _make_photo_update(
+        update_id=3, message_id=102, media_group_id="album-A"
+    )
+    await batcher.add_to_batch(update_a3, context, attachments=None)
+
+    await wait_for_condition(
+        lambda: processor.process_batch.await_count >= 2,
+        timeout=2.0,
+        description="album A flushes as a complete batch after text",
+    )
+
+    assert processor.process_batch.await_count == 2
+    _, batch_a, _ = processor.process_batch.await_args_list[1].args
+    assert [u.update_id for u, _ in batch_a] == [1, 2, 3]
+
+
+@pytest.mark.asyncio
 async def test_no_batch_batcher_text_flushes_active_albums_in_arrival_order() -> None:
     """A non-album message arriving while two albums are buffered must flush
     BOTH albums as separate batches in the order they were started, before
