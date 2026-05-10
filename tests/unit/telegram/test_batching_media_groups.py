@@ -78,25 +78,31 @@ def _make_text_update(
 
 
 @pytest.mark.asyncio
-async def test_no_batch_batcher_groups_album_into_single_batch() -> None:
-    """All four photos in an album are delivered as a single batch."""
+async def test_no_batch_batcher_flushes_quickly_when_downloads_complete() -> None:
+    """When notify_pending and add_to_batch are paired, the album flushes
+    on the short quiet delay rather than waiting for the long max-wait."""
     processor = AsyncMock()
     batcher = NoBatchMessageBatcher(
         batch_processor=processor,
-        media_group_delay_seconds=0.1,
+        media_group_quiet_seconds=0.1,
+        media_group_max_wait_seconds=30.0,
     )
     context = _make_context()
 
+    # Each message handler notifies first, then adds to batch (pairs balance out).
     for i in range(4):
         update = _make_photo_update(
             update_id=i + 1, message_id=100 + i, media_group_id="group-A"
+        )
+        await batcher.notify_pending_media_group(
+            chat_id=123, media_group_id="group-A", context=context
         )
         await batcher.add_to_batch(update, context, attachments=None)
 
     await wait_for_condition(
         lambda: processor.process_batch.await_count >= 1,
-        timeout=5.0,
-        description="media group flushed",
+        timeout=2.0,
+        description="album flushes via quiet delay",
     )
 
     assert processor.process_batch.await_count == 1
@@ -107,12 +113,91 @@ async def test_no_batch_batcher_groups_album_into_single_batch() -> None:
 
 
 @pytest.mark.asyncio
+async def test_no_batch_batcher_waits_for_outstanding_downloads() -> None:
+    """While downloads are outstanding (notify without matching add_to_batch),
+    the batcher uses the long max-wait, not the short quiet delay."""
+    processor = AsyncMock()
+    batcher = NoBatchMessageBatcher(
+        batch_processor=processor,
+        media_group_quiet_seconds=0.001,
+        media_group_max_wait_seconds=10.0,
+    )
+    context = _make_context()
+
+    # Notify for two messages, only deliver one (the second is "still downloading").
+    await batcher.notify_pending_media_group(
+        chat_id=123, media_group_id="group-B", context=context
+    )
+    await batcher.notify_pending_media_group(
+        chat_id=123, media_group_id="group-B", context=context
+    )
+
+    update = _make_photo_update(update_id=1, message_id=100, media_group_id="group-B")
+    await batcher.add_to_batch(update, context, attachments=None)
+
+    # One outstanding download remains, so the batcher must keep waiting on the
+    # long max-wait timer rather than firing on the (essentially zero) quiet delay.
+    # Inspect the scheduled deadline directly to confirm we're on max-wait.
+    assert batcher.media_group_pending_downloads[123] == 1
+    loop = asyncio.get_running_loop()
+    timer = batcher.media_group_timers[123]
+    remaining = timer.when() - loop.time()
+    assert remaining > batcher.media_group_quiet_seconds + 1.0
+    assert processor.process_batch.await_count == 0
+
+    # Deliver the slow message; this drops outstanding downloads to zero,
+    # which switches the timer to the quiet delay.
+    update_2 = _make_photo_update(update_id=2, message_id=101, media_group_id="group-B")
+    await batcher.add_to_batch(update_2, context, attachments=None)
+
+    await wait_for_condition(
+        lambda: processor.process_batch.await_count >= 1,
+        timeout=2.0,
+        description="album flushes once last download arrives",
+    )
+    _, batch, _ = processor.process_batch.await_args.args
+    assert len(batch) == 2
+    assert [u.update_id for u, _ in batch] == [1, 2]
+
+
+@pytest.mark.asyncio
+async def test_no_batch_batcher_max_wait_flushes_when_download_never_arrives() -> None:
+    """If a download never arrives, the album flushes after max_wait elapses."""
+    processor = AsyncMock()
+    batcher = NoBatchMessageBatcher(
+        batch_processor=processor,
+        media_group_quiet_seconds=10.0,
+        media_group_max_wait_seconds=0.3,
+    )
+    context = _make_context()
+
+    await batcher.notify_pending_media_group(
+        chat_id=123, media_group_id="group-C", context=context
+    )
+    await batcher.notify_pending_media_group(
+        chat_id=123, media_group_id="group-C", context=context
+    )
+
+    update = _make_photo_update(update_id=1, message_id=100, media_group_id="group-C")
+    await batcher.add_to_batch(update, context, attachments=None)
+
+    await wait_for_condition(
+        lambda: processor.process_batch.await_count >= 1,
+        timeout=3.0,
+        description="album flushes via max-wait safety net",
+    )
+    _, batch, _ = processor.process_batch.await_args.args
+    assert len(batch) == 1
+
+
+@pytest.mark.asyncio
 async def test_no_batch_batcher_processes_non_album_messages_immediately() -> None:
     """Plain text messages (no media_group_id) skip buffering."""
     processor = AsyncMock()
     batcher = NoBatchMessageBatcher(
         batch_processor=processor,
-        media_group_delay_seconds=5.0,
+        media_group_quiet_seconds=5.0,
+        media_group_max_wait_seconds=30.0,
     )
     context = _make_context()
 
@@ -132,13 +217,14 @@ async def test_no_batch_batcher_flushes_album_when_text_arrives() -> None:
     processor = AsyncMock()
     batcher = NoBatchMessageBatcher(
         batch_processor=processor,
-        media_group_delay_seconds=5.0,
+        media_group_quiet_seconds=5.0,
+        media_group_max_wait_seconds=30.0,
     )
     context = _make_context()
 
     for i in range(3):
         photo = _make_photo_update(
-            update_id=i + 1, message_id=100 + i, media_group_id="group-B"
+            update_id=i + 1, message_id=100 + i, media_group_id="group-D"
         )
         await batcher.add_to_batch(photo, context, attachments=None)
 
@@ -155,106 +241,70 @@ async def test_no_batch_batcher_flushes_album_when_text_arrives() -> None:
 
 
 @pytest.mark.asyncio
-async def test_no_batch_batcher_notify_pending_arms_timer() -> None:
-    """notify_pending_media_group sets a flush timer even before any add_to_batch."""
-    processor = AsyncMock()
-    batcher = NoBatchMessageBatcher(
-        batch_processor=processor,
-        media_group_delay_seconds=0.1,
-    )
-    context = _make_context()
-
-    await batcher.notify_pending_media_group(
-        chat_id=123, media_group_id="group-C", context=context
-    )
-    # No messages have been added; flushing an empty buffer is a no-op.
-    # ast-grep-ignore: no-asyncio-sleep-in-tests - asserting timer expiry is idempotent
-    await asyncio.sleep(0.2)
-    assert processor.process_batch.await_count == 0
-
-    # Now add a single album message before the timer is re-armed.
-    update = _make_photo_update(update_id=1, message_id=100, media_group_id="group-C")
-    await batcher.add_to_batch(update, context, attachments=None)
-
-    await wait_for_condition(
-        lambda: processor.process_batch.await_count >= 1,
-        timeout=5.0,
-        description="media group flushed after notify_pending",
-    )
-    assert processor.process_batch.await_count == 1
-    _, batch, _ = processor.process_batch.await_args.args
-    assert len(batch) == 1
-
-
-@pytest.mark.asyncio
-async def test_default_batcher_uses_longer_delay_for_media_groups() -> None:
-    """Album messages use ``media_group_delay_seconds`` instead of the normal delay."""
+async def test_default_batcher_uses_quiet_delay_when_no_pending_downloads() -> None:
+    """For album messages with no outstanding downloads, the quiet delay is used."""
     processor = AsyncMock()
     batcher = DefaultMessageBatcher(
         batch_processor=processor,
         batch_delay_seconds=0.05,
-        media_group_delay_seconds=0.5,
+        media_group_quiet_seconds=0.3,
+        media_group_max_wait_seconds=30.0,
     )
     context = _make_context()
-
-    update_album = _make_photo_update(
-        update_id=1, message_id=100, media_group_id="group-D"
-    )
-    await batcher.add_to_batch(update_album, context, attachments=None)
-
-    # Wait longer than batch_delay_seconds (0.05) but shorter than
-    # media_group_delay_seconds (0.5). The batch should still be pending.
-    # ast-grep-ignore: no-asyncio-sleep-in-tests - asserting batch does NOT fire early
-    await asyncio.sleep(0.2)
-    assert processor.process_batch.await_count == 0
-
-    update_album_2 = _make_photo_update(
-        update_id=2, message_id=101, media_group_id="group-D"
-    )
-    await batcher.add_to_batch(update_album_2, context, attachments=None)
-
-    await wait_for_condition(
-        lambda: processor.process_batch.await_count >= 1,
-        timeout=5.0,
-        description="media group batch flushed",
-    )
-    assert processor.process_batch.await_count == 1
-    _, batch, _ = processor.process_batch.await_args.args
-    assert len(batch) == 2
-    assert [u.update_id for u, _ in batch] == [1, 2]
-
-
-@pytest.mark.asyncio
-async def test_default_batcher_notify_pending_extends_delay() -> None:
-    """notify_pending_media_group makes the timer use the longer media-group delay."""
-    processor = AsyncMock()
-    batcher = DefaultMessageBatcher(
-        batch_processor=processor,
-        batch_delay_seconds=0.05,
-        media_group_delay_seconds=0.4,
-    )
-    context = _make_context()
-
-    await batcher.notify_pending_media_group(
-        chat_id=123, media_group_id="group-E", context=context
-    )
 
     update_album = _make_photo_update(
         update_id=1, message_id=100, media_group_id="group-E"
     )
     await batcher.add_to_batch(update_album, context, attachments=None)
 
-    # Without the longer media-group delay, the batch would have fired by now.
-    # ast-grep-ignore: no-asyncio-sleep-in-tests - asserting batch does NOT fire early
-    await asyncio.sleep(0.15)
-    assert processor.process_batch.await_count == 0
+    # The active timer's deadline must reflect the quiet-delay (0.3), not
+    # batch_delay_seconds (0.05). Check directly against the running loop.
+    loop = asyncio.get_running_loop()
+    timer = batcher.batch_timers[123]
+    remaining = timer.when() - loop.time()
+    assert remaining > batcher.batch_delay_seconds + 0.05
+    assert remaining <= batcher.media_group_quiet_seconds + 0.05
 
     await wait_for_condition(
         lambda: processor.process_batch.await_count >= 1,
-        timeout=5.0,
-        description="batch flushed after media-group delay",
+        timeout=2.0,
+        description="album batch flushes via quiet delay",
     )
     assert processor.process_batch.await_count == 1
+
+
+@pytest.mark.asyncio
+async def test_default_batcher_uses_max_wait_when_downloads_outstanding() -> None:
+    """While outstanding downloads exist, the long max-wait is used."""
+    processor = AsyncMock()
+    batcher = DefaultMessageBatcher(
+        batch_processor=processor,
+        batch_delay_seconds=0.05,
+        media_group_quiet_seconds=0.05,
+        media_group_max_wait_seconds=10.0,
+    )
+    context = _make_context()
+
+    # Two notify_pending calls means two outstanding downloads.
+    await batcher.notify_pending_media_group(
+        chat_id=123, media_group_id="group-F", context=context
+    )
+    await batcher.notify_pending_media_group(
+        chat_id=123, media_group_id="group-F", context=context
+    )
+
+    update_album = _make_photo_update(
+        update_id=1, message_id=100, media_group_id="group-F"
+    )
+    await batcher.add_to_batch(update_album, context, attachments=None)
+
+    # One outstanding download remains; the timer must reflect the max-wait,
+    # not the quiet delay (0.05). Inspect the scheduled deadline directly.
+    assert batcher.pending_media_group_downloads[123] == 1
+    loop = asyncio.get_running_loop()
+    timer = batcher.batch_timers[123]
+    remaining = timer.when() - loop.time()
+    assert remaining > batcher.media_group_quiet_seconds + 1.0
 
 
 @pytest.mark.asyncio
@@ -264,7 +314,8 @@ async def test_default_batcher_uses_short_delay_for_non_group_messages() -> None
     batcher = DefaultMessageBatcher(
         batch_processor=processor,
         batch_delay_seconds=0.05,
-        media_group_delay_seconds=2.0,
+        media_group_quiet_seconds=2.0,
+        media_group_max_wait_seconds=30.0,
     )
     context = _make_context()
 
@@ -274,7 +325,7 @@ async def test_default_batcher_uses_short_delay_for_non_group_messages() -> None
     await wait_for_condition(
         lambda: processor.process_batch.await_count >= 1,
         timeout=1.0,
-        description="batch flushed using short delay",
+        description="text message flushes using short delay",
     )
     assert processor.process_batch.await_count == 1
 
@@ -285,14 +336,15 @@ async def test_no_batch_batcher_attachments_preserved() -> None:
     processor = AsyncMock()
     batcher = NoBatchMessageBatcher(
         batch_processor=processor,
-        media_group_delay_seconds=0.05,
+        media_group_quiet_seconds=0.1,
+        media_group_max_wait_seconds=30.0,
     )
     context = _make_context()
 
     expected_attachments: list[list[AttachmentData] | None] = []
     for i in range(3):
         update = _make_photo_update(
-            update_id=i + 1, message_id=100 + i, media_group_id="group-F"
+            update_id=i + 1, message_id=100 + i, media_group_id="group-G"
         )
         attachments = [
             cast(
@@ -306,12 +358,15 @@ async def test_no_batch_batcher_attachments_preserved() -> None:
             )
         ]
         expected_attachments.append(attachments)
+        await batcher.notify_pending_media_group(
+            chat_id=123, media_group_id="group-G", context=context
+        )
         await batcher.add_to_batch(update, context, attachments=attachments)
 
     await wait_for_condition(
         lambda: processor.process_batch.await_count >= 1,
-        timeout=5.0,
-        description="media group attachments flushed",
+        timeout=2.0,
+        description="album with attachments flushes",
     )
 
     _, batch, _ = processor.process_batch.await_args.args

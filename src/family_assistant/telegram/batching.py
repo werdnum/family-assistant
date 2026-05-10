@@ -23,17 +23,32 @@ def _message_media_group_id(update: Update) -> str | None:
 
 
 class DefaultMessageBatcher(MessageBatcher):
-    """Buffers messages and processes them in batches to avoid race conditions."""
+    """Buffers messages and processes them in batches to avoid race conditions.
+
+    Telegram's Bot API does not expose an "album complete" marker, so the batcher
+    decides when to flush an album using two delays:
+
+    * ``media_group_quiet_seconds`` — how long to wait after the most recent
+      activity, *when every album message we have been told to expect has
+      already been added to the batch*. This keeps the user-visible delay short
+      in the common case.
+    * ``media_group_max_wait_seconds`` — how long to wait after the most recent
+      activity *while we are still waiting for an attachment download to
+      finish*. This is intentionally generous so videos and large files have
+      time to download before the album is flushed.
+    """
 
     def __init__(
         self,
         batch_processor: BatchProcessor,
         batch_delay_seconds: float = 0.5,
-        media_group_delay_seconds: float = 3.0,
+        media_group_quiet_seconds: float = 1.0,
+        media_group_max_wait_seconds: float = 30.0,
     ) -> None:
         self.batch_processor = batch_processor
         self.batch_delay_seconds = batch_delay_seconds
-        self.media_group_delay_seconds = media_group_delay_seconds
+        self.media_group_quiet_seconds = media_group_quiet_seconds
+        self.media_group_max_wait_seconds = media_group_max_wait_seconds
         self.chat_locks: dict[int, asyncio.Lock] = defaultdict(asyncio.Lock)
         self.message_buffers: dict[
             int, list[tuple[Update, list[AttachmentData] | None]]
@@ -41,6 +56,7 @@ class DefaultMessageBatcher(MessageBatcher):
         self.processing_tasks: dict[int, asyncio.Task] = {}
         self.batch_timers: dict[int, asyncio.TimerHandle] = {}
         self.pending_media_groups: dict[int, str] = {}
+        self.pending_media_group_downloads: dict[int, int] = defaultdict(int)
 
     async def add_to_batch(
         self,
@@ -59,6 +75,8 @@ class DefaultMessageBatcher(MessageBatcher):
             self.message_buffers[chat_id].append((update, attachments))
             if media_group_id is not None:
                 self.pending_media_groups[chat_id] = media_group_id
+                if self.pending_media_group_downloads[chat_id] > 0:
+                    self.pending_media_group_downloads[chat_id] -= 1
             buffer_size = len(self.message_buffers[chat_id])
             logger.info(
                 f"Buffered update {update.update_id} (message {update.message.message_id if update.message else 'N/A'}) for chat {chat_id}. Buffer size: {buffer_size}"
@@ -73,19 +91,18 @@ class DefaultMessageBatcher(MessageBatcher):
     ) -> None:
         async with self.chat_locks[chat_id]:
             self.pending_media_groups[chat_id] = media_group_id
+            self.pending_media_group_downloads[chat_id] += 1
             logger.debug(
-                f"Pre-arming batch timer for chat {chat_id} pending media group {media_group_id}."
+                f"Pre-arming batch timer for chat {chat_id} pending media group "
+                f"{media_group_id} (outstanding downloads: "
+                f"{self.pending_media_group_downloads[chat_id]})."
             )
             self._schedule_batch_locked(chat_id, context)
 
     def _schedule_batch_locked(
         self, chat_id: int, context: ContextTypes.DEFAULT_TYPE
     ) -> None:
-        delay = (
-            self.media_group_delay_seconds
-            if chat_id in self.pending_media_groups
-            else self.batch_delay_seconds
-        )
+        delay = self._next_delay_locked(chat_id)
 
         if chat_id in self.batch_timers:
             self.batch_timers[chat_id].cancel()
@@ -100,6 +117,13 @@ class DefaultMessageBatcher(MessageBatcher):
         )
         logger.debug(f"Scheduled batch processing for chat {chat_id} in {delay}s.")
 
+    def _next_delay_locked(self, chat_id: int) -> float:
+        if chat_id not in self.pending_media_groups:
+            return self.batch_delay_seconds
+        if self.pending_media_group_downloads.get(chat_id, 0) > 0:
+            return self.media_group_max_wait_seconds
+        return self.media_group_quiet_seconds
+
     async def _trigger_batch_processing(
         self, chat_id: int, context: ContextTypes.DEFAULT_TYPE
     ) -> None:
@@ -108,6 +132,7 @@ class DefaultMessageBatcher(MessageBatcher):
             if chat_id in self.batch_timers:
                 self.batch_timers.pop(chat_id)
             self.pending_media_groups.pop(chat_id, None)
+            self.pending_media_group_downloads.pop(chat_id, None)
 
             current_batch = self.message_buffers[chat_id][:]
             self.message_buffers[chat_id].clear()
@@ -169,24 +194,29 @@ class DefaultMessageBatcher(MessageBatcher):
 class NoBatchMessageBatcher(MessageBatcher):
     """Processes each message immediately, except for Telegram media groups.
 
-    Media group messages (Telegram albums) are still buffered briefly so that all
-    photos in the album are delivered to the assistant as a single message rather
-    than as several fragmented ones.
+    Media group messages (Telegram albums) are buffered briefly so that all
+    photos and videos in the album are delivered to the assistant as a single
+    message rather than as several fragmented ones. The flush timing follows
+    the same quiet / max-wait scheme described on
+    :class:`DefaultMessageBatcher`.
     """
 
     def __init__(
         self,
         batch_processor: BatchProcessor,
-        media_group_delay_seconds: float = 3.0,
+        media_group_quiet_seconds: float = 1.0,
+        media_group_max_wait_seconds: float = 30.0,
     ) -> None:
         self.batch_processor = batch_processor
-        self.media_group_delay_seconds = media_group_delay_seconds
+        self.media_group_quiet_seconds = media_group_quiet_seconds
+        self.media_group_max_wait_seconds = media_group_max_wait_seconds
         self.chat_locks: dict[int, asyncio.Lock] = defaultdict(asyncio.Lock)
         self.media_group_buffers: dict[
             int, list[tuple[Update, list[AttachmentData] | None]]
         ] = defaultdict(list)
         self.media_group_ids: dict[int, str] = {}
         self.media_group_timers: dict[int, asyncio.TimerHandle] = {}
+        self.media_group_pending_downloads: dict[int, int] = defaultdict(int)
 
     async def add_to_batch(
         self,
@@ -208,37 +238,39 @@ class NoBatchMessageBatcher(MessageBatcher):
             await self.batch_processor.process_batch(chat_id, batch, context)
             return
 
+        pending_to_flush: list[tuple[Update, list[AttachmentData] | None]] = []
+        immediate_batch: list[tuple[Update, list[AttachmentData] | None]] | None = None
+
         async with self.chat_locks[chat_id]:
             if media_group_id is None:
-                # A non-album message arrived while we were buffering an album:
-                # flush the album first, then process this message.
-                pending_batch = self._extract_buffer_locked(chat_id)
-                if pending_batch:
+                pending_to_flush = self._extract_buffer_locked(chat_id)
+                immediate_batch = [(update, attachments)]
+                if pending_to_flush:
                     logger.info(
                         f"NoBatchMessageBatcher: Flushing media group of "
-                        f"{len(pending_batch)} message(s) for chat {chat_id} due to "
-                        f"non-album message arrival."
+                        f"{len(pending_to_flush)} message(s) for chat {chat_id} due "
+                        f"to non-album message arrival."
                     )
-                    await self.batch_processor.process_batch(
-                        chat_id, pending_batch, context
-                    )
+            else:
+                self.media_group_buffers[chat_id].append((update, attachments))
+                self.media_group_ids[chat_id] = media_group_id
+                if self.media_group_pending_downloads[chat_id] > 0:
+                    self.media_group_pending_downloads[chat_id] -= 1
                 logger.info(
-                    f"NoBatchMessageBatcher: Immediately processing update {update.update_id} for chat {chat_id}"
+                    f"NoBatchMessageBatcher: Buffered media group update {update.update_id} "
+                    f"(group {media_group_id}) for chat {chat_id}. Buffer size: "
+                    f"{len(self.media_group_buffers[chat_id])}, outstanding downloads: "
+                    f"{self.media_group_pending_downloads[chat_id]}"
                 )
-                await self.batch_processor.process_batch(
-                    chat_id, [(update, attachments)], context
-                )
-                return
+                self._reset_media_group_timer_locked(chat_id, context)
 
-            # Album message: buffer and (re)arm the flush timer.
-            self.media_group_buffers[chat_id].append((update, attachments))
-            self.media_group_ids[chat_id] = media_group_id
+        if pending_to_flush:
+            await self.batch_processor.process_batch(chat_id, pending_to_flush, context)
+        if immediate_batch is not None:
             logger.info(
-                f"NoBatchMessageBatcher: Buffered media group update {update.update_id} "
-                f"(group {media_group_id}) for chat {chat_id}. Buffer size: "
-                f"{len(self.media_group_buffers[chat_id])}"
+                f"NoBatchMessageBatcher: Immediately processing update {update.update_id} for chat {chat_id}"
             )
-            self._reset_media_group_timer_locked(chat_id, context)
+            await self.batch_processor.process_batch(chat_id, immediate_batch, context)
 
     async def notify_pending_media_group(
         self,
@@ -248,9 +280,11 @@ class NoBatchMessageBatcher(MessageBatcher):
     ) -> None:
         async with self.chat_locks[chat_id]:
             self.media_group_ids[chat_id] = media_group_id
+            self.media_group_pending_downloads[chat_id] += 1
             logger.debug(
                 f"NoBatchMessageBatcher: Pre-arming media group timer for chat "
-                f"{chat_id} (group {media_group_id})."
+                f"{chat_id} (group {media_group_id}, outstanding downloads: "
+                f"{self.media_group_pending_downloads[chat_id]})."
             )
             self._reset_media_group_timer_locked(chat_id, context)
 
@@ -259,9 +293,14 @@ class NoBatchMessageBatcher(MessageBatcher):
     ) -> None:
         if chat_id in self.media_group_timers:
             self.media_group_timers[chat_id].cancel()
+        delay = (
+            self.media_group_quiet_seconds
+            if self.media_group_pending_downloads.get(chat_id, 0) == 0
+            else self.media_group_max_wait_seconds
+        )
         loop = asyncio.get_running_loop()
         self.media_group_timers[chat_id] = loop.call_later(
-            self.media_group_delay_seconds,
+            delay,
             lambda: asyncio.create_task(self._flush_media_group(chat_id, context)),
         )
 
@@ -270,6 +309,7 @@ class NoBatchMessageBatcher(MessageBatcher):
     ) -> list[tuple[Update, list[AttachmentData] | None]]:
         buffer = self.media_group_buffers.pop(chat_id, [])
         self.media_group_ids.pop(chat_id, None)
+        self.media_group_pending_downloads.pop(chat_id, None)
         timer = self.media_group_timers.pop(chat_id, None)
         if timer is not None:
             timer.cancel()
@@ -282,10 +322,17 @@ class NoBatchMessageBatcher(MessageBatcher):
             self.media_group_timers.pop(chat_id, None)
             buffer = self.media_group_buffers.pop(chat_id, [])
             self.media_group_ids.pop(chat_id, None)
+            outstanding = self.media_group_pending_downloads.pop(chat_id, 0)
             if not buffer:
                 return
-            logger.info(
-                f"NoBatchMessageBatcher: Flushing media group of {len(buffer)} "
-                f"message(s) for chat {chat_id}."
-            )
+            if outstanding > 0:
+                logger.warning(
+                    f"NoBatchMessageBatcher: Flushing media group for chat {chat_id} "
+                    f"after max wait elapsed; {outstanding} download(s) never completed."
+                )
+            else:
+                logger.info(
+                    f"NoBatchMessageBatcher: Flushing media group of {len(buffer)} "
+                    f"message(s) for chat {chat_id}."
+                )
         await self.batch_processor.process_batch(chat_id, buffer, context)
