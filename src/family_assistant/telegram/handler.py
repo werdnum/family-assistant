@@ -129,6 +129,26 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
             logger.warning("Unauthorized Telegram user %s: %s", telegram_user_id, exc)
             return None
 
+    async def _cancel_pending_media_group_if_any(
+        self, update: Update, context: ContextTypes.DEFAULT_TYPE
+    ) -> None:
+        """Roll back the matching ``notify_pending_media_group`` call.
+
+        Used by the message handler's exception paths to keep the batcher's
+        outstanding-download counter accurate when attachment processing
+        aborts before reaching ``add_to_batch``.
+        """
+        if (
+            self.message_batcher is None
+            or update.effective_chat is None
+            or update.message is None
+            or update.message.media_group_id is None
+        ):
+            return
+        await self.message_batcher.cancel_pending_media_group(
+            update.effective_chat.id, update.message.media_group_id, context
+        )
+
     def _get_chat_interfaces(self) -> dict[str, ChatInterface] | None:
         """Get chat_interfaces registry from FastAPI app state for cross-interface messaging.
 
@@ -1463,6 +1483,7 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
                 await update.message.reply_text(
                     "Sorry, error processing attached media."
                 )
+            await self._cancel_pending_media_group_if_any(update, context)
             return
         except Exception as img_err:
             logger.error(
@@ -1470,6 +1491,7 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
                 exc_info=True,
             )
             await update.message.reply_text("Sorry, error processing attached media.")
+            await self._cancel_pending_media_group_if_any(update, context)
             return
 
         if self.message_batcher is None:

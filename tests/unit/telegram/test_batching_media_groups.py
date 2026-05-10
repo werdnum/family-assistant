@@ -372,3 +372,152 @@ async def test_no_batch_batcher_attachments_preserved() -> None:
     _, batch, _ = processor.process_batch.await_args.args
     actual_attachments = [a for _, a in batch]
     assert actual_attachments == expected_attachments
+
+
+@pytest.mark.asyncio
+async def test_default_batcher_cancel_clears_pending_state_when_no_buffer() -> None:
+    """If notify_pending fires but no add_to_batch follows (e.g. download
+    failed), cancel must clear the chat's pending album state so the next
+    plain-text message uses ``batch_delay_seconds`` instead of the long
+    ``media_group_max_wait_seconds``.
+    """
+    processor = AsyncMock()
+    batcher = DefaultMessageBatcher(
+        batch_processor=processor,
+        batch_delay_seconds=0.05,
+        media_group_quiet_seconds=10.0,
+        media_group_max_wait_seconds=60.0,
+    )
+    context = _make_context()
+
+    await batcher.notify_pending_media_group(
+        chat_id=123, media_group_id="group-cancel-A", context=context
+    )
+    await batcher.cancel_pending_media_group(
+        chat_id=123, media_group_id="group-cancel-A", context=context
+    )
+
+    assert 123 not in batcher.pending_media_groups
+    assert 123 not in batcher.pending_media_group_downloads
+    assert 123 not in batcher.batch_timers
+
+    text = _make_text_update(update_id=1, message_id=200, text="hi")
+    await batcher.add_to_batch(text, context, attachments=None)
+
+    await wait_for_condition(
+        lambda: processor.process_batch.await_count >= 1,
+        timeout=1.0,
+        description="plain text after cancel flushes via short delay",
+    )
+    assert processor.process_batch.await_count == 1
+
+
+@pytest.mark.asyncio
+async def test_no_batch_batcher_cancel_clears_pending_state_when_no_buffer() -> None:
+    """Same as above but for ``NoBatchMessageBatcher``: a cancel with no
+    buffered album messages must release the chat back to pass-through mode.
+    """
+    processor = AsyncMock()
+    batcher = NoBatchMessageBatcher(
+        batch_processor=processor,
+        media_group_quiet_seconds=10.0,
+        media_group_max_wait_seconds=60.0,
+    )
+    context = _make_context()
+
+    await batcher.notify_pending_media_group(
+        chat_id=123, media_group_id="group-cancel-B", context=context
+    )
+    await batcher.cancel_pending_media_group(
+        chat_id=123, media_group_id="group-cancel-B", context=context
+    )
+
+    assert 123 not in batcher.media_group_ids
+    assert 123 not in batcher.media_group_pending_downloads
+    assert 123 not in batcher.media_group_timers
+
+    text = _make_text_update(update_id=1, message_id=200, text="hi")
+    await batcher.add_to_batch(text, context, attachments=None)
+
+    # Plain text takes the immediate-process path, so no waiting is needed.
+    assert processor.process_batch.await_count == 1
+
+
+@pytest.mark.asyncio
+async def test_default_batcher_cancel_preserves_buffered_album_messages() -> None:
+    """When some album messages have already been added to the batch, cancel
+    must NOT discard them — but the timer should fall back to the quiet delay
+    once outstanding downloads reach zero.
+    """
+    processor = AsyncMock()
+    batcher = DefaultMessageBatcher(
+        batch_processor=processor,
+        batch_delay_seconds=0.05,
+        media_group_quiet_seconds=0.2,
+        media_group_max_wait_seconds=60.0,
+    )
+    context = _make_context()
+
+    # Two photos notified, only one downloads successfully.
+    await batcher.notify_pending_media_group(
+        chat_id=123, media_group_id="group-partial", context=context
+    )
+    await batcher.notify_pending_media_group(
+        chat_id=123, media_group_id="group-partial", context=context
+    )
+
+    update = _make_photo_update(
+        update_id=1, message_id=100, media_group_id="group-partial"
+    )
+    await batcher.add_to_batch(update, context, attachments=None)
+
+    # Second download fails; handler cancels its notify.
+    await batcher.cancel_pending_media_group(
+        chat_id=123, media_group_id="group-partial", context=context
+    )
+
+    await wait_for_condition(
+        lambda: processor.process_batch.await_count >= 1,
+        timeout=2.0,
+        description="partial album flushes via quiet delay after cancel",
+    )
+    _, batch, _ = processor.process_batch.await_args.args
+    assert len(batch) == 1
+    assert batch[0][0].update_id == 1
+
+
+@pytest.mark.asyncio
+async def test_no_batch_batcher_flushes_when_new_media_group_arrives() -> None:
+    """Two albums arriving back-to-back must be delivered as two separate
+    batches, not mixed into one.
+    """
+    processor = AsyncMock()
+    batcher = NoBatchMessageBatcher(
+        batch_processor=processor,
+        media_group_quiet_seconds=10.0,
+        media_group_max_wait_seconds=60.0,
+    )
+    context = _make_context()
+
+    # Album A: two photos already in the buffer.
+    for i in range(2):
+        update = _make_photo_update(
+            update_id=i + 1, message_id=100 + i, media_group_id="album-A"
+        )
+        await batcher.add_to_batch(update, context, attachments=None)
+
+    # Album B's first photo arrives before album A's quiet timer fires.
+    update_b1 = _make_photo_update(
+        update_id=10, message_id=200, media_group_id="album-B"
+    )
+    await batcher.add_to_batch(update_b1, context, attachments=None)
+
+    # Album A should have been flushed as its own batch when B arrived.
+    assert processor.process_batch.await_count == 1
+    _, batch_a, _ = processor.process_batch.await_args_list[0].args
+    assert [u.update_id for u, _ in batch_a] == [1, 2]
+
+    # Album B's first message is now buffered alone.
+    assert batcher.media_group_ids[123] == "album-B"
+    assert len(batcher.media_group_buffers[123]) == 1
+    assert batcher.media_group_buffers[123][0][0].update_id == 10

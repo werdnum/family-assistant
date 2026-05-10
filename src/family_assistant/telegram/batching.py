@@ -99,6 +99,42 @@ class DefaultMessageBatcher(MessageBatcher):
             )
             self._schedule_batch_locked(chat_id, context)
 
+    async def cancel_pending_media_group(
+        self,
+        chat_id: int,
+        media_group_id: str,
+        context: ContextTypes.DEFAULT_TYPE,
+    ) -> None:
+        async with self.chat_locks[chat_id]:
+            if self.pending_media_group_downloads.get(chat_id, 0) > 0:
+                self.pending_media_group_downloads[chat_id] -= 1
+            logger.debug(
+                f"Cancelled pending media-group download for chat {chat_id} "
+                f"(group {media_group_id}, remaining outstanding: "
+                f"{self.pending_media_group_downloads.get(chat_id, 0)})."
+            )
+
+            if self.pending_media_group_downloads.get(
+                chat_id, 0
+            ) == 0 and not self._has_buffered_album_message_locked(chat_id):
+                # No more outstanding downloads and no album messages have
+                # been added to the buffer: revert to plain-batching state.
+                self.pending_media_groups.pop(chat_id, None)
+                self.pending_media_group_downloads.pop(chat_id, None)
+
+            if self.message_buffers.get(chat_id):
+                self._schedule_batch_locked(chat_id, context)
+            else:
+                timer = self.batch_timers.pop(chat_id, None)
+                if timer is not None:
+                    timer.cancel()
+
+    def _has_buffered_album_message_locked(self, chat_id: int) -> bool:
+        for update, _ in self.message_buffers.get(chat_id, []):
+            if update.message and update.message.media_group_id is not None:
+                return True
+        return False
+
     def _schedule_batch_locked(
         self, chat_id: int, context: ContextTypes.DEFAULT_TYPE
     ) -> None:
@@ -252,6 +288,24 @@ class NoBatchMessageBatcher(MessageBatcher):
                         f"to non-album message arrival."
                     )
             else:
+                existing_id = self.media_group_ids.get(chat_id)
+                if (
+                    existing_id is not None
+                    and self.media_group_buffers.get(chat_id)
+                    and existing_id != media_group_id
+                ):
+                    # A different album just started before the previous one
+                    # could flush. Flush the previous album as its own batch
+                    # so the two albums never get mixed into one assistant
+                    # turn.
+                    pending_to_flush = self._extract_buffer_locked(chat_id)
+                    logger.info(
+                        f"NoBatchMessageBatcher: Flushing media group "
+                        f"{existing_id} of {len(pending_to_flush)} message(s) "
+                        f"for chat {chat_id} because a new media_group_id "
+                        f"{media_group_id} arrived."
+                    )
+
                 self.media_group_buffers[chat_id].append((update, attachments))
                 self.media_group_ids[chat_id] = media_group_id
                 if self.media_group_pending_downloads[chat_id] > 0:
@@ -287,6 +341,38 @@ class NoBatchMessageBatcher(MessageBatcher):
                 f"{self.media_group_pending_downloads[chat_id]})."
             )
             self._reset_media_group_timer_locked(chat_id, context)
+
+    async def cancel_pending_media_group(
+        self,
+        chat_id: int,
+        media_group_id: str,
+        context: ContextTypes.DEFAULT_TYPE,
+    ) -> None:
+        async with self.chat_locks[chat_id]:
+            if self.media_group_pending_downloads.get(chat_id, 0) > 0:
+                self.media_group_pending_downloads[chat_id] -= 1
+            logger.debug(
+                f"NoBatchMessageBatcher: Cancelled pending media-group download "
+                f"for chat {chat_id} (group {media_group_id}, remaining "
+                f"outstanding: {self.media_group_pending_downloads.get(chat_id, 0)})."
+            )
+
+            if self.media_group_buffers.get(chat_id):
+                # Buffered album messages still need flushing; just reschedule
+                # the timer with the (now possibly shorter) delay.
+                self._reset_media_group_timer_locked(chat_id, context)
+                return
+
+            # No album messages buffered; if no more outstanding downloads,
+            # abandon the active media group entirely so the chat is not
+            # treated as having an in-flight album for unrelated future
+            # messages.
+            if self.media_group_pending_downloads.get(chat_id, 0) == 0:
+                self.media_group_pending_downloads.pop(chat_id, None)
+                self.media_group_ids.pop(chat_id, None)
+                timer = self.media_group_timers.pop(chat_id, None)
+                if timer is not None:
+                    timer.cancel()
 
     def _reset_media_group_timer_locked(
         self, chat_id: int, context: ContextTypes.DEFAULT_TYPE

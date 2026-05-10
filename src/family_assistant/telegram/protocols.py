@@ -53,6 +53,22 @@ class MessageBatcher(Protocol):
         """
         ...
 
+    async def cancel_pending_media_group(
+        self,
+        chat_id: int,
+        media_group_id: str,
+        context: ContextTypes.DEFAULT_TYPE,
+    ) -> None:
+        """Roll back a previous ``notify_pending_media_group`` call.
+
+        Should be called when the update handler aborts before reaching
+        ``add_to_batch`` (e.g. attachment download failed), so the batcher
+        does not keep treating the chat as having an outstanding album
+        download — which would otherwise extend the next batch's flush
+        delay all the way out to ``media_group_max_wait_seconds``.
+        """
+        ...
+
 
 @runtime_checkable
 class ConfirmationUIManager(Protocol):
