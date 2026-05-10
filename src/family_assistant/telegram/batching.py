@@ -294,14 +294,22 @@ class NoBatchMessageBatcher(MessageBatcher):
                 # order before processing this message, so the user's send
                 # order is preserved in what the assistant sees.
                 for active_group in list(self.active_media_group_ids.get(chat_id, [])):
+                    key = (chat_id, active_group)
+                    if not self.media_group_buffers.get(key):
+                        # Album has been pre-armed via notify_pending but none
+                        # of its messages have arrived yet. Leave its pending
+                        # counter and timer intact so the late items still get
+                        # delivered as a single batch — abandoning them here
+                        # would let them flush on the short quiet delay and
+                        # fragment the album.
+                        continue
                     extracted = self._extract_buffer_locked(chat_id, active_group)
-                    if extracted:
-                        pending_flushes.append(extracted)
-                        logger.info(
-                            f"NoBatchMessageBatcher: Flushing media group "
-                            f"{active_group} of {len(extracted)} message(s) for "
-                            f"chat {chat_id} due to non-album message arrival."
-                        )
+                    pending_flushes.append(extracted)
+                    logger.info(
+                        f"NoBatchMessageBatcher: Flushing media group "
+                        f"{active_group} of {len(extracted)} message(s) for "
+                        f"chat {chat_id} due to non-album message arrival."
+                    )
                 immediate_batch = [(update, attachments)]
             else:
                 key = (chat_id, media_group_id)
