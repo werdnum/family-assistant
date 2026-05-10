@@ -76,7 +76,11 @@ class _QueuedMidTurnUpdate:
     update: Update
     attachments: list[AttachmentData] | None
     user_input: MidTurnUserInput
-    consumed: bool = False
+    user_input_consumed: bool = False
+
+    @property
+    def needs_follow_up_batch_processing(self) -> bool:
+        return bool(self.attachments)
 
 
 class TelegramMidTurnController:
@@ -110,19 +114,23 @@ class TelegramMidTurnController:
 
     async def drain_pending_mid_turn_inputs(self) -> list[MidTurnUserInput]:
         async with self._lock:
-            pending = [item for item in self._queued_updates if not item.consumed]
+            pending = [
+                item for item in self._queued_updates if not item.user_input_consumed
+            ]
             for item in pending:
-                item.consumed = True
+                item.user_input_consumed = True
             return [item.user_input for item in pending]
 
     async def pop_unconsumed_batch(
         self,
     ) -> list[tuple[Update, list[AttachmentData] | None]]:
         async with self._lock:
-            pending = [item for item in self._queued_updates if not item.consumed]
-            self._queued_updates = [
-                item for item in self._queued_updates if item.consumed
+            pending = [
+                item
+                for item in self._queued_updates
+                if not item.user_input_consumed or item.needs_follow_up_batch_processing
             ]
+            self._queued_updates = []
             return [(item.update, item.attachments) for item in pending]
 
 
