@@ -45,6 +45,8 @@ if TYPE_CHECKING:
     from .tool_execution import ToolExecutor
     from .types import (
         LLMStreamingLoopConfig,
+        MidTurnInputProvider,
+        MidTurnUserInput,
         RequestConfirmationCallback,
         ToolExecutionResult,
     )
@@ -138,6 +140,19 @@ class LLMStreamingLoop:
             return "document"
         return "file"
 
+    @staticmethod
+    def _format_mid_turn_user_input(user_input: MidTurnUserInput) -> str:
+        """Render a mid-turn user update as model-facing steering context."""
+        source = user_input.user_name or "The user"
+        return (
+            "[MID-TURN USER UPDATE]\n"
+            f"{source} sent this while you were already working. Re-evaluate the "
+            "active plan, decide whether this changes the current task or adds "
+            "context, and make the smallest necessary adjustment. Treat this as "
+            "the latest user instruction for the current turn.\n\n"
+            f"{user_input.content}"
+        )
+
     async def run(
         self,
         db_context: DatabaseContext,
@@ -157,6 +172,7 @@ class LLMStreamingLoop:
         home_assistant_client: HomeAssistantClientWrapper | None = None,
         camera_backend: CameraBackend | None = None,
         event_sources: EventSourcesById | None = None,
+        mid_turn_input_provider: MidTurnInputProvider | None = None,
     ) -> tuple[list[LLMMessage], MessageReasoningInfo | None, list[str] | None]:
         """
         Non-streaming version of process_message that uses the streaming generator internally.
@@ -188,6 +204,7 @@ class LLMStreamingLoop:
             home_assistant_client=home_assistant_client,
             camera_backend=camera_backend,
             event_sources=event_sources,
+            mid_turn_input_provider=mid_turn_input_provider,
         ):
             if message is not None:
                 turn_messages.append(message)
@@ -219,6 +236,7 @@ class LLMStreamingLoop:
         home_assistant_client: HomeAssistantClientWrapper | None = None,
         camera_backend: CameraBackend | None = None,
         event_sources: EventSourcesById | None = None,
+        mid_turn_input_provider: MidTurnInputProvider | None = None,
     ) -> AsyncIterator[tuple[LLMStreamEvent, LLMMessage | None]]:
         """
         Streaming version of process_message that yields LLMStreamEvent objects as they are generated.
@@ -294,6 +312,12 @@ class LLMStreamingLoop:
 
         # Tool call loop
         while current_iteration <= max_iterations:
+            if (
+                mid_turn_input_provider is not None
+                and mid_turn_input_provider.should_interrupt()
+            ):
+                raise asyncio.CancelledError("Turn interrupted by user")
+
             is_final_iteration = current_iteration == max_iterations
 
             logger.debug(
@@ -757,6 +781,30 @@ class LLMStreamingLoop:
 
             # Add tool responses to messages for next iteration
             messages.extend(tool_response_messages_for_llm)
+
+            if mid_turn_input_provider is not None:
+                pending_user_inputs = (
+                    await mid_turn_input_provider.drain_pending_mid_turn_inputs()
+                )
+                for user_input in pending_user_inputs:
+                    mid_turn_message = UserMessage(
+                        content=self._format_mid_turn_user_input(user_input)
+                    )
+                    messages.append(mid_turn_message)
+                    yield (
+                        LLMStreamEvent(
+                            type="user_input",
+                            content=user_input.content,
+                        ),
+                        mid_turn_message,
+                    )
+
+            if (
+                mid_turn_input_provider is not None
+                and mid_turn_input_provider.should_interrupt()
+            ):
+                raise asyncio.CancelledError("Turn interrupted by user")
+
             current_iteration += 1
 
         # Check if we hit max iterations

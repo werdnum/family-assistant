@@ -233,7 +233,8 @@ class TelegramService:
     async def _set_bot_commands(self) -> None:
         """Sets the bot's commands visible in the Telegram interface."""
         bot_commands_to_set = [
-            BotCommand("start", "Start the bot and get a welcome message")
+            BotCommand("start", "Start the bot and get a welcome message"),
+            BotCommand("interrupt", "Stop the current request"),
         ]
 
         # Add commands from service profiles
