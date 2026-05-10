@@ -43,7 +43,7 @@ class DefaultMessageBatcher(MessageBatcher):
         batch_processor: BatchProcessor,
         batch_delay_seconds: float = 0.5,
         media_group_quiet_seconds: float = 1.0,
-        media_group_max_wait_seconds: float = 30.0,
+        media_group_max_wait_seconds: float = 60.0,
     ) -> None:
         self.batch_processor = batch_processor
         self.batch_delay_seconds = batch_delay_seconds
@@ -205,7 +205,7 @@ class NoBatchMessageBatcher(MessageBatcher):
         self,
         batch_processor: BatchProcessor,
         media_group_quiet_seconds: float = 1.0,
-        media_group_max_wait_seconds: float = 30.0,
+        media_group_max_wait_seconds: float = 60.0,
     ) -> None:
         self.batch_processor = batch_processor
         self.media_group_quiet_seconds = media_group_quiet_seconds
