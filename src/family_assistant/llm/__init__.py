@@ -807,7 +807,7 @@ class LLMOutput:
 class LLMStreamEvent:
     """Event emitted during streaming LLM responses."""
 
-    type: Literal["content", "tool_call", "tool_result", "error", "done"]
+    type: Literal["content", "tool_call", "tool_result", "user_input", "error", "done"]
     content: str | None = None  # For content chunks
     tool_call: ToolCallItem | None = None  # For tool calls
     tool_call_id: str | None = None  # For correlating tool results

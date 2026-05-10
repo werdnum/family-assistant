@@ -8,6 +8,7 @@ import io
 import logging
 import os
 import traceback
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, cast
 
 from opentelemetry import trace
@@ -38,6 +39,7 @@ from family_assistant.llm.messages import (
     text_content,
 )
 from family_assistant.processing import ProcessingService
+from family_assistant.processing.types import MidTurnUserInput
 from family_assistant.services.user_identity import (
     ResolvedUserIdentity,
     UserIdentityResolutionError,
@@ -67,6 +69,61 @@ logger = logging.getLogger(__name__)
 tracer = trace.get_tracer(__name__)
 
 TELEGRAM_MAX_MESSAGE_LENGTH = 4000
+
+
+@dataclass
+class _QueuedMidTurnUpdate:
+    update: Update
+    attachments: list[AttachmentData] | None
+    user_input: MidTurnUserInput
+    consumed: bool = False
+
+
+class TelegramMidTurnController:
+    """Tracks live user updates for one active Telegram turn."""
+
+    def __init__(self) -> None:
+        self._lock = asyncio.Lock()
+        self._queued_updates: list[_QueuedMidTurnUpdate] = []
+        self._interrupted = False
+
+    def request_interrupt(self) -> None:
+        self._interrupted = True
+
+    def should_interrupt(self) -> bool:
+        return self._interrupted
+
+    async def add_update(
+        self,
+        update: Update,
+        attachments: list[AttachmentData] | None,
+        user_input: MidTurnUserInput,
+    ) -> None:
+        async with self._lock:
+            self._queued_updates.append(
+                _QueuedMidTurnUpdate(
+                    update=update,
+                    attachments=attachments,
+                    user_input=user_input,
+                )
+            )
+
+    async def drain_pending_mid_turn_inputs(self) -> list[MidTurnUserInput]:
+        async with self._lock:
+            pending = [item for item in self._queued_updates if not item.consumed]
+            for item in pending:
+                item.consumed = True
+            return [item.user_input for item in pending]
+
+    async def pop_unconsumed_batch(
+        self,
+    ) -> list[tuple[Update, list[AttachmentData] | None]]:
+        async with self._lock:
+            pending = [item for item in self._queued_updates if not item.consumed]
+            self._queued_updates = [
+                item for item in self._queued_updates if item.consumed
+            ]
+            return [(item.update, item.attachments) for item in pending]
 
 
 class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
@@ -111,6 +168,8 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
         self.confirmation_manager: TelegramConfirmationUIManager = (
             confirmation_manager  # Store the injected manager
         )
+        self._active_mid_turns: dict[int, TelegramMidTurnController] = {}
+        self._active_processing_tasks: dict[int, asyncio.Task[None]] = {}
 
         # Store storage functions needed directly by the handler (e.g., history)
         # Storage operations are now accessed via DatabaseContext
@@ -152,6 +211,62 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
                 None,
             )
         return None
+
+    def _build_mid_turn_user_input(
+        self,
+        update: Update,
+        attachments: list[AttachmentData] | None,
+        user_name: str,
+    ) -> MidTurnUserInput | None:
+        """Convert a live Telegram update into steering text for the active turn."""
+        if update.message is None:
+            return None
+
+        text = update.message.caption or update.message.text or ""
+        text = text.strip()
+        attachment_descriptions = [
+            attachment.filename for attachment in attachments or []
+        ]
+        if attachment_descriptions:
+            attachment_text = "Attachments included in this live update: " + ", ".join(
+                attachment_descriptions
+            )
+            text = f"{text}\n\n{attachment_text}".strip()
+
+        if not text:
+            return None
+
+        return MidTurnUserInput(
+            content=text,
+            interface_message_id=str(update.message.message_id),
+            user_name=user_name,
+        )
+
+    async def _route_mid_turn_update_if_active(
+        self,
+        update: Update,
+        context: ContextTypes.DEFAULT_TYPE,
+        chat_id: int,
+        user_name: str,
+        attachments: list[AttachmentData] | None,
+    ) -> bool:
+        """Queue an update as active-turn guidance when a Telegram turn is running."""
+        controller = self._active_mid_turns.get(chat_id)
+        if controller is None:
+            return False
+
+        user_input = self._build_mid_turn_user_input(update, attachments, user_name)
+        if user_input is None:
+            return False
+
+        await controller.add_update(update, attachments, user_input)
+        if update.message is not None:
+            await context.bot.send_message(
+                chat_id=chat_id,
+                text="Got it. I'll apply that to the current response.",
+                reply_to_message_id=update.message.message_id,
+            )
+        return True
 
     async def _send_message_chunks(
         self,
@@ -458,6 +573,9 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
 
             sent_assistant_message: Message | None = None
             processing_error_traceback: str | None = None
+            pending_mid_turn_batch: list[
+                tuple[Update, list[AttachmentData] | None]
+            ] = []
             logger.debug(f"Proceeding with trigger content and user '{user_name}'.")
 
             interface_type = "telegram"
@@ -601,21 +719,50 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
                         chat_interfaces = self._get_chat_interfaces()
                         confirmation_ui_managers = self._get_confirmation_ui_managers()
 
-                        result = await selected_processing_service.handle_chat_interaction(
-                            db_context=db_context,
-                            interface_type=interface_type,
-                            conversation_id=conversation_id,
-                            trigger_content_parts=trigger_content_parts,
-                            trigger_interface_message_id=trigger_interface_message_id,
-                            user_name=user_name,
-                            user_id=resolved_user.user_id,
-                            replied_to_interface_id=replied_to_interface_id,
-                            chat_interface=self.telegram_service.chat_interface,
-                            chat_interfaces=chat_interfaces,
-                            confirmation_ui_managers=confirmation_ui_managers,
-                            request_confirmation_callback=confirmation_callback_wrapper,
-                            trigger_attachments=trigger_attachments,  # type: ignore
-                        )
+                        mid_turn_controller = TelegramMidTurnController()
+                        self._active_mid_turns[chat_id] = mid_turn_controller
+                        current_task = asyncio.current_task()
+                        if current_task is not None:
+                            self._active_processing_tasks[chat_id] = current_task
+                        try:
+                            result = await selected_processing_service.handle_chat_interaction(
+                                db_context=db_context,
+                                interface_type=interface_type,
+                                conversation_id=conversation_id,
+                                trigger_content_parts=trigger_content_parts,
+                                trigger_interface_message_id=trigger_interface_message_id,
+                                user_name=user_name,
+                                user_id=resolved_user.user_id,
+                                replied_to_interface_id=replied_to_interface_id,
+                                chat_interface=self.telegram_service.chat_interface,
+                                chat_interfaces=chat_interfaces,
+                                confirmation_ui_managers=confirmation_ui_managers,
+                                request_confirmation_callback=confirmation_callback_wrapper,
+                                trigger_attachments=trigger_attachments,  # type: ignore
+                                mid_turn_input_provider=mid_turn_controller,
+                            )
+                        except asyncio.CancelledError:
+                            logger.info(
+                                "Telegram processing turn for chat %s was interrupted.",
+                                chat_id,
+                            )
+                            return
+                        finally:
+                            if (
+                                self._active_mid_turns.get(chat_id)
+                                is mid_turn_controller
+                            ):
+                                self._active_mid_turns.pop(chat_id, None)
+                            if (
+                                current_task is not None
+                                and self._active_processing_tasks.get(chat_id)
+                                is current_task
+                            ):
+                                self._active_processing_tasks.pop(chat_id, None)
+                            if not mid_turn_controller.should_interrupt():
+                                pending_mid_turn_batch = (
+                                    await mid_turn_controller.pop_unconsumed_batch()
+                                )
 
                         final_llm_content_to_send = result.text_reply
                         last_assistant_internal_id = (
@@ -739,6 +886,18 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
                                 reply_markup=force_reply_markup,
                             )
 
+                    if pending_mid_turn_batch:
+                        logger.info(
+                            "Processing %d undrained mid-turn Telegram update(s) as a follow-up batch for chat %s.",
+                            len(pending_mid_turn_batch),
+                            chat_id,
+                        )
+                        await self.process_batch(
+                            chat_id=chat_id,
+                            batch=pending_mid_turn_batch,
+                            context=context,
+                        )
+
             except Exception as e:
                 logger.exception(
                     f"Unhandled error in process_chat_queue for chat {chat_id}: {e}",
@@ -835,6 +994,47 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
         logger.debug(f"Error details for update {update_repr}: {tb_string}")
         logger.warning("Error notification to developer has been removed.")
 
+    async def interrupt_command(
+        self, update: Update, context: ContextTypes.DEFAULT_TYPE
+    ) -> None:
+        """Interrupt the currently running Telegram turn for this chat."""
+        if not update.effective_user:
+            logger.warning("Interrupt command: Update has no effective_user.")
+            return
+        if not update.effective_chat:
+            logger.warning("Interrupt command: Update has no effective_chat.")
+            return
+
+        user_id = update.effective_user.id
+        chat_id = update.effective_chat.id
+        if self._resolve_telegram_user(user_id) is None:
+            logger.warning("Unauthorized /interrupt from user %s", user_id)
+            return
+
+        controller = self._active_mid_turns.get(chat_id)
+        task = self._active_processing_tasks.get(chat_id)
+        if controller is not None:
+            controller.request_interrupt()
+        if task is not None and not task.done():
+            task.cancel()
+            logger.info("Interrupted active Telegram turn for chat %s", chat_id)
+            await context.bot.send_message(
+                chat_id=chat_id,
+                text="Interrupted the current request.",
+                reply_to_message_id=update.message.message_id
+                if update.message is not None
+                else None,
+            )
+            return
+
+        await context.bot.send_message(
+            chat_id=chat_id,
+            text="There isn't an active request to interrupt.",
+            reply_to_message_id=update.message.message_id
+            if update.message is not None
+            else None,
+        )
+
     async def handle_unknown_command(
         self, update: Update, context: ContextTypes.DEFAULT_TYPE
     ) -> None:
@@ -866,6 +1066,7 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
         application = self.telegram_service.application
 
         application.add_handler(CommandHandler("start", self.start))
+        application.add_handler(CommandHandler("interrupt", self.interrupt_command))
 
         if self.telegram_service.slash_command_to_profile_id_map:
             for command_str in self.telegram_service.slash_command_to_profile_id_map:
@@ -1477,6 +1678,16 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
                     )
                 except Exception as e_reply:
                     logger.error(f"Failed to send error reply to user: {e_reply}")
+            return
+
+        user_name = update.effective_user.first_name or "Unknown User"
+        if await self._route_mid_turn_update_if_active(
+            update=update,
+            context=context,
+            chat_id=chat_id,
+            user_name=user_name,
+            attachments=attachments,
+        ):
             return
 
         await self.message_batcher.add_to_batch(update, context, attachments or None)

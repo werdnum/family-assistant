@@ -23,7 +23,9 @@ services to respond or perform actions.
   typing `/browse` before your query activates a powerful web browsing mode for complex web tasks or
   research, while `/research` focuses the assistant on in-depth research questions. For
   investigations that need the most thorough, multi-source synthesis (at the cost of longer
-  latency), use `/research_max` instead.
+  latency), use `/research_max` instead. If you send a follow-up message while the assistant is
+  still working through tool calls, it will apply that message to the current response when it can.
+  Send `/interrupt` to stop the active Telegram request.
 
 - **Web Interface (Secondary):** \*There's also a web interface for various tasks: \*Chat directly
   with the assistant with real-time streaming responses. \*Managing notes. \*Viewing and filtering
@@ -579,6 +581,10 @@ various tasks with dark mode support and mobile optimization.
 
 - **Unknown Commands:** If you type a command the assistant doesn't recognize (e.g.,
   `/someunknowncommand`), it will now reply with a "command not recognized" message.
+
+- **Interrupting Telegram:** Use `/interrupt` in Telegram to stop the request currently being
+  processed in that chat. If there is no active request, the assistant will tell you nothing is
+  running.
 
 - **Switching Modes or Asking for Confirmation:** To best handle your request, the assistant might
   sometimes switch to a different specialized mode or ask for your permission to use one (e.g., "Is

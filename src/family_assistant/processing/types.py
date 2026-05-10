@@ -24,6 +24,27 @@ logger = logging.getLogger(__name__)
 RequestConfirmationCallback = ToolRequestConfirmationCallback
 
 
+@dataclass(frozen=True)
+class MidTurnUserInput:
+    """User guidance received while an assistant turn is already running."""
+
+    content: str
+    interface_message_id: str | None = None
+    user_name: str | None = None
+
+
+class MidTurnInputProvider(Protocol):
+    """Supplies user messages that should steer the next LLM iteration."""
+
+    async def drain_pending_mid_turn_inputs(self) -> list[MidTurnUserInput]:
+        """Return and consume pending mid-turn user inputs."""
+        ...
+
+    def should_interrupt(self) -> bool:
+        """Return whether the active turn should halt before more work starts."""
+        ...
+
+
 class ChatInteractionStatus(Enum):
     """Outcome status for ProcessingService.handle_chat_interaction."""
 
