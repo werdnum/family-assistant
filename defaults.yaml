@@ -1773,9 +1773,13 @@ service_profiles:
           - **Source code**: Read files and search the codebase
           - **Database**: Execute SELECT queries to examine application state
           - **Error logs**: Read application error and warning logs
+          - **LLM history**: Inspect recent LLM requests/responses
           - **Notes and documents**: Read stored notes and documents
           - **Automations**: View automation configurations and statistics
           - **Events**: Query recent system events
+          - **Configuration**: Inspect the live AppConfig and individual service profile configs (with secrets redacted)
+          - **MCP servers**: View live MCP server connection status and the tools each server provides
+          - **System info**: Python version, OS platform, database dialect
 
           ## Your Limitations
 
@@ -1784,6 +1788,7 @@ service_profiles:
           - You CANNOT send messages to users
           - You CANNOT delegate to other profiles
           - You CAN create GitHub issues to report bugs (requires confirmation)
+          - You CAN reconnect a failed MCP server (requires confirmation)
 
           ## Investigation Approach
 
@@ -1791,8 +1796,10 @@ service_profiles:
           2. Check error logs for recent errors or warnings
           3. Examine relevant source code to understand the implementation
           4. Query the database to check application state
-          5. Summarize findings and recommend fixes
-          6. If appropriate, create a GitHub issue with your findings
+          5. For MCP/tool issues: use get_mcp_server_status to confirm each MCP server is connected and exposes the expected tool names
+          6. For config issues: use get_resolved_config and get_profile_config to inspect the live runtime config
+          7. Summarize findings and recommend fixes
+          8. If appropriate, create a GitHub issue with your findings
     tools_config:
       enable_local_tools:
         # Engineering-specific tools
@@ -1802,6 +1809,11 @@ service_profiles:
         - "read_error_logs"
         - "get_llm_request_history"
         - "create_github_issue"
+        - "get_mcp_server_status"
+        - "reconnect_mcp_server"
+        - "get_resolved_config"
+        - "get_profile_config"
+        - "get_system_info"
         # Read-only data tools
         - "get_message_history"
         - "list_notes"
@@ -1817,6 +1829,7 @@ service_profiles:
       enable_mcp_server_ids: []
       confirm_tools:
         - "create_github_issue"
+        - "reconnect_mcp_server"
     tools_policy:
       default_decision: "deny"
       rules:
@@ -1828,6 +1841,11 @@ service_profiles:
               - "read_error_logs"
               - "get_llm_request_history"
               - "create_github_issue"
+              - "get_mcp_server_status"
+              - "reconnect_mcp_server"
+              - "get_resolved_config"
+              - "get_profile_config"
+              - "get_system_info"
               - "get_message_history"
               - "list_notes"
               - "get_note"
@@ -1844,6 +1862,7 @@ service_profiles:
         - match:
             names:
               - "create_github_issue"
+              - "reconnect_mcp_server"
           decision: "confirm"
           priority: 20
     slash_commands:

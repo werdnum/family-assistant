@@ -46,6 +46,67 @@ async def test_mcp_provider_exposes_tool_to_server_mapping() -> None:
 
 
 @pytest.mark.asyncio
+async def test_get_server_statuses_returns_per_server_diagnostics() -> None:
+    """get_server_statuses produces a snapshot suitable for the engineer profile.
+
+    Includes status, transport, command/url, session_active, and the tool
+    list for each configured server. Tokens must not leak into the snapshot.
+    """
+    mcp_configs: dict[str, MCPServerConfig] = {
+        "code-execution": {"transport": "stdio", "command": "code-exec"},
+        "remote-tools": {
+            "transport": "sse",
+            "url": "https://example.com/mcp",
+            "token": "$REMOTE_TOKEN",
+        },
+    }
+
+    provider = MCPToolsProvider(mcp_configs)
+    # Simulate two states: code-execution connected with two tools, remote-tools failed.
+    provider._server_statuses["code-execution"] = MCP_SERVER_STATUS_CONNECTED
+    provider._server_statuses["remote-tools"] = MCP_SERVER_STATUS_FAILED
+    provider._tool_map = {
+        "create_workspace": "code-execution",
+        "execute_shell": "code-execution",
+    }
+    provider._sessions = {"code-execution": cast("ClientSession", object())}
+
+    statuses = provider.get_server_statuses()
+
+    assert set(statuses.keys()) == {"code-execution", "remote-tools"}
+
+    code_exec = statuses["code-execution"]
+    assert code_exec["status"] == MCP_SERVER_STATUS_CONNECTED
+    assert code_exec["transport"] == "stdio"
+    assert code_exec["command"] == "code-exec"
+    assert code_exec["url"] is None
+    assert code_exec["session_active"] is True
+    assert code_exec["tool_count"] == 2
+    assert code_exec["tools"] == ["create_workspace", "execute_shell"]
+
+    remote = statuses["remote-tools"]
+    assert remote["status"] == MCP_SERVER_STATUS_FAILED
+    assert remote["transport"] == "sse"
+    assert remote["url"] == "https://example.com/mcp"
+    assert remote["session_active"] is False
+    assert remote["tool_count"] == 0
+    assert remote["tools"] == []
+    assert "token" not in remote
+
+
+@pytest.mark.asyncio
+async def test_reconnect_server_unknown_id_raises_key_error() -> None:
+    """reconnect_server raises KeyError for unknown server ids so the
+    engineer-profile tool can surface a clear error instead of silently
+    no-oping."""
+    provider = MCPToolsProvider({
+        "server1": {"transport": "stdio", "command": "echo"},
+    })
+    with pytest.raises(KeyError):
+        await provider.reconnect_server("does-not-exist")
+
+
+@pytest.mark.asyncio
 async def test_filtered_tools_provider_with_mcp_filtering() -> None:
     """Test that FilteredToolsProvider correctly filters tools including MCP tools."""
 

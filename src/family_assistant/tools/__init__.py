@@ -103,9 +103,14 @@ from family_assistant.tools.engineering import (
     ENGINEERING_TOOLS_DEFINITION,
     create_github_issue,
     get_llm_request_history,
+    get_mcp_server_status,
+    get_profile_config,
+    get_resolved_config,
+    get_system_info,
     query_database,
     read_error_logs,
     read_source_file,
+    reconnect_mcp_server,
     search_source_code,
 )
 from family_assistant.tools.events import (
@@ -413,6 +418,11 @@ __all__ = [
     "read_error_logs",
     "create_github_issue",
     "get_llm_request_history",
+    "get_mcp_server_status",
+    "reconnect_mcp_server",
+    "get_resolved_config",
+    "get_profile_config",
+    "get_system_info",
     # On-demand tool activation
     "ACTIVATE_TOOLS_DEFINITION",
     "OnDemandCatalogEntry",
@@ -608,6 +618,11 @@ _LOCAL_TOOL_IMPLEMENTATIONS: dict[str, ToolImplementation] = {
     "read_error_logs": read_error_logs,
     "create_github_issue": create_github_issue,
     "get_llm_request_history": get_llm_request_history,
+    "get_mcp_server_status": get_mcp_server_status,
+    "reconnect_mcp_server": reconnect_mcp_server,
+    "get_resolved_config": get_resolved_config,
+    "get_profile_config": get_profile_config,
+    "get_system_info": get_system_info,
     # MQTT tools
     "mqtt_publish": mqtt_publish_tool,
 }
@@ -1227,6 +1242,30 @@ LOCAL_TOOL_METADATA_BY_NAME: dict[str, LocalToolMetadata] = {
     "create_github_issue": _metadata(
         ToolTag.EXTERNAL_COMM,
         ToolTag.STATE_CHANGING,
+        ToolTag.OUTPUT_TRUSTED,
+    ),
+    "get_mcp_server_status": _metadata(
+        ToolTag.READ_ONLY,
+        ToolTag.SENSITIVE_DATA,
+        ToolTag.OUTPUT_TRUSTED,
+    ),
+    "reconnect_mcp_server": _metadata(
+        ToolTag.STATE_CHANGING,
+        ToolTag.SENSITIVE_DATA,
+        ToolTag.OUTPUT_TRUSTED,
+    ),
+    "get_resolved_config": _metadata(
+        ToolTag.READ_ONLY,
+        ToolTag.SENSITIVE_DATA,
+        ToolTag.OUTPUT_TRUSTED,
+    ),
+    "get_profile_config": _metadata(
+        ToolTag.READ_ONLY,
+        ToolTag.SENSITIVE_DATA,
+        ToolTag.OUTPUT_TRUSTED,
+    ),
+    "get_system_info": _metadata(
+        ToolTag.READ_ONLY,
         ToolTag.OUTPUT_TRUSTED,
     ),
     # MQTT tools
