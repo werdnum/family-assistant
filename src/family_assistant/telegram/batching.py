@@ -332,7 +332,26 @@ class NoBatchMessageBatcher(MessageBatcher):
         media_group_id: str,
         context: ContextTypes.DEFAULT_TYPE,
     ) -> None:
+        pending_to_flush: list[tuple[Update, list[AttachmentData] | None]] = []
         async with self.chat_locks[chat_id]:
+            existing_id = self.media_group_ids.get(chat_id)
+            if (
+                existing_id is not None
+                and existing_id != media_group_id
+                and self.media_group_buffers.get(chat_id)
+            ):
+                # A different album is already buffered. Flush it as its own
+                # batch before pre-arming the new album, so back-to-back albums
+                # never get merged into one assistant turn (even when the
+                # second album's notify_pending lands before its first
+                # add_to_batch).
+                pending_to_flush = self._extract_buffer_locked(chat_id)
+                logger.info(
+                    f"NoBatchMessageBatcher: Flushing media group {existing_id} "
+                    f"of {len(pending_to_flush)} message(s) for chat {chat_id} "
+                    f"because a new media_group_id {media_group_id} was pre-armed."
+                )
+
             self.media_group_ids[chat_id] = media_group_id
             self.media_group_pending_downloads[chat_id] += 1
             logger.debug(
@@ -341,6 +360,9 @@ class NoBatchMessageBatcher(MessageBatcher):
                 f"{self.media_group_pending_downloads[chat_id]})."
             )
             self._reset_media_group_timer_locked(chat_id, context)
+
+        if pending_to_flush:
+            await self.batch_processor.process_batch(chat_id, pending_to_flush, context)
 
     async def cancel_pending_media_group(
         self,

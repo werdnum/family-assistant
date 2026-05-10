@@ -1467,6 +1467,7 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
                         )
 
         except BadRequest as br_err:
+            await self._cancel_pending_media_group_if_any(update, context)
             error_msg = str(br_err)
             if "file is too big" in error_msg.lower():
                 logger.warning(
@@ -1483,15 +1484,14 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
                 await update.message.reply_text(
                     "Sorry, error processing attached media."
                 )
-            await self._cancel_pending_media_group_if_any(update, context)
             return
         except Exception as img_err:
+            await self._cancel_pending_media_group_if_any(update, context)
             logger.error(
                 f"Failed to process attachments for message {update.message.message_id}: {img_err}",
                 exc_info=True,
             )
             await update.message.reply_text("Sorry, error processing attached media.")
-            await self._cancel_pending_media_group_if_any(update, context)
             return
 
         if self.message_batcher is None:

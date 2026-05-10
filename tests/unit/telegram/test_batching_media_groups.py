@@ -521,3 +521,51 @@ async def test_no_batch_batcher_flushes_when_new_media_group_arrives() -> None:
     assert batcher.media_group_ids[123] == "album-B"
     assert len(batcher.media_group_buffers[123]) == 1
     assert batcher.media_group_buffers[123][0][0].update_id == 10
+
+
+@pytest.mark.asyncio
+async def test_no_batch_batcher_flushes_on_notify_pending_for_different_group() -> None:
+    """Album B's notify_pending arriving while album A is buffered must flush A
+    as its own batch, not merge it with B (which would happen if notify simply
+    overwrote the active media_group_id).
+    """
+    processor = AsyncMock()
+    batcher = NoBatchMessageBatcher(
+        batch_processor=processor,
+        media_group_quiet_seconds=10.0,
+        media_group_max_wait_seconds=60.0,
+    )
+    context = _make_context()
+
+    # Album A: two photos buffered via the standard notify+add pairing.
+    for i in range(2):
+        update = _make_photo_update(
+            update_id=i + 1, message_id=100 + i, media_group_id="album-A"
+        )
+        await batcher.notify_pending_media_group(
+            chat_id=123, media_group_id="album-A", context=context
+        )
+        await batcher.add_to_batch(update, context, attachments=None)
+
+    # Album B's notify_pending arrives before any of B's downloads finish.
+    await batcher.notify_pending_media_group(
+        chat_id=123, media_group_id="album-B", context=context
+    )
+
+    # Album A must have been flushed as its own batch — the new pre-arm for
+    # B should not have been able to merge it into the same buffer.
+    assert processor.process_batch.await_count == 1
+    _, batch_a, _ = processor.process_batch.await_args_list[0].args
+    assert [u.update_id for u, _ in batch_a] == [1, 2]
+
+    # The chat is now pre-armed for album B with a fresh, empty buffer.
+    assert batcher.media_group_ids[123] == "album-B"
+    assert not batcher.media_group_buffers.get(123)
+    assert batcher.media_group_pending_downloads[123] == 1
+
+    # When B's first message lands it joins B's buffer (not the flushed A's).
+    update_b1 = _make_photo_update(
+        update_id=10, message_id=200, media_group_id="album-B"
+    )
+    await batcher.add_to_batch(update_b1, context, attachments=None)
+    assert batcher.media_group_buffers[123][0][0].update_id == 10
