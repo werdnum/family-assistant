@@ -643,11 +643,15 @@ class OpenAIImageBackend:
             image_file.name = f"image_{index}{extension}"
             image_files.append(image_file)
 
-        image_request = image_files[0] if len(image_files) == 1 else image_files
+        image_request: io.BytesIO | list[io.BytesIO] = (
+            image_files[0] if len(image_files) == 1 else image_files
+        )
         cfg = self.edit_config
         response = await self.client.images.edit(
             model=self.model,
-            image=image_request,
+            image=cast(
+                "openai._types.FileTypes | list[openai._types.FileTypes]", image_request
+            ),
             prompt=instruction,
             n=1,
             size=cfg.size,

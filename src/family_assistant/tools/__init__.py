@@ -6,8 +6,6 @@ The tools are organized into thematic submodules for better maintainability.
 
 from __future__ import annotations
 
-import logging
-
 from family_assistant import storage
 from family_assistant.tools.attachments import (
     ATTACHMENT_TOOLS_DEFINITION,
@@ -156,6 +154,7 @@ from family_assistant.tools.infrastructure import (
     find_provider_by_type,
     get_tool_definitions_for_advertisement,
 )
+from family_assistant.tools.mcp import MCPToolsProvider
 from family_assistant.tools.media_download import (
     MEDIA_DOWNLOAD_TOOLS_DEFINITION,
     download_media_tool,
@@ -254,9 +253,6 @@ from family_assistant.tools.workspace_files import (
     workspace_read_tool,
     workspace_write_tool,
 )
-
-logger = logging.getLogger(__name__)
-
 
 # Export all public interfaces
 __all__ = [
@@ -435,17 +431,8 @@ __all__ = [
     "get_script_tool",
     "delete_script_tool",
     "reindex_email_tool",
+    "MCPToolsProvider",
 ]
-
-
-# Try to import MCP tools if available
-try:
-    from family_assistant.tools.mcp import MCPToolsProvider
-
-    __all__.append("MCPToolsProvider")
-except ImportError:
-    logger.debug("MCP tools not available")
-    MCPToolsProvider = None  # type: ignore[assignment,misc]
 
 
 # IMPORTANT: Tool Registration Process
