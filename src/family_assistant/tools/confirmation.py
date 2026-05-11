@@ -365,6 +365,24 @@ async def render_send_message_to_user_confirmation(
     return "Please confirm you want to *send* this message:\n" + "\n".join(fields)
 
 
+async def render_ingest_document_from_url_confirmation(
+    args: ToolArgumentsView,
+    context: ToolExecutionContext,
+) -> str:
+    """Render a confirmation prompt for ingesting a document from a URL."""
+    _ = context
+    fields = [_confirmation_field("URL", args.get("url_to_ingest"))]
+    if args.get("title"):
+        fields.append(_confirmation_field("Title", args.get("title")))
+    if args.get("source_type"):
+        fields.append(_confirmation_field("Source type", args.get("source_type")))
+    if args.get("metadata_json"):
+        fields.append(_confirmation_field("Metadata", args.get("metadata_json")))
+    return "Please confirm you want to *fetch and index* this document:\n" + "\n".join(
+        fields
+    )
+
+
 async def render_delegate_to_service_confirmation(
     args: ToolArgumentsView,
     context: ToolExecutionContext,
@@ -397,5 +415,6 @@ TOOL_CONFIRMATION_RENDERERS: dict[str, ConfirmationRenderer] = {
     "schedule_future_callback": render_schedule_future_callback_confirmation,
     "modify_pending_callback": render_modify_pending_callback_confirmation,
     "send_message_to_user": render_send_message_to_user_confirmation,
+    "ingest_document_from_url": render_ingest_document_from_url_confirmation,
     "delegate_to_service": render_delegate_to_service_confirmation,
 }

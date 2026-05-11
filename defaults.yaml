@@ -533,6 +533,7 @@ service_profiles:
           Expected behavior:
           - Reply with a concise summary and any useful proposed actions.
           - For calendar events, notes, reminders, or messages to known Family Assistant users, call the relevant tool with the exact proposed content. Tool policy will create a durable confirmation before any write or outbound message executes.
+          - If the email points at a document the user likely wants indexed (an attachment-style link such as a shared PDF, Drive/Dropbox/iCloud document, or a long-form article), call ingest_document_from_url with that URL. Tool policy will surface a durable confirmation before any fetch occurs, so do not attempt to follow the link yourself. Do not call ingest_document_from_url for tracking pixels, unsubscribe links, marketing redirects, or other URLs the user did not intend to save.
           - If the date, timezone, recipient, or action content is ambiguous, ask for clarification in the final response instead of guessing.
           - Do not use send_message_to_user to reply to the email sender. The final response is delivered back to the authenticated sender by the email interface.
     tools_config:
@@ -551,6 +552,7 @@ service_profiles:
         - "schedule_future_callback"
         - "modify_pending_callback"
         - "send_message_to_user"
+        - "ingest_document_from_url"
       enable_mcp_server_ids: []
       confirm_tools: []
     tools_policy:
@@ -588,9 +590,10 @@ service_profiles:
               - "schedule_future_callback"
               - "modify_pending_callback"
               - "send_message_to_user"
+              - "ingest_document_from_url"
           decision: "confirm"
           priority: 50
-          description: "Email-originated writes and known-user messages require durable confirmation."
+          description: "Email-originated writes, known-user messages, and document ingestion fetches require durable confirmation."
     slash_commands: []
   - id: "reminder"
     description: "Assistant profile for handling system reminders. Its sole purpose is to formulate the reminder message to be sent to the user."
@@ -1937,3 +1940,4 @@ otel:
 
 # Secrets (telegram_token, api_keys, database_url) are primarily from env.
 # Model, embedding_model, server_url, storage_paths are also top-level or env.
+
