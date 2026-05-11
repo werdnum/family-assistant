@@ -120,7 +120,8 @@ RUN --mount=type=cache,target=/home/claude/.npm,sharing=locked,uid=1001,gid=1001
 
 # Install Python development tools
 RUN --mount=type=cache,target=/home/claude/.cache/uv,sharing=locked,uid=1001,gid=1001 \
-    uv tool install --with llm-gemini --with llm-openrouter --with llm-fragments-github llm
+    uv tool install --with llm-gemini --with llm-openrouter --with llm-fragments-github llm && \
+    uv tool install poethepoet
 
 # Application-specific setup
 USER root
