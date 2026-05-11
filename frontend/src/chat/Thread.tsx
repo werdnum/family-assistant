@@ -251,11 +251,21 @@ const ThreadWelcomeSuggestions: React.FC = () => {
 };
 
 const Composer: React.FC = () => {
+  const [attachmentError, setAttachmentError] = useState<string | null>(null);
+
   return (
     <ComposerPrimitive.Root className="flex flex-col gap-3 max-w-3xl mx-auto w-full">
       <ComposerAttachments />
+      {attachmentError && (
+        <p className="text-red-600 text-xs px-1" data-testid="attachment-error-message">
+          {attachmentError}
+        </p>
+      )}
       <div className="flex gap-2 items-end">
-        <ComposerAddAttachment />
+        <ComposerAddAttachment
+          onAttachmentAddStart={() => setAttachmentError(null)}
+          onAttachmentAddError={setAttachmentError}
+        />
         <div className="flex-1 relative">
           <ComposerPrimitive.Input
             rows={1}

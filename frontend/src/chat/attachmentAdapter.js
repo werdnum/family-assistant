@@ -6,14 +6,15 @@
 import { generateUUID } from '../utils/uuid.js';
 
 // MAX_FILE_SIZE can be configured via the VITE_MAX_FILE_SIZE environment variable (in bytes). Defaults to 100MB to match backend.
-const MAX_FILE_SIZE =
+export const MAX_FILE_SIZE =
   typeof import.meta.env !== 'undefined' && import.meta.env.VITE_MAX_FILE_SIZE
     ? Number(import.meta.env.VITE_MAX_FILE_SIZE)
     : 100 * 1024 * 1024; // 100MB default - matches backend AttachmentService
-const SUPPORTED_IMAGE_TYPES = ['image/jpeg', 'image/png', 'image/gif', 'image/webp'];
+export const SUPPORTED_IMAGE_TYPES = ['image/jpeg', 'image/png', 'image/gif', 'image/webp'];
+export const SUPPORTED_ATTACHMENT_LABEL = 'images, text, markdown, PDF';
 
 // Additional supported file types from backend AttachmentService
-const SUPPORTED_FILE_TYPES = [
+export const SUPPORTED_FILE_TYPES = [
   ...SUPPORTED_IMAGE_TYPES,
   'text/plain',
   'text/markdown',
@@ -47,20 +48,26 @@ const uploadFileToService = async (file) => {
  * @param {File} file - The file to validate
  * @throws {Error} If validation fails
  */
-const validateFile = (file) => {
-  // Check file size
+export const getAttachmentValidationError = (file) => {
   if (file.size > MAX_FILE_SIZE) {
-    throw new Error(`File size exceeds ${MAX_FILE_SIZE / (1024 * 1024)}MB limit`);
+    return `File size exceeds ${MAX_FILE_SIZE / (1024 * 1024)}MB limit`;
   }
 
-  // Check file type
   if (!SUPPORTED_FILE_TYPES.includes(file.type)) {
-    throw new Error(`Unsupported file type. Supported types: ${SUPPORTED_FILE_TYPES.join(', ')}`);
+    return `Unsupported file type. Supported: ${SUPPORTED_ATTACHMENT_LABEL}`;
   }
 
-  // Basic file name validation
   if (!file.name || file.name.trim() === '') {
-    throw new Error('File must have a valid name');
+    return 'File must have a valid name';
+  }
+
+  return null;
+};
+
+const validateFile = (file) => {
+  const validationError = getAttachmentValidationError(file);
+  if (validationError) {
+    throw new Error(validationError);
   }
 };
 

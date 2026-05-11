@@ -21,6 +21,17 @@ import {
   DialogTrigger,
 } from '@/components/ui/dialog';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
+import { getAttachmentValidationError, SUPPORTED_ATTACHMENT_LABEL } from '@/chat/attachmentAdapter';
+
+const formatAttachmentErrorMessage = (error: unknown) => {
+  const message = error instanceof Error ? error.message : String(error);
+
+  if (message.toLowerCase().includes('not accepted')) {
+    return `Unsupported file type. Supported: ${SUPPORTED_ATTACHMENT_LABEL}`;
+  }
+
+  return message || 'Failed to add attachment';
+};
 
 const useFileSrc = (file: File | undefined) => {
   const [src, setSrc] = useState<string | undefined>(undefined);
@@ -261,15 +272,32 @@ export const ComposerAttachments: FC = () => {
   );
 };
 
-export const ComposerAddAttachment: FC = () => {
+type ComposerAddAttachmentProps = {
+  onAttachmentAddStart?: () => void;
+  onAttachmentAddError?: (message: string) => void;
+};
+
+export const ComposerAddAttachment: FC<ComposerAddAttachmentProps> = ({
+  onAttachmentAddStart,
+  onAttachmentAddError,
+}) => {
   const composerRuntime = useComposerRuntime();
 
   const handleFileSelect = (event: React.ChangeEvent<HTMLInputElement>) => {
     const files = event.target.files;
     if (files && files.length > 0) {
+      onAttachmentAddStart?.();
       // Add each file as an attachment
       Array.from(files).forEach((file) => {
-        composerRuntime.addAttachment(file);
+        const validationError = getAttachmentValidationError(file);
+        if (validationError) {
+          onAttachmentAddError?.(validationError);
+          return;
+        }
+
+        void composerRuntime.addAttachment(file).catch((error: unknown) => {
+          onAttachmentAddError?.(formatAttachmentErrorMessage(error));
+        });
       });
       // Clear the input so the same file can be selected again
       event.target.value = '';

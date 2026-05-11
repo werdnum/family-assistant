@@ -9,6 +9,7 @@ import {
   CompositeAttachmentAdapter,
   defaultAttachmentAdapter,
   FileAttachmentAdapter,
+  getAttachmentValidationError,
 } from '../attachmentAdapter';
 
 // Mock crypto.randomUUID
@@ -122,6 +123,18 @@ describe('FileAttachmentAdapter', () => {
       expect(result.name).toBe('document.docx');
       expect(result.status.type).toBe('error');
       expect(result.status.error).toContain('Unsupported file type');
+    });
+
+    test('returns user-facing validation error for invalid file type', () => {
+      const file = createMockFile(
+        'document.docx',
+        'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+        1024
+      );
+
+      expect(getAttachmentValidationError(file)).toBe(
+        'Unsupported file type. Supported: images, text, markdown, PDF'
+      );
     });
 
     test('returns error for file with empty name', async () => {
