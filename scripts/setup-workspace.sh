@@ -81,7 +81,15 @@ fi
 # To update marketplaces, run the command manually:
 # claude plugin marketplace update
 
-# Step 9: Verify setup
+# Step 9: Check GNU Parallel
+if ! command -v parallel >/dev/null 2>&1; then
+    echo "⚠️  GNU Parallel is not installed"
+    echo "   poe test uses GNU Parallel for adaptive pytest scheduling."
+    echo "   Install the system package named 'parallel', or run:"
+    echo "     PYTEST_RUNNER=xdist poe test"
+fi
+
+# Step 10: Verify setup
 echo ""
 echo "✅ Workspace setup complete!"
 echo ""
@@ -98,4 +106,3 @@ echo ""
 echo "  4. Run linting:"
 echo "     poe lint"
 echo ""
-

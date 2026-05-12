@@ -62,6 +62,8 @@ The setup script will:
 - Install pre-commit hooks
 - Install frontend dependencies (`npm ci --prefix frontend`)
 - Install Playwright browsers
+- Check for GNU Parallel, which is required by the default adaptive `poe test` runner. The
+  devcontainer includes it; local hosts should install the system package named `parallel`.
 
 ### Manual Installation
 
@@ -83,6 +85,10 @@ npm ci --prefix frontend
 
 # Install Playwright browsers (using rebrowser-playwright)
 .venv/bin/python -m rebrowser_playwright install chromium
+
+# Install GNU Parallel using your operating system package manager
+# Ubuntu/Debian example:
+sudo apt-get install parallel
 
 # Optional: Install local embedding model support (adds ~450MB of dependencies)
 # Only needed if you want to use local sentence transformer models instead of cloud APIs

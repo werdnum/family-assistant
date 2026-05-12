@@ -84,7 +84,7 @@ podman exec family-assistant-full-test bash -c '
     
     # Run poe test with a long timeout
     echo "Starting poe test (linting + tests)..."
-    timeout 900 poe test || exit_code=$?
+    timeout 1800 poe test || exit_code=$?
     
     # Save exit code to file for later retrieval
     echo ${exit_code:-0} > /workspace/test-exit-code

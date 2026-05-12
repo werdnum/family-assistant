@@ -37,9 +37,10 @@ lint failures must be fixed or properly disabled.
 
 ### `run_pytest_adaptive.py`
 
-Opt-in pytest runner used by `scripts/run-tests.sh --adaptive-pytest` or
-`PYTEST_RUNNER=adaptive scripts/run-tests.sh`. It collects nodeids, runs serial pytest shards
-through GNU Parallel, and gates new shards on CPU load plus cgroup v2 memory usage.
+Default pytest runner used by `scripts/run-tests.sh`. It collects nodeids, runs serial pytest shards
+through GNU Parallel, and gates new shards on CPU load plus cgroup v2 memory usage. Use
+`scripts/run-tests.sh --xdist-pytest` or `PYTEST_RUNNER=xdist scripts/run-tests.sh` to use direct
+pytest-xdist instead.
 
 Useful environment variables:
 
