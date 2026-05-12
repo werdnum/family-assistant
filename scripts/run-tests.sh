@@ -15,13 +15,13 @@ CLEANUP_RUNNING=0
 
 # Cleanup function - kills all background processes
 cleanup() {
+    local exit_code=$?
+
     # Prevent recursive cleanup calls
     if [ "$CLEANUP_RUNNING" -eq 1 ]; then
         return
     fi
     CLEANUP_RUNNING=1
-
-    local exit_code=$?
 
     # If we have background processes, clean them up
     if [ ${#BACKGROUND_PIDS[@]} -gt 0 ]; then
@@ -96,18 +96,23 @@ usage() {
     echo ""
     echo "Options:"
     echo "  --skip-lint      Skip linting and only run tests"
+    echo "  --adaptive-pytest"
+    echo "                   Run pytest through GNU Parallel with load/cgroup memory gates"
     echo "  -n NUM           Set pytest parallelism (e.g., -n2, -n4, -n auto)"
     echo "  --help           Show this help message"
     echo ""
     echo "Environment Variables:"
     echo "  PYTEST_PARALLELISM    Set default pytest parallelism (e.g., 4, auto, 1)"
     echo "                        Overridden by -n command line option"
+    echo "  PYTEST_RUNNER         Set to 'adaptive' to use GNU Parallel adaptive shards"
+    echo "  GNU_PARALLEL          Path to GNU Parallel when it is not on PATH"
     echo ""
     echo "Examples:"
     echo "  $0                    # Run linting and tests with default parallelism"
     echo "  $0 -n2                # Run with 2 parallel workers"
     echo "  $0 -n1                # Run tests sequentially"
     echo "  $0 --skip-lint -n2    # Skip linting, run tests with 2 workers"
+    echo "  $0 --adaptive-pytest  # Run pytest with adaptive GNU Parallel scheduling"
     echo "  PYTEST_PARALLELISM=4 $0    # Run with 4 workers via env var"
     echo ""
     echo "All other arguments are passed directly to pytest."
@@ -127,6 +132,7 @@ timer_end() {
 
 # Parse command line arguments
 SKIP_LINT=0
+PYTEST_RUNNER="${PYTEST_RUNNER:-xdist}"
 PYTEST_ARGS=()
 PARALLELISM=""
 
@@ -137,6 +143,10 @@ while [ $# -gt 0 ]; do
             ;;
         --skip-lint)
             SKIP_LINT=1
+            shift
+            ;;
+        --adaptive-pytest)
+            PYTEST_RUNNER="adaptive"
             shift
             ;;
         -n|--numprocesses)
@@ -164,6 +174,12 @@ done
 # Check for PYTEST_PARALLELISM environment variable if no -n was provided
 if [ -z "$PARALLELISM" ] && [ -n "$PYTEST_PARALLELISM" ]; then
     PARALLELISM="-n$PYTEST_PARALLELISM"
+fi
+
+PYTEST_PARALLEL_ARGS=()
+if [ -n "$PARALLELISM" ]; then
+    # shellcheck disable=SC2206 # Intentional split of pytest's -n option and value.
+    PYTEST_PARALLEL_ARGS=($PARALLELISM)
 fi
 
 # Auto-select SQLite backend when PostgreSQL isn't available
@@ -304,12 +320,18 @@ fi
 # Phase 2: Parallel execution of tests and analysis
 
 # Start pytest (always runs)
-echo "${BLUE}  ▸ Starting pytest...${NC}"
-TEST_START=$(date +%s)
-if [ "${USE_MEMORY_LIMIT:-0}" = "1" ]; then
-    scripts/run_with_memory_limit.sh "${VIRTUAL_ENV:-.venv}"/bin/pytest --json-report --json-report-file=.report.json --disable-warnings --tb=short -q --ignore=scratch "$PARALLELISM" "${PYTEST_ARGS[@]}" &
+if [ "$PYTEST_RUNNER" = "adaptive" ]; then
+    echo "${BLUE}  ▸ Starting pytest with adaptive GNU Parallel scheduling...${NC}"
 else
-    "${VIRTUAL_ENV:-.venv}"/bin/pytest --json-report --json-report-file=.report.json --disable-warnings --tb=short -q --ignore=scratch "$PARALLELISM" "${PYTEST_ARGS[@]}" &
+    echo "${BLUE}  ▸ Starting pytest...${NC}"
+fi
+TEST_START=$(date +%s)
+if [ "$PYTEST_RUNNER" = "adaptive" ]; then
+    PYTEST_BIN="${VIRTUAL_ENV:-.venv}"/bin/pytest "${VIRTUAL_ENV:-.venv}"/bin/python scripts/run_pytest_adaptive.py --json-report --json-report-file=.report.json --disable-warnings --tb=short -q --ignore=scratch "${PYTEST_PARALLEL_ARGS[@]}" "${PYTEST_ARGS[@]}" &
+elif [ "${USE_MEMORY_LIMIT:-0}" = "1" ]; then
+    scripts/run_with_memory_limit.sh "${VIRTUAL_ENV:-.venv}"/bin/pytest --json-report --json-report-file=.report.json --disable-warnings --tb=short -q --ignore=scratch "${PYTEST_PARALLEL_ARGS[@]}" "${PYTEST_ARGS[@]}" &
+else
+    "${VIRTUAL_ENV:-.venv}"/bin/pytest --json-report --json-report-file=.report.json --disable-warnings --tb=short -q --ignore=scratch "${PYTEST_PARALLEL_ARGS[@]}" "${PYTEST_ARGS[@]}" &
 fi
 TEST_PID=$!
 BACKGROUND_PIDS+=("$TEST_PID")
@@ -441,6 +463,10 @@ if [ $SKIP_LINT -eq 0 ]; then
     fi
 fi
 
+# All managed background jobs have been waited on; avoid the EXIT trap reporting
+# a normal completion as an interruption.
+BACKGROUND_PIDS=()
+
 # Calculate total time
 OVERALL_END=$(date +%s)
 TOTAL_TIME=$((OVERALL_END - OVERALL_START))
@@ -545,4 +571,3 @@ else
     echo "${BLUE}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
     exit 0
 fi
-

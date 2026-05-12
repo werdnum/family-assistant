@@ -6,6 +6,16 @@ import { resetLocalStorageMock } from '../../test/mocks/localStorageMock';
 import { server } from '../../test/setup.js';
 import { renderChatApp } from '../../test/utils/renderChatApp';
 
+async function findMessageInput() {
+  await waitFor(
+    () => {
+      expect(screen.getByPlaceholderText('Message Family Assistant...')).toBeInTheDocument();
+    },
+    { timeout: 5000 }
+  );
+  return screen.getByPlaceholderText('Message Family Assistant...');
+}
+
 // Run sequentially to avoid MSW handler conflicts with parallel tests
 describe.sequential('ErrorHandling', () => {
   beforeEach(() => {
@@ -24,7 +34,7 @@ describe.sequential('ErrorHandling', () => {
     const user = userEvent.setup();
     await renderChatApp({ waitForReady: true });
 
-    const messageInput = screen.getByPlaceholderText('Message Family Assistant...');
+    const messageInput = await findMessageInput();
 
     // Try to send a message that will fail
     await user.type(messageInput, 'This should fail');
@@ -57,7 +67,7 @@ describe.sequential('ErrorHandling', () => {
 
     // Wait removed - using waitForReady option
 
-    const messageInput = screen.getByPlaceholderText('Message Family Assistant...');
+    const messageInput = await findMessageInput();
 
     await user.type(messageInput, 'This should get a server error');
     await user.keyboard('{Enter}');
@@ -99,7 +109,7 @@ describe.sequential('ErrorHandling', () => {
 
     // Wait removed - using waitForReady option
 
-    const messageInput = screen.getByPlaceholderText('Message Family Assistant...');
+    const messageInput = await findMessageInput();
 
     await user.type(messageInput, 'This will have a malformed response');
     await user.keyboard('{Enter}');
@@ -124,7 +134,7 @@ describe.sequential('ErrorHandling', () => {
 
     // Chat should still be usable even if conversations fail to load
     expect(screen.getByText('Chat')).toBeInTheDocument();
-    expect(screen.getByPlaceholderText('Message Family Assistant...')).toBeInTheDocument();
+    expect(await findMessageInput()).toBeInTheDocument();
   });
 
   it('handles profile loading errors', async () => {
@@ -141,7 +151,7 @@ describe.sequential('ErrorHandling', () => {
 
     // Chat should still function with profile loading errors
     expect(screen.getByText('Chat')).toBeInTheDocument();
-    expect(screen.getByPlaceholderText('Message Family Assistant...')).toBeInTheDocument();
+    expect(await findMessageInput()).toBeInTheDocument();
   });
 
   it('handles tool confirmation API errors', async () => {
@@ -199,7 +209,7 @@ describe.sequential('ErrorHandling', () => {
 
     // Wait removed - using waitForReady option
 
-    const messageInput = screen.getByPlaceholderText('Message Family Assistant...');
+    const messageInput = await findMessageInput();
 
     await user.type(messageInput, 'Please execute a tool call');
     await user.keyboard('{Enter}');
@@ -263,7 +273,7 @@ describe.sequential('ErrorHandling', () => {
 
     // Wait removed - using waitForReady option
 
-    const messageInput = screen.getByPlaceholderText('Message Family Assistant...');
+    const messageInput = await findMessageInput();
 
     // First message fails, but runtime might retry
     await user.type(messageInput, 'Test recovery');
@@ -306,7 +316,7 @@ describe.sequential('ErrorHandling', () => {
 
     // Wait removed - using waitForReady option
 
-    const messageInput = screen.getByPlaceholderText('Message Family Assistant...');
+    const messageInput = await findMessageInput();
 
     await user.type(messageInput, 'Give me a long response');
     await user.keyboard('{Enter}');

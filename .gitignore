@@ -51,6 +51,7 @@ frontend/dev-dist
 .cache
 .python-versions
 .poe-test-summary.txt
+.pytest-adaptive/
 
 # MonkeyType
 monkeytype.sqlite3
