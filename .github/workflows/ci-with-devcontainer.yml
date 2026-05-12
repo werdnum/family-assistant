@@ -379,20 +379,14 @@ jobs:
                 echo "No pre-built frontend assets found at /opt/frontend-dist"; \
               fi && \
               mkdir -p test-results && \
-              PYTEST_BIN=.venv/bin/pytest \
-              PYTEST_ADAPTIVE_JOBS=12 \
-              .venv/bin/python scripts/run_pytest_adaptive.py \
-                -q --timeout=300 --db sqlite -m "not postgres and not playwright and not llm_integration and not gemini_live" \
+              .venv/bin/pytest -q --timeout=300 --db sqlite -m "not postgres and not playwright and not llm_integration and not gemini_live" \
                 --json-report --json-report-file=test-results/backend-sqlite-report.json'
       - name: Upload backend test results (SQLite)
         uses: actions/upload-artifact@v7
         if: always()
         with:
           name: backend-test-artifacts-sqlite-${{ github.run_id }}
-          path: |
-            test-results/backend-sqlite-report.json
-            .pytest-adaptive/joblog.tsv
-            .pytest-adaptive/results/
+          path: test-results/backend-sqlite-report.json
           retention-days: 7
           if-no-files-found: ignore
   test-backend-postgres:
@@ -455,20 +449,14 @@ jobs:
                 echo "No pre-built frontend assets found at /opt/frontend-dist"; \
               fi && \
               mkdir -p test-results && \
-              PYTEST_BIN=.venv/bin/pytest \
-              PYTEST_ADAPTIVE_JOBS=12 \
-              .venv/bin/python scripts/run_pytest_adaptive.py \
-                --postgres -q --timeout=300 -m "not playwright and not llm_integration and not gemini_live" \
+              .venv/bin/pytest --postgres -q --timeout=300 -m "not playwright and not llm_integration and not gemini_live" \
                 --json-report --json-report-file=test-results/backend-postgres-report.json'
       - name: Upload backend test results (PostgreSQL)
         uses: actions/upload-artifact@v7
         if: always()
         with:
           name: backend-test-artifacts-postgres-${{ github.run_id }}
-          path: |
-            test-results/backend-postgres-report.json
-            .pytest-adaptive/joblog.tsv
-            .pytest-adaptive/results/
+          path: test-results/backend-postgres-report.json
           retention-days: 7
           if-no-files-found: ignore
 
@@ -517,11 +505,7 @@ jobs:
                 echo "No pre-built frontend assets found at /opt/frontend-dist"; \
               fi && \
               mkdir -p test-results && \
-              PYTEST_BIN=.venv/bin/pytest \
-              PYTEST_ADAPTIVE_JOBS=4 \
-              PYTEST_ADAPTIVE_BATCH_SIZE=5 \
-              .venv/bin/python scripts/run_pytest_adaptive.py \
-                -q --timeout=300 --db sqlite -m "playwright" \
+              .venv/bin/pytest -q --timeout=300 --db sqlite -m "playwright" \
                 --screenshot=on --video=retain-on-failure --tracing=retain-on-failure \
                 --json-report --json-report-file=test-results/playwright-sqlite-report.json \
                 --output=test-results'
@@ -532,8 +516,6 @@ jobs:
           name: playwright-artifacts-sqlite-${{ github.run_id }}
           path: |
             test-results/
-            .pytest-adaptive/joblog.tsv
-            .pytest-adaptive/results/
             /tmp/history_page_*.png
           retention-days: 7
           if-no-files-found: ignore
@@ -606,11 +588,7 @@ jobs:
                 echo "No pre-built frontend assets found at /opt/frontend-dist"; \
               fi && \
               mkdir -p test-results && \
-              PYTEST_BIN=.venv/bin/pytest \
-              PYTEST_ADAPTIVE_JOBS=4 \
-              PYTEST_ADAPTIVE_BATCH_SIZE=5 \
-              .venv/bin/python scripts/run_pytest_adaptive.py \
-                --postgres -q --timeout=300 -m "playwright" \
+              .venv/bin/pytest --postgres -q --timeout=300 -m "playwright" \
                 --screenshot=on --video=retain-on-failure --tracing=retain-on-failure \
                 --json-report --json-report-file=test-results/playwright-postgres-report.json \
                 --output=test-results'
@@ -621,8 +599,6 @@ jobs:
           name: playwright-artifacts-postgres-${{ github.run_id }}
           path: |
             test-results/
-            .pytest-adaptive/joblog.tsv
-            .pytest-adaptive/results/
             /tmp/history_page_*.png
           retention-days: 7
           if-no-files-found: ignore
