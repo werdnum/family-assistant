@@ -8,9 +8,12 @@ import os
 import shutil
 import subprocess
 import sys
+import time
 from pathlib import Path
+from typing import cast
 
 PYTEST_EXIT_NO_TESTS_COLLECTED = 5
+JsonObject = dict[str, object]
 
 
 def _repo_root() -> Path:
@@ -72,6 +75,25 @@ def _sanitize_pytest_args(args: list[str]) -> list[str]:
         sanitized.append(arg)
 
     return sanitized
+
+
+def _json_report_file(args: list[str]) -> Path | None:
+    skip_next = False
+
+    for index, arg in enumerate(args):
+        if skip_next:
+            skip_next = False
+            continue
+        if arg == "--json-report-file":
+            if index + 1 < len(args):
+                return Path(args[index + 1])
+            return None
+        if arg.startswith("--json-report-file="):
+            return Path(arg.removeprefix("--json-report-file="))
+        if arg in {"--tb", "-n", "--numprocesses"}:
+            skip_next = True
+
+    return None
 
 
 def _strip_collection_selectors(args: list[str]) -> list[str]:
@@ -146,9 +168,67 @@ def _collect_nodeids(
     return 0
 
 
+def _merge_summary(reports: list[JsonObject], exit_code: int) -> JsonObject:
+    merged_summary: dict[str, int] = {}
+    tests: list[object] = []
+    warnings: list[object] = []
+    first_report: JsonObject | None = None
+
+    for report in reports:
+        if first_report is None:
+            first_report = report
+        summary = report.get("summary", {})
+        if isinstance(summary, dict):
+            for key, value in summary.items():
+                if isinstance(value, int):
+                    merged_summary[key] = merged_summary.get(key, 0) + value
+        report_tests = report.get("tests", [])
+        if isinstance(report_tests, list):
+            tests.extend(report_tests)
+        report_warnings = report.get("warnings", [])
+        if isinstance(report_warnings, list):
+            warnings.extend(report_warnings)
+
+    duration = 0.0
+    for report in reports:
+        report_duration = report.get("duration", 0)
+        if isinstance(report_duration, int | float):
+            duration += report_duration
+
+    return {
+        "created": time.time(),
+        "duration": duration,
+        "exitcode": exit_code,
+        "root": first_report.get("root") if first_report else str(_repo_root()),
+        "environment": first_report.get("environment", {}) if first_report else {},
+        "summary": merged_summary,
+        "tests": tests,
+        "warnings": warnings,
+    }
+
+
+def _write_merged_json_report(
+    report_file: Path, shard_reports_dir: Path, exit_code: int
+) -> None:
+    reports: list[JsonObject] = []
+    for shard_report_file in sorted(shard_reports_dir.glob("shard-*.json")):
+        report = json.loads(shard_report_file.read_text(encoding="utf-8"))
+        if isinstance(report, dict):
+            reports.append(cast("JsonObject", report))
+
+    if not report_file.is_absolute():
+        report_file = _repo_root() / report_file
+    report_file.parent.mkdir(parents=True, exist_ok=True)
+    report_file.write_text(
+        json.dumps(_merge_summary(reports, exit_code), indent=2) + "\n",
+        encoding="utf-8",
+    )
+
+
 def main() -> int:
     pytest_bin = _pytest_bin()
     parallel_bin = _parallel_bin()
+    json_report_file = _json_report_file(sys.argv[1:])
     pytest_args = _sanitize_pytest_args(sys.argv[1:])
     shard_pytest_args = _strip_collection_selectors(pytest_args)
 
@@ -175,6 +255,7 @@ def main() -> int:
     jobs = os.environ.get("PYTEST_ADAPTIVE_JOBS", "12")
     joblog = work_dir / "joblog.tsv"
     results_dir = work_dir / "results" / "{#}"
+    shard_reports_dir = work_dir / "json-reports"
 
     base_command = [
         pytest_bin,
@@ -186,6 +267,9 @@ def main() -> int:
     ]
     env = os.environ.copy()
     env["PYTEST_ADAPTIVE_BASE_COMMAND"] = json.dumps(base_command)
+    if json_report_file is not None:
+        shard_reports_dir.mkdir()
+        env["PYTEST_ADAPTIVE_SHARD_REPORT_DIR"] = str(shard_reports_dir)
 
     limit_command = (
         f"{sys.executable} {(_repo_root() / 'scripts' / 'cgroup_memory_gate.py')} "
@@ -223,7 +307,14 @@ def main() -> int:
         f"batch_size={batch_size}, jobs={jobs}, load={load_limit}, "
         f"mem_threshold={mem_threshold}, delay={delay}"
     )
-    return subprocess.run(command, check=False, cwd=_repo_root(), env=env).returncode
+    result = subprocess.run(command, check=False, cwd=_repo_root(), env=env)
+    if json_report_file is not None:
+        _write_merged_json_report(
+            json_report_file,
+            shard_reports_dir,
+            result.returncode,
+        )
+    return result.returncode
 
 
 if __name__ == "__main__":
