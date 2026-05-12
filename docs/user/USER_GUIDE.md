@@ -133,6 +133,14 @@ You can ask the assistant a wide variety of things:
   communication channel. If the email came through a recipient-only alias without a mapped
   forwarding sender, confirmations can still be created, but the assistant will not email a reply.
 
+- **Forward Email to Index a Linked Document:** If the email points to a document you want to keep
+  (a shared PDF, a Drive/Dropbox/iCloud link, a long article), the assistant can propose fetching
+  and indexing it. The fetch never runs immediately — it lands as a confirmation in Telegram or the
+  Web UI, and only after you approve does the assistant download the document and add it to your
+  searchable knowledge base. This keeps untrusted senders from being able to push the assistant at
+  arbitrary URLs without your sign-off. Real MIME attachments on the email are indexed
+  automatically, so the confirmation flow is mainly for link-style attachments.
+
 - **Remember Things (Notes):** \*Tell it to save information permanently: \*"Remember: The plumber's
   number is 555-1234." \*"Add a note titled 'Vacation Ideas' with the content 'Visit the Grand
   Canyon'." \*"Update the note 'Meeting Notes' with 'Discuss budget'." \*"Append to the note

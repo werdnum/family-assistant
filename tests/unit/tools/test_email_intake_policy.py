@@ -57,6 +57,7 @@ def test_email_intake_policy_advertises_read_tools_and_confirmable_writes(
         "schedule_future_callback",
         "modify_pending_callback",
         "send_message_to_user",
+        "ingest_document_from_url",
     }
 
     for tool_name in allowed_tools:
