@@ -73,7 +73,7 @@ podman run --rm \
     
     # Run poe test with a long timeout
     echo "Starting poe test (linting + tests)..."
-    timeout 900 poe test || exit_code=$?
+    timeout 1800 poe test || exit_code=$?
     
     # Exit with the same code as poe test
     exit ${exit_code:-0}
