@@ -323,7 +323,7 @@ async def test_add_event_and_verify_in_system_prompt(
         f"Generated aggregated context for verification:\n{aggregated_context_str}"
     )
 
-    expected_time_str_in_prompt = "Tomorrow 10:00"
+    expected_time_str_in_prompt = f"Tomorrow ({start_dt_local.strftime('%b %d')}) 10:00"
     assert event_summary in aggregated_context_str, (
         "Event summary not found in aggregated context string."
     )

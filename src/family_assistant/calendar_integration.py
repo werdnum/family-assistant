@@ -54,22 +54,24 @@ def format_datetime_or_date(
             if is_end:
                 display_date -= timedelta(days=1)
 
+            date_str = display_date.strftime("%b %d")
             if display_date == today_local:
-                return "Today"
+                return f"Today ({date_str})"
             if display_date == tomorrow_local:
-                return "Tomorrow"
-            return display_date.strftime("%b %d")
+                return f"Tomorrow ({date_str})"
+            return date_str
 
         # Convert event time to local timezone for comparison and display
         dt_local = dt_obj.astimezone(local_tz)
-        # Example: "Today 14:30", "Tomorrow 09:00", "Apr 21 10:00"
+        # Example: "Today (Apr 21) 14:30", "Tomorrow (Apr 22) 09:00", "Apr 23 10:00"
 
+        date_str = dt_local.strftime("%b %d")
         if dt_local.date() == today_local:
-            day_str = "Today"
+            day_str = f"Today ({date_str})"
         elif dt_local.date() == tomorrow_local:
-            day_str = "Tomorrow"
+            day_str = f"Tomorrow ({date_str})"
         else:
-            day_str = dt_local.strftime("%b %d")  # e.g., Apr 21
+            day_str = date_str  # e.g., Apr 21
 
         # For end times exactly at midnight, display as end of previous day if makes sense
         if is_end and dt_obj.time() == time(0, 0):
@@ -87,11 +89,12 @@ def format_datetime_or_date(
         # Adjust end date for display: CalDAV often stores end date as the day *after*
         display_date = dt_obj - timedelta(days=1) if is_end else dt_obj
 
+        date_str = display_date.strftime("%b %d")
         if display_date == today_local:
-            return "Today"
+            return f"Today ({date_str})"
         if display_date == tomorrow_local:
-            return "Tomorrow"
-        return display_date.strftime("%b %d")  # e.g., Apr 21
+            return f"Tomorrow ({date_str})"
+        return date_str  # e.g., Apr 21
     # Fallback for other types, though dt_obj should only be datetime or date
     # Based on type hints, this path should not be reached if input is correct.
     # However, to satisfy linters about all paths returning, and for robustness:
