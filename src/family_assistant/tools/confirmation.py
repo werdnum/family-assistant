@@ -371,15 +371,19 @@ async def render_ingest_document_from_url_confirmation(
 ) -> str:
     """Render a confirmation prompt for ingesting a document from a URL."""
     _ = context
-    fields = [_confirmation_field("URL", args.get("url_to_ingest"))]
+    fields = [
+        _confirmation_field("URL", args.get("url_to_ingest")),
+        _confirmation_field("Source type", args.get("source_type")),
+        _confirmation_field("Source ID", args.get("source_id")),
+    ]
     if args.get("title"):
         fields.append(_confirmation_field("Title", args.get("title")))
-    if args.get("source_type"):
-        fields.append(_confirmation_field("Source type", args.get("source_type")))
     if args.get("metadata_json"):
         fields.append(_confirmation_field("Metadata", args.get("metadata_json")))
-    return "Please confirm you want to *fetch and index* this document:\n" + "\n".join(
-        fields
+    return (
+        "Please confirm you want to *fetch and index* this document"
+        " (the source type and ID determine which document record is created or overwritten):\n"
+        + "\n".join(fields)
     )
 
 
