@@ -116,7 +116,7 @@ RUN curl -fsSL https://claude.ai/install.sh | bash
 
 # Install development Node.js packages
 RUN --mount=type=cache,target=/home/claude/.npm,sharing=locked,uid=1001,gid=1001 \
-    npm install -g @google/gemini-cli@nightly
+    npm install -g @google/gemini-cli@nightly @openai/codex
 
 # Install Python development tools
 RUN --mount=type=cache,target=/home/claude/.cache/uv,sharing=locked,uid=1001,gid=1001 \
@@ -131,16 +131,24 @@ COPY .devcontainer/oneshot-config /opt/oneshot-config/
 COPY .devcontainer/setup-workspace.sh /usr/local/bin/
 COPY .devcontainer/setup-git-auth.sh /usr/local/bin/
 COPY .devcontainer/gh-wrapper /usr/local/bin/gh
+COPY .devcontainer/wrapper-common.sh /usr/local/bin/wrapper-common.sh
 COPY .devcontainer/claude-wrapper.sh /usr/local/bin/claude-wrapper
+COPY .devcontainer/gemini-wrapper.sh /usr/local/bin/gemini-wrapper
+COPY .devcontainer/codex-wrapper.sh /usr/local/bin/codex-wrapper
 COPY .devcontainer/throttle_backspaces.py /usr/local/bin/
 COPY .devcontainer/merge-settings.py /usr/local/bin/
 RUN chmod +x /usr/local/bin/setup-workspace.sh \
                /usr/local/bin/setup-git-auth.sh \
                /usr/local/bin/gh \
+               /usr/local/bin/wrapper-common.sh \
                /usr/local/bin/claude-wrapper \
+               /usr/local/bin/gemini-wrapper \
+               /usr/local/bin/codex-wrapper \
                /usr/local/bin/throttle_backspaces.py \
                /usr/local/bin/merge-settings.py && \
-    ln -sf /usr/local/bin/claude-wrapper /usr/local/bin/claude
+    ln -sf /usr/local/bin/claude-wrapper /usr/local/bin/claude && \
+    ln -sf /usr/local/bin/gemini-wrapper /usr/local/bin/gemini && \
+    ln -sf /usr/local/bin/codex-wrapper /usr/local/bin/codex
 
 # Final user and entrypoint
 USER claude

@@ -75,6 +75,7 @@ if [ "$HOME_IS_MOUNTED" = "true" ] && ! which claude >/dev/null 2>&1; then
     # Install tools
     npm install -g @anthropic-ai/claude-code
     npm install -g @google/gemini-cli@nightly
+    npm install -g @openai/codex
     npm install -g playwright
 
     # Install Playwright browsers
