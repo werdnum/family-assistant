@@ -1055,19 +1055,19 @@ tracker elsewhere.
   legacy config fields. Exit criteria: The runtime no longer depends on `FilteredToolsProvider` or
   `ConfirmingToolsProvider`, and non-confirming channels never advertise confirm-only tools.
 
-- [ ] **Step 6: Config cleanup and merge semantics** Depends on: Step 5. Scope: Remove the temporary
+- [x] **Step 6: Config cleanup and merge semantics** Depends on: Step 5. Scope: Remove the temporary
   dual-authored state, implement final `tools_policy` merge behavior in config loading, and delete
   the old policy fields from `ToolsConfig`. Deliverables: Updated config models, final config loader
   semantics, and migration-oriented tests. Exit criteria: The application boots from `tools_policy`
   alone and no runtime path reads the removed legacy policy fields.
 
-- [ ] **Step 7: Delegation restrictions** Depends on: Step 6. Scope: Add
+- [x] **Step 7: Delegation restrictions** Depends on: Step 6. Scope: Add
   `allowed_delegation_sources` to `ProcessingConfig` and enforce it inside `delegate_to_service`,
   keeping target-specific confirmation logic in the delegation tool. Deliverables: Delegation config
   model changes, delegation tool enforcement, and focused tests. Exit criteria: Delegation obeys
   both source-profile policy and target-profile restrictions without double-confirmation.
 
-- [ ] **Step 8: Cleanup and removal of legacy concepts** Depends on: Steps 1-7. Scope: Remove dead
+- [x] **Step 8: Cleanup and removal of legacy concepts** Depends on: Steps 1-7. Scope: Remove dead
   code and stale documentation for the old allowlist/confirm list model. Update any README, CLAUDE
   guidance, or operator docs that still describe `enable_local_tools`, `enable_mcp_server_ids`, or
   `confirm_tools`. Deliverables: Deleted legacy providers/config references, updated docs, and final

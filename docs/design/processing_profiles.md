@@ -24,8 +24,8 @@ specialized profiles, or users might invoke them directly.
   flexibility.
 
 - **Profile-Specific `ToolsProvider`**: Each `ProcessingService` instance will have its own
-  `ToolsProvider` stack (e.g., `LocalToolsProvider`, `MCPToolsProvider`, `CompositeToolsProvider`,
-  `ConfirmingToolsProvider`) configured according to its profile's specifications.
+  `PolicyEnforcingToolsProvider` view over the registered local and MCP tools, configured from the
+  profile's `tools_policy`.
 
 - **Profile-Specific LLM Configuration**: Each `ProcessingService` instance can be configured with a
   specific LLM model. This allows, for example, using a powerful reasoning model for complex tasks
@@ -42,8 +42,8 @@ A new structure will be introduced in `config.yaml` to manage these profiles.
 ### 3.1. `default_profile_settings`
 
 A top-level key `default_profile_settings` will define the baseline configuration. This section will
-contain subsections for `processing_config` and `tools_config`, mirroring the structure of an
-individual profile's settings.
+contain subsections for `processing_config`, `tools_config`, and `tools_policy`, mirroring the
+structure of an individual profile's settings.
 
 ```yaml
 # --- Default Service Profile Configuration ---
@@ -60,15 +60,21 @@ default_profile_settings:
     llm_model: "claude-3-haiku-20240307" # Default LLM model
     delegation_security_level: "confirm" # Default delegation security level: "blocked", "confirm", "unrestricted"
   tools_config:
-    enable_local_tools: # Default set of local tools
-      - "add_or_update_note"
-      # ... other default local tools ...
-    enable_mcp_server_ids: # Default set of MCP servers
-      - "time_server_1"
-      # ... other default MCP servers ...
-    confirm_tools: # Default list of tools requiring confirmation
-      - "modify_calendar_event"
-      # ... other tools ...
+    on_demand_local_tools:
+      - "execute_script"
+    on_demand_mcp_server_ids:
+      - "homeassistant"
+  tools_policy:
+    default_decision: "deny"
+    rules:
+      - match:
+          names: ["add_or_update_note"]
+        decision: "allow"
+        priority: 10
+      - match:
+          names: ["modify_calendar_event"]
+        decision: "confirm"
+        priority: 20
 ```
 
 ### 3.2. `service_profiles`
@@ -79,7 +85,9 @@ A top-level list `service_profiles` will define individual profiles. Each profil
 - `description` (string, optional): A human-readable description.
 - `processing_config` (object, optional): Overrides for `ProcessingServiceConfig` settings. This
   includes `delegation_security_level` and `include_system_docs`.
-- `tools_config` (object, optional): Configuration for the toolset available to this profile.
+- `tools_config` (object, optional): Operational tool settings such as timeouts and on-demand
+  catalog hints.
+- `tools_policy` (object, optional): Allow, deny, and confirmation rules for the profile's tools.
 
 ### 3.2.0. `include_system_docs`
 
@@ -135,11 +143,13 @@ service_profiles:
       max_history_messages: 3 # REPLACES default
       llm_model: "gpt-4-turbo" # REPLACES default, uses a more powerful model
       delegation_security_level: "unrestricted" # This profile allows unrestricted delegation
-    tools_config: # REPLACES default_profile_settings.tools_config entirely for this profile
-      enable_local_tools:
-        - "add_or_update_note"
-      enable_mcp_server_ids: []
-      confirm_tools: []
+    tools_policy: # REPLACES default_profile_settings.tools_policy entirely for this profile
+      default_decision: "deny"
+      rules:
+        - match:
+            names: ["add_or_update_note"]
+          decision: "allow"
+          priority: 10
     slash_commands: # List of slash commands that trigger this profile
       - "/focus"
       - "/ask_focused"
@@ -154,8 +164,7 @@ When loading a profile:
    - **Dictionaries** (e.g., `prompts`, `calendar_config`): Perform a deep merge. Keys from the
      profile's dictionary will overwrite keys in the default dictionary. New keys in the profile's
      dictionary will be added.
-   - **Lists** (e.g., `enable_local_tools`, `confirm_tools`): The profile's list will *replace* the
-     default list entirely.
+   - **Lists**: The profile's list will *replace* the default list entirely.
    - **Scalar Values** (e.g., `timezone`, `max_history_messages`): The profile's value will
      *replace* the default value.
 
@@ -177,11 +186,10 @@ The main application startup logic (`src/family_assistant/__main__.py`) will be 
    - Create an `LLMInterface` instance (e.g., `LiteLLMClient`) configured with the profile's
      specified `llm_model` (and any other relevant LLM parameters from the configuration).
    - Build a `ToolsProvider` stack:
-     - `LocalToolsProvider` configured with only the `enable_local_tools` specified for the profile.
-     - `MCPToolsProvider` configured with only the `enable_mcp_server_ids` specified for the
-       profile.
+     - `LocalToolsProvider` for the registered local tools.
+     - `MCPToolsProvider` for configured MCP servers.
      - `CompositeToolsProvider` to combine these.
-     - `ConfirmingToolsProvider` wrapping the composite, using the profile's `confirm_tools` list.
+     - `PolicyEnforcingToolsProvider` wrapping the composite, using the profile's `tools_policy`.
    - Instantiate a `ProcessingService` with the profile-specific `ProcessingServiceConfig`, the
      profile-specific `LLMInterface`, and the `ToolsProvider` stack.
    - Store the `ProcessingService` instance in a central registry (e.g., a dictionary in FastAPI app

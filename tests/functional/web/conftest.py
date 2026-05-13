@@ -38,16 +38,16 @@ from family_assistant.services.attachment_registry import (
 from family_assistant.storage import init_db
 from family_assistant.storage.context import DatabaseContext, get_db_context
 from family_assistant.tools import (
-    AVAILABLE_FUNCTIONS as local_tool_implementations,
-)
-from family_assistant.tools import (
-    TOOLS_DEFINITION as local_tools_definition,
+    LOCAL_TOOL_REGISTRATIONS as local_tool_registrations,
 )
 from family_assistant.tools import (
     CompositeToolsProvider,
-    ConfirmingToolsProvider,
     LocalToolsProvider,
     MCPToolsProvider,
+    PolicyEnforcingToolsProvider,
+    PolicyEngine,
+    ToolPolicyConfig,
+    ToolPolicyDecision,
     ToolsProvider,
 )
 from family_assistant.web.web_chat_interface import WebChatInterface
@@ -340,13 +340,6 @@ async def _create_web_assistant(
                     "delegation_security_level": "none",
                 },
                 "tools_config": {
-                    "enable_local_tools": [
-                        "add_or_update_note",
-                        "search_documents",
-                        "delete_calendar_event",
-                        "attach_to_response",
-                    ],
-                    "confirm_tools": ["delete_calendar_event", "add_or_update_note"],
                     "confirmation_timeout_seconds": 10.0,
                     "mcp_initialization_timeout_seconds": 5,
                 },
@@ -393,8 +386,6 @@ async def _create_web_assistant(
                     "delegation_security_level": "none",
                 },
                 "tools_config": {
-                    "enable_local_tools": ["search_documents"],
-                    "confirm_tools": [],
                     "confirmation_timeout_seconds": 10.0,
                     "mcp_initialization_timeout_seconds": 5,
                 },
@@ -424,8 +415,6 @@ async def _create_web_assistant(
                     "delegation_security_level": "none",
                 },
                 "tools_config": {
-                    "enable_local_tools": [],
-                    "confirm_tools": [],
                     "confirmation_timeout_seconds": 10.0,
                     "mcp_initialization_timeout_seconds": 5,
                 },
@@ -1109,11 +1098,7 @@ def api_mock_processing_service_config() -> ProcessingServiceConfig:
         timezone=ZoneInfo("UTC"),
         max_history_messages=5,
         history_max_age_hours=24,
-        tools_config=ToolsConfig(
-            enable_local_tools=["add_or_update_note"],
-            enable_mcp_server_ids=[],
-            confirm_tools=[],
-        ),
+        tools_config=ToolsConfig(),
         delegation_security_level=DelegationSecurityLevel.CONFIRM,
         id="chat_api_test_profile",
     )
@@ -1130,12 +1115,11 @@ async def api_test_tools_provider(
     api_mock_processing_service_config: ProcessingServiceConfig,
 ) -> ToolsProvider:
     """
-    Provides a ToolsProvider stack (Local, MCP, Composite, Confirming)
+    Provides a policy-enforced ToolsProvider stack for testing.
     configured for testing.
     """
     local_provider = LocalToolsProvider(
-        definitions=local_tools_definition,  # Use actual definitions
-        implementations=local_tool_implementations,  # Use actual implementations
+        registrations=local_tool_registrations,
         embedding_generator=None,  # Not needed for add_note
         calendar_config=cast("CalendarConfig", {}),  # Empty calendar config for tests
     )
@@ -1150,14 +1134,15 @@ async def api_test_tools_provider(
     )
     await composite_provider.get_tool_definitions()  # Initialize
 
-    confirming_provider = ConfirmingToolsProvider(
+    policy_provider = PolicyEnforcingToolsProvider(
         wrapped_provider=composite_provider,
-        tools_requiring_confirmation=set(
-            api_mock_processing_service_config.tools_config.confirm_tools
+        policy_engine=PolicyEngine.from_policy_config(
+            ToolPolicyConfig(default_decision=ToolPolicyDecision.ALLOW)
         ),
+        confirmation_timeout=api_mock_processing_service_config.tools_config.confirmation_timeout_seconds,
     )
-    await confirming_provider.get_tool_definitions()  # Initialize
-    return confirming_provider
+    await policy_provider.get_tool_definitions()
+    return policy_provider
 
 
 @pytest.fixture(scope="function")

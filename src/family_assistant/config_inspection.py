@@ -79,13 +79,12 @@ def dump_profile_like(
 ) -> dict[str, Any]:
     """Serialize a ServiceProfile/DefaultProfileSettings including excluded operator fields.
 
-    ``operator_tools_policy`` and ``operator_mcp_server_ids`` on both
-    ``ServiceProfile`` and ``DefaultProfileSettings`` are declared with
-    ``exclude=True`` so they do not round-trip through the YAML config, but they
-    ARE merged with the profile/defaults layers at runtime (see
-    ``PolicyEngine.from_layers``). For diagnostic dumps we want the caller to
-    see every layer contributing to the effective policy — including any
-    defaults that apply to every profile — so we serialize them explicitly here.
+    ``operator_tools_policy`` on both ``ServiceProfile`` and
+    ``DefaultProfileSettings`` is declared with ``exclude=True`` so it does not
+    round-trip through the YAML config, but it is merged with the
+    profile/defaults layers at runtime (see ``PolicyEngine.from_layers``). For
+    diagnostic dumps we serialize it explicitly so callers can see every layer
+    contributing to the effective policy.
     """
     dumped = profile.model_dump(mode="json")
 
@@ -95,10 +94,5 @@ def dump_profile_like(
         )
     else:
         dumped["operator_tools_policy"] = None
-
-    dumped["operator_mcp_server_ids"] = [
-        entry if isinstance(entry, str) else entry.model_dump(mode="json")
-        for entry in profile.operator_mcp_server_ids
-    ]
 
     return dumped

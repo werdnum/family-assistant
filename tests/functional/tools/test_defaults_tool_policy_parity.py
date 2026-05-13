@@ -11,7 +11,6 @@ from family_assistant.config_loader import (
 from family_assistant.config_models import (
     DefaultProfileSettings,
     ServiceProfile,
-    ToolsConfig,
 )
 from family_assistant.tools import LOCAL_TOOL_DESCRIPTORS, PolicyEngine, ToolDescriptor
 from family_assistant.tools.policy import ToolPolicyDecision
@@ -27,7 +26,6 @@ MCP_SERVER_IDS = (
     "scrape",
     "browser",
 )
-NON_LEGACY_POLICY_PROFILES = {"email_intake"}
 
 
 def _load_defaults_yaml() -> dict[str, object]:
@@ -75,46 +73,30 @@ def _make_mcp_descriptor(server_id: str) -> ToolDescriptor:
     )
 
 
-def _legacy_decision(
-    descriptor: ToolDescriptor,
-    tools_config: ToolsConfig,
-    *,
-    can_confirm: bool,
-) -> ToolPolicyDecision:
-    if descriptor.origin == "local":
-        all_local = tools_config.get_all_tool_names()
-        enabled = all_local is None or descriptor.name in all_local
-    else:
-        all_mcp = tools_config.get_all_mcp_server_ids()
-        enabled = all_mcp is None or descriptor.mcp_server_id in set(all_mcp)
-
-    if not enabled:
-        return ToolPolicyDecision.DENY
-
-    if descriptor.name in set(tools_config.confirm_tools):
-        return ToolPolicyDecision.CONFIRM if can_confirm else ToolPolicyDecision.DENY
-
-    return ToolPolicyDecision.ALLOW
-
-
-def test_defaults_yaml_dual_authors_tools_config_and_policy() -> None:
+def test_defaults_yaml_uses_policy_only_for_tool_access() -> None:
     defaults_data = _load_defaults_yaml()
     default_profile_settings = defaults_data["default_profile_settings"]
     assert isinstance(default_profile_settings, dict)
-    assert "tools_config" in default_profile_settings
     assert "tools_policy" in default_profile_settings
+    default_tools_config = default_profile_settings.get("tools_config", {})
+    assert isinstance(default_tools_config, dict)
+    assert "enable_local_tools" not in default_tools_config
+    assert "enable_mcp_server_ids" not in default_tools_config
+    assert "confirm_tools" not in default_tools_config
 
     service_profiles = defaults_data["service_profiles"]
     assert isinstance(service_profiles, list)
 
     for profile in service_profiles:
         assert isinstance(profile, dict)
-        if "tools_config" not in profile:
-            continue
-        assert "tools_policy" in profile, profile["id"]
+        tools_config = profile.get("tools_config", {})
+        assert isinstance(tools_config, dict)
+        assert "enable_local_tools" not in tools_config
+        assert "enable_mcp_server_ids" not in tools_config
+        assert "confirm_tools" not in tools_config
 
 
-def test_tools_policy_matches_legacy_defaults_for_shipped_profiles() -> None:
+def test_shipped_profiles_define_effective_tool_policy() -> None:
     default_settings, profiles = _load_resolved_profiles()
     descriptors = [*LOCAL_TOOL_DESCRIPTORS]
     descriptors.extend(_make_mcp_descriptor(server_id) for server_id in MCP_SERVER_IDS)
@@ -125,40 +107,24 @@ def test_tools_policy_matches_legacy_defaults_for_shipped_profiles() -> None:
     }
 
     for profile_id, profile in profile_map.items():
-        if profile_id in NON_LEGACY_POLICY_PROFILES:
-            continue
         assert profile.tools_policy is not None, profile_id
         engine = PolicyEngine.from_policy_config(profile.tools_policy)
 
         for descriptor in descriptors:
-            for can_confirm in (False, True):
-                expected = _legacy_decision(
-                    descriptor,
-                    profile.tools_config,
-                    can_confirm=can_confirm,
-                )
-                advertised = engine.evaluate_for_advertisement(
-                    descriptor,
-                    can_confirm=can_confirm,
-                )
-                executable = engine.evaluate_for_execution(
-                    descriptor,
-                    can_confirm=can_confirm,
-                )
+            advertised_without_confirmation = engine.evaluate_for_advertisement(
+                descriptor,
+                can_confirm=False,
+            )
+            executable_without_confirmation = engine.evaluate_for_execution(
+                descriptor,
+                can_confirm=False,
+            )
 
-                assert advertised.decision is expected, (
-                    profile_id,
-                    descriptor.name,
-                    descriptor.origin,
-                    descriptor.mcp_server_id,
-                    can_confirm,
-                    "advertisement",
-                )
-                assert executable.decision is expected, (
-                    profile_id,
-                    descriptor.name,
-                    descriptor.origin,
-                    descriptor.mcp_server_id,
-                    can_confirm,
-                    "execution",
-                )
+            assert isinstance(
+                advertised_without_confirmation.decision,
+                ToolPolicyDecision,
+            )
+            assert isinstance(
+                executable_without_confirmation.decision,
+                ToolPolicyDecision,
+            )

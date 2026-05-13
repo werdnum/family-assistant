@@ -3,7 +3,6 @@
 # development; production deployments should configure one entry per human user
 # so Telegram, web/OIDC, and email all resolve to the same user id.
 users: []
-
 # LLM Provider Configuration
 # Each service profile can specify a 'provider' in its processing_config.
 # Available providers: 'openai', 'google', 'anthropic'
@@ -50,30 +49,25 @@ llm_parameters:
   # "anthropic/claude-3-":
   #   temperature: 0.75
   #   top_k: 50
-
 # Gemini Live Voice API Configuration
 # See: https://ai.google.dev/gemini-api/docs/live
 gemini_live_config:
   # Model to use for Gemini Live voice sessions
   model: "gemini-3.1-flash-live-preview"
-
   # Voice configuration
   voice:
     # Prebuilt voice name (e.g., "Puck", "Kore", "Charon", "Fenrir", "Aoede")
     name: "Autonoe"
-
   # Session limits
   session:
     # Maximum duration in minutes before auto-disconnect
     max_duration_minutes: 15
-
   # Transcription settings
   transcription:
     # Enable input (user) transcription
     input_enabled: true
     # Enable output (assistant) transcription
     output_enabled: true
-
   # Voice Activity Detection (VAD) configuration
   # Controls automatic speech detection and turn-taking
   vad:
@@ -88,22 +82,18 @@ gemini_live_config:
     prefix_padding_ms: null
     # Pause duration in ms to consider speech ended (null for default)
     silence_duration_ms: null
-
   # Advanced features (require v1alpha API)
   # Affective dialog allows the model to adapt response style to user's tone
   affective_dialog:
     enabled: true
-
   # Proactivity allows the model to proactively decline irrelevant responses
   proactivity:
     enabled: true
     proactive_audio: true
-
   # Thinking configuration for reasoning
   thinking:
     # Include thought summaries in responses (for debugging)
     include_thoughts: false
-
   # Telephone-specific overrides for Asterisk Live API
   # These override the base settings above for telephone calls
   # Telephone audio has different characteristics (narrowband, potential noise)
@@ -121,7 +111,6 @@ gemini_live_config:
     # Pre-recorded greeting played immediately when answering the call
     greeting:
       enabled: true
-
 # Configuration for the document indexing pipeline
 indexing_pipeline_config:
   # Optional global configurations for the pipeline itself, if IndexingPipeline supports them
@@ -219,12 +208,10 @@ mcp_config:
         - "npm:@modelcontextprotocol/server-google-maps"
       env:
         GOOGLE_MAPS_API_KEY: "$GOOGLE_MAPS_API_KEY"
-
 # --- Notes Configuration ---
 # Controls default visibility labels applied to new notes.
 notes_config:
   default_visibility_labels: ["default"]
-
 # --- Email Intake Security ---
 # Optional controls for the /webhook/mail Mailgun receiving webhook. By default
 # these are permissive to preserve existing indexing-only deployments; configure
@@ -265,7 +252,6 @@ email_intake:
   max_raw_request_bytes: 26214400
   max_attachment_bytes: 10485760
   max_total_attachment_bytes: 26214400
-
 # --- Skills Configuration ---
 # Directories for file-based skills (loaded at startup, shown in skill catalog).
 # builtin_dir defaults to the package's skills/builtin/ directory when not set.
@@ -300,99 +286,31 @@ default_profile_settings:
     web_history_max_age_hours: 720 # 30 days
     max_iterations: 10 # Maximum number of tool call iterations
   tools_config:
-    # `enable_local_tools` are not explicitly listed here for the default profile.
-    # The application currently enables all available local tools.
-    enable_local_tools:
-      # Core tools (eager - always loaded with full schema)
-      - "add_or_update_note"
-      - "get_note"
-      - "list_notes"
-      - "delete_note"
-      - "schedule_future_callback"
-      - "schedule_reminder"
-      - "schedule_action"
-      - "list_pending_callbacks"
-      - "modify_pending_callback"
-      - "cancel_pending_callback"
-      - "search_documents"
-      - "get_full_document_content"
-      - "get_attachment_info"
-      - "get_message_history"
-      - "get_user_documentation_content"
-      - "ingest_document_from_url"
-      - "reindex_email"
-      - "send_message_to_user"
-      - "attach_to_response"
-      - "add_calendar_event"
-      - "search_calendar_events"
-      - "modify_calendar_event"
-      - "delete_calendar_event"
-      - "delegate_to_service"
-      - "query_recent_events" # Event system tool
-      # On-demand tools (catalog only until activated - saves context tokens)
-      - name: "execute_script"
-        loading: "on_demand"
-      - name: "test_script_with_simulated_tools"
-        loading: "on_demand"
-      - "save_script"
-
-      - "list_scripts"
-      - "get_script"
-      - "delete_script"
-      # Home Assistant tools: gated behind the "Home Assistant" built-in
-      # skill, which auto-activates the full set when loaded via get_note.
-      - name: "render_home_assistant_template"
-        loading: "on_demand"
-      - name: "get_camera_snapshot"
-        loading: "on_demand"
-      - name: "download_state_history"
-        loading: "on_demand"
-      - name: "list_home_assistant_entities"
-        loading: "on_demand"
-      - name: "list_home_assistant_actions"
-        loading: "on_demand"
-      - name: "call_home_assistant_action"
-        loading: "on_demand"
-      - name: "list_automations"
-        loading: "on_demand"
-      - name: "get_automation"
-        loading: "on_demand"
-      - name: "get_automation_stats"
-        loading: "on_demand"
-      - name: "generate_image"
-        loading: "on_demand"
-      - name: "transform_image"
-        loading: "on_demand"
-      - name: "generate_video"
-        loading: "on_demand"
-      - name: "download_media"
-        loading: "on_demand"
-      - name: "highlight_image"
-        loading: "on_demand"
-      - name: "spawn_worker"
-        loading: "on_demand"
-      - name: "read_task_result"
-        loading: "on_demand"
-      - name: "list_worker_tasks"
-        loading: "on_demand"
-      - name: "cancel_worker_task"
-        loading: "on_demand"
-      - name: "mqtt_publish"
-        loading: "on_demand"
-    enable_mcp_server_ids: # Explicitly define MCP servers for the default profile
-      - "time"
-      - "brave"
-      - "google-maps"
-      # Gated behind the "Home Assistant" skill, which auto-activates the
-      # whole server alongside the local HA tools when loaded via get_note.
-      - {id: "homeassistant", loading: "on_demand"}
-    # Tools requiring explicit user confirmation before execution for this default profile.
-    # This list is overridden by the TOOLS_REQUIRING_CONFIRMATION environment variable if set.
-    confirm_tools:
-      - delete_calendar_event
-      - modify_calendar_event
-      # - tool_that_posts_online
     mcp_initialization_timeout_seconds: 60 # Default 1 minute
+    on_demand_local_tools:
+      - "execute_script"
+      - "test_script_with_simulated_tools"
+      - "render_home_assistant_template"
+      - "get_camera_snapshot"
+      - "download_state_history"
+      - "list_home_assistant_entities"
+      - "list_home_assistant_actions"
+      - "call_home_assistant_action"
+      - "list_automations"
+      - "get_automation"
+      - "get_automation_stats"
+      - "generate_image"
+      - "transform_image"
+      - "generate_video"
+      - "download_media"
+      - "highlight_image"
+      - "spawn_worker"
+      - "read_task_result"
+      - "list_worker_tasks"
+      - "cancel_worker_task"
+      - "mqtt_publish"
+    on_demand_mcp_server_ids:
+      - "homeassistant"
   tools_policy:
     default_decision: "deny"
     rules:
@@ -417,7 +335,6 @@ default_profile_settings:
             - "reindex_email"
             - "execute_script"
             - "save_script"
-
             - "list_scripts"
             - "get_script"
             - "delete_script"
@@ -540,25 +457,6 @@ service_profiles:
           - When calling ingest_document_from_url, always supply all three required arguments: url_to_ingest (the exact URL copied from the email), source_type set to "email_intake_url", and source_id set to a unique value for this URL (a UUID or a stable slug derived from the message-id and link is fine). Use the title argument when the email gives the document a clear name. Tool policy will surface a durable confirmation before any fetch occurs, so do not attempt to follow the link yourself. Do not call ingest_document_from_url for tracking pixels, unsubscribe links, marketing redirects, or other URLs the user did not intend to save.
           - If the date, timezone, recipient, or action content is ambiguous, ask for clarification in the final response instead of guessing.
           - Do not use send_message_to_user to reply to the email sender. The final response is delivered back to the authenticated sender by the email interface.
-    tools_config:
-      enable_local_tools:
-        - "search_calendar_events"
-        - "add_calendar_event"
-        - "modify_calendar_event"
-        - "get_note"
-        - "list_notes"
-        - "add_or_update_note"
-        - "search_documents"
-        - "get_full_document_content"
-        - "get_message_history"
-        - "list_pending_callbacks"
-        - "schedule_reminder"
-        - "schedule_future_callback"
-        - "modify_pending_callback"
-        - "send_message_to_user"
-        - "ingest_document_from_url"
-      enable_mcp_server_ids: []
-      confirm_tools: []
     tools_policy:
       default_decision: "deny"
       rules:
@@ -604,16 +502,6 @@ service_profiles:
     processing_config:
       prompts:
         system_prompt: "You are a reminder delivery system. Your goal is to write the text of the reminder message that will be sent to the user.\n\nInstructions:\n1. Read the reminder context provided.\n2. You may use read-only tools (calendar, notes, docs) to gather context if the reminder is vague or refers to stored information.\n3. Write a clear, friendly reminder message addressed to {user_name}.\n4. Your final response must be ONLY the message content. Do NOT describe your actions.\n5. If the reminder context contains a task, simply state the task.\n\nExample:\nContext: 'Pick up milk'\nResponse: 'Hi {user_name}, this is your reminder to pick up milk.'\n\nCurrent time: {current_time}"
-    tools_config:
-      enable_local_tools:
-        - "search_calendar_events"
-        - "get_note"
-        - "list_notes"
-        - "search_documents"
-        - "get_full_document_content"
-        - "get_user_documentation_content"
-      enable_mcp_server_ids: []
-      confirm_tools: []
     tools_policy:
       default_decision: "deny"
       rules:
@@ -634,21 +522,6 @@ service_profiles:
       max_iterations: 25
       prompts: # MERGES with default_profile_settings.processing_config.prompts
         system_prompt: "You browse the web via accessibility snapshots on behalf of {user_name}. Start every session with browser_open, which navigates to a URL and returns a snapshot of the page structure. Each snapshot is rendered as indented text where interactive elements are tagged with stable refs like `e12`; use those refs with browser_click, browser_fill, and browser_select. Use browser_extract when {user_name} wants the page content as Markdown, browser_wait when you need to wait for load states or a specific element, and browser_screenshot only when you need a visual to attach to your reply. When the fixed tools don't fit — shadow DOM traversal, iframes, reading JSON endpoints via fetch, or complex multi-step DOM mutation in a single turn — use browser_exec to run JavaScript in-page via page.evaluate. For tasks that can only be solved visually (canvas, image maps, drag-and-drop that doesn't target DOM nodes), call delegate_to_service with target_service_id='browser_visual_profile'; the visual profile shares the same browser tab so the session state (URL, cookies, form progress) carries over. After any tool calls, your final text response will be sent directly to {user_name}. Do NOT use the 'send_message_to_user' tool to respond to {user_name} - that tool is only for sending messages to OTHER users. Current time is {current_time}."
-    tools_config: # REPLACES default_profile_settings.tools_config entirely for this profile
-      enable_local_tools:
-        - "browser_open"
-        - "browser_snapshot"
-        - "browser_click"
-        - "browser_fill"
-        - "browser_select"
-        - "browser_extract"
-        - "browser_wait"
-        - "browser_screenshot"
-        - "browser_exec"
-        - "attach_to_response"
-        - "delegate_to_service"
-      enable_mcp_server_ids: []
-      confirm_tools: [] # No tools to confirm
     tools_policy: # REPLACES default_profile_settings.tools_policy entirely for this profile
       default_decision: "deny"
       rules:
@@ -682,24 +555,6 @@ service_profiles:
       max_iterations: 50
       prompts: # MERGES with default_profile_settings.processing_config.prompts
         system_prompt: "You are an assistant with web browsing capabilities interacting with {user_name}. Every browser action you take (navigate, click, scroll, etc.) automatically captures a screenshot which you will see. By default, ALL screenshots from your actions are sent to the user. For multi-step workflows where you only want to show specific screenshots (e.g., just the final result), use attach_to_response to select which ones to send. After any tool calls you make, your final text response will be sent directly to {user_name}. Do NOT use the 'send_message_to_user' tool to respond to {user_name} - that tool is only for sending messages to OTHER users. Current time is {current_time}."
-    tools_config: # REPLACES default_profile_settings.tools_config entirely for this profile
-      enable_local_tools:
-        - "click_at"
-        - "type_text_at"
-        - "scroll_at"
-        - "open_web_browser"
-        - "navigate"
-        - "search"
-        - "go_back"
-        - "go_forward"
-        - "key_combination"
-        - "wait_5_seconds"
-        - "hover_at"
-        - "drag_and_drop"
-        - "scroll_document"
-        - "attach_to_response"
-      enable_mcp_server_ids: []
-      confirm_tools: [] # No tools to confirm
     tools_policy: # REPLACES default_profile_settings.tools_policy entirely for this profile
       default_decision: "deny"
       rules:
@@ -732,10 +587,6 @@ service_profiles:
         system_prompt: "You are a research assistant interacting with {user_name}. Please focus on providing comprehensive and accurate information. After any tool calls you make, your final text response will be sent directly to {user_name}. Do NOT use the 'send_message_to_user' tool to respond to {user_name} - that tool is only for sending messages to OTHER users."
         # Inherits default timezone, history settings.
         # No specific context providers are added by default for this profile.
-    tools_config: # REPLACES default_profile_settings.tools_config entirely for this profile
-      enable_local_tools: [] # No local tools for this profile
-      enable_mcp_server_ids: [] # No MCP tools for this profile
-      confirm_tools: [] # No tools to confirm
     tools_policy: # REPLACES default_profile_settings.tools_policy entirely for this profile
       default_decision: "deny"
     slash_commands:
@@ -747,10 +598,6 @@ service_profiles:
       llm_model: "deep-research-max-preview-04-2026"
       prompts:
         system_prompt: "You are a research assistant interacting with {user_name}. Please focus on providing comprehensive and accurate information. After any tool calls you make, your final text response will be sent directly to {user_name}. Do NOT use the 'send_message_to_user' tool to respond to {user_name} - that tool is only for sending messages to OTHER users."
-    tools_config:
-      enable_local_tools: []
-      enable_mcp_server_ids: []
-      confirm_tools: []
     tools_policy:
       default_decision: "deny"
     slash_commands:
@@ -762,31 +609,6 @@ service_profiles:
       include_system_docs:
         - "data_visualization.md"
         - "vega_lite_reference.md"
-    tools_config:
-      enable_local_tools:
-        - "create_vega_chart"
-        - "jq_query"
-        - "attach_to_response"
-        - "get_attachment_info"
-        - "search_documents"
-        - "get_full_document_content"
-        - "download_state_history"
-        - "list_home_assistant_entities"
-        - "render_home_assistant_template"
-        - "execute_script"
-        - "save_script"
-
-        - "list_scripts"
-        - "get_script"
-        - "delete_script"
-        - "test_script_with_simulated_tools"
-        # AI Worker tools (for complex data processing tasks)
-        - "spawn_worker"
-        - "read_task_result"
-        - "list_worker_tasks"
-      enable_mcp_server_ids:
-        - "homeassistant"
-        - "scrape"
     tools_policy:
       default_decision: "deny"
       rules:
@@ -803,7 +625,6 @@ service_profiles:
               - "render_home_assistant_template"
               - "execute_script"
               - "save_script"
-
               - "list_scripts"
               - "get_script"
               - "delete_script"
@@ -835,25 +656,6 @@ service_profiles:
         system_prompt: "You are an automated event handler assistant. You are responding to events from scripts and automations. Provide clear, concise responses focused on the event context.\n\nCurrent time: {current_time}\n\n{aggregated_other_context}"
       max_history_messages: 1 # Minimal history for event processing
       history_max_age_hours: 0.5 # 30 minutes - events are typically immediate
-    tools_config: # REPLACES default_profile_settings.tools_config entirely for this profile
-      enable_local_tools:
-        # Core data tools (read/write for notes, read-only for documents)
-        - "add_or_update_note"
-        - "list_notes"
-        - "get_note"
-        - "search_documents"
-        # Communication (Telegram only to prevent email spam)
-        - "send_message_to_user"
-        # Calendar read-only
-        - "search_calendar_events"
-        # Event system query only (no listener creation/modification)
-        - "query_recent_events"
-        # MQTT publishing for automation integration
-        - "mqtt_publish"
-      enable_mcp_server_ids:
-        # Home Assistant read-only access
-        - "homeassistant" # Configured to only allow get_entity_state and get_all_entities
-      confirm_tools: [] # No confirmation needed for automated operations
     tools_policy: # REPLACES default_profile_settings.tools_policy entirely for this profile
       default_decision: "deny"
       rules:
@@ -1148,54 +950,6 @@ service_profiles:
           - Common patterns and examples
 
           Your success is measured by creating automations that work reliably without manual intervention. Take the time to validate, test, and verify before creating.
-    tools_config:
-      enable_local_tools:
-        # Automation management tools
-        - "create_automation"
-        - "list_automations"
-        - "get_automation"
-        - "update_automation"
-        - "enable_automation"
-        - "disable_automation"
-        - "delete_automation"
-        - "get_automation_stats"
-        # Event testing and validation tools
-        - "query_recent_events"
-        - "test_event_listener"
-        # Script execution for testing
-        - "execute_script"
-        - "save_script"
-
-        - "list_scripts"
-        - "get_script"
-        - "delete_script"
-        - "test_script_with_simulated_tools"
-        # Calendar and notes for context
-        - "search_calendar_events"
-        - "get_calendar_events"
-        - "list_notes"
-        - "get_note"
-        - "search_notes"
-        # Communication tools
-        - "send_message_to_user"
-        # Document access for understanding context
-        - "search_documents"
-        - "get_full_document_content"
-        - "get_user_documentation_content"
-        # Home Assistant state validation
-        - "download_state_history"
-        - "render_home_assistant_template"
-        # Callback and action scheduling
-        - "schedule_action"
-        - "list_pending_callbacks"
-        # AI Worker tools (for complex automation scripting tasks)
-        - "spawn_worker"
-        - "read_task_result"
-        - "list_worker_tasks"
-        - "mqtt_publish"
-      enable_mcp_server_ids:
-        - "homeassistant" # For validating entity IDs and states
-      confirm_tools: [] # No confirmation needed for automation creation workflows
     tools_policy:
       default_decision: "deny"
       rules:
@@ -1213,7 +967,6 @@ service_profiles:
               - "test_event_listener"
               - "execute_script"
               - "save_script"
-
               - "list_scripts"
               - "get_script"
               - "delete_script"
@@ -1282,28 +1035,6 @@ service_profiles:
           4. **Review**: Present the result. If using `generate_video`, note that it may take a few minutes.
 
           Current time: {current_time}
-    tools_config:
-      enable_local_tools:
-        # Image generation and manipulation
-        - "generate_image"
-        - "transform_image"
-        - "highlight_image"
-        - "generate_video"
-        # Helper tools
-        - "get_attachment_info"
-        - "attach_to_response"
-        - "execute_script"
-        - "save_script"
-
-        - "list_scripts"
-        - "get_script"
-        - "delete_script"
-        - "test_script_with_simulated_tools"
-        - "send_message_to_user"
-        - "get_message_history"
-        - "search_documents"
-      enable_mcp_server_ids: []
-      confirm_tools: []
     tools_policy:
       default_decision: "deny"
       rules:
@@ -1317,7 +1048,6 @@ service_profiles:
               - "attach_to_response"
               - "execute_script"
               - "save_script"
-
               - "list_scripts"
               - "get_script"
               - "delete_script"
@@ -1342,52 +1072,6 @@ service_profiles:
           Most queries will be conversational and should not require complex processes.
           Keep your responses concise and suitable for voice interaction. Avoid using markdown formatting like bold or lists in your speech unless it translates well to spoken text.
           Current time: {current_time}
-    tools_config:
-      enable_local_tools:
-        - "add_or_update_note"
-        - "get_note"
-        - "list_notes"
-        - "delete_note"
-        - "schedule_future_callback"
-        - "schedule_reminder"
-        - "schedule_action"
-        - "list_pending_callbacks"
-        - "modify_pending_callback"
-        - "cancel_pending_callback"
-        - "search_documents"
-        - "get_full_document_content"
-        - "get_attachment_info"
-        - "get_message_history"
-        - "get_user_documentation_content"
-        - "ingest_document_from_url"
-        - "execute_script"
-        - "save_script"
-
-        - "list_scripts"
-        - "get_script"
-        - "delete_script"
-        - "test_script_with_simulated_tools"
-        - "send_message_to_user"
-        - "add_calendar_event"
-        - "search_calendar_events"
-        - "modify_calendar_event"
-        - "delete_calendar_event"
-        - "delegate_to_service"
-        - "query_recent_events"
-        - "render_home_assistant_template"
-        - "get_camera_snapshot"
-        - "download_state_history"
-        - "list_home_assistant_entities"
-        - "list_automations"
-        - "get_automation"
-        - "get_automation_stats"
-        - "generate_video"
-      enable_mcp_server_ids:
-        - "time"
-        - "brave"
-        - "homeassistant"
-        - "google-maps"
-      confirm_tools: []
     tools_policy:
       default_decision: "deny"
       rules:
@@ -1411,7 +1095,6 @@ service_profiles:
               - "ingest_document_from_url"
               - "execute_script"
               - "save_script"
-
               - "list_scripts"
               - "get_script"
               - "delete_script"
@@ -1492,13 +1175,6 @@ service_profiles:
           - Keep responses concise and natural for voice
 
           Current time: {current_time}
-    tools_config:
-      enable_local_tools:
-        - "send_message_to_user"
-        - "get_note"
-        - "list_notes"
-      enable_mcp_server_ids: []
-      confirm_tools: []
     tools_policy:
       default_decision: "deny"
       rules:
@@ -1529,18 +1205,6 @@ service_profiles:
       camera_config:
         backend: "reolink"
         # cameras_config: {}  # Uncomment and populate, or use REOLINK_CAMERAS env var
-    tools_config:
-      enable_local_tools:
-        - "list_cameras"
-        - "search_camera_events"
-        - "get_camera_frame"
-        - "get_camera_frames_batch"
-        - "get_camera_recordings"
-        - "get_live_camera_snapshot"
-        - "scan_camera_frames"
-        - "attach_to_response"
-        - "get_attachment_info"
-      enable_mcp_server_ids: []
     tools_policy:
       default_decision: "deny"
       rules:
@@ -1590,75 +1254,15 @@ service_profiles:
 
           {aggregated_other_context}
     tools_config:
-      enable_local_tools:
-        - "add_or_update_note"
-        - "get_note"
-        - "list_notes"
-        - "delete_note"
-        - "schedule_future_callback"
-        - "schedule_reminder"
-        - "schedule_action"
-        - "list_pending_callbacks"
-        - "modify_pending_callback"
-        - "cancel_pending_callback"
-        - "search_documents"
-        - "get_full_document_content"
-        - "get_attachment_info"
-        - "get_message_history"
-        - "get_user_documentation_content"
-        - "ingest_document_from_url"
-        - "execute_script"
-        - "save_script"
-
-        - "list_scripts"
-        - "get_script"
-        - "delete_script"
-        - "test_script_with_simulated_tools"
-        - "send_message_to_user"
-        - "attach_to_response"
-        - "add_calendar_event"
-        - "search_calendar_events"
-        - "modify_calendar_event"
-        - "delete_calendar_event"
-        - "delegate_to_service"
-        - "query_recent_events"
-        # Home Assistant tools: gated behind the "Home Assistant" built-in
-        # skill, which auto-activates the full set when loaded via get_note.
-        - name: "render_home_assistant_template"
-          loading: "on_demand"
-        - name: "get_camera_snapshot"
-          loading: "on_demand"
-        - name: "download_state_history"
-          loading: "on_demand"
-        - name: "list_home_assistant_entities"
-          loading: "on_demand"
-        - name: "list_home_assistant_actions"
-          loading: "on_demand"
-        - name: "call_home_assistant_action"
-          loading: "on_demand"
-        - "list_automations"
-        - "get_automation"
-        - "get_automation_stats"
-        - "generate_image"
-        - "transform_image"
-        - "generate_video"
-        - "download_media"
-        - "highlight_image"
-        - "spawn_worker"
-        - "read_task_result"
-        - "list_worker_tasks"
-        - "cancel_worker_task"
-        - "mqtt_publish"
-      enable_mcp_server_ids:
-        - "time"
-        - "brave"
-        - "google-maps"
-        # Gated behind the "Home Assistant" skill, which auto-activates the
-        # whole server alongside the local HA tools when loaded via get_note.
-        - {id: "homeassistant", loading: "on_demand"}
-      confirm_tools:
-        - delete_calendar_event
-        - modify_calendar_event
+      on_demand_local_tools:
+        - "render_home_assistant_template"
+        - "get_camera_snapshot"
+        - "download_state_history"
+        - "list_home_assistant_entities"
+        - "list_home_assistant_actions"
+        - "call_home_assistant_action"
+      on_demand_mcp_server_ids:
+        - "homeassistant"
     tools_policy:
       default_decision: "deny"
       rules:
@@ -1682,7 +1286,6 @@ service_profiles:
               - "ingest_document_from_url"
               - "execute_script"
               - "save_script"
-
               - "list_scripts"
               - "get_script"
               - "delete_script"
@@ -1807,36 +1410,6 @@ service_profiles:
           6. For config issues: use get_resolved_config and get_profile_config to inspect the live runtime config
           7. Summarize findings and recommend fixes
           8. If appropriate, create a GitHub issue with your findings
-    tools_config:
-      enable_local_tools:
-        # Engineering-specific tools
-        - "read_source_file"
-        - "search_source_code"
-        - "query_database"
-        - "read_error_logs"
-        - "get_llm_request_history"
-        - "create_github_issue"
-        - "get_mcp_server_status"
-        - "reconnect_mcp_server"
-        - "get_resolved_config"
-        - "get_profile_config"
-        - "get_system_info"
-        # Read-only data tools
-        - "get_message_history"
-        - "list_notes"
-        - "get_note"
-        - "search_documents"
-        - "get_full_document_content"
-        - "get_user_documentation_content"
-        - "list_pending_callbacks"
-        - "query_recent_events"
-        - "list_automations"
-        - "get_automation"
-        - "get_automation_stats"
-      enable_mcp_server_ids: []
-      confirm_tools:
-        - "create_github_issue"
-        - "reconnect_mcp_server"
     tools_policy:
       default_decision: "deny"
       rules:
@@ -1880,16 +1453,13 @@ attachment_config:
   # Maximum file size for general attachments (in bytes)
   # Default: 100MB to handle large documents/images
   max_file_size: 104857600 # 100 * 1024 * 1024
-
   # Maximum file size for multimodal LLM processing (in bytes)
   # This is typically lower due to LLM provider limits
   # Default: 20MB (most LLM providers support up to 20MB images)
   max_multimodal_size: 20971520 # 20 * 1024 * 1024
-
   # Storage path for chat attachments
   # Can be overridden by chat_attachment_storage_path for backward compatibility
   storage_path: "/tmp/chat_attachments"
-
   # Allowed MIME types for attachments
   allowed_mime_types:
     - "image/jpeg"
@@ -1906,7 +1476,6 @@ attachment_config:
     - "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
     - "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
     - "application/vnd.openxmlformats-officedocument.presentationml.presentation"
-
 # AI Worker Sandbox configuration
 # Enables spawning isolated AI coding agents for complex computing tasks
 ai_worker_config:
@@ -1931,7 +1500,6 @@ ai_worker_config:
   docker:
     image: "ghcr.io/werdnum/ai-coding-base:latest"
     network: "bridge"
-
 otel:
   enabled: false
   service_name: "family-assistant"
@@ -1941,7 +1509,5 @@ otel:
   log_correlation: true
   traces_sample_rate: 1.0
   debug_console_exporter: false
-
 # Secrets (telegram_token, api_keys, database_url) are primarily from env.
 # Model, embedding_model, server_url, storage_paths are also top-level or env.
-

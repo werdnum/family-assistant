@@ -171,10 +171,7 @@ def _make_service_config(profile_id: str) -> ProcessingServiceConfig:
         timezone=ZoneInfo("UTC"),
         max_history_messages=5,
         history_max_age_hours=24,
-        tools_config=ToolsConfig(
-            enable_local_tools=["delegate_to_service"],
-            confirm_tools=[],
-        ),
+        tools_config=ToolsConfig(),
         delegation_security_level=DelegationSecurityLevel.CONFIRM,
         id=profile_id,
     )

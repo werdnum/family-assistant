@@ -54,7 +54,8 @@ or the main assistant implements fixes.
 ### Confirmation for Side Effects
 
 `create_github_issue` is the only tool that has external side effects (creating an issue on GitHub).
-It is listed in `confirm_tools` so the user must approve before execution.
+The engineer profile's `tools_policy` requires confirmation for that tool so the user must approve
+before execution.
 
 ## Tools
 

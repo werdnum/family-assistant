@@ -124,6 +124,7 @@ class ProcessingConfig(BaseModel):
     provider: str | None = None  # 'google', 'openai', 'anthropic'
     retry_config: RetryConfig | None = None
     delegation_security_level: DelegationSecurityLevel = DelegationSecurityLevel.CONFIRM
+    allowed_delegation_sources: list[str] | None = None
     home_assistant_api_url: str | None = None
     home_assistant_token: str | None = None
     home_assistant_context_template: str | None = None
@@ -137,114 +138,27 @@ class ProcessingConfig(BaseModel):
     default_note_visibility_labels: list[str] | None = None
 
 
-class ToolLoadingEntry(BaseModel):
-    """Tool with explicit loading mode.
-
-    Used in ``enable_local_tools`` to mark individual tools as on-demand::
-
-        enable_local_tools:
-          - "always_loaded_tool"                          # string → eager
-          - { name: "lazy_tool", loading: "on_demand" }   # dict → on-demand
-    """
-
-    model_config = ConfigDict(extra="forbid")
-
-    name: str
-    loading: Literal["eager", "on_demand"] = "eager"
-
-
-class MCPServerLoadingEntry(BaseModel):
-    """MCP server with explicit loading mode.
-
-    Used in ``enable_mcp_server_ids`` to mark entire MCP servers as on-demand::
-
-        enable_mcp_server_ids:
-          - "time"                                          # string → eager
-          - { id: "homeassistant", loading: "on_demand" }   # dict → on-demand
-    """
-
-    model_config = ConfigDict(extra="forbid")
-
-    id: str
-    loading: Literal["eager", "on_demand"] = "eager"
-
-
 class ToolsConfig(BaseModel):
-    """Configuration for tool availability and behavior.
+    """Operational tool configuration.
 
-    Controls which tools are enabled, which require confirmation,
-    and MCP server settings.
-
-    Items in ``enable_local_tools`` and ``enable_mcp_server_ids`` can be plain
-    strings (eager by default) or dicts with a ``loading`` field set to
-    ``"on_demand"`` to defer full schema loading until the agent activates them.
+    Tool access control lives in ``tools_policy``. This model only contains
+    non-policy settings such as timeouts and optional on-demand catalog hints.
     """
 
     model_config = ConfigDict(extra="forbid")
 
-    enable_local_tools: list[str | ToolLoadingEntry] | None = None
-    enable_mcp_server_ids: list[str | MCPServerLoadingEntry] | None = None
-    confirm_tools: list[str] = Field(default_factory=list)
+    on_demand_local_tools: list[str] = Field(default_factory=list)
+    on_demand_mcp_server_ids: list[str] = Field(default_factory=list)
     mcp_initialization_timeout_seconds: int = 60
     confirmation_timeout_seconds: float = 3600.0
 
-    def get_all_tool_names(self) -> set[str] | None:
-        """Return all enabled tool names (eager + on-demand), or None if unfiltered."""
-        if self.enable_local_tools is None:
-            return None
-        return {
-            entry if isinstance(entry, str) else entry.name
-            for entry in self.enable_local_tools
-        }
-
-    def get_eager_tool_names(self) -> set[str] | None:
-        """Return tool names that should be eagerly loaded, or None if unfiltered."""
-        if self.enable_local_tools is None:
-            return None
-        return {
-            entry if isinstance(entry, str) else entry.name
-            for entry in self.enable_local_tools
-            if isinstance(entry, str) or entry.loading == "eager"
-        }
-
     def get_on_demand_tool_names(self) -> set[str]:
         """Return tool names configured for on-demand loading."""
-        if self.enable_local_tools is None:
-            return set()
-        return {
-            entry.name
-            for entry in self.enable_local_tools
-            if isinstance(entry, ToolLoadingEntry) and entry.loading == "on_demand"
-        }
-
-    def get_all_mcp_server_ids(self) -> list[str] | None:
-        """Return all enabled MCP server IDs (eager + on-demand), or None if unfiltered."""
-        if self.enable_mcp_server_ids is None:
-            return None
-        return [
-            entry if isinstance(entry, str) else entry.id
-            for entry in self.enable_mcp_server_ids
-        ]
-
-    def get_eager_mcp_server_ids(self) -> list[str] | None:
-        """Return MCP server IDs that should be eagerly loaded, or None if unfiltered."""
-        if self.enable_mcp_server_ids is None:
-            return None
-        return [
-            entry if isinstance(entry, str) else entry.id
-            for entry in self.enable_mcp_server_ids
-            if isinstance(entry, str) or entry.loading == "eager"
-        ]
+        return set(self.on_demand_local_tools)
 
     def get_on_demand_mcp_server_ids(self) -> list[str]:
         """Return MCP server IDs configured for on-demand loading."""
-        if self.enable_mcp_server_ids is None:
-            return []
-        return [
-            entry.id
-            for entry in self.enable_mcp_server_ids
-            if isinstance(entry, MCPServerLoadingEntry) and entry.loading == "on_demand"
-        ]
+        return list(self.on_demand_mcp_server_ids)
 
 
 class RemoteA2AAuthConfig(BaseModel):
@@ -285,9 +199,6 @@ class ServiceProfile(BaseModel):
     tools_config: ToolsConfig = Field(default_factory=ToolsConfig)
     tools_policy: ToolPolicyConfig | None = None
     operator_tools_policy: ToolPolicyConfig | None = Field(default=None, exclude=True)
-    operator_mcp_server_ids: list[str | MCPServerLoadingEntry] = Field(
-        default_factory=list, exclude=True
-    )
     chat_id_to_name_map: dict[int, str] = Field(default_factory=dict)
     slash_commands: list[str] = Field(default_factory=list)
     visibility_grants: list[str] = Field(default_factory=list)
@@ -303,9 +214,6 @@ class DefaultProfileSettings(BaseModel):
     tools_config: ToolsConfig = Field(default_factory=ToolsConfig)
     tools_policy: ToolPolicyConfig | None = None
     operator_tools_policy: ToolPolicyConfig | None = Field(default=None, exclude=True)
-    operator_mcp_server_ids: list[str | MCPServerLoadingEntry] = Field(
-        default_factory=list, exclude=True
-    )
     chat_id_to_name_map: dict[int, str] = Field(default_factory=dict)
     slash_commands: list[str] = Field(default_factory=list)
     visibility_grants: list[str] = Field(default_factory=list)

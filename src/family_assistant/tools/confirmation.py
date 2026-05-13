@@ -71,7 +71,7 @@ def _extract_calendar_config_from_provider(
         config = provider.get_calendar_config()
         return cast("CalendarConfig", config) if config else None
 
-    # ConfirmingToolsProvider or other wrapper
+    # Policy or other wrapper
     if hasattr(provider, "wrapped_provider"):
         wrapped = provider.wrapped_provider  # type: ignore[attr-defined]
         if isinstance(wrapped, LocalToolsProvider):

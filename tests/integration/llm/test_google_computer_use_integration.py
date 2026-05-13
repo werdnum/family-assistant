@@ -410,25 +410,7 @@ async def test_computer_use_browser_navigation_e2e(db_engine: AsyncEngine) -> No
                     "history_max_age_hours": 1,
                     "delegation_security_level": "unrestricted",
                 },
-                "tools_config": {
-                    "enable_local_tools": [
-                        "click_at",
-                        "type_text_at",
-                        "scroll_at",
-                        "open_web_browser",
-                        "navigate",
-                        "search",
-                        "go_back",
-                        "go_forward",
-                        "key_combination",
-                        "wait_5_seconds",
-                        "hover_at",
-                        "drag_and_drop",
-                        "scroll_document",
-                    ],
-                    "enable_mcp_server_ids": [],
-                    "confirm_tools": [],
-                },
+                "tools_config": {},
                 "tools_policy": {
                     "default_decision": "deny",
                     "rules": [
@@ -585,25 +567,7 @@ async def test_grab_screenshot_of_website(db_engine: AsyncEngine) -> None:
                     "history_max_age_hours": 1,
                     "delegation_security_level": "unrestricted",
                 },
-                "tools_config": {
-                    "enable_local_tools": [
-                        "click_at",
-                        "type_text_at",
-                        "scroll_at",
-                        "open_web_browser",
-                        "navigate",
-                        "search",
-                        "go_back",
-                        "go_forward",
-                        "key_combination",
-                        "wait_5_seconds",
-                        "hover_at",
-                        "drag_and_drop",
-                        "scroll_document",
-                    ],
-                    "enable_mcp_server_ids": [],
-                    "confirm_tools": [],
-                },
+                "tools_config": {},
                 "tools_policy": {
                     "default_decision": "deny",
                     "rules": [

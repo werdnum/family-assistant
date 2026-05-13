@@ -21,14 +21,16 @@ from family_assistant.calendar_integration import (
 )
 from family_assistant.storage.context import DatabaseContext, get_db_context
 from family_assistant.tools import (
-    AVAILABLE_FUNCTIONS as local_tool_implementations,
+    LOCAL_TOOL_REGISTRATIONS as local_tool_registrations,
 )
 from family_assistant.tools import (
-    TOOLS_DEFINITION as local_tools_definition,
-)
-from family_assistant.tools import (
-    ConfirmingToolsProvider,
     LocalToolsProvider,
+    PolicyEnforcingToolsProvider,
+    PolicyEngine,
+    PolicyRule,
+    ToolMatcher,
+    ToolPolicyConfig,
+    ToolPolicyDecision,
 )
 from family_assistant.tools.calendar import (
     add_calendar_event_tool,
@@ -339,7 +341,7 @@ async def test_confirming_tools_provider_with_calendar_events(
     pg_vector_db_engine: AsyncEngine,
     radicale_server: tuple[str, str, str, str],
 ) -> None:
-    """Test the full ConfirmingToolsProvider flow with real calendar events."""
+    """Test the full PolicyEnforcingToolsProvider flow with real calendar events."""
 
     radicale_base_url, r_user, r_pass, test_calendar_url = radicale_server
 
@@ -377,8 +379,7 @@ async def test_confirming_tools_provider_with_calendar_events(
     )
 
     local_provider = LocalToolsProvider(
-        definitions=local_tools_definition,
-        implementations=local_tool_implementations,
+        registrations=local_tool_registrations,
         calendar_config=test_calendar_config,
     )
 
@@ -402,9 +403,19 @@ async def test_confirming_tools_provider_with_calendar_events(
         confirmation_prompts_shown.append(f"{tool_name} called with args: {tool_args}")
         return ConfirmationOutcome(kind="approved")
 
-    confirming_provider = ConfirmingToolsProvider(
+    confirming_provider = PolicyEnforcingToolsProvider(
         wrapped_provider=local_provider,
-        tools_requiring_confirmation={"modify_calendar_event"},
+        policy_engine=PolicyEngine.from_policy_config(
+            ToolPolicyConfig(
+                default_decision=ToolPolicyDecision.ALLOW,
+                rules=[
+                    PolicyRule(
+                        match=ToolMatcher(names=["modify_calendar_event"]),
+                        decision=ToolPolicyDecision.CONFIRM,
+                    )
+                ],
+            )
+        ),
         confirmation_timeout=10.0,  # Short timeout for tests (10s instead of default 1hr)
     )
 
@@ -475,10 +486,10 @@ async def test_confirming_provider_sets_tools_provider_for_renderer(
     pg_vector_db_engine: AsyncEngine,
     radicale_server: tuple[str, str, str, str],
 ) -> None:
-    """Test that ConfirmingToolsProvider makes calendar config available to confirmation renderers.
+    """Test that PolicyEnforcingToolsProvider makes calendar config available to confirmation renderers.
 
     Reproduces production path where context.tools_provider starts as None
-    and must be set by ConfirmingToolsProvider before the renderer runs.
+    and must be set by PolicyEnforcingToolsProvider before the renderer runs.
     """
     radicale_base_url, r_user, r_pass, test_calendar_url = radicale_server
 
@@ -506,8 +517,7 @@ async def test_confirming_provider_sets_tools_provider_for_renderer(
     )
 
     local_provider = LocalToolsProvider(
-        definitions=local_tools_definition,
-        implementations=local_tool_implementations,
+        registrations=local_tool_registrations,
         calendar_config=test_calendar_config,
     )
 
@@ -531,9 +541,19 @@ async def test_confirming_provider_sets_tools_provider_for_renderer(
             rendered_prompts.append(prompt_text)
         return ConfirmationOutcome(kind="approved")
 
-    confirming_provider = ConfirmingToolsProvider(
+    confirming_provider = PolicyEnforcingToolsProvider(
         wrapped_provider=local_provider,
-        tools_requiring_confirmation={"modify_calendar_event"},
+        policy_engine=PolicyEngine.from_policy_config(
+            ToolPolicyConfig(
+                default_decision=ToolPolicyDecision.ALLOW,
+                rules=[
+                    PolicyRule(
+                        match=ToolMatcher(names=["modify_calendar_event"]),
+                        decision=ToolPolicyDecision.CONFIRM,
+                    )
+                ],
+            )
+        ),
         confirmation_timeout=10.0,
     )
 

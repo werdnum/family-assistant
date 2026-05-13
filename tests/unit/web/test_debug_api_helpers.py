@@ -38,7 +38,7 @@ def test_non_secret_field_names_are_not_redacted() -> None:
         "description",
         "timezone",
         "max_iterations",
-        "enable_local_tools",
+        "on_demand_local_tools",
     ):
         assert not is_sensitive_field_name(name), name
 

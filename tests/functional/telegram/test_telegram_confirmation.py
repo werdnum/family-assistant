@@ -449,15 +449,12 @@ def _require_confirmation_for_test_tool(
         provider, "_tool_definitions_by_confirmation"
     ):
         provider_impl = cast("Any", provider)
-        enabled_tool_names = sorted(
-            processing_service.service_config.tools_config.get_all_tool_names() or []
-        )
         provider_impl._policy_engine = PolicyEngine.from_policy_config(
             ToolPolicyConfig.model_validate({
                 "default_decision": ToolPolicyDecision.DENY,
                 "rules": [
                     {
-                        "match": {"names": enabled_tool_names},
+                        "match": {"names": ["*"]},
                         "decision": ToolPolicyDecision.ALLOW,
                         "priority": 10,
                     },
@@ -488,7 +485,7 @@ async def test_confirmation_accepted(
     # Arrange
     fix = telegram_handler_fixture
 
-    # Temporarily add add_or_update_note to confirm_tools just for this test
+    # Temporarily add add_or_update_note to tools_policy just for this test
     # This is a test-specific override to verify confirmation flow works
     _require_confirmation_for_test_tool(fix, TOOL_NAME_SENSITIVE)
     # Cast mock_llm to the concrete type to access specific attributes like .rules and ._calls
@@ -552,8 +549,8 @@ async def test_confirmation_accepted(
 
     mock_llm_client.rules = [rule_request_tool, rule_final_success]  # Use casted client
 
-    # --- No need to create ConfirmingToolsProvider manually ---
-    # The Assistant will create it automatically based on confirm_tools config
+    # --- No need to create PolicyEnforcingToolsProvider manually ---
+    # The Assistant will create it automatically based on tools_policy config
 
     # --- Mock Confirmation Manager ---
     # Simulate user ACCEPTING the confirmation prompt
@@ -572,7 +569,7 @@ async def test_confirmation_accepted(
         bot_data={"processing_service": fix.processing_service},
     )
 
-    # Act: Call the handler - it will use the ConfirmingToolsProvider created by Assistant
+    # Act: Call the handler - it will use the PolicyEnforcingToolsProvider created by Assistant
     await fix.handler.message_handler(update, context)
 
     # Assert
@@ -618,7 +615,7 @@ async def test_confirmation_rejected(
     # Arrange
     fix = telegram_handler_fixture
 
-    # Temporarily add add_or_update_note to confirm_tools just for this test
+    # Temporarily add add_or_update_note to tools_policy just for this test
     # This is a test-specific override to verify confirmation flow works
     _require_confirmation_for_test_tool(fix, TOOL_NAME_SENSITIVE)
     # Cast mock_llm to the concrete type
@@ -630,8 +627,8 @@ async def test_confirmation_rejected(
     user_text = f"Add note: Title={test_note_title}, Content={test_note_content}"
     tool_call_id = f"call_reject_{uuid.uuid4()}"
     llm_request_tool_text = "Okay, I can add that note."
-    # Message returned by ConfirmingToolsProvider on rejection
-    # This needs to match the *actual* string from ConfirmingToolsProvider
+    # Message returned by PolicyEnforcingToolsProvider on rejection
+    # This needs to match the *actual* string from PolicyEnforcingToolsProvider
     tool_cancel_result_text = (
         f"OK. Action cancelled by user for tool '{TOOL_NAME_SENSITIVE}'."
     )
@@ -678,8 +675,8 @@ async def test_confirmation_rejected(
     rule_final_cancel: Rule = (cancel_result_matcher, final_cancel_output)
 
     mock_llm_client.rules = [rule_request_tool, rule_final_cancel]  # Use casted client
-    # --- No need to create ConfirmingToolsProvider manually ---
-    # The Assistant will create it automatically based on confirm_tools config
+    # --- No need to create PolicyEnforcingToolsProvider manually ---
+    # The Assistant will create it automatically based on tools_policy config
 
     # --- Mock Confirmation Manager ---
     # Simulate user REJECTING the confirmation prompt
@@ -694,7 +691,7 @@ async def test_confirmation_rejected(
         bot_data={"processing_service": fix.processing_service},
     )
 
-    # Act: Call the handler - it will use the ConfirmingToolsProvider created by Assistant
+    # Act: Call the handler - it will use the PolicyEnforcingToolsProvider created by Assistant
     await fix.handler.message_handler(update, context)
 
     # Assert
@@ -732,7 +729,7 @@ async def test_confirmation_timed_out(
     # Arrange
     fix = telegram_handler_fixture
 
-    # Temporarily add add_or_update_note to confirm_tools just for this test
+    # Temporarily add add_or_update_note to tools_policy just for this test
     # This is a test-specific override to verify confirmation flow works
     _require_confirmation_for_test_tool(fix, TOOL_NAME_SENSITIVE)
     # Cast mock_llm to the concrete type
@@ -744,8 +741,8 @@ async def test_confirmation_timed_out(
     user_text = f"Add note: Title={test_note_title}, Content={test_note_content}"
     tool_call_id = f"call_timeout_{uuid.uuid4()}"
     llm_request_tool_text = "Okay, I can add that note."
-    # Message returned by ConfirmingToolsProvider on timeout (same as rejection)
-    # This needs to match the *actual* string from ConfirmingToolsProvider for timeout
+    # Message returned by PolicyEnforcingToolsProvider on timeout (same as rejection)
+    # This needs to match the *actual* string from PolicyEnforcingToolsProvider for timeout
     tool_timeout_result_text = f"Action cancelled: Confirmation request for tool '{TOOL_NAME_SENSITIVE}' timed out."  # Final message from LLM after seeing the timeout/cancellation
     llm_final_timeout_text = "Okay, the request timed out and was cancelled."
 
@@ -788,8 +785,8 @@ async def test_confirmation_timed_out(
     rule_final_timeout: Rule = (timeout_result_matcher, final_timeout_output)
 
     mock_llm_client.rules = [rule_request_tool, rule_final_timeout]  # Use casted client
-    # --- No need to create ConfirmingToolsProvider manually ---
-    # The Assistant will create it automatically based on confirm_tools config
+    # --- No need to create PolicyEnforcingToolsProvider manually ---
+    # The Assistant will create it automatically based on tools_policy config
 
     # --- Mock Confirmation Manager ---
     # Simulate TIMEOUT during the confirmation request
@@ -804,7 +801,7 @@ async def test_confirmation_timed_out(
         bot_data={"processing_service": fix.processing_service},
     )
 
-    # Act: Call the handler - it will use the ConfirmingToolsProvider created by Assistant
+    # Act: Call the handler - it will use the PolicyEnforcingToolsProvider created by Assistant
     await fix.handler.message_handler(update, context)
 
     # Assert

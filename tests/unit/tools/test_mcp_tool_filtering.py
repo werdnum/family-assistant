@@ -10,20 +10,42 @@ import pytest
 from mcp.types import Tool, ToolAnnotations
 
 from family_assistant.tools import (
-    FilteredToolsProvider,
     MCPServerConfig,
     MCPToolsProvider,
+    PolicyEnforcingToolsProvider,
 )
 from family_assistant.tools.mcp import (
     MCP_SERVER_STATUS_CANCELLED,
     MCP_SERVER_STATUS_CONNECTED,
     MCP_SERVER_STATUS_FAILED,
 )
-from family_assistant.tools.metadata import ToolTag, build_tool_descriptor
+from family_assistant.tools.metadata import (
+    ToolDescriptor,
+    ToolTag,
+    build_tool_descriptor,
+)
+from family_assistant.tools.policy import (
+    PolicyEngine,
+    PolicyRule,
+    ToolMatcher,
+    ToolPolicyConfig,
+    ToolPolicyDecision,
+)
 from family_assistant.tools.types import ToolDefinition
 
 if TYPE_CHECKING:
     from mcp import ClientSession
+
+
+def _tool_definition(name: str) -> ToolDefinition:
+    return {
+        "type": "function",
+        "function": {
+            "name": name,
+            "description": f"{name} test tool",
+            "parameters": {"type": "object", "properties": {}},
+        },
+    }
 
 
 @pytest.mark.asyncio
@@ -107,25 +129,79 @@ async def test_reconnect_server_unknown_id_raises_key_error() -> None:
 
 
 @pytest.mark.asyncio
-async def test_filtered_tools_provider_with_mcp_filtering() -> None:
-    """Test that FilteredToolsProvider correctly filters tools including MCP tools."""
+async def test_policy_provider_filters_tools_by_name() -> None:
+    """Policy enforcement filters advertised tools including MCP tools."""
 
-    # Create mock tool definitions
-    tool_defs = [
-        {"type": "function", "function": {"name": "local_tool_1"}},
-        {"type": "function", "function": {"name": "local_tool_2"}},
-        {"type": "function", "function": {"name": "mcp_tool_1"}},
-        {"type": "function", "function": {"name": "mcp_tool_2"}},
-        {"type": "function", "function": {"name": "mcp_tool_3"}},
-    ]
+    class StubProvider:
+        def __init__(self) -> None:
+            self._descriptors = [
+                build_tool_descriptor(
+                    _tool_definition("local_tool_1"),
+                    frozenset({ToolTag.READ_ONLY}),
+                    origin="local",
+                ),
+                build_tool_descriptor(
+                    _tool_definition("local_tool_2"),
+                    frozenset({ToolTag.READ_ONLY}),
+                    origin="local",
+                ),
+                build_tool_descriptor(
+                    _tool_definition("mcp_tool_1"),
+                    frozenset({ToolTag.READ_ONLY}),
+                    origin="mcp",
+                    mcp_server_id="browser",
+                ),
+                build_tool_descriptor(
+                    _tool_definition("mcp_tool_2"),
+                    frozenset({ToolTag.READ_ONLY}),
+                    origin="mcp",
+                    mcp_server_id="time",
+                ),
+                build_tool_descriptor(
+                    _tool_definition("mcp_tool_3"),
+                    frozenset({ToolTag.READ_ONLY}),
+                    origin="mcp",
+                    mcp_server_id="browser",
+                ),
+            ]
 
-    # Create a mock composite provider
-    mock_provider = AsyncMock()
-    mock_provider.get_tool_definitions.return_value = tool_defs
+        async def get_tool_definitions(self) -> list[ToolDefinition]:
+            return [descriptor.definition for descriptor in self._descriptors]
 
-    # Test 1: Filter with specific allowed tools
+        async def get_tool_descriptors(self) -> list[ToolDescriptor]:
+            return self._descriptors
+
+        async def get_tool_descriptor(self, name: str) -> ToolDescriptor | None:
+            return next(
+                (
+                    descriptor
+                    for descriptor in self._descriptors
+                    if descriptor.name == name
+                ),
+                None,
+            )
+
+        async def execute_tool(self, *_args: object, **_kwargs: object) -> str:
+            return "ok"
+
+        async def close(self) -> None:
+            return None
+
     allowed_tools = {"local_tool_1", "mcp_tool_1", "mcp_tool_3"}
-    filtered_provider = FilteredToolsProvider(mock_provider, allowed_tools)
+    filtered_provider = PolicyEnforcingToolsProvider(
+        StubProvider(),
+        PolicyEngine.from_policy_config(
+            ToolPolicyConfig(
+                default_decision=ToolPolicyDecision.DENY,
+                rules=[
+                    PolicyRule(
+                        match=ToolMatcher(names=sorted(allowed_tools)),
+                        decision=ToolPolicyDecision.ALLOW,
+                    )
+                ],
+            )
+        ),
+    )
 
     filtered_defs = await filtered_provider.get_tool_definitions()
     filtered_names = {d["function"]["name"] for d in filtered_defs}
@@ -133,61 +209,38 @@ async def test_filtered_tools_provider_with_mcp_filtering() -> None:
     assert filtered_names == allowed_tools
     assert len(filtered_defs) == 3
 
-    # Test 2: No filtering (None means all tools)
-    unfiltered_provider = FilteredToolsProvider(mock_provider, None)
-    unfiltered_defs = await unfiltered_provider.get_tool_definitions()
-
-    assert len(unfiltered_defs) == len(tool_defs)
-    assert unfiltered_defs == tool_defs
-
 
 @pytest.mark.asyncio
-async def test_profile_builds_correct_tool_set_with_mcp_servers() -> None:
-    """Test that profile configuration correctly builds tool set including MCP tools from enabled servers."""
+async def test_policy_can_allow_mcp_servers_by_id() -> None:
+    """Policy rules can expose all tools from selected MCP servers."""
+    descriptors = [
+        build_tool_descriptor(
+            _tool_definition("browse_url"),
+            frozenset(),
+            origin="mcp",
+            mcp_server_id="browser",
+        ),
+        build_tool_descriptor(
+            _tool_definition("get_time"),
+            frozenset(),
+            origin="mcp",
+            mcp_server_id="time",
+        ),
+    ]
+    engine = PolicyEngine.from_policy_config(
+        ToolPolicyConfig(
+            default_decision=ToolPolicyDecision.DENY,
+            rules=[
+                PolicyRule(
+                    match=ToolMatcher(mcp_server_ids=["browser"]),
+                    decision=ToolPolicyDecision.ALLOW,
+                )
+            ],
+        )
+    )
 
-    # Simulate the logic from assistant.py
-
-    # Simulate MCP tool-to-server mapping
-    mcp_tool_to_server = {
-        "browse_url": "browser",
-        "search_web": "browser",
-        "get_time": "time",
-        "set_timer": "time",
-        "run_python": "python",
-    }
-
-    # Profile configuration
-    enable_local_tools = ["add_note", "search_notes"]  # Not delete_note
-    enable_mcp_server_ids = ["browser", "python"]  # Not time server
-
-    # Build the complete set of allowed tools (simulating assistant.py logic)
-    enabled_local_tool_names = set(enable_local_tools)
-    all_enabled_tool_names = enabled_local_tool_names.copy()
-
-    # Add MCP tools from enabled servers
-    for tool_name, server_id in mcp_tool_to_server.items():
-        if server_id in enable_mcp_server_ids:
-            all_enabled_tool_names.add(tool_name)
-
-    # Verify the result
-    expected_tools = {
-        # Local tools
-        "add_note",
-        "search_notes",
-        # MCP tools from browser server
-        "browse_url",
-        "search_web",
-        # MCP tools from python server
-        "run_python",
-        # NOT included: delete_note (local), get_time, set_timer (from time server)
-    }
-
-    assert all_enabled_tool_names == expected_tools
-
-    # Verify excluded tools are not present
-    assert "delete_note" not in all_enabled_tool_names
-    assert "get_time" not in all_enabled_tool_names
-    assert "set_timer" not in all_enabled_tool_names
+    assert engine.evaluate(descriptors[0]).decision is ToolPolicyDecision.ALLOW
+    assert engine.evaluate(descriptors[1]).decision is ToolPolicyDecision.DENY
 
 
 @pytest.mark.asyncio

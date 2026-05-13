@@ -206,6 +206,7 @@ class ProcessingServiceConfig:
     tools_config: ToolsConfig
     delegation_security_level: DelegationSecurityLevel
     id: str  # Unique identifier for this service profile
+    allowed_delegation_sources: list[str] | None = None
     description: str = ""  # Human-readable description of this profile
     model_parameters: dict[str, dict[str, object]] | None = (
         None  # regex pattern -> provider params mapping
@@ -245,4 +246,5 @@ class RemoteServiceConfig:
     id: str
     description: str
     delegation_security_level: DelegationSecurityLevel
+    allowed_delegation_sources: list[str] | None = None
     confirmation_timeout_seconds: float = 3600.0

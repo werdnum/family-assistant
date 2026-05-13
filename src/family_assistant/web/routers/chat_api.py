@@ -1787,7 +1787,7 @@ async def get_available_profiles(
 
         # Get all available tools for this profile (local + MCP)
         try:
-            # This correctly returns only allowed tools if FilteredToolsProvider is used
+            # This correctly returns only tools allowed by the profile policy.
             defs = await service.tools_provider.get_tool_definitions()
             available_tools = [
                 d.get("function", {}).get("name", "unknown") for d in defs

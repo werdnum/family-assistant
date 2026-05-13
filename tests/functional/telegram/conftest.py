@@ -109,11 +109,6 @@ async def telegram_handler_fixture(
                     "delegation_security_level": "none",  # Allow tools for tests
                 },
                 "tools_config": {
-                    "enable_local_tools": [
-                        "add_or_update_note",
-                        "send_message_to_user",  # Enable the tool for this test
-                    ],
-                    "confirm_tools": [],  # No tools require confirmation in tests
                     "mcp_initialization_timeout_seconds": 5,
                 },
                 "tools_policy": {

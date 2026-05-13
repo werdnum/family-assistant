@@ -287,7 +287,7 @@ async def test_thought_signatures_persist_and_roundtrip(
         timezone=ZoneInfo("UTC"),
         max_history_messages=10,
         history_max_age_hours=24,
-        tools_config=ToolsConfig(enable_local_tools=[], enable_mcp_server_ids=[]),
+        tools_config=ToolsConfig(),
         delegation_security_level=DelegationSecurityLevel.CONFIRM,
         id="test_profile",
     )
@@ -366,7 +366,7 @@ async def test_thought_signatures_without_tool_calls(
         timezone=ZoneInfo("UTC"),
         max_history_messages=10,
         history_max_age_hours=24,
-        tools_config=ToolsConfig(enable_local_tools=[], enable_mcp_server_ids=[]),
+        tools_config=ToolsConfig(),
         delegation_security_level=DelegationSecurityLevel.CONFIRM,
         id="test_profile",
     )

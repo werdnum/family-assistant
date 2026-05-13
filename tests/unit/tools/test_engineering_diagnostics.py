@@ -267,7 +267,6 @@ async def test_get_profile_config_lists_when_id_omitted() -> None:
     fake_default_settings = Mock()
     fake_default_settings.model_dump.return_value = {"description": "default"}
     fake_default_settings.operator_tools_policy = None
-    fake_default_settings.operator_mcp_server_ids = []
 
     p1 = Mock()
     p1.id = "default_assistant"
@@ -301,7 +300,6 @@ async def test_get_profile_config_returns_specific_profile() -> None:
         "processing_config": {"openai_api_key": "leak-me"},
     }
     matched.operator_tools_policy = None
-    matched.operator_mcp_server_ids = []
 
     fake_app_config = Mock()
     fake_app_config.service_profiles = [matched]

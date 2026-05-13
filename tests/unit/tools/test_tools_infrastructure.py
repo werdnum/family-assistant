@@ -13,7 +13,6 @@ import pytest
 
 from family_assistant.storage.context import DatabaseContext
 from family_assistant.tools.infrastructure import (
-    ConfirmingToolsProvider,
     LocalToolsProvider,
     PolicyEnforcingToolsProvider,
     ToolPolicyDeniedError,
@@ -600,8 +599,8 @@ class TestLocalToolsProvider:
             del sys.modules["fake_tool_module"]
 
 
-class TestConfirmingToolsProvider:
-    """Test cases for ConfirmingToolsProvider."""
+class TestPolicyConfirmationFlow:
+    """Test cases for policy-driven confirmation."""
 
     @pytest.mark.asyncio
     async def test_execute_tool_passes_confirmation_callback_arguments_by_name(
@@ -612,18 +611,28 @@ class TestConfirmingToolsProvider:
         class StubToolsProvider:
             def __init__(self) -> None:
                 self.calls: list[tuple[str, dict[str, object], str | None]] = []
-
-            async def get_tool_definitions(self) -> list[ToolDefinition]:
-                return [
-                    {
+                self.descriptor = ToolDescriptor(
+                    name="dangerous_tool",
+                    definition={
                         "type": "function",
                         "function": {
                             "name": "dangerous_tool",
                             "description": "Tool requiring confirmation",
                             "parameters": {"type": "object", "properties": {}},
                         },
-                    }
-                ]
+                    },
+                    tags=frozenset({ToolTag.DESTRUCTIVE}),
+                    origin="local",
+                )
+
+            async def get_tool_definitions(self) -> list[ToolDefinition]:
+                return [self.descriptor.definition]
+
+            async def get_tool_descriptors(self) -> list[ToolDescriptor]:
+                return [self.descriptor]
+
+            async def get_tool_descriptor(self, name: str) -> ToolDescriptor | None:
+                return self.descriptor if name == self.descriptor.name else None
 
             async def execute_tool(
                 self,
@@ -639,9 +648,19 @@ class TestConfirmingToolsProvider:
                 return None
 
         wrapped_provider = StubToolsProvider()
-        provider = ConfirmingToolsProvider(
+        provider = PolicyEnforcingToolsProvider(
             wrapped_provider=wrapped_provider,
-            tools_requiring_confirmation={"dangerous_tool"},
+            policy_engine=PolicyEngine.from_policy_config(
+                ToolPolicyConfig(
+                    default_decision=ToolPolicyDecision.DENY,
+                    rules=[
+                        PolicyRule(
+                            match=ToolMatcher(names=["dangerous_tool"]),
+                            decision=ToolPolicyDecision.CONFIRM,
+                        ),
+                    ],
+                )
+            ),
             confirmation_timeout=42.0,
         )
 

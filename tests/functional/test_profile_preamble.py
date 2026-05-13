@@ -35,7 +35,7 @@ def _make_service(
         timezone=ZoneInfo("UTC"),
         max_history_messages=5,
         history_max_age_hours=24,
-        tools_config=ToolsConfig(enable_local_tools=[], confirm_tools=[]),
+        tools_config=ToolsConfig(),
         delegation_security_level=DelegationSecurityLevel.BLOCKED,
         id=profile_id,
         description=description,

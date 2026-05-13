@@ -52,8 +52,7 @@ graph TB
         subgraph "Tool Providers"
             LOCAL["LocalToolsProvider<br/>• Python functions<br/>• Dependency injection"]
             MCP["MCPToolsProvider<br/>• External servers<br/>• Protocol integration"]
-            FILTERED["FilteredToolsProvider<br/>• Profile restrictions"]
-            CONFIRM["ConfirmingToolsProvider<br/>• User confirmation"]
+            POLICY["PolicyEnforcingToolsProvider<br/>• Profile restrictions<br/>• User confirmation"]
         end
         
         subgraph "Tool Categories"
@@ -548,33 +547,33 @@ sequenceDiagram
 sequenceDiagram
     participant LLM
     participant Processing as ProcessingService
-    participant Confirming as ConfirmingToolsProvider
+    participant Policy as PolicyEnforcingToolsProvider
     participant Manager as ConfirmationManager
     participant User
     participant Tool as Actual Tool
 
     LLM->>Processing: Tool call request
-    Processing->>Confirming: Execute tool
+    Processing->>Policy: Execute tool
     
     alt Tool needs confirmation
-        Confirming->>Manager: Request confirmation
+        Policy->>Manager: Request confirmation
         Manager->>User: Send confirmation request
         Note over Manager: SSE or Telegram message
         
         User->>Manager: Approve/Reject
-        Manager-->>Confirming: User decision
+        Manager-->>Policy: User decision
         
         alt Approved
-            Confirming->>Tool: Execute tool
-            Tool-->>Confirming: Result
-            Confirming-->>Processing: Tool result
+            Policy->>Tool: Execute tool
+            Tool-->>Policy: Result
+            Policy-->>Processing: Tool result
         else Rejected
-            Confirming-->>Processing: Rejection message
+            Policy-->>Processing: Rejection message
         end
     else No confirmation needed
-        Confirming->>Tool: Execute directly
-        Tool-->>Confirming: Result
-        Confirming-->>Processing: Tool result
+        Policy->>Tool: Execute directly
+        Tool-->>Policy: Result
+        Policy-->>Processing: Tool result
     end
     
     Processing->>LLM: Tool result

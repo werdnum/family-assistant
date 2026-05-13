@@ -53,7 +53,7 @@ DEFAULT_CONFIG = {
             "llm_model": "fake_model",
             "delegation_security_level": "confirm",
         },
-        "tools_config": {"enable_local_tools": [], "enable_mcp_server_ids": []},
+        "tools_config": {},
     },
     "service_profiles": [
         {
@@ -108,7 +108,7 @@ async def test_reply_with_different_profile_includes_history(
         timezone=ZoneInfo("UTC"),
         max_history_messages=10,
         history_max_age_hours=24,
-        tools_config=ToolsConfig(enable_local_tools=[], enable_mcp_server_ids=[]),
+        tools_config=ToolsConfig(),
         delegation_security_level=DelegationSecurityLevel.CONFIRM,
         id="profile_a",
     )
@@ -126,7 +126,7 @@ async def test_reply_with_different_profile_includes_history(
         timezone=ZoneInfo("UTC"),
         max_history_messages=10,
         history_max_age_hours=24,
-        tools_config=ToolsConfig(enable_local_tools=[], enable_mcp_server_ids=[]),
+        tools_config=ToolsConfig(),
         delegation_security_level=DelegationSecurityLevel.CONFIRM,
         id="profile_b",
     )

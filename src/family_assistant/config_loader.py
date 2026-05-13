@@ -119,12 +119,6 @@ ENV_VAR_MAPPINGS: list[EnvVarMapping] = [
     # User access control (list types)
     EnvVarMapping("ALLOWED_USER_IDS", "allowed_user_ids", list),
     EnvVarMapping("DEVELOPER_CHAT_ID", "developer_chat_id", int),
-    # Tools configuration
-    EnvVarMapping(
-        "TOOLS_REQUIRING_CONFIRMATION",
-        "default_profile_settings.tools_config.confirm_tools",
-        list,
-    ),
     # Chat ID to name map (dict type)
     EnvVarMapping(
         "CHAT_ID_TO_NAME_MAP",
@@ -350,22 +344,11 @@ def _apply_default_profile_tools_policy_layers(
     override in a separate internal field so runtime evaluation can apply layer
     precedence without changing the documented 0..99 priority range.
 
-    Also extracts operator-added MCP server IDs so they can be unioned into
-    profiles that define their own tools_config.
     """
 
     operator_default_settings = operator_config_data.get("default_profile_settings")
     if not isinstance(operator_default_settings, dict):
         return
-
-    # Extract operator MCP server IDs
-    operator_tools_config = operator_default_settings.get("tools_config")
-    if isinstance(operator_tools_config, dict):
-        operator_mcp_ids = operator_tools_config.get("enable_mcp_server_ids", [])
-        if operator_mcp_ids:
-            config_data["default_profile_settings"]["operator_mcp_server_ids"] = list(
-                operator_mcp_ids
-            )
 
     operator_policy_data = operator_default_settings.get("tools_policy")
     if not isinstance(operator_policy_data, dict):
@@ -721,6 +704,7 @@ def resolve_service_profile(
             "max_iterations",
             "context_pruning_min_turns",
             "delegation_security_level",
+            "allowed_delegation_sources",
             "retry_config",
             "camera_config",
         ]
@@ -752,36 +736,9 @@ def resolve_service_profile(
                         SYSTEM_PROMPT_DOCS_KEY,
                     )
 
-    # Replace tools_config entirely if defined, but union operator MCP server IDs
+    # Replace tools_config entirely if defined.
     if "tools_config" in profile_def and isinstance(profile_def["tools_config"], dict):
         resolved["tools_config"] = copy.deepcopy(profile_def["tools_config"])
-        # Operator-enabled MCP servers are always additive — the operator is
-        # declaring "these servers exist in this deployment" which is true
-        # regardless of what the profile ships with.
-        operator_mcp_ids = default_settings.get("operator_mcp_server_ids") or []
-        if operator_mcp_ids:
-            profile_mcp_ids = (
-                resolved["tools_config"].get(
-                    "enable_mcp_server_ids",
-                )
-                or []
-            )
-            # Deduplicate by string ID, preserving order. Entries can be
-            # plain strings, MCPServerLoadingEntry dicts (from YAML), or
-            # MCPServerLoadingEntry model instances (from validated config).
-            seen: set[str] = set()
-            merged: list[Any] = []
-            for entry in profile_mcp_ids + operator_mcp_ids:
-                if isinstance(entry, str):
-                    entry_id = entry
-                elif isinstance(entry, dict):
-                    entry_id = entry.get("id", "")
-                else:
-                    entry_id = getattr(entry, "id", "")
-                if entry_id and entry_id not in seen:
-                    seen.add(entry_id)
-                    merged.append(entry)
-            resolved["tools_config"]["enable_mcp_server_ids"] = merged
 
     # Replace tools_policy entirely if defined (operator layer is preserved
     # separately so it still applies via PolicyEngine.from_layers)
