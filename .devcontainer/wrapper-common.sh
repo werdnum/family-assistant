@@ -6,7 +6,7 @@
 
 # Auto-pull latest changes
 wrapper_common_auto_pull() {
-    [ -d ".git" ] || return 0
+    git rev-parse --is-inside-work-tree >/dev/null 2>&1 || return 0
 
     local orig_head
     orig_head=$(git rev-parse HEAD 2>/dev/null || echo "")
@@ -98,3 +98,4 @@ wrapper_common_setup() {
     wrapper_common_install_frontend
     wrapper_common_export_env
 }
+
