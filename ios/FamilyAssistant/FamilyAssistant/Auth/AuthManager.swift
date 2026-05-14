@@ -163,31 +163,38 @@ final class AuthManager {
 
     @MainActor
     func bootstrapSession() async {
-        guard KeychainHelper.readString(key: Keys.apiToken) != nil else {
-            isAuthenticated = false
-            return
-        }
-
-        guard await refreshIfNeeded() else {
-            await clearLocalAuthState()
-            return
-        }
-
         guard let token = KeychainHelper.readString(key: Keys.apiToken) else {
-            await clearLocalAuthState()
+            clearLocalAuthState()
             return
         }
 
         do {
-            try await establishSession(apiToken: token)
+            try await refreshIfNeeded()
+        } catch AuthError.authRejected, AuthError.noCredentials {
+            clearLocalAuthState()
+            return
         } catch {
-            logger.error("Session bootstrap failed: \(error.localizedDescription, privacy: .public)")
-            await clearLocalAuthState()
+            logger.warning(
+                "Token refresh failed transiently; keeping local auth state: \(error.localizedDescription, privacy: .public)"
+            )
+            return
+        }
+
+        let activeToken = KeychainHelper.readString(key: Keys.apiToken) ?? token
+
+        do {
+            try await establishSession(apiToken: activeToken)
+        } catch AuthError.authRejected {
+            clearLocalAuthState()
+        } catch {
+            logger.warning(
+                "Session bridge failed transiently; keeping local auth state: \(error.localizedDescription, privacy: .public)"
+            )
         }
     }
 
     @MainActor
-    private func clearLocalAuthState() async {
+    private func clearLocalAuthState() {
         KeychainHelper.delete(key: Keys.apiToken)
         KeychainHelper.delete(key: Keys.refreshToken)
         UserDefaults.standard.removeObject(forKey: Keys.tokenExpiry)
@@ -197,40 +204,53 @@ final class AuthManager {
     // MARK: - Token Refresh
 
     @MainActor
-    func refreshIfNeeded() async -> Bool {
+    func refreshIfNeeded() async throws {
         guard let expiryString = UserDefaults.standard.string(forKey: Keys.tokenExpiry),
               let expiry = ISO8601DateFormatter().date(from: expiryString)
         else {
-            return false
+            throw AuthError.noCredentials
         }
 
-        // Refresh if token expires within the next hour
         if expiry.timeIntervalSinceNow > 3600 {
-            return true
+            return
         }
 
         guard let refreshToken = KeychainHelper.readString(key: Keys.refreshToken),
               let baseURL = validatedServerURL()
         else {
-            return false
+            throw AuthError.noCredentials
         }
 
         let url = baseURL.appendingPathComponent("api/auth/refresh")
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        request.httpBody = try? JSONEncoder().encode(["refresh_token": refreshToken])
+        request.httpBody = try JSONEncoder().encode(["refresh_token": refreshToken])
 
+        let data: Data
+        let response: URLResponse
         do {
-            let (data, response) = try await URLSession.shared.data(for: request)
-            guard let httpResponse = response as? HTTPURLResponse, httpResponse.statusCode == 200 else {
-                return false
-            }
-            let tokenResponse = try JSONDecoder().decode(TokenResponse.self, from: data)
-            saveTokens(tokenResponse)
-            return true
+            (data, response) = try await URLSession.shared.data(for: request)
         } catch {
-            return false
+            throw AuthError.transient(underlying: error)
+        }
+
+        guard let httpResponse = response as? HTTPURLResponse else {
+            throw AuthError.transient(underlying: nil)
+        }
+
+        switch httpResponse.statusCode {
+        case 200:
+            do {
+                let tokenResponse = try JSONDecoder().decode(TokenResponse.self, from: data)
+                saveTokens(tokenResponse)
+            } catch {
+                throw AuthError.transient(underlying: error)
+            }
+        case 401, 403:
+            throw AuthError.authRejected
+        default:
+            throw AuthError.transient(underlying: nil)
         }
     }
 
@@ -246,12 +266,26 @@ final class AuthManager {
         request.httpMethod = "POST"
         request.setValue("Bearer \(apiToken)", forHTTPHeaderField: "Authorization")
 
-        let (_, response) = try await URLSession.shared.data(for: request)
-        guard let httpResponse = response as? HTTPURLResponse, httpResponse.statusCode == 200 else {
-            throw AuthError.sessionFailed
+        let response: URLResponse
+        do {
+            (_, response) = try await URLSession.shared.data(for: request)
+        } catch {
+            throw AuthError.transient(underlying: error)
         }
 
-        // Bridge cookies from URLSession to WKWebView
+        guard let httpResponse = response as? HTTPURLResponse else {
+            throw AuthError.transient(underlying: nil)
+        }
+
+        switch httpResponse.statusCode {
+        case 200:
+            break
+        case 401, 403:
+            throw AuthError.authRejected
+        default:
+            throw AuthError.transient(underlying: nil)
+        }
+
         if let headerFields = httpResponse.allHeaderFields as? [String: String],
            let responseURL = httpResponse.url
         {
@@ -338,13 +372,19 @@ struct TokenResponse: Decodable {
 enum AuthError: LocalizedError {
     case invalidServerURL
     case exchangeFailed
-    case sessionFailed
+    case authRejected
+    case noCredentials
+    case transient(underlying: Error?)
 
     var errorDescription: String? {
         switch self {
         case .invalidServerURL: "Invalid server URL"
         case .exchangeFailed: "Failed to exchange authorization code"
-        case .sessionFailed: "Failed to establish session"
+        case .authRejected: "Server rejected stored credentials"
+        case .noCredentials: "No stored credentials"
+        case .transient(let underlying):
+            if let underlying { "Temporary failure: \(underlying.localizedDescription)" }
+            else { "Temporary network or server error" }
         }
     }
 }
