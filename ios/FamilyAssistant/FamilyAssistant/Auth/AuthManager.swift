@@ -1,6 +1,7 @@
 import AuthenticationServices
 import CryptoKit
 import Foundation
+import os
 import WebKit
 
 @Observable
@@ -11,6 +12,9 @@ final class AuthManager {
     var errorMessage: String?
 
     private var codeVerifier: String?
+    private var authSession: ASWebAuthenticationSession?
+    private var contextProvider: PresentationContextProvider?
+    private let logger = Logger(subsystem: "com.familyassistant.app", category: "auth")
 
     private enum Keys {
         static let serverURL = "fa_server_url"
@@ -69,7 +73,12 @@ final class AuthManager {
         }
 
         let callbackScheme = "familyassistant"
-        let session = ASWebAuthenticationSession(url: authURL, callbackURLScheme: callbackScheme) { [weak self] callbackURL, error in
+
+        // Cancel any existing session before creating a new one
+        authSession?.cancel()
+        authSession = nil
+
+        authSession = ASWebAuthenticationSession(url: authURL, callbackURLScheme: callbackScheme) { [weak self] callbackURL, error in
             Task { @MainActor in
                 guard let self else { return }
                 if let error {
@@ -87,12 +96,16 @@ final class AuthManager {
             }
         }
 
-        // Present from the key window's root scene
-        if let windowScene = UIApplication.shared.connectedScenes.first as? UIWindowScene {
-            session.presentationContextProvider = PresentationContextProvider(anchor: windowScene.windows.first!)
+        authSession?.prefersEphemeralWebBrowserSession = false
+        // Must retain the context provider — ASWebAuthenticationSession holds a weak reference
+        contextProvider = PresentationContextProvider()
+        authSession?.presentationContextProvider = contextProvider
+
+        if authSession?.start() != true {
+            logger.error("ASWebAuthenticationSession failed to start")
+            errorMessage = "Failed to start authentication"
+            isLoading = false
         }
-        session.prefersEphemeralWebBrowserSession = false
-        session.start()
     }
 
     // MARK: - Callback Handling
@@ -304,14 +317,10 @@ enum AuthError: LocalizedError {
 // MARK: - ASWebAuthenticationSession Presentation
 
 private final class PresentationContextProvider: NSObject, ASWebAuthenticationPresentationContextProviding {
-    let anchor: UIWindow
-
-    init(anchor: UIWindow) {
-        self.anchor = anchor
-    }
-
     func presentationAnchor(for session: ASWebAuthenticationSession) -> ASPresentationAnchor {
-        anchor
+        let windowScenes = UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }
+        let allWindows = windowScenes.flatMap { $0.windows }
+        return allWindows.first { $0.isKeyWindow } ?? allWindows.first ?? UIWindow()
     }
 }
 

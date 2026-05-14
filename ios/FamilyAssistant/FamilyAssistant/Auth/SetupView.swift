@@ -10,9 +10,11 @@ struct SetupView: View {
             VStack(spacing: 24) {
                 Spacer()
 
-                Image(systemName: "house.fill")
-                    .font(.system(size: 64))
-                    .foregroundStyle(.tint)
+                Image("Logo")
+                    .resizable()
+                    .scaledToFit()
+                    .frame(width: 100, height: 100)
+                    .cornerRadius(20)
 
                 Text("Family Assistant")
                     .font(.largeTitle.bold())
