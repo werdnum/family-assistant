@@ -212,23 +212,10 @@ async def app_auth_oidc_callback(request: Request) -> HTMLResponse:
         "created_at": time.monotonic(),
     }
 
-    # Build the Universal Link redirect URL
-    # The iOS app claims /.well-known/app-auth-callback via AASA
-    scheme = (
-        "https"
-        if (
-            request.headers.get("x-forwarded-proto") == "https"
-            or request.url.scheme == "https"
-        )
-        else request.url.scheme
-    )
-    redirect_url = str(
-        request.url.replace(
-            scheme=scheme,
-            path="/.well-known/app-auth-callback",
-            query=f"code={auth_code}",
-        )
-    )
+    # TEMPORARY: Use custom URL scheme for local iOS testing instead of
+    # the Universal Link (/.well-known/app-auth-callback) which requires a
+    # configured AASA file and HTTPS-served app.
+    redirect_url = f"familyassistant://callback?code={auth_code}"
 
     # Render a simple page that redirects to the Universal Link
     html = f"""<!DOCTYPE html>
