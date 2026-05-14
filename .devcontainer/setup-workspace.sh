@@ -64,35 +64,48 @@ if mountpoint -q /home/claude 2>/dev/null || [ -n "$(findmnt -n -o SOURCE --targ
     HOME_IS_MOUNTED=true
 fi
 
-# Install npm tools if they don't exist (e.g., when home is mounted)
-if [ "$HOME_IS_MOUNTED" = "true" ] && ! which claude >/dev/null 2>&1; then
-    echo "Installing npm tools in mounted home directory..."
-    
-    # Ensure npm global directory exists
-    mkdir -p /home/claude/.npm-global
+# Install npm tools individually if missing (e.g., when home is mounted from an older image).
+# We check each binary in /home/claude/.npm-global/bin directly: relying on `which claude`
+# would falsely succeed because the wrapper symlink in /usr/local/bin always exists.
+if [ "$HOME_IS_MOUNTED" = "true" ]; then
+    NPM_BIN_DIR=/home/claude/.npm-global/bin
+    mkdir -p "$NPM_BIN_DIR"
     export NPM_CONFIG_PREFIX=/home/claude/.npm-global
-    
-    # Install tools
-    npm install -g @anthropic-ai/claude-code
-    npm install -g @google/gemini-cli@nightly
-    npm install -g playwright
 
-    # Install Playwright browsers
-    if [ -n "$PLAYWRIGHT_BROWSERS_PATH" ]; then
-        npx playwright install chromium
+    installed_any=false
+    install_npm_tool() {
+        local binary="$1"
+        local package="$2"
+        if [ ! -x "$NPM_BIN_DIR/$binary" ]; then
+            echo "Installing $package..."
+            npm install -g "$package"
+            installed_any=true
+        fi
+    }
+
+    install_npm_tool claude "@anthropic-ai/claude-code"
+    install_npm_tool gemini "@google/gemini-cli@nightly"
+    install_npm_tool codex "@openai/codex"
+    install_npm_tool playwright playwright
+
+    if [ "$installed_any" = "true" ]; then
+        # Install Playwright browsers
+        if [ -n "$PLAYWRIGHT_BROWSERS_PATH" ]; then
+            npx playwright install chromium
+        fi
+
+        # Install LLM tools using uv (idempotent: uv tool install is a no-op if already present)
+        export PATH="/home/claude/.local/bin:$PATH"
+        uv tool install --with llm-gemini --with llm-openrouter --with llm-fragments-github llm
+
+        # Ensure proper ownership of installed tools (avoid recursive chown on large dirs)
+        # Only chown the bin directory and key files, not the entire node_modules
+        chown claude:claude /home/claude/.npm-global
+        chown -R claude:claude /home/claude/.npm-global/bin
+        [ -d "/home/claude/.local" ] && chown -R claude:claude /home/claude/.local
+
+        echo "npm tools installation complete"
     fi
-    
-    # Install LLM tools using uv
-    export PATH="/home/claude/.local/bin:$PATH"
-    uv tool install --with llm-gemini --with llm-openrouter --with llm-fragments-github llm
-    
-    # Ensure proper ownership of installed tools (avoid recursive chown on large dirs)
-    # Only chown the bin directory and key files, not the entire node_modules
-    chown claude:claude /home/claude/.npm-global
-    chown -R claude:claude /home/claude/.npm-global/bin
-    [ -d "/home/claude/.local" ] && chown -R claude:claude /home/claude/.local
-    
-    echo "npm tools installation complete"
 fi
 
 # If running as root, ensure proper ownership later
