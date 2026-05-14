@@ -159,6 +159,41 @@ final class AuthManager {
         return try JSONDecoder().decode(TokenResponse.self, from: data)
     }
 
+    // MARK: - Session Bootstrap
+
+    @MainActor
+    func bootstrapSession() async {
+        guard KeychainHelper.readString(key: Keys.apiToken) != nil else {
+            isAuthenticated = false
+            return
+        }
+
+        guard await refreshIfNeeded() else {
+            await clearLocalAuthState()
+            return
+        }
+
+        guard let token = KeychainHelper.readString(key: Keys.apiToken) else {
+            await clearLocalAuthState()
+            return
+        }
+
+        do {
+            try await establishSession(apiToken: token)
+        } catch {
+            logger.error("Session bootstrap failed: \(error.localizedDescription, privacy: .public)")
+            await clearLocalAuthState()
+        }
+    }
+
+    @MainActor
+    private func clearLocalAuthState() async {
+        KeychainHelper.delete(key: Keys.apiToken)
+        KeychainHelper.delete(key: Keys.refreshToken)
+        UserDefaults.standard.removeObject(forKey: Keys.tokenExpiry)
+        isAuthenticated = false
+    }
+
     // MARK: - Token Refresh
 
     @MainActor

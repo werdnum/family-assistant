@@ -18,12 +18,7 @@ struct ContentView: View {
                 }
             }
             .task {
-                // Refresh token and re-establish session on each appearance
-                if await authManager.refreshIfNeeded() {
-                    if let token = KeychainHelper.readString(key: "fa_api_token") {
-                        try? await authManager.establishSession(apiToken: token)
-                    }
-                }
+                await authManager.bootstrapSession()
             }
         } else {
             SetupView()
