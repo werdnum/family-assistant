@@ -67,11 +67,15 @@ webhook will:
    Each call returns an `attachment_id`; the populated `AttachmentData` list is written back to
    `received_emails.attachment_info`.
 2. **Insert/upsert the email's document row** via `db_context.vector.add_document` using the
-   existing `EmailDocument.from_row(email_row)`. Persist the resulting `document_id` on a new
-   `received_emails.document_id` column (or reuse an existing column if one is already appropriate —
-   to be confirmed during implementation).
-3. **Enqueue `email_intake_action`.** The action task now reads a row that already carries
-   `document_id` and per-attachment `attachment_id`s.
+   existing `EmailDocument.from_row(email_row)`. The returned `document_id` is passed into the
+   `email_intake_action` task payload directly — no new column on `received_emails` is needed.
+   `EmailDocument` always sets `source_type='email'` and `source_id=message_id_header`
+   (`src/family_assistant/indexing/email_indexer.py:67-74`), and `documents.source_id` is
+   `unique=True` (`src/family_assistant/storage/vector.py:119`), so the row is also recoverable by
+   lookup if a downstream reader ever needs to re-derive the id.
+3. **Enqueue `email_intake_action`** with `email_db_id` and the new `document_id` in the payload.
+   The action task reads a row that already carries per-attachment `attachment_id`s and is told the
+   email document id directly.
 
 The existing `index_email` task still runs in parallel for the heavy lifting (embedding, PDF
 extraction, per-attachment document creation). Its current "if attachment_id is already set, verify
@@ -157,14 +161,18 @@ creating the email `document_id` adds three concrete wins:
   `_get_text_content_fallback` and to the email body, and email rows already follow this "row first,
   embeddings later" sequence implicitly via the index task — we're just making the row-first step
   explicit and synchronous.
-- **Schema change.** Adding `received_emails.document_id` needs an Alembic migration. If the column
-  already exists or can be reconstructed cheaply by joining on `source_id`, we skip the migration.
-  The implementation pass will confirm this before adding a column.
+- **No schema change needed.** Verified before implementation: `documents.source_id` is
+  `unique=True` and `EmailDocument.source_id` is the email's `message_id_header`, so the document_id
+  is fully recoverable from existing data. We pass it through the `email_intake_action` task payload
+  to avoid a re-lookup; no Alembic migration is required.
 
 ## Test plan
 
 - **Webhook integration:** `POST /webhook/mail` returns 200; the inserted `received_emails` row has
-  `document_id` populated and every entry in `attachment_info` has a non-null `attachment_id`.
+  every entry in `attachment_info` populated with a non-null `attachment_id`, and a corresponding
+  `documents` row exists with `source_type='email'` and `source_id` matching the email's
+  `message_id_header`. The enqueued `email_intake_action` task payload contains the resolved
+  `document_id`.
 - **Prompt content:** `tests/functional/email_intake/test_email_actions.py` is extended to assert
   that `attachment_id` values and the `document_id` appear in the rendered action prompt.
 - **Tool wiring:** the `email_intake` profile loads `read_attachment`, `read_text_attachment`, and
