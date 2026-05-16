@@ -18,8 +18,12 @@ from family_assistant.llm.messages import text_content
 from family_assistant.services.confirmation_service import ConfirmationService
 from family_assistant.services.user_identity import UserIdentityResolver
 from family_assistant.storage.context import get_db_context
-from family_assistant.storage.email import received_emails_table
+from family_assistant.storage.email import parse_attachment_infos, received_emails_table
 from family_assistant.tools.confirmation import TOOL_CONFIRMATION_RENDERERS
+from family_assistant.tools.documents import (
+    EmailAttachmentSummary,
+    format_email_attachments_text,
+)
 from family_assistant.tools.types import ConfirmationOutcome, ToolExecutionContext
 
 if TYPE_CHECKING:
@@ -68,9 +72,39 @@ class EmailIntakeActionPayload(TypedDict, total=False):
     """Payload for processing an accepted inbound email as an assistant turn."""
 
     email_db_id: int
+    document_id: int | None
 
 
-def build_email_action_prompt(email_row: dict[str, object]) -> str:
+def _build_attachment_summary(
+    attachments: object,
+) -> list[EmailAttachmentSummary]:
+    """Return ``EmailAttachmentSummary`` entries from a raw ``attachment_info`` value.
+
+    The webhook pre-registers attachments before enqueueing the action task,
+    so most live emails arrive with ``attachment_id`` populated. Legacy rows
+    (or rows where webhook-side registration failed) may still be missing
+    ids; those entries are surfaced with ``attachment_id=None`` so the
+    formatter can render the "needs reindex" hint.
+    """
+    if not isinstance(attachments, list) or not attachments:
+        return []
+    parsed = parse_attachment_infos(attachments, context="email_action_prompt")
+    return [
+        {
+            "attachment_id": att.attachment_id,
+            "filename": att.filename,
+            "mime_type": att.content_type,
+            "size": att.size,
+        }
+        for att in parsed
+    ]
+
+
+def build_email_action_prompt(
+    email_row: dict[str, object],
+    *,
+    document_id: int | None = None,
+) -> str:
     """Build the user message for an email-originated assistant turn."""
     body = (
         str(email_row.get("stripped_text") or "")
@@ -81,16 +115,30 @@ def build_email_action_prompt(email_row: dict[str, object]) -> str:
         body = body[:MAX_EMAIL_EVIDENCE_CHARS] + "\n\n[Email content truncated.]"
     body = _neutralize_untrusted_evidence_boundaries(body)
 
-    attachments = email_row.get("attachment_info")
+    attachment_summaries = _build_attachment_summary(email_row.get("attachment_info"))
     attachment_text = ""
-    if isinstance(attachments, list) and attachments:
-        attachment_text = "\nAttachments:\n" + "\n".join(
-            (
-                f"- {_untrusted_email_text(item.get('filename', 'attachment'))} "
-                f"({_untrusted_email_text(item.get('content_type', 'unknown'))})"
-            )
-            for item in attachments
-            if isinstance(item, dict)
+    if attachment_summaries:
+        # Neutralise sender-controlled filenames before piping them through
+        # the shared formatter so they cannot smuggle prompt-boundary tags.
+        neutralised: list[EmailAttachmentSummary] = [
+            {
+                "attachment_id": entry["attachment_id"],
+                "filename": _untrusted_email_text(entry["filename"]),
+                "mime_type": _untrusted_email_text(entry["mime_type"]),
+                "size": entry["size"],
+            }
+            for entry in attachment_summaries
+        ]
+        attachment_text = "\nAttachments:\n" + format_email_attachments_text(
+            neutralised
+        )
+
+    document_hint = ""
+    if document_id is not None:
+        document_hint = (
+            f"- Email document id: {document_id} (call "
+            "`get_full_document_content(document_id)` to read the email body "
+            "and the canonical attachment summary in one tool call).\n"
         )
 
     return (
@@ -105,6 +153,7 @@ def build_email_action_prompt(email_row: dict[str, object]) -> str:
         f"- Authenticated user id: {email_row.get('target_user_id')}\n"
         f"- SMTP sender: {email_row.get('sender_address')}\n"
         f"- Mailgun recipient: {email_row.get('recipient_address')}\n"
+        f"{document_hint}"
         "\n\n"
         "Untrusted email evidence begins:\n"
         f"{UNTRUSTED_EMAIL_EVIDENCE_START_TAG}\n"
@@ -319,6 +368,8 @@ async def handle_email_intake_action(
             f"Cannot process email action for email {email_db_id} without target_user_id"
         )
 
+    document_id = payload.get("document_id")
+
     processing_service = _resolve_email_processing_service(exec_context)
     conversation_id = email_conversation_id(email_db_id)
     email_interface: ChatInterface | None = None
@@ -350,7 +401,9 @@ async def handle_email_intake_action(
         db_context=exec_context.db_context,
         interface_type="email",
         conversation_id=conversation_id,
-        trigger_content_parts=[text_content(build_email_action_prompt(email_row))],
+        trigger_content_parts=[
+            text_content(build_email_action_prompt(email_row, document_id=document_id))
+        ],
         trigger_interface_message_id=str(email_row["message_id_header"]),
         user_name=target_user_id,
         user_id=target_user_id,

@@ -17,9 +17,13 @@ from dateutil.parser import parse as parse_datetime
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from markdownify import markdownify
 from pydantic import BaseModel, ValidationError
+from sqlalchemy import update
 from starlette.datastructures import UploadFile as StarletteUploadFile
 
 from family_assistant.email_intake.actions import EMAIL_INTAKE_ACTION_TASK_TYPE
+from family_assistant.email_intake.attachment_registration import (
+    register_or_reuse_email_attachment,
+)
 from family_assistant.email_intake.security import (
     EmailIntakePayloadTooLargeError,
     EmailIntakeSecurityError,
@@ -30,12 +34,18 @@ from family_assistant.email_intake.security import (
     verify_mailgun_signature,
     verify_sender_authorization,
 )
+from family_assistant.indexing.email_indexer import EmailDocument
 from family_assistant.services.user_identity import (
     UserIdentityResolutionError,
     UserIdentityResolver,
 )
 from family_assistant.storage.context import DatabaseContext
-from family_assistant.storage.email import AttachmentData, ParsedEmailData
+from family_assistant.storage.email import (
+    AttachmentData,
+    ParsedEmailData,
+    received_emails_table,
+)
+from family_assistant.storage.vector import add_document
 from family_assistant.web.dependencies import get_db
 from family_assistant.web.models import WebhookEventPayload
 
@@ -463,6 +473,77 @@ async def handle_mail_webhook(
 
         # Pass the Pydantic model instance to the storage function
         email_db_id = await db_context.email.store_incoming(parsed_email_payload)
+
+        document_id: int | None = None
+        if email_db_id is not None:
+            attachment_registry = getattr(
+                request.app.state, "attachment_registry", None
+            )
+            # Eagerly register each attachment with the AttachmentRegistry so
+            # the email_intake assistant turn — enqueued just below — sees a
+            # row whose ``attachment_info`` already carries ``attachment_id``
+            # values. Without this, the action task races the parallel
+            # ``index_email`` task and typically renders the prompt before
+            # any id has been written, leaving the model with no handle on
+            # attachment content. See
+            # ``docs/design/email-attachment-access.md``.
+            if processed_attachments and attachment_registry is not None:
+                registration_dirty = False
+                for attachment in processed_attachments:
+                    if attachment.attachment_id is not None:
+                        continue
+                    try:
+                        registered_id = await register_or_reuse_email_attachment(
+                            db_context=db_context,
+                            attachment_registry=attachment_registry,
+                            email_db_id=email_db_id,
+                            message_id_header=parsed_email_payload.message_id_header,
+                            attachment=attachment,
+                        )
+                    except Exception:
+                        logger.exception(
+                            "Failed to pre-register email attachment %s for "
+                            "email %s; index_email will retry.",
+                            attachment.filename,
+                            email_db_id,
+                        )
+                        continue
+                    if registered_id is not None:
+                        attachment.attachment_id = registered_id
+                        registration_dirty = True
+                if registration_dirty:
+                    await db_context.execute_with_retry(
+                        update(received_emails_table)
+                        .where(received_emails_table.c.id == email_db_id)
+                        .values(
+                            attachment_info=[
+                                att.model_dump() for att in processed_attachments
+                            ]
+                        )
+                    )
+
+            # Upsert the email's ``documents`` row so the action prompt can
+            # surface ``document_id`` and the model can call
+            # ``get_full_document_content`` to read body + attachment summary
+            # in one tool call. ``add_document`` is a row upsert keyed on
+            # ``source_id`` (the Message-Id header) and does no embedding
+            # work; the parallel ``index_email`` task still runs the
+            # chunking/embedding/extraction pipeline against the same row.
+            try:
+                email_doc = EmailDocument.from_row(
+                    parsed_email_payload.model_dump(by_alias=False)
+                )
+                document_id = await add_document(
+                    db_context=db_context,
+                    doc=email_doc,
+                )
+            except Exception:
+                logger.exception(
+                    "Failed to upsert email document row for email %s; "
+                    "index_email will retry.",
+                    email_db_id,
+                )
+
         if (
             email_db_id is not None
             and email_intake_config.enable_actions
@@ -476,6 +557,7 @@ async def handle_mail_webhook(
                     "interface_type": "email",
                     "conversation_id": f"email:{email_db_id}",
                     "user_name": target_user_id,
+                    "document_id": document_id,
                 },
                 original_task_id=f"email_intake_action_{email_db_id}",
                 max_retries_override=0,

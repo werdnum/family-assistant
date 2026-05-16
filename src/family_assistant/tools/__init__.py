@@ -10,6 +10,7 @@ from family_assistant import storage
 from family_assistant.tools.attachments import (
     ATTACHMENT_TOOLS_DEFINITION,
     attach_to_response_tool,
+    read_attachment_tool,
     read_text_attachment_tool,
 )
 from family_assistant.tools.automations import (
@@ -536,6 +537,7 @@ _LOCAL_TOOL_IMPLEMENTATIONS: dict[str, ToolImplementation] = {
     "test_script_with_simulated_tools": test_script_with_simulated_tools_tool,
     "attach_to_response": attach_to_response_tool,
     "read_text_attachment": read_text_attachment_tool,
+    "read_attachment": read_attachment_tool,
     # Mock image processing tools (for testing)
     "annotate_image": annotate_image_tool,
     "mock_camera_snapshot": mock_camera_snapshot_tool,
@@ -932,6 +934,13 @@ LOCAL_TOOL_METADATA_BY_NAME: dict[str, LocalToolMetadata] = {
         ToolTag.OUTPUT_TRUSTED,
     ),
     "read_text_attachment": _metadata(
+        ToolTag.READ_ONLY,
+        ToolTag.SENSITIVE_DATA,
+        ToolTag.DOCUMENTS,
+        ToolTag.MEDIA,
+        ToolTag.OUTPUT_UNTRUSTED,
+    ),
+    "read_attachment": _metadata(
         ToolTag.READ_ONLY,
         ToolTag.SENSITIVE_DATA,
         ToolTag.DOCUMENTS,

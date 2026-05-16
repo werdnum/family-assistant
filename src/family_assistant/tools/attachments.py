@@ -6,13 +6,41 @@ import json
 import logging
 from typing import TYPE_CHECKING
 
-from family_assistant.tools.types import ToolResult
+from family_assistant.tools.types import ToolAttachment, ToolResult
 
 if TYPE_CHECKING:
     from family_assistant.scripting.apis.attachments import ScriptAttachment
     from family_assistant.tools.types import ToolDefinition, ToolExecutionContext
 
 logger = logging.getLogger(__name__)
+
+
+# MIME type prefixes/exact matches that we render inline as text rather than
+# returning as a binary multimodal attachment. ``application/json`` and
+# ``application/xml`` are explicitly included because their top-level type is
+# ``application/`` even though the content is text.
+_TEXT_MIME_PREFIXES = ("text/",)
+_TEXT_MIME_EXACT = frozenset({
+    "application/json",
+    "application/xml",
+    "application/yaml",
+    "application/x-yaml",
+    "application/javascript",
+    "application/x-www-form-urlencoded",
+})
+
+
+def _is_text_mime(mime_type: str) -> bool:
+    mime_type = (mime_type or "").lower()
+    if mime_type in _TEXT_MIME_EXACT:
+        return True
+    return any(mime_type.startswith(prefix) for prefix in _TEXT_MIME_PREFIXES)
+
+
+# Maximum bytes to inline as text when ``read_attachment`` decodes a text
+# attachment. Larger text payloads should go through ``read_text_attachment``
+# which supports pagination.
+_READ_ATTACHMENT_TEXT_INLINE_LIMIT = 16 * 1024
 
 
 # Tool Definitions
@@ -77,10 +105,133 @@ ATTACHMENT_TOOLS_DEFINITION: list[ToolDefinition] = [
             },
         },
     },
+    {
+        "type": "function",
+        "function": {
+            "name": "read_attachment",
+            "description": (
+                "Read the full content of an attachment by ID and surface it for the LLM. "
+                "For text attachments (text/*, application/json, etc.) the decoded content "
+                "is returned inline. For binary attachments (images, PDFs, audio) the bytes "
+                "are returned as a multimodal attachment so the next turn can perceive them "
+                "directly. Use `read_text_attachment` instead when you need pagination or "
+                "filtering on a large text file."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "attachment_id": {
+                        "type": "attachment",
+                        "description": "The UUID of the attachment to read.",
+                    },
+                },
+                "required": ["attachment_id"],
+            },
+        },
+    },
 ]
 
 
 # Tool Implementations
+async def read_attachment_tool(
+    exec_context: ToolExecutionContext,
+    attachment_id: ScriptAttachment | str,
+) -> ToolResult:
+    """Fetch an attachment by id and surface its content to the LLM.
+
+    Text attachments are decoded and returned inline (capped at
+    ``_READ_ATTACHMENT_TEXT_INLINE_LIMIT`` bytes — larger payloads should
+    use ``read_text_attachment`` for pagination). Binary attachments are
+    returned as a multimodal ``ToolAttachment`` so the next turn can
+    perceive the bytes directly.
+    """
+    if not isinstance(attachment_id, str):
+        attachment_id_str = attachment_id.get_id()
+    else:
+        attachment_id_str = attachment_id
+
+    logger.info(f"Reading attachment {attachment_id_str}")
+
+    db_context = exec_context.db_context
+    registry = exec_context.attachment_registry
+    if registry is None:
+        return ToolResult(text="Error: Attachment registry not available.")
+
+    metadata = await registry.get_attachment(db_context, attachment_id_str)
+    if metadata is None:
+        return ToolResult(
+            text=f"Error: Attachment {attachment_id_str} not found.",
+        )
+
+    content_bytes = await registry.get_attachment_content(db_context, attachment_id_str)
+    if content_bytes is None:
+        return ToolResult(
+            text=(
+                f"Error: Attachment {attachment_id_str} has no content "
+                "(file may have been removed)."
+            ),
+        )
+
+    mime_type = metadata.mime_type or "application/octet-stream"
+    filename = metadata.metadata.get("original_filename") or metadata.description
+    size = metadata.size or len(content_bytes)
+
+    if _is_text_mime(mime_type):
+        if len(content_bytes) > _READ_ATTACHMENT_TEXT_INLINE_LIMIT:
+            return ToolResult(
+                text=(
+                    f"Attachment {attachment_id_str} ({filename}, {mime_type}, "
+                    f"{size} bytes) is too large to inline as text "
+                    f"(>{_READ_ATTACHMENT_TEXT_INLINE_LIMIT} bytes). Use "
+                    f"`read_text_attachment(attachment_id='{attachment_id_str}', "
+                    "offset=..., limit=...)` to read it in chunks."
+                ),
+                data={
+                    "attachment_id": attachment_id_str,
+                    "mime_type": mime_type,
+                    "size": size,
+                    "truncated": True,
+                },
+            )
+        try:
+            decoded = content_bytes.decode("utf-8")
+        except UnicodeDecodeError:
+            return ToolResult(
+                text=(
+                    f"Error: Attachment {attachment_id_str} is declared as "
+                    f"{mime_type} but content is not valid UTF-8."
+                ),
+            )
+        return ToolResult(
+            text=(
+                f"--- Attachment {attachment_id_str} ({filename}, {mime_type}, "
+                f"{size} bytes) ---\n{decoded}"
+            ),
+            data={
+                "attachment_id": attachment_id_str,
+                "mime_type": mime_type,
+                "size": size,
+                "content": decoded,
+            },
+        )
+
+    attachment = ToolAttachment(
+        content=content_bytes,
+        mime_type=mime_type,
+        description=str(filename) if filename else attachment_id_str,
+        attachment_id=attachment_id_str,
+    )
+    return ToolResult(
+        text=f"Attached {filename} ({mime_type}, {size} bytes).",
+        attachments=[attachment],
+        data={
+            "attachment_id": attachment_id_str,
+            "mime_type": mime_type,
+            "size": size,
+        },
+    )
+
+
 async def read_text_attachment_tool(
     exec_context: ToolExecutionContext,
     attachment_id: ScriptAttachment | str,
