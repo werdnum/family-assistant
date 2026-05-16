@@ -128,10 +128,13 @@ You can ask the assistant a wide variety of things:
   confirmation or ticket purchase and let the assistant extract the relevant details. For example, a
   soccer ticket email can become a proposed calendar event or note. The assistant treats the email
   body and forwarded content as untrusted evidence, so it will not follow special instructions
-  embedded in the email. Any state-changing action waits for your confirmation in Telegram or the
-  Web UI, and Telegram shows inline approval buttons when it is your configured primary
-  communication channel. If the email came through a recipient-only alias without a mapped
-  forwarding sender, confirmations can still be created, but the assistant will not email a reply.
+  embedded in the email. Attachments are available to the assistant during this turn — text
+  attachments are read inline, while images and PDFs are surfaced as multimodal content so the
+  assistant can perceive their contents when proposing actions. Any state-changing action waits for
+  your confirmation in Telegram or the Web UI, and Telegram shows inline approval buttons when it is
+  your configured primary communication channel. If the email came through a recipient-only alias
+  without a mapped forwarding sender, confirmations can still be created, but the assistant will not
+  email a reply.
 
 - **Forward Email to Index a Linked Document:** If the email points to a document you want to keep
   (a shared PDF, a Drive/Dropbox/iCloud link, a long article), the assistant can propose fetching
