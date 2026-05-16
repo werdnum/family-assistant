@@ -8,6 +8,11 @@ import WebKit
 final class AuthManager {
     var serverURL: String = ""
     var isAuthenticated = false
+    /// True between app launch and the first completion of `bootstrapSession()`
+    /// when stored credentials exist. Consumers should render a loading state
+    /// (not the web view) while this is true so the WKWebView's first request
+    /// happens after `establishSession` has bridged the session cookie.
+    var isBootstrapping = false
     var isLoading = false
     var errorMessage: String?
 
@@ -27,6 +32,7 @@ final class AuthManager {
         serverURL = UserDefaults.standard.string(forKey: Keys.serverURL) ?? ""
         if KeychainHelper.readString(key: Keys.apiToken) != nil {
             isAuthenticated = true
+            isBootstrapping = true
         }
     }
 
@@ -163,6 +169,8 @@ final class AuthManager {
 
     @MainActor
     func bootstrapSession() async {
+        defer { isBootstrapping = false }
+
         guard let token = KeychainHelper.readString(key: Keys.apiToken) else {
             clearLocalAuthState()
             return
@@ -175,9 +183,8 @@ final class AuthManager {
             return
         } catch {
             logger.warning(
-                "Token refresh failed transiently; keeping local auth state: \(error.localizedDescription, privacy: .public)"
+                "Token refresh failed transiently; will attempt session bridge with existing token: \(error.localizedDescription, privacy: .public)"
             )
-            return
         }
 
         let activeToken = KeychainHelper.readString(key: Keys.apiToken) ?? token
@@ -290,7 +297,7 @@ final class AuthManager {
            let responseURL = httpResponse.url
         {
             let cookies = HTTPCookie.cookies(withResponseHeaderFields: headerFields, for: responseURL)
-            let cookieStore = WKWebsiteDataStore.default().httpCookieStore
+            let cookieStore = await WKWebsiteDataStore.default().httpCookieStore
             for cookie in cookies {
                 await cookieStore.setCookie(cookie)
             }

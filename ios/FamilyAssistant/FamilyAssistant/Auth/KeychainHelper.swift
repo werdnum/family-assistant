@@ -2,6 +2,7 @@ import Foundation
 import Security
 
 enum KeychainHelper {
+    @discardableResult
     static func save(key: String, data: Data) -> Bool {
         delete(key: key)
         let query: [String: Any] = [
@@ -13,6 +14,7 @@ enum KeychainHelper {
         return SecItemAdd(query as CFDictionary, nil) == errSecSuccess
     }
 
+    @discardableResult
     static func save(key: String, string: String) -> Bool {
         guard let data = string.data(using: .utf8) else { return false }
         return save(key: key, data: data)
