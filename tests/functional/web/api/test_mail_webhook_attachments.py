@@ -25,7 +25,12 @@ import pytest
 from sqlalchemy import insert, select
 from sqlalchemy import text as sa_text
 
-from family_assistant.config_models import AppConfig, EmailIntakeConfig
+from family_assistant.config_models import (
+    AppConfig,
+    EmailIntakeConfig,
+    EmailIntakeUserMapping,
+)
+from family_assistant.email_intake.actions import EMAIL_INTAKE_ACTION_TASK_TYPE
 from family_assistant.indexing.email_indexer import EmailIndexer
 from family_assistant.indexing.pipeline import IndexingPipeline
 from family_assistant.services.attachment_registry import AttachmentRegistry
@@ -33,6 +38,7 @@ from family_assistant.storage.base import attachment_metadata_table
 from family_assistant.storage.context import DatabaseContext
 from family_assistant.storage.email import AttachmentData, received_emails_table
 from family_assistant.storage.tasks import tasks_table
+from family_assistant.storage.vector import DocumentRecord
 from family_assistant.tools.documents import (
     get_full_document_content_tool,
     reindex_email_tool,
@@ -309,6 +315,116 @@ async def test_webhook_accepts_email_with_attachment(
         # Webhook stores the file; indexing (which runs separately) assigns the ID.
         assert stored[0].storage_path.endswith("ticket.pdf")
         assert stored[0].attachment_id is None
+
+
+@pytest.mark.asyncio
+@pytest.mark.postgres
+async def test_webhook_pre_registers_attachments_and_upserts_document(
+    api_client: httpx.AsyncClient,
+    db_engine: AsyncEngine,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """With an AttachmentRegistry configured on app.state, the webhook registers
+    each attachment eagerly so attachment_id reaches the action prompt, upserts
+    the email's documents row, and passes the resulting document_id in the
+    email_intake_action task payload."""
+    registry = AttachmentRegistry(
+        storage_path=str(tmp_path / "registry"),
+        db_engine=db_engine,
+        config={
+            "email_attachment_base_path": str(tmp_path / "mailbox"),
+        },
+    )
+    monkeypatch.setattr(
+        fastapi_app.state, "attachment_registry", registry, raising=False
+    )
+    monkeypatch.setattr(
+        fastapi_app.state,
+        "config",
+        AppConfig(
+            attachment_storage_path=str(tmp_path / "mailbox"),
+            mailbox_raw_dir=str(tmp_path / "raw"),
+            email_intake=EmailIntakeConfig(
+                mailgun_webhook_signing_key=SIGNING_KEY,
+                allowed_sender_addresses=[SENDER],
+                allowed_recipient_addresses=[RECIPIENT],
+                require_authenticated_sender=False,
+                enable_actions=True,
+                user_mappings=[
+                    EmailIntakeUserMapping(
+                        user_id=SENDER,
+                        sender_addresses={SENDER},
+                        recipient_addresses={RECIPIENT},
+                    )
+                ],
+            ),
+        ),
+        raising=False,
+    )
+    monkeypatch.setattr(
+        fastapi_app.state,
+        "email_intake_dns_resolver",
+        build_dns_for(domain=SENDER_DOMAIN),
+        raising=False,
+    )
+
+    message_id = f"<mailgun-{uuid.uuid4()}@example.com>"
+    form = _mailgun_form(message_id=message_id)
+    form["attachment-count"] = "1"
+
+    response = await api_client.post(
+        "/webhook/mail",
+        data=form,
+        files={
+            "attachment-1": ("ticket.pdf", b"PDF", "application/pdf"),
+        },
+    )
+
+    assert response.status_code == 200, response.text
+
+    async with DatabaseContext(engine=db_engine) as db_context:
+        email_row = await db_context.fetch_one(
+            select(received_emails_table.c.attachment_info).where(
+                received_emails_table.c.message_id_header == message_id
+            )
+        )
+        assert email_row is not None
+        stored = [
+            AttachmentData.model_validate(item) for item in email_row["attachment_info"]
+        ]
+        assert len(stored) == 1
+        attachment_id = stored[0].attachment_id
+        assert attachment_id is not None
+        assert uuid.UUID(attachment_id)
+
+        registry_row = await db_context.fetch_one(
+            select(
+                attachment_metadata_table.c.attachment_id,
+                attachment_metadata_table.c.source_type,
+                attachment_metadata_table.c.source_id,
+            ).where(attachment_metadata_table.c.attachment_id == attachment_id)
+        )
+        assert registry_row is not None
+        assert registry_row["source_type"] == "email"
+        assert registry_row["source_id"] == message_id
+
+        document_row = await db_context.fetch_one(
+            select(DocumentRecord.id, DocumentRecord.source_type).where(
+                DocumentRecord.source_id == message_id
+            )
+        )
+        assert document_row is not None
+        assert document_row["source_type"] == "email"
+        document_id = document_row["id"]
+
+        task_row = await db_context.fetch_one(
+            select(tasks_table.c.task_type, tasks_table.c.payload).where(
+                tasks_table.c.task_type == EMAIL_INTAKE_ACTION_TASK_TYPE
+            )
+        )
+        assert task_row is not None
+        assert task_row["payload"]["document_id"] == document_id
 
 
 @pytest.mark.asyncio

@@ -18,7 +18,10 @@ from family_assistant.scripting.apis.attachments import ScriptAttachment
 from family_assistant.services.attachment_registry import AttachmentRegistry
 from family_assistant.storage.context import DatabaseContext
 from family_assistant.tools import AVAILABLE_FUNCTIONS, TOOLS_DEFINITION
-from family_assistant.tools.attachments import attach_to_response_tool
+from family_assistant.tools.attachments import (
+    attach_to_response_tool,
+    read_attachment_tool,
+)
 from family_assistant.tools.communication import send_message_to_user_tool
 from family_assistant.tools.image_tools import highlight_image_tool
 from family_assistant.tools.types import ToolExecutionContext
@@ -383,6 +386,165 @@ class TestToolRegistration:
         assert "attachment_ids" in params["properties"]
         assert params["properties"]["attachment_ids"]["type"] == "array"
         assert "attachment_ids" in params["required"]
+
+
+class TestReadAttachmentTool:
+    """Test the read_attachment tool for text and binary attachments."""
+
+    async def test_read_attachment_inlines_text(
+        self,
+        db_engine: AsyncEngine,
+        tmp_path: Path,
+    ) -> None:
+        async with DatabaseContext(db_engine) as db_context:
+            attachment_registry = AttachmentRegistry(
+                storage_path=str(tmp_path), db_engine=db_engine, config=None
+            )
+
+            attachment_id = str(uuid.uuid4())
+            hash_prefix = attachment_id[:2]
+            storage_dir = tmp_path / hash_prefix
+            storage_dir.mkdir(parents=True, exist_ok=True)
+            storage_path = str(storage_dir / f"{attachment_id}.txt")
+            content_text = "hello\nworld\n"
+            async with aiofiles.open(storage_path, "wb") as f:
+                await f.write(content_text.encode("utf-8"))
+
+            await attachment_registry.register_attachment(
+                db_context=db_context,
+                attachment_id=attachment_id,
+                source_type="user",
+                source_id="test_user",
+                mime_type="text/plain",
+                description="Greeting",
+                size=len(content_text.encode("utf-8")),
+                storage_path=storage_path,
+                conversation_id="test_conversation",
+                metadata={"original_filename": "greeting.txt"},
+            )
+
+            exec_context = ToolExecutionContext(
+                conversation_id="test_conversation",
+                interface_type="email",
+                turn_id="turn_1",
+                user_name="test_user",
+                db_context=db_context,
+                processing_service=None,
+                clock=None,
+                home_assistant_client=None,
+                event_sources=None,
+                chat_interface=None,
+                attachment_registry=attachment_registry,
+                camera_backend=None,
+                timezone=ZoneInfo("UTC"),
+            )
+
+            result = await read_attachment_tool(
+                exec_context=exec_context,
+                attachment_id=attachment_id,
+            )
+
+            assert result.attachments is None
+            assert result.text is not None
+            assert content_text in result.text
+            data = result.get_data()
+            assert isinstance(data, dict)
+            assert data["mime_type"] == "text/plain"
+            assert data["content"] == content_text
+
+    async def test_read_attachment_returns_binary_as_multimodal(
+        self,
+        db_engine: AsyncEngine,
+        tmp_path: Path,
+    ) -> None:
+        async with DatabaseContext(db_engine) as db_context:
+            attachment_registry = AttachmentRegistry(
+                storage_path=str(tmp_path), db_engine=db_engine, config=None
+            )
+
+            image_bytes = create_test_image(64, 64, "white")
+            attachment_id = str(uuid.uuid4())
+            hash_prefix = attachment_id[:2]
+            storage_dir = tmp_path / hash_prefix
+            storage_dir.mkdir(parents=True, exist_ok=True)
+            storage_path = str(storage_dir / f"{attachment_id}.png")
+            async with aiofiles.open(storage_path, "wb") as f:
+                await f.write(image_bytes)
+
+            await attachment_registry.register_attachment(
+                db_context=db_context,
+                attachment_id=attachment_id,
+                source_type="user",
+                source_id="test_user",
+                mime_type="image/png",
+                description="Test image",
+                size=len(image_bytes),
+                storage_path=storage_path,
+                conversation_id="test_conversation",
+                metadata={"original_filename": "test.png"},
+            )
+
+            exec_context = ToolExecutionContext(
+                conversation_id="test_conversation",
+                interface_type="email",
+                turn_id="turn_1",
+                user_name="test_user",
+                db_context=db_context,
+                processing_service=None,
+                clock=None,
+                home_assistant_client=None,
+                event_sources=None,
+                chat_interface=None,
+                attachment_registry=attachment_registry,
+                camera_backend=None,
+                timezone=ZoneInfo("UTC"),
+            )
+
+            result = await read_attachment_tool(
+                exec_context=exec_context,
+                attachment_id=attachment_id,
+            )
+
+            assert result.attachments is not None
+            assert len(result.attachments) == 1
+            tool_attachment = result.attachments[0]
+            assert tool_attachment.mime_type == "image/png"
+            assert tool_attachment.content == image_bytes
+            assert tool_attachment.attachment_id == attachment_id
+
+    async def test_read_attachment_missing_returns_error(
+        self,
+        db_engine: AsyncEngine,
+        tmp_path: Path,
+    ) -> None:
+        async with DatabaseContext(db_engine) as db_context:
+            attachment_registry = AttachmentRegistry(
+                storage_path=str(tmp_path), db_engine=db_engine, config=None
+            )
+
+            exec_context = ToolExecutionContext(
+                conversation_id="test_conversation",
+                interface_type="email",
+                turn_id="turn_1",
+                user_name="test_user",
+                db_context=db_context,
+                processing_service=None,
+                clock=None,
+                home_assistant_client=None,
+                event_sources=None,
+                chat_interface=None,
+                attachment_registry=attachment_registry,
+                camera_backend=None,
+                timezone=ZoneInfo("UTC"),
+            )
+
+            result = await read_attachment_tool(
+                exec_context=exec_context,
+                attachment_id="00000000-0000-0000-0000-000000000000",
+            )
+
+            assert result.text is not None
+            assert "not found" in result.text.lower()
 
 
 def create_test_image(
