@@ -1,10 +1,10 @@
 {
-  "replay_id": "integration.llm.test_streaming/test_basic_streaming_gemini[google-gemini-3-flash-preview]/mldev",
+  "replay_id": "integration.llm.test_streaming/test_streaming_with_multi_turn_conversation_gemini[google-gemini-3.5-flash]/mldev",
   "interactions": [
     {
       "request": {
         "method": "post",
-        "url": "{MLDEV_URL_PREFIX}/models/gemini-3-flash-preview:streamGenerateContent?alt=sse",
+        "url": "{MLDEV_URL_PREFIX}/models/gemini-3.5-flash:streamGenerateContent?alt=sse",
         "headers": {
           "Content-Type": "application/json",
           "x-goog-api-key": "{REDACTED}",
@@ -17,7 +17,23 @@
               {
                 "parts": [
                   {
-                    "text": "Count from 1 to 5, with each number on a new line."
+                    "text": "My favorite color is blue. Remember this."
+                  }
+                ],
+                "role": "user"
+              },
+              {
+                "parts": [
+                  {
+                    "text": "I'll remember that your favorite color is blue."
+                  }
+                ],
+                "role": "model"
+              },
+              {
+                "parts": [
+                  {
+                    "text": "What's my favorite color?"
                   }
                 ],
                 "role": "user"
@@ -49,7 +65,7 @@
                 "content": {
                   "parts": [
                     {
-                      "text": "1\n2\n3\n4\n5"
+                      "text": "Your favorite color is blue."
                     }
                   ],
                   "role": "model"
@@ -59,19 +75,19 @@
               }
             ],
             "usageMetadata": {
-              "promptTokenCount": 17,
-              "candidatesTokenCount": 9,
-              "totalTokenCount": 78,
+              "promptTokenCount": 30,
+              "candidatesTokenCount": 6,
+              "totalTokenCount": 61,
               "promptTokensDetails": [
                 {
                   "modality": "TEXT",
-                  "tokenCount": 17
+                  "tokenCount": 30
                 }
               ],
-              "thoughtsTokenCount": 52
+              "thoughtsTokenCount": 25
             },
-            "modelVersion": "gemini-3-flash-preview",
-            "responseId": "7BcpadvZIbKjkdUPrOGAgQ0"
+            "modelVersion": "gemini-3.5-flash",
+            "responseId": "_RgpaZO7D-36vdIPwZmg2Aw"
           }
         ],
         "byte_segments": [],
@@ -95,7 +111,7 @@
                 "content": {
                   "parts": [
                     {
-                      "text": "1\n2\n3\n4\n5"
+                      "text": "Your favorite color is blue."
                     }
                   ],
                   "role": "model"
@@ -104,19 +120,19 @@
                 "index": 0
               }
             ],
-            "model_version": "gemini-3-flash-preview",
-            "response_id": "7BcpadvZIbKjkdUPrOGAgQ0",
+            "model_version": "gemini-3.5-flash",
+            "response_id": "_RgpaZO7D-36vdIPwZmg2Aw",
             "usage_metadata": {
-              "candidates_token_count": 9,
-              "prompt_token_count": 17,
+              "candidates_token_count": 6,
+              "prompt_token_count": 30,
               "prompt_tokens_details": [
                 {
                   "modality": "TEXT",
-                  "token_count": 17
+                  "token_count": 30
                 }
               ],
-              "thoughts_token_count": 52,
-              "total_token_count": 78
+              "thoughts_token_count": 25,
+              "total_token_count": 61
             }
           }
         ]
