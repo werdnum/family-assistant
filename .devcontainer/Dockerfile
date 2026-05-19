@@ -142,6 +142,9 @@ RUN curl -fsSL https://claude.ai/install.sh | bash
 RUN --mount=type=cache,target=/home/claude/.npm,sharing=locked,uid=1001,gid=1001 \
     npm install -g @google/gemini-cli@nightly @openai/codex
 
+# Install Antigravity CLI (agy) - installs to /home/claude/.local/bin/agy
+RUN curl -fsSL https://antigravity.google/cli/install.sh | bash
+
 # Install Python development tools
 RUN --mount=type=cache,target=/home/claude/.cache/uv,sharing=locked,uid=1001,gid=1001 \
     uv tool install --with llm-gemini --with llm-openrouter --with llm-fragments-github llm && \
