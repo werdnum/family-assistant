@@ -7,7 +7,7 @@ RUN groupadd -r -g 1001 appuser && useradd -r -u 1001 -g appuser -m -d /home/app
 # Install system dependencies: npm for Node.js MCP servers and frontend build
 # Using --mount for caching apt downloads
 RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
-    apt-get update && apt-get install -y --no-install-recommends \
+    apt-get update && apt-get upgrade -y && apt-get install -y --no-install-recommends \
     # Add CA certificates for HTTPS communication
     ca-certificates \
     curl \
@@ -117,7 +117,7 @@ RUN uv pip install "rebrowser-playwright>=1.52.0" "markitdown[html]>=0.1.0"
 # Note: We install deps manually to handle renamed packages in newer Debian
 # (ttf-ubuntu-font-family -> fonts-ubuntu, ttf-unifont -> fonts-unifont)
 USER root
-RUN apt-get update && apt-get install -y --no-install-recommends \
+RUN apt-get update && apt-get upgrade -y && apt-get install -y --no-install-recommends \
     libasound2 \
     libatk-bridge2.0-0 \
     libatk1.0-0 \
@@ -186,6 +186,13 @@ COPY --chown=appuser:appuser . .
 # This completes the installation by adding the project itself.
 USER appuser
 RUN uv sync --extra local-embeddings
+
+# The production app serves prebuilt assets from src/family_assistant/static/dist.
+# Keeping the frontend workspace in the runtime image also keeps npm lockfiles and
+# build-only dependencies visible to vulnerability scanners.
+USER root
+RUN rm -rf /app/frontend
+USER appuser
 
 # --- Runtime Configuration ---
 # Expose the port the web server listens on
