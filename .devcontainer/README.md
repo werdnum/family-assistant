@@ -41,7 +41,9 @@ separation of concerns:
 │ - Dev tools:      │    │ - Python test deps         │
 │   * claude-code   │    │ - NO dev tools (smaller!)  │
 │   * gemini-cli    │    │                            │
-│   * llm           │    │ Used by: CI workflows      │
+│   * codex         │    │ Used by: CI workflows      │
+│   * agy           │    │                            │
+│   * llm           │    │                            │
 │   * claudecodeui  │    │                            │
 │                   │    │                            │
 │ Used by: devs     │    │                            │
