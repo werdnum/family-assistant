@@ -1,0 +1,44 @@
+name: "Docker Login With Retry"
+description: "Log in to a Docker registry with retries for transient registry timeouts"
+inputs:
+  registry:
+    description: "Docker registry hostname"
+    required: true
+  username:
+    description: "Docker registry username"
+    required: true
+  password:
+    description: "Docker registry password or token"
+    required: true
+  attempts:
+    description: "Maximum login attempts"
+    required: false
+    default: "5"
+
+runs:
+  using: "composite"
+  steps:
+    - name: Log in with retry
+      shell: bash
+      run: |
+        set -euo pipefail
+
+        attempts="${{ inputs.attempts }}"
+        for attempt in $(seq 1 "$attempts"); do
+          echo "Logging into ${{ inputs.registry }} (attempt ${attempt}/${attempts})..."
+          if printf '%s' "${{ inputs.password }}" | docker login \
+            "${{ inputs.registry }}" \
+            --username "${{ inputs.username }}" \
+            --password-stdin; then
+            exit 0
+          fi
+
+          if [ "$attempt" -eq "$attempts" ]; then
+            echo "Docker login failed after ${attempts} attempts." >&2
+            exit 1
+          fi
+
+          sleep_seconds=$((attempt * 10))
+          echo "Docker login failed; retrying in ${sleep_seconds}s..." >&2
+          sleep "$sleep_seconds"
+        done

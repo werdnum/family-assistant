@@ -58,9 +58,6 @@ def _build_test_config(
             "delegation_security_level": "none",
         },
         "tools_config": {
-            "enable_local_tools": ["get_note", "delete_note"],
-            "enable_mcp_server_ids": [],
-            "confirm_tools": ["delete_note"],
             "confirmation_timeout_seconds": 10.0,
             "mcp_initialization_timeout_seconds": 5,
         },
@@ -91,9 +88,7 @@ def _build_test_config(
                 "delegation_security_level": "none",
             },
             "tools_config": {
-                "enable_local_tools": [],
-                "enable_mcp_server_ids": [],
-                "confirm_tools": [],
+                "confirmation_timeout_seconds": 10.0,
             },
             "tools_policy": _build_policy_config(allowed_names=[]),
         },

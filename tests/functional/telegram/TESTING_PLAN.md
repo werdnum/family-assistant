@@ -185,7 +185,7 @@ The following refactoring could simplify these tests further:
    `TelegramConfirmationUIManager` class that implements the protocol. This class will need access
    to the `telegram.ext.Application` instance. \*Inject an instance of the `ConfirmationUIManager`
    protocol into `TelegramUpdateHandler` during initialization. \*Update `ProcessingService` or the
-   `ConfirmingToolsProvider` callback mechanism to call the injected
+   `PolicyEnforcingToolsProvider` callback mechanism to call the injected
    `confirmation_manager.request_confirmation`. \*Ensure the `TelegramConfirmationUIManager`
    registers the `confirmation_callback_handler` with the Telegram `Application`.
 

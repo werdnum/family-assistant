@@ -925,7 +925,7 @@ ENGINEERING_TOOLS_DEFINITION: list[ToolDefinition] = [
                 "redacted). Without profile_id returns the list of available "
                 "profile ids plus the merged default_profile_settings; with "
                 "profile_id returns just that profile's body, including merged "
-                "operator_tools_policy and operator_mcp_server_ids."
+                "operator_tools_policy."
             ),
             "parameters": {
                 "type": "object",

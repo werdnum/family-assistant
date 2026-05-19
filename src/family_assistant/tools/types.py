@@ -264,7 +264,7 @@ class ToolExecutionContext:
         chat_interface: Optional interface for sending messages back to the chat.
         timezone: ZoneInfo for localization, defaults to UTC.
         request_confirmation_callback: Optional callback to request user confirmation.
-            This function is typically called by `ConfirmingToolsProvider`.
+            This function is typically called by `PolicyEnforcingToolsProvider`.
             Expected signature:
             (interface_type: str, conversation_id: str, turn_id: str | None,
              tool_name: str, call_id: str, tool_args: ToolArguments,

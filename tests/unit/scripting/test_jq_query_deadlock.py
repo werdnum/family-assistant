@@ -1,7 +1,7 @@
 """Test for jq_query() deadlock when called from scripts.
 
 This test reproduces the deadlock that occurs when jq_query() is called from within
-a script with a ConfirmingToolsProvider (which doesn't have get_raw_tool_definitions).
+a script with a policy wrapper (which doesn't have get_raw_tool_definitions).
 """
 
 from pathlib import Path
@@ -12,11 +12,16 @@ from sqlalchemy.ext.asyncio import AsyncEngine
 
 from family_assistant.services.attachment_registry import AttachmentRegistry
 from family_assistant.storage.context import DatabaseContext
-from family_assistant.tools import AVAILABLE_FUNCTIONS, TOOLS_DEFINITION
+from family_assistant.tools import LOCAL_TOOL_REGISTRATIONS
 from family_assistant.tools.execute_script import execute_script_tool
 from family_assistant.tools.infrastructure import (
-    ConfirmingToolsProvider,
     LocalToolsProvider,
+    PolicyEnforcingToolsProvider,
+)
+from family_assistant.tools.policy import (
+    PolicyEngine,
+    ToolPolicyConfig,
+    ToolPolicyDecision,
 )
 from family_assistant.tools.types import ToolExecutionContext
 
@@ -46,22 +51,20 @@ async def test_jq_query_from_script_no_deadlock(
 
     1. _process_attachment_arguments() (async coroutine on main loop)
     2. → calls _get_raw_tool_definitions() (sync method)
-    3. → which calls _run_async(get_tool_definitions()) with ConfirmingToolsProvider
+    3. → which calls _run_async(get_tool_definitions()) with a policy wrapper
     4. → creates nested _run_async() call while already in async context
     5. → deadlock: main loop blocked, can't process the new coroutine
     """
     async with DatabaseContext(engine=db_engine) as db:
-        # Create a basic LocalToolsProvider
-        local_provider = LocalToolsProvider(
-            definitions=TOOLS_DEFINITION,
-            implementations=AVAILABLE_FUNCTIONS,
-        )
+        local_provider = LocalToolsProvider(registrations=LOCAL_TOOL_REGISTRATIONS)
 
-        # Wrap it in ConfirmingToolsProvider
-        # This doesn't have get_raw_tool_definitions(), triggering the deadlock
-        confirming_provider = ConfirmingToolsProvider(
+        # Wrap it in PolicyEnforcingToolsProvider. This doesn't have
+        # get_raw_tool_definitions(), which previously triggered the deadlock.
+        policy_provider = PolicyEnforcingToolsProvider(
             wrapped_provider=local_provider,
-            tools_requiring_confirmation=set(),  # No tools need confirmation, we just need the wrapper
+            policy_engine=PolicyEngine.from_policy_config(
+                ToolPolicyConfig(default_decision=ToolPolicyDecision.ALLOW)
+            ),
         )
 
         ctx = ToolExecutionContext(
@@ -76,7 +79,7 @@ async def test_jq_query_from_script_no_deadlock(
             attachment_registry=attachment_registry,
             camera_backend=None,
             processing_service=None,
-            tools_provider=confirming_provider,  # Use confirming provider,
+            tools_provider=policy_provider,
             timezone=ZoneInfo("UTC"),
         )
 

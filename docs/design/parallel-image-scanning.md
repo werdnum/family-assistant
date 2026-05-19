@@ -208,6 +208,6 @@ Create a script template for parallelization. Rejected because:
 1. Add `scan_camera_frames_tool` function to `src/family_assistant/tools/camera.py`
 2. Add tool definition to `CAMERA_TOOLS_DEFINITION`
 3. Add tool registration in `src/family_assistant/tools/__init__.py`
-4. Add to camera_analyst profile's `enable_local_tools` in `defaults.yaml`
+4. Add an allow rule for the camera_analyst profile in `defaults.yaml`
 5. Update camera_analyst system prompt to mention new tool
 6. Write unit and functional tests

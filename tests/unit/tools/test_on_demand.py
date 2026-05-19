@@ -6,11 +6,7 @@ from typing import TYPE_CHECKING, Any
 
 import pytest
 
-from family_assistant.config_models import (
-    MCPServerLoadingEntry,
-    ToolLoadingEntry,
-    ToolsConfig,
-)
+from family_assistant.config_models import ToolsConfig
 from family_assistant.tools.infrastructure import LocalToolsProvider
 from family_assistant.tools.metadata import (
     ToolDescriptor,
@@ -61,72 +57,29 @@ def _make_provider(tool_names: list[str]) -> LocalToolsProvider:
 
 
 class TestToolsConfig:
-    """Test ToolsConfig helper methods for eager/on-demand splitting."""
+    """Test ToolsConfig helper methods for on-demand catalog hints."""
 
-    def test_plain_strings_all_eager(self) -> None:
-        tc = ToolsConfig(enable_local_tools=["a", "b", "c"])
-        assert tc.get_all_tool_names() == {"a", "b", "c"}
-        assert tc.get_eager_tool_names() == {"a", "b", "c"}
-        assert tc.get_on_demand_tool_names() == set()
-
-    def test_mixed_eager_and_on_demand(self) -> None:
-        tc = ToolsConfig(
-            enable_local_tools=[
-                "eager_tool",
-                ToolLoadingEntry(name="lazy_tool", loading="on_demand"),
-            ]
-        )
-        assert tc.get_all_tool_names() == {"eager_tool", "lazy_tool"}
-        assert tc.get_eager_tool_names() == {"eager_tool"}
-        assert tc.get_on_demand_tool_names() == {"lazy_tool"}
-
-    def test_none_means_unfiltered(self) -> None:
+    def test_default_has_no_on_demand_hints(self) -> None:
         tc = ToolsConfig()
-        assert tc.get_all_tool_names() is None
-        assert tc.get_eager_tool_names() is None
         assert tc.get_on_demand_tool_names() == set()
+        assert tc.get_on_demand_mcp_server_ids() == []
 
-    def test_from_dict_yaml_format(self) -> None:
-        """Test that raw YAML-style dicts are parsed correctly by Pydantic.
+    def test_on_demand_local_tools(self) -> None:
+        tc = ToolsConfig(
+            on_demand_local_tools=["lazy_tool", "another_lazy_tool"],
+        )
+        assert tc.get_on_demand_tool_names() == {"lazy_tool", "another_lazy_tool"}
 
-        ``defaults.yaml`` produces dict entries (e.g. ``{"name": "tool_b",
-        "loading": "on_demand"}``) for on-demand tools, so the config loader
-        path must accept that shape — not just pre-built ``ToolLoadingEntry``
-        instances.
-        """
+    def test_on_demand_local_tools_from_yaml_list(self) -> None:
         tc = ToolsConfig.model_validate({
-            "enable_local_tools": [
-                "tool_a",
-                {"name": "tool_b", "loading": "on_demand"},
-            ]
+            "on_demand_local_tools": ["tool_b"],
         })
-        assert tc.get_eager_tool_names() == {"tool_a"}
         assert tc.get_on_demand_tool_names() == {"tool_b"}
 
-    def test_mcp_server_ids_mixed(self) -> None:
-        tc = ToolsConfig(
-            enable_mcp_server_ids=[
-                "time",
-                MCPServerLoadingEntry(id="homeassistant", loading="on_demand"),
-            ]
-        )
-        assert tc.get_all_mcp_server_ids() == ["time", "homeassistant"]
-        assert tc.get_eager_mcp_server_ids() == ["time"]
-
-    def test_mcp_server_ids_from_yaml_dicts(self) -> None:
-        """``defaults.yaml`` may use dict entries for on-demand MCP servers.
-
-        Verify Pydantic accepts the raw dict shape for ``enable_mcp_server_ids``
-        the same way it does for ``enable_local_tools``.
-        """
+    def test_on_demand_mcp_server_ids(self) -> None:
         tc = ToolsConfig.model_validate({
-            "enable_mcp_server_ids": [
-                "time",
-                {"id": "homeassistant", "loading": "on_demand"},
-            ]
+            "on_demand_mcp_server_ids": ["homeassistant"],
         })
-        assert tc.get_all_mcp_server_ids() == ["time", "homeassistant"]
-        assert tc.get_eager_mcp_server_ids() == ["time"]
         assert tc.get_on_demand_mcp_server_ids() == ["homeassistant"]
 
 

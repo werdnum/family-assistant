@@ -119,40 +119,38 @@ TOOLS_DEFINITION: list[ToolDefinition] = (
 )
 ```
 
-### 3. Enable the Tool in Configuration
+### 3. Allow the Tool in Policy
 
-**IMPORTANT**: Tools must be enabled in `config.yaml` for each profile that should have access to
-them.
+**IMPORTANT**: Tools must be allowed by `tools_policy` for each profile that should have access to
+them. Tool access is denied unless a matching policy rule allows it.
 
-Add the tool name to `config.yaml` under the appropriate profile's `enable_local_tools` list:
+Add the tool name or one of its metadata tags to the appropriate profile policy:
 
 ```yaml
-
 # config.yaml
 default_profile_settings:
-  tools_config:
-    enable_local_tools:
-      # ... existing tools ...
-
-      - "tool_name"  # Add your new tool here
+  tools_policy:
+    rules:
+      - match: { names: ["tool_name"] }
+        decision: "allow"
+        priority: 10
 
 service_profiles:
-
   - id: "default_assistant"
     # This profile inherits from default_profile_settings
     # so it will have access to "tool_name"
 
   - id: "browser_profile"
-    tools_config:  # This REPLACES the default tools_config
-      enable_local_tools:
-        # Only tools listed here will be available
-        # "tool_name" is NOT available unless listed
-
+    tools_policy:
+      default_decision: "deny"
+      rules:
+        - match: { tags_any: ["browser"] }
+          decision: "allow"
+          priority: 10
 ```
 
-**Note**: If `enable_local_tools` is not specified for a profile, ALL tools defined in the code are
-enabled by default. This dual registration system provides security and flexibility - different
-profiles can have different tool access.
+For tools that should appear in the on-demand catalog instead of the always-advertised tool list,
+also add their names to `tools_config.on_demand_local_tools`.
 
 ## Tool Execution Context
 

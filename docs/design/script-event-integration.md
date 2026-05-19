@@ -215,29 +215,26 @@ service_profiles:
     display_name: "Event Handler"
     llm_config:
       model: "claude-3-5-haiku-20241022"  # Use fast model for scripts
-    tools_config:
-      enable_local_tools:
-        # Core data tools
-        - "add_or_update_note"
-        - "search_notes"
-        - "search_documents"
-        - "get_note"
-        
-        # Communication (no email sending to prevent spam)
-        - "send_telegram_message"
-        
-        # Home Assistant (read-only)
-        - "get_entity_state"
-        - "get_all_entities"
-        
-        # Calendar (read-only)
-        - "get_calendar_events"
-        
-        # No destructive operations:
-        # - No delete_note
-        # - No control_device (prevent automation loops)
-        # - No send_email (prevent spam)
-        # - No modify/delete calendar events
+    tools_policy:
+      default_decision: "deny"
+      rules:
+        - match:
+            names:
+              # Core data tools
+              - "add_or_update_note"
+              - "search_notes"
+              - "search_documents"
+              - "get_note"
+              # Communication (no email sending to prevent spam)
+              - "send_telegram_message"
+              # Home Assistant (read-only)
+              - "get_entity_state"
+              - "get_all_entities"
+              # Calendar (read-only)
+              - "get_calendar_events"
+          decision: "allow"
+          priority: 10
+        # Destructive operations are omitted, so the default deny blocks them.
 ```
 
 Scripts will use this profile's tools by default, inheriting safe defaults.

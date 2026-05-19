@@ -15,17 +15,17 @@ The tools system follows a consistent pattern:
 
 ## Adding a New Tool
 
-**IMPORTANT**: Tools must be registered in TWO places:
+**IMPORTANT**: Tools must be registered in code and allowed by policy:
 
 1. **In the code** (`src/family_assistant/tools/__init__.py`):
 
    - Add the tool function to `AVAILABLE_FUNCTIONS` dictionary
    - Add the tool definition to the appropriate `TOOLS_DEFINITION` list
 
-2. **In the configuration** (`config.yaml`):
+2. **In profile policy** (`tools_policy` in `defaults.yaml` or `config.yaml`):
 
-   - Add the tool name to `enable_local_tools` list for each profile that should have access
-   - If `enable_local_tools` is not specified for a profile, ALL tools are enabled by default
+   - Add a matching allow rule by tool name or tag for each profile that should have access
+   - Tool access is denied unless `tools_policy` allows it
 
 This dual registration system provides:
 
@@ -139,17 +139,18 @@ TOOLS_DEFINITION: list[ToolDefinition] = (
 )
 ```
 
-### Step 3: Enable the Tool in Configuration
+### Step 3: Allow the Tool in Policy
 
-Add the tool name to `config.yaml` under the appropriate profile's `enable_local_tools` list:
+Add the tool name or one of its metadata tags to the relevant `tools_policy` rules:
 
 ```yaml
 # config.yaml
 default_profile_settings:
-  tools_config:
-    enable_local_tools:
-      # ... existing tools ...
-      - "tool_name"  # Add your new tool here
+  tools_policy:
+    rules:
+      - match: { names: ["tool_name"] }
+        decision: "allow"
+        priority: 10
 
 service_profiles:
   - id: "default_assistant"
@@ -157,10 +158,12 @@ service_profiles:
     # so it will have access to "tool_name"
 
   - id: "browser_profile"
-    tools_config:  # This REPLACES the default tools_config
-      enable_local_tools:
-        # Only tools listed here will be available
-        # "tool_name" is NOT available unless listed
+    tools_policy:
+      default_decision: "deny"
+      rules:
+        - match: { tags_any: ["browser"] }
+          decision: "allow"
+          priority: 10
 ```
 
 Example from the codebase:
@@ -169,15 +172,18 @@ Example from the codebase:
 # config.yaml
 service_profiles:
   - id: "default_assistant"
-    tools_config:
-      enable_local_tools:
-        - "add_or_update_note"
-        - "search_documents"
-        # ... other tools this profile should have
+    tools_policy:
+      rules:
+        - match:
+            names:
+              - "add_or_update_note"
+              - "search_documents"
+          decision: "allow"
+          priority: 10
 ```
 
-**Note**: If `enable_local_tools` is not specified for a profile, ALL tools defined in the code are
-enabled by default.
+For tools that should be discoverable on demand instead of always advertised, also add their names
+to `tools_config.on_demand_local_tools`.
 
 ## Tool Execution Context
 

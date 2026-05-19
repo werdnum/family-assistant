@@ -25,16 +25,16 @@ from family_assistant.processing import (
 from family_assistant.storage import message_history_table
 from family_assistant.storage.context import DatabaseContext
 from family_assistant.tools import (
-    AVAILABLE_FUNCTIONS as local_tool_implementations_map,
-)
-from family_assistant.tools import (
-    TOOLS_DEFINITION as local_tools_definition_list,
+    LOCAL_TOOL_REGISTRATIONS as local_tool_registrations,
 )
 from family_assistant.tools import (
     CompositeToolsProvider,
-    ConfirmingToolsProvider,
     LocalToolsProvider,
     MCPToolsProvider,
+    PolicyEnforcingToolsProvider,
+    PolicyEngine,
+    ToolPolicyConfig,
+    ToolPolicyDecision,
     ToolsProvider,
 )
 from tests.mocks.mock_llm import (
@@ -68,10 +68,7 @@ def primary_service_config(dummy_prompts: dict[str, str]) -> ProcessingServiceCo
         timezone=ZoneInfo("UTC"),
         max_history_messages=10,
         history_max_age_hours=24,
-        tools_config=ToolsConfig(
-            enable_local_tools=["delegate_to_service"],
-            confirm_tools=[],
-        ),
+        tools_config=ToolsConfig(),
         delegation_security_level=DelegationSecurityLevel.UNRESTRICTED,
         id=PRIMARY_PROFILE_ID,
     )
@@ -84,33 +81,16 @@ def delegated_service_config(dummy_prompts: dict[str, str]) -> ProcessingService
         timezone=ZoneInfo("UTC"),
         max_history_messages=10,
         history_max_age_hours=24,
-        tools_config=ToolsConfig(
-            enable_local_tools=[],
-            confirm_tools=[],
-        ),
+        tools_config=ToolsConfig(),
         delegation_security_level=DelegationSecurityLevel.UNRESTRICTED,
         id=DELEGATED_PROFILE_ID,
     )
 
 
-def create_tools_provider(profile_tools_config: ToolsConfig) -> ToolsProvider:
+def create_tools_provider(_profile_tools_config: ToolsConfig) -> ToolsProvider:
     """Helper to create a ToolsProvider for a profile."""
-    enabled_local_tool_names = profile_tools_config.get_all_tool_names() or set()
-
-    profile_local_definitions = [
-        td
-        for td in local_tools_definition_list
-        if td.get("function", {}).get("name") in enabled_local_tool_names
-    ]
-    profile_local_implementations = {
-        name: func
-        for name, func in local_tool_implementations_map.items()
-        if name in enabled_local_tool_names
-    }
-
     local_provider = LocalToolsProvider(
-        definitions=profile_local_definitions,
-        implementations=profile_local_implementations,
+        registrations=local_tool_registrations,
     )
     mcp_provider = MCPToolsProvider(mcp_server_configs={})
 
@@ -118,12 +98,12 @@ def create_tools_provider(profile_tools_config: ToolsConfig) -> ToolsProvider:
         providers=[local_provider, mcp_provider]
     )
 
-    confirm_tools_set = set(profile_tools_config.confirm_tools)
-    confirming_provider = ConfirmingToolsProvider(
+    return PolicyEnforcingToolsProvider(
         wrapped_provider=composite_provider,
-        tools_requiring_confirmation=confirm_tools_set,
+        policy_engine=PolicyEngine.from_policy_config(
+            ToolPolicyConfig(default_decision=ToolPolicyDecision.ALLOW)
+        ),
     )
-    return confirming_provider
 
 
 @pytest_asyncio.fixture

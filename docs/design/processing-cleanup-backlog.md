@@ -258,8 +258,8 @@ It now incorporates external analysis from:
   - Impact: Hard to maintain; error-prone copy-paste types.
   - Status (2026-03-09): Phase 10 complete on branch `processing-phase10-type-boundary-hardening`
     (confirmation callback typing is now centralized as `RequestConfirmationCallback` in
-    `tools/types.py`; processing/tool layers reuse that contract, and `ConfirmingToolsProvider` now
-    invokes callbacks by keyword arguments to prevent positional signature drift).
+    `tools/types.py`; processing/tool layers reuse that contract, and policy enforcement invokes
+    callbacks by keyword arguments to prevent positional signature drift).
   - References: `service.py:148`, `service.py:206`, `service.py:266`, `service.py:687`,
     `llm_loop.py:67`, `tool_execution.py:70`
   - Sources: `[C678]` (Added from PR #678)

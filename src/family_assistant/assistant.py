@@ -997,6 +997,9 @@ class Assistant:
                 context_pruning_min_turns=profile_proc_conf.context_pruning_min_turns,
                 tools_config=profile_tools_conf,
                 delegation_security_level=profile_proc_conf.delegation_security_level,
+                allowed_delegation_sources=(
+                    profile_proc_conf.allowed_delegation_sources
+                ),
                 id=profile_id,
                 description=profile_conf.description
                 or f"Processing profile: {profile_id}",
@@ -1266,6 +1269,7 @@ class Assistant:
             or remote_config.skills_description
             or f"Remote A2A agent at {remote_config.agent_url}",
             delegation_security_level=profile_conf.processing_config.delegation_security_level,
+            allowed_delegation_sources=profile_conf.processing_config.allowed_delegation_sources,
             confirmation_timeout_seconds=profile_conf.tools_config.confirmation_timeout_seconds,
         )
 

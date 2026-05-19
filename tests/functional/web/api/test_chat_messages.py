@@ -35,16 +35,16 @@ from family_assistant.processing import ProcessingService, ProcessingServiceConf
 from family_assistant.storage import init_db
 from family_assistant.storage.context import DatabaseContext, get_db_context
 from family_assistant.tools import (
-    AVAILABLE_FUNCTIONS as local_tool_implementations,
-)
-from family_assistant.tools import (
-    TOOLS_DEFINITION as local_tools_definition,
+    LOCAL_TOOL_REGISTRATIONS as local_tool_registrations,
 )
 from family_assistant.tools import (
     CompositeToolsProvider,
-    ConfirmingToolsProvider,
     LocalToolsProvider,
     MCPToolsProvider,
+    PolicyEnforcingToolsProvider,
+    PolicyEngine,
+    ToolPolicyConfig,
+    ToolPolicyDecision,
     ToolsProvider,
 )
 from family_assistant.web.app_creator import app as actual_app
@@ -84,11 +84,7 @@ def mock_processing_service_config() -> ProcessingServiceConfig:
         timezone=ZoneInfo("UTC"),
         max_history_messages=5,
         history_max_age_hours=24,
-        tools_config=ToolsConfig(
-            enable_local_tools=["add_or_update_note"],
-            enable_mcp_server_ids=[],
-            confirm_tools=[],
-        ),
+        tools_config=ToolsConfig(),
         delegation_security_level=DelegationSecurityLevel.CONFIRM,  # Added
         id="chat_api_test_profile",  # Added
     )
@@ -105,12 +101,10 @@ async def test_tools_provider(
     mock_processing_service_config: ProcessingServiceConfig,
 ) -> ToolsProvider:
     """
-    Provides a ToolsProvider stack (Local, MCP, Composite, Confirming)
-    configured for testing.
+    Provides a policy-enforced ToolsProvider stack configured for testing.
     """
     local_provider = LocalToolsProvider(
-        definitions=local_tools_definition,  # Use actual definitions
-        implementations=local_tool_implementations,  # Use actual implementations
+        registrations=local_tool_registrations,
         embedding_generator=None,  # Not needed for add_note
         calendar_config=cast(
             "CalendarConfig", {"caldav": {"calendar_urls": ["http://test.com"]}}
@@ -127,14 +121,14 @@ async def test_tools_provider(
     )
     await composite_provider.get_tool_definitions()  # Initialize
 
-    confirming_provider = ConfirmingToolsProvider(
+    policy_provider = PolicyEnforcingToolsProvider(
         wrapped_provider=composite_provider,
-        tools_requiring_confirmation=set(
-            mock_processing_service_config.tools_config.confirm_tools
+        policy_engine=PolicyEngine.from_policy_config(
+            ToolPolicyConfig(default_decision=ToolPolicyDecision.ALLOW)
         ),
     )
-    await confirming_provider.get_tool_definitions()  # Initialize
-    return confirming_provider
+    await policy_provider.get_tool_definitions()
+    return policy_provider
 
 
 @pytest.fixture(scope="function")
@@ -250,11 +244,7 @@ def mock_processing_service_config_no_tools() -> ProcessingServiceConfig:
         timezone=ZoneInfo("UTC"),
         max_history_messages=5,
         history_max_age_hours=24,
-        tools_config=ToolsConfig(
-            enable_local_tools=[],
-            enable_mcp_server_ids=[],
-            confirm_tools=[],
-        ),
+        tools_config=ToolsConfig(),
         delegation_security_level=DelegationSecurityLevel.BLOCKED,
         id="chat_api_test_profile_no_tools",
     )
@@ -411,9 +401,6 @@ async def test_api_chat_add_note_tool(
         (rule1_matcher, rule1_output),
         (rule2_matcher, rule2_output),
     ]
-
-    # Ensure 'add_or_update_note' is not in confirm_tools for the test_processing_service
-    # This is handled by mock_processing_service_config fixture
 
     # Act
     response = await test_client.post(

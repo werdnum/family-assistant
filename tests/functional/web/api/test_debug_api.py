@@ -10,10 +10,8 @@ from family_assistant.config_loader import resolve_all_service_profiles
 from family_assistant.config_models import (
     AppConfig,
     DefaultProfileSettings,
-    MCPServerLoadingEntry,
     ProcessingConfig,
     ServiceProfile,
-    ToolLoadingEntry,
     ToolsConfig,
 )
 from family_assistant.tools.metadata import ToolTag
@@ -55,12 +53,7 @@ def _make_sample_config() -> AppConfig:
             },
         ),
         tools_config=ToolsConfig(
-            enable_local_tools=[
-                "add_or_update_note",
-                ToolLoadingEntry(name="search_documents", loading="on_demand"),
-            ],
-            enable_mcp_server_ids=["time"],
-            confirm_tools=["delete_note"],
+            on_demand_local_tools=["search_documents"],
         ),
         tools_policy=ToolPolicyConfig(
             rules=[
@@ -91,10 +84,7 @@ def _make_sample_config() -> AppConfig:
             provider="google",
             max_iterations=3,
         ),
-        tools_config=ToolsConfig(
-            enable_local_tools=["search_documents"],
-            confirm_tools=[],
-        ),
+        tools_config=ToolsConfig(on_demand_local_tools=["search_documents"]),
     )
 
     return AppConfig(
@@ -163,16 +153,7 @@ async def test_dump_profiles_returns_full_config(
         )
 
         tools_config = trusted["config"]["tools_config"]
-        # Plain strings stay as strings; on-demand entries become dicts.
-        assert "add_or_update_note" in tools_config["enable_local_tools"]
-        on_demand = next(
-            entry
-            for entry in tools_config["enable_local_tools"]
-            if isinstance(entry, dict)
-        )
-        assert on_demand == {"name": "search_documents", "loading": "on_demand"}
-        assert tools_config["enable_mcp_server_ids"] == ["time"]
-        assert tools_config["confirm_tools"] == ["delete_note"]
+        assert tools_config["on_demand_local_tools"] == ["search_documents"]
 
         # Policy rules are fully serialized.
         policy = trusted["config"]["tools_policy"]
@@ -476,13 +457,12 @@ async def test_dump_profiles_remote_services_have_no_live_llm_fields(
 async def test_dump_profiles_includes_operator_layer(
     api_client: httpx.AsyncClient,
 ) -> None:
-    """Operator-layer policy/MCP overrides are exposed even though model_dump excludes them.
+    """Operator-layer policy overrides are exposed even though model_dump excludes them.
 
-    ``ServiceProfile.operator_tools_policy`` and ``operator_mcp_server_ids`` are
-    declared with ``exclude=True`` so Pydantic's default ``model_dump()`` leaves
-    them out. At runtime they get merged into the effective policy alongside
-    the profile-layer rules, so the debug endpoint must surface them or it will
-    misrepresent how tools will actually be gated.
+    ``ServiceProfile.operator_tools_policy`` is declared with ``exclude=True`` so
+    Pydantic's default ``model_dump()`` leaves it out. At runtime it gets merged
+    into the effective policy alongside the profile-layer rules, so the debug
+    endpoint must surface it or it will misrepresent how tools are gated.
     """
     profile = ServiceProfile(
         id="with_operator_overrides",
@@ -505,10 +485,9 @@ async def test_dump_profiles_includes_operator_layer(
         service_profiles=[profile],
         default_profile_settings=DefaultProfileSettings(),
     )
-    # ServiceProfile declares operator_tools_policy / operator_mcp_server_ids with
-    # exclude=True, so passing them to AppConfig(...) would strip them during
-    # nested re-validation. In production they are set programmatically after
-    # config load, so we mirror that here.
+    # ServiceProfile declares operator_tools_policy with exclude=True, so passing
+    # it to AppConfig(...) would strip it during nested re-validation. In
+    # production it is set programmatically after config load, so we mirror that.
     config.service_profiles[0].operator_tools_policy = ToolPolicyConfig(
         rules=[
             PolicyRule(
@@ -519,11 +498,6 @@ async def test_dump_profiles_includes_operator_layer(
         ],
         default_decision=ToolPolicyDecision.DENY,
     )
-    config.service_profiles[0].operator_mcp_server_ids = [
-        "operator_eager_mcp",
-        MCPServerLoadingEntry(id="operator_lazy_mcp", loading="on_demand"),
-    ]
-
     original_config = _install_test_config(config)
     original_registry = _install_registry({})
     try:
@@ -538,15 +512,6 @@ async def test_dump_profiles_includes_operator_layer(
         assert operator_policy["rules"][0]["match"]["names"] == ["operator_*"]
         assert operator_policy["rules"][0]["decision"] == "deny"
         assert operator_policy["rules"][0]["description"] == "Operator-layer override"
-
-        # MCP overrides serialize plain strings as strings and loading entries as dicts.
-        assert "operator_eager_mcp" in dumped["operator_mcp_server_ids"]
-        lazy = next(
-            entry
-            for entry in dumped["operator_mcp_server_ids"]
-            if isinstance(entry, dict)
-        )
-        assert lazy == {"id": "operator_lazy_mcp", "loading": "on_demand"}
 
         # The profile-layer policy is still present alongside the operator layer.
         assert dumped["tools_policy"]["rules"][0]["match"]["names"] == ["profile_*"]
@@ -579,7 +544,7 @@ async def test_dump_profiles_reflects_resolved_defaults(
                 "llm_model": "gemini/default-model",
             },
             "tools_config": {
-                "confirm_tools": ["delete_note"],
+                "confirmation_timeout_seconds": 120.0,
             },
         },
         "service_profiles": [
@@ -609,7 +574,7 @@ async def test_dump_profiles_reflects_resolved_defaults(
         assert processing["max_history_messages"] == 11
         assert processing["history_max_age_hours"] == 48.0
         assert processing["llm_model"] == "gemini/default-model"
-        assert profile_config["tools_config"]["confirm_tools"] == ["delete_note"]
+        assert profile_config["tools_config"]["confirmation_timeout_seconds"] == 120.0
     finally:
         _restore_registry(original_registry)
         _restore_config(original_config)
@@ -621,11 +586,11 @@ async def test_dump_profiles_default_settings_include_operator_layer(
 ) -> None:
     """default_profile_settings also exposes excluded operator-layer fields.
 
-    ``DefaultProfileSettings.operator_tools_policy`` and
-    ``operator_mcp_server_ids`` have ``exclude=True`` for the same reason the
-    profile-level fields do, and they apply to every profile at runtime. The
-    top-level ``default_profile_settings`` dump must include them too or a
-    consumer reading this endpoint will misjudge the effective policy.
+    ``DefaultProfileSettings.operator_tools_policy`` has ``exclude=True`` for
+    the same reason the profile-level field does, and it applies to every
+    profile at runtime. The top-level ``default_profile_settings`` dump must
+    include it too or a consumer reading this endpoint will misjudge the
+    effective policy.
     """
     config = _make_sample_config()
     config.default_profile_settings.operator_tools_policy = ToolPolicyConfig(
@@ -638,11 +603,6 @@ async def test_dump_profiles_default_settings_include_operator_layer(
         ],
         default_decision=ToolPolicyDecision.DENY,
     )
-    config.default_profile_settings.operator_mcp_server_ids = [
-        "global_eager_mcp",
-        MCPServerLoadingEntry(id="global_lazy_mcp", loading="on_demand"),
-    ]
-
     original_config = _install_test_config(config)
     original_registry = _install_registry({})
     try:
@@ -656,13 +616,6 @@ async def test_dump_profiles_default_settings_include_operator_layer(
         assert op_policy["rules"][0]["match"]["names"] == ["global_*"]
         assert op_policy["rules"][0]["description"] == "Global operator override"
 
-        assert "global_eager_mcp" in defaults["operator_mcp_server_ids"]
-        lazy = next(
-            entry
-            for entry in defaults["operator_mcp_server_ids"]
-            if isinstance(entry, dict)
-        )
-        assert lazy == {"id": "global_lazy_mcp", "loading": "on_demand"}
     finally:
         _restore_registry(original_registry)
         _restore_config(original_config)

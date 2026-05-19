@@ -141,8 +141,6 @@ from family_assistant.tools.image_tools import (
 from family_assistant.tools.infrastructure import (
     CompositeToolsProvider,
     ConfirmationCallbackProtocol,
-    ConfirmingToolsProvider,
-    FilteredToolsProvider,
     LocalToolsProvider,
     PolicyEnforcingToolsProvider,
     ToolConfirmationFailed,
@@ -260,8 +258,6 @@ __all__ = [
     "ToolsProvider",
     "LocalToolsProvider",
     "CompositeToolsProvider",
-    "ConfirmingToolsProvider",
-    "FilteredToolsProvider",
     "PolicyEnforcingToolsProvider",
     "MCPServerConfig",
     "collect_system_prompt_addition",
@@ -441,14 +437,14 @@ __all__ = [
 # 1. Add the tool function to the implementation map below
 # 2. Add the tool definition to the appropriate TOOLS_DEFINITION list (e.g., NOTE_TOOLS_DEFINITION)
 # 3. Add tool metadata in LOCAL_TOOL_METADATA_BY_NAME below
-# 4. Add the tool name to config.yaml under enable_local_tools for each profile that should have access
+# 4. Add or adjust tools_policy rules for each profile that should have access
 #
 # The registration-backed catalog provides security and flexibility:
 # - Different profiles can have different tool access (e.g., browser profile has only browser tools)
 # - Destructive tools can be excluded from certain profiles
 # - New profiles can mix and match tools without code changes
 #
-# Note: If enable_local_tools is not specified for a profile, ALL tools are enabled by default.
+# Note: Runtime tool access is denied unless tools_policy allows it.
 
 
 def _metadata(*tags: ToolTag, summary: str | None = None) -> LocalToolMetadata:

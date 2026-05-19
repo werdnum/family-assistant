@@ -166,6 +166,27 @@ async def delegate_to_service_tool(
             attachments=None,
         )
 
+    source_service_id = exec_context.processing_service.service_config.id
+    allowed_sources = getattr(
+        target_service.service_config,
+        "allowed_delegation_sources",
+        None,
+    )
+    if allowed_sources is not None and source_service_id not in allowed_sources:
+        logger.warning(
+            "Delegation from '%s' to '%s' blocked by target allowed_delegation_sources.",
+            source_service_id,
+            target_service_id,
+        )
+        return ToolResult(
+            text=(
+                "Error: Tool 'delegate_to_service' is not allowed. "
+                f"Profile '{source_service_id}' is not permitted to delegate "
+                f"to '{target_service_id}'."
+            ),
+            attachments=None,
+        )
+
     confirmation_timeout_seconds = exec_context.processing_service.service_config.tools_config.confirmation_timeout_seconds
     actual_confirm_delegation = confirm_delegation
 

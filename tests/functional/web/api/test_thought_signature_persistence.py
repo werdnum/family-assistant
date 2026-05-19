@@ -29,8 +29,11 @@ from family_assistant.storage.context import DatabaseContext, get_db_context
 from family_assistant.tools import (
     LOCAL_TOOL_REGISTRATIONS,
     CompositeToolsProvider,
-    ConfirmingToolsProvider,
     LocalToolsProvider,
+    PolicyEnforcingToolsProvider,
+    PolicyEngine,
+    ToolPolicyConfig,
+    ToolPolicyDecision,
 )
 from family_assistant.web.app_creator import app
 from family_assistant.web.web_chat_interface import WebChatInterface
@@ -103,9 +106,11 @@ async def llm_integration_processing_service(
     # unrelated tools are added to the global registry.
     local_tools = LocalToolsProvider(registrations=_REPLAY_REGISTRATIONS)
     composite_tools = CompositeToolsProvider(providers=[local_tools])
-    tools_provider = ConfirmingToolsProvider(
+    tools_provider = PolicyEnforcingToolsProvider(
         wrapped_provider=composite_tools,
-        tools_requiring_confirmation=set(),  # No confirmation needed for integration test
+        policy_engine=PolicyEngine.from_policy_config(
+            ToolPolicyConfig(default_decision=ToolPolicyDecision.ALLOW)
+        ),
     )
 
     # Create processing service config

@@ -62,13 +62,9 @@ async def test_landing_page_query_param(
     base_url = web_test_fixture.base_url
     chat_page = ChatPage(page, base_url)
 
-    # Configure mock LLM response
-    mock_llm_client.rules = [
-        (
-            lambda args: "test query" in str(args.get("messages", [])),
-            LLMOutput(content="I received your test query!"),
-        )
-    ]
+    # Configure mock LLM response. The q parameter is asserted through the
+    # rendered user message below, so keep the assistant response deterministic.
+    mock_llm_client.default_response = LLMOutput(content="I received your test query!")
 
     # Navigate to /chat with q parameter
     query = "test query"

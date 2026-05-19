@@ -86,13 +86,18 @@
 #     urls:
 #       - "https://calendar.google.com/calendar/ical/example/basic.ics"
 
-# --- Tools Requiring Confirmation ---
-# Override which tools require explicit user confirmation
+# --- Tool Policy Overrides ---
+# Add operator-specific tool policy rules. These compose above defaults.yaml
+# and can allow, deny, or require confirmation for matching tools.
 # default_profile_settings:
-#   tools_config:
-#     confirm_tools:
-#       - delete_calendar_event
-#       - modify_calendar_event
+#   tools_policy:
+#     rules:
+#       - match:
+#           names:
+#             - delete_calendar_event
+#             - modify_calendar_event
+#         decision: "confirm"
+#         priority: 90
 
 # --- Service Profiles ---
 # Profiles defined here are merged with defaults.yaml by ID:

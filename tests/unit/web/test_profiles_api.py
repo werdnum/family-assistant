@@ -99,7 +99,7 @@ async def test_profiles_api_does_not_fallback_to_all_mcp_servers_when_none_visib
             timezone=ZoneInfo("UTC"),
             max_history_messages=5,
             history_max_age_hours=1,
-            tools_config=ToolsConfig(enable_mcp_server_ids=[]),
+            tools_config=ToolsConfig(),
             delegation_security_level=DelegationSecurityLevel.CONFIRM,
             id="profile-no-mcp",
             description="Profile without visible MCP tools",

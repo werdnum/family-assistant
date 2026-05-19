@@ -907,19 +907,19 @@ class TestResolveServiceProfile:
         default_settings: dict[str, Any] = {
             "processing_config": {},
             "tools_config": {
-                "confirm_tools": ["tool1", "tool2"],
-                "enable_local_tools": ["all"],
+                "confirmation_timeout_seconds": 60.0,
+                "on_demand_local_tools": ["lazy_default"],
             },
             "chat_id_to_name_map": {},
             "slash_commands": [],
         }
         profile_def = {
             "id": "test_profile",
-            "tools_config": {"enable_local_tools": ["specific_tool"]},
+            "tools_config": {"on_demand_local_tools": ["specific_tool"]},
         }
         result = resolve_service_profile(profile_def, default_settings, {})
         # tools_config should be completely replaced
-        assert result["tools_config"] == {"enable_local_tools": ["specific_tool"]}
+        assert result["tools_config"] == {"on_demand_local_tools": ["specific_tool"]}
 
     def test_tools_policy_inherited_from_defaults(self) -> None:
         """Test that tools_policy is inherited when the profile does not override it."""
@@ -1921,9 +1921,17 @@ class TestLoadConfig:
                         "processing_config": {
                             "prompts": {"system_prompt": "You are a reminder bot."},
                         },
-                        "tools_config": {
-                            "enable_local_tools": ["get_note", "list_notes"],
-                            "enable_mcp_server_ids": [],
+                        "tools_policy": {
+                            "default_decision": "deny",
+                            "rules": [
+                                {
+                                    "match": {
+                                        "names": ["get_note", "list_notes"],
+                                    },
+                                    "decision": "allow",
+                                    "priority": 10,
+                                },
+                            ],
                         },
                     },
                 ],
@@ -1973,13 +1981,8 @@ class TestLoadConfig:
             reminder.processing_config.prompts["system_prompt"]
             == "You are a reminder bot."
         )
-        assert reminder.tools_config.enable_local_tools is not None
-        local_tool_names = [
-            t if isinstance(t, str) else t.name
-            for t in reminder.tools_config.enable_local_tools
-        ]
-        assert "get_note" in local_tool_names
-        assert "list_notes" in local_tool_names
+        assert reminder.tools_policy is not None
+        assert reminder.tools_policy.rules[0].match.names == ["get_note", "list_notes"]
 
     def test_empty_service_profiles_in_config_yaml_wipes_defaults(
         self, tmp_path: Path

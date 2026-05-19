@@ -33,7 +33,6 @@ from family_assistant.tools import (
 )
 from family_assistant.tools import (
     CompositeToolsProvider,
-    ConfirmingToolsProvider,
     LocalToolsProvider,
     MCPToolsProvider,
     PolicyEnforcingToolsProvider,
@@ -81,10 +80,7 @@ def primary_service_config(dummy_prompts: dict[str, str]) -> ProcessingServiceCo
         timezone=ZoneInfo("UTC"),
         max_history_messages=5,
         history_max_age_hours=24,
-        tools_config=ToolsConfig(
-            enable_local_tools=["delegate_to_service"],
-            confirm_tools=[],
-        ),
+        tools_config=ToolsConfig(),
         delegation_security_level=DelegationSecurityLevel.UNRESTRICTED,  # Primary can delegate freely
         id=PRIMARY_PROFILE_ID,
     )
@@ -102,10 +98,7 @@ def specialized_service_config_factory(
             timezone=ZoneInfo("UTC"),
             max_history_messages=5,
             history_max_age_hours=24,
-            tools_config=ToolsConfig(
-                enable_local_tools=[],
-                confirm_tools=[],
-            ),
+            tools_config=ToolsConfig(),
             delegation_security_level=delegation_security_level,
             id=SPECIALIZED_PROFILE_ID,  # Add id for specialized profile
         )
@@ -305,45 +298,19 @@ async def mock_confirmation_callback() -> AsyncMock:
 
 
 def create_tools_provider(
-    profile_tools_config: ToolsConfig,
+    _profile_tools_config: ToolsConfig,
     delegation_security_by_target_profile_id: (
         dict[str, DelegationSecurityLevel] | None
     ) = None,
 ) -> ToolsProvider:
     """Helper to create a ToolsProvider stack for a profile."""
-    enabled_local_tool_names = profile_tools_config.get_all_tool_names() or set()
-
-    # If empty, enable all known local tools for simplicity in test setup,
-    # or be specific if the test requires it. For delegation, primary needs delegate_to_service.
-    if not enabled_local_tool_names and "delegate_to_service" in (
-        enabled_local_tool_names
-    ):
-        enabled_local_tool_names = {"delegate_to_service"}  # Ensure primary has it
-    elif (
-        not enabled_local_tool_names
-    ):  # For specialized, if empty, means no local tools
-        pass
-
-    profile_local_registrations = [
-        registration
-        for registration in local_tool_registrations
-        if registration.name in enabled_local_tool_names
-    ]
-
-    logger.info(f"create_tools_provider: profile_tools_config={profile_tools_config}")
-    logger.info(
-        f"create_tools_provider: enabled_local_tool_names={enabled_local_tool_names}"
-    )
-    logger.info(
-        f"create_tools_provider: profile_local_registrations names={[registration.name for registration in profile_local_registrations]}"
-    )
     logger.info(
         "create_tools_provider: profile_local_implementations keys=%s",
         list(local_tool_implementations_map.keys()),
     )
 
     local_provider = LocalToolsProvider(
-        registrations=profile_local_registrations,
+        registrations=local_tool_registrations,
     )
     mcp_provider = MCPToolsProvider(mcp_server_configs={})  # Mocked
 
@@ -351,10 +318,8 @@ def create_tools_provider(
         providers=[local_provider, mcp_provider]
     )
 
-    provider_for_confirmation: ToolsProvider = composite_provider
-
+    delegation_rules: list[PolicyRule] = []
     if delegation_security_by_target_profile_id:
-        delegation_rules: list[PolicyRule] = []
         for (
             target_profile_id,
             delegation_security,
@@ -379,22 +344,14 @@ def create_tools_provider(
                     priority=99,
                 )
             )
-
-        if delegation_rules:
-            provider_for_confirmation = PolicyEnforcingToolsProvider(
-                wrapped_provider=composite_provider,
-                policy_engine=PolicyEngine.from_policy_config(
-                    ToolPolicyConfig(
-                        default_decision=ToolPolicyDecision.ALLOW,
-                        rules=delegation_rules,
-                    )
-                ),
+    return PolicyEnforcingToolsProvider(
+        wrapped_provider=composite_provider,
+        policy_engine=PolicyEngine.from_policy_config(
+            ToolPolicyConfig(
+                default_decision=ToolPolicyDecision.ALLOW,
+                rules=delegation_rules,
             )
-
-    confirm_tools_set = set(profile_tools_config.confirm_tools)
-    return ConfirmingToolsProvider(
-        wrapped_provider=provider_for_confirmation,
-        tools_requiring_confirmation=confirm_tools_set,
+        ),
     )
 
 

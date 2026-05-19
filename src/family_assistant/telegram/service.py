@@ -220,7 +220,7 @@ class TelegramService:
         tool_call_id: str | None = None,
         source_message_internal_id: int | None = None,
     ) -> ConfirmationOutcome:
-        """Public method to request confirmation, called by ConfirmingToolsProvider."""
+        """Public method to request confirmation, called by policy enforcement."""
         # Delegate directly to the confirmation manager
         if self.confirmation_manager:
             return await self.confirmation_manager.request_confirmation(

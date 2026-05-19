@@ -109,8 +109,9 @@ worker) and graceful shutdown.
 - `family_assistant.processing` (ProcessingService, ProcessingServiceConfig)
 - `family_assistant.task_worker` (TaskWorker, handle_llm_callback, new_task_event, shutdown_event,
   original_handle_log_message)
-- `family_assistant.tools` (CompositeToolsProvider, ConfirmingToolsProvider, LocalToolsProvider,
-  MCPToolsProvider, ToolsProvider, \_scan_user_docs, AVAILABLE_FUNCTIONS, TOOLS_DEFINITION)
+- `family_assistant.tools` (CompositeToolsProvider, PolicyEnforcingToolsProvider,
+  LocalToolsProvider, MCPToolsProvider, ToolsProvider, \_scan_user_docs, AVAILABLE_FUNCTIONS,
+  TOOLS_DEFINITION)
 - `family_assistant.tools.types` (ToolExecutionContext)
 - `family_assistant.utils.scraping` (PlaywrightScraper)
 - `family_assistant.web.app_creator` (app)
@@ -782,7 +783,8 @@ orchestrates tool confirmation logic.
 - `LocalToolsProvider`: Implements `ToolsProvider` for local Python functions, with improved
   dependency injection.
 - `CompositeToolsProvider`: Combines multiple `ToolsProvider` instances.
-- `ConfirmingToolsProvider`: Wraps another provider to add user confirmation for sensitive tools.
+- `PolicyEnforcingToolsProvider`: Wraps another provider to enforce allow, deny, and confirmation
+  policy decisions.
 
 **Internal Dependencies:**
 

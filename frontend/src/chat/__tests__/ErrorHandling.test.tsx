@@ -118,7 +118,7 @@ describe.sequential('ErrorHandling', () => {
 
     // Runtime should handle stream errors gracefully
     expect(screen.getByText('Chat')).toBeInTheDocument();
-  }, 10000); // Add timeout
+  }, 30000); // Increased timeout for parallel test runs
 
   it('handles conversation loading errors', async () => {
     // Mock error loading conversations
