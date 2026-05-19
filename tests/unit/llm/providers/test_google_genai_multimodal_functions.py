@@ -23,7 +23,7 @@ class TestMultimodalFunctionResponses:
     @pytest.fixture
     def client_v3(self) -> GoogleGenAIClient:
         """Create a GoogleGenAIClient instance for Gemini 3.0 (multimodal tool support)."""
-        return GoogleGenAIClient(api_key="test_key", model="gemini-3-flash-preview")
+        return GoogleGenAIClient(api_key="test_key", model="gemini-3.5-flash")
 
     def test_supports_multimodal_tools(
         self, client_v2: GoogleGenAIClient, client_v3: GoogleGenAIClient

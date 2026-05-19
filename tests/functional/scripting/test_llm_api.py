@@ -32,8 +32,8 @@ def mock_llm_client() -> AsyncMock:
 
 @pytest.mark.no_db
 def test_default_model() -> None:
-    """Default model should be gemini-3-flash-preview."""
-    assert DEFAULT_MODEL == "gemini-3-flash-preview"
+    """Default model should be gemini-3.5-flash."""
+    assert DEFAULT_MODEL == "gemini-3.5-flash"
 
 
 @pytest.mark.no_db

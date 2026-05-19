@@ -176,8 +176,8 @@ async def test_one_shot_structured_with_custom_model(
 
 @pytest.mark.no_db
 def test_default_model_is_gemini_flash() -> None:
-    """Test that the default model is gemini-3-flash-preview."""
-    assert DEFAULT_MODEL == "gemini-3-flash-preview"
+    """Test that the default model is gemini-3.5-flash."""
+    assert DEFAULT_MODEL == "gemini-3.5-flash"
 
 
 @pytest.mark.no_db

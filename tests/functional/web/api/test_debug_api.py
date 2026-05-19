@@ -87,7 +87,7 @@ def _make_sample_config() -> AppConfig:
         id="readonly",
         description="Read-only analysis profile.",
         processing_config=ProcessingConfig(
-            llm_model="gemini/gemini-3-flash-preview",
+            llm_model="gemini/gemini-3.5-flash",
             provider="google",
             max_iterations=3,
         ),
@@ -378,7 +378,7 @@ async def test_dump_profiles_runtime_info_for_retrying_llm_client(
             self.primary_client = _InnerClient()
             self.primary_model = "anthropic/claude-sonnet-4-6"
             self.fallback_client = _InnerClient()
-            self.fallback_model = "models/gemini-3-flash-preview"
+            self.fallback_model = "models/gemini-3.5-flash"
 
     class _RetryingLocalService:
         kind = "local"
@@ -397,7 +397,7 @@ async def test_dump_profiles_runtime_info_for_retrying_llm_client(
         assert runtime["kind"] == "local"
         assert runtime["llm_model"] == "anthropic/claude-sonnet-4-6"
         # Fallback's "models/" prefix is normalized too.
-        assert runtime["llm_fallback_model"] == "gemini-3-flash-preview"
+        assert runtime["llm_fallback_model"] == "gemini-3.5-flash"
         assert runtime["llm_client_class"] == "_RetryingLikeClient"
     finally:
         _restore_registry(original_registry)
@@ -487,7 +487,7 @@ async def test_dump_profiles_includes_operator_layer(
     profile = ServiceProfile(
         id="with_operator_overrides",
         description="Profile with operator-layer policy overrides.",
-        processing_config=ProcessingConfig(llm_model="gemini/gemini-3-flash-preview"),
+        processing_config=ProcessingConfig(llm_model="gemini/gemini-3.5-flash"),
         tools_policy=ToolPolicyConfig(
             rules=[
                 PolicyRule(
