@@ -1770,6 +1770,7 @@ dev = [
     { name = "homeassistant", version = "2025.6.3", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.13.2' and platform_python_implementation == 'PyPy'" },
     { name = "homeassistant", version = "2025.10.4", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.13.2' and platform_python_implementation != 'PyPy'" },
     { name = "hupper" },
+    { name = "hypothesis" },
     { name = "llm-fragments-github" },
     { name = "llm-fragments-reader" },
     { name = "llm-gemini" },
@@ -1823,11 +1824,6 @@ pgserver = [
     { name = "pixeltable-pgserver" },
 ]
 
-[package.dev-dependencies]
-dev = [
-    { name = "hypothesis" },
-]
-
 [package.metadata]
 requires-dist = [
     { name = "a2a-sdk", specifier = ">=0.3.0" },
@@ -1859,6 +1855,7 @@ requires-dist = [
     { name = "homeassistant-api", specifier = ">=5.0.0" },
     { name = "httpx", specifier = ">=0.27.0" },
     { name = "hupper", marker = "extra == 'dev'", specifier = ">=1.12.1" },
+    { name = "hypothesis", marker = "extra == 'dev'", specifier = ">=6.152.9" },
     { name = "icalendar", specifier = ">=6.0.0" },
     { name = "itsdangerous", specifier = ">=2.1.0" },
     { name = "janus", specifier = ">=1.0.0" },
@@ -1957,9 +1954,6 @@ requires-dist = [
     { name = "yt-dlp", specifier = ">=2024.0.0" },
 ]
 provides-extras = ["dev", "local-embeddings", "pgserver"]
-
-[package.metadata.requires-dev]
-dev = [{ name = "hypothesis", specifier = ">=6.152.9" }]
 
 [[package]]
 name = "fastapi"
