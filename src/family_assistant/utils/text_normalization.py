@@ -205,10 +205,11 @@ def _strip_delims(match: re.Match[str]) -> str:
 
 # Markdown code spans whose contents must be preserved verbatim. CommonMark
 # allows code spans to be delimited by any number of backticks; the closing
-# string must have the same count. ``(`+)([\s\S]*?)\1`` captures the opener
-# and matches a closer of equal length, which also covers fenced
-# ``` ```...``` ``` blocks.
-_CODE_SPAN_RE = re.compile(r"(`+)[\s\S]*?\1")
+# string must have the same count and contents must be non-empty (otherwise
+# ``  `` would match as an empty span between two adjacent backticks).
+# ``(`+)[\s\S]+?\1`` captures the opener and matches a closer of equal length;
+# this also covers fenced ``` ```...``` ``` blocks.
+_CODE_SPAN_RE = re.compile(r"(`+)[\s\S]+?\1")
 
 
 def _normalize_segment(text: str) -> str:
@@ -257,22 +258,40 @@ def _streaming_safe_split(buffer: str) -> int:
     construct, or ``len(buffer)`` if the entire buffer is safe to emit.
     """
     n = len(buffer)
+    # Find all closed code spans first. ``normalize_latex_to_unicode`` removes
+    # these before applying math/command substitutions, so the scan must
+    # treat code spans as opaque -- a math closer (e.g. ``\]``) sitting
+    # inside a code span isn't a real closer.
+    code_span_ranges = [(m.start(), m.end()) for m in _CODE_SPAN_RE.finditer(buffer)]
+    code_span_starts = {start: end for start, end in code_span_ranges}
+
+    def _in_code_span(pos: int) -> bool:
+        for start, end in code_span_ranges:
+            if start <= pos < end:
+                return True
+            if start > pos:
+                break
+        return False
+
+    def _find_outside_code(needle: str, start: int) -> int:
+        pos = buffer.find(needle, start)
+        while pos >= 0 and _in_code_span(pos):
+            pos = buffer.find(needle, pos + 1)
+        return pos
+
     i = 0
     while i < n:
-        ch = buffer[i]
-
-        # Fenced code block: ```...```
-        if buffer.startswith("```", i):
-            close = buffer.find("```", i + 3)
-            if close < 0:
-                return i
-            i = close + 3
+        # Closed code span starts here -- skip its whole length atomically.
+        if i in code_span_starts:
+            i = code_span_starts[i]
             continue
+
+        ch = buffer[i]
 
         # Display dollar math: $$...$$ (must be checked before single ``$``
         # so the first ``$`` isn't consumed as a non-opener literal).
         if buffer.startswith("$$", i) and (i == 0 or buffer[i - 1] != "\\"):
-            close = buffer.find("$$", i + 2)
+            close = _find_outside_code("$$", i + 2)
             if close < 0:
                 return i
             i = close + 2
@@ -280,7 +299,7 @@ def _streaming_safe_split(buffer: str) -> int:
 
         # Display math: \[...\]
         if buffer.startswith("\\[", i):
-            close = buffer.find("\\]", i + 2)
+            close = _find_outside_code("\\]", i + 2)
             if close < 0:
                 return i
             i = close + 2
@@ -288,7 +307,7 @@ def _streaming_safe_split(buffer: str) -> int:
 
         # Inline math: \(...\)
         if buffer.startswith("\\(", i):
-            close = buffer.find("\\)", i + 2)
+            close = _find_outside_code("\\)", i + 2)
             if close < 0:
                 return i
             i = close + 2
@@ -318,6 +337,9 @@ def _streaming_safe_split(buffer: str) -> int:
                         cj = buffer[j]
                         if cj == "\n":
                             break
+                        if _in_code_span(j):
+                            j += 1
+                            continue
                         if cj == "\\" and j + 1 < n:
                             j += 2
                             continue
@@ -331,21 +353,11 @@ def _streaming_safe_split(buffer: str) -> int:
                     continue
             # Otherwise: $ is followed by a non-math character -- literal.
 
-        # Code span: ``+``...``+`` where opener and closer have matching
-        # backtick count (CommonMark). Covers single-backtick inline spans
-        # and multi-backtick spans the LLM emits when the code itself
-        # contains backticks. Fenced blocks already matched above, but a
-        # short ``` ```x``` ``` on one line is also handled here.
+        # Code span opener that didn't form a closed span (otherwise the
+        # ``code_span_starts`` skip above would have caught it). The buffer
+        # is mid-code-span; defer until the closer arrives.
         if ch == "`":
-            count = 0
-            while i + count < n and buffer[i + count] == "`":
-                count += 1
-            closer = "`" * count
-            close = buffer.find(closer, i + count)
-            if close < 0:
-                return i
-            i = close + count
-            continue
+            return i
 
         # Bare backslash command. A backslash followed by letters is a
         # candidate command; only the trailing one matters because anything

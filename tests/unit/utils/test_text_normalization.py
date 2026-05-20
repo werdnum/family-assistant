@@ -267,6 +267,13 @@ class TestCodeSpansPreserved:
             == r"see ```\beta``` here"
         )
 
+    def test_bracket_math_closer_inside_code_span_not_paired(self) -> None:
+        # The ``\]`` belongs to the surrounding code span, not to ``\[``.
+        # Both the persisted and streamed paths must preserve the verbatim
+        # markup rather than collapsing ``\[`\alpha\]``` into ``\`α\```.
+        text = r"Use \[`\alpha\]` notation."
+        assert normalize_latex_to_unicode(text) == text
+
 
 class TestStreamingLatexNormalizer:
     """Buffered normalization for chunked / streamed text."""
@@ -352,6 +359,16 @@ class TestStreamingLatexNormalizer:
         out = self._drain(n, ["$\\", r"alpha$"])
         assert out == normalize_latex_to_unicode(r"$\alpha$")
         assert out == "α"
+
+    def test_bracket_math_with_interior_code_span_not_paired(self) -> None:
+        # The ``\]`` is inside a code span, so the surrounding ``\[`` is
+        # not a math opener -- the streamer must keep the markup verbatim
+        # to match ``normalize_latex_to_unicode``.
+        n = StreamingLatexNormalizer()
+        text = r"Use \[`\alpha\]` notation."
+        out = self._drain(n, [text])
+        assert out == normalize_latex_to_unicode(text)
+        assert out == text
 
     def test_multi_backtick_code_span_split(self) -> None:
         # Regression: a double-backtick code span split across chunks must
