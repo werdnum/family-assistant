@@ -297,35 +297,39 @@ def _streaming_safe_split(buffer: str) -> int:
         # Dollar math: ``$[ \t]*\command...$`` on the same line. A bare ``$``
         # is only a delimiter when the content (after optional whitespace)
         # starts with ``\letter`` -- this matches the inline-math regex and
-        # preserves currency mentions like ``$5``.
+        # preserves currency mentions like ``$5``. When the buffer ends with
+        # ``$``, ``$ ``, or ``$\`` we can't yet decide whether the next chunk
+        # turns it into a math opener, so hold back from that position.
         if ch == "$" and (i == 0 or buffer[i - 1] != "\\"):
-            # Skip optional inline whitespace, then look for ``\letter``.
             probe = i + 1
             while probe < n and buffer[probe] in " \t":
                 probe += 1
-            if (
-                probe + 1 < n
-                and buffer[probe] == "\\"
-                and buffer[probe + 1].isascii()
-                and buffer[probe + 1].isalpha()
-            ):
-                j = probe
-                close = -1
-                while j < n:
-                    cj = buffer[j]
-                    if cj == "\n":
-                        break
-                    if cj == "\\" and j + 1 < n:
-                        j += 2
-                        continue
-                    if cj == "$":
-                        close = j
-                        break
-                    j += 1
-                if close < 0:
+            if probe == n:
+                # Trailing ``$`` (possibly with whitespace) -- defer.
+                return i
+            if buffer[probe] == "\\":
+                if probe + 1 == n:
+                    # Trailing ``$\`` -- defer, the next char decides.
                     return i
-                i = close + 1
-                continue
+                if buffer[probe + 1].isascii() and buffer[probe + 1].isalpha():
+                    j = probe
+                    close = -1
+                    while j < n:
+                        cj = buffer[j]
+                        if cj == "\n":
+                            break
+                        if cj == "\\" and j + 1 < n:
+                            j += 2
+                            continue
+                        if cj == "$":
+                            close = j
+                            break
+                        j += 1
+                    if close < 0:
+                        return i
+                    i = close + 1
+                    continue
+            # Otherwise: $ is followed by a non-math character -- literal.
 
         # Code span: ``+``...``+`` where opener and closer have matching
         # backtick count (CommonMark). Covers single-backtick inline spans

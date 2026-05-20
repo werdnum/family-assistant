@@ -328,6 +328,31 @@ class TestStreamingLatexNormalizer:
         out = self._drain(n, chunks)
         assert out == normalize_latex_to_unicode("".join(chunks))
 
+    def test_trailing_dollar_held_until_intent_known(self) -> None:
+        # Regression: when a chunk ends with a bare ``$``, the streamer
+        # can't yet decide whether the next chunk turns it into a math
+        # opener. It must defer instead of emitting the literal dollar.
+        n = StreamingLatexNormalizer()
+        out = self._drain(n, ["$", r"\alp", r"ha$"])
+        assert out == normalize_latex_to_unicode("$\\alpha$")
+        assert out == "α"
+
+    def test_trailing_dollar_with_whitespace_then_command(self) -> None:
+        # Same as above but with whitespace after the ``$`` -- still a
+        # potential math opener, so we must defer.
+        n = StreamingLatexNormalizer()
+        out = self._drain(n, ["$ ", r"\alpha$"])
+        assert out == normalize_latex_to_unicode(r"$ \alpha$")
+        assert out == "α"
+
+    def test_trailing_dollar_backslash_split(self) -> None:
+        # Buffer ending with ``$\`` -- the next char (letter? non-letter?)
+        # determines whether this is math. Defer.
+        n = StreamingLatexNormalizer()
+        out = self._drain(n, ["$\\", r"alpha$"])
+        assert out == normalize_latex_to_unicode(r"$\alpha$")
+        assert out == "α"
+
     def test_multi_backtick_code_span_split(self) -> None:
         # Regression: a double-backtick code span split across chunks must
         # be held back until the matching closer arrives so the contents

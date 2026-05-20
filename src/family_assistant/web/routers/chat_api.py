@@ -1392,6 +1392,12 @@ async def api_chat_send_message_stream(
                     break
 
                 elif queue_event["type"] == "error":
+                    # Flush any text the LaTeX normalizer was holding back
+                    # before reporting the error -- otherwise partial output
+                    # generated before the failure would be silently dropped.
+                    trailing = latex_normalizer.flush()
+                    if trailing:
+                        yield f"event: text\ndata: {json.dumps({'content': trailing})}\n\n"
                     error_id = str(uuid.uuid4())
                     logger.error(f"Streaming error {error_id}: {queue_event['error']}")
                     yield f"event: error\ndata: {json.dumps({'error': queue_event['error'], 'error_id': error_id})}\n\n"
@@ -1403,6 +1409,11 @@ async def api_chat_send_message_stream(
         except Exception as e:
             error_id = str(uuid.uuid4())
             logger.error(f"Streaming error {error_id}: {e}", exc_info=True)
+            # Flush buffered normalizer text so partial assistant output
+            # isn't lost when the stream fails mid-construct.
+            trailing = latex_normalizer.flush()
+            if trailing:
+                yield f"event: text\ndata: {json.dumps({'content': trailing})}\n\n"
             # Send error event to client
             error_msg = "An error occurred while processing your request"
             if getattr(request.app.state, "debug_mode", False):
