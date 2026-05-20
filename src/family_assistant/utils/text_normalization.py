@@ -204,12 +204,12 @@ def _strip_delims(match: re.Match[str]) -> str:
 
 
 # Markdown code spans whose contents must be preserved verbatim. CommonMark
-# allows code spans to be delimited by any number of backticks; the closing
-# string must have the same count and contents must be non-empty (otherwise
-# ``  `` would match as an empty span between two adjacent backticks).
-# ``(`+)[\s\S]+?\1`` captures the opener and matches a closer of equal length;
-# this also covers fenced ``` ```...``` ``` blocks.
-_CODE_SPAN_RE = re.compile(r"(`+)[\s\S]+?\1")
+# requires the opener and closer to be standalone "backtick strings" of equal
+# length -- a run of N backticks not preceded or followed by another backtick.
+# The ``(?<!`)`` / ``(?!`)`` boundary checks prevent the regex from
+# backtracking the opener inside a longer fence (e.g. treating the first ``
+# of ``` as a single-backtick code span).
+_CODE_SPAN_RE = re.compile(r"(?<!`)(`+)(?!`)[\s\S]+?(?<!`)\1(?!`)")
 
 
 def _normalize_segment(text: str) -> str:

@@ -380,6 +380,18 @@ class TestStreamingLatexNormalizer:
         assert out == normalize_latex_to_unicode("".join(chunks))
         assert out == r"``\alpha``"
 
+    def test_triple_backtick_fence_split(self) -> None:
+        # Regression: a fenced span split as ``` ```\\a `` + ``lpha``` ```
+        # must hold back until the closing ``` arrives. The old regex
+        # backtracked the opener from ``` to `, treating the first three
+        # backticks as a "closed" single-backtick span and normalizing the
+        # body as prose.
+        n = StreamingLatexNormalizer()
+        chunks = [r"```\a", r"lpha```"]
+        out = self._drain(n, chunks)
+        assert out == normalize_latex_to_unicode("".join(chunks))
+        assert out == r"```\alpha```"
+
     def test_inline_math_with_inner_whitespace_split(self) -> None:
         # ``$ \alpha$`` (LLM-emitted padding) split across chunks should
         # produce normalized ``α`` in the stream, matching the persisted
