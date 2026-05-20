@@ -359,7 +359,7 @@ async def test_existing_durable_confirmation_truncates_long_telegram_prompt() ->
     outcome = await manager.send_existing_confirmation_request(
         conversation_id=str(USER_CHAT_ID),
         request_id="confirm_long",
-        prompt_text="Email-originated action\n\n" + ("x" * 10000),
+        prompt_text="From your email — approve to run:\n\n" + ("x" * 10000),
     )
 
     assert outcome.kind == "completed"

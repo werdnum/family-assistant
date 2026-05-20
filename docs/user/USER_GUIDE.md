@@ -124,14 +124,18 @@ You can ask the assistant a wide variety of things:
     tools real by default, simulates action tools with realistic values, and returns a transcript of
     which calls were real vs simulated.
 
-- **Forward Email for Action:** If email intake actions are enabled, you can forward an order
-  confirmation or ticket purchase and let the assistant extract the relevant details. For example, a
-  soccer ticket email can become a proposed calendar event or note. The assistant treats the email
-  body and forwarded content as untrusted evidence, so it will not follow special instructions
-  embedded in the email. Any state-changing action waits for your confirmation in Telegram or the
-  Web UI, and Telegram shows inline approval buttons when it is your configured primary
-  communication channel. If the email came through a recipient-only alias without a mapped
-  forwarding sender, confirmations can still be created, but the assistant will not email a reply.
+- **Email the Assistant:** If email intake actions are enabled, you can email the assistant directly
+  or forward something — an order confirmation, ticket purchase, school notice — and ask it to do
+  something with it (or let it summarise and offer to save useful bits). For example, a soccer
+  ticket email can become a calendar event or a note. The assistant replies by email like a normal
+  chat. Anything that writes data or sends a message (calendar events, notes, reminders, messages to
+  other Family Assistant users, fetching a linked document) waits for you to approve it in Telegram
+  or the Web UI before it runs. Approvals stay open for 24 hours, so you don't have to react the
+  moment the reply lands. Telegram shows inline approval buttons when it is your configured primary
+  communication channel. The assistant ignores instructions embedded inside forwarded content — only
+  your direct request controls what it does. If the email came through a recipient-only alias
+  without a mapped forwarding sender, confirmations can still be created, but the assistant won't
+  email a reply.
 
 - **Forward Email to Index a Linked Document:** If the email points to a document you want to keep
   (a shared PDF, a Drive/Dropbox/iCloud link, a long article), the assistant can propose fetching
