@@ -212,8 +212,8 @@ def _contains_tool_result(kwargs: MatcherArgs) -> bool:
 def _contains_pending_confirmation_tool_result(kwargs: MatcherArgs) -> bool:
     return any(
         isinstance(message, ToolMessage)
-        and "action pending confirmation" in message.content.lower()
-        and "has not executed" in message.content.lower()
+        and "waiting on the user to approve" in message.content.lower()
+        and "hasn't run yet" in message.content.lower()
         for message in kwargs["messages"]
     )
 
@@ -401,9 +401,9 @@ def test_email_action_prompt_keeps_sender_controlled_fields_untrusted() -> None:
         ],
     })
 
-    trusted_metadata = prompt.split("Untrusted email metadata:", maxsplit=1)[0]
-    assert "Subject:" not in trusted_metadata
-    assert "Attachments:" not in trusted_metadata
+    trusted_section = prompt.split("<untrusted_email_evidence>", maxsplit=1)[0]
+    assert "Subject:" not in trusted_section
+    assert "Attachments:" not in trusted_section
     assert prompt.count("</untrusted_email_evidence>") == 1
     evidence_body = prompt.split("<untrusted_email_evidence>", maxsplit=1)[1]
     assert "Subject:" in evidence_body
@@ -739,7 +739,7 @@ async def test_email_action_creates_durable_confirmation_and_replies_by_email(
         request = pending[0]
         assert request["tool_name"] == "add_or_update_note"
         assert request["tool_args_json"]["title"] == "Soccer tickets"
-        assert "Email-originated action" in request["confirmation_prompt"]
+        assert "From your email" in request["confirmation_prompt"]
         note_content = request["tool_args_json"]["content"]
         assert isinstance(note_content, str)
         assert "Special instruction for agents" not in note_content
