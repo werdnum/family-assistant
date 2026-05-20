@@ -5,15 +5,22 @@ or ``\\alpha`` in prose. None of our delivery surfaces (Telegram, plain-text
 email, the current React frontend) parse LaTeX, so users see the raw markup.
 
 ``normalize_latex_to_unicode`` rewrites known LaTeX commands to their Unicode
-equivalents and strips surrounding math delimiters when their contents look
-like math. It is intentionally conservative: text without a backslash is
-returned unchanged, currency mentions like ``$100`` are left alone, and
-unknown commands are preserved.
+equivalents, strips surrounding math delimiters when their contents look
+like math, and preserves markdown code spans verbatim. ``StreamingLatexNormalizer``
+is the streaming counterpart used by the SSE chat endpoint.
+
+Both paths share one tokenizer (``_consume``) that recognises constructs in a
+single left-to-right pass. The streaming case is the same tokenizer with
+``eof=False``; an incomplete trailing token (a partial backslash command,
+an open math span, an unclosed code span) makes the tokenizer return
+``None`` and the caller buffers the tail until more input arrives.
+
+The tokeniser is intentionally conservative: text without a backslash, ``$``,
+or backtick is returned unchanged, currency mentions like ``$100`` are left
+alone, and unknown commands are preserved.
 """
 
 from __future__ import annotations
-
-import re
 
 _LATEX_COMMANDS: dict[str, str] = {
     # Arrows
@@ -162,336 +169,451 @@ _LATEX_COMMANDS: dict[str, str] = {
     "checkmark": "✓",
 }
 
-_LATEX_COMMAND_RE = re.compile(r"\\([a-zA-Z]+)")
 
-# Inline ``$...$`` is only treated as math when the content (after optional
-# leading whitespace) starts with a backslash command. This avoids corrupting
-# currency mentions like ``"Price $5 and \alpha cost $10."`` while still
-# normalizing common LLM output such as ``"$ \alpha + \beta $"``.
-_INLINE_DOLLAR_MATH_RE = re.compile(
-    r"(?<!\\)\$(?!\$)([ \t]*\\[a-zA-Z]+[^$\n]*?)(?<!\\)\$(?!\$)"
-)
-
-_DISPLAY_DOLLAR_MATH_RE = re.compile(
-    r"\$\$(.*?\\[a-zA-Z]+.*?)\$\$",
-    re.DOTALL,
-)
-
-_PAREN_MATH_RE = re.compile(r"\\\(([^\n]*?\\[a-zA-Z]+[^\n]*?)\\\)")
-
-_BRACKET_MATH_RE = re.compile(
-    r"\\\[(.*?\\[a-zA-Z]+.*?)\\\]",
-    re.DOTALL,
-)
-
-# Single combined regex used by ``_normalize_segment``. Applying each math
-# pattern in turn would let earlier substitutions create new match
-# opportunities for later patterns -- e.g. ``$$\alpha$$`` collapsing to
-# ``α`` could turn a previously-rejected ``$...$`` pair into valid inline
-# math. That cascading behaviour is impossible to reproduce in the
-# streaming scan, which can only see the buffer as one snapshot. Combining
-# all alternatives into one ``re.sub`` ensures both code paths agree.
-_MATH_PATTERN_RE = re.compile(
-    r"(?<!\\)\$\$(?P<display>.*?\\[a-zA-Z]+.*?)\$\$"
-    r"|(?<!\\)\$(?!\$)(?P<inline>[ \t]*\\[a-zA-Z]+[^$\n]*?)(?<!\\)\$(?!\$)"
-    r"|\\\[(?P<bracket>.*?\\[a-zA-Z]+.*?)\\\]"
-    r"|\\\((?P<paren>[^\n]*?\\[a-zA-Z]+[^\n]*?)\\\)",
-    re.DOTALL,
-)
-
-
-def _replace_command(match: re.Match[str]) -> str:
-    name = match.group(1)
-    replacement = _LATEX_COMMANDS.get(name)
-    if replacement is None:
-        return match.group(0)
-    return replacement
+def _is_ascii_letter(ch: str) -> bool:
+    """ASCII a-zA-Z. Matches what LaTeX accepts in a control sequence name."""
+    return ch.isascii() and ch.isalpha()
 
 
 def _convert_commands(text: str) -> str:
-    return _LATEX_COMMAND_RE.sub(_replace_command, text)
+    """Replace every ``\\letter+`` run with its Unicode glyph (or pass through).
 
-
-def _strip_math_delims(match: re.Match[str]) -> str:
-    for name in ("display", "inline", "bracket", "paren"):
-        content = match.group(name)
-        if content is not None:
-            return _convert_commands(content).strip()
-    return match.group(0)
-
-
-# Markdown code spans whose contents must be preserved verbatim. CommonMark
-# requires the opener and closer to be standalone "backtick strings" of equal
-# length -- a run of N backticks not preceded or followed by another backtick.
-# The ``(?<!`)`` / ``(?!`)`` boundary checks prevent the regex from
-# backtracking the opener inside a longer fence (e.g. treating the first ``
-# of ``` as a single-backtick code span).
-_CODE_SPAN_RE = re.compile(r"(?<!`)(`+)(?!`)[\s\S]+?(?<!`)\1(?!`)")
-
-
-def _normalize_segment(text: str) -> str:
-    """Apply math/command substitutions to a non-code segment."""
-    if not text or "\\" not in text:
+    Used for content inside math delimiters; in the prose tokenizer the
+    same conversion happens via ``_consume_command``.
+    """
+    if "\\" not in text:
         return text
-    text = _MATH_PATTERN_RE.sub(_strip_math_delims, text)
-    return _convert_commands(text)
+    out: list[str] = []
+    i = 0
+    n = len(text)
+    while i < n:
+        ch = text[i]
+        if ch == "\\" and i + 1 < n and _is_ascii_letter(text[i + 1]):
+            j = i + 1
+            while j < n and _is_ascii_letter(text[j]):
+                j += 1
+            name = text[i + 1 : j]
+            out.append(_LATEX_COMMANDS.get(name, text[i:j]))
+            i = j
+            continue
+        out.append(ch)
+        i += 1
+    return "".join(out)
+
+
+# ---------------------------------------------------------------------------
+# Tokenizer
+# ---------------------------------------------------------------------------
+#
+# ``_consume(text, i, eof)`` returns either ``(rendered, new_i)`` or ``None``.
+# A ``None`` return means the construct starting at ``i`` is incomplete and
+# the caller (a streaming buffer) should wait for more input.  With
+# ``eof=True`` the tokenizer treats an unfinished construct as literal text
+# instead, so callers can flush at end of stream.
+#
+# Each consumer handles a specific construct.  ``_consume`` dispatches based
+# on the character at ``i``; everything else falls through to a plain text
+# run via ``_consume_text``.
+
+
+def _is_code_span_opener(text: str, i: int, n: int, *, eof: bool) -> bool | None:
+    """Return True if backticks at ``text[i]`` open a *confirmed* code span.
+
+    A confirmed code span is one whose closer is visible in the buffer and
+    whose boundaries can be verified (no following backtick run). Used by
+    math consumers to abort: a math closer that sits inside a code span
+    would be extracted away before the math regex ran, so the math
+    construct can't be finalised.
+
+    Returns:
+        ``True``  — a real code span begins here; the caller should abort.
+        ``False`` — not a code span (just literal backticks in content).
+        ``None`` — streaming mode, can't tell yet; caller should defer.
+    """
+    if i >= n or text[i] != "`":
+        return False
+    count = 0
+    while i + count < n and text[i + count] == "`":
+        count += 1
+    end_open = i + count
+    if end_open == n:
+        return None if not eof else False
+    closer = "`" * count
+    search = end_open
+    while True:
+        candidate = text.find(closer, search)
+        if candidate < 0:
+            return None if not eof else False
+        end_close = candidate + count
+        if end_close < n and text[end_close] == "`":
+            search = candidate + 1
+            continue
+        if end_close == n and not eof:
+            return None
+        if candidate == end_open:
+            search = candidate + 1
+            continue
+        return True
+
+
+def _consume_text(text: str, i: int, n: int) -> tuple[str, int]:
+    """Consume a plain text run up to the next potentially-significant char.
+
+    Stops on ``$``, ``\\``, or `` ` `` so the dispatcher can route to the
+    right consumer.
+    """
+    start = i
+    while i < n and text[i] not in "`$\\":
+        i += 1
+    return text[start:i], i
+
+
+def _consume_command(text: str, i: int, n: int, *, eof: bool) -> tuple[str, int] | None:
+    """Consume ``\\letter+``.
+
+    Returns ``None`` in streaming mode when the letters extend to end of
+    buffer (a following chunk might add more letters and rename the
+    command).  In eof mode the command is rendered with whatever letters
+    are available.
+    """
+    j = i + 1
+    while j < n and _is_ascii_letter(text[j]):
+        j += 1
+    if j == n and not eof:
+        return None
+    name = text[i + 1 : j]
+    return _LATEX_COMMANDS.get(name, text[i:j]), j
+
+
+def _consume_code_span(
+    text: str, i: int, n: int, *, eof: bool
+) -> tuple[str, int] | None:
+    """Consume `` `code` ``, `` ``code`` ``, ``` ```code``` ``` etc.
+
+    CommonMark code spans are delimited by a "backtick string" of N
+    backticks; the closer must be a backtick string of equal length not
+    flanked by additional backticks. The contents are preserved verbatim.
+
+    Returns ``None`` in streaming mode if the opener extends to end of
+    buffer (might still grow), no closer is yet visible, or the closer
+    sits at end of buffer (we can't yet check it isn't part of a longer
+    run).
+    """
+    count = 0
+    while i + count < n and text[i + count] == "`":
+        count += 1
+    end_open = i + count
+    if end_open == n:
+        if not eof:
+            return None
+        # Trailing backticks with no closer -- literal.
+        return text[i:end_open], end_open
+
+    closer = "`" * count
+    search = end_open
+    while True:
+        candidate = text.find(closer, search)
+        if candidate < 0:
+            if not eof:
+                return None
+            return text[i:end_open], end_open
+        end_close = candidate + count
+        # Reject if the closer is part of a longer backtick run.
+        if end_close < n and text[end_close] == "`":
+            search = candidate + 1
+            continue
+        if end_close == n and not eof:
+            # Can't verify the boundary yet.
+            return None
+        # CommonMark code spans require non-empty content.
+        if candidate == end_open:
+            search = candidate + 1
+            continue
+        return text[i:end_close], end_close
+
+
+def _consume_display_math(
+    text: str, i: int, n: int, *, eof: bool
+) -> tuple[str, int] | None:
+    """Consume ``$$...$$`` where the content contains a ``\\command``.
+
+    Caller must have verified ``text[i:i+2] == "$$"`` and that the opener
+    isn't preceded by ``\\``.
+    """
+    j = i + 2
+    has_command = False
+    while j < n:
+        ch = text[j]
+        if ch == "`":
+            verdict = _is_code_span_opener(text, j, n, eof=eof)
+            if verdict is None:
+                return None
+            if verdict:
+                # The would-be ``$$`` closer would sit inside a code span
+                # after extraction, so this math span doesn't exist.
+                return "$$", i + 2
+            # Just literal backticks; skip them as content.
+            while j < n and text[j] == "`":
+                j += 1
+            continue
+        if ch == "\\" and j + 1 < n:
+            nxt = text[j + 1]
+            if _is_ascii_letter(nxt):
+                has_command = True
+            # Skip the escaped char so e.g. ``\$`` doesn't trigger a
+            # spurious closer.
+            j += 2
+            continue
+        if ch == "$" and j + 1 < n and text[j + 1] == "$":
+            if has_command:
+                content = text[i + 2 : j]
+                return _convert_commands(content).strip(), j + 2
+            # Inner ``$$`` without a command yet -- treat as content and
+            # keep looking for the real closer.
+            j += 2
+            continue
+        j += 1
+    if not eof:
+        return None
+    # No closer in buffer -- opener is literal.
+    return "$$", i + 2
+
+
+def _consume_inline_dollar(
+    text: str, i: int, n: int, *, eof: bool
+) -> tuple[str, int] | None:
+    """Consume ``$[ \\t]*\\command...$`` on a single line.
+
+    Caller has verified ``text[i] == "$"``, ``text[i+1] != "$"`` and that
+    the opener isn't preceded by ``\\``.
+    """
+    probe = i + 1
+    while probe < n and text[probe] in " \t":
+        probe += 1
+    if probe == n:
+        if not eof:
+            return None
+        return "$", i + 1
+    if text[probe] != "\\":
+        # ``$5`` etc. -- currency / prose, not math.
+        return "$", i + 1
+    if probe + 1 == n:
+        if not eof:
+            return None
+        return "$", i + 1
+    if not _is_ascii_letter(text[probe + 1]):
+        # ``$\$`` etc. -- the backslash escapes something, not a command.
+        return "$", i + 1
+
+    j = probe
+    while j < n:
+        ch = text[j]
+        if ch == "\n":
+            # ``[^$\n]*?`` in the regex forbids newlines.
+            return "$", i + 1
+        if ch == "`":
+            verdict = _is_code_span_opener(text, j, n, eof=eof)
+            if verdict is None:
+                return None
+            if verdict:
+                # Closer would land inside the code span -- opener is literal.
+                return "$", i + 1
+            while j < n and text[j] == "`":
+                j += 1
+            continue
+        if ch == "\\" and j + 1 < n:
+            j += 2
+            continue
+        if ch == "$":
+            # Closer can't be immediately followed by another ``$``.
+            if j + 1 < n and text[j + 1] == "$":
+                return "$", i + 1
+            if j + 1 == n and not eof:
+                # Can't verify the trailing ``(?!\$)`` yet.
+                return None
+            content = text[i + 1 : j]
+            return _convert_commands(content).strip(), j + 1
+        j += 1
+    if not eof:
+        return None
+    return "$", i + 1
+
+
+def _consume_paren_math(
+    text: str, i: int, n: int, *, eof: bool
+) -> tuple[str, int] | None:
+    """Consume ``\\(...\\)`` where the content contains a ``\\command``.
+
+    Caller has verified ``text[i:i+2] == "\\("``.
+    """
+    j = i + 2
+    has_command = False
+    while j < n:
+        ch = text[j]
+        if ch == "\n":
+            # ``[^\n]*?`` in the regex forbids newlines.
+            return text[i : i + 2], i + 2
+        if ch == "`":
+            verdict = _is_code_span_opener(text, j, n, eof=eof)
+            if verdict is None:
+                return None
+            if verdict:
+                return text[i : i + 2], i + 2
+            while j < n and text[j] == "`":
+                j += 1
+            continue
+        if ch == "\\" and j + 1 < n:
+            nxt = text[j + 1]
+            if nxt == ")":
+                if has_command:
+                    content = text[i + 2 : j]
+                    return _convert_commands(content).strip(), j + 2
+                # No command inside -- opener is literal.
+                return text[i : i + 2], i + 2
+            if _is_ascii_letter(nxt):
+                has_command = True
+            j += 2
+            continue
+        j += 1
+    if not eof:
+        return None
+    return text[i : i + 2], i + 2
+
+
+def _consume_bracket_math(
+    text: str, i: int, n: int, *, eof: bool
+) -> tuple[str, int] | None:
+    """Consume ``\\[...\\]`` where the content contains a ``\\command``.
+
+    Caller has verified ``text[i:i+2] == "\\["``. Content may span newlines
+    (the regex uses DOTALL).
+    """
+    j = i + 2
+    has_command = False
+    while j < n:
+        ch = text[j]
+        if ch == "`":
+            verdict = _is_code_span_opener(text, j, n, eof=eof)
+            if verdict is None:
+                return None
+            if verdict:
+                return text[i : i + 2], i + 2
+            while j < n and text[j] == "`":
+                j += 1
+            continue
+        if ch == "\\" and j + 1 < n:
+            nxt = text[j + 1]
+            if nxt == "]":
+                if has_command:
+                    content = text[i + 2 : j]
+                    return _convert_commands(content).strip(), j + 2
+                return text[i : i + 2], i + 2
+            if _is_ascii_letter(nxt):
+                has_command = True
+            j += 2
+            continue
+        j += 1
+    if not eof:
+        return None
+    return text[i : i + 2], i + 2
+
+
+def _consume(text: str, i: int, n: int, *, eof: bool) -> tuple[str, int] | None:
+    """Consume one token starting at ``text[i]``.
+
+    Dispatches to the appropriate per-construct consumer. ``None`` means
+    the construct is incomplete and the caller should wait for more input.
+    """
+    if i >= n:
+        return "", i
+
+    ch = text[i]
+
+    if ch == "`":
+        return _consume_code_span(text, i, n, eof=eof)
+
+    if ch == "$":
+        # Escaped opener -- ``\$`` was already consumed by the previous
+        # ``\``-handling branch, so if we got here ``text[i-1]`` is the
+        # last "real" character.
+        if i > 0 and text[i - 1] == "\\":
+            return "$", i + 1
+        if i + 1 < n and text[i + 1] == "$":
+            return _consume_display_math(text, i, n, eof=eof)
+        if i + 1 == n:
+            if not eof:
+                return None
+            return "$", i + 1
+        return _consume_inline_dollar(text, i, n, eof=eof)
+
+    if ch == "\\":
+        if i + 1 == n:
+            if not eof:
+                return None
+            return "\\", i + 1
+        nxt = text[i + 1]
+        if nxt == "(":
+            return _consume_paren_math(text, i, n, eof=eof)
+        if nxt == "[":
+            return _consume_bracket_math(text, i, n, eof=eof)
+        if _is_ascii_letter(nxt):
+            return _consume_command(text, i, n, eof=eof)
+        # ``\$``, ``\\``, ``\@`` etc. -- consume both characters as text.
+        return text[i : i + 2], i + 2
+
+    return _consume_text(text, i, n)
+
+
+# ---------------------------------------------------------------------------
+# Public API
+# ---------------------------------------------------------------------------
 
 
 def normalize_latex_to_unicode(text: str) -> str:
     """Replace LaTeX math markup with Unicode equivalents.
 
-    Returns ``text`` unchanged when no backslash is present so the common case
-    is essentially free. Known commands (e.g. ``\\rightarrow``, ``\\alpha``) are
-    replaced with their glyphs; unknown commands are left intact. Math
-    delimiters (``$...$``, ``$$...$$``, ``\\(...\\)``, ``\\[...\\]``) are
-    stripped only when their contents contain a backslash command, so prose
-    like ``"$100 fee"`` is unaffected. Markdown code spans -- fenced
-    ``` ```...``` ``` blocks and inline `` `...` `` -- are preserved verbatim,
-    so explanations of LaTeX syntax aren't corrupted.
+    Returns ``text`` unchanged when no backslash is present so the common
+    case is essentially free. Known commands (e.g. ``\\rightarrow``,
+    ``\\alpha``) are replaced with their glyphs; unknown commands are left
+    intact. Math delimiters (``$...$``, ``$$...$$``, ``\\(...\\)``,
+    ``\\[...\\]``) are stripped only when their contents contain a
+    backslash command, so prose like ``"$100 fee"`` is unaffected. Markdown
+    code spans -- fenced ``` ```...``` ``` blocks and inline `` `...` `` --
+    are preserved verbatim, so explanations of LaTeX syntax aren't
+    corrupted.
     """
     if not text or "\\" not in text:
         return text
-
-    pieces: list[str] = []
-    cursor = 0
-    for match in _CODE_SPAN_RE.finditer(text):
-        pieces.append(_normalize_segment(text[cursor : match.start()]))
-        pieces.append(match.group(0))
-        cursor = match.end()
-    pieces.append(_normalize_segment(text[cursor:]))
-    return "".join(pieces)
-
-
-def _streaming_safe_split(buffer: str) -> int:
-    """Find the position up to which ``buffer`` can be normalized in isolation.
-
-    Walks the buffer left-to-right at the top level, skipping over closed
-    constructs (fenced code, ``\\[...\\]``, ``\\(...\\)``, ``$\\command...$``,
-    inline ``` `...` ```) as opaque units so their interiors don't interact
-    with the outer scan. Returns the start position of the first unclosed
-    construct, or ``len(buffer)`` if the entire buffer is safe to emit.
-    """
-    n = len(buffer)
-    # Find all closed code spans first. ``normalize_latex_to_unicode`` removes
-    # these before applying math/command substitutions, so the scan must
-    # treat code spans as opaque -- a math closer (e.g. ``\]``) sitting
-    # inside a code span isn't a real closer.
-    # Drop matches whose closer sits at end-of-buffer: ``_CODE_SPAN_RE``
-    # requires the closer not to be followed by another backtick
-    # (``(?!`)``); end-of-buffer satisfies that vacuously, but a future
-    # chunk could add a backtick and invalidate the match. Deferring is
-    # the safe choice.
-    code_span_ranges = [
-        (m.start(), m.end()) for m in _CODE_SPAN_RE.finditer(buffer) if m.end() < n
-    ]
-    code_span_starts = {start: end for start, end in code_span_ranges}
-
-    def _in_code_span(pos: int) -> bool:
-        for start, end in code_span_ranges:
-            if start <= pos < end:
-                return True
-            if start > pos:
-                break
-        return False
-
-    def _find_outside_code(needle: str, start: int) -> int:
-        pos = buffer.find(needle, start)
-        while pos >= 0 and _in_code_span(pos):
-            pos = buffer.find(needle, pos + 1)
-        return pos
-
-    def _has_orphan_backtick(start: int, end: int) -> bool:
-        """Return True if any backtick in ``buffer[start:end]`` is not part
-        of a confirmed code span. Such a backtick could open a code span in
-        a later chunk and swallow the math closer we just found, so the
-        math construct can't be finalised yet.
-        """
-        return any(buffer[j] == "`" and not _in_code_span(j) for j in range(start, end))
-
-    def _has_command(start: int, end: int) -> bool:
-        """Return True if ``buffer[start:end]`` contains ``\\letter+``."""
-        j = start
-        while j < end - 1:
-            if (
-                buffer[j] == "\\"
-                and buffer[j + 1].isascii()
-                and buffer[j + 1].isalpha()
-            ):
-                return True
-            j += 1
-        return False
-
-    def _next_code_span_start(after: int) -> int:
-        """Return the start of the first code span at or after ``after``,
-        or ``n`` if none exists. Math constructs can't extend past a code
-        span boundary because ``normalize_latex_to_unicode`` extracts code
-        spans before applying math substitutions.
-        """
-        for span_start, _span_end in code_span_ranges:
-            if span_start >= after:
-                return span_start
-        return n
-
-    def _find_math_close(content_start: int, closer: str) -> int:
-        """Find the first ``closer`` after ``content_start`` whose preceding
-        content contains a ``\\command`` (matching the math regex's
-        ``\\[a-zA-Z]+`` requirement). The search is bounded by the next
-        code span so math doesn't pair across code-span boundaries.
-        Returns -1 if no valid closer exists.
-        """
-        boundary = _next_code_span_start(content_start)
-        search_from = content_start
-        while True:
-            candidate = buffer.find(closer, search_from)
-            if candidate < 0 or candidate >= boundary:
-                return -1
-            if _has_command(content_start, candidate):
-                return candidate
-            search_from = candidate + 1
-
+    n = len(text)
+    out: list[str] = []
     i = 0
     while i < n:
-        # Closed code span starts here -- skip its whole length atomically.
-        if i in code_span_starts:
-            i = code_span_starts[i]
+        result = _consume(text, i, n, eof=True)
+        if result is None:
+            # ``eof=True`` should always return a value; if a consumer
+            # bails defensively, emit the byte and keep going.
+            out.append(text[i])
+            i += 1
             continue
-
-        ch = buffer[i]
-
-        # Display dollar math: $$...$$ (must be checked before single ``$``
-        # so the first ``$`` isn't consumed as a non-opener literal).
-        if buffer.startswith("$$", i) and (i == 0 or buffer[i - 1] != "\\"):
-            close = _find_math_close(i + 2, "$$")
-            if close < 0:
-                return i
-            if _has_orphan_backtick(i + 2, close):
-                return i
-            i = close + 2
+        rendered, next_i = result
+        if next_i == i:
+            # Shouldn't happen, but guard against an infinite loop.
+            out.append(text[i])
+            i += 1
             continue
-
-        # Display math: \[...\]
-        if buffer.startswith("\\[", i):
-            close = _find_math_close(i + 2, "\\]")
-            if close < 0:
-                return i
-            if _has_orphan_backtick(i + 2, close):
-                return i
-            i = close + 2
-            continue
-
-        # Inline math: \(...\)
-        if buffer.startswith("\\(", i):
-            close = _find_math_close(i + 2, "\\)")
-            if close < 0:
-                return i
-            if _has_orphan_backtick(i + 2, close):
-                return i
-            i = close + 2
-            continue
-
-        # Dollar math: ``$[ \t]*\command...$`` on the same line. A bare ``$``
-        # is only a delimiter when the content (after optional whitespace)
-        # starts with ``\letter`` -- this matches the inline-math regex and
-        # preserves currency mentions like ``$5``. When the buffer ends with
-        # ``$``, ``$ ``, or ``$\`` we can't yet decide whether the next chunk
-        # turns it into a math opener, so hold back from that position.
-        if ch == "$" and (i == 0 or buffer[i - 1] != "\\"):
-            probe = i + 1
-            while probe < n and buffer[probe] in " \t":
-                probe += 1
-            if probe == n:
-                # Trailing ``$`` (possibly with whitespace) -- defer.
-                return i
-            if buffer[probe] == "\\":
-                if probe + 1 == n:
-                    # Trailing ``$\`` -- defer, the next char decides.
-                    return i
-                if buffer[probe + 1].isascii() and buffer[probe + 1].isalpha():
-                    j = probe
-                    close = -1
-                    hit_newline = False
-                    hit_code_span = False
-                    while j < n:
-                        cj = buffer[j]
-                        if cj == "\n":
-                            # Inline math regex's ``[^$\n]*?`` forbids
-                            # newlines; once we see one the opener can never
-                            # become valid math. Treat as literal.
-                            hit_newline = True
-                            break
-                        if _in_code_span(j):
-                            # Math closer would be in a different segment
-                            # than the opener once the code span is
-                            # extracted; this opener is literal.
-                            hit_code_span = True
-                            break
-                        if cj == "\\" and j + 1 < n:
-                            j += 2
-                            continue
-                        if cj == "$":
-                            close = j
-                            break
-                        j += 1
-                    if close < 0:
-                        if hit_newline or hit_code_span:
-                            # Opener can't form a math span -- it's literal.
-                            i += 1
-                            continue
-                        # Closer might arrive in a later chunk -- defer.
-                        return i
-                    # Validate the inline-math regex's ``(?!\$)`` on the
-                    # closer: a ``$`` immediately followed by another ``$``
-                    # isn't a real closer.
-                    if close == n - 1:
-                        # Can't see the next char yet -- defer.
-                        return i
-                    if buffer[close + 1] == "$":
-                        # Closer is followed by ``$``, so the regex would
-                        # reject this span. Opener is literal; advance one.
-                        i += 1
-                        continue
-                    if _has_orphan_backtick(probe, close):
-                        return i
-                    i = close + 1
-                    continue
-            # Otherwise: $ is followed by a non-math character -- literal.
-
-        # Code span opener that didn't form a closed span (otherwise the
-        # ``code_span_starts`` skip above would have caught it). The buffer
-        # is mid-code-span; defer until the closer arrives.
-        if ch == "`":
-            return i
-
-        # Bare backslash command. A backslash followed by letters is a
-        # candidate command; only the trailing one matters because anything
-        # before it has a non-letter terminator and is therefore complete.
-        if ch == "\\" and i + 1 < n:
-            j = i + 1
-            while j < n and buffer[j].isascii() and buffer[j].isalpha():
-                j += 1
-            if j == n:
-                # Trailing partial command -- hold back from the backslash.
-                return i
-            i = j
-            continue
-
-        # A lone trailing backslash could be the start of a command.
-        if ch == "\\":
-            return i
-
-        i += 1
-
-    return n
+        out.append(rendered)
+        i = next_i
+    return "".join(out)
 
 
 class StreamingLatexNormalizer:
     """Stateful normalizer for chunked text streams.
 
     Token-streamed text can split LaTeX commands, math delimiters, or code
-    spans across chunks. Per-chunk normalization would leak partially-rewritten
-    markup. This buffer holds back the tail of each chunk while it might still
-    extend an incomplete construct, normalizes the safe prefix, and flushes
-    the remainder at end of stream.
+    spans across chunks. This buffer accumulates chunks, tokenizes as far
+    as is safe (the same tokenizer the batch path uses), emits the
+    rendered tokens, and keeps any incomplete trailing construct in the
+    buffer until ``feed`` or ``flush`` resolves it.
     """
 
     def __init__(self) -> None:
@@ -502,15 +624,47 @@ class StreamingLatexNormalizer:
         if not chunk:
             return ""
         self._buffer += chunk
-        split = _streaming_safe_split(self._buffer)
-        if split <= 0:
-            return ""
-        emit = self._buffer[:split]
-        self._buffer = self._buffer[split:]
-        return normalize_latex_to_unicode(emit)
+        rendered, consumed = _tokenize(self._buffer, eof=False)
+        self._buffer = self._buffer[consumed:]
+        return rendered
 
     def flush(self) -> str:
-        """Return any remaining buffered text normalized at end of stream."""
-        remaining = self._buffer
+        """Return any remaining buffered text, normalized at end of stream."""
+        if not self._buffer:
+            return ""
+        rendered, _ = _tokenize(self._buffer, eof=True)
         self._buffer = ""
-        return normalize_latex_to_unicode(remaining)
+        return rendered
+
+
+def _tokenize(text: str, *, eof: bool) -> tuple[str, int]:
+    """Run the tokenizer until either the input is exhausted or an
+    incomplete construct is hit (only in ``eof=False`` mode).
+
+    Returns ``(rendered, consumed)`` where ``consumed`` is the number of
+    input characters successfully tokenized.
+    """
+    n = len(text)
+    if not text:
+        return "", 0
+    if "\\" not in text and "$" not in text and "`" not in text:
+        # Pure prose -- short-circuit the per-character loop.
+        return text, n
+
+    out: list[str] = []
+    i = 0
+    while i < n:
+        result = _consume(text, i, n, eof=eof)
+        if result is None:
+            return "".join(out), i
+        rendered, next_i = result
+        if next_i == i:
+            # Shouldn't happen; guard.
+            if eof:
+                out.append(text[i])
+                i += 1
+                continue
+            return "".join(out), i
+        out.append(rendered)
+        i = next_i
+    return "".join(out), i
