@@ -4,7 +4,10 @@ from __future__ import annotations
 
 import pytest
 
-from family_assistant.utils.text_normalization import normalize_latex_to_unicode
+from family_assistant.utils.text_normalization import (
+    StreamingLatexNormalizer,
+    normalize_latex_to_unicode,
+)
 
 
 class TestNoOpCases:
@@ -217,3 +220,83 @@ class TestCurrencyNotCorrupted:
             normalize_latex_to_unicode(r"Spent $5 and saved $\rightarrow$ all good")
             == r"Spent $5 and saved → all good"
         )
+
+
+class TestCodeSpansPreserved:
+    """LaTeX inside markdown code spans must be left verbatim."""
+
+    def test_inline_code_preserved(self) -> None:
+        assert (
+            normalize_latex_to_unicode(r"Use `\alpha` for greek alpha")
+            == r"Use `\alpha` for greek alpha"
+        )
+
+    def test_inline_code_alongside_normal_math(self) -> None:
+        # Code keeps `\alpha`; surrounding `$\beta$` is converted.
+        assert (
+            normalize_latex_to_unicode(r"Type `\alpha` to get $\beta$")
+            == r"Type `\alpha` to get β"
+        )
+
+    def test_fenced_code_block_preserved(self) -> None:
+        source = "Block:\n```\n\\alpha + \\beta\n```\nafter"
+        assert normalize_latex_to_unicode(source) == source
+
+    def test_multiple_code_spans_preserved(self) -> None:
+        assert (
+            normalize_latex_to_unicode(r"`\alpha`, `\beta`, plain \gamma")
+            == r"`\alpha`, `\beta`, plain γ"
+        )
+
+
+class TestStreamingLatexNormalizer:
+    """Buffered normalization for chunked / streamed text."""
+
+    def _drain(self, normalizer: StreamingLatexNormalizer, chunks: list[str]) -> str:
+        emitted = "".join(normalizer.feed(chunk) for chunk in chunks)
+        return emitted + normalizer.flush()
+
+    def test_single_complete_chunk(self) -> None:
+        n = StreamingLatexNormalizer()
+        assert self._drain(n, [r"A $\rightarrow$ B"]) == "A → B"
+
+    def test_command_split_across_chunks(self) -> None:
+        # The reviewer's example: `"$\alp"` then `"ha$"` must produce `α`.
+        n = StreamingLatexNormalizer()
+        assert self._drain(n, [r"$\alp", r"ha$"]) == "α"
+
+    def test_dollar_open_across_chunks(self) -> None:
+        # Math opens in one chunk and closes in the next.
+        n = StreamingLatexNormalizer()
+        assert self._drain(n, [r"start $\rig", r"htarrow$ end"]) == "start → end"
+
+    def test_code_span_inside_stream_preserved(self) -> None:
+        n = StreamingLatexNormalizer()
+        assert (
+            self._drain(n, [r"use `\al", r"pha` for ", r"$\beta$"])
+            == r"use `\alpha` for β"
+        )
+
+    def test_trailing_backslash_held_until_complete(self) -> None:
+        n = StreamingLatexNormalizer()
+        # First feed ends with a bare backslash -- must hold back.
+        assert n.feed("hi \\") == "hi "
+        # Next feed completes the command.
+        assert n.feed("rightarrow done") == "→ done"
+        assert not n.flush()
+
+    def test_currency_dollars_in_stream_preserved(self) -> None:
+        n = StreamingLatexNormalizer()
+        # Even with a backslash later in the buffer, the currency $ shouldn't
+        # pair with it because the math content wouldn't start with `\command`.
+        out = self._drain(n, [r"Price $5 and ", r"\alpha cost $10."])
+        assert out == r"Price $5 and α cost $10."
+
+    def test_empty_chunks_are_noop(self) -> None:
+        n = StreamingLatexNormalizer()
+        assert not n.feed("")
+        assert not n.flush()
+
+    def test_plain_text_passes_through(self) -> None:
+        n = StreamingLatexNormalizer()
+        assert self._drain(n, ["Hello, ", "world!"]) == "Hello, world!"

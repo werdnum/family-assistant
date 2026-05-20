@@ -41,6 +41,7 @@ from family_assistant.storage.context import DatabaseContext, get_db_context
 from family_assistant.tools import MCPToolsProvider, find_provider_by_type
 from family_assistant.tools.infrastructure import ToolDescriptorProvider
 from family_assistant.tools.types import ConfirmationOutcome, ToolExecutionContext
+from family_assistant.utils.text_normalization import StreamingLatexNormalizer
 from family_assistant.web.confirmation_manager import web_confirmation_manager
 from family_assistant.web.dependencies import (
     get_attachment_registry,
@@ -1243,6 +1244,7 @@ async def api_chat_send_message_stream(
 
         last_reasoning_info: MessageReasoningInfo | None = None
         send_close_event = True
+        latex_normalizer = StreamingLatexNormalizer()
 
         try:
             # Process events from queue and yield SSE events
@@ -1286,13 +1288,14 @@ async def api_chat_send_message_stream(
                     event = queue_event["event"]
                     # Process normal stream events
                     if event.type == "content":
-                        # Send text content chunks. LaTeX normalization is
-                        # intentionally NOT applied here: streaming chunks can
-                        # split a single LaTeX command (e.g. "$\alp" then
-                        # "ha$"), so per-chunk normalization would leak raw
-                        # markup. The finalized AssistantMessage is normalized
-                        # in ProcessingService before persistence.
-                        yield f"event: text\ndata: {json.dumps({'content': event.content})}\n\n"
+                        # The streaming normalizer buffers the trailing bytes
+                        # of each chunk while they might still extend a LaTeX
+                        # command, math span, or code span, then flushes the
+                        # remainder at end of stream. This keeps live tokens
+                        # consistent with the persisted (normalized) message.
+                        content = latex_normalizer.feed(event.content or "")
+                        if content:
+                            yield f"event: text\ndata: {json.dumps({'content': content})}\n\n"
 
                     elif event.type == "tool_call":
                         # Convert tool_call to dict for JSON serialization
@@ -1376,6 +1379,10 @@ async def api_chat_send_message_stream(
                         yield f"event: error\ndata: {json.dumps(error_data)}\n\n"
 
                 elif queue_event["type"] == "stream_end":
+                    # Flush any text the LaTeX normalizer was holding back.
+                    trailing = latex_normalizer.flush()
+                    if trailing:
+                        yield f"event: text\ndata: {json.dumps({'content': trailing})}\n\n"
                     # Send the end event once at the true end of the stream
                     # ast-grep-ignore: no-dict-any - SSE end event payload optionally includes provider-specific reasoning_info
                     done_data: dict[str, Any] = {}

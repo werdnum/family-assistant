@@ -201,6 +201,25 @@ def _strip_delims(match: re.Match[str]) -> str:
     return _convert_commands(match.group(1))
 
 
+# Markdown code spans whose contents must be preserved verbatim. Fenced blocks
+# come first so a stray backtick inside a fence doesn't terminate it early.
+_CODE_SPAN_RE = re.compile(
+    r"```[\s\S]*?```"  # fenced code block
+    r"|`[^`\n]+`"  # inline code span
+)
+
+
+def _normalize_segment(text: str) -> str:
+    """Apply math/command substitutions to a non-code segment."""
+    if not text or "\\" not in text:
+        return text
+    text = _DISPLAY_DOLLAR_MATH_RE.sub(_strip_delims, text)
+    text = _INLINE_DOLLAR_MATH_RE.sub(_strip_delims, text)
+    text = _BRACKET_MATH_RE.sub(_strip_delims, text)
+    text = _PAREN_MATH_RE.sub(_strip_delims, text)
+    return _convert_commands(text)
+
+
 def normalize_latex_to_unicode(text: str) -> str:
     """Replace LaTeX math markup with Unicode equivalents.
 
@@ -209,13 +228,121 @@ def normalize_latex_to_unicode(text: str) -> str:
     replaced with their glyphs; unknown commands are left intact. Math
     delimiters (``$...$``, ``$$...$$``, ``\\(...\\)``, ``\\[...\\]``) are
     stripped only when their contents contain a backslash command, so prose
-    like ``"$100 fee"`` is unaffected.
+    like ``"$100 fee"`` is unaffected. Markdown code spans -- fenced
+    ``` ```...``` ``` blocks and inline `` `...` `` -- are preserved verbatim,
+    so explanations of LaTeX syntax aren't corrupted.
     """
     if not text or "\\" not in text:
         return text
 
-    text = _DISPLAY_DOLLAR_MATH_RE.sub(_strip_delims, text)
-    text = _INLINE_DOLLAR_MATH_RE.sub(_strip_delims, text)
-    text = _BRACKET_MATH_RE.sub(_strip_delims, text)
-    text = _PAREN_MATH_RE.sub(_strip_delims, text)
-    return _convert_commands(text)
+    pieces: list[str] = []
+    cursor = 0
+    for match in _CODE_SPAN_RE.finditer(text):
+        pieces.append(_normalize_segment(text[cursor : match.start()]))
+        pieces.append(match.group(0))
+        cursor = match.end()
+    pieces.append(_normalize_segment(text[cursor:]))
+    return "".join(pieces)
+
+
+# Patterns describing where the trailing edge of a buffered stream might still
+# be inside an incomplete construct that must not be normalized in isolation.
+_TRAILING_BARE_COMMAND_RE = re.compile(r"\\[a-zA-Z]*\Z")
+_TRAILING_OPEN_PAREN_MATH_RE = re.compile(r"\\\([^\n]*\Z")
+_TRAILING_OPEN_BRACKET_MATH_RE = re.compile(r"\\\[[\s\S]*\Z")
+
+
+def _last_unmatched(text: str, marker: str, *, line_scoped: bool) -> int:
+    """Return the position of the last unmatched ``marker`` occurrence.
+
+    ``line_scoped`` resets the open/close state at every newline (matches
+    Markdown inline conventions for ``$`` and inline backticks).
+    """
+    open_pos = -1
+    in_span = False
+    for i, ch in enumerate(text):
+        if line_scoped and ch == "\n":
+            open_pos = -1
+            in_span = False
+            continue
+        if ch == "\\" and i + 1 < len(text):
+            # Skip escaped character.
+            continue
+        if ch == marker:
+            if in_span:
+                in_span = False
+            else:
+                in_span = True
+                open_pos = i
+    return open_pos if in_span else -1
+
+
+def _streaming_safe_split(buffer: str) -> int:
+    """Find the position up to which ``buffer`` can be normalized in isolation.
+
+    Anything after the returned position may still be inside an open math
+    span, code span, or partial backslash command, so it must wait for more
+    input. Returns ``len(buffer)`` when the entire buffer is safe to emit.
+    """
+    if not buffer:
+        return 0
+
+    candidates: list[int] = [len(buffer)]
+
+    bare = _TRAILING_BARE_COMMAND_RE.search(buffer)
+    if bare:
+        candidates.append(bare.start())
+
+    paren = _TRAILING_OPEN_PAREN_MATH_RE.search(buffer)
+    if paren and r"\)" not in paren.group(0):
+        candidates.append(paren.start())
+
+    bracket = _TRAILING_OPEN_BRACKET_MATH_RE.search(buffer)
+    if bracket and r"\]" not in bracket.group(0):
+        candidates.append(bracket.start())
+
+    dollar = _last_unmatched(buffer, "$", line_scoped=True)
+    if dollar >= 0:
+        candidates.append(dollar)
+
+    backtick = _last_unmatched(buffer, "`", line_scoped=True)
+    if backtick >= 0:
+        candidates.append(backtick)
+
+    fence_positions = [m.start() for m in re.finditer(r"```", buffer)]
+    if len(fence_positions) % 2 == 1:
+        candidates.append(fence_positions[-1])
+
+    return min(candidates)
+
+
+class StreamingLatexNormalizer:
+    """Stateful normalizer for chunked text streams.
+
+    Token-streamed text can split LaTeX commands, math delimiters, or code
+    spans across chunks. Per-chunk normalization would leak partially-rewritten
+    markup. This buffer holds back the tail of each chunk while it might still
+    extend an incomplete construct, normalizes the safe prefix, and flushes
+    the remainder at end of stream.
+    """
+
+    def __init__(self) -> None:
+        self._buffer = ""
+
+    def feed(self, chunk: str) -> str:
+        """Append ``chunk`` and return text that is now safe to emit."""
+        if not chunk:
+            return ""
+        self._buffer += chunk
+        split = _streaming_safe_split(self._buffer)
+        if split <= 0:
+            return ""
+        emit = self._buffer[:split]
+        self._buffer = self._buffer[split:]
+        return normalize_latex_to_unicode(emit)
+
+    def flush(self) -> str:
+        """Return any remaining buffered text normalized at end of stream."""
+        remaining = self._buffer
+        self._buffer = ""
+        return normalize_latex_to_unicode(remaining)
