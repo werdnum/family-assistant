@@ -164,8 +164,12 @@ _LATEX_COMMANDS: dict[str, str] = {
 
 _LATEX_COMMAND_RE = re.compile(r"\\([a-zA-Z]+)")
 
+# Inline ``$...$`` is only treated as math when the content starts with a
+# backslash command. This avoids corrupting currency mentions like
+# ``"Price $5 and \alpha cost $10."`` where the dollars are not math
+# delimiters.
 _INLINE_DOLLAR_MATH_RE = re.compile(
-    r"(?<!\\)\$(?!\$)([^$\n]*?\\[a-zA-Z]+[^$\n]*?)(?<!\\)\$(?!\$)"
+    r"(?<!\\)\$(?!\$)(\\[a-zA-Z]+[^$\n]*?)(?<!\\)\$(?!\$)"
 )
 
 _DISPLAY_DOLLAR_MATH_RE = re.compile(

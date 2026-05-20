@@ -41,7 +41,6 @@ from family_assistant.storage.context import DatabaseContext, get_db_context
 from family_assistant.tools import MCPToolsProvider, find_provider_by_type
 from family_assistant.tools.infrastructure import ToolDescriptorProvider
 from family_assistant.tools.types import ConfirmationOutcome, ToolExecutionContext
-from family_assistant.utils.text_normalization import normalize_latex_to_unicode
 from family_assistant.web.confirmation_manager import web_confirmation_manager
 from family_assistant.web.dependencies import (
     get_attachment_registry,
@@ -1287,13 +1286,13 @@ async def api_chat_send_message_stream(
                     event = queue_event["event"]
                     # Process normal stream events
                     if event.type == "content":
-                        # Send text content chunks
-                        content = (
-                            normalize_latex_to_unicode(event.content)
-                            if event.content
-                            else event.content
-                        )
-                        yield f"event: text\ndata: {json.dumps({'content': content})}\n\n"
+                        # Send text content chunks. LaTeX normalization is
+                        # intentionally NOT applied here: streaming chunks can
+                        # split a single LaTeX command (e.g. "$\alp" then
+                        # "ha$"), so per-chunk normalization would leak raw
+                        # markup. The finalized AssistantMessage is normalized
+                        # in ProcessingService before persistence.
+                        yield f"event: text\ndata: {json.dumps({'content': event.content})}\n\n"
 
                     elif event.type == "tool_call":
                         # Convert tool_call to dict for JSON serialization

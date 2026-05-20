@@ -182,3 +182,38 @@ class TestEdgeCases:
             normalize_latex_to_unicode(r"price is \$100 plus \$50")
             == r"price is \$100 plus \$50"
         )
+
+
+class TestCurrencyNotCorrupted:
+    """Regression: ``$...$`` must not be stripped across prose.
+
+    The original regex matched whenever any ``\\command`` appeared between
+    two ``$`` characters on the same line, which corrupted currency mentions.
+    The fix requires the math content to start with a backslash command.
+    """
+
+    def test_currency_with_bare_command_between(self) -> None:
+        assert (
+            normalize_latex_to_unicode(r"Price $5 and \alpha cost $10.")
+            == r"Price $5 and α cost $10."
+        )
+
+    def test_dollar_amounts_with_command_first(self) -> None:
+        # The first $ opens what looks like math, but content starts with
+        # "5 ..." not "\command", so the dollars stay put.
+        assert (
+            normalize_latex_to_unicode(r"Saved $50 thanks to \alpha-testing!")
+            == r"Saved $50 thanks to α-testing!"
+        )
+
+    def test_dollar_followed_by_text_then_command(self) -> None:
+        # `$abc\alpha$` -- content doesn't start with a backslash command,
+        # so we treat the dollars as literal and only convert the command.
+        assert normalize_latex_to_unicode(r"$abc\alpha$") == r"$abcα$"
+
+    def test_proper_math_still_converts(self) -> None:
+        # Sanity check that valid `$\command$` math still works after the fix.
+        assert (
+            normalize_latex_to_unicode(r"Spent $5 and saved $\rightarrow$ all good")
+            == r"Spent $5 and saved → all good"
+        )
