@@ -245,126 +245,110 @@ def normalize_latex_to_unicode(text: str) -> str:
     return "".join(pieces)
 
 
-# Patterns describing where the trailing edge of a buffered stream might still
-# be inside an incomplete construct that must not be normalized in isolation.
-_TRAILING_BARE_COMMAND_RE = re.compile(r"\\[a-zA-Z]*\Z")
-_TRAILING_OPEN_PAREN_MATH_RE = re.compile(r"\\\([^\n]*\Z")
-_TRAILING_OPEN_BRACKET_MATH_RE = re.compile(r"\\\[[\s\S]*\Z")
-
-
-def _last_unmatched(text: str, marker: str, *, line_scoped: bool) -> int:
-    """Return the position of the last unmatched ``marker`` occurrence.
-
-    ``line_scoped`` resets the open/close state at every newline (matches
-    Markdown inline conventions for inline backticks).
-    """
-    open_pos = -1
-    in_span = False
-    for i, ch in enumerate(text):
-        if line_scoped and ch == "\n":
-            open_pos = -1
-            in_span = False
-            continue
-        if ch == "\\" and i + 1 < len(text):
-            # Skip escaped character.
-            continue
-        if ch == marker:
-            if in_span:
-                in_span = False
-            else:
-                in_span = True
-                open_pos = i
-    return open_pos if in_span else -1
-
-
-# Matches a literal ``$`` that's followed by ``\letters`` (a candidate inline
-# math opener). The negative lookbehind rejects escaped ``\$``, and the
-# lookahead requires the content to start with a backslash command -- the same
-# rule ``_INLINE_DOLLAR_MATH_RE`` enforces for closed spans.
-_INLINE_MATH_OPENER_RE = re.compile(r"(?<!\\)\$(?=\\[a-zA-Z])")
-
-
-def _last_unclosed_inline_math_dollar(text: str) -> int:
-    """Return the position of the last ``$`` that opens an unclosed math span.
-
-    Unlike a naive toggle, this treats a ``$`` as a math delimiter only when
-    it is immediately followed by a ``\\command`` (matching the production
-    inline-math rule). Currency mentions like ``$5`` are not paired with a
-    later ``$\\command`` opener, so streamed text like
-    ``"cost $5 and $\\alpha$ end"`` is split correctly.
-    """
-    # Closed inline math spans found by the production regex -- positions
-    # inside these are safe (the closing ``$`` is already paired).
-    closed_ranges = [
-        (m.start(), m.end()) for m in _INLINE_DOLLAR_MATH_RE.finditer(text)
-    ]
-
-    def is_closed(pos: int) -> bool:
-        return any(start <= pos < end for start, end in closed_ranges)
-
-    last_open = -1
-    for opener_match in _INLINE_MATH_OPENER_RE.finditer(text):
-        pos = opener_match.start()
-        if is_closed(pos):
-            continue
-        # An opener with no closing ``$`` before EOL is the boundary we care
-        # about. Look for the next unescaped ``$`` on the same line.
-        i = pos + 1
-        end = text.find("\n", i)
-        line_end = len(text) if end < 0 else end
-        closer_pos = -1
-        j = i
-        while j < line_end:
-            ch = text[j]
-            if ch == "\\" and j + 1 < line_end:
-                j += 2
-                continue
-            if ch == "$":
-                closer_pos = j
-                break
-            j += 1
-        if closer_pos == -1:
-            last_open = pos
-    return last_open
-
-
 def _streaming_safe_split(buffer: str) -> int:
     """Find the position up to which ``buffer`` can be normalized in isolation.
 
-    Anything after the returned position may still be inside an open math
-    span, code span, or partial backslash command, so it must wait for more
-    input. Returns ``len(buffer)`` when the entire buffer is safe to emit.
+    Walks the buffer left-to-right at the top level, skipping over closed
+    constructs (fenced code, ``\\[...\\]``, ``\\(...\\)``, ``$\\command...$``,
+    inline ``` `...` ```) as opaque units so their interiors don't interact
+    with the outer scan. Returns the start position of the first unclosed
+    construct, or ``len(buffer)`` if the entire buffer is safe to emit.
     """
-    if not buffer:
-        return 0
+    n = len(buffer)
+    i = 0
+    while i < n:
+        ch = buffer[i]
 
-    candidates: list[int] = [len(buffer)]
+        # Fenced code block: ```...```
+        if buffer.startswith("```", i):
+            close = buffer.find("```", i + 3)
+            if close < 0:
+                return i
+            i = close + 3
+            continue
 
-    bare = _TRAILING_BARE_COMMAND_RE.search(buffer)
-    if bare:
-        candidates.append(bare.start())
+        # Display math: \[...\]
+        if buffer.startswith("\\[", i):
+            close = buffer.find("\\]", i + 2)
+            if close < 0:
+                return i
+            i = close + 2
+            continue
 
-    paren = _TRAILING_OPEN_PAREN_MATH_RE.search(buffer)
-    if paren and r"\)" not in paren.group(0):
-        candidates.append(paren.start())
+        # Inline math: \(...\)
+        if buffer.startswith("\\(", i):
+            close = buffer.find("\\)", i + 2)
+            if close < 0:
+                return i
+            i = close + 2
+            continue
 
-    bracket = _TRAILING_OPEN_BRACKET_MATH_RE.search(buffer)
-    if bracket and r"\]" not in bracket.group(0):
-        candidates.append(bracket.start())
+        # Dollar math: $\command...$ on the same line. A bare ``$`` is only a
+        # delimiter when followed by ``\letter`` (matches the inline-math
+        # rule that preserves currency mentions like ``$5``).
+        if (
+            ch == "$"
+            and (i == 0 or buffer[i - 1] != "\\")
+            and i + 2 < n
+            and buffer[i + 1] == "\\"
+            and buffer[i + 2].isascii()
+            and buffer[i + 2].isalpha()
+        ):
+            j = i + 1
+            close = -1
+            while j < n:
+                cj = buffer[j]
+                if cj == "\n":
+                    break
+                if cj == "\\" and j + 1 < n:
+                    j += 2
+                    continue
+                if cj == "$":
+                    close = j
+                    break
+                j += 1
+            if close < 0:
+                return i
+            i = close + 1
+            continue
 
-    dollar = _last_unclosed_inline_math_dollar(buffer)
-    if dollar >= 0:
-        candidates.append(dollar)
+        # Inline code span: `...` on the same line.
+        if ch == "`":
+            j = i + 1
+            close = -1
+            while j < n:
+                cj = buffer[j]
+                if cj == "\n":
+                    break
+                if cj == "`":
+                    close = j
+                    break
+                j += 1
+            if close < 0:
+                return i
+            i = close + 1
+            continue
 
-    backtick = _last_unmatched(buffer, "`", line_scoped=True)
-    if backtick >= 0:
-        candidates.append(backtick)
+        # Bare backslash command. A backslash followed by letters is a
+        # candidate command; only the trailing one matters because anything
+        # before it has a non-letter terminator and is therefore complete.
+        if ch == "\\" and i + 1 < n:
+            j = i + 1
+            while j < n and buffer[j].isascii() and buffer[j].isalpha():
+                j += 1
+            if j == n:
+                # Trailing partial command -- hold back from the backslash.
+                return i
+            i = j
+            continue
 
-    fence_positions = [m.start() for m in re.finditer(r"```", buffer)]
-    if len(fence_positions) % 2 == 1:
-        candidates.append(fence_positions[-1])
+        # A lone trailing backslash could be the start of a command.
+        if ch == "\\":
+            return i
 
-    return min(candidates)
+        i += 1
+
+    return n
 
 
 class StreamingLatexNormalizer:

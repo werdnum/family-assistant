@@ -300,6 +300,15 @@ class TestStreamingLatexNormalizer:
         out = self._drain(n, [r"cost $5 and $\alp", r"ha$ end"])
         assert out == r"cost $5 and α end"
 
+    def test_backtick_inside_bracket_math_does_not_split(self) -> None:
+        # Regression: a backtick inside a \[...\] math span must not be
+        # treated as an unclosed inline-code opener -- it's consumed by the
+        # bracket-math substitution. Streamed output must match persisted.
+        n = StreamingLatexNormalizer()
+        chunks = [r"\[\alpha `", r"\]"]
+        out = self._drain(n, chunks)
+        assert out == normalize_latex_to_unicode("".join(chunks))
+
     def test_empty_chunks_are_noop(self) -> None:
         n = StreamingLatexNormalizer()
         assert not n.feed("")
