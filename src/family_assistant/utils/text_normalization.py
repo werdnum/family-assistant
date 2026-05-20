@@ -164,12 +164,12 @@ _LATEX_COMMANDS: dict[str, str] = {
 
 _LATEX_COMMAND_RE = re.compile(r"\\([a-zA-Z]+)")
 
-# Inline ``$...$`` is only treated as math when the content starts with a
-# backslash command. This avoids corrupting currency mentions like
-# ``"Price $5 and \alpha cost $10."`` where the dollars are not math
-# delimiters.
+# Inline ``$...$`` is only treated as math when the content (after optional
+# leading whitespace) starts with a backslash command. This avoids corrupting
+# currency mentions like ``"Price $5 and \alpha cost $10."`` while still
+# normalizing common LLM output such as ``"$ \alpha + \beta $"``.
 _INLINE_DOLLAR_MATH_RE = re.compile(
-    r"(?<!\\)\$(?!\$)(\\[a-zA-Z]+[^$\n]*?)(?<!\\)\$(?!\$)"
+    r"(?<!\\)\$(?!\$)([ \t]*\\[a-zA-Z]+[^$\n]*?)(?<!\\)\$(?!\$)"
 )
 
 _DISPLAY_DOLLAR_MATH_RE = re.compile(
@@ -198,7 +198,9 @@ def _convert_commands(text: str) -> str:
 
 
 def _strip_delims(match: re.Match[str]) -> str:
-    return _convert_commands(match.group(1))
+    # Trim surrounding whitespace so that ``$ \alpha $`` renders as ``α``
+    # without the literal padding the LLM emitted.
+    return _convert_commands(match.group(1)).strip()
 
 
 # Markdown code spans whose contents must be preserved verbatim. Fenced blocks
@@ -292,34 +294,38 @@ def _streaming_safe_split(buffer: str) -> int:
             i = close + 2
             continue
 
-        # Dollar math: $\command...$ on the same line. A bare ``$`` is only a
-        # delimiter when followed by ``\letter`` (matches the inline-math
-        # rule that preserves currency mentions like ``$5``).
-        if (
-            ch == "$"
-            and (i == 0 or buffer[i - 1] != "\\")
-            and i + 2 < n
-            and buffer[i + 1] == "\\"
-            and buffer[i + 2].isascii()
-            and buffer[i + 2].isalpha()
-        ):
-            j = i + 1
-            close = -1
-            while j < n:
-                cj = buffer[j]
-                if cj == "\n":
-                    break
-                if cj == "\\" and j + 1 < n:
-                    j += 2
-                    continue
-                if cj == "$":
-                    close = j
-                    break
-                j += 1
-            if close < 0:
-                return i
-            i = close + 1
-            continue
+        # Dollar math: ``$[ \t]*\command...$`` on the same line. A bare ``$``
+        # is only a delimiter when the content (after optional whitespace)
+        # starts with ``\letter`` -- this matches the inline-math regex and
+        # preserves currency mentions like ``$5``.
+        if ch == "$" and (i == 0 or buffer[i - 1] != "\\"):
+            # Skip optional inline whitespace, then look for ``\letter``.
+            probe = i + 1
+            while probe < n and buffer[probe] in " \t":
+                probe += 1
+            if (
+                probe + 1 < n
+                and buffer[probe] == "\\"
+                and buffer[probe + 1].isascii()
+                and buffer[probe + 1].isalpha()
+            ):
+                j = probe
+                close = -1
+                while j < n:
+                    cj = buffer[j]
+                    if cj == "\n":
+                        break
+                    if cj == "\\" and j + 1 < n:
+                        j += 2
+                        continue
+                    if cj == "$":
+                        close = j
+                        break
+                    j += 1
+                if close < 0:
+                    return i
+                i = close + 1
+                continue
 
         # Inline code span: `...` on the same line.
         if ch == "`":

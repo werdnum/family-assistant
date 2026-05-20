@@ -111,6 +111,14 @@ class TestMathDelimiterStripping:
             == "Spent $5 then $7 then $3."
         )
 
+    def test_inline_math_with_leading_whitespace(self) -> None:
+        # ``$ \alpha$`` -- LLM padding before the command -- should still be
+        # recognized as math and the literal dollars dropped.
+        assert normalize_latex_to_unicode(r"$ \alpha$") == "α"
+
+    def test_inline_math_with_padded_whitespace(self) -> None:
+        assert normalize_latex_to_unicode(r"$ \alpha + \beta $") == "α + β"
+
 
 class TestBareCommands:
     def test_bare_command_without_delimiters(self) -> None:
@@ -308,6 +316,16 @@ class TestStreamingLatexNormalizer:
         chunks = [r"\[\alpha `", r"\]"]
         out = self._drain(n, chunks)
         assert out == normalize_latex_to_unicode("".join(chunks))
+
+    def test_inline_math_with_inner_whitespace_split(self) -> None:
+        # ``$ \alpha$`` (LLM-emitted padding) split across chunks should
+        # produce normalized ``α`` in the stream, matching the persisted
+        # output rather than leaking the literal ``$`` delimiters.
+        n = StreamingLatexNormalizer()
+        chunks = [r"$ \al", r"pha$ end"]
+        out = self._drain(n, chunks)
+        assert out == normalize_latex_to_unicode("".join(chunks))
+        assert out == "α end"
 
     def test_display_dollar_math_split_across_chunks(self) -> None:
         # Regression: ``$$...$$`` display math must be atomic in the stream
