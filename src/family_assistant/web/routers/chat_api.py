@@ -1329,6 +1329,12 @@ async def api_chat_send_message_stream(
                         yield f"event: tool_result\ndata: {json.dumps(tool_result_data)}\n\n"
 
                     elif event.type == "done":
+                        # Flush any buffered LaTeX text from this turn so
+                        # trailing ambiguous bytes (e.g. ``$``) aren't
+                        # merged with the next turn's opening tokens.
+                        trailing = latex_normalizer.flush()
+                        if trailing:
+                            yield f"event: text\ndata: {json.dumps({'content': trailing})}\n\n"
                         # Handle attachment IDs from attach_to_response tool calls
                         if event.metadata and "attachment_ids" in event.metadata:
                             # Get attachment registry to fetch attachment metadata
