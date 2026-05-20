@@ -309,6 +309,17 @@ class TestStreamingLatexNormalizer:
         out = self._drain(n, chunks)
         assert out == normalize_latex_to_unicode("".join(chunks))
 
+    def test_display_dollar_math_split_across_chunks(self) -> None:
+        # Regression: ``$$...$$`` display math must be atomic in the stream
+        # scan. If we treated the opener as two single-``$`` literals, the
+        # first ``$`` would be emitted early and the rest of the buffer would
+        # be normalized as inline math, leaving ``$α$`` instead of ``α``.
+        n = StreamingLatexNormalizer()
+        chunks = [r"$$\alp", r"ha$$"]
+        out = self._drain(n, chunks)
+        assert out == normalize_latex_to_unicode("".join(chunks))
+        assert out == "α"
+
     def test_empty_chunks_are_noop(self) -> None:
         n = StreamingLatexNormalizer()
         assert not n.feed("")

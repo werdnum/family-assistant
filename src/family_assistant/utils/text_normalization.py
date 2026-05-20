@@ -267,6 +267,15 @@ def _streaming_safe_split(buffer: str) -> int:
             i = close + 3
             continue
 
+        # Display dollar math: $$...$$ (must be checked before single ``$``
+        # so the first ``$`` isn't consumed as a non-opener literal).
+        if buffer.startswith("$$", i) and (i == 0 or buffer[i - 1] != "\\"):
+            close = buffer.find("$$", i + 2)
+            if close < 0:
+                return i
+            i = close + 2
+            continue
+
         # Display math: \[...\]
         if buffer.startswith("\\[", i):
             close = buffer.find("\\]", i + 2)
