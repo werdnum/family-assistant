@@ -256,7 +256,7 @@ def _last_unmatched(text: str, marker: str, *, line_scoped: bool) -> int:
     """Return the position of the last unmatched ``marker`` occurrence.
 
     ``line_scoped`` resets the open/close state at every newline (matches
-    Markdown inline conventions for ``$`` and inline backticks).
+    Markdown inline conventions for inline backticks).
     """
     open_pos = -1
     in_span = False
@@ -275,6 +275,57 @@ def _last_unmatched(text: str, marker: str, *, line_scoped: bool) -> int:
                 in_span = True
                 open_pos = i
     return open_pos if in_span else -1
+
+
+# Matches a literal ``$`` that's followed by ``\letters`` (a candidate inline
+# math opener). The negative lookbehind rejects escaped ``\$``, and the
+# lookahead requires the content to start with a backslash command -- the same
+# rule ``_INLINE_DOLLAR_MATH_RE`` enforces for closed spans.
+_INLINE_MATH_OPENER_RE = re.compile(r"(?<!\\)\$(?=\\[a-zA-Z])")
+
+
+def _last_unclosed_inline_math_dollar(text: str) -> int:
+    """Return the position of the last ``$`` that opens an unclosed math span.
+
+    Unlike a naive toggle, this treats a ``$`` as a math delimiter only when
+    it is immediately followed by a ``\\command`` (matching the production
+    inline-math rule). Currency mentions like ``$5`` are not paired with a
+    later ``$\\command`` opener, so streamed text like
+    ``"cost $5 and $\\alpha$ end"`` is split correctly.
+    """
+    # Closed inline math spans found by the production regex -- positions
+    # inside these are safe (the closing ``$`` is already paired).
+    closed_ranges = [
+        (m.start(), m.end()) for m in _INLINE_DOLLAR_MATH_RE.finditer(text)
+    ]
+
+    def is_closed(pos: int) -> bool:
+        return any(start <= pos < end for start, end in closed_ranges)
+
+    last_open = -1
+    for opener_match in _INLINE_MATH_OPENER_RE.finditer(text):
+        pos = opener_match.start()
+        if is_closed(pos):
+            continue
+        # An opener with no closing ``$`` before EOL is the boundary we care
+        # about. Look for the next unescaped ``$`` on the same line.
+        i = pos + 1
+        end = text.find("\n", i)
+        line_end = len(text) if end < 0 else end
+        closer_pos = -1
+        j = i
+        while j < line_end:
+            ch = text[j]
+            if ch == "\\" and j + 1 < line_end:
+                j += 2
+                continue
+            if ch == "$":
+                closer_pos = j
+                break
+            j += 1
+        if closer_pos == -1:
+            last_open = pos
+    return last_open
 
 
 def _streaming_safe_split(buffer: str) -> int:
@@ -301,7 +352,7 @@ def _streaming_safe_split(buffer: str) -> int:
     if bracket and r"\]" not in bracket.group(0):
         candidates.append(bracket.start())
 
-    dollar = _last_unmatched(buffer, "$", line_scoped=True)
+    dollar = _last_unclosed_inline_math_dollar(buffer)
     if dollar >= 0:
         candidates.append(dollar)
 

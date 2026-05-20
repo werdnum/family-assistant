@@ -292,6 +292,14 @@ class TestStreamingLatexNormalizer:
         out = self._drain(n, [r"Price $5 and ", r"\alpha cost $10."])
         assert out == r"Price $5 and α cost $10."
 
+    def test_currency_followed_by_split_math_span(self) -> None:
+        # Regression: the safe-split logic must not pair a currency `$` with
+        # a later math opener. Streaming "cost $5 and $\alp" then "ha$ end"
+        # should produce "cost $5 and α end", matching the persisted message.
+        n = StreamingLatexNormalizer()
+        out = self._drain(n, [r"cost $5 and $\alp", r"ha$ end"])
+        assert out == r"cost $5 and α end"
+
     def test_empty_chunks_are_noop(self) -> None:
         n = StreamingLatexNormalizer()
         assert not n.feed("")
