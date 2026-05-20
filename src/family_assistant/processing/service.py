@@ -23,6 +23,7 @@ from family_assistant.llm.messages import (
     UserMessage,
 )
 from family_assistant.utils.clock import Clock, SystemClock
+from family_assistant.utils.text_normalization import normalize_latex_to_unicode
 
 from .attachments import AttachmentProcessor
 from .context import ContextPreparer
@@ -740,6 +741,9 @@ class ProcessingService:
 
             if generated_turn_messages:
                 for turn_msg in generated_turn_messages:
+                    if isinstance(turn_msg, AssistantMessage) and turn_msg.content:
+                        turn_msg.content = normalize_latex_to_unicode(turn_msg.content)
+
                     reasoning_info_for_msg = (
                         final_reasoning_info
                         if isinstance(turn_msg, AssistantMessage)
@@ -894,6 +898,13 @@ class ProcessingService:
 
                         # Save messages as they're generated
                         if stream_msg is not None:
+                            if (
+                                isinstance(stream_msg, AssistantMessage)
+                                and stream_msg.content
+                            ):
+                                stream_msg.content = normalize_latex_to_unicode(
+                                    stream_msg.content
+                                )
                             reasoning_info_for_stream = (
                                 event.metadata.get("reasoning_info")
                                 if isinstance(stream_msg, AssistantMessage)
