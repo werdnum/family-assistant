@@ -184,6 +184,21 @@ _BRACKET_MATH_RE = re.compile(
     re.DOTALL,
 )
 
+# Single combined regex used by ``_normalize_segment``. Applying each math
+# pattern in turn would let earlier substitutions create new match
+# opportunities for later patterns -- e.g. ``$$\alpha$$`` collapsing to
+# ``α`` could turn a previously-rejected ``$...$`` pair into valid inline
+# math. That cascading behaviour is impossible to reproduce in the
+# streaming scan, which can only see the buffer as one snapshot. Combining
+# all alternatives into one ``re.sub`` ensures both code paths agree.
+_MATH_PATTERN_RE = re.compile(
+    r"(?<!\\)\$\$(?P<display>.*?\\[a-zA-Z]+.*?)\$\$"
+    r"|(?<!\\)\$(?!\$)(?P<inline>[ \t]*\\[a-zA-Z]+[^$\n]*?)(?<!\\)\$(?!\$)"
+    r"|\\\[(?P<bracket>.*?\\[a-zA-Z]+.*?)\\\]"
+    r"|\\\((?P<paren>[^\n]*?\\[a-zA-Z]+[^\n]*?)\\\)",
+    re.DOTALL,
+)
+
 
 def _replace_command(match: re.Match[str]) -> str:
     name = match.group(1)
@@ -197,10 +212,12 @@ def _convert_commands(text: str) -> str:
     return _LATEX_COMMAND_RE.sub(_replace_command, text)
 
 
-def _strip_delims(match: re.Match[str]) -> str:
-    # Trim surrounding whitespace so that ``$ \alpha $`` renders as ``α``
-    # without the literal padding the LLM emitted.
-    return _convert_commands(match.group(1)).strip()
+def _strip_math_delims(match: re.Match[str]) -> str:
+    for name in ("display", "inline", "bracket", "paren"):
+        content = match.group(name)
+        if content is not None:
+            return _convert_commands(content).strip()
+    return match.group(0)
 
 
 # Markdown code spans whose contents must be preserved verbatim. CommonMark
@@ -216,10 +233,7 @@ def _normalize_segment(text: str) -> str:
     """Apply math/command substitutions to a non-code segment."""
     if not text or "\\" not in text:
         return text
-    text = _DISPLAY_DOLLAR_MATH_RE.sub(_strip_delims, text)
-    text = _INLINE_DOLLAR_MATH_RE.sub(_strip_delims, text)
-    text = _BRACKET_MATH_RE.sub(_strip_delims, text)
-    text = _PAREN_MATH_RE.sub(_strip_delims, text)
+    text = _MATH_PATTERN_RE.sub(_strip_math_delims, text)
     return _convert_commands(text)
 
 
@@ -262,7 +276,14 @@ def _streaming_safe_split(buffer: str) -> int:
     # these before applying math/command substitutions, so the scan must
     # treat code spans as opaque -- a math closer (e.g. ``\]``) sitting
     # inside a code span isn't a real closer.
-    code_span_ranges = [(m.start(), m.end()) for m in _CODE_SPAN_RE.finditer(buffer)]
+    # Drop matches whose closer sits at end-of-buffer: ``_CODE_SPAN_RE``
+    # requires the closer not to be followed by another backtick
+    # (``(?!`)``); end-of-buffer satisfies that vacuously, but a future
+    # chunk could add a backtick and invalidate the match. Deferring is
+    # the safe choice.
+    code_span_ranges = [
+        (m.start(), m.end()) for m in _CODE_SPAN_RE.finditer(buffer) if m.end() < n
+    ]
     code_span_starts = {start: end for start, end in code_span_ranges}
 
     def _in_code_span(pos: int) -> bool:
@@ -279,6 +300,41 @@ def _streaming_safe_split(buffer: str) -> int:
             pos = buffer.find(needle, pos + 1)
         return pos
 
+    def _has_orphan_backtick(start: int, end: int) -> bool:
+        """Return True if any backtick in ``buffer[start:end]`` is not part
+        of a confirmed code span. Such a backtick could open a code span in
+        a later chunk and swallow the math closer we just found, so the
+        math construct can't be finalised yet.
+        """
+        return any(buffer[j] == "`" and not _in_code_span(j) for j in range(start, end))
+
+    def _has_command(start: int, end: int) -> bool:
+        """Return True if ``buffer[start:end]`` contains ``\\letter+``."""
+        j = start
+        while j < end - 1:
+            if (
+                buffer[j] == "\\"
+                and buffer[j + 1].isascii()
+                and buffer[j + 1].isalpha()
+            ):
+                return True
+            j += 1
+        return False
+
+    def _find_math_close(content_start: int, closer: str) -> int:
+        """Find the first ``closer`` after ``content_start`` whose preceding
+        content contains a ``\\command`` (matching the math regex's
+        ``\\[a-zA-Z]+`` requirement). Returns -1 if no valid closer exists.
+        """
+        search_from = content_start
+        while True:
+            candidate = _find_outside_code(closer, search_from)
+            if candidate < 0:
+                return -1
+            if _has_command(content_start, candidate):
+                return candidate
+            search_from = candidate + 1
+
     i = 0
     while i < n:
         # Closed code span starts here -- skip its whole length atomically.
@@ -291,24 +347,30 @@ def _streaming_safe_split(buffer: str) -> int:
         # Display dollar math: $$...$$ (must be checked before single ``$``
         # so the first ``$`` isn't consumed as a non-opener literal).
         if buffer.startswith("$$", i) and (i == 0 or buffer[i - 1] != "\\"):
-            close = _find_outside_code("$$", i + 2)
+            close = _find_math_close(i + 2, "$$")
             if close < 0:
+                return i
+            if _has_orphan_backtick(i + 2, close):
                 return i
             i = close + 2
             continue
 
         # Display math: \[...\]
         if buffer.startswith("\\[", i):
-            close = _find_outside_code("\\]", i + 2)
+            close = _find_math_close(i + 2, "\\]")
             if close < 0:
+                return i
+            if _has_orphan_backtick(i + 2, close):
                 return i
             i = close + 2
             continue
 
         # Inline math: \(...\)
         if buffer.startswith("\\(", i):
-            close = _find_outside_code("\\)", i + 2)
+            close = _find_math_close(i + 2, "\\)")
             if close < 0:
+                return i
+            if _has_orphan_backtick(i + 2, close):
                 return i
             i = close + 2
             continue
@@ -333,9 +395,14 @@ def _streaming_safe_split(buffer: str) -> int:
                 if buffer[probe + 1].isascii() and buffer[probe + 1].isalpha():
                     j = probe
                     close = -1
+                    hit_newline = False
                     while j < n:
                         cj = buffer[j]
                         if cj == "\n":
+                            # Inline math regex's ``[^$\n]*?`` forbids
+                            # newlines; once we see one the opener can never
+                            # become valid math. Treat as literal.
+                            hit_newline = True
                             break
                         if _in_code_span(j):
                             j += 1
@@ -348,6 +415,24 @@ def _streaming_safe_split(buffer: str) -> int:
                             break
                         j += 1
                     if close < 0:
+                        if hit_newline:
+                            # Opener can't form a math span -- it's literal.
+                            i += 1
+                            continue
+                        # Closer might arrive in a later chunk -- defer.
+                        return i
+                    # Validate the inline-math regex's ``(?!\$)`` on the
+                    # closer: a ``$`` immediately followed by another ``$``
+                    # isn't a real closer.
+                    if close == n - 1:
+                        # Can't see the next char yet -- defer.
+                        return i
+                    if buffer[close + 1] == "$":
+                        # Closer is followed by ``$``, so the regex would
+                        # reject this span. Opener is literal; advance one.
+                        i += 1
+                        continue
+                    if _has_orphan_backtick(probe, close):
                         return i
                     i = close + 1
                     continue

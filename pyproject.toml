@@ -450,5 +450,6 @@ telegram-bot-api-mock = { git = "https://github.com/werdnum/telegram-bot-api-moc
 
 [dependency-groups]
 dev = [
+    "hypothesis>=6.152.9",
 ]
 
