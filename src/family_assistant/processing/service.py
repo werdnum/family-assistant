@@ -741,7 +741,15 @@ class ProcessingService:
 
             if generated_turn_messages:
                 for turn_msg in generated_turn_messages:
-                    if isinstance(turn_msg, AssistantMessage) and turn_msg.content:
+                    if (
+                        isinstance(turn_msg, AssistantMessage)
+                        and turn_msg.content
+                        and not turn_msg.tool_calls
+                    ):
+                        # Skip messages that carry tool calls: their content
+                        # may be cryptographically tied to a Google thought
+                        # signature (see ContextPreparer.format_history) and
+                        # rewriting it would break replay continuity.
                         turn_msg.content = normalize_latex_to_unicode(turn_msg.content)
 
                     reasoning_info_for_msg = (
@@ -901,7 +909,12 @@ class ProcessingService:
                             if (
                                 isinstance(stream_msg, AssistantMessage)
                                 and stream_msg.content
+                                and not stream_msg.tool_calls
                             ):
+                                # Skip messages that carry tool calls: see
+                                # the matching branch in
+                                # handle_chat_interaction for the
+                                # thought-signature rationale.
                                 stream_msg.content = normalize_latex_to_unicode(
                                     stream_msg.content
                                 )
