@@ -256,6 +256,17 @@ class TestCodeSpansPreserved:
             == r"`\alpha`, `\beta`, plain γ"
         )
 
+    def test_double_backtick_code_span_preserved(self) -> None:
+        # Multi-backtick spans are used when the code contains backticks; the
+        # contents must stay verbatim too.
+        assert normalize_latex_to_unicode(r"``\alpha``") == r"``\alpha``"
+
+    def test_triple_backtick_inline_code_span_preserved(self) -> None:
+        assert (
+            normalize_latex_to_unicode(r"see ```\beta``` here")
+            == r"see ```\beta``` here"
+        )
+
 
 class TestStreamingLatexNormalizer:
     """Buffered normalization for chunked / streamed text."""
@@ -316,6 +327,16 @@ class TestStreamingLatexNormalizer:
         chunks = [r"\[\alpha `", r"\]"]
         out = self._drain(n, chunks)
         assert out == normalize_latex_to_unicode("".join(chunks))
+
+    def test_multi_backtick_code_span_split(self) -> None:
+        # Regression: a double-backtick code span split across chunks must
+        # be held back until the matching closer arrives so the contents
+        # aren't normalized as bare commands.
+        n = StreamingLatexNormalizer()
+        chunks = [r"``\alp", r"ha``"]
+        out = self._drain(n, chunks)
+        assert out == normalize_latex_to_unicode("".join(chunks))
+        assert out == r"``\alpha``"
 
     def test_inline_math_with_inner_whitespace_split(self) -> None:
         # ``$ \alpha$`` (LLM-emitted padding) split across chunks should

@@ -203,12 +203,12 @@ def _strip_delims(match: re.Match[str]) -> str:
     return _convert_commands(match.group(1)).strip()
 
 
-# Markdown code spans whose contents must be preserved verbatim. Fenced blocks
-# come first so a stray backtick inside a fence doesn't terminate it early.
-_CODE_SPAN_RE = re.compile(
-    r"```[\s\S]*?```"  # fenced code block
-    r"|`[^`\n]+`"  # inline code span
-)
+# Markdown code spans whose contents must be preserved verbatim. CommonMark
+# allows code spans to be delimited by any number of backticks; the closing
+# string must have the same count. ``(`+)([\s\S]*?)\1`` captures the opener
+# and matches a closer of equal length, which also covers fenced
+# ``` ```...``` ``` blocks.
+_CODE_SPAN_RE = re.compile(r"(`+)[\s\S]*?\1")
 
 
 def _normalize_segment(text: str) -> str:
@@ -327,21 +327,20 @@ def _streaming_safe_split(buffer: str) -> int:
                 i = close + 1
                 continue
 
-        # Inline code span: `...` on the same line.
+        # Code span: ``+``...``+`` where opener and closer have matching
+        # backtick count (CommonMark). Covers single-backtick inline spans
+        # and multi-backtick spans the LLM emits when the code itself
+        # contains backticks. Fenced blocks already matched above, but a
+        # short ``` ```x``` ``` on one line is also handled here.
         if ch == "`":
-            j = i + 1
-            close = -1
-            while j < n:
-                cj = buffer[j]
-                if cj == "\n":
-                    break
-                if cj == "`":
-                    close = j
-                    break
-                j += 1
+            count = 0
+            while i + count < n and buffer[i + count] == "`":
+                count += 1
+            closer = "`" * count
+            close = buffer.find(closer, i + count)
             if close < 0:
                 return i
-            i = close + 1
+            i = close + count
             continue
 
         # Bare backslash command. A backslash followed by letters is a
