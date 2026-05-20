@@ -321,15 +321,29 @@ def _streaming_safe_split(buffer: str) -> int:
             j += 1
         return False
 
+    def _next_code_span_start(after: int) -> int:
+        """Return the start of the first code span at or after ``after``,
+        or ``n`` if none exists. Math constructs can't extend past a code
+        span boundary because ``normalize_latex_to_unicode`` extracts code
+        spans before applying math substitutions.
+        """
+        for span_start, _span_end in code_span_ranges:
+            if span_start >= after:
+                return span_start
+        return n
+
     def _find_math_close(content_start: int, closer: str) -> int:
         """Find the first ``closer`` after ``content_start`` whose preceding
         content contains a ``\\command`` (matching the math regex's
-        ``\\[a-zA-Z]+`` requirement). Returns -1 if no valid closer exists.
+        ``\\[a-zA-Z]+`` requirement). The search is bounded by the next
+        code span so math doesn't pair across code-span boundaries.
+        Returns -1 if no valid closer exists.
         """
+        boundary = _next_code_span_start(content_start)
         search_from = content_start
         while True:
-            candidate = _find_outside_code(closer, search_from)
-            if candidate < 0:
+            candidate = buffer.find(closer, search_from)
+            if candidate < 0 or candidate >= boundary:
                 return -1
             if _has_command(content_start, candidate):
                 return candidate
@@ -396,6 +410,7 @@ def _streaming_safe_split(buffer: str) -> int:
                     j = probe
                     close = -1
                     hit_newline = False
+                    hit_code_span = False
                     while j < n:
                         cj = buffer[j]
                         if cj == "\n":
@@ -405,8 +420,11 @@ def _streaming_safe_split(buffer: str) -> int:
                             hit_newline = True
                             break
                         if _in_code_span(j):
-                            j += 1
-                            continue
+                            # Math closer would be in a different segment
+                            # than the opener once the code span is
+                            # extracted; this opener is literal.
+                            hit_code_span = True
+                            break
                         if cj == "\\" and j + 1 < n:
                             j += 2
                             continue
@@ -415,7 +433,7 @@ def _streaming_safe_split(buffer: str) -> int:
                             break
                         j += 1
                     if close < 0:
-                        if hit_newline:
+                        if hit_newline or hit_code_span:
                             # Opener can't form a math span -- it's literal.
                             i += 1
                             continue

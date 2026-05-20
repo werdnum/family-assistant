@@ -211,6 +211,11 @@ _REGRESSION_INPUTS: Final = [
     # Code span containing math closer (must not be paired)
     "Use \\[`\\alpha\\]` notation.",
     "Code: `\\]` standalone.",
+    # Math opener and would-be closer separated by a code span -- the
+    # math regex would only see each side as a separate segment, so the
+    # streaming scan must too.
+    "$\\alpha`x`$\\beta$",
+    "\\[\\alpha`x`\\]\\beta\\)",
     # Currency
     "Just $100 here.",
     "Paid $50 today, $25 yesterday.",
