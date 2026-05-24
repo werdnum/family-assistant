@@ -1074,6 +1074,40 @@ class TestResolveServiceProfile:
             result["processing_config"]["retry_config"]["primary"]["model"] == "gpt-4o"
         )
 
+    def test_remote_a2a_copied_from_profile(self) -> None:
+        """Test that remote_a2a config is preserved in the resolved profile."""
+        default_settings: dict[str, Any] = {
+            "processing_config": {"timezone": "UTC"},
+            "tools_config": {},
+            "chat_id_to_name_map": {},
+            "slash_commands": [],
+        }
+        remote_a2a_config = {
+            "agent_url": "https://agent.example.com/a2a",
+            "auth": {"type": "bearer", "token_env": "AGENT_TOKEN"},
+            "timeout_seconds": 120.0,
+            "skills_description": "Remote agent skills",
+        }
+        profile_def = {
+            "id": "remote_agent",
+            "description": "A remote A2A agent",
+            "remote_a2a": remote_a2a_config,
+        }
+        result = resolve_service_profile(profile_def, default_settings, {})
+        assert result["remote_a2a"] == remote_a2a_config
+
+    def test_remote_a2a_absent_when_not_in_profile(self) -> None:
+        """Test that remote_a2a is not added when not in profile definition."""
+        default_settings: dict[str, Any] = {
+            "processing_config": {"timezone": "UTC"},
+            "tools_config": {},
+            "chat_id_to_name_map": {},
+            "slash_commands": [],
+        }
+        profile_def = {"id": "local_profile", "description": "A local profile"}
+        result = resolve_service_profile(profile_def, default_settings, {})
+        assert "remote_a2a" not in result
+
 
 class TestResolveAllServiceProfiles:
     """Tests for resolve_all_service_profiles function."""
@@ -1634,7 +1668,20 @@ class TestLoadConfig:
                         "id": "test_profile",
                         "description": "A test profile",
                         "processing_config": {"max_iterations": 25},
-                    }
+                    },
+                    {
+                        "id": "k8s_agent",
+                        "description": "Remote Kubernetes agent",
+                        "remote_a2a": {
+                            "agent_url": "http://k8s-agent:9000/a2a",
+                            "auth": {
+                                "type": "bearer",
+                                "token_env": "K8S_AGENT_TOKEN",
+                            },
+                            "timeout_seconds": 60.0,
+                            "skills_description": "Kubernetes operations",
+                        },
+                    },
                 ]
             })
         )
@@ -1668,6 +1715,13 @@ class TestLoadConfig:
             p for p in config.service_profiles if p.id == "test_profile"
         )
         assert test_profile.processing_config.max_iterations == 25
+        # remote_a2a config survives the full load_config pipeline
+        k8s_profile = next(p for p in config.service_profiles if p.id == "k8s_agent")
+        assert k8s_profile.remote_a2a is not None
+        assert k8s_profile.remote_a2a.agent_url == "http://k8s-agent:9000/a2a"
+        assert k8s_profile.remote_a2a.auth.type == "bearer"
+        assert k8s_profile.remote_a2a.auth.token_env == "K8S_AGENT_TOKEN"
+        assert k8s_profile.remote_a2a.timeout_seconds == 60.0
 
     def test_profile_inherits_timezone_from_defaults(self, tmp_path: Path) -> None:
         """Regression: profile without explicit timezone inherits from defaults.

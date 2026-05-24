@@ -766,6 +766,10 @@ def resolve_service_profile(
     ):
         resolved["visibility_grants"] = profile_def["visibility_grants"]
 
+    # Handle remote_a2a (replace if present)
+    if "remote_a2a" in profile_def:
+        resolved["remote_a2a"] = profile_def["remote_a2a"]
+
     return resolved
 
 
