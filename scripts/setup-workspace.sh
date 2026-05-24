@@ -84,23 +84,24 @@ fi
 # Step 9: Install GNU Parallel
 if ! command -v parallel >/dev/null 2>&1; then
     echo "📦 Installing GNU Parallel..."
+    installed=false
     if command -v apt-get >/dev/null 2>&1; then
-        sudo apt-get update -qq && sudo apt-get install -y -qq parallel || {
-            echo "⚠️  Failed to install GNU Parallel via apt-get"
+        if sudo apt-get update -qq && sudo apt-get install -y -qq parallel; then
+            installed=true
+        fi
+    elif command -v brew >/dev/null 2>&1; then
+        if brew install parallel; then
+            installed=true
+        fi
+    fi
+    if [ "$installed" = false ]; then
+        echo "   Package manager install failed or unavailable, downloading static binary..."
+        ./scripts/install-parallel.sh .venv/bin || {
+            echo "⚠️  Failed to install GNU Parallel"
             echo "   poe test uses GNU Parallel for adaptive pytest scheduling."
             echo "   Install the system package named 'parallel', or run:"
             echo "     PYTEST_RUNNER=xdist poe test"
         }
-    elif command -v brew >/dev/null 2>&1; then
-        brew install parallel || {
-            echo "⚠️  Failed to install GNU Parallel via brew"
-            echo "   Install manually, or run: PYTEST_RUNNER=xdist poe test"
-        }
-    else
-        echo "⚠️  Cannot auto-install GNU Parallel (no apt-get or brew found)"
-        echo "   poe test uses GNU Parallel for adaptive pytest scheduling."
-        echo "   Install the system package named 'parallel', or run:"
-        echo "     PYTEST_RUNNER=xdist poe test"
     fi
 else
     echo "✓ GNU Parallel already installed"
@@ -123,3 +124,4 @@ echo ""
 echo "  4. Run linting:"
 echo "     poe lint"
 echo ""
+
