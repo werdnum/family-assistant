@@ -5,10 +5,9 @@ from __future__ import annotations
 import json
 import threading
 import uuid
-from collections.abc import Iterator
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING, ClassVar, cast
 
 import httpx
 import pytest
@@ -37,6 +36,8 @@ from family_assistant.llm.content_parts import (
 )
 
 if TYPE_CHECKING:
+    from collections.abc import Iterator
+
     from pytest_httpx import HTTPXMock
 
 
@@ -65,14 +66,21 @@ def _content_parts(text: str) -> list[ContentPartDict]:
     return cast("list[ContentPartDict]", [text_content(text)])
 
 
+def _text_part_text(part: Part) -> str:
+    root = part.root
+    assert isinstance(root, TextPart)
+    return root.text
+
+
 class FakeA2AAgentHandler(BaseHTTPRequestHandler):
-    mode = "completed"
-    task_id = "task-test"
-    task_state = "completed"
-    task_message = "Remote task failed"
-    text = "Hello from remote"
-    streaming = False
-    poll_count = 0
+    mode: ClassVar[str] = "completed"
+    task_id: ClassVar[str] = "task-test"
+    task_state: ClassVar[str] = "completed"
+    task_message: ClassVar[str] = "Remote task failed"
+    text: ClassVar[str] = "Hello from remote"
+    streaming: ClassVar[bool] = False
+    poll_count: ClassVar[int] = 0
+    agent_url: ClassVar[str] = ""
 
     def log_message(self, _fmt: str, *_args: object) -> None:
         return
@@ -104,31 +112,38 @@ class FakeA2AAgentHandler(BaseHTTPRequestHandler):
 
     def handle_message_send(self, body: dict) -> None:
         if self.mode == "jsonrpc_error":
-            self.send_json(self.jsonrpc_error(body.get("id"), -32600, "Invalid request"))
-            return
-        if self.mode == "message":
-            self.send_json({"jsonrpc": "2.0", "id": body.get("id"), "result": self.message()})
-            return
-        if self.mode == "poll":
             self.send_json(
-                {
-                    "jsonrpc": "2.0",
-                    "id": body.get("id"),
-                    "result": self.task("working", artifacts=False),
-                }
+                self.jsonrpc_error(body.get("id"), -32600, "Invalid request")
             )
             return
-        self.send_json(
-            {
+        if self.mode == "message":
+            self.send_json({
                 "jsonrpc": "2.0",
                 "id": body.get("id"),
-                "result": self.task(self.task_state, artifacts=self.task_state == "completed"),
-            }
-        )
+                "result": self.message(),
+            })
+            return
+        if self.mode == "poll":
+            self.send_json({
+                "jsonrpc": "2.0",
+                "id": body.get("id"),
+                "result": self.task("working", artifacts=False),
+            })
+            return
+        self.send_json({
+            "jsonrpc": "2.0",
+            "id": body.get("id"),
+            "result": self.task(
+                self.task_state, artifacts=self.task_state == "completed"
+            ),
+        })
 
     def handle_message_stream(self, body: dict) -> None:
         if self.mode == "jsonrpc_error":
-            self.send_sse(body.get("id"), [self.jsonrpc_error(body.get("id"), -32600, "Invalid request")])
+            self.send_sse(
+                body.get("id"),
+                [self.jsonrpc_error(body.get("id"), -32600, "Invalid request")],
+            )
             return
         if self.mode == "message":
             self.send_sse(
@@ -171,13 +186,11 @@ class FakeA2AAgentHandler(BaseHTTPRequestHandler):
 
     def handle_tasks_get(self, body: dict) -> None:
         type(self).poll_count += 1
-        self.send_json(
-            {
-                "jsonrpc": "2.0",
-                "id": body.get("id"),
-                "result": self.task("completed", artifacts=True),
-            }
-        )
+        self.send_json({
+            "jsonrpc": "2.0",
+            "id": body.get("id"),
+            "result": self.task("completed", artifacts=True),
+        })
 
     def send_json(self, value: dict, status: HTTPStatus = HTTPStatus.OK) -> None:
         payload = json.dumps(value).encode()
@@ -197,7 +210,8 @@ class FakeA2AAgentHandler(BaseHTTPRequestHandler):
             self.wfile.flush()
 
     def rpc_url(self) -> str:
-        return f"http://127.0.0.1:{self.server.server_port}/a2a"
+        server = cast("ThreadingHTTPServer", self.server)
+        return f"http://127.0.0.1:{server.server_port}/a2a"
 
     def task(self, state: str, *, artifacts: bool) -> dict:
         task: dict = {
@@ -369,7 +383,7 @@ class TestA2AClientWrapper:
         task = await wrapper.send_message(_content_parts("Hello"))
         assert task.status.state == TaskState.completed
         assert task.artifacts is not None
-        assert task.artifacts[0].parts[0].root.text == "Hello back!"
+        assert _text_part_text(task.artifacts[0].parts[0]) == "Hello back!"
         await wrapper.close()
 
     @pytest.mark.asyncio
@@ -384,7 +398,7 @@ class TestA2AClientWrapper:
         task = await wrapper.send_message(_content_parts("Hello"))
         assert task.status.state == TaskState.completed
         assert task.artifacts is not None
-        assert task.artifacts[0].parts[0].root.text == "Finished later"
+        assert _text_part_text(task.artifacts[0].parts[0]) == "Finished later"
         assert fake_a2a_agent.poll_count == 1
         await wrapper.close()
 
@@ -400,7 +414,7 @@ class TestA2AClientWrapper:
         task = await wrapper.send_message(_content_parts("Hello"))
         assert task.status.state == TaskState.completed
         assert task.history is not None
-        assert task.history[-1].parts[0].root.text == "Direct answer"
+        assert _text_part_text(task.history[-1].parts[0]) == "Direct answer"
         await wrapper.close()
 
     @pytest.mark.asyncio
@@ -416,7 +430,7 @@ class TestA2AClientWrapper:
         task = await wrapper.send_message(_content_parts("Hello"))
         assert task.status.state == TaskState.completed
         assert task.artifacts is not None
-        assert task.artifacts[0].parts[0].root.text == "Streamed answer"
+        assert _text_part_text(task.artifacts[0].parts[0]) == "Streamed answer"
         await wrapper.close()
 
     @pytest.mark.asyncio
@@ -443,7 +457,7 @@ class TestA2AClientWrapper:
         task = await wrapper.send_message(_content_parts("Hello"))
         assert task.status.state == TaskState.failed
         assert task.status.message is not None
-        assert task.status.message.parts[0].root.text == "LLM error"
+        assert _text_part_text(task.status.message.parts[0]) == "LLM error"
         await wrapper.close()
 
     @pytest.mark.asyncio
@@ -470,7 +484,7 @@ class TestA2AClientWrapper:
         task = await wrapper.send_message(_content_parts("Hello"))
         assert task.status.state == expected
         assert task.status.message is not None
-        assert task.status.message.parts[0].root.text == "Terminal state message"
+        assert _text_part_text(task.status.message.parts[0]) == "Terminal state message"
         await wrapper.close()
 
     @pytest.mark.asyncio

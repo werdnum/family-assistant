@@ -10,15 +10,21 @@ import asyncio
 import logging
 import time
 import uuid
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 import a2a.types as a2a_types
 import httpx
-from a2a.client import A2ACardResolver, ClientConfig, ClientFactory
+from a2a.client import A2ACardResolver, Client, ClientConfig, ClientFactory
 from a2a.client.errors import (
     A2AClientError as SdkClientError,
+)
+from a2a.client.errors import (
     A2AClientHTTPError as SdkHTTPError,
+)
+from a2a.client.errors import (
     A2AClientJSONRPCError as SdkJSONRPCError,
+)
+from a2a.client.errors import (
     A2AClientTimeoutError as SdkTimeoutError,
 )
 
@@ -168,7 +174,7 @@ class A2AClientWrapper:
         except SdkClientError as exc:
             raise A2AClientError(self._format_sdk_error(exc, card.url)) from exc
 
-    async def _poll_until_terminal(self, a2a_client: Any, task: Task) -> Task:
+    async def _poll_until_terminal(self, a2a_client: Client, task: Task) -> Task:
         """Poll tasks/get for agents that return a non-terminal message/send Task."""
         deadline = time.monotonic() + self._timeout
         latest_task = task
@@ -180,9 +186,7 @@ class A2AClientWrapper:
                     f"(last state: {latest_task.status.state})"
                 )
             await asyncio.sleep(min(POLL_INTERVAL_SECONDS, remaining))
-            latest_task = await a2a_client.get_task(
-                TaskQueryParams(id=latest_task.id)
-            )
+            latest_task = await a2a_client.get_task(TaskQueryParams(id=latest_task.id))
         return latest_task
 
     @staticmethod
@@ -190,7 +194,9 @@ class A2AClientWrapper:
         return task.status.state in TERMINAL_TASK_STATES
 
     @staticmethod
-    def _message_to_completed_task(message: Message, fallback_context_id: str | None) -> Task:
+    def _message_to_completed_task(
+        message: Message, fallback_context_id: str | None
+    ) -> Task:
         return Task(
             id=message.task_id or str(uuid.uuid4()),
             context_id=message.context_id or fallback_context_id or str(uuid.uuid4()),
