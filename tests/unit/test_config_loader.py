@@ -1074,6 +1074,40 @@ class TestResolveServiceProfile:
             result["processing_config"]["retry_config"]["primary"]["model"] == "gpt-4o"
         )
 
+    def test_remote_a2a_copied_from_profile(self) -> None:
+        """Test that remote_a2a config is preserved in the resolved profile."""
+        default_settings: dict[str, Any] = {
+            "processing_config": {"timezone": "UTC"},
+            "tools_config": {},
+            "chat_id_to_name_map": {},
+            "slash_commands": [],
+        }
+        remote_a2a_config = {
+            "agent_url": "https://agent.example.com/a2a",
+            "auth": {"type": "bearer", "token_env": "AGENT_TOKEN"},
+            "timeout_seconds": 120.0,
+            "skills_description": "Remote agent skills",
+        }
+        profile_def = {
+            "id": "remote_agent",
+            "description": "A remote A2A agent",
+            "remote_a2a": remote_a2a_config,
+        }
+        result = resolve_service_profile(profile_def, default_settings, {})
+        assert result["remote_a2a"] == remote_a2a_config
+
+    def test_remote_a2a_absent_when_not_in_profile(self) -> None:
+        """Test that remote_a2a is not added when not in profile definition."""
+        default_settings: dict[str, Any] = {
+            "processing_config": {"timezone": "UTC"},
+            "tools_config": {},
+            "chat_id_to_name_map": {},
+            "slash_commands": [],
+        }
+        profile_def = {"id": "local_profile", "description": "A local profile"}
+        result = resolve_service_profile(profile_def, default_settings, {})
+        assert "remote_a2a" not in result
+
 
 class TestResolveAllServiceProfiles:
     """Tests for resolve_all_service_profiles function."""
