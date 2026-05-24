@@ -6,14 +6,21 @@ and content part conversion for remote profile delegation.
 
 from __future__ import annotations
 
+import asyncio
 import logging
+import time
 import uuid
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import a2a.types as a2a_types
 import httpx
-from a2a.client import A2ACardResolver
-from a2a.client.errors import A2AClientHTTPError as SdkHTTPError
+from a2a.client import A2ACardResolver, ClientConfig, ClientFactory
+from a2a.client.errors import (
+    A2AClientError as SdkClientError,
+    A2AClientHTTPError as SdkHTTPError,
+    A2AClientJSONRPCError as SdkJSONRPCError,
+    A2AClientTimeoutError as SdkTimeoutError,
+)
 
 from family_assistant.a2a.converters import content_parts_to_a2a_parts
 from family_assistant.a2a.types import (
@@ -22,6 +29,9 @@ from family_assistant.a2a.types import (
     Part,
     Role,
     Task,
+    TaskQueryParams,
+    TaskState,
+    TaskStatus,
 )
 
 if TYPE_CHECKING:
@@ -33,6 +43,15 @@ logger = logging.getLogger(__name__)
 # Limit on base64-encoded size in the JSON-RPC payload (not decoded file size).
 # Base64 inflates by ~33%, so this allows ~7.5 MB raw files.
 MAX_INLINE_ATTACHMENT_BYTES = 10 * 1024 * 1024
+POLL_INTERVAL_SECONDS = 1.0
+TERMINAL_TASK_STATES = {
+    TaskState.completed,
+    TaskState.failed,
+    TaskState.canceled,
+    TaskState.rejected,
+    TaskState.auth_required,
+    TaskState.input_required,
+}
 
 
 class A2AClientError(Exception):
@@ -125,52 +144,71 @@ class A2AClientWrapper:
             metadata=metadata,
         )
 
-        rpc_url = card.url
-        jsonrpc_payload = {
-            "jsonrpc": "2.0",
-            "id": str(uuid.uuid4()),
-            "method": "message/send",
-            "params": {"message": message.model_dump(exclude_none=True)},
-        }
-
         client = self._get_httpx_client()
         try:
-            response = await client.post(rpc_url, json=jsonrpc_payload)
-            response.raise_for_status()
-        except httpx.HTTPStatusError as exc:
-            raise A2AClientError(
-                f"HTTP {exc.response.status_code} from A2A agent at {rpc_url}"
-            ) from exc
-        except httpx.ConnectError as exc:
-            raise A2AClientError(
-                f"Cannot connect to A2A agent at {rpc_url}: {exc}"
-            ) from exc
-        except httpx.TimeoutException as exc:
-            raise A2AClientError(
-                f"Timeout connecting to A2A agent at {rpc_url}"
-            ) from exc
+            a2a_client = ClientFactory(
+                ClientConfig(
+                    streaming=True,
+                    polling=False,
+                    httpx_client=client,
+                    accepted_output_modes=card.default_output_modes or [],
+                )
+            ).create(card)
+            latest_task: Task | None = None
+            async for event in a2a_client.send_message(message):
+                if isinstance(event, Message):
+                    return self._message_to_completed_task(event, context_id)
+                task, _update = event
+                latest_task = task
+                if self._is_terminal(task):
+                    return task
+            if latest_task is None:
+                raise A2AClientError("A2A agent returned no message or task")
+            return await self._poll_until_terminal(a2a_client, latest_task)
+        except SdkClientError as exc:
+            raise A2AClientError(self._format_sdk_error(exc, card.url)) from exc
 
-        try:
-            body = response.json()
-        except ValueError as exc:
-            raise A2AClientError(
-                f"Invalid JSON response from A2A agent at {rpc_url}"
-            ) from exc
-
-        if "error" in body:
-            error = body["error"]
-            raise A2AClientError(
-                f"A2A JSON-RPC error {error.get('code')}: {error.get('message')}"
+    async def _poll_until_terminal(self, a2a_client: Any, task: Task) -> Task:
+        """Poll tasks/get for agents that return a non-terminal message/send Task."""
+        deadline = time.monotonic() + self._timeout
+        latest_task = task
+        while not self._is_terminal(latest_task):
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise A2AClientError(
+                    f"Timed out waiting for A2A task {latest_task.id} to reach a terminal state "
+                    f"(last state: {latest_task.status.state})"
+                )
+            await asyncio.sleep(min(POLL_INTERVAL_SECONDS, remaining))
+            latest_task = await a2a_client.get_task(
+                TaskQueryParams(id=latest_task.id)
             )
+        return latest_task
 
-        result = body.get("result")
-        if result is None:
-            raise A2AClientError("A2A response missing 'result' field")
+    @staticmethod
+    def _is_terminal(task: Task) -> bool:
+        return task.status.state in TERMINAL_TASK_STATES
 
-        try:
-            return Task.model_validate(result)
-        except Exception as exc:
-            raise A2AClientError(f"Failed to parse A2A task response: {exc}") from exc
+    @staticmethod
+    def _message_to_completed_task(message: Message, fallback_context_id: str | None) -> Task:
+        return Task(
+            id=message.task_id or str(uuid.uuid4()),
+            context_id=message.context_id or fallback_context_id or str(uuid.uuid4()),
+            status=TaskStatus(state=TaskState.completed, message=message),
+            history=[message],
+        )
+
+    @staticmethod
+    def _format_sdk_error(exc: SdkClientError, url: str) -> str:
+        if isinstance(exc, SdkJSONRPCError):
+            return f"A2A JSON-RPC error {exc.error.code}: {exc.error.message}"
+        if isinstance(exc, SdkTimeoutError):
+            return f"Timeout connecting to A2A agent at {url}: {exc.message}"
+        if isinstance(exc, SdkHTTPError):
+            if exc.status_code == 503 and "Network communication error" in exc.message:
+                return f"Cannot connect to A2A agent at {url}: {exc.message}"
+            return f"HTTP {exc.status_code} from A2A agent at {url}: {exc.message}"
+        return f"A2A client error communicating with {url}: {exc}"
 
     def _convert_and_validate_parts(
         self, content_parts: list[ContentPartDict]
