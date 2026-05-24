@@ -81,12 +81,29 @@ fi
 # To update marketplaces, run the command manually:
 # claude plugin marketplace update
 
-# Step 9: Check GNU Parallel
+# Step 9: Install GNU Parallel
 if ! command -v parallel >/dev/null 2>&1; then
-    echo "⚠️  GNU Parallel is not installed"
-    echo "   poe test uses GNU Parallel for adaptive pytest scheduling."
-    echo "   Install the system package named 'parallel', or run:"
-    echo "     PYTEST_RUNNER=xdist poe test"
+    echo "📦 Installing GNU Parallel..."
+    if command -v apt-get >/dev/null 2>&1; then
+        sudo apt-get update -qq && sudo apt-get install -y -qq parallel || {
+            echo "⚠️  Failed to install GNU Parallel via apt-get"
+            echo "   poe test uses GNU Parallel for adaptive pytest scheduling."
+            echo "   Install the system package named 'parallel', or run:"
+            echo "     PYTEST_RUNNER=xdist poe test"
+        }
+    elif command -v brew >/dev/null 2>&1; then
+        brew install parallel || {
+            echo "⚠️  Failed to install GNU Parallel via brew"
+            echo "   Install manually, or run: PYTEST_RUNNER=xdist poe test"
+        }
+    else
+        echo "⚠️  Cannot auto-install GNU Parallel (no apt-get or brew found)"
+        echo "   poe test uses GNU Parallel for adaptive pytest scheduling."
+        echo "   Install the system package named 'parallel', or run:"
+        echo "     PYTEST_RUNNER=xdist poe test"
+    fi
+else
+    echo "✓ GNU Parallel already installed"
 fi
 
 # Step 10: Verify setup
