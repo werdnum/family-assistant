@@ -2137,6 +2137,57 @@ class TestLoadConfig:
         assert "brave" in servers
         assert "custom" in servers
 
+    def test_remote_a2a_profile_survives_full_config_load(self, tmp_path: Path) -> None:
+        """End-to-end: remote_a2a config in YAML produces a ServiceProfile with remote_a2a set."""
+        config_file = tmp_path / "config.yaml"
+        config_file.write_text(
+            yaml.dump({
+                "service_profiles": [
+                    {
+                        "id": "k8s_agent",
+                        "description": "Remote Kubernetes agent",
+                        "remote_a2a": {
+                            "agent_url": "http://k8s-agent:9000/a2a",
+                            "auth": {
+                                "type": "bearer",
+                                "token_env": "K8S_AGENT_TOKEN",
+                            },
+                            "timeout_seconds": 60.0,
+                            "skills_description": "Kubernetes operations",
+                        },
+                    }
+                ]
+            })
+        )
+        prompts_file = tmp_path / "prompts.yaml"
+        prompts_file.write_text(yaml.dump({"system_prompt": "test"}))
+
+        env_to_clear = [m.env_var for m in ENV_VAR_MAPPINGS]
+        env_to_clear.extend([
+            "CALDAV_USERNAME",
+            "CALDAV_PASSWORD",
+            "CALDAV_CALENDAR_URLS",
+            "ICAL_URLS",
+            "MCP_CONFIG_PATH",
+            "INDEXING_PIPELINE_CONFIG_JSON",
+        ])
+        clean_env = {k: v for k, v in os.environ.items() if k not in env_to_clear}
+
+        with mock.patch.dict(os.environ, clean_env, clear=True):
+            config = load_config(
+                config_file_path=str(config_file),
+                prompts_file_path=str(prompts_file),
+                load_dotenv_file=False,
+            )
+
+        k8s_profile = next(p for p in config.service_profiles if p.id == "k8s_agent")
+        assert k8s_profile.remote_a2a is not None
+        assert k8s_profile.remote_a2a.agent_url == "http://k8s-agent:9000/a2a"
+        assert k8s_profile.remote_a2a.auth.type == "bearer"
+        assert k8s_profile.remote_a2a.auth.token_env == "K8S_AGENT_TOKEN"
+        assert k8s_profile.remote_a2a.timeout_seconds == 60.0
+        assert k8s_profile.remote_a2a.skills_description == "Kubernetes operations"
+
 
 class TestEnvVarMappingsComplete:
     """Tests to ensure environment variable mappings are complete and correct."""
