@@ -47,9 +47,9 @@ async def error_list(
     total_pages = (total_count + limit - 1) // limit
 
     return templates.TemplateResponse(
+        request,
         "errors.html",
-        {
-            "request": request,
+        context={
             "errors": errors,
             "page": page,
             "total_pages": total_pages,
@@ -76,6 +76,7 @@ async def error_detail(
         raise HTTPException(404, "Error log not found")
 
     return templates.TemplateResponse(
+        request,
         "error_detail.html",
-        {"request": request, "error": error, "now_utc": datetime.now(UTC)},
+        context={"error": error, "now_utc": datetime.now(UTC)},
     )

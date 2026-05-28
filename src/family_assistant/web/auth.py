@@ -336,9 +336,12 @@ class AuthMiddleware:
             return
 
         request = Request(scope, receive=receive)
+        # Use scope["path"] instead of request.url.path to avoid
+        # CVE-2026-48710 Host header poisoning of the parsed URL path.
+        request_path: str = scope["path"]
 
         for pattern in self.public_paths:
-            if pattern.match(request.url.path):
+            if pattern.match(request_path):
                 await self.app(scope, receive, send)
                 return
 
@@ -403,7 +406,7 @@ class AuthMiddleware:
                         request.session["user"] = api_user
                     user = api_user  # Update user for the current request flow
                     logger.debug(
-                        f"User authenticated via API token for path {request.url.path}"
+                        f"User authenticated via API token for path {request_path}"
                     )
 
         if not user:
@@ -412,7 +415,7 @@ class AuthMiddleware:
             with contextlib.suppress(AssertionError):
                 request.session["redirect_after_login"] = str(request.url)
             logger.debug(
-                f"No user session or valid API token for protected path {request.url.path}, redirecting to OIDC login."
+                f"No user session or valid API token for protected path {request_path}, redirecting to OIDC login."
             )
             redirect_response = RedirectResponse(
                 url=request.url_for("login"),

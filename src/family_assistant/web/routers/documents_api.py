@@ -217,9 +217,6 @@ async def upload_document(
             description="Unique identifier for the document within its source type.",
         ),
     ],
-    source_uri: Annotated[
-        str, Form(..., description="Canonical URI/URL of the original document.")
-    ],
     title: Annotated[
         str,
         Form(
@@ -230,6 +227,10 @@ async def upload_document(
     # Other dependencies
     db_context: Annotated[DatabaseContext, Depends(get_db)],
     # Optional Form fields
+    source_uri: Annotated[
+        str | None,
+        Form(description="Canonical URI/URL of the original document."),
+    ] = None,
     content_parts_json: Annotated[
         str | None,
         Form(

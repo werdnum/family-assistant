@@ -64,9 +64,9 @@ async def view_context_page(
         )
 
         return templates.TemplateResponse(
+            request,
             "context_viewer.html.j2",
-            {
-                "request": request,
+            context={
                 "aggregated_context": aggregated_context,
                 "context_fragments": context_fragments,
                 "system_prompt_template": system_prompt_template,
