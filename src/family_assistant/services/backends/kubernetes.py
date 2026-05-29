@@ -33,6 +33,7 @@ from kubernetes_asyncio.client import (
     V1PodSpec,
     V1PodTemplateSpec,
     V1ResourceRequirements,
+    V1SeccompProfile,
     V1SecretEnvSource,
     V1SecurityContext,
     V1Volume,
@@ -202,6 +203,25 @@ class KubernetesBackend:
     def resources(self) -> WorkerResourceLimits:
         """Get the resource limits for worker containers."""
         return self._config.resources
+
+    def _worker_container_security_context(self) -> V1SecurityContext:
+        """Build the worker container security context."""
+        if self._config.enable_rootless_podman:
+            return V1SecurityContext(
+                allow_privilege_escalation=True,
+                capabilities=V1Capabilities(
+                    add=["SETUID", "SETGID"],
+                    drop=["ALL"],
+                ),
+                read_only_root_filesystem=False,
+                seccomp_profile=V1SeccompProfile(type="Unconfined"),
+            )
+
+        return V1SecurityContext(
+            allow_privilege_escalation=False,
+            capabilities=V1Capabilities(drop=["ALL"]),
+            read_only_root_filesystem=False,
+        )
 
     async def _ensure_config_loaded(self) -> None:
         """Ensure Kubernetes configuration is loaded (once)."""
@@ -436,10 +456,8 @@ class KubernetesBackend:
                                 env=env_vars,
                                 env_from=env_from,
                                 volume_mounts=volume_mounts,
-                                security_context=V1SecurityContext(
-                                    allow_privilege_escalation=False,
-                                    capabilities=V1Capabilities(drop=["ALL"]),
-                                    read_only_root_filesystem=False,
+                                security_context=(
+                                    self._worker_container_security_context()
                                 ),
                                 resources=V1ResourceRequirements(
                                     requests={
