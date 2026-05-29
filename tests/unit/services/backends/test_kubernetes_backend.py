@@ -275,6 +275,34 @@ class TestKubernetesBackendBuildJobManifest:
         container_security = pod_spec.containers[0].security_context
         assert container_security.allow_privilege_escalation is False
         assert container_security.capabilities.drop == ["ALL"]
+        assert container_security.seccomp_profile is None
+
+    def test_build_manifest_rootless_podman_security_context(self) -> None:
+        """Test rootless Podman support is explicitly opt-in."""
+        config = KubernetesBackendConfig(
+            namespace="test-namespace",
+            ai_coder_image="test-image:latest",
+            service_account="test-sa",
+            enable_rootless_podman=True,
+        )
+        custom_backend = KubernetesBackend(config=config)
+        custom_backend._config_loaded = True
+
+        manifest = custom_backend._build_job_manifest(
+            job_name="ai-worker-task-123",
+            task_id="task-123",
+            prompt_path="tasks/task-123/prompt.md",
+            output_dir="tasks/task-123/output",
+            webhook_url="http://localhost:8000/webhook/event",
+            model="claude",
+            timeout_minutes=30,
+        )
+
+        container_security = manifest.spec.template.spec.containers[0].security_context
+        assert container_security.allow_privilege_escalation is True
+        assert container_security.capabilities.add == ["SETUID", "SETGID"]
+        assert container_security.capabilities.drop is None
+        assert container_security.seccomp_profile.type == "Unconfined"
 
     def test_build_manifest_custom_uid_gid(self) -> None:
         """Test job manifest uses custom uid/gid from config."""

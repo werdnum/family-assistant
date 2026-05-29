@@ -802,6 +802,7 @@ class KubernetesBackendConfig(BaseModel):
     run_as_user: int | None = 1000
     run_as_group: int | None = 1000
     fs_group: int | None = 1000
+    enable_rootless_podman: bool = False
 
     # Additional volumes and volume mounts to attach to worker pods
     extra_volumes: list[k8s_models.Volume] | None = None
