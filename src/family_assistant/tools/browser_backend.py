@@ -577,7 +577,7 @@ class RemoteBrowserBackend:
 
     # ast-grep-ignore: no-dict-any - JS return values are genuinely arbitrary JSON
     async def evaluate(self, code: str) -> Any:  # noqa: ANN401
-        result = await self._command("exec", {"code": code})
+        result = await self._command("exec", {"code": wrap_exec_code(code)})
         if "error" in result:
             raise BrowserBackendError(str(result["error"]))
         return result.get("result")
@@ -707,3 +707,4 @@ async def close_browser_backend(exec_context: ToolExecutionContext) -> None:
     if remote is not None:
         await remote.close()
     await close_browser_session(exec_context)
+
