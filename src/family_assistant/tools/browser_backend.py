@@ -226,10 +226,14 @@ class HandoffUnavailableError(BrowserBackendError):
 
 @runtime_checkable
 class BrowserBackend(Protocol):
-    """Page-level operations the semantic DOM tools depend on.
+    """Page-level operations shared by semantic DOM and visual computer-use tools.
 
     ``ref_cache`` maps short refs (``e12``) to selectors; it is repopulated on
     each snapshot and cleared on navigation / arbitrary JS execution.
+
+    The ``mouse_*`` / ``keyboard_*`` / ``go_back`` / ``go_forward`` methods are
+    used by the visual (Computer Use) profile so it can share the same remote
+    browser session instead of opening a separate local tab.
     """
 
     @property
@@ -237,6 +241,12 @@ class BrowserBackend(Protocol):
 
     @property
     def current_url(self) -> str: ...
+
+    @property
+    def screen_width(self) -> int: ...
+
+    @property
+    def screen_height(self) -> int: ...
 
     def clear_refs(self) -> None: ...
 
@@ -260,6 +270,24 @@ class BrowserBackend(Protocol):
 
     # ast-grep-ignore: no-dict-any - JS return values are genuinely arbitrary JSON
     async def evaluate(self, code: str) -> Any: ...  # noqa: ANN401
+
+    async def mouse_click(self, x: float, y: float) -> None: ...
+
+    async def mouse_move(self, x: float, y: float) -> None: ...
+
+    async def mouse_down(self) -> None: ...
+
+    async def mouse_up(self) -> None: ...
+
+    async def mouse_wheel(self, delta_x: float, delta_y: float) -> None: ...
+
+    async def keyboard_type(self, text: str) -> None: ...
+
+    async def keyboard_press(self, keys: str) -> None: ...
+
+    async def go_back(self) -> None: ...
+
+    async def go_forward(self) -> None: ...
 
     async def request_handoff(
         self,
@@ -287,6 +315,14 @@ class LocalPlaywrightBackend:
     def current_url(self) -> str:
         page = self._session.page
         return page.url if page is not None else ""
+
+    @property
+    def screen_width(self) -> int:
+        return self._session.screen_width
+
+    @property
+    def screen_height(self) -> int:
+        return self._session.screen_height
 
     def clear_refs(self) -> None:
         self._session.clear_refs()
@@ -350,6 +386,46 @@ class LocalPlaywrightBackend:
         except PlaywrightError as exc:
             raise BrowserBackendError(str(exc)) from exc
 
+    async def mouse_click(self, x: float, y: float) -> None:
+        page = await self._page()
+        await page.mouse.click(x, y)
+        with contextlib.suppress(PlaywrightError):
+            await page.wait_for_load_state("domcontentloaded", timeout=2000)
+
+    async def mouse_move(self, x: float, y: float) -> None:
+        page = await self._page()
+        await page.mouse.move(x, y)
+
+    async def mouse_down(self) -> None:
+        page = await self._page()
+        await page.mouse.down()
+
+    async def mouse_up(self) -> None:
+        page = await self._page()
+        await page.mouse.up()
+
+    async def mouse_wheel(self, delta_x: float, delta_y: float) -> None:
+        page = await self._page()
+        await page.mouse.wheel(delta_x, delta_y)
+
+    async def keyboard_type(self, text: str) -> None:
+        page = await self._page()
+        await page.keyboard.type(text)
+
+    async def keyboard_press(self, keys: str) -> None:
+        page = await self._page()
+        await page.keyboard.press(keys)
+        with contextlib.suppress(PlaywrightError):
+            await page.wait_for_load_state("domcontentloaded", timeout=2000)
+
+    async def go_back(self) -> None:
+        page = await self._page()
+        await page.go_back()
+
+    async def go_forward(self) -> None:
+        page = await self._page()
+        await page.go_forward()
+
     async def request_handoff(
         self,
         *,
@@ -365,6 +441,11 @@ class LocalPlaywrightBackend:
 
     async def close(self) -> None:
         await self._session.close()
+
+
+# browser-server default viewport — must match DEFAULT_DISPLAY_WIDTH/HEIGHT in runtime.py
+_REMOTE_VIEWPORT_WIDTH = 1280
+_REMOTE_VIEWPORT_HEIGHT = 720
 
 
 class RemoteBrowserBackend:
@@ -501,6 +582,41 @@ class RemoteBrowserBackend:
             raise BrowserBackendError(str(result["error"]))
         return result.get("result")
 
+    @property
+    def screen_width(self) -> int:
+        return _REMOTE_VIEWPORT_WIDTH
+
+    @property
+    def screen_height(self) -> int:
+        return _REMOTE_VIEWPORT_HEIGHT
+
+    async def mouse_click(self, x: float, y: float) -> None:
+        await self._command("mouse_click", {"x": x, "y": y})
+
+    async def mouse_move(self, x: float, y: float) -> None:
+        await self._command("mouse_move", {"x": x, "y": y})
+
+    async def mouse_down(self) -> None:
+        await self._command("mouse_down", {})
+
+    async def mouse_up(self) -> None:
+        await self._command("mouse_up", {})
+
+    async def mouse_wheel(self, delta_x: float, delta_y: float) -> None:
+        await self._command("mouse_wheel", {"delta_x": delta_x, "delta_y": delta_y})
+
+    async def keyboard_type(self, text: str) -> None:
+        await self._command("keyboard_type", {"text": text})
+
+    async def keyboard_press(self, keys: str) -> None:
+        await self._command("keyboard_press", {"keys": keys})
+
+    async def go_back(self) -> None:
+        await self._command("navigate_back", {})
+
+    async def go_forward(self) -> None:
+        await self._command("navigate_forward", {})
+
     async def request_handoff(
         self,
         *,
@@ -566,13 +682,11 @@ async def get_browser_backend(exec_context: ToolExecutionContext) -> BrowserBack
     """Resolve the browser backend for this execution context.
 
     Uses the remote ``browser-server`` backend when ``browser_handoff_config`` is
-    enabled for the active profile; otherwise the shared local Playwright session.
-
-    Note: visual delegation (``browser_visual_profile``) still uses the local
-    Computer Use session via ``get_browser_session``, so delegating a remote-backed
-    DOM profile to the visual profile will open a separate local tab rather than
-    reusing the remote session.  Routing the visual profile through the remote
-    session is tracked as a future improvement.
+    enabled for the active profile (including ``browser_visual_profile``); otherwise
+    the shared local Playwright session.  Both the semantic DOM profile and the
+    visual Computer Use profile share the same remote session keyed by
+    ``conversation_id``, so the tab state (URL, cookies, form fills) is preserved
+    across profile delegation.
     """
     config = _remote_enabled(exec_context)
     if config is not None:
@@ -593,4 +707,3 @@ async def close_browser_backend(exec_context: ToolExecutionContext) -> None:
     if remote is not None:
         await remote.close()
     await close_browser_session(exec_context)
-

@@ -1512,6 +1512,7 @@ browser_handoff_config:
     token_env: "BROWSER_HANDOFF_SERVICE_TOKEN"
   handoff_capable_profiles:
     - "browser_profile"
+    - "browser_visual_profile"
 otel:
   enabled: false
   service_name: "family-assistant"

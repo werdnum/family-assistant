@@ -1,20 +1,25 @@
-"""Computer Use tools for browser automation using Playwright.
+"""Computer Use tools for browser automation.
 
 This module implements the tools required by the Gemini Computer Use model
-to interact with a web browser using async Playwright.
+to interact with a web browser.  All operations go through
+:class:`~family_assistant.tools.browser_backend.BrowserBackend` so that when a
+remote ``browser-server`` session is active the visual profile shares the
+same live browser tab as the semantic DOM profile.
 
-Session management (``BrowserSession``, ``get_browser_session``,
-``close_browser_session``) lives in :mod:`family_assistant.tools.browser_session`
-so the semantic DOM tools in ``browser_dom.py`` can share the same browser tab.
+When no remote backend is configured the local Playwright session is used,
+preserving the existing behaviour.
+
+``BrowserSession``, ``get_browser_session``, and ``close_browser_session``
+are re-exported for callers that still reference them directly.
 """
 
 from __future__ import annotations
 
 import asyncio
-import contextlib
 import logging
 from typing import TYPE_CHECKING
 
+from family_assistant.tools.browser_backend import BrowserBackend, get_browser_backend
 from family_assistant.tools.browser_session import (
     BrowserSession,
     close_browser_session,
@@ -24,8 +29,6 @@ from family_assistant.tools.browser_session import (
 from family_assistant.tools.types import ToolAttachment, ToolDefinition, ToolResult
 
 if TYPE_CHECKING:
-    from rebrowser_playwright.async_api import Page
-
     from family_assistant.tools.types import ToolExecutionContext
 
 logger = logging.getLogger(__name__)
@@ -51,7 +54,7 @@ __all__ = [
 ]
 
 
-async def _take_screenshot_with_url(session: BrowserSession, page: Page) -> ToolResult:
+async def _take_screenshot_with_url(backend: BrowserBackend) -> ToolResult:
     """Take a screenshot and return it as a ToolResult with URL.
 
     The Gemini Computer Use model requires function responses to include
@@ -59,19 +62,19 @@ async def _take_screenshot_with_url(session: BrowserSession, page: Page) -> Tool
 
     Every Computer Use action is assumed to have potentially mutated the
     page (click, type, scroll, navigate, …), so any DOM refs captured by
-    ``browser_dom`` snapshots on the shared session are now stale. We
+    ``browser_dom`` snapshots on the shared session are now stale.  We
     invalidate them here so that a subsequent ``browser_click`` can't
     target a ref that no longer points at the intended element.
     """
-    session.clear_refs()
-    screenshot_bytes = await page.screenshot(type="png")
+    backend.clear_refs()
+    screenshot_bytes = await backend.screenshot_png()
     attachment = ToolAttachment(
         content=screenshot_bytes,
         mime_type="image/png",
         description="Browser screenshot",
     )
     return ToolResult(
-        data={"url": page.url},
+        data={"url": backend.current_url},
         attachments=[attachment],
     )
 
@@ -92,20 +95,12 @@ async def computer_use_click_at(
     Returns:
         A screenshot of the screen after the click.
     """
-    session = await get_browser_session(exec_context)
-    page = await session.ensure_page()
-
-    actual_x = denormalize_coordinate(x, session.screen_width)
-    actual_y = denormalize_coordinate(y, session.screen_height)
-
+    backend = await get_browser_backend(exec_context)
+    actual_x = denormalize_coordinate(x, backend.screen_width)
+    actual_y = denormalize_coordinate(y, backend.screen_height)
     logger.info(f"Clicking at ({actual_x}, {actual_y})")
-    await page.mouse.click(actual_x, actual_y)
-
-    # Wait for potential navigations/renders
-    with contextlib.suppress(Exception):
-        await page.wait_for_load_state(timeout=2000)
-
-    return await _take_screenshot_with_url(session, page)
+    await backend.mouse_click(actual_x, actual_y)
+    return await _take_screenshot_with_url(backend)
 
 
 async def computer_use_type_text_at(
@@ -127,31 +122,17 @@ async def computer_use_type_text_at(
     Returns:
         A screenshot of the screen after typing.
     """
-    session = await get_browser_session(exec_context)
-    page = await session.ensure_page()
-
-    actual_x = denormalize_coordinate(x, session.screen_width)
-    actual_y = denormalize_coordinate(y, session.screen_height)
-
+    backend = await get_browser_backend(exec_context)
+    actual_x = denormalize_coordinate(x, backend.screen_width)
+    actual_y = denormalize_coordinate(y, backend.screen_height)
     logger.info(f"Typing '{text}' at ({actual_x}, {actual_y})")
-
-    # Click to focus
-    await page.mouse.click(actual_x, actual_y)
-
-    # Clear existing text (Ctrl+A + Backspace)
-    await page.keyboard.press("Control+A")
-    await page.keyboard.press("Backspace")
-
-    await page.keyboard.type(text)
-
+    await backend.mouse_click(actual_x, actual_y)
+    await backend.keyboard_press("Control+A")
+    await backend.keyboard_press("Backspace")
+    await backend.keyboard_type(text)
     if press_enter:
-        await page.keyboard.press("Enter")
-
-    # Wait for potential navigations/renders
-    with contextlib.suppress(Exception):
-        await page.wait_for_load_state(timeout=2000)
-
-    return await _take_screenshot_with_url(session, page)
+        await backend.keyboard_press("Enter")
+    return await _take_screenshot_with_url(backend)
 
 
 async def computer_use_scroll_at(
@@ -181,34 +162,24 @@ async def computer_use_scroll_at(
         raise ValueError(
             f"Invalid scroll direction '{direction}'. Must be one of: {valid_directions}"
         )
-
-    session = await get_browser_session(exec_context)
-    page = await session.ensure_page()
-
-    actual_x = denormalize_coordinate(x, session.screen_width)
-    actual_y = denormalize_coordinate(y, session.screen_height)
-
+    backend = await get_browser_backend(exec_context)
+    actual_x = denormalize_coordinate(x, backend.screen_width)
+    actual_y = denormalize_coordinate(y, backend.screen_height)
     logger.info(f"Scrolling {direction} at ({actual_x}, {actual_y}) by {magnitude}")
-
-    # Calculate delta based on direction
-    delta_x = 0
-    delta_y = 0
-
+    delta_x = 0.0
+    delta_y = 0.0
     if direction == "down":
-        delta_y = magnitude
+        delta_y = float(magnitude)
     elif direction == "up":
-        delta_y = -magnitude
+        delta_y = -float(magnitude)
     elif direction == "right":
-        delta_x = magnitude
+        delta_x = float(magnitude)
     elif direction == "left":
-        delta_x = -magnitude
-
-    await page.mouse.move(actual_x, actual_y)
-    await page.mouse.wheel(delta_x, delta_y)
-
-    await asyncio.sleep(0.5)  # Wait for scroll animation
-
-    return await _take_screenshot_with_url(session, page)
+        delta_x = -float(magnitude)
+    await backend.mouse_move(actual_x, actual_y)
+    await backend.mouse_wheel(delta_x, delta_y)
+    await asyncio.sleep(0.5)
+    return await _take_screenshot_with_url(backend)
 
 
 async def computer_use_open_web_browser(
@@ -222,14 +193,10 @@ async def computer_use_open_web_browser(
     Returns:
         A screenshot of the browser showing Google.
     """
-    session = await get_browser_session(exec_context)
-    page = await session.ensure_page()
-
-    # Navigate to Google as the default starting page
-    # Computer Use API requires a valid HTTP/HTTPS URL
+    backend = await get_browser_backend(exec_context)
     logger.info("Opening web browser (navigating to Google)")
-    await page.goto("https://www.google.com")
-    return await _take_screenshot_with_url(session, page)
+    await backend.goto("https://www.google.com")
+    return await _take_screenshot_with_url(backend)
 
 
 async def computer_use_navigate(
@@ -244,17 +211,12 @@ async def computer_use_navigate(
     Returns:
         A screenshot of the page after navigation.
     """
-    session = await get_browser_session(exec_context)
-    page = await session.ensure_page()
-
+    backend = await get_browser_backend(exec_context)
     logger.info(f"Navigating to {url}")
-
-    # Ensure URL has protocol
     if not url.startswith("http"):
         url = "https://" + url
-
-    await page.goto(url)
-    return await _take_screenshot_with_url(session, page)
+    await backend.goto(url)
+    return await _take_screenshot_with_url(backend)
 
 
 async def computer_use_search(exec_context: ToolExecutionContext) -> ToolResult:
@@ -266,12 +228,10 @@ async def computer_use_search(exec_context: ToolExecutionContext) -> ToolResult:
     Returns:
         A screenshot of the search engine homepage.
     """
-    session = await get_browser_session(exec_context)
-    page = await session.ensure_page()
-
+    backend = await get_browser_backend(exec_context)
     logger.info("Navigating to search engine")
-    await page.goto("https://www.google.com")
-    return await _take_screenshot_with_url(session, page)
+    await backend.goto("https://www.google.com")
+    return await _take_screenshot_with_url(backend)
 
 
 async def computer_use_go_back(exec_context: ToolExecutionContext) -> ToolResult:
@@ -283,12 +243,10 @@ async def computer_use_go_back(exec_context: ToolExecutionContext) -> ToolResult
     Returns:
         A screenshot of the page after navigation.
     """
-    session = await get_browser_session(exec_context)
-    page = await session.ensure_page()
-
+    backend = await get_browser_backend(exec_context)
     logger.info("Going back")
-    await page.go_back()
-    return await _take_screenshot_with_url(session, page)
+    await backend.go_back()
+    return await _take_screenshot_with_url(backend)
 
 
 async def computer_use_go_forward(exec_context: ToolExecutionContext) -> ToolResult:
@@ -300,12 +258,10 @@ async def computer_use_go_forward(exec_context: ToolExecutionContext) -> ToolRes
     Returns:
         A screenshot of the page after navigation.
     """
-    session = await get_browser_session(exec_context)
-    page = await session.ensure_page()
-
+    backend = await get_browser_backend(exec_context)
     logger.info("Going forward")
-    await page.go_forward()
-    return await _take_screenshot_with_url(session, page)
+    await backend.go_forward()
+    return await _take_screenshot_with_url(backend)
 
 
 async def computer_use_key_combination(
@@ -320,12 +276,10 @@ async def computer_use_key_combination(
     Returns:
         A screenshot of the screen after the key press.
     """
-    session = await get_browser_session(exec_context)
-    page = await session.ensure_page()
-
+    backend = await get_browser_backend(exec_context)
     logger.info(f"Pressing keys: {keys}")
-    await page.keyboard.press(keys)
-    return await _take_screenshot_with_url(session, page)
+    await backend.keyboard_press(keys)
+    return await _take_screenshot_with_url(backend)
 
 
 async def computer_use_wait_5_seconds(
@@ -339,12 +293,10 @@ async def computer_use_wait_5_seconds(
     Returns:
         A screenshot of the screen after waiting.
     """
-    session = await get_browser_session(exec_context)
-    page = await session.ensure_page()
-
+    backend = await get_browser_backend(exec_context)
     logger.info("Waiting 5 seconds")
     await asyncio.sleep(5)
-    return await _take_screenshot_with_url(session, page)
+    return await _take_screenshot_with_url(backend)
 
 
 async def computer_use_hover_at(
@@ -360,16 +312,12 @@ async def computer_use_hover_at(
     Returns:
         A screenshot of the screen after hovering.
     """
-    session = await get_browser_session(exec_context)
-    page = await session.ensure_page()
-
-    actual_x = denormalize_coordinate(x, session.screen_width)
-    actual_y = denormalize_coordinate(y, session.screen_height)
-
+    backend = await get_browser_backend(exec_context)
+    actual_x = denormalize_coordinate(x, backend.screen_width)
+    actual_y = denormalize_coordinate(y, backend.screen_height)
     logger.info(f"Hovering at ({actual_x}, {actual_y})")
-    await page.mouse.move(actual_x, actual_y)
-
-    return await _take_screenshot_with_url(session, page)
+    await backend.mouse_move(actual_x, actual_y)
+    return await _take_screenshot_with_url(backend)
 
 
 async def computer_use_drag_and_drop(
@@ -391,24 +339,22 @@ async def computer_use_drag_and_drop(
     Returns:
         A screenshot of the screen after the drag and drop.
     """
-    session = await get_browser_session(exec_context)
-    page = await session.ensure_page()
-
-    start_x = denormalize_coordinate(x, session.screen_width)
-    start_y = denormalize_coordinate(y, session.screen_height)
-    end_x = denormalize_coordinate(destination_x, session.screen_width)
-    end_y = denormalize_coordinate(destination_y, session.screen_height)
-
+    backend = await get_browser_backend(exec_context)
+    start_x = denormalize_coordinate(x, backend.screen_width)
+    start_y = denormalize_coordinate(y, backend.screen_height)
+    end_x = denormalize_coordinate(destination_x, backend.screen_width)
+    end_y = denormalize_coordinate(destination_y, backend.screen_height)
     logger.info(f"Dragging from ({start_x}, {start_y}) to ({end_x}, {end_y})")
-
-    await page.mouse.move(start_x, start_y)
-    await page.mouse.down()
-    await page.mouse.move(
-        end_x, end_y, steps=10
-    )  # Steps make it more realistic/reliable
-    await page.mouse.up()
-
-    return await _take_screenshot_with_url(session, page)
+    await backend.mouse_move(start_x, start_y)
+    await backend.mouse_down()
+    # Move in steps for realism/reliability
+    step_count = 10
+    for i in range(1, step_count + 1):
+        ix = start_x + (end_x - start_x) * i / step_count
+        iy = start_y + (end_y - start_y) * i / step_count
+        await backend.mouse_move(ix, iy)
+    await backend.mouse_up()
+    return await _take_screenshot_with_url(backend)
 
 
 async def computer_use_scroll_document(
@@ -431,23 +377,17 @@ async def computer_use_scroll_document(
         raise ValueError(
             f"Invalid scroll direction '{direction}'. Must be one of: {valid_directions}"
         )
-
-    session = await get_browser_session(exec_context)
-    page = await session.ensure_page()
-
+    backend = await get_browser_backend(exec_context)
     logger.info(f"Scrolling document {direction}")
-
-    if direction == "down":
-        await page.evaluate("window.scrollBy(0, window.innerHeight)")
-    elif direction == "up":
-        await page.evaluate("window.scrollBy(0, -window.innerHeight)")
-    elif direction == "right":
-        await page.evaluate("window.scrollBy(window.innerWidth, 0)")
-    elif direction == "left":
-        await page.evaluate("window.scrollBy(-window.innerWidth, 0)")
-
+    scroll_js = {
+        "down": "window.scrollBy(0, window.innerHeight)",
+        "up": "window.scrollBy(0, -window.innerHeight)",
+        "right": "window.scrollBy(window.innerWidth, 0)",
+        "left": "window.scrollBy(-window.innerWidth, 0)",
+    }
+    await backend.evaluate(scroll_js[direction])
     await asyncio.sleep(0.5)
-    return await _take_screenshot_with_url(session, page)
+    return await _take_screenshot_with_url(backend)
 
 
 # Tools Definition
