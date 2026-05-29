@@ -209,7 +209,10 @@ class KubernetesBackend:
         if self._config.enable_rootless_podman:
             return V1SecurityContext(
                 allow_privilege_escalation=True,
-                capabilities=V1Capabilities(add=["SETUID", "SETGID"]),
+                capabilities=V1Capabilities(
+                    add=["SETUID", "SETGID"],
+                    drop=["ALL"],
+                ),
                 read_only_root_filesystem=False,
                 seccomp_profile=V1SeccompProfile(type="Unconfined"),
             )

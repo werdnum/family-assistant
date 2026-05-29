@@ -301,7 +301,7 @@ class TestKubernetesBackendBuildJobManifest:
         container_security = manifest.spec.template.spec.containers[0].security_context
         assert container_security.allow_privilege_escalation is True
         assert container_security.capabilities.add == ["SETUID", "SETGID"]
-        assert container_security.capabilities.drop is None
+        assert container_security.capabilities.drop == ["ALL"]
         assert container_security.seccomp_profile.type == "Unconfined"
 
     def test_build_manifest_custom_uid_gid(self) -> None:
