@@ -567,6 +567,12 @@ async def get_browser_backend(exec_context: ToolExecutionContext) -> BrowserBack
 
     Uses the remote ``browser-server`` backend when ``browser_handoff_config`` is
     enabled for the active profile; otherwise the shared local Playwright session.
+
+    Note: visual delegation (``browser_visual_profile``) still uses the local
+    Computer Use session via ``get_browser_session``, so delegating a remote-backed
+    DOM profile to the visual profile will open a separate local tab rather than
+    reusing the remote session.  Routing the visual profile through the remote
+    session is tracked as a future improvement.
     """
     config = _remote_enabled(exec_context)
     if config is not None:
@@ -587,3 +593,4 @@ async def close_browser_backend(exec_context: ToolExecutionContext) -> None:
     if remote is not None:
         await remote.close()
     await close_browser_session(exec_context)
+
