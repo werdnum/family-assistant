@@ -167,7 +167,7 @@ def _exec_context(*, enabled: bool, profile_id: str | None) -> ToolExecutionCont
         processing_profile_id=profile_id,
         conversation_id="conv_select",
     )
-    return cast("ToolExecutionContext", ctx)
+    return cast("ToolExecutionContext", cast("object", ctx))
 
 
 @pytest.mark.asyncio

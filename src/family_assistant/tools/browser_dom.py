@@ -137,7 +137,7 @@ def _filter_tree(
             continue
         # TypedDicts can't be copy-constructed via dict(td) per pyright; the
         # shape is invariant, so a shallow cast preserves types safely.
-        copy = cast("SnapshotNode", dict(node))
+        copy = cast("SnapshotNode", cast("object", dict(node)))
         if children:
             copy["children"] = _filter_tree(children, query, include_all=node_matches)
             if not copy["children"]:

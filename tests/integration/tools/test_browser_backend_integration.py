@@ -10,22 +10,23 @@ any imports in this file are resolved.
 
 from __future__ import annotations
 
-import sys
-
 import httpx
 import pytest
-
-# browser_handoff_service is available because conftest.py inserted the sibling
-# browser-server repo into sys.path before this module was imported.
-from browser_handoff_service.main import (
-    app as _browser_server_app,  # type: ignore[import-not-found]  # sibling-repo; added to sys.path in conftest.py
-)
 
 from family_assistant.config_models import BrowserHandoffConfig, RemoteA2AAuthConfig
 from family_assistant.tools.browser_backend import (
     BrowserBackendError,
     RemoteBrowserBackend,
 )
+
+# conftest.py inserts the sibling browser-server repo into sys.path.
+# pytest.importorskip skips this entire module if the import cannot be resolved
+# (e.g. in a checkout without the sibling repo).
+_bhs = pytest.importorskip(
+    "browser_handoff_service.main",
+    reason="browser-server sibling repo not available",
+)
+_browser_server_app = _bhs.app
 
 _SERVICE_TOKEN = "integration-test-token"
 _SERVICE_URL = "http://browser-server.local"
@@ -48,7 +49,9 @@ def _make_backend(*, conversation_id: str = "integ-conv-1") -> RemoteBrowserBack
     cfg = BrowserHandoffConfig(
         enabled=True,
         service_url=_SERVICE_URL,
-        auth=RemoteA2AAuthConfig(type="bearer", token_env="BROWSER_HANDOFF_SERVICE_TOKEN"),
+        auth=RemoteA2AAuthConfig(
+            type="bearer", token_env="BROWSER_HANDOFF_SERVICE_TOKEN"
+        ),
     )
     return RemoteBrowserBackend(
         config=cfg,
@@ -163,7 +166,9 @@ async def test_bearer_token_is_sent_in_every_request() -> None:
     cfg = BrowserHandoffConfig(
         enabled=True,
         service_url=_SERVICE_URL,
-        auth=RemoteA2AAuthConfig(type="bearer", token_env="BROWSER_HANDOFF_SERVICE_TOKEN"),
+        auth=RemoteA2AAuthConfig(
+            type="bearer", token_env="BROWSER_HANDOFF_SERVICE_TOKEN"
+        ),
     )
     backend = RemoteBrowserBackend(
         config=cfg,
@@ -199,7 +204,9 @@ async def test_missing_token_env_raises_browser_backend_error(
     cfg = BrowserHandoffConfig(
         enabled=True,
         service_url=_SERVICE_URL,
-        auth=RemoteA2AAuthConfig(type="bearer", token_env="BROWSER_HANDOFF_SERVICE_TOKEN"),
+        auth=RemoteA2AAuthConfig(
+            type="bearer", token_env="BROWSER_HANDOFF_SERVICE_TOKEN"
+        ),
     )
     backend = RemoteBrowserBackend(
         config=cfg,
@@ -208,10 +215,3 @@ async def test_missing_token_env_raises_browser_backend_error(
     )
     with pytest.raises(BrowserBackendError, match="token env"):
         await backend.goto("https://example.test/")
-
-
-# Guard: if the import above succeeded we know sys.path insertion worked.
-assert "browser_handoff_service" in sys.modules, (
-    "browser_handoff_service not importable — check conftest.py sys.path insertion"
-)
-
