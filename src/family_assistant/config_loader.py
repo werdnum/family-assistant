@@ -137,6 +137,12 @@ ENV_VAR_MAPPINGS: list[EnvVarMapping] = [
     ),
     EnvVarMapping("AI_WORKER_K8S_NAMESPACE", "ai_worker_config.kubernetes.namespace"),
     EnvVarMapping("AI_WORKER_K8S_IMAGE", "ai_worker_config.kubernetes.ai_coder_image"),
+    # Browser-server (handoff) integration
+    EnvVarMapping("BROWSER_HANDOFF_ENABLED", "browser_handoff_config.enabled", bool),
+    EnvVarMapping("BROWSER_HANDOFF_URL", "browser_handoff_config.service_url"),
+    EnvVarMapping(
+        "BROWSER_HANDOFF_TIMEOUT", "browser_handoff_config.timeout_seconds", float
+    ),
     # OpenTelemetry
     EnvVarMapping("OTEL_ENABLED", "otel.enabled", bool),
     EnvVarMapping("OTEL_SERVICE_NAME", "otel.service_name"),

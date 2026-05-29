@@ -11,11 +11,14 @@ from __future__ import annotations
 import pytest
 import toons
 
+from family_assistant.tools.browser_backend import (
+    LocalPlaywrightBackend,
+    _coerce_load_state,  # noqa: PLC2701  # Testing private load-state narrowing helper
+)
 from family_assistant.tools.browser_dom import (
     Snapshot,
     SnapshotNode,
     _any_match,  # noqa: PLC2701  # Testing private query matcher used by renderer
-    _coerce_load_state,  # noqa: PLC2701  # Testing private load-state narrowing helper
     _collect_refs,  # noqa: PLC2701  # Testing private ref-tree walker
     _format_toon,  # noqa: PLC2701  # Testing private TOON renderer
     _resolve_ref,  # noqa: PLC2701  # Testing private ref-cache lookup
@@ -175,16 +178,16 @@ class TestResolveRef:
     """Ref resolution against the session cache."""
 
     def test_returns_selector_when_ref_is_known(self) -> None:
-        session = BrowserSession()
-        session.ref_cache["e7"] = '[data-fa-ref="e7"]'
-        assert _resolve_ref(session, "e7") == '[data-fa-ref="e7"]'
+        backend = LocalPlaywrightBackend(BrowserSession())
+        backend.ref_cache["e7"] = '[data-fa-ref="e7"]'
+        assert _resolve_ref(backend, "e7") == '[data-fa-ref="e7"]'
 
     def test_raises_valueerror_with_known_refs_listed(self) -> None:
-        session = BrowserSession()
-        session.ref_cache["e1"] = '[data-fa-ref="e1"]'
-        session.ref_cache["e2"] = '[data-fa-ref="e2"]'
+        backend = LocalPlaywrightBackend(BrowserSession())
+        backend.ref_cache["e1"] = '[data-fa-ref="e1"]'
+        backend.ref_cache["e2"] = '[data-fa-ref="e2"]'
         with pytest.raises(ValueError, match="Unknown ref 'e99'") as exc:
-            _resolve_ref(session, "e99")
+            _resolve_ref(backend, "e99")
         assert "e1" in str(exc.value)
 
 

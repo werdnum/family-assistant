@@ -91,6 +91,23 @@ In practice you usually don't need to think about this — start with `/browse` 
 delegate when needed. You can also invoke `/browse_visual` directly if you know the task is
 visual-only from the start.
 
+## Handing the browser to a human (optional)
+
+Some steps should never be done by the assistant: entering payment details, signing in with your
+credentials, typing a one-time passcode, accepting legal consent, or solving a CAPTCHA. When the
+optional **browser-server** integration is enabled, the assistant can hand the *live* browser
+session over to you: it calls `browser_request_handoff` and replies with a one-time link. You open
+the link, take control of the very same browser (rendered in your own window), finish the sensitive
+step, and mark it done — then control returns to the assistant.
+
+While you are in control, the assistant has **no** ability to see or drive that browser: it cannot
+take screenshots, read the page, or run actions. This keeps secrets you type (passwords, card
+numbers, OTPs) away from the model.
+
+This capability is off unless your operator has configured the browser-server integration. When it
+is not configured, the assistant will tell you it can't hand off and will ask you to do the step
+yourself instead.
+
 ## Examples by Use Case
 
 ### Online Shopping

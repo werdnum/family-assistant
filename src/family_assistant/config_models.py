@@ -182,6 +182,34 @@ class RemoteA2AConfig(BaseModel):
     skills_description: str | None = None
 
 
+class BrowserHandoffConfig(BaseModel):
+    """Optional integration with an external browser-server (handoff service).
+
+    When ``enabled`` and ``service_url`` are set, the semantic DOM browser tools
+    run against a remote ``browser-server`` session instead of a local headless
+    Playwright browser. The same rich tools (snapshot/click/fill/.../screenshot)
+    work unchanged; the difference is the browser lives on a service that can
+    transfer the live session to a human via noVNC (enabling
+    ``browser_request_handoff``). Disabled by default — when off, browsing uses
+    the in-process local Playwright backend exactly as before.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    enabled: bool = False
+    # Cluster-internal base URL, e.g.
+    # http://browser-server.browser-server.svc.cluster.local:8000
+    service_url: str | None = None
+    # Auth reuses the remote-A2A model: bearer token read from token_env at
+    # request time (never stored in YAML).
+    auth: RemoteA2AAuthConfig = Field(default_factory=RemoteA2AAuthConfig)
+    timeout_seconds: float = 30.0
+    # Profiles permitted to use the remote backend / request a human handoff.
+    handoff_capable_profiles: list[str] = Field(
+        default_factory=lambda: ["browser_profile"]
+    )
+
+
 class ServiceProfile(BaseModel):
     """Configuration for a service profile.
 
@@ -1063,6 +1091,9 @@ class AppConfig(BaseSettings):
         default_factory=MessageBatchingConfig
     )
     ai_worker_config: AIWorkerConfig = Field(default_factory=AIWorkerConfig)
+    browser_handoff_config: BrowserHandoffConfig = Field(
+        default_factory=BrowserHandoffConfig
+    )
     notes_config: NotesConfig = Field(default_factory=NotesConfig)
     skills_config: SkillsConfig = Field(default_factory=SkillsConfig)
     mqtt_config: MQTTConfig = Field(default_factory=MQTTConfig)
