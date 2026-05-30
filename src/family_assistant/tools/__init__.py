@@ -30,6 +30,7 @@ from family_assistant.tools.browser_dom import (
     browser_extract_tool,
     browser_fill_tool,
     browser_open_tool,
+    browser_request_handoff_tool,
     browser_screenshot_tool,
     browser_select_tool,
     browser_snapshot_tool,
@@ -383,6 +384,7 @@ __all__ = [
     "browser_extract_tool",
     "browser_fill_tool",
     "browser_open_tool",
+    "browser_request_handoff_tool",
     "browser_screenshot_tool",
     "browser_select_tool",
     "browser_snapshot_tool",
@@ -581,6 +583,7 @@ _LOCAL_TOOL_IMPLEMENTATIONS: dict[str, ToolImplementation] = {
     "browser_extract": browser_extract_tool,
     "browser_screenshot": browser_screenshot_tool,
     "browser_exec": browser_exec_tool,
+    "browser_request_handoff": browser_request_handoff_tool,
     # Workspace file tools
     "workspace_read": workspace_read_tool,
     "workspace_write": workspace_write_tool,
@@ -1118,6 +1121,11 @@ LOCAL_TOOL_METADATA_BY_NAME: dict[str, LocalToolMetadata] = {
         ToolTag.STATE_CHANGING,
         ToolTag.EXTERNAL_COMM,
         ToolTag.OUTPUT_UNTRUSTED,
+    ),
+    "browser_request_handoff": _metadata(
+        ToolTag.BROWSER,
+        ToolTag.STATE_CHANGING,
+        ToolTag.EXTERNAL_COMM,
     ),
     "workspace_read": _metadata(
         ToolTag.READ_ONLY,

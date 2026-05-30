@@ -519,7 +519,7 @@ service_profiles:
     processing_config:
       max_iterations: 25
       prompts: # MERGES with default_profile_settings.processing_config.prompts
-        system_prompt: "You browse the web via accessibility snapshots on behalf of {user_name}. Start every session with browser_open, which navigates to a URL and returns a snapshot of the page structure. Each snapshot is rendered as indented text where interactive elements are tagged with stable refs like `e12`; use those refs with browser_click, browser_fill, and browser_select. Use browser_extract when {user_name} wants the page content as Markdown, browser_wait when you need to wait for load states or a specific element, and browser_screenshot only when you need a visual to attach to your reply. When the fixed tools don't fit — shadow DOM traversal, iframes, reading JSON endpoints via fetch, or complex multi-step DOM mutation in a single turn — use browser_exec to run JavaScript in-page via page.evaluate. For tasks that can only be solved visually (canvas, image maps, drag-and-drop that doesn't target DOM nodes), call delegate_to_service with target_service_id='browser_visual_profile'; the visual profile shares the same browser tab so the session state (URL, cookies, form progress) carries over. After any tool calls, your final text response will be sent directly to {user_name}. Do NOT use the 'send_message_to_user' tool to respond to {user_name} - that tool is only for sending messages to OTHER users. Current time is {current_time}."
+        system_prompt: "You browse the web via accessibility snapshots on behalf of {user_name}. Start every session with browser_open, which navigates to a URL and returns a snapshot of the page structure. Each snapshot is rendered as indented text where interactive elements are tagged with stable refs like `e12`; use those refs with browser_click, browser_fill, and browser_select. Use browser_extract when {user_name} wants the page content as Markdown, browser_wait when you need to wait for load states or a specific element, and browser_screenshot only when you need a visual to attach to your reply. When the fixed tools don't fit — shadow DOM traversal, iframes, reading JSON endpoints via fetch, or complex multi-step DOM mutation in a single turn — use browser_exec to run JavaScript in-page via page.evaluate. For tasks that can only be solved visually (canvas, image maps, drag-and-drop that doesn't target DOM nodes), call delegate_to_service with target_service_id='browser_visual_profile'; the visual profile shares the same browser tab so the session state (URL, cookies, form progress) carries over. When a step requires the human — entering payment details, credentials, a one-time passcode, accepting legal consent, or solving a CAPTCHA — call browser_request_handoff, which returns a one-time link for {user_name} to take over the same live browser; share that link and wait. (Handoff only works when the browser-server integration is enabled; if it isn't, the tool reports that and you should ask {user_name} to do the step themselves.) After any tool calls, your final text response will be sent directly to {user_name}. Do NOT use the 'send_message_to_user' tool to respond to {user_name} - that tool is only for sending messages to OTHER users. Current time is {current_time}."
     tools_policy: # REPLACES default_profile_settings.tools_policy entirely for this profile
       default_decision: "deny"
       rules:
@@ -534,6 +534,7 @@ service_profiles:
               - "browser_wait"
               - "browser_screenshot"
               - "browser_exec"
+              - "browser_request_handoff"
               - "attach_to_response"
           decision: "allow"
           priority: 10
@@ -1499,6 +1500,20 @@ ai_worker_config:
   docker:
     image: "ghcr.io/werdnum/ai-coding-base:latest"
     network: "bridge"
+# Optional integration with an external browser-server (handoff service).
+# When enabled, the semantic DOM browser tools run against a remote browser
+# session that can be transferred to a human via noVNC. Disabled by default;
+# when off, browsing uses the in-process local Playwright backend.
+browser_handoff_config:
+  enabled: false
+  service_url: null
+  timeout_seconds: 30.0
+  auth:
+    type: "bearer"
+    token_env: "BROWSER_HANDOFF_SERVICE_TOKEN"
+  handoff_capable_profiles:
+    - "browser_profile"
+    - "browser_visual_profile"
 otel:
   enabled: false
   service_name: "family-assistant"
