@@ -1496,6 +1496,7 @@ ai_worker_config:
     runtime_class: "gvisor"
     job_ttl_seconds: 3600
     enable_rootless_podman: false
+    enable_kata_podman: false
   docker:
     image: "ghcr.io/werdnum/ai-coding-base:latest"
     network: "bridge"

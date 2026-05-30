@@ -23,6 +23,7 @@ from kubernetes_asyncio.client import (
     CoreV1Api,
     V1Capabilities,
     V1Container,
+    V1EmptyDirVolumeSource,
     V1EnvFromSource,
     V1EnvVar,
     V1Job,
@@ -53,6 +54,21 @@ logger = logging.getLogger(__name__)
 
 # Default max turns for the AI agent
 DEFAULT_MAX_TURNS = 50
+
+KATA_PODMAN_CAPABILITIES = [
+    "CHOWN",
+    "DAC_OVERRIDE",
+    "FOWNER",
+    "FSETID",
+    "SETGID",
+    "SETUID",
+    "SETFCAP",
+    "SETPCAP",
+    "MKNOD",
+    "SYS_ADMIN",
+    "SYS_CHROOT",
+    "NET_RAW",
+]
 
 
 @dataclass
@@ -206,6 +222,17 @@ class KubernetesBackend:
 
     def _worker_container_security_context(self) -> V1SecurityContext:
         """Build the worker container security context."""
+        if self._config.enable_kata_podman:
+            return V1SecurityContext(
+                allow_privilege_escalation=True,
+                capabilities=V1Capabilities(
+                    add=KATA_PODMAN_CAPABILITIES,
+                    drop=["ALL"],
+                ),
+                read_only_root_filesystem=False,
+                seccomp_profile=V1SeccompProfile(type="Unconfined"),
+            )
+
         if self._config.enable_rootless_podman:
             return V1SecurityContext(
                 allow_privilege_escalation=True,
@@ -221,6 +248,23 @@ class KubernetesBackend:
             allow_privilege_escalation=False,
             capabilities=V1Capabilities(drop=["ALL"]),
             read_only_root_filesystem=False,
+        )
+
+    def _worker_pod_security_context(self) -> V1PodSecurityContext:
+        """Build the worker pod security context."""
+        if self._config.enable_kata_podman:
+            return V1PodSecurityContext(
+                run_as_non_root=False,
+                run_as_user=0,
+                run_as_group=0,
+                fs_group=self._config.fs_group,
+            )
+
+        return V1PodSecurityContext(
+            run_as_non_root=self._config.run_as_user is not None,
+            run_as_user=self._config.run_as_user,
+            run_as_group=self._config.run_as_group,
+            fs_group=self._config.fs_group,
         )
 
     async def _ensure_config_loaded(self) -> None:
@@ -370,6 +414,28 @@ class KubernetesBackend:
             )
         ]
 
+        if self._config.enable_kata_podman:
+            volume_mounts.extend([
+                V1VolumeMount(
+                    name="podman-varlib",
+                    mount_path="/var/lib/containers",
+                ),
+                V1VolumeMount(
+                    name="podman-run",
+                    mount_path="/run/containers",
+                ),
+            ])
+            volumes.extend([
+                V1Volume(
+                    name="podman-varlib",
+                    empty_dir=V1EmptyDirVolumeSource(),
+                ),
+                V1Volume(
+                    name="podman-run",
+                    empty_dir=V1EmptyDirVolumeSource(),
+                ),
+            ])
+
         if model == "claude" and self._config.claude_config_volume:
             vol = self._config.claude_config_volume
             volume_mounts.append(
@@ -442,12 +508,7 @@ class KubernetesBackend:
                         restart_policy="Never",
                         service_account_name=self.service_account,
                         runtime_class_name=self.runtime_class,
-                        security_context=V1PodSecurityContext(
-                            run_as_non_root=self._config.run_as_user is not None,
-                            run_as_user=self._config.run_as_user,
-                            run_as_group=self._config.run_as_group,
-                            fs_group=self._config.fs_group,
-                        ),
+                        security_context=self._worker_pod_security_context(),
                         containers=[
                             V1Container(
                                 name="worker",

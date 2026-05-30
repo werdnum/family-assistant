@@ -10,6 +10,7 @@ import pytest
 
 from family_assistant.config_models import KubernetesBackendConfig
 from family_assistant.services.backends.kubernetes import (
+    KATA_PODMAN_CAPABILITIES,
     KubernetesBackend,
     KubernetesTask,
 )
@@ -303,6 +304,51 @@ class TestKubernetesBackendBuildJobManifest:
         assert container_security.capabilities.add == ["SETUID", "SETGID"]
         assert container_security.capabilities.drop == ["ALL"]
         assert container_security.seccomp_profile.type == "Unconfined"
+
+    def test_build_manifest_kata_podman_profile(self) -> None:
+        """Test Kata Podman support is explicitly opt-in."""
+        config = KubernetesBackendConfig(
+            namespace="test-namespace",
+            ai_coder_image="test-image:latest",
+            service_account="test-sa",
+            enable_kata_podman=True,
+            run_as_user=1001,
+            run_as_group=1001,
+            fs_group=1001,
+        )
+        custom_backend = KubernetesBackend(config=config)
+        custom_backend._config_loaded = True
+
+        manifest = custom_backend._build_job_manifest(
+            job_name="ai-worker-task-123",
+            task_id="task-123",
+            prompt_path="tasks/task-123/prompt.md",
+            output_dir="tasks/task-123/output",
+            webhook_url="http://localhost:8000/webhook/event",
+            model="claude",
+            timeout_minutes=30,
+        )
+
+        pod_spec = manifest.spec.template.spec
+        pod_security = pod_spec.security_context
+        assert pod_security.run_as_non_root is False
+        assert pod_security.run_as_user == 0
+        assert pod_security.run_as_group == 0
+        assert pod_security.fs_group == 1001
+
+        container_security = pod_spec.containers[0].security_context
+        assert container_security.allow_privilege_escalation is True
+        assert container_security.capabilities.add == KATA_PODMAN_CAPABILITIES
+        assert container_security.capabilities.drop == ["ALL"]
+        assert container_security.seccomp_profile.type == "Unconfined"
+
+        volume_mounts = {v.name: v for v in pod_spec.containers[0].volume_mounts}
+        assert volume_mounts["podman-varlib"].mount_path == "/var/lib/containers"
+        assert volume_mounts["podman-run"].mount_path == "/run/containers"
+
+        volumes = {v.name: v for v in pod_spec.volumes}
+        assert volumes["podman-varlib"].empty_dir is not None
+        assert volumes["podman-run"].empty_dir is not None
 
     def test_build_manifest_custom_uid_gid(self) -> None:
         """Test job manifest uses custom uid/gid from config."""
