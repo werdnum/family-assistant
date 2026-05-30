@@ -136,7 +136,6 @@ async def test_request_handoff_returns_non_empty_url() -> None:
             reason="payment",
             handoff_note="Please complete checkout",
             expected_origin=None,
-            allowed_resume="never",
         )
         assert isinstance(result, dict)
         # browser-server returns a HandoffResponse with a handoff_url field
@@ -188,6 +187,63 @@ async def test_bearer_token_is_sent_in_every_request() -> None:
 
 
 @pytest.mark.integration
+async def test_claim_handback_resumes_session() -> None:
+    """claim_handback() re-attaches the backend to a session the human handed back.
+
+    Simulates the full HITL loop:
+      1. Agent requests handoff (allow_resume=True)
+      2. Human claims the session via the handoff URL token
+      3. Human hands back to the agent via /handover
+      4. Agent calls claim_handback() — backend _session_id is updated
+      5. Subsequent snapshot works on the resumed session
+    """
+    backend = _make_backend(conversation_id="integ-claim")
+    transport = httpx.ASGITransport(app=_browser_server_app)
+    human_client = httpx.AsyncClient(
+        transport=transport,
+        base_url=_SERVICE_URL,
+    )
+    try:
+        # 1. Agent navigates and requests handoff with allow_resume=True
+        await backend.goto("https://example.test/account")
+        handoff_result = await backend.request_handoff(
+            reason="other",
+            handoff_note="Please review and confirm",
+            expected_origin=None,
+            allow_resume=True,
+        )
+        session_id = str(handoff_result["session_id"])
+        handoff_token = handoff_result["handoff_url"].split("token=", 1)[1]
+
+        # 2. Human claims the session
+        claimed = await human_client.post(
+            f"/v1/sessions/{session_id}/claim",
+            json={"token": handoff_token},
+        )
+        assert claimed.status_code == 200, claimed.text
+        control_token = claimed.json()["control_token"]
+
+        # 3. Human hands back to the agent
+        handover = await human_client.post(
+            f"/v1/sessions/{session_id}/handover",
+            json={"token": control_token, "handoff_note": "Payment done"},
+        )
+        assert handover.status_code == 200, handover.text
+        handover_token = handover.json()["handover_token"]
+
+        # 4. Agent claims the handback
+        claim_result = await backend.claim_handback(session_id, handover_token)
+        assert claim_result.get("state") in {"agent_active", "agent_resumable"}
+
+        # 5. Snapshot works after reclaim
+        snap = await backend.raw_snapshot()
+        assert "roots" in snap
+    finally:
+        await backend.close()
+        await human_client.aclose()
+
+
+@pytest.mark.integration
 async def test_missing_token_env_raises_browser_backend_error(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -215,3 +271,4 @@ async def test_missing_token_env_raises_browser_backend_error(
     )
     with pytest.raises(BrowserBackendError, match="token env"):
         await backend.goto("https://example.test/")
+
