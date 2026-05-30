@@ -1,17 +1,18 @@
-"""Integration test: RemoteBrowserBackend against a real browser-server (fake runtime).
+"""Integration tests for RemoteBrowserBackend against browser-server.
 
-browser-server runs in-process via httpx.ASGITransport with BROWSER_RUNTIME=fake,
-so no Chromium or network is needed.  The test exercises the full HTTP round-trip
-from family-assistant's RemoteBrowserBackend through the browser-server REST API.
-
-The sibling repo is added to sys.path by tests/integration/tools/conftest.py before
-any imports in this file are resolved.
+The browser-server package is an explicit dev dependency. These tests run its
+real FastAPI app in-process with the fake browser runtime, so no Chromium or
+network service is needed while still exercising the browser-server REST API.
 """
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 import httpx
 import pytest
+from browser_handoff_service.main import app as browser_server_app
+from browser_handoff_service.main import registry as browser_server_registry
 
 from family_assistant.config_models import BrowserHandoffConfig, RemoteA2AAuthConfig
 from family_assistant.tools.browser_backend import (
@@ -19,28 +20,37 @@ from family_assistant.tools.browser_backend import (
     RemoteBrowserBackend,
 )
 
-# conftest.py inserts the sibling browser-server repo into sys.path.
-# pytest.importorskip skips this entire module if the import cannot be resolved
-# (e.g. in a checkout without the sibling repo).
-_bhs = pytest.importorskip(
-    "browser_handoff_service.main",
-    reason="browser-server sibling repo not available",
-)
-_browser_server_app = _bhs.app
+if TYPE_CHECKING:
+    from collections.abc import AsyncIterator
 
 _SERVICE_TOKEN = "integration-test-token"
 _SERVICE_URL = "http://browser-server.local"
 
 
 @pytest.fixture(autouse=True)
-def _env(monkeypatch: pytest.MonkeyPatch) -> None:
+async def _browser_server_state(
+    monkeypatch: pytest.MonkeyPatch,
+) -> AsyncIterator[None]:
     monkeypatch.setenv("BROWSER_RUNTIME", "fake")
     monkeypatch.setenv("BROWSER_HANDOFF_SERVICE_TOKEN", _SERVICE_TOKEN)
+    await _clear_browser_server_state()
+    yield
+    await _clear_browser_server_state()
+
+
+async def _clear_browser_server_state() -> None:
+    for session in list(browser_server_registry.list_sessions()):
+        await browser_server_registry.close(session.session_id)
+    browser_server_registry.sessions.clear()
+    browser_server_registry.locks.clear()
+    browser_server_registry.events.clear()
+    browser_server_registry.tokens.clear()
+    browser_server_registry.workers.clear()
 
 
 def _make_backend(*, conversation_id: str = "integ-conv-1") -> RemoteBrowserBackend:
     """Return a RemoteBrowserBackend wired to the real browser-server app via ASGITransport."""
-    transport = httpx.ASGITransport(app=_browser_server_app)
+    transport = httpx.ASGITransport(app=browser_server_app)
     client = httpx.AsyncClient(
         transport=transport,
         base_url=_SERVICE_URL,
@@ -58,6 +68,16 @@ def _make_backend(*, conversation_id: str = "integ-conv-1") -> RemoteBrowserBack
         conversation_id=conversation_id,
         client=client,
     )
+
+
+def _session_id_for_conversation(conversation_id: str) -> str:
+    matches = [
+        session.session_id
+        for session in browser_server_registry.list_sessions()
+        if session.conversation_id == conversation_id
+    ]
+    assert len(matches) == 1
+    return matches[0]
 
 
 @pytest.mark.integration
@@ -151,7 +171,7 @@ async def test_bearer_token_is_sent_in_every_request() -> None:
 
     class _LoggingTransport(httpx.AsyncBaseTransport):
         def __init__(self) -> None:
-            self._inner = httpx.ASGITransport(app=_browser_server_app)
+            self._inner = httpx.ASGITransport(app=browser_server_app)
 
         async def handle_async_request(self, request: httpx.Request) -> httpx.Response:
             seen.append(request)
@@ -187,6 +207,55 @@ async def test_bearer_token_is_sent_in_every_request() -> None:
 
 
 @pytest.mark.integration
+async def test_unknown_session_recreates_session_and_retries_command() -> None:
+    """A server-side session eviction is recovered by creating a new session."""
+    conversation_id = "integ-unknown-session"
+    backend = _make_backend(conversation_id=conversation_id)
+    try:
+        await backend.goto("https://example.test/before-restart")
+        stale_session_id = _session_id_for_conversation(conversation_id)
+        await browser_server_registry.close(stale_session_id)
+        browser_server_registry.sessions.pop(stale_session_id)
+
+        await backend.goto("https://example.test/after-restart")
+
+        recovered_session_id = _session_id_for_conversation(conversation_id)
+        assert recovered_session_id != stale_session_id
+        assert backend.current_url == "https://example.test/after-restart"
+    finally:
+        await backend.close()
+
+
+@pytest.mark.integration
+async def test_unknown_session_handoff_fails_instead_of_handing_off_fresh_session() -> (
+    None
+):
+    """Handoff must not silently replace the live browser the human expects."""
+    conversation_id = "integ-unknown-session-handoff"
+    backend = _make_backend(conversation_id=conversation_id)
+    try:
+        await backend.goto("https://example.test/checkout")
+        stale_session_id = _session_id_for_conversation(conversation_id)
+        await browser_server_registry.close(stale_session_id)
+        browser_server_registry.sessions.pop(stale_session_id)
+
+        with pytest.raises(BrowserBackendError, match="live browser session"):
+            await backend.request_handoff(
+                reason="other",
+                handoff_note="Please take over",
+                expected_origin=None,
+            )
+
+        assert [
+            session.session_id
+            for session in browser_server_registry.list_sessions()
+            if session.conversation_id == conversation_id
+        ] == []
+    finally:
+        await backend.close()
+
+
+@pytest.mark.integration
 async def test_claim_handback_resumes_session() -> None:
     """claim_handback() re-attaches the backend to a session the human handed back.
 
@@ -198,7 +267,7 @@ async def test_claim_handback_resumes_session() -> None:
       5. Subsequent snapshot works on the resumed session
     """
     backend = _make_backend(conversation_id="integ-claim")
-    transport = httpx.ASGITransport(app=_browser_server_app)
+    transport = httpx.ASGITransport(app=browser_server_app)
     human_client = httpx.AsyncClient(
         transport=transport,
         base_url=_SERVICE_URL,
@@ -255,7 +324,7 @@ async def test_missing_token_env_raises_browser_backend_error(
     """
     monkeypatch.delenv("BROWSER_HANDOFF_SERVICE_TOKEN", raising=False)
 
-    transport = httpx.ASGITransport(app=_browser_server_app)
+    transport = httpx.ASGITransport(app=browser_server_app)
     client = httpx.AsyncClient(transport=transport, base_url=_SERVICE_URL)
     cfg = BrowserHandoffConfig(
         enabled=True,
@@ -271,4 +340,3 @@ async def test_missing_token_env_raises_browser_backend_error(
     )
     with pytest.raises(BrowserBackendError, match="token env"):
         await backend.goto("https://example.test/")
-

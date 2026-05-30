@@ -1158,6 +1158,21 @@ wheels = [
 ]
 
 [[package]]
+name = "browser-handoff-service"
+version = "0.1.0"
+source = { git = "https://github.com/werdnum/browser-server.git#09bef388d8563e3267b1d32e823e53ca52d2d54e" }
+dependencies = [
+    { name = "fastapi" },
+    { name = "httpx" },
+    { name = "jinja2" },
+    { name = "pydantic" },
+    { name = "pyjwt", extra = ["crypto"] },
+    { name = "rebrowser-playwright" },
+    { name = "uvicorn", extra = ["standard"] },
+    { name = "websockets" },
+]
+
+[[package]]
 name = "btsocket"
 version = "0.3.0"
 source = { registry = "https://pypi.org/simple" }
@@ -1775,6 +1790,7 @@ dev = [
     { name = "assertpy" },
     { name = "ast-grep-cli" },
     { name = "basedpyright" },
+    { name = "browser-handoff-service" },
     { name = "fastapi-sso" },
     { name = "homeassistant", version = "2025.4.4", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.13.2'" },
     { name = "homeassistant", version = "2025.6.3", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.13.2' and platform_python_implementation == 'PyPy'" },
@@ -1852,6 +1868,7 @@ requires-dist = [
     { name = "backoff", specifier = ">=2.2.1" },
     { name = "basedpyright", marker = "extra == 'dev'" },
     { name = "bcrypt", specifier = ">=4.0.0,<5.0.0" },
+    { name = "browser-handoff-service", marker = "extra == 'dev'", git = "https://github.com/werdnum/browser-server.git" },
     { name = "caldav", specifier = ">=1.2.0" },
     { name = "cloudcoil-models-kubernetes", specifier = ">=1.32" },
     { name = "dkimpy", specifier = ">=1.1.8" },
