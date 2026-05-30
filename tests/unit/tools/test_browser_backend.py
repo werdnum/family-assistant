@@ -200,4 +200,3 @@ async def test_local_backend_handoff_is_unavailable() -> None:
             handoff_note="",
             expected_origin=None,
         )
-

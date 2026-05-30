@@ -190,6 +190,7 @@ dev = [
     "homeassistant>=2025.4.4",
     "pixeltable-pgserver>=0.4.0",
     "monkeytype>=23.3.0",  # Runtime type inference from tests
+    "browser-handoff-service",
 ]
 local-embeddings = [
     "sentence-transformers>=3.0.1",
@@ -450,4 +451,5 @@ explicit = true
 [tool.uv.sources]
 torch = { index = "torch-cpu" }
 telegram-bot-api-mock = { git = "https://github.com/werdnum/telegram-bot-api-mock" }
+browser-handoff-service = { git = "https://github.com/werdnum/browser-server.git" }
 

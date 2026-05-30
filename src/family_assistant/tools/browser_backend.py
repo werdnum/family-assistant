@@ -515,6 +515,35 @@ class RemoteBrowserBackend:
         self._session_id = str(resp.json()["session_id"])
         return self._session_id
 
+    def _clear_remote_session(self, session_id: str) -> None:
+        logger.warning(
+            "browser-server session %s is no longer available; clearing cached session",
+            session_id,
+        )
+        self._session_id = None
+        self.ref_cache.clear()
+        self._last_url = ""
+
+    def _is_unknown_session_response(self, resp: httpx.Response) -> bool:
+        if resp.status_code != 404:
+            return False
+        try:
+            payload = resp.json()
+        except ValueError:
+            return "unknown session" in resp.text.lower()
+        if not isinstance(payload, dict):
+            return "unknown session" in resp.text.lower()
+        detail = payload.get("detail")
+        return isinstance(detail, str) and "unknown session" in detail.lower()
+
+    def _session_lost_error(self, action: str, session_id: str) -> BrowserBackendError:
+        self._clear_remote_session(session_id)
+        return BrowserBackendError(
+            f"browser-server {action} failed because the live browser session "
+            "is no longer available. Start with browser_open to create a new "
+            "browser session."
+        )
+
     # ast-grep-ignore: no-dict-any - agent-command results are heterogeneous JSON
     async def _command(
         self, command_type: str, args: JsonDict | None = None
@@ -525,6 +554,16 @@ class RemoteBrowserBackend:
             headers=self._headers(),
             json={"type": command_type, "args": args or {}},
         )
+        if self._is_unknown_session_response(resp):
+            if command_type != "navigate":
+                raise self._session_lost_error(f"command {command_type}", session_id)
+            self._clear_remote_session(session_id)
+            session_id = await self._ensure_session()
+            resp = await self._client.post(
+                f"{self._base_url}/v1/sessions/{session_id}/agent-command",
+                headers=self._headers(),
+                json={"type": command_type, "args": args or {}},
+            )
         self._raise_for_status(resp, f"command {command_type}")
         result = resp.json().get("result", {})
         url = result.get("url")
@@ -647,6 +686,8 @@ class RemoteBrowserBackend:
             headers=self._headers(),
             json=payload,
         )
+        if self._is_unknown_session_response(resp):
+            raise self._session_lost_error("handoff", session_id)
         self._raise_for_status(resp, "handoff")
         return resp.json()
 
