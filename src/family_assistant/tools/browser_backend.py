@@ -295,7 +295,11 @@ class BrowserBackend(Protocol):
         reason: str,
         handoff_note: str,
         expected_origin: str | None,
-        allowed_resume: str,
+        allow_resume: bool = False,
+    ) -> JsonDict: ...
+
+    async def claim_handback(
+        self, session_id: str, handback_token: str
     ) -> JsonDict: ...
 
     async def close(self) -> None: ...
@@ -432,11 +436,16 @@ class LocalPlaywrightBackend:
         reason: str,
         handoff_note: str,
         expected_origin: str | None,
-        allowed_resume: str,
+        allow_resume: bool = False,
     ) -> JsonDict:
         raise HandoffUnavailableError(
             "Human browser handoff requires browser_handoff_config to be enabled "
             "(no remote browser-server is configured)."
+        )
+
+    async def claim_handback(self, session_id: str, handback_token: str) -> JsonDict:
+        raise HandoffUnavailableError(
+            "claim_handback requires browser-server integration"
         )
 
     async def close(self) -> None:
@@ -623,13 +632,13 @@ class RemoteBrowserBackend:
         reason: str,
         handoff_note: str,
         expected_origin: str | None,
-        allowed_resume: str,
+        allow_resume: bool = False,
     ) -> JsonDict:
         session_id = await self._ensure_session()
         payload: JsonDict = {
             "reason": reason,
             "handoff_note": handoff_note,
-            "allowed_resume": allowed_resume,
+            "allowed_resume": "after_sanitize" if allow_resume else "never",
         }
         if expected_origin is not None:
             payload["expected_origin"] = expected_origin
@@ -639,6 +648,16 @@ class RemoteBrowserBackend:
             json=payload,
         )
         self._raise_for_status(resp, "handoff")
+        return resp.json()
+
+    async def claim_handback(self, session_id: str, handback_token: str) -> JsonDict:
+        resp = await self._client.post(
+            f"{self._base_url}/v1/sessions/{session_id}/agent-claim",
+            headers=self._headers(),
+            json={"token": handback_token},
+        )
+        self._raise_for_status(resp, "agent-claim")
+        self._session_id = session_id
         return resp.json()
 
     async def close(self) -> None:
@@ -707,4 +726,3 @@ async def close_browser_backend(exec_context: ToolExecutionContext) -> None:
     if remote is not None:
         await remote.close()
     await close_browser_session(exec_context)
-

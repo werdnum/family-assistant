@@ -88,6 +88,7 @@ logger = logging.getLogger(__name__)
 __all__ = [
     "BROWSER_DOM_TOOLS_DEFINITION",
     "browser_click_tool",
+    "browser_claim_handback_tool",
     "browser_exec_tool",
     "browser_extract_tool",
     "browser_fill_tool",
@@ -391,6 +392,7 @@ async def browser_request_handoff_tool(
     reason: str,
     handoff_note: str = "",
     expected_origin: str | None = None,
+    allow_resume: bool = False,
 ) -> ToolResult:
     """Hand the live browser session to a human via the browser-server.
 
@@ -407,7 +409,7 @@ async def browser_request_handoff_tool(
             reason=reason,
             handoff_note=handoff_note,
             expected_origin=expected_origin,
-            allowed_resume="never",
+            allow_resume=allow_resume,
         )
     except HandoffUnavailableError as exc:
         return ToolResult(
@@ -427,6 +429,47 @@ async def browser_request_handoff_tool(
         ),
         data=result,
     )
+
+
+async def browser_claim_handback_tool(
+    exec_context: ToolExecutionContext,
+    session_id: str,
+    handback_token: str,
+) -> ToolResult:
+    """Reclaim a browser session that a human handed back to the agent.
+
+    After the human finishes their task and clicks 'Hand over to agent' in
+    the browser UI, they receive a one-time handback token. Pass that token
+    and the session ID here to resume full agent control of the same browser
+    tab — same URL, cookies, and form state. Only works when the browser-server
+    integration is configured and the handoff was requested with allow_resume=true.
+    """
+    backend = await get_browser_backend(exec_context)
+    logger.info("browser_claim_handback: session_id=%s", session_id)
+    try:
+        await backend.claim_handback(session_id, handback_token)
+    except HandoffUnavailableError as exc:
+        return ToolResult(
+            text=f"Browser handback claim is not available: {exc}",
+            data={"error": "handoff_unavailable", "detail": str(exc)},
+        )
+    except BrowserBackendError as exc:
+        return ToolResult(
+            text=f"Browser handback claim failed: {exc}",
+            data={"error": "claim_failed", "detail": str(exc)},
+        )
+    # Return a fresh snapshot so the agent sees the current page state
+    try:
+        snap = await _take_snapshot(backend, query=None)
+        return ToolResult(
+            text=f"Session reclaimed. Now at: {backend.current_url}",
+            data={"claimed": True, "session_id": session_id, "snapshot": snap},
+        )
+    except BrowserBackendError as exc:
+        return ToolResult(
+            text=f"Session reclaimed but snapshot failed: {exc}",
+            data={"claimed": True, "session_id": session_id},
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -669,8 +712,40 @@ BROWSER_DOM_TOOLS_DEFINITION: list[ToolDefinition] = [
                         "type": "string",
                         "description": "Optional origin (scheme+host) the browser must be on before handing off.",
                     },
+                    "allow_resume": {
+                        "type": "boolean",
+                        "description": "If true, the human can hand the browser back to the agent after completing their task. The agent will then call browser_claim_handback with the session_id and handback_token the human receives.",
+                    },
                 },
                 "required": ["reason"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "browser_claim_handback",
+            "description": (
+                "Reclaim a browser session after a human has handed it back. "
+                "Call this with the session_id (from browser_request_handoff result) "
+                "and the handback_token the human received after clicking 'Hand over to agent'. "
+                "Returns a snapshot of the current page so the agent can continue from "
+                "where the human left off. Only works when the browser-server integration "
+                "is configured and the original handoff used allow_resume=true."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "session_id": {
+                        "type": "string",
+                        "description": "The browser session ID from the browser_request_handoff result.",
+                    },
+                    "handback_token": {
+                        "type": "string",
+                        "description": "The one-time token the human received after handing back control.",
+                    },
+                },
+                "required": ["session_id", "handback_token"],
             },
         },
     },

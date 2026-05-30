@@ -25,6 +25,7 @@ from family_assistant.tools.automations import (
 )
 from family_assistant.tools.browser_dom import (
     BROWSER_DOM_TOOLS_DEFINITION,
+    browser_claim_handback_tool,
     browser_click_tool,
     browser_exec_tool,
     browser_extract_tool,
@@ -379,6 +380,7 @@ __all__ = [
     "computer_use_wait_5_seconds",
     # Browser DOM (semantic) tools
     "BROWSER_DOM_TOOLS_DEFINITION",
+    "browser_claim_handback_tool",
     "browser_click_tool",
     "browser_exec_tool",
     "browser_extract_tool",
@@ -577,6 +579,7 @@ _LOCAL_TOOL_IMPLEMENTATIONS: dict[str, ToolImplementation] = {
     "browser_open": browser_open_tool,
     "browser_snapshot": browser_snapshot_tool,
     "browser_click": browser_click_tool,
+    "browser_claim_handback": browser_claim_handback_tool,
     "browser_fill": browser_fill_tool,
     "browser_select": browser_select_tool,
     "browser_wait": browser_wait_tool,
@@ -1123,6 +1126,11 @@ LOCAL_TOOL_METADATA_BY_NAME: dict[str, LocalToolMetadata] = {
         ToolTag.OUTPUT_UNTRUSTED,
     ),
     "browser_request_handoff": _metadata(
+        ToolTag.BROWSER,
+        ToolTag.STATE_CHANGING,
+        ToolTag.EXTERNAL_COMM,
+    ),
+    "browser_claim_handback": _metadata(
         ToolTag.BROWSER,
         ToolTag.STATE_CHANGING,
         ToolTag.EXTERNAL_COMM,
