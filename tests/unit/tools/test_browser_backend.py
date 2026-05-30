@@ -153,7 +153,6 @@ async def test_remote_backend_request_handoff_returns_url() -> None:
         reason="payment",
         handoff_note="pay",
         expected_origin=None,
-        allowed_resume="never",
     )
     assert result["handoff_url"].endswith("token=abc")
     await backend.close()
@@ -200,5 +199,5 @@ async def test_local_backend_handoff_is_unavailable() -> None:
             reason="payment",
             handoff_note="",
             expected_origin=None,
-            allowed_resume="never",
         )
+
