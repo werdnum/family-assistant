@@ -45,6 +45,7 @@ class VectorSearchQuery:
     # Filters
     embedding_types: list[str] = field(default_factory=list)
     source_types: list[str] = field(default_factory=list)
+    source_ids: list[str] = field(default_factory=list)
     created_after: datetime | None = None  # Expect timezone-aware datetime
     created_before: datetime | None = None  # Expect timezone-aware datetime
     title_like: str | None = None
@@ -164,6 +165,18 @@ async def query_vector_store(
                 query.source_types
             )  # Pass as list for ANY
             doc_where_clauses.append("d.source_type = ANY(:doc_source_types_array)")
+    if query.source_ids:
+        if is_sqlite:
+            _build_in_clause_for_sqlite(
+                params,
+                doc_where_clauses,
+                "d.source_id",
+                query.source_ids,
+                "doc_source_id",
+            )
+        else:
+            params["doc_source_ids_array"] = query.source_ids
+            doc_where_clauses.append("d.source_id = ANY(:doc_source_ids_array)")
     if query.created_after:
         params["doc_created_gte"] = query.created_after
         doc_where_clauses.append("d.created_at >= :doc_created_gte")

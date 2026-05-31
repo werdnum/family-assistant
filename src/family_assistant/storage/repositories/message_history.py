@@ -318,6 +318,45 @@ class MessageHistoryRepository(BaseRepository):
             : min(max(access_query.limit, 1), _MAX_MESSAGE_HISTORY_LIMIT)
         ]
 
+    async def get_index_source_ids_for_query(
+        self,
+        query: MessageHistoryQuery,
+        *,
+        limit: int = 5000,
+    ) -> list[str]:
+        """Return indexed document source IDs allowed by structured history filters."""
+        bounded_limit = min(max(limit, 1), 5000)
+        conditions = self._build_history_query_conditions(
+            query,
+            include_text_query=False,
+        )
+        stmt = (
+            select(
+                message_history_table.c.internal_id,
+                message_history_table.c.turn_id,
+            )
+            .where(*conditions)
+            .order_by(
+                message_history_table.c.timestamp.desc(),
+                message_history_table.c.internal_id.desc(),
+            )
+            .limit(bounded_limit)
+        )
+
+        source_ids: list[str] = []
+        seen_source_ids: set[str] = set()
+        for row in await self._db.fetch_all(stmt):
+            turn_id = row["turn_id"]
+            source_id = (
+                f"message_turn:{turn_id}"
+                if turn_id
+                else f"message_row:{row['internal_id']}"
+            )
+            if source_id not in seen_source_ids:
+                source_ids.append(source_id)
+                seen_source_ids.add(source_id)
+        return source_ids
+
     async def get_indexable_message_groups(
         self,
         *,

@@ -218,11 +218,11 @@ async def test_get_message_history_tool_returns_structured_json(
 
 
 @pytest.mark.asyncio
-async def test_semantic_history_search_overfetches_before_acl_hydration(
+async def test_semantic_history_search_prefilters_access_before_vector_limit(
     db_engine: AsyncEngine,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Semantic search asks for extra candidates and hydrates only accessible rows."""
+    """Semantic search applies accessible source IDs before vector-store limiting."""
     async with DatabaseContext(engine=db_engine) as db:
         timestamp = datetime.now(UTC)
         await _store_user_message(
@@ -278,12 +278,31 @@ async def test_semantic_history_search_overfetches_before_acl_hydration(
     assert data["result_count"] == 1
     assert data["results"][0]["content"] == "The accessible passport note"
     assert captured_query is not None
-    assert captured_query.limit > 1
+    assert captured_query.limit == 1
+    assert captured_query.source_ids == ["message_turn:turn-current-user"]
     metadata_filters = {
         metadata_filter.key: metadata_filter.value
         for metadata_filter in captured_query.metadata_filters
     }
     assert metadata_filters["user_id"] == "user-a"
+
+
+@pytest.mark.asyncio
+async def test_get_message_history_tool_returns_invalid_request_for_bad_datetime(
+    db_engine: AsyncEngine,
+) -> None:
+    """Malformed time filters are returned as tool errors instead of exceptions."""
+    async with DatabaseContext(engine=db_engine) as db:
+        result = await get_message_history_tool(
+            exec_context=_build_exec_context(db),
+            query="passport",
+            start_time="not-a-date",
+        )
+
+    data = cast("dict[str, Any]", result.data)
+    assert data["error"] == "invalid_request"
+    assert data["message"] == "start_time must be an ISO datetime."
+    assert data["results"] == []
 
 
 @pytest.mark.asyncio

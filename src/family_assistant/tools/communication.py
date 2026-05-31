@@ -246,27 +246,26 @@ async def get_message_history_tool(
         if subconversation_id is None
         else subconversation_id
     )
-    history_query = MessageHistoryQuery(
-        query=query,
-        search_mode=search_mode,
-        conversation_id=conversation_id,
-        scope=scope,
-        roles=tuple(roles or ()),
-        tool_names=tuple(tool_names or ()),
-        start_time=_parse_optional_datetime(start_time, "start_time"),
-        end_time=_parse_optional_datetime(end_time, "end_time"),
-        has_attachments=has_attachments,
-        has_error=has_error,
-        processing_profile_id=effective_profile_id,
-        subconversation_id=effective_subconversation_id,
-        limit=limit,
-        include_context=include_context,
-        interface_type=exec_context.interface_type,
-        current_conversation_id=exec_context.conversation_id,
-        current_user_id=exec_context.user_id,
-    )
-
     try:
+        history_query = MessageHistoryQuery(
+            query=query,
+            search_mode=search_mode,
+            conversation_id=conversation_id,
+            scope=scope,
+            roles=tuple(roles or ()),
+            tool_names=tuple(tool_names or ()),
+            start_time=_parse_optional_datetime(start_time, "start_time"),
+            end_time=_parse_optional_datetime(end_time, "end_time"),
+            has_attachments=has_attachments,
+            has_error=has_error,
+            processing_profile_id=effective_profile_id,
+            subconversation_id=effective_subconversation_id,
+            limit=limit,
+            include_context=include_context,
+            interface_type=exec_context.interface_type,
+            current_conversation_id=exec_context.conversation_id,
+            current_user_id=exec_context.user_id,
+        )
         rows = await _execute_message_history_query(
             exec_context=exec_context,
             embedding_generator=effective_embedding_generator,
@@ -353,15 +352,25 @@ async def _semantic_message_history_rows(
     if not embedding_result.embeddings:
         raise ValueError("Failed to generate embedding for message-history query.")
 
+    source_ids = (
+        await exec_context.db_context.message_history.get_index_source_ids_for_query(
+            history_query,
+            limit=_semantic_search_source_prefilter_limit(),
+        )
+    )
+    if not source_ids:
+        return []
+
     search_query = VectorSearchQuery(
         search_type="hybrid",
         semantic_query=history_query.query,
         keywords=history_query.query,
         embedding_model=embedding_result.model_name,
         source_types=["message_history"],
+        source_ids=source_ids,
         embedding_types=["message_turn"],
         metadata_filters=_message_history_metadata_filters(history_query),
-        limit=_semantic_search_candidate_limit(history_query.limit),
+        limit=max(min(history_query.limit, 100), 1),
         visibility_grants=exec_context.visibility_grants,
     )
     search_results = await query_vector_store(
@@ -390,9 +399,8 @@ async def _semantic_message_history_rows(
     )
 
 
-def _semantic_search_candidate_limit(requested_limit: int) -> int:
-    bounded_limit = max(min(requested_limit, 100), 1)
-    return min(max(bounded_limit * 10, 50), 500)
+def _semantic_search_source_prefilter_limit() -> int:
+    return 5000
 
 
 def _message_history_metadata_filters(
