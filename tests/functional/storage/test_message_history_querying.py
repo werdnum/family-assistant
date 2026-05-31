@@ -30,10 +30,13 @@ from family_assistant.storage.repositories.message_history import (
 from family_assistant.storage.tasks import tasks_table
 from family_assistant.storage.vector import DocumentEmbeddingRecord, DocumentRecord
 from family_assistant.storage.vector_search import VectorSearchQuery, query_vector_store
-from family_assistant.tools.communication import get_message_history_tool
+from family_assistant.tools.communication import (
+    COMMUNICATION_TOOLS_DEFINITION,
+    get_message_history_tool,
+)
 from family_assistant.tools.documents import search_documents_tool
 from family_assistant.tools.infrastructure import LocalToolsProvider
-from family_assistant.tools.types import ToolExecutionContext
+from family_assistant.tools.types import ToolExecutionContext, ToolResult
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncEngine
@@ -543,6 +546,62 @@ async def test_local_tools_provider_injects_optional_embedding_generator(
         )
 
     assert result == "mock-embedding-model"
+
+
+@pytest.mark.asyncio
+async def test_local_tools_provider_injects_embedding_generator_for_history_tool(
+    db_engine: AsyncEngine,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The real message-history tool receives provider-level embeddings."""
+    async with DatabaseContext(engine=db_engine) as db:
+        await _store_user_message(
+            db,
+            conversation_id="current",
+            user_id="user-a",
+            content="The passports are in the blue folder",
+            timestamp=datetime.now(UTC),
+            turn_id="turn-passport",
+        )
+
+        captured_query_embedding: list[float] | None = None
+
+        async def fake_query_vector_store(
+            *,
+            db_context: DatabaseContext,
+            query: VectorSearchQuery,
+            query_embedding: list[float] | None = None,
+        ) -> list[dict[str, object]]:
+            nonlocal captured_query_embedding
+            _ = db_context, query
+            captured_query_embedding = query_embedding
+            return [{"source_id": "message_turn:turn-passport"}]
+
+        monkeypatch.setattr(
+            "family_assistant.tools.communication.query_vector_store",
+            fake_query_vector_store,
+        )
+        provider = LocalToolsProvider(
+            definitions=COMMUNICATION_TOOLS_DEFINITION,
+            implementations={"get_message_history": get_message_history_tool},
+            embedding_generator=MockEmbeddingGenerator(
+                dimensions=3,
+                embedding_map={"passport": [0.1, 0.2, 0.3]},
+            ),
+        )
+
+        result = await provider.execute_tool(
+            "get_message_history",
+            {"query": "passport", "search_mode": "semantic"},
+            _build_exec_context(db),
+        )
+
+    assert isinstance(result, ToolResult)
+    data = cast("dict[str, Any]", result.data)
+    assert "error" not in data, data
+    assert data["result_count"] == 1
+    assert data["results"][0]["content"] == "The passports are in the blue folder"
+    assert captured_query_embedding == [0.1, 0.2, 0.3]
 
 
 @pytest.mark.asyncio

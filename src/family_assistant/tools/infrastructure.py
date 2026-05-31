@@ -11,6 +11,7 @@ import copy
 import inspect
 import json
 import logging
+import re
 import uuid
 from typing import (
     TYPE_CHECKING,
@@ -49,6 +50,12 @@ logger = logging.getLogger(__name__)
 
 def _annotation_contains_type_name(annotation: object, type_name: str) -> bool:
     """Return whether an annotation or its union args include a named type."""
+    if isinstance(annotation, str):
+        identifiers = re.findall(r"\b[A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*\b", annotation)
+        return any(
+            identifier == type_name or identifier.endswith(f".{type_name}")
+            for identifier in identifiers
+        )
     if getattr(annotation, "__name__", None) == type_name:
         return True
     if get_origin(annotation) is None:
