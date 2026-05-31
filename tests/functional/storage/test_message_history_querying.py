@@ -9,7 +9,7 @@ from zoneinfo import ZoneInfo
 import pytest
 from sqlalchemy import select
 
-from family_assistant.embeddings import MockEmbeddingGenerator
+from family_assistant.embeddings import EmbeddingGenerator, MockEmbeddingGenerator
 from family_assistant.indexing.message_history_indexer import (
     handle_index_message_history_batch,
 )
@@ -26,14 +26,14 @@ from family_assistant.storage.repositories.message_history import (
     MessageHistoryQuery,
 )
 from family_assistant.storage.vector import DocumentEmbeddingRecord, DocumentRecord
+from family_assistant.storage.vector_search import VectorSearchQuery, query_vector_store
 from family_assistant.tools.communication import get_message_history_tool
 from family_assistant.tools.documents import search_documents_tool
+from family_assistant.tools.infrastructure import LocalToolsProvider
 from family_assistant.tools.types import ToolExecutionContext
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncEngine
-
-    from family_assistant.storage.vector_search import VectorSearchQuery
 
 
 @pytest.mark.asyncio
@@ -481,6 +481,65 @@ async def test_search_documents_excludes_message_history_source(
     assert result == "No relevant documents found matching the query and filters."
     assert captured_query is not None
     assert captured_query.excluded_source_types == ["message_history"]
+
+
+@pytest.mark.asyncio
+async def test_vector_search_excludes_message_history_without_source_acl(
+    db_engine: AsyncEngine,
+) -> None:
+    """Raw vector search does not expose message history without source IDs."""
+    async with DatabaseContext(engine=db_engine) as db:
+        query = VectorSearchQuery(
+            search_type="semantic",
+            semantic_query="passport",
+            embedding_model="mock-embedding-model",
+            source_types=["message_history"],
+            embedding_types=["message_turn"],
+            limit=5,
+        )
+        results = await query_vector_store(
+            db_context=db,
+            query=query,
+            query_embedding=[0.0, 0.0, 0.0],
+        )
+
+    assert results == []
+
+
+@pytest.mark.asyncio
+async def test_local_tools_provider_injects_optional_embedding_generator(
+    db_engine: AsyncEngine,
+) -> None:
+    """Embedding injection recognizes EmbeddingGenerator | None annotations."""
+
+    async def optional_embedding_tool(
+        embedding_generator: EmbeddingGenerator | None = None,
+    ) -> str:
+        assert embedding_generator is not None
+        return embedding_generator.model_name
+
+    provider = LocalToolsProvider(
+        definitions=[
+            {
+                "type": "function",
+                "function": {
+                    "name": "optional_embedding",
+                    "description": "Test optional embedding injection.",
+                    "parameters": {"type": "object", "properties": {}},
+                },
+            }
+        ],
+        implementations={"optional_embedding": optional_embedding_tool},
+        embedding_generator=MockEmbeddingGenerator(dimensions=3),
+    )
+    async with DatabaseContext(engine=db_engine) as db:
+        result = await provider.execute_tool(
+            "optional_embedding",
+            {},
+            _build_exec_context(db),
+        )
+
+    assert result == "mock-embedding-model"
 
 
 @pytest.mark.asyncio

@@ -149,34 +149,42 @@ async def query_vector_store(
 
     # Check database dialect for case-insensitive LIKE
     like_operator = "LIKE" if is_sqlite else "ILIKE"
+    source_types = list(query.source_types)
+    excluded_source_types = list(query.excluded_source_types)
+    if not query.source_ids:
+        source_types = [
+            source_type
+            for source_type in source_types
+            if source_type != "message_history"
+        ]
+        if "message_history" not in excluded_source_types:
+            excluded_source_types.append("message_history")
 
     # Document Filters
-    if query.source_types:
+    if source_types:
         if is_sqlite:
             # SQLite doesn't support ANY, use IN instead
             _build_in_clause_for_sqlite(
                 params,
                 doc_where_clauses,
                 "d.source_type",
-                query.source_types,
+                source_types,
                 "doc_source_type",
             )
         else:
-            params["doc_source_types_array"] = (
-                query.source_types
-            )  # Pass as list for ANY
+            params["doc_source_types_array"] = source_types  # Pass as list for ANY
             doc_where_clauses.append("d.source_type = ANY(:doc_source_types_array)")
-    if query.excluded_source_types:
+    if excluded_source_types:
         if is_sqlite:
             placeholders = ", ".join(
                 f":doc_excluded_source_type_{i}"
-                for i in range(len(query.excluded_source_types))
+                for i in range(len(excluded_source_types))
             )
-            for i, value in enumerate(query.excluded_source_types):
+            for i, value in enumerate(excluded_source_types):
                 params[f"doc_excluded_source_type_{i}"] = value
             doc_where_clauses.append(f"d.source_type NOT IN ({placeholders})")
         else:
-            params["doc_excluded_source_types_array"] = query.excluded_source_types
+            params["doc_excluded_source_types_array"] = excluded_source_types
             doc_where_clauses.append(
                 "NOT (d.source_type = ANY(:doc_excluded_source_types_array))"
             )

@@ -17,6 +17,8 @@ from typing import (
     Any,
     Protocol,
     cast,
+    get_args,
+    get_origin,
     get_type_hints,
     runtime_checkable,
 )
@@ -43,6 +45,17 @@ if TYPE_CHECKING:
     from family_assistant.embeddings import EmbeddingGenerator
 
 logger = logging.getLogger(__name__)
+
+
+def _annotation_contains_type_name(annotation: object, type_name: str) -> bool:
+    """Return whether an annotation or its union args include a named type."""
+    if getattr(annotation, "__name__", None) == type_name:
+        return True
+    if get_origin(annotation) is None:
+        return False
+    return any(
+        _annotation_contains_type_name(arg, type_name) for arg in get_args(annotation)
+    )
 
 
 def translate_attachment_schemas_for_llm(
@@ -503,9 +516,9 @@ class LocalToolsProvider:
 
                 elif param_name == "embedding_generator":
                     # Check for EmbeddingGenerator by name since we can't import it
-                    if (
-                        hasattr(annotation_to_check, "__name__")
-                        and annotation_to_check.__name__ == "EmbeddingGenerator"
+                    if _annotation_contains_type_name(
+                        annotation_to_check,
+                        "EmbeddingGenerator",
                     ):
                         needs_embedding_generator = True
                     # Also check for string annotation
