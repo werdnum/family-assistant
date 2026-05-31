@@ -14,6 +14,7 @@ from family_assistant.storage.vector import add_document, add_embedding
 if TYPE_CHECKING:
     from datetime import datetime
 
+    from family_assistant.storage.context import DatabaseContext
     from family_assistant.storage.types import MessageHistoryRow
     from family_assistant.tools.types import ToolExecutionContext
 
@@ -23,6 +24,7 @@ MESSAGE_HISTORY_SOURCE_TYPE = "message_history"
 MESSAGE_TURN_EMBEDDING_TYPE = "message_turn"
 DEFAULT_MESSAGE_HISTORY_INDEX_BATCH_SIZE = 50
 MAX_INDEXED_FIELD_LENGTH = 4000
+MESSAGE_HISTORY_BACKFILL_TASK_ID = "system_message_history_backfill"
 
 
 class MessageHistoryIndexBatchPayload(TypedDict, total=False):
@@ -48,6 +50,20 @@ class MessageHistoryDocument:
     file_path: str | None
     visibility_labels: list[str] | None
     id: int | None = None
+
+
+async def enqueue_message_history_backfill_task(
+    db_context: DatabaseContext,
+    *,
+    limit: int = DEFAULT_MESSAGE_HISTORY_INDEX_BATCH_SIZE,
+) -> None:
+    """Ensure existing message history gets a one-time semantic-search backfill."""
+    await db_context.tasks.enqueue(
+        task_id=MESSAGE_HISTORY_BACKFILL_TASK_ID,
+        task_type="index_message_history_batch",
+        payload={"limit": limit},
+        max_retries_override=5,
+    )
 
 
 async def handle_index_message_history_batch(

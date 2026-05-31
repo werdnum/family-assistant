@@ -11,6 +11,8 @@ from sqlalchemy import select
 
 from family_assistant.embeddings import EmbeddingGenerator, MockEmbeddingGenerator
 from family_assistant.indexing.message_history_indexer import (
+    MESSAGE_HISTORY_BACKFILL_TASK_ID,
+    enqueue_message_history_backfill_task,
     handle_index_message_history_batch,
 )
 from family_assistant.llm.messages import (
@@ -25,6 +27,7 @@ from family_assistant.storage.repositories.message_history import (
     MessageHistoryAccessDeniedError,
     MessageHistoryQuery,
 )
+from family_assistant.storage.tasks import tasks_table
 from family_assistant.storage.vector import DocumentEmbeddingRecord, DocumentRecord
 from family_assistant.storage.vector_search import VectorSearchQuery, query_vector_store
 from family_assistant.tools.communication import get_message_history_tool
@@ -564,6 +567,26 @@ async def test_add_message_surfaces_index_enqueue_failures(
                 user_id="user-a",
                 processing_profile_id="default",
             )
+
+
+@pytest.mark.asyncio
+async def test_message_history_backfill_task_is_seeded_as_system_task(
+    db_engine: AsyncEngine,
+) -> None:
+    """Startup can seed a one-time backfill for preexisting message history."""
+    async with DatabaseContext(engine=db_engine) as db:
+        await enqueue_message_history_backfill_task(db, limit=17)
+
+        task_row = await db.fetch_one(
+            select(tasks_table).where(
+                tasks_table.c.task_id == MESSAGE_HISTORY_BACKFILL_TASK_ID
+            )
+        )
+
+    assert task_row is not None
+    assert task_row["task_type"] == "index_message_history_batch"
+    assert task_row["payload"] == {"limit": 17}
+    assert task_row["status"] == "pending"
 
 
 @pytest.mark.asyncio

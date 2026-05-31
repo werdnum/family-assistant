@@ -8,6 +8,9 @@ from fastapi.responses import HTMLResponse
 from sqlalchemy import text
 
 from family_assistant.embeddings import EmbeddingGenerator
+from family_assistant.indexing.message_history_indexer import (
+    MESSAGE_HISTORY_SOURCE_TYPE,
+)
 from family_assistant.storage.context import DatabaseContext
 from family_assistant.storage.vector import DocumentRecord, get_document_by_id
 from family_assistant.storage.vector_search import (
@@ -23,6 +26,11 @@ from family_assistant.web.dependencies import (
 
 logger = logging.getLogger(__name__)
 vector_search_router = APIRouter()
+
+_PUBLIC_SOURCE_TYPES_QUERY = text(
+    "SELECT DISTINCT source_type FROM documents "
+    "WHERE source_type != :excluded_source_type ORDER BY source_type;"
+)
 
 
 @vector_search_router.get(
@@ -48,9 +56,6 @@ async def vector_search_form(
         q_types = text(
             "SELECT DISTINCT embedding_type FROM document_embeddings ORDER BY embedding_type;"
         )
-        q_source_types = text(
-            "SELECT DISTINCT source_type FROM documents ORDER BY source_type;"
-        )
         # Query to get distinct top-level keys from the JSONB metadata column
         # Only available for PostgreSQL - SQLite doesn't support jsonb_each
         if db_context.engine.dialect.name == "postgresql":
@@ -66,7 +71,10 @@ async def vector_search_form(
             ) = await asyncio.gather(
                 db_context.fetch_all(q_models),
                 db_context.fetch_all(q_types),
-                db_context.fetch_all(q_source_types),
+                db_context.fetch_all(
+                    _PUBLIC_SOURCE_TYPES_QUERY,
+                    {"excluded_source_type": MESSAGE_HISTORY_SOURCE_TYPE},
+                ),
                 db_context.fetch_all(q_meta_keys),
             )
             distinct_metadata_keys = [row["key"] for row in meta_keys_result]
@@ -79,7 +87,10 @@ async def vector_search_form(
             ) = await asyncio.gather(
                 db_context.fetch_all(q_models),
                 db_context.fetch_all(q_types),
-                db_context.fetch_all(q_source_types),
+                db_context.fetch_all(
+                    _PUBLIC_SOURCE_TYPES_QUERY,
+                    {"excluded_source_type": MESSAGE_HISTORY_SOURCE_TYPE},
+                ),
             )
             distinct_metadata_keys = []  # Empty for SQLite
 
@@ -134,7 +145,7 @@ async def document_detail_view(
 
     try:
         document = await get_document_by_id(db_context, document_id)
-        if not document:
+        if not document or document.source_type == MESSAGE_HISTORY_SOURCE_TYPE:
             error = f"Document with ID {document_id} not found."
         elif document.embeddings:
             # Look for raw content types first (these should contain full text)
@@ -450,9 +461,6 @@ async def handle_vector_search(
         q_types = text(
             "SELECT DISTINCT embedding_type FROM document_embeddings ORDER BY embedding_type;"
         )
-        q_source_types = text(
-            "SELECT DISTINCT source_type FROM documents ORDER BY source_type;"
-        )
         # Query to get distinct top-level keys from the JSONB metadata column
         # Only available for PostgreSQL - SQLite doesn't support jsonb_each
         if db_context.engine.dialect.name == "postgresql":
@@ -469,7 +477,10 @@ async def handle_vector_search(
             ) = await asyncio.gather(
                 db_context.fetch_all(q_models),
                 db_context.fetch_all(q_types),
-                db_context.fetch_all(q_source_types),
+                db_context.fetch_all(
+                    _PUBLIC_SOURCE_TYPES_QUERY,
+                    {"excluded_source_type": MESSAGE_HISTORY_SOURCE_TYPE},
+                ),
                 db_context.fetch_all(q_meta_keys),
             )
             distinct_metadata_keys = [row["key"] for row in meta_keys_result]
@@ -482,7 +493,10 @@ async def handle_vector_search(
             ) = await asyncio.gather(
                 db_context.fetch_all(q_models),
                 db_context.fetch_all(q_types),
-                db_context.fetch_all(q_source_types),
+                db_context.fetch_all(
+                    _PUBLIC_SOURCE_TYPES_QUERY,
+                    {"excluded_source_type": MESSAGE_HISTORY_SOURCE_TYPE},
+                ),
             )
             distinct_metadata_keys = []  # Empty for SQLite
 

@@ -5,6 +5,9 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, Field
 
 from family_assistant.embeddings import EmbeddingGenerator
+from family_assistant.indexing.message_history_indexer import (
+    MESSAGE_HISTORY_SOURCE_TYPE,
+)
 from family_assistant.storage.context import DatabaseContext
 from family_assistant.storage.vector import DocumentRecord, get_document_by_id
 from family_assistant.storage.vector_search import (
@@ -131,7 +134,7 @@ async def get_document_detail(
 ) -> DocumentDetail:
     """Return document metadata."""
     record: DocumentRecord | None = await get_document_by_id(db_context, document_id)
-    if not record:
+    if not record or record.source_type == MESSAGE_HISTORY_SOURCE_TYPE:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Document not found")
     return DocumentDetail(
         id=record.id,

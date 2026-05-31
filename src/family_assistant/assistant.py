@@ -52,6 +52,7 @@ from family_assistant.home_assistant_shared import create_home_assistant_client
 from family_assistant.indexing.document_indexer import DocumentIndexer
 from family_assistant.indexing.email_indexer import EmailIndexer
 from family_assistant.indexing.message_history_indexer import (
+    enqueue_message_history_backfill_task,
     handle_index_message_history_batch,
 )
 from family_assistant.indexing.notes_indexer import NotesIndexer
@@ -1572,6 +1573,12 @@ class Assistant:
                     )
                 except Exception as e:
                     logger.warning(f"Completed automation cleanup task setup: {e}")
+
+                try:
+                    await enqueue_message_history_backfill_task(db_ctx)
+                    logger.info("Message history backfill task scheduled")
+                except Exception as e:
+                    logger.warning(f"Message history backfill task setup: {e}")
         except RuntimeError as e:
             if "different loop" in str(e):
                 logger.warning(
