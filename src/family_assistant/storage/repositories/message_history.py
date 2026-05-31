@@ -401,36 +401,49 @@ class MessageHistoryRepository(BaseRepository):
                 "The all_accessible scope is not enabled for message history."
             )
         if query.scope == "current_conversation":
-            conversation_id = query.conversation_id or query.current_conversation_id
-            if not conversation_id:
-                raise MessageHistoryAccessDeniedError(
-                    "current_conversation scope requires a conversation_id."
-                )
-            conditions.append(
-                message_history_table.c.conversation_id == conversation_id
-            )
-            if query.interface_type:
-                conditions.append(
-                    message_history_table.c.interface_type == query.interface_type
-                )
-        elif query.conversation_id:
-            conditions.append(
-                message_history_table.c.conversation_id == query.conversation_id
-            )
-            if query.interface_type:
-                conditions.append(
-                    message_history_table.c.interface_type == query.interface_type
-                )
-        elif query.current_user_id:
-            conditions.append(message_history_table.c.user_id == query.current_user_id)
-        else:
             if not query.current_conversation_id:
                 raise MessageHistoryAccessDeniedError(
-                    "same_user scope requires a user_id or current conversation."
+                    "current_conversation scope requires the current conversation."
+                )
+            if (
+                query.conversation_id is not None
+                and query.conversation_id != query.current_conversation_id
+            ):
+                raise MessageHistoryAccessDeniedError(
+                    "current_conversation scope cannot query another conversation."
                 )
             conditions.append(
                 message_history_table.c.conversation_id == query.current_conversation_id
             )
+            if query.interface_type:
+                conditions.append(
+                    message_history_table.c.interface_type == query.interface_type
+                )
+        elif query.scope == "same_user":
+            if query.current_user_id:
+                conditions.append(
+                    message_history_table.c.user_id == query.current_user_id
+                )
+                if query.conversation_id:
+                    conditions.append(
+                        message_history_table.c.conversation_id == query.conversation_id
+                    )
+            else:
+                if not query.current_conversation_id:
+                    raise MessageHistoryAccessDeniedError(
+                        "same_user scope requires a user_id or current conversation."
+                    )
+                if (
+                    query.conversation_id is not None
+                    and query.conversation_id != query.current_conversation_id
+                ):
+                    raise MessageHistoryAccessDeniedError(
+                        "same_user scope without a user_id cannot query another conversation."
+                    )
+                conditions.append(
+                    message_history_table.c.conversation_id
+                    == query.current_conversation_id
+                )
             if query.interface_type:
                 conditions.append(
                     message_history_table.c.interface_type == query.interface_type

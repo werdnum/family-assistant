@@ -27,6 +27,8 @@ from family_assistant.tools.types import ToolExecutionContext
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncEngine
 
+    from family_assistant.storage.vector_search import VectorSearchQuery
+
 
 @pytest.mark.asyncio
 async def test_message_history_query_defaults_to_same_user_scope(
@@ -147,6 +149,34 @@ async def test_message_history_query_filters_tools_and_hydrates_context(
 
 
 @pytest.mark.asyncio
+async def test_same_user_scope_keeps_user_filter_when_conversation_id_is_supplied(
+    db_engine: AsyncEngine,
+) -> None:
+    """A guessed conversation_id cannot bypass same-user history isolation."""
+    async with DatabaseContext(engine=db_engine) as db:
+        now = datetime.now(UTC)
+        await _store_user_message(
+            db,
+            conversation_id="other-user-conversation",
+            user_id="user-b",
+            content="Passport details for another user",
+            timestamp=now,
+        )
+
+        rows = await db.message_history.query_history(
+            MessageHistoryQuery(
+                query="passport",
+                conversation_id="other-user-conversation",
+                current_conversation_id="current",
+                current_user_id="user-a",
+                processing_profile_id="default",
+            )
+        )
+
+    assert rows == []
+
+
+@pytest.mark.asyncio
 async def test_message_history_query_denies_all_accessible_scope(
     db_engine: AsyncEngine,
 ) -> None:
@@ -185,6 +215,75 @@ async def test_get_message_history_tool_returns_structured_json(
     data = cast("dict[str, Any]", result.data)
     assert data["result_count"] == 1
     assert data["results"][0]["content"] == "The passports are in the blue folder"
+
+
+@pytest.mark.asyncio
+async def test_semantic_history_search_overfetches_before_acl_hydration(
+    db_engine: AsyncEngine,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Semantic search asks for extra candidates and hydrates only accessible rows."""
+    async with DatabaseContext(engine=db_engine) as db:
+        timestamp = datetime.now(UTC)
+        await _store_user_message(
+            db,
+            conversation_id="other-user-conversation",
+            user_id="user-b",
+            content="The inaccessible passport note",
+            timestamp=timestamp,
+            turn_id="turn-other-user",
+        )
+        await _store_user_message(
+            db,
+            conversation_id="current",
+            user_id="user-a",
+            content="The accessible passport note",
+            timestamp=timestamp + timedelta(seconds=1),
+            turn_id="turn-current-user",
+        )
+
+        captured_query: VectorSearchQuery | None = None
+
+        async def fake_query_vector_store(
+            *,
+            db_context: DatabaseContext,
+            query: VectorSearchQuery,
+            query_embedding: list[float] | None = None,
+        ) -> list[dict[str, object]]:
+            nonlocal captured_query
+            _ = db_context, query_embedding
+            captured_query = query
+            return [
+                {"source_id": "message_turn:turn-other-user"},
+                {"source_id": "message_turn:turn-current-user"},
+            ]
+
+        monkeypatch.setattr(
+            "family_assistant.tools.communication.query_vector_store",
+            fake_query_vector_store,
+        )
+
+        result = await get_message_history_tool(
+            exec_context=_build_exec_context(
+                db,
+                embedding_generator=MockEmbeddingGenerator(dimensions=3),
+            ),
+            query="passport",
+            search_mode="semantic",
+            limit=1,
+        )
+
+    data = cast("dict[str, Any]", result.data)
+    assert "error" not in data, data
+    assert data["result_count"] == 1
+    assert data["results"][0]["content"] == "The accessible passport note"
+    assert captured_query is not None
+    assert captured_query.limit > 1
+    metadata_filters = {
+        metadata_filter.key: metadata_filter.value
+        for metadata_filter in captured_query.metadata_filters
+    }
+    assert metadata_filters["user_id"] == "user-a"
 
 
 @pytest.mark.asyncio

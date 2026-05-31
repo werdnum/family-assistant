@@ -13,7 +13,11 @@ from typing import TYPE_CHECKING, Literal
 
 from family_assistant.llm.messages import AssistantMessage, MessageReasoningInfo
 from family_assistant.scripting.apis.attachments import ScriptAttachment
-from family_assistant.storage.vector_search import VectorSearchQuery, query_vector_store
+from family_assistant.storage.vector_search import (
+    MetadataFilter,
+    VectorSearchQuery,
+    query_vector_store,
+)
 from family_assistant.tools.types import ToolResult
 
 if TYPE_CHECKING:
@@ -229,6 +233,9 @@ async def get_message_history_tool(
     )
 
     db_context = exec_context.db_context
+    effective_embedding_generator = (
+        embedding_generator or exec_context.embedding_generator
+    )
     effective_profile_id = (
         exec_context.processing_profile_id
         if processing_profile_id is None
@@ -262,7 +269,7 @@ async def get_message_history_tool(
     try:
         rows = await _execute_message_history_query(
             exec_context=exec_context,
-            embedding_generator=embedding_generator,
+            embedding_generator=effective_embedding_generator,
             history_query=history_query,
         )
         data = {
@@ -353,7 +360,8 @@ async def _semantic_message_history_rows(
         embedding_model=embedding_result.model_name,
         source_types=["message_history"],
         embedding_types=["message_turn"],
-        limit=max(min(history_query.limit, 100), 1),
+        metadata_filters=_message_history_metadata_filters(history_query),
+        limit=_semantic_search_candidate_limit(history_query.limit),
         visibility_grants=exec_context.visibility_grants,
     )
     search_results = await query_vector_store(
@@ -380,6 +388,55 @@ async def _semantic_message_history_rows(
         internal_ids=tuple(internal_ids),
         access_query=history_query,
     )
+
+
+def _semantic_search_candidate_limit(requested_limit: int) -> int:
+    bounded_limit = max(min(requested_limit, 100), 1)
+    return min(max(bounded_limit * 10, 50), 500)
+
+
+def _message_history_metadata_filters(
+    history_query: MessageHistoryQuery,
+) -> list[MetadataFilter]:
+    filters: list[MetadataFilter] = []
+    if history_query.scope == "current_conversation":
+        conversation_id = history_query.current_conversation_id
+        if conversation_id:
+            filters.append(MetadataFilter(key="conversation_id", value=conversation_id))
+    elif history_query.scope == "same_user":
+        if history_query.current_user_id:
+            filters.append(
+                MetadataFilter(key="user_id", value=history_query.current_user_id)
+            )
+        conversation_id = history_query.conversation_id
+        if conversation_id:
+            filters.append(MetadataFilter(key="conversation_id", value=conversation_id))
+
+    if history_query.interface_type:
+        filters.append(
+            MetadataFilter(key="interface_type", value=history_query.interface_type)
+        )
+    if (
+        history_query.processing_profile_id is not None
+        and history_query.processing_profile_id != "*"
+    ):
+        filters.append(
+            MetadataFilter(
+                key="processing_profile_id",
+                value=history_query.processing_profile_id,
+            )
+        )
+    if (
+        history_query.subconversation_id is not None
+        and history_query.subconversation_id != "*"
+    ):
+        filters.append(
+            MetadataFilter(
+                key="subconversation_id",
+                value=history_query.subconversation_id,
+            )
+        )
+    return filters
 
 
 def _parse_optional_datetime(value: str | None, field_name: str) -> datetime | None:
