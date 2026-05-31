@@ -51,6 +51,10 @@ from family_assistant.events.webhook_source import WebhookEventSource
 from family_assistant.home_assistant_shared import create_home_assistant_client
 from family_assistant.indexing.document_indexer import DocumentIndexer
 from family_assistant.indexing.email_indexer import EmailIndexer
+from family_assistant.indexing.message_history_indexer import (
+    enqueue_message_history_backfill_task,
+    handle_index_message_history_batch,
+)
 from family_assistant.indexing.notes_indexer import NotesIndexer
 from family_assistant.indexing.tasks import handle_embed_and_store_batch
 from family_assistant.llm.factory import LLMClientFactory
@@ -1376,6 +1380,9 @@ class Assistant:
             "embed_and_store_batch", handle_embed_and_store_batch
         )
         self.task_worker_instance.register_task_handler(
+            "index_message_history_batch", handle_index_message_history_batch
+        )
+        self.task_worker_instance.register_task_handler(
             "system_event_cleanup", handle_system_event_cleanup
         )
         self.task_worker_instance.register_task_handler(
@@ -1566,6 +1573,12 @@ class Assistant:
                     )
                 except Exception as e:
                     logger.warning(f"Completed automation cleanup task setup: {e}")
+
+                try:
+                    await enqueue_message_history_backfill_task(db_ctx)
+                    logger.info("Message history backfill task scheduled")
+                except Exception as e:
+                    logger.warning(f"Message history backfill task setup: {e}")
         except RuntimeError as e:
             if "different loop" in str(e):
                 logger.warning(

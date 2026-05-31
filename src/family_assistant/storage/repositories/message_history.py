@@ -2,13 +2,16 @@
 
 import json
 import logging
+import uuid
 from collections.abc import Mapping
 from dataclasses import asdict, dataclass
 from datetime import UTC, datetime, timedelta
-from typing import Any, cast
+from typing import Any, Literal, NotRequired, TypedDict, cast
 
-from sqlalchemy import insert, or_, select, update
+from sqlalchemy import String, and_, insert, or_, select, update
 from sqlalchemy.exc import SQLAlchemyError
+from sqlalchemy.sql import cast as sa_cast
+from sqlalchemy.sql import func as sql_func
 from sqlalchemy.sql import functions as func
 from sqlalchemy.sql.elements import ColumnElement
 
@@ -36,6 +39,70 @@ from family_assistant.storage.types import ConversationSummaryRow, MessageHistor
 logger = logging.getLogger(__name__)
 
 _MAX_ASSISTANT_ROWS_PER_TOOL_EXAMPLE = 20
+_DEFAULT_MESSAGE_HISTORY_LIMIT = 20
+_MAX_MESSAGE_HISTORY_LIMIT = 100
+_MAX_CONTEXT_MESSAGES_PER_SIDE = 10
+
+MessageHistoryScope = Literal["current_conversation", "same_user", "all_accessible"]
+MessageHistorySearchMode = Literal["structured", "semantic", "hybrid"]
+
+
+@dataclass(frozen=True, slots=True)
+class MessageHistoryQuery:
+    """Structured query input for message history retrieval."""
+
+    query: str | None = None
+    search_mode: MessageHistorySearchMode = "structured"
+    conversation_id: str | None = None
+    scope: MessageHistoryScope = "same_user"
+    roles: tuple[str, ...] = ()
+    tool_names: tuple[str, ...] = ()
+    start_time: datetime | None = None
+    end_time: datetime | None = None
+    has_attachments: bool | None = None
+    has_error: bool | None = None
+    processing_profile_id: str | None = None
+    subconversation_id: str | None = None
+    limit: int = _DEFAULT_MESSAGE_HISTORY_LIMIT
+    include_context: int = 0
+    interface_type: str | None = None
+    current_conversation_id: str | None = None
+    current_user_id: str | None = None
+
+
+class MessageHistoryAccessDeniedError(ValueError):
+    """Raised when a message-history query requests a disallowed scope."""
+
+
+class MessageHistoryToolCallSummary(TypedDict):
+    """Compact tool-call summary returned by message-history queries."""
+
+    id: str
+    name: str
+    arguments: str | dict[str, object]
+
+
+class MessageHistorySummary(TypedDict):
+    """Compact message-history result returned to tool callers."""
+
+    message_id: int
+    interface_type: str
+    conversation_id: str
+    turn_id: str | None
+    thread_root_id: int | None
+    timestamp: str
+    role: str
+    user_id: str | None
+    processing_profile_id: str | None
+    subconversation_id: str | None
+    content: str | None
+    tool_name: str | None
+    tool_call_id: str | None
+    tool_calls: list[MessageHistoryToolCallSummary]
+    has_error: bool
+    has_attachments: bool
+    attachment_count: int
+    context: NotRequired[list["MessageHistorySummary"]]
 
 
 @dataclass(frozen=True, slots=True)
@@ -52,6 +119,550 @@ class ToolHistoryExample:
 
 class MessageHistoryRepository(BaseRepository):
     """Repository for managing message history in the database."""
+
+    async def query_history(
+        self, query: MessageHistoryQuery
+    ) -> list[MessageHistoryRow]:
+        """Query message history with structured filters and conservative access scope."""
+        limit = min(max(query.limit, 1), _MAX_MESSAGE_HISTORY_LIMIT)
+        conditions = self._build_history_query_conditions(query)
+
+        stmt = (
+            select(message_history_table)
+            .where(*conditions)
+            .order_by(
+                message_history_table.c.timestamp.desc(),
+                message_history_table.c.internal_id.desc(),
+            )
+            .limit(limit)
+        )
+
+        rows = await self._db.fetch_all(stmt)
+        return [self._process_message_row_as_dict(row) for row in rows]
+
+    async def hydrate_history_results(
+        self,
+        rows: list[MessageHistoryRow],
+        *,
+        include_context: int,
+        access_query: MessageHistoryQuery | None = None,
+    ) -> list[MessageHistorySummary]:
+        """Return compact result objects with optional neighboring context."""
+        bounded_context = min(max(include_context, 0), _MAX_CONTEXT_MESSAGES_PER_SIDE)
+        hydrated: list[MessageHistorySummary] = []
+        for row in rows:
+            result = self.summarize_message_row(row)
+            if bounded_context:
+                context_rows = await self.get_context_around_message(
+                    row,
+                    per_side=bounded_context,
+                    access_query=access_query,
+                )
+                result["context"] = [
+                    self.summarize_message_row(context_row)
+                    for context_row in context_rows
+                ]
+            hydrated.append(result)
+        return hydrated
+
+    async def get_context_around_message(
+        self,
+        row: MessageHistoryRow,
+        *,
+        per_side: int,
+        access_query: MessageHistoryQuery | None = None,
+    ) -> list[MessageHistoryRow]:
+        """Fetch neighboring rows around a message within the same conversation boundary."""
+        if per_side <= 0:
+            return [row]
+
+        base_conditions: list[ColumnElement[bool]] = [
+            message_history_table.c.interface_type == row["interface_type"],
+            message_history_table.c.conversation_id == row["conversation_id"],
+        ]
+        processing_profile_id = row.get("processing_profile_id")
+        if processing_profile_id is None:
+            base_conditions.append(
+                message_history_table.c.processing_profile_id.is_(None)
+            )
+        else:
+            base_conditions.append(
+                message_history_table.c.processing_profile_id == processing_profile_id
+            )
+
+        subconversation_id = row.get("subconversation_id")
+        if subconversation_id is None:
+            base_conditions.append(message_history_table.c.subconversation_id.is_(None))
+        else:
+            base_conditions.append(
+                message_history_table.c.subconversation_id == subconversation_id
+            )
+        if access_query is not None and access_query.scope == "same_user":
+            if access_query.current_user_id:
+                user_access_conditions: list[ColumnElement[bool]] = [
+                    message_history_table.c.user_id == access_query.current_user_id
+                ]
+                if access_query.current_conversation_id == row["conversation_id"]:
+                    user_access_conditions.append(
+                        and_(
+                            message_history_table.c.user_id.is_(None),
+                            message_history_table.c.conversation_id
+                            == access_query.current_conversation_id,
+                        )
+                    )
+                base_conditions.append(or_(*user_access_conditions))
+            elif (
+                access_query.current_conversation_id is None
+                or row["conversation_id"] != access_query.current_conversation_id
+            ):
+                raise MessageHistoryAccessDeniedError(
+                    "same_user context requires a user_id or current conversation."
+                )
+
+        timestamp = row["timestamp"]
+        internal_id = row["internal_id"]
+        before_stmt = (
+            select(message_history_table)
+            .where(
+                *base_conditions,
+                or_(
+                    message_history_table.c.timestamp < timestamp,
+                    and_(
+                        message_history_table.c.timestamp == timestamp,
+                        message_history_table.c.internal_id < internal_id,
+                    ),
+                ),
+            )
+            .order_by(
+                message_history_table.c.timestamp.desc(),
+                message_history_table.c.internal_id.desc(),
+            )
+            .limit(per_side)
+        )
+        after_stmt = (
+            select(message_history_table)
+            .where(
+                *base_conditions,
+                or_(
+                    message_history_table.c.timestamp > timestamp,
+                    and_(
+                        message_history_table.c.timestamp == timestamp,
+                        message_history_table.c.internal_id > internal_id,
+                    ),
+                ),
+            )
+            .order_by(
+                message_history_table.c.timestamp.asc(),
+                message_history_table.c.internal_id.asc(),
+            )
+            .limit(per_side)
+        )
+
+        before_rows = [
+            self._process_message_row_as_dict(context_row)
+            for context_row in await self._db.fetch_all(before_stmt)
+        ]
+        after_rows = [
+            self._process_message_row_as_dict(context_row)
+            for context_row in await self._db.fetch_all(after_stmt)
+        ]
+        before_rows.reverse()
+        return [*before_rows, row, *after_rows]
+
+    async def get_rows_by_search_references(
+        self,
+        *,
+        turn_ids: tuple[str, ...],
+        internal_ids: tuple[int, ...],
+        access_query: MessageHistoryQuery,
+    ) -> list[MessageHistoryRow]:
+        """Hydrate vector-search source references through message_history with ACL filters."""
+        if not turn_ids and not internal_ids:
+            return []
+
+        conditions = self._build_history_query_conditions(
+            MessageHistoryQuery(
+                scope=access_query.scope,
+                conversation_id=access_query.conversation_id,
+                roles=access_query.roles,
+                tool_names=access_query.tool_names,
+                start_time=access_query.start_time,
+                end_time=access_query.end_time,
+                has_attachments=access_query.has_attachments,
+                has_error=access_query.has_error,
+                processing_profile_id=access_query.processing_profile_id,
+                subconversation_id=access_query.subconversation_id,
+                interface_type=access_query.interface_type,
+                current_conversation_id=access_query.current_conversation_id,
+                current_user_id=access_query.current_user_id,
+                limit=access_query.limit,
+            ),
+            include_text_query=False,
+        )
+        reference_conditions: list[ColumnElement[bool]] = []
+        if turn_ids:
+            reference_conditions.append(message_history_table.c.turn_id.in_(turn_ids))
+        if internal_ids:
+            reference_conditions.append(
+                message_history_table.c.internal_id.in_(internal_ids)
+            )
+
+        stmt = (
+            select(message_history_table)
+            .where(*conditions, or_(*reference_conditions))
+            .order_by(
+                message_history_table.c.timestamp.asc(),
+                message_history_table.c.internal_id.asc(),
+            )
+        )
+        rows = await self._db.fetch_all(stmt)
+        grouped_turn_rows: dict[str, list[MessageHistoryRow]] = {}
+        grouped_internal_rows: dict[int, MessageHistoryRow] = {}
+        for db_row in rows:
+            message_row = self._process_message_row_as_dict(db_row)
+            turn_id = message_row.get("turn_id")
+            if turn_id:
+                grouped_turn_rows.setdefault(turn_id, []).append(message_row)
+            else:
+                grouped_internal_rows.setdefault(
+                    message_row["internal_id"],
+                    message_row,
+                )
+
+        ordered_rows: list[MessageHistoryRow] = []
+        seen_internal_ids: set[int] = set()
+        for turn_id in turn_ids:
+            for message_row in grouped_turn_rows.get(turn_id, []):
+                internal_id = message_row["internal_id"]
+                if internal_id not in seen_internal_ids:
+                    ordered_rows.append(message_row)
+                    seen_internal_ids.add(internal_id)
+        for internal_id in internal_ids:
+            if (
+                internal_id in grouped_internal_rows
+                and internal_id not in seen_internal_ids
+            ):
+                ordered_rows.append(grouped_internal_rows[internal_id])
+                seen_internal_ids.add(internal_id)
+
+        return ordered_rows[:_MAX_MESSAGE_HISTORY_LIMIT]
+
+    async def get_index_source_ids_for_query(
+        self,
+        query: MessageHistoryQuery,
+        *,
+        limit: int = 5000,
+    ) -> list[str]:
+        """Return indexed document source IDs allowed by structured history filters."""
+        bounded_limit = min(max(limit, 1), 5000)
+        conditions = self._build_history_query_conditions(
+            query,
+            include_text_query=False,
+        )
+        stmt = (
+            select(
+                message_history_table.c.internal_id,
+                message_history_table.c.turn_id,
+            )
+            .where(*conditions)
+            .order_by(
+                message_history_table.c.timestamp.desc(),
+                message_history_table.c.internal_id.desc(),
+            )
+            .limit(bounded_limit)
+        )
+
+        source_ids: list[str] = []
+        seen_source_ids: set[str] = set()
+        for row in await self._db.fetch_all(stmt):
+            turn_id = row["turn_id"]
+            source_id = (
+                f"message_turn:{turn_id}"
+                if turn_id
+                else f"message_row:{row['internal_id']}"
+            )
+            if source_id not in seen_source_ids:
+                source_ids.append(source_id)
+                seen_source_ids.add(source_id)
+        return source_ids
+
+    async def get_indexable_message_groups(
+        self,
+        *,
+        turn_id: str | None = None,
+        internal_id: int | None = None,
+        after_internal_id: int | None = None,
+        limit: int = 50,
+    ) -> tuple[list[list[MessageHistoryRow]], int | None]:
+        """Return turn-level groups to project into the document index."""
+        bounded_limit = min(max(limit, 1), 200)
+        seed_conditions: list[ColumnElement[bool]] = []
+        if turn_id is not None:
+            seed_conditions.append(message_history_table.c.turn_id == turn_id)
+        if internal_id is not None:
+            seed_conditions.append(message_history_table.c.internal_id == internal_id)
+        if after_internal_id is not None:
+            seed_conditions.append(
+                message_history_table.c.internal_id > after_internal_id
+            )
+
+        seed_stmt = (
+            select(message_history_table)
+            .where(*seed_conditions)
+            .order_by(message_history_table.c.internal_id.asc())
+            .limit(bounded_limit)
+        )
+        seed_rows = [
+            self._process_message_row_as_dict(row)
+            for row in await self._db.fetch_all(seed_stmt)
+        ]
+        if not seed_rows:
+            return [], None
+
+        groups: list[list[MessageHistoryRow]] = []
+        seen_sources: set[str] = set()
+        for seed_row in seed_rows:
+            source_key = self.get_index_source_id(seed_row)
+            if source_key in seen_sources:
+                continue
+            seen_sources.add(source_key)
+
+            if seed_row.get("turn_id"):
+                group_stmt = (
+                    select(message_history_table)
+                    .where(message_history_table.c.turn_id == seed_row["turn_id"])
+                    .order_by(
+                        message_history_table.c.timestamp.asc(),
+                        message_history_table.c.internal_id.asc(),
+                    )
+                )
+                group_rows = [
+                    self._process_message_row_as_dict(row)
+                    for row in await self._db.fetch_all(group_stmt)
+                ]
+            else:
+                group_rows = [seed_row]
+
+            if group_rows:
+                groups.append(group_rows)
+
+        return groups, seed_rows[-1]["internal_id"]
+
+    @staticmethod
+    def get_index_source_id(row: MessageHistoryRow) -> str:
+        """Return the stable document source ID for a message-history row."""
+        turn_id = row.get("turn_id")
+        if turn_id:
+            return f"message_turn:{turn_id}"
+        return f"message_row:{row['internal_id']}"
+
+    def _build_history_query_conditions(
+        self,
+        query: MessageHistoryQuery,
+        *,
+        include_text_query: bool = True,
+    ) -> list[ColumnElement[bool]]:
+        """Build SQLAlchemy filter conditions for structured message-history queries."""
+        conditions: list[ColumnElement[bool]] = []
+        if query.scope == "all_accessible":
+            raise MessageHistoryAccessDeniedError(
+                "The all_accessible scope is not enabled for message history."
+            )
+        if query.scope == "current_conversation":
+            if not query.current_conversation_id:
+                raise MessageHistoryAccessDeniedError(
+                    "current_conversation scope requires the current conversation."
+                )
+            if (
+                query.conversation_id is not None
+                and query.conversation_id != query.current_conversation_id
+            ):
+                raise MessageHistoryAccessDeniedError(
+                    "current_conversation scope cannot query another conversation."
+                )
+            conditions.append(
+                message_history_table.c.conversation_id == query.current_conversation_id
+            )
+            if query.interface_type:
+                conditions.append(
+                    message_history_table.c.interface_type == query.interface_type
+                )
+        elif query.scope == "same_user":
+            if query.current_user_id:
+                user_access_conditions = [
+                    message_history_table.c.user_id == query.current_user_id
+                ]
+                if query.current_conversation_id and (
+                    query.conversation_id is None
+                    or query.conversation_id == query.current_conversation_id
+                ):
+                    user_access_conditions.append(
+                        and_(
+                            message_history_table.c.user_id.is_(None),
+                            message_history_table.c.conversation_id
+                            == query.current_conversation_id,
+                        )
+                    )
+                conditions.append(or_(*user_access_conditions))
+                if query.conversation_id:
+                    conditions.append(
+                        message_history_table.c.conversation_id == query.conversation_id
+                    )
+            else:
+                if not query.current_conversation_id:
+                    raise MessageHistoryAccessDeniedError(
+                        "same_user scope requires a user_id or current conversation."
+                    )
+                if (
+                    query.conversation_id is not None
+                    and query.conversation_id != query.current_conversation_id
+                ):
+                    raise MessageHistoryAccessDeniedError(
+                        "same_user scope without a user_id cannot query another conversation."
+                    )
+                conditions.append(
+                    message_history_table.c.conversation_id
+                    == query.current_conversation_id
+                )
+            if query.interface_type:
+                conditions.append(
+                    message_history_table.c.interface_type == query.interface_type
+                )
+
+        if query.roles:
+            conditions.append(message_history_table.c.role.in_(query.roles))
+        if query.tool_names:
+            tool_name_conditions: list[ColumnElement[bool]] = [
+                message_history_table.c.tool_name.in_(query.tool_names)
+            ]
+            for tool_name in query.tool_names:
+                tool_name_conditions.append(
+                    sa_cast(message_history_table.c.tool_calls, String).contains(
+                        f'"name": "{tool_name}"'
+                    )
+                )
+            conditions.append(or_(*tool_name_conditions))
+        if query.start_time:
+            conditions.append(message_history_table.c.timestamp >= query.start_time)
+        if query.end_time:
+            conditions.append(message_history_table.c.timestamp <= query.end_time)
+        if query.has_attachments is True:
+            conditions.append(message_history_table.c.attachments.is_not(None))
+        elif query.has_attachments is False:
+            conditions.append(message_history_table.c.attachments.is_(None))
+        if query.has_error is True:
+            conditions.append(
+                or_(
+                    message_history_table.c.role == "error",
+                    message_history_table.c.error_traceback.is_not(None),
+                )
+            )
+        elif query.has_error is False:
+            conditions.append(
+                and_(
+                    message_history_table.c.role != "error",
+                    message_history_table.c.error_traceback.is_(None),
+                )
+            )
+
+        if query.processing_profile_id != "*":
+            if query.processing_profile_id is None:
+                conditions.append(
+                    message_history_table.c.processing_profile_id.is_(None)
+                )
+            else:
+                conditions.append(
+                    message_history_table.c.processing_profile_id
+                    == query.processing_profile_id
+                )
+
+        if query.subconversation_id != "*":
+            if query.subconversation_id is None:
+                conditions.append(message_history_table.c.subconversation_id.is_(None))
+            else:
+                conditions.append(
+                    message_history_table.c.subconversation_id
+                    == query.subconversation_id
+                )
+
+        if include_text_query and query.query:
+            if self._db.engine.dialect.name == "postgresql":
+                postgres_text_query = sql_func.plainto_tsquery("english", query.query)
+                like_pattern = f"%{query.query.lower()}%"
+                conditions.append(
+                    or_(
+                        sql_func.to_tsvector(
+                            "english",
+                            sql_func.coalesce(message_history_table.c.content, ""),
+                        ).op("@@")(postgres_text_query),
+                        sql_func.to_tsvector(
+                            "english",
+                            sql_func.coalesce(
+                                sa_cast(message_history_table.c.tool_calls, String),
+                                "",
+                            ),
+                        ).op("@@")(postgres_text_query),
+                        sql_func.lower(message_history_table.c.tool_name).like(
+                            like_pattern
+                        ),
+                        sql_func.lower(
+                            sa_cast(message_history_table.c.tool_calls, String)
+                        ).like(like_pattern),
+                    )
+                )
+            else:
+                like_pattern = f"%{query.query.lower()}%"
+                conditions.append(
+                    or_(
+                        sql_func.lower(message_history_table.c.content).like(
+                            like_pattern
+                        ),
+                        sql_func.lower(message_history_table.c.tool_name).like(
+                            like_pattern
+                        ),
+                        sql_func.lower(
+                            sa_cast(message_history_table.c.tool_calls, String)
+                        ).like(like_pattern),
+                    )
+                )
+
+        return conditions
+
+    @staticmethod
+    def summarize_message_row(row: MessageHistoryRow) -> MessageHistorySummary:
+        """Convert a message row into compact JSON-safe metadata for tools."""
+        tool_calls = row.get("tool_calls")
+        summarized_tool_calls: list[MessageHistoryToolCallSummary] = []
+        if isinstance(tool_calls, list):
+            for tool_call in tool_calls:
+                if isinstance(tool_call, ToolCallItem):
+                    summarized_tool_calls.append({
+                        "id": tool_call.id,
+                        "name": tool_call.function.name,
+                        "arguments": tool_call.function.arguments,
+                    })
+
+        attachments = row.get("attachments")
+        attachment_count = len(attachments) if isinstance(attachments, list) else 0
+        return {
+            "message_id": row["internal_id"],
+            "interface_type": row["interface_type"],
+            "conversation_id": row["conversation_id"],
+            "turn_id": row["turn_id"],
+            "thread_root_id": row["thread_root_id"],
+            "timestamp": row["timestamp"].isoformat(),
+            "role": row["role"],
+            "user_id": row["user_id"],
+            "processing_profile_id": row["processing_profile_id"],
+            "subconversation_id": row["subconversation_id"],
+            "content": row["content"],
+            "tool_name": row["tool_name"],
+            "tool_call_id": row["tool_call_id"],
+            "tool_calls": summarized_tool_calls,
+            "has_error": row["role"] == "error" or bool(row["error_traceback"]),
+            "has_attachments": attachment_count > 0,
+            "attachment_count": attachment_count,
+        }
 
     async def add_message(
         self,
@@ -271,11 +882,34 @@ class MessageHistoryRepository(BaseRepository):
 
                     self._db.on_commit(notify_listeners)
 
-            return internal_id
-
         except SQLAlchemyError as e:
             self._logger.error(f"Failed to add message to history: {e}", exc_info=True)
             return None
+
+        await self._enqueue_message_history_indexing_task(
+            internal_id=internal_id,
+            turn_id=turn_id,
+        )
+        return internal_id
+
+    async def _enqueue_message_history_indexing_task(
+        self,
+        *,
+        internal_id: int,
+        turn_id: str | None,
+    ) -> None:
+        """Queue indexing for newly persisted message history."""
+        payload: dict[str, object] = {"limit": 50}
+        if turn_id:
+            payload["turn_id"] = turn_id
+        else:
+            payload["internal_id"] = internal_id
+
+        await self._db.tasks.enqueue(
+            task_id=f"index_message_history_{uuid.uuid4()}",
+            task_type="index_message_history_batch",
+            payload=payload,
+        )
 
     async def get_recent(
         self,

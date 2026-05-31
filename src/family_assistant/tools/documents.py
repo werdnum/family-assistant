@@ -53,6 +53,8 @@ class EmailAttachmentSummary(TypedDict):
 
 logger = logging.getLogger(__name__)
 
+_SEARCH_DOCUMENTS_EXCLUDED_SOURCE_TYPES = ["message_history"]
+
 
 # Tool Definitions
 DOCUMENT_TOOLS_DEFINITION: list[ToolDefinition] = [
@@ -320,6 +322,7 @@ async def search_documents_tool(
             keywords=query,  # Use same text for keywords in this simplified tool
             embedding_model=embedding_model,
             source_types=source_types or [],  # Use empty list if None
+            excluded_source_types=_SEARCH_DOCUMENTS_EXCLUDED_SOURCE_TYPES,
             embedding_types=embedding_types or [],  # Use empty list if None
             limit=limit,
             visibility_grants=exec_context.visibility_grants,

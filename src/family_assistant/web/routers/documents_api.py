@@ -20,6 +20,9 @@ from sqlalchemy import select
 from sqlalchemy.sql import functions as func
 
 from family_assistant.indexing.ingestion import process_document_ingestion_request
+from family_assistant.indexing.message_history_indexer import (
+    MESSAGE_HISTORY_SOURCE_TYPE,
+)
 from family_assistant.storage.context import DatabaseContext
 from family_assistant.storage.vector import DocumentRecord, get_document_by_id
 from family_assistant.web.dependencies import get_db
@@ -30,6 +33,10 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 documents_api_router = APIRouter()
+
+
+def _is_public_document(record: DocumentRecord) -> bool:
+    return record.source_type != MESSAGE_HISTORY_SOURCE_TYPE
 
 
 class DocumentModel(BaseModel):
@@ -69,6 +76,7 @@ async def list_documents(
             DocumentRecord.added_at,
             DocumentRecord.doc_metadata,
         )
+        .where(DocumentRecord.source_type != MESSAGE_HISTORY_SOURCE_TYPE)
         .order_by(DocumentRecord.added_at.desc())
         .limit(limit)
         .offset(offset)
@@ -77,7 +85,11 @@ async def list_documents(
         stmt = stmt.where(DocumentRecord.source_type == source_type)
     rows = await db_context.fetch_all(stmt)
     documents = [DocumentModel(**row) for row in rows]
-    total_stmt = select(func.count().label("count")).select_from(DocumentRecord)
+    total_stmt = (
+        select(func.count().label("count"))
+        .select_from(DocumentRecord)
+        .where(DocumentRecord.source_type != MESSAGE_HISTORY_SOURCE_TYPE)
+    )
     if source_type:
         total_stmt = total_stmt.where(DocumentRecord.source_type == source_type)
     total_row = await db_context.fetch_one(total_stmt)
@@ -91,7 +103,7 @@ async def get_document(
 ) -> dict:
     """Get a document by ID with detailed information including embeddings."""
     record = await get_document_by_id(db_context, document_id)
-    if not record:
+    if not record or not _is_public_document(record):
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Document not found")
 
     # Prepare embeddings data
@@ -184,6 +196,10 @@ async def reindex_document(
     """
     API endpoint to re-index a document.
     """
+    record = await get_document_by_id(db_context, document_id)
+    if not record or not _is_public_document(record):
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Document not found")
+
     await db_context.tasks.enqueue(
         task_id=f"reindex_document_{document_id}_{uuid.uuid4()}",
         task_type="reindex_document",

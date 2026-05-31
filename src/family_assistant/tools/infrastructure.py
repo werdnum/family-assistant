@@ -11,12 +11,15 @@ import copy
 import inspect
 import json
 import logging
+import re
 import uuid
 from typing import (
     TYPE_CHECKING,
     Any,
     Protocol,
     cast,
+    get_args,
+    get_origin,
     get_type_hints,
     runtime_checkable,
 )
@@ -43,6 +46,23 @@ if TYPE_CHECKING:
     from family_assistant.embeddings import EmbeddingGenerator
 
 logger = logging.getLogger(__name__)
+
+
+def _annotation_contains_type_name(annotation: object, type_name: str) -> bool:
+    """Return whether an annotation or its union args include a named type."""
+    if isinstance(annotation, str):
+        identifiers = re.findall(r"\b[A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*\b", annotation)
+        return any(
+            identifier == type_name or identifier.endswith(f".{type_name}")
+            for identifier in identifiers
+        )
+    if getattr(annotation, "__name__", None) == type_name:
+        return True
+    if get_origin(annotation) is None:
+        return False
+    return any(
+        _annotation_contains_type_name(arg, type_name) for arg in get_args(annotation)
+    )
 
 
 def translate_attachment_schemas_for_llm(
@@ -465,6 +485,7 @@ class LocalToolsProvider:
             needs_exec_context = False
             needs_db_context = False
             needs_embedding_generator = False
+            requires_embedding_generator = False
             needs_calendar_config = False
 
             for param_name, param in sig.parameters.items():
@@ -503,17 +524,23 @@ class LocalToolsProvider:
 
                 elif param_name == "embedding_generator":
                     # Check for EmbeddingGenerator by name since we can't import it
-                    if (
-                        hasattr(annotation_to_check, "__name__")
-                        and annotation_to_check.__name__ == "EmbeddingGenerator"
+                    if _annotation_contains_type_name(
+                        annotation_to_check,
+                        "EmbeddingGenerator",
                     ):
                         needs_embedding_generator = True
+                        requires_embedding_generator = (
+                            param.default is inspect.Parameter.empty
+                        )
                     # Also check for string annotation
                     elif (
                         isinstance(param.annotation, str)
                         and param.annotation == "EmbeddingGenerator"
                     ):
                         needs_embedding_generator = True
+                        requires_embedding_generator = (
+                            param.default is inspect.Parameter.empty
+                        )
                         logger.debug(
                             f"Identified 'embedding_generator' for {callable_func.__name__} via string annotation."
                         )
@@ -553,7 +580,7 @@ class LocalToolsProvider:
             if needs_embedding_generator:
                 if self._embedding_generator:
                     call_args["embedding_generator"] = self._embedding_generator
-                else:
+                elif requires_embedding_generator:
                     logger.error(
                         f"Tool '{name}' requires an embedding generator, but none was provided to LocalToolsProvider."
                     )
