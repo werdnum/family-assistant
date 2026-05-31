@@ -494,6 +494,12 @@ various tasks with dark mode support and mobile optimization.
     ![History Page](../../screenshots/desktop/history.png) *The History page shows past
     conversations with filtering and search options*
 
+  - **Asking About Past Conversations:** You can ask the assistant to search older conversation
+    history directly, such as "what did I say about passports last month?" or "when did you last add
+    a calendar event for me?" The assistant can search exact fields like dates, roles, tools,
+    attachments, and errors, and can also use semantic search for fuzzy references. Results are
+    scoped conservatively to your own history and the current processing context.
+
   - **Viewing Background Tasks:** See a log of tasks the assistant has performed automatically in
     the background (like fetching calendar updates or future scheduled actions). You can also
     manually retry failed tasks from this page.

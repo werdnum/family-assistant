@@ -8,13 +8,20 @@ from __future__ import annotations
 
 import json
 import logging
-from datetime import UTC, datetime, timedelta
-from typing import TYPE_CHECKING
+from datetime import UTC, datetime
+from typing import TYPE_CHECKING, Literal
 
 from family_assistant.llm.messages import AssistantMessage, MessageReasoningInfo
 from family_assistant.scripting.apis.attachments import ScriptAttachment
+from family_assistant.storage.vector_search import VectorSearchQuery, query_vector_store
+from family_assistant.tools.types import ToolResult
 
 if TYPE_CHECKING:
+    from family_assistant.embeddings import EmbeddingGenerator
+    from family_assistant.storage.repositories.message_history import (
+        MessageHistoryQuery,
+    )
+    from family_assistant.storage.types import MessageHistoryRow
     from family_assistant.tools.types import ToolDefinition, ToolExecutionContext
 
 logger = logging.getLogger(__name__)
@@ -27,31 +34,86 @@ COMMUNICATION_TOOLS_DEFINITION: list[ToolDefinition] = [
         "function": {
             "name": "get_message_history",
             "description": (
-                "Retrieve past messages from the current conversation history. Use this if you need context from earlier in the conversation that might not be in the default short-term history window.\n\n"
-                "Returns: A formatted string containing the message history with timestamps, roles, and content. "
-                "Each message is formatted as '[timestamp] Role: content'. Tool calls are shown as '-> Called Tool: name(args) -> Response: response'. "
-                "If no messages are found, returns 'No message history found matching the specified criteria.'. "
-                "On error, returns 'Error: Failed to retrieve message history. [error details]'."
+                "Structured and semantic lookup against past conversation history. Use structured mode for exact filters like dates, roles, tools, attachments, or errors; semantic mode for fuzzy recall; and hybrid mode when both are useful.\n\n"
+                "Returns: ToolResult JSON with query metadata and compact message summaries. Each result includes stable message_id, timestamp, role, content, conversation metadata, tool metadata, and optional neighboring context. "
+                "If no messages are found, returns an empty results list. On denied broadened scope or other errors, returns JSON with an error field."
             ),
             "parameters": {
                 "type": "object",
                 "properties": {
+                    "query": {
+                        "type": "string",
+                        "description": "Optional natural language or keyword text to search for.",
+                    },
+                    "search_mode": {
+                        "type": "string",
+                        "enum": ["structured", "semantic", "hybrid"],
+                        "description": "Use structured for exact filters, semantic for fuzzy recall, or hybrid for both.",
+                        "default": "structured",
+                    },
+                    "conversation_id": {
+                        "type": "string",
+                        "description": "Optional conversation filter. Narrows results to one conversation.",
+                    },
+                    "scope": {
+                        "type": "string",
+                        "enum": [
+                            "same_user",
+                            "current_conversation",
+                            "all_accessible",
+                        ],
+                        "description": "Search scope. Defaults to same_user when user identity is available. all_accessible is denied unless policy enables it.",
+                        "default": "same_user",
+                    },
+                    "roles": {
+                        "type": "array",
+                        "items": {
+                            "type": "string",
+                            "enum": ["user", "assistant", "tool", "system", "error"],
+                        },
+                        "description": "Optional role filters.",
+                    },
+                    "tool_names": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "Optional tool names to find in tool responses or assistant tool calls.",
+                    },
+                    "start_time": {
+                        "type": "string",
+                        "description": "Optional inclusive ISO datetime lower bound.",
+                    },
+                    "end_time": {
+                        "type": "string",
+                        "description": "Optional inclusive ISO datetime upper bound.",
+                    },
+                    "has_attachments": {
+                        "type": "boolean",
+                        "description": "Optional filter for messages with or without attachments.",
+                    },
+                    "has_error": {
+                        "type": "boolean",
+                        "description": "Optional filter for error messages or tool/message rows with tracebacks.",
+                    },
+                    "processing_profile_id": {
+                        "type": "string",
+                        "description": "Optional processing profile filter. Omit to use the current profile. Use '*' only when explicitly broadening profile scope is appropriate.",
+                    },
+                    "subconversation_id": {
+                        "type": "string",
+                        "description": "Optional subconversation filter. Omit to use the current subconversation/main conversation. Use '*' only when explicitly broadening subconversation scope is appropriate.",
+                    },
                     "limit": {
                         "type": "integer",
-                        "description": (
-                            "Optional. The maximum number of messages to retrieve (most recent first). Default is 10."
-                        ),
-                        "default": 10,
+                        "description": "Optional maximum number of results. Default is 20, maximum is 100.",
+                        "default": 20,
                     },
-                    "max_age_hours": {
+                    "include_context": {
                         "type": "integer",
-                        "description": (
-                            "Optional. Retrieve messages only up to this many hours old. Default is 24."
-                        ),
-                        "default": 24,
+                        "description": "Optional number of neighboring messages per side to include for each result. Default is 0, maximum is 10.",
+                        "default": 0,
                     },
                 },
-                "required": [],  # No parameters are strictly required, defaults will be used
+                "required": [],
             },
         },
     },
@@ -121,84 +183,212 @@ COMMUNICATION_TOOLS_DEFINITION: list[ToolDefinition] = [
 # Tool Implementations
 async def get_message_history_tool(
     exec_context: ToolExecutionContext,
-    limit: int = 10,
-    max_age_hours: int = 24,
-) -> str:
+    embedding_generator: EmbeddingGenerator | None = None,
+    query: str | None = None,
+    search_mode: Literal["structured", "semantic", "hybrid"] = "structured",
+    conversation_id: str | None = None,
+    scope: Literal["same_user", "current_conversation", "all_accessible"] = "same_user",
+    roles: list[str] | None = None,
+    tool_names: list[str] | None = None,
+    start_time: str | None = None,
+    end_time: str | None = None,
+    has_attachments: bool | None = None,
+    has_error: bool | None = None,
+    processing_profile_id: str | None = None,
+    subconversation_id: str | None = None,
+    limit: int = 20,
+    include_context: int = 0,
+) -> ToolResult:
     """
-    Retrieves recent message history for the current chat, with optional filters.
+    Query persisted message history with structured filters and optional semantic search.
 
     Args:
         exec_context: The execution context containing chat_id and db_context.
-        limit: Maximum number of messages to retrieve (default: 10).
-        max_age_hours: Maximum age of messages in hours (default: 24).
+        embedding_generator: Optional embedding generator for semantic/hybrid search.
+        query: Natural language or keyword query.
+        search_mode: structured, semantic, or hybrid.
+        conversation_id: Optional conversation filter.
+        scope: Access scope.
+        roles: Optional role filters.
+        tool_names: Optional tool name filters.
+        start_time: Optional inclusive ISO datetime lower bound.
+        end_time: Optional inclusive ISO datetime upper bound.
+        has_attachments: Optional attachment presence filter.
+        has_error: Optional error presence filter.
+        processing_profile_id: Optional profile filter; defaults to current profile.
+        subconversation_id: Optional subconversation filter; defaults to current value.
+        limit: Maximum number of results.
+        include_context: Number of neighboring messages per side to include.
 
     Returns:
-        A formatted string containing the message history or an error message.
+        Structured tool result containing compact message history results.
     """
-    # get_recent_history now accessed via db_context.message_history.get_recent
+    from family_assistant.storage.repositories.message_history import (  # noqa: PLC0415
+        MessageHistoryAccessDeniedError,
+        MessageHistoryQuery,
+    )
 
-    # Use new identifiers
-    interface_type = exec_context.interface_type
-    conversation_id = exec_context.conversation_id
     db_context = exec_context.db_context
-    logger.info(
-        f"Executing get_message_history_tool for {interface_type}:{conversation_id} (limit={limit}, max_age_hours={max_age_hours})"
+    effective_profile_id = (
+        exec_context.processing_profile_id
+        if processing_profile_id is None
+        else processing_profile_id
+    )
+    effective_subconversation_id = (
+        exec_context.subconversation_id
+        if subconversation_id is None
+        else subconversation_id
+    )
+    history_query = MessageHistoryQuery(
+        query=query,
+        search_mode=search_mode,
+        conversation_id=conversation_id,
+        scope=scope,
+        roles=tuple(roles or ()),
+        tool_names=tuple(tool_names or ()),
+        start_time=_parse_optional_datetime(start_time, "start_time"),
+        end_time=_parse_optional_datetime(end_time, "end_time"),
+        has_attachments=has_attachments,
+        has_error=has_error,
+        processing_profile_id=effective_profile_id,
+        subconversation_id=effective_subconversation_id,
+        limit=limit,
+        include_context=include_context,
+        interface_type=exec_context.interface_type,
+        current_conversation_id=exec_context.conversation_id,
+        current_user_id=exec_context.user_id,
     )
 
     try:
-        max_age_delta = timedelta(hours=max_age_hours)
-        history_messages = await db_context.message_history.get_recent_with_metadata(
-            interface_type=interface_type,  # Pass interface type
-            conversation_id=conversation_id,  # Pass conversation ID
-            limit=limit,
-            max_age=max_age_delta,
+        rows = await _execute_message_history_query(
+            exec_context=exec_context,
+            embedding_generator=embedding_generator,
+            history_query=history_query,
+        )
+        data = {
+            "search_mode": search_mode,
+            "scope": scope,
+            "query": query,
+            "result_count": len(rows),
+            "results": await db_context.message_history.hydrate_history_results(
+                rows,
+                include_context=include_context,
+            ),
+        }
+        return ToolResult(data=data)
+    except MessageHistoryAccessDeniedError as exc:
+        return ToolResult(
+            data={
+                "error": "access_denied",
+                "message": str(exc),
+                "results": [],
+            }
+        )
+    except ValueError as exc:
+        return ToolResult(
+            data={
+                "error": "invalid_request",
+                "message": str(exc),
+                "results": [],
+            }
+        )
+    except Exception as exc:
+        logger.error("Error executing get_message_history_tool: %s", exc, exc_info=True)
+        return ToolResult(
+            data={
+                "error": "query_failed",
+                "message": f"Failed to retrieve message history. {exc}",
+                "results": [],
+            }
         )
 
-        if not history_messages:
-            return "No message history found matching the specified criteria."
 
-        # Format the history for the LLM
-        local_tz = exec_context.timezone
-        formatted_history = ["Retrieved message history:"]
-        for msg in history_messages:
-            role = msg.get("role", "unknown")
-            content = msg.get("content", "")
-            timestamp = msg.get("timestamp")
-            if timestamp:
-                if timestamp.tzinfo is None:
-                    timestamp = timestamp.replace(tzinfo=UTC)
-                time_str = timestamp.astimezone(local_tz).strftime(
-                    "%Y-%m-%d %H:%M:%S %Z"
-                )
-            else:
-                time_str = "Unknown Time"
-
-            # Basic formatting, include full content
-            formatted_history.append(f"[{time_str}] {role.capitalize()}: {content}")
-
-            # Include tool call info if present (simplified)
-            if role == "assistant" and msg.get(
-                "tool_calls"
-            ):  # Use correct key 'tool_calls'
-                tool_calls = msg.get("tool_calls_info_raw", [])
-                if isinstance(tool_calls, list):
-                    for call in tool_calls:
-                        if isinstance(call, dict):
-                            func_name = call.get("function_name", "unknown_tool")
-                            args = call.get("arguments", {})
-                            resp = call.get("response_content", "")
-                            formatted_history.append(
-                                f"  -> Called Tool: {func_name}({json.dumps(args)}) -> Response: {resp}"
-                            )  # Include full response
-
-        return "\n".join(formatted_history)
-
-    except Exception as e:
-        logger.error(
-            f"Error executing get_message_history_tool for {interface_type}:{conversation_id}: {e}",
-            exc_info=True,
+async def _execute_message_history_query(
+    *,
+    exec_context: ToolExecutionContext,
+    embedding_generator: EmbeddingGenerator | None,
+    history_query: MessageHistoryQuery,
+) -> list[MessageHistoryRow]:
+    if history_query.search_mode == "structured":
+        return await exec_context.db_context.message_history.query_history(
+            history_query
         )
-        return f"Error: Failed to retrieve message history. {e}"
+    if not history_query.query:
+        raise ValueError("query is required for semantic or hybrid message search.")
+    semantic_rows = await _semantic_message_history_rows(
+        exec_context=exec_context,
+        embedding_generator=embedding_generator,
+        history_query=history_query,
+    )
+    if history_query.search_mode == "semantic":
+        return semantic_rows
+
+    structured_rows = await exec_context.db_context.message_history.query_history(
+        history_query
+    )
+    rows_by_id = {row["internal_id"]: row for row in semantic_rows}
+    for row in structured_rows:
+        rows_by_id.setdefault(row["internal_id"], row)
+    return list(rows_by_id.values())[: max(min(history_query.limit, 100), 1)]
+
+
+async def _semantic_message_history_rows(
+    *,
+    exec_context: ToolExecutionContext,
+    embedding_generator: EmbeddingGenerator | None,
+    history_query: MessageHistoryQuery,
+) -> list[MessageHistoryRow]:
+    if embedding_generator is None:
+        raise ValueError("Semantic message-history search requires embeddings.")
+    embedding_result = await embedding_generator.generate_embeddings([
+        history_query.query or ""
+    ])
+    if not embedding_result.embeddings:
+        raise ValueError("Failed to generate embedding for message-history query.")
+
+    search_query = VectorSearchQuery(
+        search_type="hybrid",
+        semantic_query=history_query.query,
+        keywords=history_query.query,
+        embedding_model=embedding_result.model_name,
+        source_types=["message_history"],
+        embedding_types=["message_turn"],
+        limit=max(min(history_query.limit, 100), 1),
+        visibility_grants=exec_context.visibility_grants,
+    )
+    search_results = await query_vector_store(
+        db_context=exec_context.db_context,
+        query=search_query,
+        query_embedding=embedding_result.embeddings[0],
+    )
+    turn_ids: list[str] = []
+    internal_ids: list[int] = []
+    for result in search_results:
+        source_id = result.get("source_id")
+        if not isinstance(source_id, str):
+            continue
+        if source_id.startswith("message_turn:"):
+            turn_ids.append(source_id.removeprefix("message_turn:"))
+        elif source_id.startswith("message_row:"):
+            try:
+                internal_ids.append(int(source_id.removeprefix("message_row:")))
+            except ValueError:
+                continue
+
+    return await exec_context.db_context.message_history.get_rows_by_search_references(
+        turn_ids=tuple(turn_ids),
+        internal_ids=tuple(internal_ids),
+        access_query=history_query,
+    )
+
+
+def _parse_optional_datetime(value: str | None, field_name: str) -> datetime | None:
+    if value is None:
+        return None
+    try:
+        return datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError as exc:
+        raise ValueError(f"{field_name} must be an ISO datetime.") from exc
 
 
 async def send_message_to_user_tool(
