@@ -413,10 +413,6 @@ def _message_history_metadata_filters(
         if conversation_id:
             filters.append(MetadataFilter(key="conversation_id", value=conversation_id))
     elif history_query.scope == "same_user":
-        if history_query.current_user_id:
-            filters.append(
-                MetadataFilter(key="user_id", value=history_query.current_user_id)
-            )
         conversation_id = history_query.conversation_id
         if conversation_id:
             filters.append(MetadataFilter(key="conversation_id", value=conversation_id))

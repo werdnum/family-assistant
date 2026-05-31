@@ -13,7 +13,12 @@ from family_assistant.embeddings import MockEmbeddingGenerator
 from family_assistant.indexing.message_history_indexer import (
     handle_index_message_history_batch,
 )
-from family_assistant.llm.messages import AssistantMessage, ToolMessage, UserMessage
+from family_assistant.llm.messages import (
+    AssistantMessage,
+    SystemMessage,
+    ToolMessage,
+    UserMessage,
+)
 from family_assistant.llm.tool_call import ToolCallFunction, ToolCallItem
 from family_assistant.storage.context import DatabaseContext
 from family_assistant.storage.repositories.message_history import (
@@ -281,11 +286,9 @@ async def test_semantic_history_search_prefilters_access_before_vector_limit(
     assert captured_query is not None
     assert captured_query.limit == 1
     assert captured_query.source_ids == ["message_turn:turn-current-user"]
-    metadata_filters = {
-        metadata_filter.key: metadata_filter.value
-        for metadata_filter in captured_query.metadata_filters
-    }
-    assert metadata_filters["user_id"] == "user-a"
+    assert {
+        metadata_filter.key for metadata_filter in captured_query.metadata_filters
+    } == {"interface_type", "processing_profile_id"}
 
 
 @pytest.mark.asyncio
@@ -389,6 +392,41 @@ async def test_message_history_context_preserves_same_user_scope(
     assert [row["content"] for row in data["results"][0]["context"]] == [
         "My passport note"
     ]
+
+
+@pytest.mark.asyncio
+async def test_same_user_scope_includes_current_conversation_null_user_rows(
+    db_engine: AsyncEngine,
+) -> None:
+    """same_user can see system/callback rows without user IDs in the current chat."""
+    async with DatabaseContext(engine=db_engine) as db:
+        timestamp = datetime.now(UTC)
+        await db.message_history.add_message(
+            SystemMessage(content="Current callback reminder"),
+            interface_type="test",
+            conversation_id="current",
+            timestamp=timestamp,
+            processing_profile_id="default",
+        )
+        await db.message_history.add_message(
+            SystemMessage(content="Other callback reminder"),
+            interface_type="test",
+            conversation_id="other",
+            timestamp=timestamp + timedelta(seconds=1),
+            processing_profile_id="default",
+        )
+
+        rows = await db.message_history.query_history(
+            MessageHistoryQuery(
+                query="callback",
+                current_conversation_id="current",
+                current_user_id="user-a",
+                processing_profile_id="default",
+                limit=10,
+            )
+        )
+
+    assert [row["content"] for row in rows] == ["Current callback reminder"]
 
 
 @pytest.mark.asyncio

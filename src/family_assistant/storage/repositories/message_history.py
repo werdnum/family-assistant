@@ -199,9 +199,18 @@ class MessageHistoryRepository(BaseRepository):
             )
         if access_query is not None and access_query.scope == "same_user":
             if access_query.current_user_id:
-                base_conditions.append(
+                user_access_conditions: list[ColumnElement[bool]] = [
                     message_history_table.c.user_id == access_query.current_user_id
-                )
+                ]
+                if access_query.current_conversation_id == row["conversation_id"]:
+                    user_access_conditions.append(
+                        and_(
+                            message_history_table.c.user_id.is_(None),
+                            message_history_table.c.conversation_id
+                            == access_query.current_conversation_id,
+                        )
+                    )
+                base_conditions.append(or_(*user_access_conditions))
             elif (
                 access_query.current_conversation_id is None
                 or row["conversation_id"] != access_query.current_conversation_id
@@ -480,9 +489,21 @@ class MessageHistoryRepository(BaseRepository):
                 )
         elif query.scope == "same_user":
             if query.current_user_id:
-                conditions.append(
+                user_access_conditions = [
                     message_history_table.c.user_id == query.current_user_id
-                )
+                ]
+                if query.current_conversation_id and (
+                    query.conversation_id is None
+                    or query.conversation_id == query.current_conversation_id
+                ):
+                    user_access_conditions.append(
+                        and_(
+                            message_history_table.c.user_id.is_(None),
+                            message_history_table.c.conversation_id
+                            == query.current_conversation_id,
+                        )
+                    )
+                conditions.append(or_(*user_access_conditions))
                 if query.conversation_id:
                     conditions.append(
                         message_history_table.c.conversation_id == query.conversation_id
