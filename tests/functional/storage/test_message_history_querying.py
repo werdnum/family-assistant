@@ -22,6 +22,7 @@ from family_assistant.storage.repositories.message_history import (
 )
 from family_assistant.storage.vector import DocumentEmbeddingRecord, DocumentRecord
 from family_assistant.tools.communication import get_message_history_tool
+from family_assistant.tools.documents import search_documents_tool
 from family_assistant.tools.types import ToolExecutionContext
 
 if TYPE_CHECKING:
@@ -406,6 +407,66 @@ async def test_get_message_history_tool_returns_invalid_request_for_bad_datetime
     assert data["error"] == "invalid_request"
     assert data["message"] == "start_time must be an ISO datetime."
     assert data["results"] == []
+
+
+@pytest.mark.asyncio
+async def test_search_documents_excludes_message_history_source(
+    db_engine: AsyncEngine,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """General document search never searches message-history index entries."""
+    captured_query: VectorSearchQuery | None = None
+
+    async def fake_query_vector_store(
+        *,
+        db_context: DatabaseContext,
+        query: VectorSearchQuery,
+        query_embedding: list[float] | None = None,
+    ) -> list[dict[str, object]]:
+        nonlocal captured_query
+        _ = db_context, query_embedding
+        captured_query = query
+        return []
+
+    monkeypatch.setattr(
+        "family_assistant.tools.documents.query_vector_store",
+        fake_query_vector_store,
+    )
+
+    async with DatabaseContext(engine=db_engine) as db:
+        result = await search_documents_tool(
+            exec_context=_build_exec_context(db),
+            embedding_generator=MockEmbeddingGenerator(dimensions=3),
+            query="passport",
+        )
+
+    assert result == "No relevant documents found matching the query and filters."
+    assert captured_query is not None
+    assert captured_query.excluded_source_types == ["message_history"]
+
+
+@pytest.mark.asyncio
+async def test_add_message_surfaces_index_enqueue_failures(
+    db_engine: AsyncEngine,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Message writes fail instead of silently losing semantic indexing."""
+
+    async def fail_enqueue(*args: object, **kwargs: object) -> None:
+        _ = args, kwargs
+        raise RuntimeError("queue unavailable")
+
+    with pytest.raises(RuntimeError, match="queue unavailable"):
+        async with DatabaseContext(engine=db_engine) as db:
+            monkeypatch.setattr(db.tasks, "enqueue", fail_enqueue)
+            await db.message_history.add_message(
+                UserMessage(content="Index me"),
+                interface_type="test",
+                conversation_id="current",
+                timestamp=datetime.now(UTC),
+                user_id="user-a",
+                processing_profile_id="default",
+            )
 
 
 @pytest.mark.asyncio

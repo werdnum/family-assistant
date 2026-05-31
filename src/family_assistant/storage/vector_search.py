@@ -45,6 +45,7 @@ class VectorSearchQuery:
     # Filters
     embedding_types: list[str] = field(default_factory=list)
     source_types: list[str] = field(default_factory=list)
+    excluded_source_types: list[str] = field(default_factory=list)
     source_ids: list[str] = field(default_factory=list)
     created_after: datetime | None = None  # Expect timezone-aware datetime
     created_before: datetime | None = None  # Expect timezone-aware datetime
@@ -165,6 +166,20 @@ async def query_vector_store(
                 query.source_types
             )  # Pass as list for ANY
             doc_where_clauses.append("d.source_type = ANY(:doc_source_types_array)")
+    if query.excluded_source_types:
+        if is_sqlite:
+            placeholders = ", ".join(
+                f":doc_excluded_source_type_{i}"
+                for i in range(len(query.excluded_source_types))
+            )
+            for i, value in enumerate(query.excluded_source_types):
+                params[f"doc_excluded_source_type_{i}"] = value
+            doc_where_clauses.append(f"d.source_type NOT IN ({placeholders})")
+        else:
+            params["doc_excluded_source_types_array"] = query.excluded_source_types
+            doc_where_clauses.append(
+                "NOT (d.source_type = ANY(:doc_excluded_source_types_array))"
+            )
     if query.source_ids:
         if is_sqlite:
             _build_in_clause_for_sqlite(

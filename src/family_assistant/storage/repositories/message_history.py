@@ -846,16 +846,15 @@ class MessageHistoryRepository(BaseRepository):
 
                     self._db.on_commit(notify_listeners)
 
-            await self._enqueue_message_history_indexing_task(
-                internal_id=internal_id,
-                turn_id=turn_id,
-            )
-
-            return internal_id
-
         except SQLAlchemyError as e:
             self._logger.error(f"Failed to add message to history: {e}", exc_info=True)
             return None
+
+        await self._enqueue_message_history_indexing_task(
+            internal_id=internal_id,
+            turn_id=turn_id,
+        )
+        return internal_id
 
     async def _enqueue_message_history_indexing_task(
         self,
@@ -863,26 +862,18 @@ class MessageHistoryRepository(BaseRepository):
         internal_id: int,
         turn_id: str | None,
     ) -> None:
-        """Queue best-effort indexing for newly persisted message history."""
+        """Queue indexing for newly persisted message history."""
         payload: dict[str, object] = {"limit": 50}
         if turn_id:
             payload["turn_id"] = turn_id
         else:
             payload["internal_id"] = internal_id
 
-        try:
-            await self._db.tasks.enqueue(
-                task_id=f"index_message_history_{uuid.uuid4()}",
-                task_type="index_message_history_batch",
-                payload=payload,
-            )
-        except Exception as exc:
-            self._logger.warning(
-                "Failed to enqueue message-history indexing for row %s: %s",
-                internal_id,
-                exc,
-                exc_info=True,
-            )
+        await self._db.tasks.enqueue(
+            task_id=f"index_message_history_{uuid.uuid4()}",
+            task_type="index_message_history_batch",
+            payload=payload,
+        )
 
     async def get_recent(
         self,
