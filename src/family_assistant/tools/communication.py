@@ -279,6 +279,7 @@ async def get_message_history_tool(
             "results": await db_context.message_history.hydrate_history_results(
                 rows,
                 include_context=include_context,
+                access_query=history_query,
             ),
         }
         return ToolResult(data=data)

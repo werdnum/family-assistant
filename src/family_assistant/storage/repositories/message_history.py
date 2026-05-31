@@ -145,6 +145,7 @@ class MessageHistoryRepository(BaseRepository):
         rows: list[MessageHistoryRow],
         *,
         include_context: int,
+        access_query: MessageHistoryQuery | None = None,
     ) -> list[MessageHistorySummary]:
         """Return compact result objects with optional neighboring context."""
         bounded_context = min(max(include_context, 0), _MAX_CONTEXT_MESSAGES_PER_SIDE)
@@ -153,7 +154,9 @@ class MessageHistoryRepository(BaseRepository):
             result = self.summarize_message_row(row)
             if bounded_context:
                 context_rows = await self.get_context_around_message(
-                    row, per_side=bounded_context
+                    row,
+                    per_side=bounded_context,
+                    access_query=access_query,
                 )
                 result["context"] = [
                     self.summarize_message_row(context_row)
@@ -167,6 +170,7 @@ class MessageHistoryRepository(BaseRepository):
         row: MessageHistoryRow,
         *,
         per_side: int,
+        access_query: MessageHistoryQuery | None = None,
     ) -> list[MessageHistoryRow]:
         """Fetch neighboring rows around a message within the same conversation boundary."""
         if per_side <= 0:
@@ -193,6 +197,18 @@ class MessageHistoryRepository(BaseRepository):
             base_conditions.append(
                 message_history_table.c.subconversation_id == subconversation_id
             )
+        if access_query is not None and access_query.scope == "same_user":
+            if access_query.current_user_id:
+                base_conditions.append(
+                    message_history_table.c.user_id == access_query.current_user_id
+                )
+            elif (
+                access_query.current_conversation_id is None
+                or row["conversation_id"] != access_query.current_conversation_id
+            ):
+                raise MessageHistoryAccessDeniedError(
+                    "same_user context requires a user_id or current conversation."
+                )
 
         timestamp = row["timestamp"]
         internal_id = row["internal_id"]
@@ -291,32 +307,36 @@ class MessageHistoryRepository(BaseRepository):
             )
         )
         rows = await self._db.fetch_all(stmt)
-        grouped_rows: dict[str, MessageHistoryRow] = {}
+        grouped_turn_rows: dict[str, list[MessageHistoryRow]] = {}
+        grouped_internal_rows: dict[int, MessageHistoryRow] = {}
         for db_row in rows:
             message_row = self._process_message_row_as_dict(db_row)
-            key = (
-                f"turn:{message_row['turn_id']}"
-                if message_row.get("turn_id")
-                else f"row:{message_row['internal_id']}"
-            )
-            grouped_rows.setdefault(key, message_row)
+            turn_id = message_row.get("turn_id")
+            if turn_id:
+                grouped_turn_rows.setdefault(turn_id, []).append(message_row)
+            else:
+                grouped_internal_rows.setdefault(
+                    message_row["internal_id"],
+                    message_row,
+                )
 
         ordered_rows: list[MessageHistoryRow] = []
-        seen_keys: set[str] = set()
+        seen_internal_ids: set[int] = set()
         for turn_id in turn_ids:
-            key = f"turn:{turn_id}"
-            if key in grouped_rows and key not in seen_keys:
-                ordered_rows.append(grouped_rows[key])
-                seen_keys.add(key)
+            for message_row in grouped_turn_rows.get(turn_id, []):
+                internal_id = message_row["internal_id"]
+                if internal_id not in seen_internal_ids:
+                    ordered_rows.append(message_row)
+                    seen_internal_ids.add(internal_id)
         for internal_id in internal_ids:
-            key = f"row:{internal_id}"
-            if key in grouped_rows and key not in seen_keys:
-                ordered_rows.append(grouped_rows[key])
-                seen_keys.add(key)
+            if (
+                internal_id in grouped_internal_rows
+                and internal_id not in seen_internal_ids
+            ):
+                ordered_rows.append(grouped_internal_rows[internal_id])
+                seen_internal_ids.add(internal_id)
 
-        return ordered_rows[
-            : min(max(access_query.limit, 1), _MAX_MESSAGE_HISTORY_LIMIT)
-        ]
+        return ordered_rows[:_MAX_MESSAGE_HISTORY_LIMIT]
 
     async def get_index_source_ids_for_query(
         self,

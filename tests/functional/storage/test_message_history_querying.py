@@ -288,6 +288,109 @@ async def test_semantic_history_search_prefilters_access_before_vector_limit(
 
 
 @pytest.mark.asyncio
+async def test_semantic_history_search_returns_rows_from_matched_turn(
+    db_engine: AsyncEngine,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Turn-level semantic hits surface the turn rows, not only the first row."""
+    async with DatabaseContext(engine=db_engine) as db:
+        timestamp = datetime.now(UTC)
+        await _store_user_message(
+            db,
+            conversation_id="current",
+            user_id="user-a",
+            content="Where did we put the travel documents?",
+            timestamp=timestamp,
+            turn_id="turn-travel-docs",
+        )
+        await db.message_history.add_message(
+            AssistantMessage(content="The passports are in the blue folder."),
+            interface_type="test",
+            conversation_id="current",
+            timestamp=timestamp + timedelta(seconds=1),
+            turn_id="turn-travel-docs",
+            user_id="user-a",
+            processing_profile_id="default",
+        )
+
+        async def fake_query_vector_store(
+            *,
+            db_context: DatabaseContext,
+            query: VectorSearchQuery,
+            query_embedding: list[float] | None = None,
+        ) -> list[dict[str, object]]:
+            _ = db_context, query, query_embedding
+            return [{"source_id": "message_turn:turn-travel-docs"}]
+
+        monkeypatch.setattr(
+            "family_assistant.tools.communication.query_vector_store",
+            fake_query_vector_store,
+        )
+
+        result = await get_message_history_tool(
+            exec_context=_build_exec_context(
+                db,
+                embedding_generator=MockEmbeddingGenerator(dimensions=3),
+            ),
+            query="passports",
+            search_mode="semantic",
+            limit=1,
+        )
+
+    data = cast("dict[str, Any]", result.data)
+    assert "error" not in data, data
+    assert [row["content"] for row in data["results"]] == [
+        "Where did we put the travel documents?",
+        "The passports are in the blue folder.",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_message_history_context_preserves_same_user_scope(
+    db_engine: AsyncEngine,
+) -> None:
+    """Context hydration does not leak neighboring rows from other users."""
+    async with DatabaseContext(engine=db_engine) as db:
+        timestamp = datetime.now(UTC)
+        await _store_user_message(
+            db,
+            conversation_id="shared",
+            user_id="user-b",
+            content="Other user's previous message",
+            timestamp=timestamp,
+        )
+        await _store_user_message(
+            db,
+            conversation_id="shared",
+            user_id="user-a",
+            content="My passport note",
+            timestamp=timestamp + timedelta(seconds=1),
+        )
+        await _store_user_message(
+            db,
+            conversation_id="shared",
+            user_id="user-b",
+            content="Other user's next message",
+            timestamp=timestamp + timedelta(seconds=2),
+        )
+
+        result = await get_message_history_tool(
+            exec_context=_build_exec_context(db),
+            query="passport",
+            conversation_id="shared",
+            include_context=2,
+        )
+
+    data = cast("dict[str, Any]", result.data)
+    assert "error" not in data, data
+    assert data["result_count"] == 1
+    assert data["results"][0]["content"] == "My passport note"
+    assert [row["content"] for row in data["results"][0]["context"]] == [
+        "My passport note"
+    ]
+
+
+@pytest.mark.asyncio
 async def test_get_message_history_tool_returns_invalid_request_for_bad_datetime(
     db_engine: AsyncEngine,
 ) -> None:
