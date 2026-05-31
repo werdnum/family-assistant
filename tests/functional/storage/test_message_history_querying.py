@@ -605,6 +605,37 @@ async def test_local_tools_provider_injects_embedding_generator_for_history_tool
 
 
 @pytest.mark.asyncio
+async def test_local_tools_provider_allows_structured_history_without_embeddings(
+    db_engine: AsyncEngine,
+) -> None:
+    """Optional embedding dependencies do not block structured history queries."""
+    async with DatabaseContext(engine=db_engine) as db:
+        await _store_user_message(
+            db,
+            conversation_id="current",
+            user_id="user-a",
+            content="The passports are in the blue folder",
+            timestamp=datetime.now(UTC),
+        )
+        provider = LocalToolsProvider(
+            definitions=COMMUNICATION_TOOLS_DEFINITION,
+            implementations={"get_message_history": get_message_history_tool},
+        )
+
+        result = await provider.execute_tool(
+            "get_message_history",
+            {"query": "passport", "search_mode": "structured"},
+            _build_exec_context(db),
+        )
+
+    assert isinstance(result, ToolResult)
+    data = cast("dict[str, Any]", result.data)
+    assert "error" not in data, data
+    assert data["result_count"] == 1
+    assert data["results"][0]["content"] == "The passports are in the blue folder"
+
+
+@pytest.mark.asyncio
 async def test_add_message_surfaces_index_enqueue_failures(
     db_engine: AsyncEngine,
     monkeypatch: pytest.MonkeyPatch,

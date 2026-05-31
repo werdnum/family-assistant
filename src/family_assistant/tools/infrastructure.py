@@ -485,6 +485,7 @@ class LocalToolsProvider:
             needs_exec_context = False
             needs_db_context = False
             needs_embedding_generator = False
+            requires_embedding_generator = False
             needs_calendar_config = False
 
             for param_name, param in sig.parameters.items():
@@ -528,12 +529,18 @@ class LocalToolsProvider:
                         "EmbeddingGenerator",
                     ):
                         needs_embedding_generator = True
+                        requires_embedding_generator = (
+                            param.default is inspect.Parameter.empty
+                        )
                     # Also check for string annotation
                     elif (
                         isinstance(param.annotation, str)
                         and param.annotation == "EmbeddingGenerator"
                     ):
                         needs_embedding_generator = True
+                        requires_embedding_generator = (
+                            param.default is inspect.Parameter.empty
+                        )
                         logger.debug(
                             f"Identified 'embedding_generator' for {callable_func.__name__} via string annotation."
                         )
@@ -573,7 +580,7 @@ class LocalToolsProvider:
             if needs_embedding_generator:
                 if self._embedding_generator:
                     call_args["embedding_generator"] = self._embedding_generator
-                else:
+                elif requires_embedding_generator:
                     logger.error(
                         f"Tool '{name}' requires an embedding generator, but none was provided to LocalToolsProvider."
                     )
