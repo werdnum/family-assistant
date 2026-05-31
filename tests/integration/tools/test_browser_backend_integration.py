@@ -7,12 +7,14 @@ network service is needed while still exercising the browser-server REST API.
 
 from __future__ import annotations
 
+from datetime import timedelta
 from typing import TYPE_CHECKING
 
 import httpx
 import pytest
 from browser_handoff_service.main import app as browser_server_app
 from browser_handoff_service.main import registry as browser_server_registry
+from browser_handoff_service.models import TERMINAL_STATES, now_utc
 
 from family_assistant.config_models import BrowserHandoffConfig, RemoteA2AAuthConfig
 from family_assistant.tools.browser_backend import (
@@ -251,6 +253,76 @@ async def test_unknown_session_handoff_fails_instead_of_handing_off_fresh_sessio
             for session in browser_server_registry.list_sessions()
             if session.conversation_id == conversation_id
         ] == []
+    finally:
+        await backend.close()
+
+
+async def _expire_session(session_id: str) -> None:
+    """Drive a live session to the EXPIRED terminal state, as the reaper would."""
+    browser_server_registry.sessions[session_id].idle_expires_at = (
+        now_utc() - timedelta(seconds=1)
+    )
+    await browser_server_registry.reap_expired()
+
+
+def _live_session_id_for_conversation(conversation_id: str) -> str:
+    """The single non-terminal session for a conversation.
+
+    Unlike server eviction, an expired session lingers in the registry in the
+    EXPIRED terminal state, so a recovered conversation has both the dead and the
+    fresh session; the recovered backend points at the live one.
+    """
+    matches = [
+        session.session_id
+        for session in browser_server_registry.list_sessions()
+        if session.conversation_id == conversation_id
+        and session.state not in TERMINAL_STATES
+    ]
+    assert len(matches) == 1
+    return matches[0]
+
+
+@pytest.mark.integration
+async def test_expired_session_recreates_session_and_retries_navigation() -> None:
+    """An expired (terminal) session is recovered transparently on browser_open."""
+    conversation_id = "integ-expired-nav"
+    backend = _make_backend(conversation_id=conversation_id)
+    try:
+        await backend.goto("https://example.test/before-expiry")
+        stale_session_id = _live_session_id_for_conversation(conversation_id)
+        await _expire_session(stale_session_id)
+
+        await backend.goto("https://example.test/after-expiry")
+
+        recovered_session_id = _live_session_id_for_conversation(conversation_id)
+        assert recovered_session_id != stale_session_id
+        assert backend.current_url == "https://example.test/after-expiry"
+    finally:
+        await backend.close()
+
+
+@pytest.mark.integration
+async def test_expired_session_command_prompts_browser_open() -> None:
+    """A non-navigation command on an expired session fails clearly and clears it.
+
+    The agent should be told to start over with browser_open rather than be
+    wedged on a dead session (the bug that previously needed a pod restart).
+    """
+    conversation_id = "integ-expired-cmd"
+    backend = _make_backend(conversation_id=conversation_id)
+    try:
+        await backend.goto("https://example.test/checkout")
+        stale_session_id = _live_session_id_for_conversation(conversation_id)
+        await _expire_session(stale_session_id)
+
+        with pytest.raises(BrowserBackendError, match="browser_open"):
+            await backend.raw_snapshot()
+
+        # The dead session is cleared, so a fresh browser_open succeeds without
+        # any manual lease release or pod restart.
+        await backend.goto("https://example.test/restarted")
+        recovered_session_id = _live_session_id_for_conversation(conversation_id)
+        assert recovered_session_id != stale_session_id
     finally:
         await backend.close()
 
