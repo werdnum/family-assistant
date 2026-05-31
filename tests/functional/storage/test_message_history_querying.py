@@ -161,6 +161,52 @@ async def test_message_history_query_filters_tools_and_hydrates_context(
 
 
 @pytest.mark.asyncio
+async def test_message_history_query_searches_tool_call_text(
+    db_engine: AsyncEngine,
+) -> None:
+    """Structured text search includes assistant tool-call arguments."""
+    async with DatabaseContext(engine=db_engine) as db:
+        now = datetime.now(UTC)
+        await db.message_history.add_message(
+            AssistantMessage(
+                content=None,
+                tool_calls=[
+                    ToolCallItem(
+                        id="call-1",
+                        type="function",
+                        function=ToolCallFunction(
+                            name="add_calendar_event",
+                            arguments={"summary": "Passport appointment"},
+                        ),
+                    )
+                ],
+            ),
+            interface_type="test",
+            conversation_id="current",
+            timestamp=now,
+            turn_id="turn-1",
+            user_id="user-a",
+            processing_profile_id="default",
+        )
+
+        rows = await db.message_history.query_history(
+            MessageHistoryQuery(
+                query="passport",
+                scope="current_conversation",
+                current_conversation_id="current",
+                interface_type="test",
+                processing_profile_id="default",
+                limit=10,
+            )
+        )
+
+    assert len(rows) == 1
+    assert rows[0]["role"] == "assistant"
+    assert rows[0]["content"] is None
+    assert rows[0]["tool_calls"]
+
+
+@pytest.mark.asyncio
 async def test_same_user_scope_keeps_user_filter_when_conversation_id_is_supplied(
     db_engine: AsyncEngine,
 ) -> None:

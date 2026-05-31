@@ -587,12 +587,27 @@ class MessageHistoryRepository(BaseRepository):
 
         if include_text_query and query.query:
             if self._db.engine.dialect.name == "postgresql":
+                postgres_text_query = sql_func.plainto_tsquery("english", query.query)
+                like_pattern = f"%{query.query.lower()}%"
                 conditions.append(
                     or_(
                         sql_func.to_tsvector(
-                            "english", message_history_table.c.content
-                        ).op("@@")(sql_func.plainto_tsquery("english", query.query)),
-                        message_history_table.c.tool_name == query.query,
+                            "english",
+                            sql_func.coalesce(message_history_table.c.content, ""),
+                        ).op("@@")(postgres_text_query),
+                        sql_func.to_tsvector(
+                            "english",
+                            sql_func.coalesce(
+                                sa_cast(message_history_table.c.tool_calls, String),
+                                "",
+                            ),
+                        ).op("@@")(postgres_text_query),
+                        sql_func.lower(message_history_table.c.tool_name).like(
+                            like_pattern
+                        ),
+                        sql_func.lower(
+                            sa_cast(message_history_table.c.tool_calls, String)
+                        ).like(like_pattern),
                     )
                 )
             else:
