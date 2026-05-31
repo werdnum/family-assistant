@@ -536,6 +536,18 @@ class RemoteBrowserBackend:
         detail = payload.get("detail")
         return isinstance(detail, str) and "unknown session" in detail.lower()
 
+    def _is_session_gone_response(self, resp: httpx.Response) -> bool:
+        """True when the cached session can no longer be used and must be replaced.
+
+        Covers two server signals: 404 ``unknown session`` (the server forgot the
+        session, e.g. after eviction or a restart) and 410 ``Gone`` (the session
+        existed but expired or reached a terminal state). Both mean "start a new
+        session"; a 403 deliberately does *not* match, because that signals the
+        agent does not own the lease (e.g. a human handoff is in progress) and must
+        not be papered over by silently opening a fresh session.
+        """
+        return resp.status_code == 410 or self._is_unknown_session_response(resp)
+
     def _session_lost_error(self, action: str, session_id: str) -> BrowserBackendError:
         self._clear_remote_session(session_id)
         return BrowserBackendError(
@@ -554,7 +566,7 @@ class RemoteBrowserBackend:
             headers=self._headers(),
             json={"type": command_type, "args": args or {}},
         )
-        if self._is_unknown_session_response(resp):
+        if self._is_session_gone_response(resp):
             if command_type != "navigate":
                 raise self._session_lost_error(f"command {command_type}", session_id)
             self._clear_remote_session(session_id)
@@ -686,7 +698,7 @@ class RemoteBrowserBackend:
             headers=self._headers(),
             json=payload,
         )
-        if self._is_unknown_session_response(resp):
+        if self._is_session_gone_response(resp):
             raise self._session_lost_error("handoff", session_id)
         self._raise_for_status(resp, "handoff")
         return resp.json()

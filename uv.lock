@@ -1160,7 +1160,7 @@ wheels = [
 [[package]]
 name = "browser-handoff-service"
 version = "0.1.0"
-source = { git = "https://github.com/werdnum/browser-server.git#09bef388d8563e3267b1d32e823e53ca52d2d54e" }
+source = { git = "https://github.com/werdnum/browser-server.git#668d2157954028b91ba4701b473a2aa22501c864" }
 dependencies = [
     { name = "fastapi" },
     { name = "httpx" },
