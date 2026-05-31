@@ -379,8 +379,52 @@ jobs:
                 echo "No pre-built frontend assets found at /opt/frontend-dist"; \
               fi && \
               mkdir -p test-results && \
-              .venv/bin/pytest -q --timeout=300 --db sqlite -m "not postgres and not playwright and not llm_integration and not gemini_live" \
+              .venv/bin/python scripts/run_pytest_adaptive.py -q --timeout=300 --db sqlite -m "not postgres and not playwright and not llm_integration and not gemini_live" \
                 --json-report --json-report-file=test-results/backend-sqlite-report.json'
+      - name: Summarize backend test results (SQLite)
+        if: always()
+        run: |
+          python - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          report_path = Path("test-results/backend-sqlite-report.json")
+          summary_path = Path(os.environ["GITHUB_STEP_SUMMARY"])
+          if not report_path.exists():
+              summary_path.write_text(
+                  "## Backend SQLite tests\n\nNo pytest JSON report was produced.\n",
+                  encoding="utf-8",
+              )
+              raise SystemExit(0)
+
+          report = json.loads(report_path.read_text(encoding="utf-8"))
+          summary = report.get("summary", {})
+          tests = report.get("tests", [])
+          failed_tests = [
+              test for test in tests if test.get("outcome") in {"failed", "error"}
+          ][:10]
+
+          lines = [
+              "## Backend SQLite tests",
+              "",
+              f"- Exit code: `{report.get('exitcode')}`",
+              f"- Collected: `{summary.get('collected', summary.get('total', 0))}`",
+              f"- Passed: `{summary.get('passed', 0)}`",
+              f"- Failed: `{summary.get('failed', summary.get('failures', 0))}`",
+              f"- Errors: `{summary.get('error', summary.get('errors', 0))}`",
+              f"- Skipped: `{summary.get('skipped', 0)}`",
+              "",
+          ]
+          if failed_tests:
+              lines.append("### First failures")
+              lines.extend(
+                  f"- `{test.get('nodeid', test.get('name', '<unknown>'))}`"
+                  for test in failed_tests
+              )
+
+          summary_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+          PY
       - name: Upload backend test results (SQLite)
         uses: actions/upload-artifact@v7
         if: always()
@@ -449,8 +493,52 @@ jobs:
                 echo "No pre-built frontend assets found at /opt/frontend-dist"; \
               fi && \
               mkdir -p test-results && \
-              .venv/bin/pytest --postgres -q --timeout=300 -m "not playwright and not llm_integration and not gemini_live" \
+              .venv/bin/python scripts/run_pytest_adaptive.py --postgres -q --timeout=300 -m "not playwright and not llm_integration and not gemini_live" \
                 --json-report --json-report-file=test-results/backend-postgres-report.json'
+      - name: Summarize backend test results (PostgreSQL)
+        if: always()
+        run: |
+          python - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          report_path = Path("test-results/backend-postgres-report.json")
+          summary_path = Path(os.environ["GITHUB_STEP_SUMMARY"])
+          if not report_path.exists():
+              summary_path.write_text(
+                  "## Backend PostgreSQL tests\n\nNo pytest JSON report was produced.\n",
+                  encoding="utf-8",
+              )
+              raise SystemExit(0)
+
+          report = json.loads(report_path.read_text(encoding="utf-8"))
+          summary = report.get("summary", {})
+          tests = report.get("tests", [])
+          failed_tests = [
+              test for test in tests if test.get("outcome") in {"failed", "error"}
+          ][:10]
+
+          lines = [
+              "## Backend PostgreSQL tests",
+              "",
+              f"- Exit code: `{report.get('exitcode')}`",
+              f"- Collected: `{summary.get('collected', summary.get('total', 0))}`",
+              f"- Passed: `{summary.get('passed', 0)}`",
+              f"- Failed: `{summary.get('failed', summary.get('failures', 0))}`",
+              f"- Errors: `{summary.get('error', summary.get('errors', 0))}`",
+              f"- Skipped: `{summary.get('skipped', 0)}`",
+              "",
+          ]
+          if failed_tests:
+              lines.append("### First failures")
+              lines.extend(
+                  f"- `{test.get('nodeid', test.get('name', '<unknown>'))}`"
+                  for test in failed_tests
+              )
+
+          summary_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+          PY
       - name: Upload backend test results (PostgreSQL)
         uses: actions/upload-artifact@v7
         if: always()
