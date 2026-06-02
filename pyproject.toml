@@ -146,7 +146,7 @@ dev = [
     "pytest-flakefinder>=1.1.0",
     "pytest-recording>=0.13.0", # VCR.py integration for pytest
     "pytest-xdist>=3.8.0", # Parallel test execution
-    "pytest-rerunfailures>=16.0.1", # Enable @pytest.mark.flaky reruns in CI
+    "pytest-rerunfailures>=16.2", # Enable @pytest.mark.flaky reruns in CI
     "hypothesis>=6.152.9", # Property-based testing
     "vcrpy>=7.0.0", # HTTP record/replay for testing - v7 fixes urllib3 conflicts
     "aiosqlite",
@@ -172,7 +172,7 @@ dev = [
     "pytest-json-report",
     "pytest-alembic>=0.11.0",
     "ruff",
-    "pre-commit>=4.2.0",
+    "pre-commit>=4.6.0",
     "basedpyright",
     "pytype",
     "mdformat>=0.7.17",
@@ -185,7 +185,7 @@ dev = [
     "llm-fragments-reader>=0.1",
     "hupper>=1.12.1",
     "watchdog>=3.0.0",
-    "pytest-playwright-asyncio>=0.2.0",
+    "pytest-playwright-asyncio>=0.8.0",
     "playwright==1.52.0",  # Pin to match rebrowser-playwright version for shared browser binaries
     "homeassistant>=2025.4.4",
     "pixeltable-pgserver>=0.4.0",
