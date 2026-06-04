@@ -124,6 +124,10 @@
 
 # --- MCP (Model Context Protocol) Servers ---
 # Configure external MCP servers. These override the defaults in defaults.yaml.
+# Supported transports: "stdio" (default, local process), "sse" (remote
+# Server-Sent Events), and "streamable_http" (remote Streamable HTTP; aliases
+# "streamablehttp"/"http"). Remote transports accept an optional Bearer `token`
+# (use "$ENV_VAR" to read it from the environment).
 # mcp_config:
 #   mcpServers:
 #     custom_server:
@@ -131,3 +135,11 @@
 #       args: ["path/to/server.py"]
 #       env:
 #         API_KEY: "$CUSTOM_API_KEY"
+#     remote_sse_server:
+#       transport: "sse"
+#       url: "https://example.com/sse"
+#       token: "$MY_MCP_TOKEN"
+#     remote_http_server:
+#       transport: "streamable_http"
+#       url: "https://example.com/mcp"
+#       token: "$MY_MCP_TOKEN"

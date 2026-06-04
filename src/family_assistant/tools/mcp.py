@@ -18,6 +18,7 @@ if TYPE_CHECKING:
     from mcp import ClientSession
 from mcp import ClientSession, StdioServerParameters, stdio_client
 from mcp.client.sse import sse_client  # Assuming sse_client is in mcp.client.sse
+from mcp.client.streamable_http import streamablehttp_client
 from mcp.types import TextContent  # Import TextContent from mcp.types
 
 from family_assistant.tools.metadata import (
@@ -38,6 +39,15 @@ from .types import (
 )
 
 logger = logging.getLogger(__name__)
+
+# Transport type aliases for the Streamable HTTP transport. The MCP spec calls
+# this "Streamable HTTP"; we accept several spellings so operators can use
+# whichever they're familiar with (Claude Code uses "http").
+MCP_STREAMABLE_HTTP_TRANSPORTS = frozenset({
+    "streamable_http",
+    "streamablehttp",
+    "http",
+})
 
 # MCP Server Status Constants
 MCP_SERVER_STATUS_PENDING = "pending"
@@ -334,9 +344,16 @@ class MCPToolsProvider:
 
                 self._connection_contexts[server_id] = exit_stack
 
-            elif transport_type == "sse":
+            elif (
+                transport_type == "sse"
+                or transport_type in MCP_STREAMABLE_HTTP_TRANSPORTS
+            ):
+                is_streamable_http = transport_type in MCP_STREAMABLE_HTTP_TRANSPORTS
+                transport_label = "streamable_http" if is_streamable_http else "sse"
                 if not url:
-                    logger.error(f"MCP server '{server_id}' (sse): 'url' is missing.")
+                    logger.error(
+                        f"MCP server '{server_id}' ({transport_label}): 'url' is missing."
+                    )
                     self._server_statuses[server_id] = MCP_SERVER_STATUS_FAILED
                     with contextlib.suppress(Exception):
                         await exit_stack.aclose()
@@ -347,17 +364,30 @@ class MCPToolsProvider:
                 if resolved_token_sse:
                     headers["Authorization"] = f"Bearer {resolved_token_sse}"
                     logger.debug(
-                        f"Using Authorization header for SSE server '{server_id}'."
+                        f"Using Authorization header for {transport_label} server '{server_id}'."
                     )
                 else:
                     logger.warning(
-                        f"No token resolved for SSE server '{server_id}'. Connecting without Authorization header."
+                        f"No token resolved for {transport_label} server '{server_id}'. "
+                        "Connecting without Authorization header."
                     )
                     # Add other potential header mappings here if needed
 
-                read_stream, write_stream = await exit_stack.enter_async_context(
-                    sse_client(url=url, headers=headers)
-                )
+                if is_streamable_http:
+                    # streamablehttp_client yields a 3-tuple; the third element is a
+                    # callback for retrieving the negotiated session id, which we
+                    # don't need here.
+                    (
+                        read_stream,
+                        write_stream,
+                        _get_session_id,
+                    ) = await exit_stack.enter_async_context(
+                        streamablehttp_client(url=url, headers=headers)
+                    )
+                else:
+                    read_stream, write_stream = await exit_stack.enter_async_context(
+                        sse_client(url=url, headers=headers)
+                    )
 
                 session = await exit_stack.enter_async_context(
                     ClientSession(read_stream, write_stream)

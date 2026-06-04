@@ -181,6 +181,25 @@ indexing_pipeline_config:
 # --- MCP (Model Context Protocol) Servers ---
 # Configuration for external MCP servers that provide additional tools.
 # Operator-specific servers (e.g. Home Assistant) should be added in config.yaml.
+#
+# Three transports are supported:
+#   - stdio (default): spawn a local process via `command`/`args`/`env`.
+#   - sse: connect to a remote Server-Sent Events endpoint via `url`.
+#   - streamable_http: connect to a remote Streamable HTTP endpoint via `url`
+#     (aliases: "streamablehttp", "http").
+# Remote transports (sse, streamable_http) accept an optional `token` for a
+# Bearer Authorization header. Use "$ENV_VAR" to read the token from the
+# environment, e.g. token: "$MY_MCP_TOKEN".
+#
+# Example remote servers:
+#   remote_sse:
+#     transport: "sse"
+#     url: "https://example.com/sse"
+#     token: "$MY_MCP_TOKEN"
+#   remote_http:
+#     transport: "streamable_http"
+#     url: "https://example.com/mcp"
+#     token: "$MY_MCP_TOKEN"
 mcp_config:
   mcpServers:
     time:
