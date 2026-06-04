@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 import logging
 import os  # Added os import
@@ -40,6 +41,7 @@ from family_assistant.tools import (
     LocalToolsProvider,
     MCPToolsProvider,
 )
+from family_assistant.tools.types import ToolExecutionContext
 from tests.helpers import find_free_port, require_executable, wait_for_server
 from tests.mocks.mock_llm import (
     LLMOutput,  # Use LLMOutput from mocks for rules
@@ -68,16 +70,18 @@ MCP_TIME_TOOL_NAME = (
 )
 
 
-# --- Fixture to manage mcp-proxy subprocess for SSE tests ---
-@pytest_asyncio.fixture(scope="function")  # Use pytest_asyncio.fixture
-async def mcp_proxy_server() -> AsyncGenerator[str]:
-    """
-    Starts mcp-proxy listening for SSE and forwarding to mcp-server-time via stdio.
-    Yields the SSE URL.
+# --- Fixtures to manage mcp-proxy subprocess for remote-transport tests ---
+@contextlib.asynccontextmanager
+async def _run_mcp_proxy() -> AsyncGenerator[str]:
+    """Start mcp-proxy forwarding to mcp-server-time and yield its base URL.
+
+    mcp-proxy exposes both an SSE endpoint (``/sse``) and a Streamable HTTP
+    endpoint (``/mcp/``) on the same port, so the caller can derive whichever
+    endpoint URL it needs from the yielded base URL.
     """
     host = "127.0.0.1"
     port = find_free_port()
-    sse_url = f"http://{host}:{port}/sse"
+    base_url = f"http://{host}:{port}"
     mcp_proxy_command = require_executable("mcp-proxy")
     mcp_server_time_command = require_executable("mcp-server-time")
     command = [
@@ -98,7 +102,7 @@ async def mcp_proxy_server() -> AsyncGenerator[str]:
 
     # Wait for the server to be ready
     try:
-        await wait_for_server(sse_url, timeout=30.0)
+        await wait_for_server(f"{base_url}/sse", timeout=30.0)
     except RuntimeError as e:
         # If server didn't start, capture any stderr output
         stderr_output = ""
@@ -116,39 +120,61 @@ async def mcp_proxy_server() -> AsyncGenerator[str]:
             f"Failed to start MCP proxy: {e}\nstderr: {stderr_output}"
         ) from e
 
-    yield sse_url  # Provide the SSE URL to the test
+    try:
+        yield base_url  # Provide the base URL to the caller
+    finally:
+        logger.info("Stopping MCP proxy server...")
+        if process.returncode is None:  # Check if process is still running
+            try:
+                # Terminate the process group first
+                # Ensure process.pid is available; it should be after creation
+                if process.pid is not None:
+                    os.killpg(os.getpgid(process.pid), signal.SIGTERM)
+                # Also send SIGINT to the main process, as mcp-proxy might trap it
+                process.send_signal(signal.SIGINT)
+                await asyncio.wait_for(process.wait(), timeout=5)
+            except (ProcessLookupError, PermissionError) as e:
+                logger.warning(
+                    f"Error sending SIGTERM/SIGINT to process group or process: {e}"
+                )
+            except TimeoutError:
+                logger.warning(
+                    "MCP proxy did not terminate after SIGINT/SIGTERM, sending SIGKILL."
+                )
+                if process.returncode is None:  # Check again before kill
+                    try:
+                        process.kill()
+                        await asyncio.wait_for(process.wait(), timeout=5)
+                    except TimeoutError:
+                        logger.error("MCP proxy did not terminate after SIGKILL.")
+                    except Exception as e:
+                        logger.error(f"Error during SIGKILL: {e}")
+        else:
+            logger.info(
+                f"MCP proxy server already terminated with code {process.returncode}."
+            )
+        logger.info("MCP proxy server stopped.")
 
-    logger.info("Stopping MCP proxy server...")
-    if process.returncode is None:  # Check if process is still running
-        try:
-            # Terminate the process group first
-            # Ensure process.pid is available; it should be after creation
-            if process.pid is not None:
-                os.killpg(os.getpgid(process.pid), signal.SIGTERM)
-            # Also send SIGINT to the main process, as mcp-proxy might trap it
-            process.send_signal(signal.SIGINT)
-            await asyncio.wait_for(process.wait(), timeout=5)
-        except (ProcessLookupError, PermissionError) as e:
-            logger.warning(
-                f"Error sending SIGTERM/SIGINT to process group or process: {e}"
-            )
-        except TimeoutError:
-            logger.warning(
-                "MCP proxy did not terminate after SIGINT/SIGTERM, sending SIGKILL."
-            )
-            if process.returncode is None:  # Check again before kill
-                try:
-                    process.kill()
-                    await asyncio.wait_for(process.wait(), timeout=5)
-                except TimeoutError:
-                    logger.error("MCP proxy did not terminate after SIGKILL.")
-                except Exception as e:
-                    logger.error(f"Error during SIGKILL: {e}")
-    else:
-        logger.info(
-            f"MCP proxy server already terminated with code {process.returncode}."
-        )
-    logger.info("MCP proxy server stopped.")
+
+@pytest_asyncio.fixture(scope="function")  # Use pytest_asyncio.fixture
+async def mcp_proxy_server() -> AsyncGenerator[str]:
+    """
+    Starts mcp-proxy listening for SSE and forwarding to mcp-server-time via stdio.
+    Yields the SSE URL.
+    """
+    async with _run_mcp_proxy() as base_url:
+        yield f"{base_url}/sse"  # Provide the SSE URL to the test
+
+
+@pytest_asyncio.fixture(scope="function")  # Use pytest_asyncio.fixture
+async def mcp_proxy_streamable_http_server() -> AsyncGenerator[str]:
+    """
+    Starts mcp-proxy listening for Streamable HTTP and forwarding to
+    mcp-server-time via stdio. Yields the Streamable HTTP URL.
+    """
+    async with _run_mcp_proxy() as base_url:
+        # mcp-proxy serves the Streamable HTTP endpoint at /mcp/ (trailing slash).
+        yield f"{base_url}/mcp/"  # Provide the Streamable HTTP URL to the test
 
 
 @pytest.mark.asyncio
@@ -549,3 +575,72 @@ async def test_mcp_time_conversion_sse(
         f"Verified MCP tool '{MCP_TIME_TOOL_NAME}' was called via SSE and final response contained expected fragment."
     )
     await processing_service.tools_provider.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("transport", ["streamable_http", "streamablehttp", "http"])
+async def test_mcp_time_conversion_streamable_http(
+    mcp_proxy_streamable_http_server: str, transport: str
+) -> None:
+    """
+    Tests connecting to an MCP server over the Streamable HTTP transport and
+    executing a tool end-to-end via mcp-proxy (which forwards to
+    mcp-server-time over stdio).
+
+    Parametrized over all accepted spellings of the transport name
+    ("streamable_http", "streamablehttp", "http") to confirm each alias
+    resolves to the Streamable HTTP transport.
+    """
+    mcp_config: dict[str, MCPServerConfig] = {
+        "time_http": {
+            "transport": transport,
+            "url": mcp_proxy_streamable_http_server,
+        }
+    }
+    mcp_provider = MCPToolsProvider(mcp_server_configs=mcp_config)
+    await mcp_provider.initialize()
+
+    try:
+        # The Streamable HTTP server should advertise the convert_time tool.
+        definitions = await mcp_provider.get_tool_definitions()
+        tool_names = [d.get("function", {}).get("name") for d in definitions]
+        assert MCP_TIME_TOOL_NAME in tool_names, (
+            f"Expected tool '{MCP_TIME_TOOL_NAME}' to be discovered over "
+            f"Streamable HTTP (transport={transport}). Found: {tool_names}"
+        )
+
+        context = ToolExecutionContext(
+            interface_type="test",
+            conversation_id=str(TEST_CHAT_ID),
+            user_name=TEST_USER_NAME,
+            turn_id="turn-http",
+            db_context=MagicMock(),
+            processing_service=None,
+            clock=None,
+            home_assistant_client=None,
+            event_sources=None,
+            attachment_registry=None,
+            camera_backend=None,
+            timezone=ZoneInfo("UTC"),
+        )
+        result = await mcp_provider.execute_tool(
+            MCP_TIME_TOOL_NAME,
+            {
+                "time": SOURCE_TIME,
+                "source_timezone": SOURCE_TZ,
+                "target_timezone": TARGET_TZ,
+            },
+            context,
+        )
+
+        assert EXPECTED_CONVERTED_TIME_FRAGMENT in result, (
+            f"Streamable HTTP tool result did not contain the expected converted "
+            f"time. Got: '{result}' Expected fragment: "
+            f"'{EXPECTED_CONVERTED_TIME_FRAGMENT}'"
+        )
+        logger.info(
+            f"Verified MCP tool '{MCP_TIME_TOOL_NAME}' executed via Streamable HTTP "
+            f"transport (transport={transport})."
+        )
+    finally:
+        await mcp_provider.close()

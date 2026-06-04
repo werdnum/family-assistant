@@ -56,6 +56,19 @@ class MCPServerSSEConfig(TypedDict):
     tool_metadata: NotRequired[dict[str, list[str]]]
 
 
+class MCPServerStreamableHTTPConfig(TypedDict):
+    """Configuration for a Streamable HTTP-based MCP server.
+
+    The ``transport`` field accepts ``"streamable_http"`` (canonical) as well as
+    the ``"streamablehttp"`` and ``"http"`` aliases.
+    """
+
+    transport: Literal["streamable_http", "streamablehttp", "http"]
+    url: str
+    token: NotRequired[str | None]
+    tool_metadata: NotRequired[dict[str, list[str]]]
+
+
 class MCPServerGenericConfig(TypedDict, total=False):
     """Generic configuration for MCP servers, used when transport is not explicitly specified."""
 
@@ -69,7 +82,12 @@ class MCPServerGenericConfig(TypedDict, total=False):
 
 
 # Use a Union to represent the allowed MCP server configurations.
-MCPServerConfig = MCPServerStdIOConfig | MCPServerSSEConfig | MCPServerGenericConfig
+MCPServerConfig = (
+    MCPServerStdIOConfig
+    | MCPServerSSEConfig
+    | MCPServerStreamableHTTPConfig
+    | MCPServerGenericConfig
+)
 
 
 # Tool Definition Types
