@@ -48,8 +48,10 @@ dependencies = [
     # HTML templating
     "python-multipart",
     # Required by FastAPI for form data
-    "mcp>=1.6.0",
-    # Model Context Protocol SDK
+    "mcp>=1.8.0",
+    # Model Context Protocol SDK. Floor is 1.8.0: the Streamable HTTP client
+    # transport (mcp.client.streamable_http) was introduced in that release and
+    # is imported unconditionally by family_assistant.tools.mcp.
     "caldav>=1.2.0",
     # CalDAV client library
     "vobject>=0.9.6",
