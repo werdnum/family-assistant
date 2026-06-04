@@ -26,6 +26,15 @@ function createSSEStream(payloads: Record<string, unknown>[]) {
   });
 }
 
+function createDeferred(): { promise: Promise<void>; resolve: () => void } {
+  let resolve!: () => void;
+  const promise = new Promise<void>((promiseResolve) => {
+    resolve = promiseResolve;
+  });
+
+  return { promise, resolve };
+}
+
 class MockEventSource {
   static instances: MockEventSource[] = [];
 
@@ -236,6 +245,7 @@ describe.sequential('Streaming Error Recovery', () => {
     'does not let live history reload replace an active activate_tools stream',
     async () => {
       const originalEventSource = globalThis.EventSource;
+      const originalFetch = globalThis.fetch;
       globalThis.EventSource = MockEventSource as unknown as typeof EventSource;
       MockEventSource.instances = [];
 
@@ -244,6 +254,20 @@ describe.sequential('Streaming Error Recovery', () => {
       );
 
       let shouldReturnTruncatedHistory = false;
+      let activeStreamHistoryFetches = 0;
+      const liveUpdateHandled = createDeferred();
+      const finalChunkReleased = createDeferred();
+
+      globalThis.fetch = ((input, init) => {
+        const url = input instanceof Request ? input.url : String(input);
+        if (
+          shouldReturnTruncatedHistory &&
+          url.includes('/api/v1/chat/conversations/web_conv_activate_tools_race/messages')
+        ) {
+          activeStreamHistoryFetches += 1;
+        }
+        return originalFetch(input, init);
+      }) as typeof fetch;
 
       server.use(
         http.get('/api/v1/chat/conversations/:conversationId/messages', ({ params }) => {
@@ -297,43 +321,45 @@ describe.sequential('Streaming Error Recovery', () => {
           const encoder = new TextEncoder();
           const stream = new ReadableStream({
             start(controller) {
-              controller.enqueue(
-                encoder.encode(
-                  `data: ${JSON.stringify({
-                    tool_call: {
-                      id: 'call_activate_tools',
-                      type: 'function',
-                      function: {
-                        name: 'activate_tools',
-                        arguments: JSON.stringify({
-                          tool_names: ['execute_script', 'generate_image'],
-                        }),
+              void (async () => {
+                controller.enqueue(
+                  encoder.encode(
+                    `data: ${JSON.stringify({
+                      tool_call: {
+                        id: 'call_activate_tools',
+                        type: 'function',
+                        function: {
+                          name: 'activate_tools',
+                          arguments: JSON.stringify({
+                            tool_names: ['execute_script', 'generate_image'],
+                          }),
+                        },
                       },
-                    },
-                  })}\n\n`
-                )
-              );
-              controller.enqueue(
-                encoder.encode(
-                  `data: ${JSON.stringify({
-                    tool_call_id: 'call_activate_tools',
-                    result:
-                      'Activated tools: execute_script, generate_image. You can now use them.',
-                  })}\n\n`
-                )
-              );
+                    })}\n\n`
+                  )
+                );
+                controller.enqueue(
+                  encoder.encode(
+                    `data: ${JSON.stringify({
+                      tool_call_id: 'call_activate_tools',
+                      result:
+                        'Activated tools: execute_script, generate_image. You can now use them.',
+                    })}\n\n`
+                  )
+                );
 
-              shouldReturnTruncatedHistory = true;
-              MockEventSource.instances[MockEventSource.instances.length - 1]?.emit('message', {
-                internal_id: '302',
-                timestamp: '2026-06-04T12:29:02Z',
-                new_messages: true,
-                role: 'tool',
-                content: 'Activated tools: execute_script, generate_image. You can now use them.',
-                conversation_id: 'web_conv_activate_tools_race',
-              });
+                shouldReturnTruncatedHistory = true;
+                MockEventSource.instances[MockEventSource.instances.length - 1]?.emit('message', {
+                  internal_id: '302',
+                  timestamp: '2026-06-04T12:29:02Z',
+                  new_messages: true,
+                  role: 'tool',
+                  content: 'Activated tools: execute_script, generate_image. You can now use them.',
+                  conversation_id: 'web_conv_activate_tools_race',
+                });
+                liveUpdateHandled.resolve();
 
-              setTimeout(() => {
+                await finalChunkReleased.promise;
                 controller.enqueue(
                   encoder.encode(
                     `data: ${JSON.stringify({
@@ -343,7 +369,7 @@ describe.sequential('Streaming Error Recovery', () => {
                 );
                 controller.enqueue(encoder.encode('data: {"done": true}\n\n'));
                 controller.close();
-              }, 25);
+              })();
             },
           });
 
@@ -368,6 +394,10 @@ describe.sequential('Streaming Error Recovery', () => {
         await user.type(messageInput, 'New inkplate image');
         await user.keyboard('{Enter}');
 
+        await liveUpdateHandled.promise;
+        expect(activeStreamHistoryFetches).toBe(0);
+        finalChunkReleased.resolve();
+
         await waitFor(
           () => {
             expect(
@@ -377,7 +407,9 @@ describe.sequential('Streaming Error Recovery', () => {
           { timeout: 5000 }
         );
       } finally {
+        finalChunkReleased.resolve();
         globalThis.EventSource = originalEventSource;
+        globalThis.fetch = originalFetch;
       }
     },
     { timeout: 30000 }
