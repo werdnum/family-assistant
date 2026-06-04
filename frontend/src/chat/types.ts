@@ -85,7 +85,7 @@ export interface BackendMessageMetadata extends Record<string, unknown> {
 
 export interface BackendConversationMessage extends Record<string, unknown> {
   internal_id: string;
-  role: 'user' | 'assistant' | 'system' | 'tool';
+  role: 'user' | 'assistant' | 'system' | 'tool' | 'error';
   timestamp: string;
   content?: string | BackendContentPart[];
   attachments?: BackendAttachment[];

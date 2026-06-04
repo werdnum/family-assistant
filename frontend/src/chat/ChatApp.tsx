@@ -154,6 +154,7 @@ const ChatApp: React.FC<ChatAppProps> = ({ profileId = 'default_assistant' }) =>
     return saved === 'true';
   });
   const streamingMessageIdRef = useRef<string | null>(null);
+  const activeStreamConversationIdRef = useRef<string | null>(null);
   const toolCallMessageIdRef = useRef<string | null>(null);
   const lastStreamingErrorRef = useRef<string | null>(null);
   const initialPromptProcessedRef = useRef(false);
@@ -509,6 +510,7 @@ const ChatApp: React.FC<ChatAppProps> = ({ profileId = 'default_assistant' }) =>
       // Always clean up refs and refresh conversations
       if (streamingMessageIdRef.current === messageId) {
         streamingMessageIdRef.current = null;
+        activeStreamConversationIdRef.current = null;
       }
       if (toolCallMessageIdRef.current === toolCallMessageId) {
         toolCallMessageIdRef.current = null;
@@ -599,6 +601,8 @@ const ChatApp: React.FC<ChatAppProps> = ({ profileId = 'default_assistant' }) =>
   // Load messages for a conversation
   const loadConversationMessages = useCallback(async (convId: string, background = false) => {
     try {
+      const streamWasActiveAtRequestStart = activeStreamConversationIdRef.current === convId;
+
       // Cancel previous messages request if it exists
       if (messagesAbortControllerRef.current) {
         messagesAbortControllerRef.current.abort();
@@ -616,6 +620,10 @@ const ChatApp: React.FC<ChatAppProps> = ({ profileId = 'default_assistant' }) =>
       });
       if (response.ok) {
         const data = (await response.json()) as ConversationMessagesResponse;
+        if (streamWasActiveAtRequestStart || activeStreamConversationIdRef.current === convId) {
+          return;
+        }
+
         const processedMessages: Message[] = [];
         const toolResponses = new Map<string, string>();
         const toolAttachments = new Map<string, BackendAttachment[]>();
@@ -641,6 +649,29 @@ const ChatApp: React.FC<ChatAppProps> = ({ profileId = 'default_assistant' }) =>
 
         data.messages.forEach((msg: BackendConversationMessage) => {
           if (msg.role === 'tool') {
+            return;
+          }
+
+          if (msg.role === 'error') {
+            let errorText = 'An error occurred while processing this message.';
+            if (typeof msg.content === 'string' && msg.content.trim()) {
+              errorText = msg.content;
+            } else if (Array.isArray(msg.content)) {
+              const textParts = msg.content
+                .map((part) => (part.type === 'text' ? (part as { text?: unknown }).text : null))
+                .filter((text): text is string => typeof text === 'string' && Boolean(text.trim()));
+              if (textParts.length > 0) {
+                errorText = textParts.join('\n\n');
+              }
+            }
+
+            processedMessages.push({
+              id: `msg_${msg.internal_id}`,
+              role: 'assistant',
+              content: [{ type: 'text', text: errorText }],
+              createdAt: new Date(msg.timestamp),
+              status: { type: 'complete' },
+            });
             return;
           }
 
@@ -744,6 +775,7 @@ const ChatApp: React.FC<ChatAppProps> = ({ profileId = 'default_assistant' }) =>
               role: 'assistant',
               content: content,
               createdAt: new Date(msg.timestamp),
+              status: { type: 'complete' },
             });
             return;
           }
@@ -807,6 +839,7 @@ const ChatApp: React.FC<ChatAppProps> = ({ profileId = 'default_assistant' }) =>
             content: messageContent.length > 0 ? messageContent : [{ type: 'text', text: '' }],
             createdAt: new Date(msg.timestamp),
             attachments: attachments.length > 0 ? attachments : undefined,
+            status: msg.role === 'assistant' ? { type: 'complete' } : undefined,
           });
         });
 
@@ -921,7 +954,9 @@ const ChatApp: React.FC<ChatAppProps> = ({ profileId = 'default_assistant' }) =>
       ) {
         // Dedupe: Don't show notification if we're currently streaming
         // (this message is likely from the active streaming session)
-        const isCurrentlyStreaming = isStreaming && update.conversation_id === conversationId;
+        const isCurrentlyStreaming =
+          update.conversation_id === conversationId &&
+          (isStreaming || activeStreamConversationIdRef.current === update.conversation_id);
 
         if (!isCurrentlyStreaming) {
           // Extract preview from content (first 100 chars)
@@ -943,7 +978,11 @@ const ChatApp: React.FC<ChatAppProps> = ({ profileId = 'default_assistant' }) =>
       // Reload messages for the updated conversation
       // Skip reload if we're currently streaming to avoid race conditions
       // Use background loading to prevent disabling the input during updates
-      if (update.conversation_id === conversationId && !isStreaming) {
+      const isActiveStreamUpdate =
+        update.conversation_id === conversationId &&
+        activeStreamConversationIdRef.current === update.conversation_id;
+
+      if (update.conversation_id === conversationId && !isStreaming && !isActiveStreamUpdate) {
         loadConversationMessages(conversationId, true);
       }
     },
@@ -1059,12 +1098,14 @@ const ChatApp: React.FC<ChatAppProps> = ({ profileId = 'default_assistant' }) =>
 
       setMessages((prev) => [...prev, userMessage, loadingAssistantMessage]);
 
+      const targetConversationId = conversationId || `web_conv_${generateUUID()}`;
       streamingMessageIdRef.current = assistantMessageId;
+      activeStreamConversationIdRef.current = targetConversationId;
       lastStreamingErrorRef.current = null;
 
       await sendStreamingMessage({
         prompt: message.content[0].text,
-        conversationId: conversationId || `web_conv_${generateUUID()}`,
+        conversationId: targetConversationId,
         profileId: currentProfileId,
         interfaceType: 'web',
         attachments: processedAttachments,
