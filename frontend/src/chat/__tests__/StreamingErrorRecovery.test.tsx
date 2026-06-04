@@ -2,7 +2,7 @@ import { screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { HttpResponse, http } from 'msw';
 import { describe, it, beforeEach, expect, vi } from 'vitest';
-import { resetLocalStorageMock } from '../../test/mocks/localStorageMock';
+import { mockLocalStorage, resetLocalStorageMock } from '../../test/mocks/localStorageMock';
 import { server } from '../../test/setup.js';
 import { renderChatApp } from '../../test/utils/renderChatApp';
 
@@ -26,11 +26,52 @@ function createSSEStream(payloads: Record<string, unknown>[]) {
   });
 }
 
+function createDeferred(): { promise: Promise<void>; resolve: () => void } {
+  let resolve!: () => void;
+  const promise = new Promise<void>((promiseResolve) => {
+    resolve = promiseResolve;
+  });
+
+  return { promise, resolve };
+}
+
+class MockEventSource {
+  static instances: MockEventSource[] = [];
+
+  readonly url: string;
+  private listeners = new Map<string, Array<(event: { data: string }) => void>>();
+
+  onerror: ((event: unknown) => void) | null = null;
+
+  constructor(url: string) {
+    this.url = url;
+    MockEventSource.instances.push(this);
+  }
+
+  addEventListener(type: string, listener: (event: { data: string }) => void) {
+    const listeners = this.listeners.get(type) ?? [];
+    listeners.push(listener);
+    this.listeners.set(type, listeners);
+  }
+
+  close() {
+    // No-op for tests.
+  }
+
+  emit(type: string, payload: Record<string, unknown>) {
+    const listeners = this.listeners.get(type) ?? [];
+    for (const listener of listeners) {
+      listener({ data: JSON.stringify(payload) });
+    }
+  }
+}
+
 // Run sequentially to avoid MSW handler conflicts with parallel tests
 describe.sequential('Streaming Error Recovery', () => {
   beforeEach(() => {
     resetLocalStorageMock();
     vi.clearAllMocks();
+    window.history.replaceState({}, '', '/chat');
   });
 
   it(
@@ -196,6 +237,292 @@ describe.sequential('Streaming Error Recovery', () => {
         },
         { timeout: 5000 }
       );
+    },
+    { timeout: 30000 }
+  );
+
+  it(
+    'does not let live history reload replace an active activate_tools stream',
+    async () => {
+      const originalEventSource = globalThis.EventSource;
+      const originalFetch = globalThis.fetch;
+      globalThis.EventSource = MockEventSource as unknown as typeof EventSource;
+      MockEventSource.instances = [];
+
+      mockLocalStorage.getItem.mockImplementation((key: string) =>
+        key === 'lastConversationId' ? 'web_conv_activate_tools_race' : null
+      );
+
+      let shouldReturnTruncatedHistory = false;
+      let activeStreamHistoryFetches = 0;
+      const liveUpdateHandled = createDeferred();
+      const finalChunkReleased = createDeferred();
+
+      globalThis.fetch = ((input, init) => {
+        const url = input instanceof Request ? input.url : String(input);
+        if (
+          shouldReturnTruncatedHistory &&
+          url.includes('/api/v1/chat/conversations/web_conv_activate_tools_race/messages')
+        ) {
+          activeStreamHistoryFetches += 1;
+        }
+        return originalFetch(input, init);
+      }) as typeof fetch;
+
+      server.use(
+        http.get('/api/v1/chat/conversations/:conversationId/messages', ({ params }) => {
+          expect(params.conversationId).toBe('web_conv_activate_tools_race');
+
+          if (!shouldReturnTruncatedHistory) {
+            return HttpResponse.json({ messages: [] });
+          }
+
+          return HttpResponse.json({
+            messages: [
+              {
+                internal_id: '300',
+                role: 'user',
+                content:
+                  'New inkplate image: a humorous animal themed scene of a king having a whimsical birthday party.',
+                timestamp: '2026-06-04T12:29:00Z',
+              },
+              {
+                internal_id: '301',
+                role: 'assistant',
+                content: null,
+                timestamp: '2026-06-04T12:29:01Z',
+                tool_calls: [
+                  {
+                    id: 'call_activate_tools',
+                    type: 'function',
+                    function: {
+                      name: 'activate_tools',
+                      arguments: JSON.stringify({
+                        tool_names: ['execute_script', 'generate_image'],
+                      }),
+                    },
+                  },
+                ],
+              },
+              {
+                internal_id: '302',
+                role: 'tool',
+                content: 'Activated tools: execute_script, generate_image. You can now use them.',
+                tool_call_id: 'call_activate_tools',
+                timestamp: '2026-06-04T12:29:02Z',
+              },
+            ],
+          });
+        }),
+        http.post('/api/v1/chat/send_message_stream', async ({ request }) => {
+          const body = (await request.json()) as { conversation_id: string };
+          expect(body.conversation_id).toBe('web_conv_activate_tools_race');
+
+          const encoder = new TextEncoder();
+          const stream = new ReadableStream({
+            start(controller) {
+              void (async () => {
+                controller.enqueue(
+                  encoder.encode(
+                    `data: ${JSON.stringify({
+                      tool_call: {
+                        id: 'call_activate_tools',
+                        type: 'function',
+                        function: {
+                          name: 'activate_tools',
+                          arguments: JSON.stringify({
+                            tool_names: ['execute_script', 'generate_image'],
+                          }),
+                        },
+                      },
+                    })}\n\n`
+                  )
+                );
+                controller.enqueue(
+                  encoder.encode(
+                    `data: ${JSON.stringify({
+                      tool_call_id: 'call_activate_tools',
+                      result:
+                        'Activated tools: execute_script, generate_image. You can now use them.',
+                    })}\n\n`
+                  )
+                );
+
+                shouldReturnTruncatedHistory = true;
+                MockEventSource.instances[MockEventSource.instances.length - 1]?.emit('message', {
+                  internal_id: '302',
+                  timestamp: '2026-06-04T12:29:02Z',
+                  new_messages: true,
+                  role: 'tool',
+                  content: 'Activated tools: execute_script, generate_image. You can now use them.',
+                  conversation_id: 'web_conv_activate_tools_race',
+                });
+                liveUpdateHandled.resolve();
+
+                await finalChunkReleased.promise;
+                controller.enqueue(
+                  encoder.encode(
+                    `data: ${JSON.stringify({
+                      content: 'I can generate and deploy that Inkplate image now.',
+                    })}\n\n`
+                  )
+                );
+                controller.enqueue(encoder.encode('data: {"done": true}\n\n'));
+                controller.close();
+              })();
+            },
+          });
+
+          return new HttpResponse(stream, {
+            headers: { 'Content-Type': 'text/event-stream' },
+          });
+        })
+      );
+
+      try {
+        const user = userEvent.setup();
+        await renderChatApp({ waitForReady: true });
+
+        await waitFor(
+          () => {
+            expect(MockEventSource.instances.length).toBeGreaterThan(0);
+          },
+          { timeout: 3000 }
+        );
+
+        const messageInput = screen.getByPlaceholderText('Message Family Assistant...');
+        await user.type(messageInput, 'New inkplate image');
+        await user.keyboard('{Enter}');
+
+        await liveUpdateHandled.promise;
+        expect(activeStreamHistoryFetches).toBe(0);
+        finalChunkReleased.resolve();
+
+        await waitFor(
+          () => {
+            expect(
+              screen.getByText('I can generate and deploy that Inkplate image now.')
+            ).toBeInTheDocument();
+          },
+          { timeout: 5000 }
+        );
+      } finally {
+        finalChunkReleased.resolve();
+        globalThis.EventSource = originalEventSource;
+        globalThis.fetch = originalFetch;
+      }
+    },
+    { timeout: 30000 }
+  );
+
+  it(
+    'loads historical tool calls without results as terminal instead of pending',
+    async () => {
+      mockLocalStorage.getItem.mockImplementation((key: string) =>
+        key === 'lastConversationId' ? 'web_conv_stuck_tool' : null
+      );
+
+      server.use(
+        http.get('/api/v1/chat/conversations/:conversationId/messages', ({ params }) => {
+          expect(params.conversationId).toBe('web_conv_stuck_tool');
+          return HttpResponse.json({
+            messages: [
+              {
+                internal_id: '100',
+                role: 'user',
+                content: 'Please check this',
+                timestamp: '2026-01-01T10:00:00Z',
+              },
+              {
+                internal_id: '101',
+                role: 'assistant',
+                content: null,
+                timestamp: '2026-01-01T10:00:01Z',
+                tool_calls: [
+                  {
+                    id: 'call_missing_result',
+                    type: 'function',
+                    function: {
+                      name: 'search_notes',
+                      arguments: JSON.stringify({ query: 'missing result' }),
+                    },
+                  },
+                ],
+              },
+            ],
+          });
+        })
+      );
+
+      await renderChatApp({ waitForReady: true });
+
+      await waitFor(
+        () => {
+          expect(screen.getByTestId('send-button')).toBeInTheDocument();
+        },
+        { timeout: 5000 }
+      );
+      expect(screen.getByPlaceholderText('Message Family Assistant...')).toBeEnabled();
+      expect(screen.queryByText('Stop generating')).not.toBeInTheDocument();
+    },
+    { timeout: 30000 }
+  );
+
+  it(
+    'loads persisted error rows as assistant messages',
+    async () => {
+      mockLocalStorage.getItem.mockImplementation((key: string) =>
+        key === 'lastConversationId' ? 'web_conv_error_row' : null
+      );
+
+      server.use(
+        http.get('/api/v1/chat/conversations/:conversationId/messages', ({ params }) => {
+          expect(params.conversationId).toBe('web_conv_error_row');
+          return HttpResponse.json({
+            messages: [
+              {
+                internal_id: '200',
+                role: 'user',
+                content: 'Please run the tool',
+                timestamp: '2026-01-01T10:00:00Z',
+              },
+              {
+                internal_id: '201',
+                role: 'assistant',
+                content: null,
+                timestamp: '2026-01-01T10:00:01Z',
+                tool_calls: [
+                  {
+                    id: 'call_before_error',
+                    type: 'function',
+                    function: {
+                      name: 'attach_to_response',
+                      arguments: JSON.stringify({ attachment_ids: ['missing'] }),
+                    },
+                  },
+                ],
+              },
+              {
+                internal_id: '202',
+                role: 'error',
+                content: 'An error occurred during a tool call.',
+                timestamp: '2026-01-01T10:00:02Z',
+                error_traceback: 'ValueError: missing attachment',
+              },
+            ],
+          });
+        })
+      );
+
+      await renderChatApp({ waitForReady: true });
+
+      await waitFor(
+        () => {
+          expect(screen.getByText('An error occurred during a tool call.')).toBeInTheDocument();
+        },
+        { timeout: 5000 }
+      );
+      expect(screen.getByPlaceholderText('Message Family Assistant...')).toBeEnabled();
     },
     { timeout: 30000 }
   );
