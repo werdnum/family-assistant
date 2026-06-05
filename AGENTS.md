@@ -529,7 +529,7 @@ dynamically adjusting available tools and supervision requirements based on inpu
 
    - Full tool access (same as Trusted Profile) for comprehensive task handling
    - Uses Claude Opus 4.7 (`claude-opus-4-7`) for superior multi-step reasoning
-   - Higher iteration limit (25) for deep analysis workflows
+   - Higher iteration limit (100) for deep analysis workflows
    - Used via `/complex` slash command or delegation from default assistant
    - Example: "Plan a detailed family vacation itinerary considering everyone's preferences"
    - **Not to be confused with `spawn_worker`**: `spawn_worker` launches isolated coding agents
