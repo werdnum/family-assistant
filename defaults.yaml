@@ -446,9 +446,11 @@ default_profile_settings:
 service_profiles:
   - id: "default_assistant"
     description: "Main assistant using default settings, without browser tools. Suitable for general tasks, note-taking, calendar management, and information retrieval from stored documents."
-    # This profile implicitly uses all settings from 'default_profile_settings'
-    # as no specific 'processing_config', 'tools_config', or 'tools_policy' is
-    # defined here, thus inheriting the default non-browser tool access.
+    # This profile inherits the default non-browser tool access from
+    # 'default_profile_settings', overriding only max_iterations so the main
+    # assistant has more headroom before hitting the tool-call limit.
+    processing_config:
+      max_iterations: 25
   - id: "email_intake"
     description: "Assistant profile for handling email the user sends or forwards. Replies by email and may propose calendar events, notes, reminders, document indexing, or messages to known users; writes wait for confirmation."
     processing_config:
@@ -571,7 +573,7 @@ service_profiles:
       # Using simple format (no retry/fallback for browser tasks)
       provider: "google"
       llm_model: "gemini-3.5-flash"
-      max_iterations: 50
+      max_iterations: 100
       prompts: # MERGES with default_profile_settings.processing_config.prompts
         system_prompt: "You are an assistant with web browsing capabilities interacting with {user_name}. Every browser action you take (navigate, click, scroll, etc.) automatically captures a screenshot which you will see. By default, ALL screenshots from your actions are sent to the user. For multi-step workflows where you only want to show specific screenshots (e.g., just the final result), use attach_to_response to select which ones to send. After any tool calls you make, your final text response will be sent directly to {user_name}. Do NOT use the 'send_message_to_user' tool to respond to {user_name} - that tool is only for sending messages to OTHER users. Current time is {current_time}."
     tools_policy: # REPLACES default_profile_settings.tools_policy entirely for this profile
@@ -701,7 +703,7 @@ service_profiles:
     processing_config:
       provider: "anthropic"
       llm_model: "claude-sonnet-4-6"
-      max_iterations: 25 # Allow more iterations for complex validation workflows
+      max_iterations: 100 # Allow more iterations for complex validation workflows
       include_system_docs:
         - "scripting.md" # Include scripting documentation by default
       prompts:
@@ -1215,7 +1217,7 @@ service_profiles:
         fallback:
           provider: "openai"
           model: "gpt-5.5"
-      max_iterations: 50
+      max_iterations: 100
       # Camera backend configuration for Reolink cameras
       # Can be configured here or via REOLINK_CAMERAS environment variable (JSON format)
       # Environment variable takes precedence if cameras_config is empty
@@ -1248,7 +1250,7 @@ service_profiles:
     processing_config:
       provider: "anthropic"
       llm_model: "claude-opus-4-7"
-      max_iterations: 25
+      max_iterations: 100
       prompts:
         system_prompt: |
           You are an advanced reasoning assistant interacting with {user_name}, powered by Claude Opus 4.7. You are invoked for tasks that require deep analysis, multi-step planning, or sophisticated judgment.
@@ -1387,7 +1389,7 @@ service_profiles:
     processing_config:
       provider: "anthropic"
       llm_model: "claude-sonnet-4-6"
-      max_iterations: 30
+      max_iterations: 100
       prompts:
         system_prompt: |
           You are an engineering diagnostic assistant helping {user_name} investigate and debug the Family Assistant application.
@@ -1545,3 +1547,4 @@ otel:
   debug_console_exporter: false
 # Secrets (telegram_token, api_keys, database_url) are primarily from env.
 # Model, embedding_model, server_url, storage_paths are also top-level or env.
+
