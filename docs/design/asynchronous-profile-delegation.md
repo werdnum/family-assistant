@@ -41,6 +41,7 @@ rename or alias should not fork the behavior.
 - Do not stream every subagent token into the main conversation in the first implementation.
 - Do not support arbitrary in-memory confirmation callbacks after the main turn has returned.
 - Do not expose the delegated profile's full internal message history in the main chat feed.
+- Do not replace `spawn_worker`, `worker_tasks`, or AI worker sandbox result handling.
 
 ## Current Architecture
 
@@ -56,6 +57,9 @@ Relevant pieces already exist:
   committed through a `DatabaseContext` that has the notifier attached.
 - Delegated history already uses a fresh `subconversation_id` so the target profile's internal
   messages are isolated from the main conversation history.
+- `spawn_worker` already provides a separate asynchronous worker path for isolated Claude Code or
+  Gemini CLI jobs. It stores `worker_tasks`, creates workspace task directories, launches a worker
+  backend, and wakes the LLM through a webhook/event listener when the external job completes.
 
 Two constraints matter for this design:
 
@@ -92,6 +96,32 @@ TaskWorker executes target profile
 ```
 
 This keeps the synchronous fast path while making the slow path durable.
+
+### Relationship to `spawn_worker`
+
+Async profile delegation and `spawn_worker` both return control to the conversation while work
+continues, but they are different execution products and should stay separate.
+
+| Dimension    | Async profile delegation                                              | `spawn_worker`                                                    |
+| ------------ | --------------------------------------------------------------------- | ----------------------------------------------------------------- |
+| Executor     | Family Assistant `DelegatableService` profile                         | External Claude Code or Gemini CLI container                      |
+| Data access  | FA tools/data allowed by the target profile policy                    | No FA tools, notes, calendar, documents, or Home Assistant access |
+| Inputs       | Chat content parts, attachment references, conversation/user metadata | Workspace paths and a task prompt                                 |
+| Outputs      | `ChatInteractionResult` text and attachment IDs                       | Workspace output files, summary, exit code, backend status        |
+| History      | Stored in message history under `subconversation_id`                  | Stored in `worker_tasks` plus workspace task directory            |
+| Completion   | Main-conversation assistant notification from the profile result      | Webhook event wakes the LLM; LLM uses `read_task_result`          |
+| Status tools | `get_delegation_status`, `list_delegations`                           | `read_task_result`, `list_worker_tasks`, `cancel_worker_task`     |
+
+Use async profile delegation when the task needs Family Assistant context or tools: notes, calendar,
+documents, Home Assistant, profile-specific MCP tools, or profile-specific reasoning policy. Use
+`spawn_worker` when the task is standalone computing or coding over files that have already been
+materialized into the shared workspace.
+
+The implementation should not reuse the `worker_tasks` table for delegation runs. `worker_tasks`
+tracks external backend jobs and workspace artifacts; `delegation_runs` tracks profile-to-profile
+chat work, `subconversation_id` isolation, policy rechecks, and `ChatInteractionResult` propagation.
+The two systems can share notification infrastructure and UI patterns, but not persistence or result
+contracts.
 
 ### Configuration
 
