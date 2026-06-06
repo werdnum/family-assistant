@@ -7,7 +7,6 @@ reaches every channel a user is subscribed to. The interface mirrors the individ
 drop-in wherever a single push service was previously used.
 """
 
-import asyncio
 import logging
 
 from family_assistant.services.apns import APNsService
@@ -55,7 +54,11 @@ class NotificationDispatcher:
     ) -> None:
         """Send a notification to the user across every enabled channel.
 
-        Each channel is isolated: a failure in one does not prevent the others from delivering.
+        Channels are dispatched sequentially rather than concurrently: every channel runs
+        repository queries against the caller's ``db_context``, whose single ``AsyncConnection``
+        cannot service concurrent operations (concurrent use raises "another operation is in
+        progress" on async PostgreSQL). Each channel is isolated so a failure in one does not
+        prevent the others from delivering.
         """
         channels = []
         if self._web_push is not None and self._web_push.enabled:
@@ -63,25 +66,15 @@ class NotificationDispatcher:
         if self._apns is not None and self._apns.enabled:
             channels.append(("apns", self._apns))
 
-        if not channels:
-            return
-
-        results = await asyncio.gather(
-            *(
-                service.send_notification(
+        for name, service in channels:
+            try:
+                await service.send_notification(
                     user_identifier, title, body, db_context, metadata=metadata
                 )
-                for _, service in channels
-            ),
-            return_exceptions=True,
-        )
-
-        for (name, _), result in zip(channels, results, strict=True):
-            if isinstance(result, BaseException):
+            except Exception:
                 logger.warning(
-                    "Notification channel %s failed for user %s: %s",
+                    "Notification channel %s failed for user %s",
                     name,
                     user_identifier,
-                    result,
-                    exc_info=result,
+                    exc_info=True,
                 )
