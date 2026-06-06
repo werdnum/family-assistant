@@ -51,6 +51,7 @@ from family_assistant.web.routers.gemini_live_api import gemini_live_router
 
 # documents_ui, vector_search, and errors routers removed - replaced with React
 from family_assistant.web.routers.health import health_router
+from family_assistant.web.routers.ios_push import router as ios_push_router
 from family_assistant.web.routers.push import router as push_router
 from family_assistant.web.routers.vite_pages import vite_pages_router
 from family_assistant.web.routers.webhooks import webhooks_router
@@ -267,6 +268,7 @@ def create_app() -> FastAPI:
     # Client configuration and push notification endpoints
     new_app.include_router(client_config_router, tags=["Client Configuration"])
     new_app.include_router(push_router, tags=["Push Notifications"])
+    new_app.include_router(ios_push_router, tags=["iOS Push Notifications"])
 
     # General API endpoints (like /api/tools/execute, /api/documents/upload)
     new_app.include_router(api_router, prefix="/api", tags=["General API"])
