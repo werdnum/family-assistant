@@ -288,6 +288,27 @@ python scripts/generate_vapid_keys.py
 # VAPID_PUBLIC_KEY=<url-safe-base64-no-padding>
 ```
 
+### Environment Variables for iOS Push Notifications (APNs)
+
+Native iOS push notifications are delivered through Apple Push Notification service (APNs) using
+provider-token authentication with a `.p8` auth key. The APNs sender is enabled only when
+`APNS_TEAM_ID`, `APNS_KEY_ID`, `APNS_BUNDLE_ID` and a private key are all configured. All of these
+map to the `apns` config section.
+
+- **`APNS_TEAM_ID`** - Apple Developer Team ID, used as the JWT `iss` claim.
+- **`APNS_KEY_ID`** - APNs auth key id, used as the JWT `kid` header.
+- **`APNS_AUTH_KEY`** - Contents of the `.p8` private key (PEM). Treated as a secret and redacted
+  from logged config.
+- **`APNS_AUTH_KEY_PATH`** - Path to a `.p8` file (alternative to `APNS_AUTH_KEY`).
+- **`APNS_BUNDLE_ID`** - The app bundle id, sent as the `apns-topic` header.
+- **`APNS_USE_SANDBOX`** - Default APNs environment (`true` for sandbox) when a registered token
+  does not specify one. Each device token also carries its own `environment`, and a
+  sandbox/production mismatch (`BadDeviceToken`) is auto-corrected on the next send.
+
+Clients register device tokens via `POST /api/ios/push-tokens` and unregister via
+`DELETE /api/ios/push-tokens/{device_token}` (both authenticated). See
+[docs/design/ios_push_notifications.md](docs/design/ios_push_notifications.md) for the full design.
+
 ### Environment Variables for Email Intake
 
 The following environment variable can be used instead of hardcoding the value in `config.yaml`:

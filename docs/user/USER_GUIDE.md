@@ -542,6 +542,16 @@ various tasks with dark mode support and mobile optimization.
     ![Automations Page](../../screenshots/desktop/automations.png) *The Automations page for
     managing event and schedule-based automations*
 
+- **Push Notifications:** The assistant can notify you even when the app isn't open.
+
+  - **Browser (PWA):** Install the web app to your device and allow notifications to receive browser
+    push notifications.
+  - **iOS app:** The native iOS app registers for Apple push notifications, so you get alerts
+    delivered through the system.
+  - **When you're notified:** a new assistant reply arrives in a web conversation, a confirmation is
+    waiting for your approval, a background task fails after retrying, or a spawned worker task
+    finishes. Notifications are sent to every device you've registered.
+
 ## 8. Tips for Best Results
 
 - **Be Clear:** The more specific your request, the better the assistant can understand and help.
