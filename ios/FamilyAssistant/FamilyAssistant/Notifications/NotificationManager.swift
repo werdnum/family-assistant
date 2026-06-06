@@ -406,6 +406,10 @@ final class NotificationManager {
     }
 
     private func normalizeNavigationPath(_ rawValue: String) -> String? {
+        if rawValue.hasPrefix("//") {
+            return nil
+        }
+
         if rawValue.hasPrefix("/") {
             return rawValue
         }
