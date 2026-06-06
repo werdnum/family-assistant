@@ -31,9 +31,11 @@ const DEFAULT_TOOL_GROUP_STATE: ToolGroupState = {
 
 // Hook to safely access message state with fallback
 function useSafeToolGroupState(startIndex: number, endIndex: number): ToolGroupState {
+  let serializedState: string | null = null;
+
   try {
-    const serializedState = useAuiState((s) => {
-      const parts = s.message.parts;
+    serializedState = useAuiState((state) => {
+      const parts = state.message.parts;
       const toolNames: string[] = [];
       const toolCallIds: string[] = [];
       let hasUnfinishedTool = false;
@@ -52,12 +54,21 @@ function useSafeToolGroupState(startIndex: number, endIndex: number): ToolGroupS
 
       return JSON.stringify({ toolNames, toolCallIds, hasUnfinishedTool });
     });
-
-    return useMemo(() => JSON.parse(serializedState) as ToolGroupState, [serializedState]);
   } catch {
-    // Fallback when message context is not available (e.g., in tests)
-    return DEFAULT_TOOL_GROUP_STATE;
+    serializedState = null;
   }
+
+  return useMemo(() => {
+    if (!serializedState) {
+      return DEFAULT_TOOL_GROUP_STATE;
+    }
+
+    try {
+      return JSON.parse(serializedState) as ToolGroupState;
+    } catch {
+      return DEFAULT_TOOL_GROUP_STATE;
+    }
+  }, [serializedState]);
 }
 
 const ToolGroup: React.FC<ToolGroupProps> = ({ startIndex, endIndex, children }) => {

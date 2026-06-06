@@ -1,4 +1,5 @@
 import '@testing-library/jest-dom';
+import './mocks/localStorageMock';
 import { afterEach, afterAll, beforeAll } from 'vitest';
 import { setupServer } from 'msw/node';
 import { handlers } from './mocks/handlers';
@@ -6,11 +7,24 @@ import { handlers } from './mocks/handlers';
 // Set up MSW server
 export const server = setupServer(...handlers);
 
+let originalFetch;
+
 // Start server before all tests
 beforeAll(() => {
   server.listen({
     onUnhandledRequest: 'warn', // Log unhandled requests during development
   });
+
+  originalFetch = globalThis.fetch;
+  globalThis.fetch = (input, init) => {
+    if (init && 'signal' in init) {
+      const sanitizedInit = { ...init };
+      delete sanitizedInit.signal;
+      return originalFetch(input, sanitizedInit);
+    }
+
+    return originalFetch(input, init);
+  };
 });
 
 // Reset handlers after each test (RTL auto-cleanup handles component unmount)
@@ -20,6 +34,7 @@ afterEach(() => {
 
 // Stop server after all tests
 afterAll(() => {
+  globalThis.fetch = originalFetch;
   server.close();
 });
 

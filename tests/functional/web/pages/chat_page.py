@@ -100,6 +100,10 @@ class ChatPage(BasePage):
         # Use locator API to avoid stale element references
         chat_input = self.page.locator(self.CHAT_INPUT)
         await chat_input.wait_for(state="visible", timeout=10000)
+        await expect(chat_input).to_be_enabled(timeout=10000)
+
+        send_button = self.page.locator(self.SEND_BUTTON)
+        await expect(send_button).to_be_enabled(timeout=10000)
 
         # Focus the input
         await chat_input.click()

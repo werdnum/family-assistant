@@ -110,4 +110,5 @@ def test_relative_path_without_yaml_context_falls_back_to_cwd() -> None:
     with tempfile.TemporaryDirectory() as fallback_cwd, _cwd(Path(fallback_cwd)):
         cfg = AppConfig(attachment_storage_path="./relative-fallback")
 
-    assert cfg.attachment_storage_path == str(Path(fallback_cwd) / "relative-fallback")
+    expected = (Path(fallback_cwd) / "relative-fallback").resolve()
+    assert Path(cfg.attachment_storage_path) == expected
