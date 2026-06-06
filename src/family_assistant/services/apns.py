@@ -10,6 +10,7 @@ import json
 import logging
 import time
 from collections.abc import Callable
+from pathlib import Path
 
 import httpx
 import jwt
@@ -49,6 +50,44 @@ def _host_for_environment(environment: str) -> str:
 def _other_environment(environment: str) -> str:
     """Return the opposite APNs environment."""
     return "production" if environment == "sandbox" else "sandbox"
+
+
+def _is_permanently_invalid(status_code: int, reason: str | None) -> bool:
+    """Whether an APNs response conclusively proves the device token is invalid.
+
+    Transient failures (5xx, 429, provider-token errors, or local ``httpx`` errors reported as
+    ``(0, None)``) are deliberately excluded so a valid token is not pruned on a flaky send.
+    """
+    return (
+        status_code == 410
+        or reason in _UNREGISTERED_REASONS
+        or reason == "BadDeviceToken"
+    )
+
+
+class ApnsAuthKeyError(RuntimeError):
+    """Raised when a configured APNs auth key path cannot be read."""
+
+
+def load_apns_auth_key(
+    *, auth_key: str | None, auth_key_path: str | None
+) -> str | None:
+    """Resolve the APNs auth key from an inline value or a configured ``.p8`` path.
+
+    An inline ``auth_key`` takes precedence. When only ``auth_key_path`` is set, the file must be
+    readable: an unreadable explicit path is a configuration error and is raised rather than
+    silently disabling iOS push.
+    """
+    if auth_key:
+        return auth_key
+    if auth_key_path:
+        try:
+            return Path(auth_key_path).read_text(encoding="utf-8")
+        except OSError as e:
+            raise ApnsAuthKeyError(
+                f"APNs auth key path {auth_key_path!r} could not be read: {e}"
+            ) from e
+    return None
 
 
 class APNsService:
@@ -220,13 +259,23 @@ class APNsService:
                     other,
                 )
                 return other
+            if _is_permanently_invalid(retry_status, retry_reason):
+                logger.warning(
+                    "APNs token %s… invalid in both environments (%s/%s); deleting",
+                    token.device_token[:8],
+                    reason,
+                    retry_reason,
+                )
+                return "delete"
+            # The retry failed for a reason that does not prove the token is invalid (e.g. a
+            # transient 5xx/429 or provider-token error); keep it for the next send.
             logger.warning(
-                "APNs token %s… invalid in both environments (%s/%s); deleting",
+                "APNs token %s… environment retry inconclusive (status=%s reason=%s); keeping",
                 token.device_token[:8],
-                reason,
+                retry_status,
                 retry_reason,
             )
-            return "delete"
+            return None
 
         logger.warning(
             "APNs delivery failed for token %s… (status=%s reason=%s)",

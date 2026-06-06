@@ -2,6 +2,7 @@
 
 import json
 from collections.abc import AsyncGenerator
+from pathlib import Path
 
 import httpx
 import jwt
@@ -14,7 +15,9 @@ from sqlalchemy.ext.asyncio import AsyncEngine
 from family_assistant.services.apns import (
     APNS_HOST_PRODUCTION,
     APNS_HOST_SANDBOX,
+    ApnsAuthKeyError,
     APNsService,
+    load_apns_auth_key,
 )
 from family_assistant.storage.context import DatabaseContext
 
@@ -174,6 +177,29 @@ async def test_bad_device_token_in_both_environments_deletes(
 
 
 @pytest.mark.asyncio
+async def test_bad_device_token_keeps_token_on_transient_retry_failure(
+    db_context: DatabaseContext,
+) -> None:
+    """A transient failure on the environment retry must not delete a valid token."""
+    await db_context.ios_push_tokens.upsert(
+        user_identifier="user-1", device_token="tok", environment="production"
+    )
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        # Production rejects as BadDeviceToken; the sandbox retry hits a transient 500.
+        if request.url.host == httpx.URL(APNS_HOST_SANDBOX).host:
+            return httpx.Response(500, json={"reason": "InternalServerError"})
+        return httpx.Response(400, json={"reason": "BadDeviceToken"})
+
+    await _service(handler).send_notification("user-1", "t", "b", db_context)
+
+    # Token is preserved (environment unchanged) for the next send attempt.
+    tokens = await db_context.ios_push_tokens.get_by_user("user-1")
+    assert len(tokens) == 1
+    assert tokens[0].environment == "production"
+
+
+@pytest.mark.asyncio
 async def test_expired_provider_token_refreshes_and_retries(
     db_context: DatabaseContext,
 ) -> None:
@@ -213,3 +239,31 @@ async def test_no_tokens_is_noop(db_context: DatabaseContext) -> None:
 
     await _service(handler).send_notification("nobody", "t", "b", db_context)
     assert called is False
+
+
+def test_load_apns_auth_key_prefers_inline_value(tmp_path: Path) -> None:
+    """An inline auth key is used in preference to a path."""
+    key_file = tmp_path / "key.p8"
+    key_file.write_text("from-file")
+    assert (
+        load_apns_auth_key(auth_key="inline", auth_key_path=str(key_file)) == "inline"
+    )
+
+
+def test_load_apns_auth_key_reads_path(tmp_path: Path) -> None:
+    """A configured path is read when no inline key is provided."""
+    key_file = tmp_path / "key.p8"
+    key_file.write_text("from-file")
+    assert load_apns_auth_key(auth_key=None, auth_key_path=str(key_file)) == "from-file"
+
+
+def test_load_apns_auth_key_none_when_unconfigured() -> None:
+    """No key and no path yields None (APNs simply stays disabled)."""
+    assert load_apns_auth_key(auth_key=None, auth_key_path=None) is None
+
+
+def test_load_apns_auth_key_raises_on_unreadable_path(tmp_path: Path) -> None:
+    """An explicitly configured but unreadable path is a fatal configuration error."""
+    missing = tmp_path / "does-not-exist.p8"
+    with pytest.raises(ApnsAuthKeyError):
+        load_apns_auth_key(auth_key=None, auth_key_path=str(missing))

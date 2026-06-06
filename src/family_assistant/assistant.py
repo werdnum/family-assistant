@@ -64,7 +64,7 @@ from family_assistant.processing import (
     ProcessingService,
     ProcessingServiceConfig,
 )
-from family_assistant.services.apns import APNsService
+from family_assistant.services.apns import APNsService, load_apns_auth_key
 from family_assistant.services.confirmation_service import (
     CONFIRMATION_TOOL_EXECUTION_TASK_TYPE,
     ConfirmationService,
@@ -402,18 +402,10 @@ class Assistant:
         )
 
         apns_conf = self.config.apns
-        apns_auth_key = apns_conf.auth_key
-        if not apns_auth_key and apns_conf.auth_key_path:
-            try:
-                apns_auth_key = Path(apns_conf.auth_key_path).read_text(
-                    encoding="utf-8"
-                )
-            except OSError as e:
-                logger.error(
-                    "Could not read APNs auth key from %s: %s",
-                    apns_conf.auth_key_path,
-                    e,
-                )
+        apns_auth_key = load_apns_auth_key(
+            auth_key=apns_conf.auth_key,
+            auth_key_path=apns_conf.auth_key_path,
+        )
         self.apns_service = APNsService(
             team_id=apns_conf.team_id,
             key_id=apns_conf.key_id,

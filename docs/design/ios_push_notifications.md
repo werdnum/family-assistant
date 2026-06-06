@@ -43,8 +43,10 @@ A device token is unique to a device/app install, so registration is an **upsert
 
 - **`410` / reason `Unregistered` / `ExpiredToken`** → delete the stored token.
 - **`400` reason `BadDeviceToken`** → likely a sandbox/production mismatch. Retry once against the
-  other APNs environment; on success, persist the corrected `environment`. If both fail, log and
-  delete the token.
+  other APNs environment; on success, persist the corrected `environment`. The token is only deleted
+  if the retry is *also* conclusively invalid (`BadDeviceToken`/`Unregistered`/410); a transient
+  retry failure (5xx, 429, provider-token error, local `httpx` error) leaves the token in place for
+  the next send.
 - **`403` reason `ExpiredProviderToken` / `InvalidProviderToken`** → invalidate the cached JWT and
   retry once.
 - All non-success responses log the APNs `reason` for debugging.
