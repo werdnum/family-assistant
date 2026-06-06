@@ -7,6 +7,7 @@ from .confirmation_requests import ConfirmationRequestsRepository
 from .email import EmailRepository
 from .error_logs import ErrorLogsRepository
 from .events import EventsRepository
+from .ios_push_token import IosPushTokenRepository
 from .message_history import MessageHistoryRepository
 from .notes import NotesRepository
 from .push_subscription import PushSubscriptionRepository
@@ -24,6 +25,7 @@ __all__ = [
     "EmailRepository",
     "ErrorLogsRepository",
     "EventsRepository",
+    "IosPushTokenRepository",
     "MessageHistoryRepository",
     "NotesRepository",
     "PushSubscriptionRepository",

@@ -64,6 +64,7 @@ from family_assistant.processing import (
     ProcessingService,
     ProcessingServiceConfig,
 )
+from family_assistant.services.apns import APNsService, load_apns_auth_key
 from family_assistant.services.confirmation_service import (
     CONFIRMATION_TOOL_EXECUTION_TASK_TYPE,
     ConfirmationService,
@@ -71,6 +72,7 @@ from family_assistant.services.confirmation_service import (
 from family_assistant.services.confirmation_waiters import (
     ConfirmationResultWaiterRegistry,
 )
+from family_assistant.services.notification_dispatcher import NotificationDispatcher
 from family_assistant.services.push_notification import PushNotificationService
 from family_assistant.services.user_identity import UserIdentityResolver
 from family_assistant.services.worker_backend import get_worker_backend
@@ -282,6 +284,8 @@ class Assistant:
         self.notes_indexer: NotesIndexer | None = None
         self.telegram_service: TelegramService | None = None
         self.push_notification_service: PushNotificationService | None = None
+        self.apns_service: APNsService | None = None
+        self.notification_dispatcher: NotificationDispatcher | None = None
         self.confirmation_service: ConfirmationService | None = None
         self.confirmation_result_waiters: ConfirmationResultWaiterRegistry | None = None
         self.task_worker_instance: TaskWorker | None = None
@@ -388,6 +392,42 @@ class Assistant:
                 logger.debug("Playwright browsers already installed")
         except Exception as e:  # noqa: BLE001
             logger.warning(f"Could not check/install Playwright browsers: {e}")
+
+    def _setup_notifications(self) -> None:
+        """Initialize Web Push and iOS APNs services and the fan-out dispatcher."""
+        assert self.fastapi_app is not None
+        self.push_notification_service = PushNotificationService(
+            vapid_private_key=self.config.pwa_config.vapid_private_key,
+            vapid_contact_email=self.config.pwa_config.vapid_contact_email,
+        )
+
+        apns_conf = self.config.apns
+        apns_auth_key = load_apns_auth_key(
+            auth_key=apns_conf.auth_key,
+            auth_key_path=apns_conf.auth_key_path,
+        )
+        self.apns_service = APNsService(
+            team_id=apns_conf.team_id,
+            key_id=apns_conf.key_id,
+            auth_key=apns_auth_key,
+            bundle_id=apns_conf.bundle_id,
+            use_sandbox=apns_conf.use_sandbox,
+        )
+
+        self.notification_dispatcher = NotificationDispatcher(
+            web_push=self.push_notification_service,
+            apns=self.apns_service,
+        )
+
+        self.fastapi_app.state.push_notification_service = (
+            self.push_notification_service
+        )
+        self.fastapi_app.state.notification_dispatcher = self.notification_dispatcher
+        logger.info(
+            "Notifications initialized (web_push=%s, apns=%s)",
+            self.push_notification_service.enabled,
+            self.apns_service.enabled,
+        )
 
     async def setup_dependencies(self) -> None:
         """Initializes and wires up all core application components."""
@@ -512,10 +552,16 @@ class Assistant:
         # Store engine in FastAPI app state for web dependencies
         self.fastapi_app.state.database_engine = self.database_engine
 
+        # Initialize notification channels (Web Push + iOS APNs) and the dispatcher that fans
+        # out to all configured channels. Built before the confirmation service so it can be
+        # injected as a dependency.
+        self._setup_notifications()
+
         database_engine = self.database_engine
         assert database_engine is not None
         self.confirmation_service = ConfirmationService(
-            db_context_factory=lambda: get_db_context(database_engine)
+            db_context_factory=lambda: get_db_context(database_engine),
+            notifier=self.notification_dispatcher,
         )
         self.confirmation_result_waiters = ConfirmationResultWaiterRegistry()
         self.fastapi_app.state.confirmation_service = self.confirmation_service
@@ -585,23 +631,6 @@ class Assistant:
         self.fastapi_app.state.attachment_registry = self.attachment_registry
         logger.info(
             f"AttachmentRegistry initialized with path: {attachment_storage_path}"
-        )
-
-        # Initialize PushNotificationService
-        vapid_private_key = self.config.pwa_config.vapid_private_key
-        vapid_contact_email = self.config.pwa_config.vapid_contact_email
-
-        self.push_notification_service = PushNotificationService(
-            vapid_private_key=vapid_private_key,
-            vapid_contact_email=vapid_contact_email,
-        )
-
-        # Store in app.state for lifespan to retrieve
-        self.fastapi_app.state.push_notification_service = (
-            self.push_notification_service
-        )
-        logger.info(
-            f"PushNotificationService initialized (enabled={self.push_notification_service.enabled})"
         )
 
         # Setup error logging to database if enabled
@@ -1354,6 +1383,7 @@ class Assistant:
             chat_interfaces=self.fastapi_app.state.chat_interfaces,
             confirmation_result_waiters=self.confirmation_result_waiters,
             confirmation_ui_managers=self.fastapi_app.state.confirmation_ui_managers,
+            notification_dispatcher=self.notification_dispatcher,
         )
         self.task_worker_instance.register_task_handler(
             "log_message", task_wrapper_handle_log_message

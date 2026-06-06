@@ -2,20 +2,29 @@
 
 from __future__ import annotations
 
+import logging
 import uuid
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
+
+from family_assistant.services.notifier import (
+    CONFIRMATION_CATEGORY,
+    NotificationMetadata,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Callable
     from contextlib import AbstractAsyncContextManager
 
+    from family_assistant.services.notifier import Notifier
     from family_assistant.storage.context import DatabaseContext
     from family_assistant.storage.repositories.confirmation_requests import (
         ConfirmationRequestRow,
         ConfirmationStatus,
     )
     from family_assistant.tools.types import ToolArgumentsView
+
+logger = logging.getLogger(__name__)
 
 CONFIRMATION_TOOL_EXECUTION_TASK_TYPE = "confirmation_tool_execution"
 DURABLE_CONFIRMATION_STATUS_POLL_SECONDS = 5.0
@@ -49,8 +58,10 @@ class ConfirmationService:
         self,
         *,
         db_context_factory: Callable[[], AbstractAsyncContextManager[DatabaseContext]],
+        notifier: Notifier | None = None,
     ) -> None:
         self._db_context_factory = db_context_factory
+        self._notifier = notifier
 
     async def create_request(
         self,
@@ -66,7 +77,7 @@ class ConfirmationService:
         """Create a durable pending confirmation request."""
         request_id = f"confirm_{uuid.uuid4().hex[:12]}"
         async with self._db_context_factory() as db:
-            return await db.confirmation_requests.create(
+            request = await db.confirmation_requests.create(
                 request_id=request_id,
                 target_user_id=target_user_id,
                 tool_name=tool_name,
@@ -75,6 +86,36 @@ class ConfirmationService:
                 source_message_internal_id=source_message_internal_id,
                 confirmation_prompt=confirmation_prompt,
                 expires_at=expires_at,
+            )
+        # Notify only after the request transaction has committed, so a recipient that immediately
+        # approves/rejects (on a separate connection) can resolve the request_id.
+        await self._notify_pending(target_user_id, request_id, confirmation_prompt)
+        return request
+
+    async def _notify_pending(
+        self,
+        target_user_id: str,
+        request_id: str,
+        confirmation_prompt: str,
+    ) -> None:
+        """Send a push notification for a newly created pending confirmation."""
+        if self._notifier is None or not self._notifier.enabled:
+            return
+        try:
+            async with self._db_context_factory() as db:
+                await self._notifier.send_notification(
+                    user_identifier=target_user_id,
+                    title="Confirmation needed",
+                    body=confirmation_prompt[:150],
+                    db_context=db,
+                    metadata=NotificationMetadata(
+                        category=CONFIRMATION_CATEGORY,
+                        request_id=request_id,
+                    ),
+                )
+        except Exception:
+            logger.warning(
+                "Failed to send confirmation push notification", exc_info=True
             )
 
     async def approve_and_enqueue_execution(

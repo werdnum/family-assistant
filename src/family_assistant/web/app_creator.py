@@ -51,6 +51,7 @@ from family_assistant.web.routers.gemini_live_api import gemini_live_router
 
 # documents_ui, vector_search, and errors routers removed - replaced with React
 from family_assistant.web.routers.health import health_router
+from family_assistant.web.routers.ios_push import router as ios_push_router
 from family_assistant.web.routers.push import router as push_router
 from family_assistant.web.routers.vite_pages import vite_pages_router
 from family_assistant.web.routers.webhooks import webhooks_router
@@ -146,14 +147,15 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             WebChatInterface,
         )
 
-        # Retrieve push service from app.state (injected by Assistant)
-        push_notification_service = getattr(
+        # Retrieve the notification dispatcher (fans out to Web Push + iOS) from app.state,
+        # injected by Assistant. Fall back to the bare Web Push service if only that is wired.
+        notifier = getattr(app.state, "notification_dispatcher", None) or getattr(
             app.state, "push_notification_service", None
         )
 
         app.state.web_chat_interface = WebChatInterface(
             app.state.database_engine,
-            push_notification_service=push_notification_service,
+            notifier=notifier,
         )
         # Register web chat interface in the registry
         if not hasattr(app.state, "chat_interfaces"):
@@ -267,6 +269,7 @@ def create_app() -> FastAPI:
     # Client configuration and push notification endpoints
     new_app.include_router(client_config_router, tags=["Client Configuration"])
     new_app.include_router(push_router, tags=["Push Notifications"])
+    new_app.include_router(ios_push_router, tags=["iOS Push Notifications"])
 
     # General API endpoints (like /api/tools/execute, /api/documents/upload)
     new_app.include_router(api_router, prefix="/api", tags=["General API"])

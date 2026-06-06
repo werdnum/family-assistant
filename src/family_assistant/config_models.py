@@ -328,6 +328,23 @@ class PWAConfig(BaseModel):
     vapid_contact_email: str | None = None
 
 
+class ApnsConfig(BaseModel):
+    """Apple Push Notification service (iOS) configuration.
+
+    The APNs sender is enabled only when team_id, key_id, bundle_id and a private key (either
+    `auth_key` inline or `auth_key_path`) are all configured.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    team_id: str | None = None
+    key_id: str | None = None
+    auth_key: str | None = None
+    auth_key_path: str | None = None
+    bundle_id: str | None = None
+    use_sandbox: bool = False
+
+
 class GeminiVoiceConfig(BaseModel):
     """Gemini voice settings."""
 
@@ -1080,6 +1097,7 @@ class AppConfig(BaseSettings):
     # Feature configurations
     calendar_config: CalendarConfig = Field(default_factory=CalendarConfig)
     pwa_config: PWAConfig = Field(default_factory=PWAConfig)
+    apns: ApnsConfig = Field(default_factory=ApnsConfig)
     gemini_live_config: GeminiLiveConfig = Field(default_factory=GeminiLiveConfig)
     mcp_config: MCPConfig = Field(default_factory=MCPConfig)
     indexing_pipeline_config: IndexingPipelineConfig = Field(

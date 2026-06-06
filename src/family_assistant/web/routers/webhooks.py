@@ -30,6 +30,8 @@ from family_assistant.email_intake.security import (
     verify_mailgun_signature,
     verify_sender_authorization,
 )
+from family_assistant.services.notification_targets import notify_conversation
+from family_assistant.services.notifier import MESSAGE_CATEGORY, NotificationMetadata
 from family_assistant.services.user_identity import (
     UserIdentityResolutionError,
     UserIdentityResolver,
@@ -42,6 +44,7 @@ from family_assistant.web.models import WebhookEventPayload
 if TYPE_CHECKING:
     from family_assistant.config_models import AppConfig
     from family_assistant.events.webhook_source import WebhookEventSource
+    from family_assistant.services.notifier import Notifier
 
 logger = logging.getLogger(__name__)
 webhooks_router = APIRouter()
@@ -599,7 +602,13 @@ async def handle_generic_webhook(
 
     # Handle worker completion events - update task status in database
     if effective_event_type == "worker_completion":
-        await _handle_worker_completion(db_context, body.data)
+        await _handle_worker_completion(
+            db_context,
+            body.data,
+            notification_dispatcher=getattr(
+                request.app.state, "notification_dispatcher", None
+            ),
+        )
 
     # Get webhook source and emit event
     webhook_source: WebhookEventSource | None = getattr(
@@ -617,12 +626,14 @@ async def _handle_worker_completion(
     db_context: DatabaseContext,
     # ast-grep-ignore: no-dict-any - Webhook data is dynamic from external worker
     data: dict[str, Any] | None,
+    notification_dispatcher: "Notifier | None" = None,
 ) -> None:
     """Handle worker completion webhook by updating task status.
 
     Args:
         db_context: Database context for data access
         data: The webhook data containing task_id, outcome, output, exit_code, callback_token
+        notification_dispatcher: Optional dispatcher used to push-notify the conversation owner.
     """
     if not data:
         logger.warning("Worker completion event missing data payload")
@@ -685,6 +696,25 @@ async def _handle_worker_completion(
 
         if updated:
             logger.info(f"Updated worker task {task_id} status to {status}")
+            if notification_dispatcher is not None:
+                conversation_id = task.get("conversation_id")
+                try:
+                    await notify_conversation(
+                        notification_dispatcher,
+                        db_context,
+                        interface_type=task.get("interface_type"),
+                        conversation_id=conversation_id,
+                        title="Worker task complete",
+                        body=f"A spawned worker task finished ({status}).",
+                        metadata=NotificationMetadata(
+                            category=MESSAGE_CATEGORY,
+                            conversation_id=conversation_id,
+                        ),
+                    )
+                except Exception:
+                    logger.warning(
+                        "Failed to send worker completion notification", exc_info=True
+                    )
         else:
             logger.warning(f"Worker task {task_id} not found for completion update")
 

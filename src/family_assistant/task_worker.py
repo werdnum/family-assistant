@@ -46,6 +46,7 @@ if TYPE_CHECKING:
     from family_assistant.services.confirmation_waiters import (
         ConfirmationResultWaiterRegistry,
     )
+    from family_assistant.services.notifier import Notifier
     from family_assistant.storage.repositories.confirmation_requests import (
         ConfirmationRequestRow,
     )
@@ -56,6 +57,8 @@ if TYPE_CHECKING:
 # handle_index_email is now a method of EmailIndexer and registered in __main__.py
 from family_assistant.processing import ProcessingService
 from family_assistant.processing.utils import get_file_extension_from_mime_type
+from family_assistant.services.notification_targets import notify_conversation
+from family_assistant.services.notifier import MESSAGE_CATEGORY, NotificationMetadata
 from family_assistant.storage.context import DatabaseContext, get_db_context
 from family_assistant.storage.message_history import message_history_table
 from family_assistant.storage.tasks import enqueue_task, get_task_event
@@ -616,6 +619,7 @@ class TaskWorker:
         chat_interfaces: dict[str, ChatInterface] | None = None,
         confirmation_result_waiters: ConfirmationResultWaiterRegistry | None = None,
         confirmation_ui_managers: dict[str, ConfirmationUIManager] | None = None,
+        notification_dispatcher: Notifier | None = None,
     ) -> None:
         """Initializes the TaskWorker with its dependencies."""
         self.processing_service = processing_service
@@ -623,6 +627,7 @@ class TaskWorker:
         self.chat_interfaces = chat_interfaces
         self.confirmation_result_waiters = confirmation_result_waiters
         self.confirmation_ui_managers = confirmation_ui_managers
+        self.notification_dispatcher = notification_dispatcher
         # Use provided shutdown_event_instance or create a new instance-specific event
         # Don't use the module-level shutdown_event as it persists across test runs
         self.shutdown_event = (
@@ -1017,6 +1022,34 @@ class TaskWorker:
                 await self._enqueue_script_error_notification(
                     db_context, task, error_str
                 )
+            # Push-notify the conversation owner that a background task failed.
+            await self._notify_task_failure(db_context, task)
+
+    async def _notify_task_failure(
+        self,
+        db_context: DatabaseContext,
+        task: TaskDict,
+    ) -> None:
+        """Push-notify the conversation owner that a task failed after its retries."""
+        if self.notification_dispatcher is None:
+            return
+        payload = task.get("payload") or {}
+        conversation_id = payload.get("conversation_id")
+        try:
+            await notify_conversation(
+                self.notification_dispatcher,
+                db_context,
+                interface_type=payload.get("interface_type"),
+                conversation_id=conversation_id,
+                title="Task failed",
+                body=f"A background task ({task['task_type']}) failed.",
+                metadata=NotificationMetadata(
+                    category=MESSAGE_CATEGORY,
+                    conversation_id=conversation_id,
+                ),
+            )
+        except Exception:
+            logger.warning("Failed to send task failure notification", exc_info=True)
 
     async def _enqueue_script_error_notification(
         self,
