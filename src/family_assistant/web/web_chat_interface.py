@@ -3,11 +3,11 @@ Web ChatInterface implementation for delivering messages via Server-Sent Events.
 """
 
 import logging
-from datetime import timedelta
 from typing import TYPE_CHECKING
 
 from family_assistant.interfaces import ChatInterface
 from family_assistant.llm.messages import AssistantMessage, MessageAttachmentMetadata
+from family_assistant.services.notification_targets import resolve_conversation_user
 from family_assistant.storage.context import get_db_context
 from family_assistant.utils.clock import SystemClock
 
@@ -101,25 +101,11 @@ class WebChatInterface(ChatInterface):
                     and self.push_notification_service.enabled
                 ):
                     try:
-                        # Find user_id from recent user messages
-                        user_id: str | None = None
-                        if not user_id:
-                            # Fallback: query recent messages to find a user message
-                            # (assistant messages don't have user_id, so we look for user messages)
-                            recent = await db_context.message_history.get_recent_with_metadata(
-                                interface_type="web",
-                                conversation_id=conversation_id,
-                                limit=10,
-                                max_age=timedelta(days=365),
-                            )
-                            # Find the most recent user message with a user_id
-                            for message in recent:
-                                if message.get("role") == "user" and message.get(
-                                    "user_id"
-                                ):
-                                    user_id = message["user_id"]
-                                    break
-
+                        user_id = await resolve_conversation_user(
+                            db_context,
+                            interface_type="web",
+                            conversation_id=conversation_id,
+                        )
                         if user_id:
                             await self.push_notification_service.send_notification(
                                 user_identifier=user_id,
