@@ -95,6 +95,13 @@ ENV_VAR_MAPPINGS: list[EnvVarMapping] = [
     EnvVarMapping("VAPID_PUBLIC_KEY", "pwa_config.vapid_public_key"),
     EnvVarMapping("VAPID_PRIVATE_KEY", "pwa_config.vapid_private_key"),
     EnvVarMapping("VAPID_CONTACT_EMAIL", "pwa_config.vapid_contact_email"),
+    # APNs (iOS push) configuration
+    EnvVarMapping("APNS_TEAM_ID", "apns.team_id"),
+    EnvVarMapping("APNS_KEY_ID", "apns.key_id"),
+    EnvVarMapping("APNS_AUTH_KEY", "apns.auth_key"),
+    EnvVarMapping("APNS_AUTH_KEY_PATH", "apns.auth_key_path"),
+    EnvVarMapping("APNS_BUNDLE_ID", "apns.bundle_id"),
+    EnvVarMapping("APNS_USE_SANDBOX", "apns.use_sandbox", bool),
     # Profile settings
     EnvVarMapping("DEFAULT_SERVICE_PROFILE_ID", "default_service_profile_id"),
     EnvVarMapping("TIMEZONE", "default_profile_settings.processing_config.timezone"),
@@ -1092,6 +1099,12 @@ def _log_config(
     if "pwa_config" in loggable:
         loggable["pwa_config"] = {
             k: v for k, v in loggable["pwa_config"].items() if k != "vapid_private_key"
+        }
+
+    # Remove APNs private key material
+    if "apns" in loggable:
+        loggable["apns"] = {
+            k: v for k, v in loggable["apns"].items() if k != "auth_key"
         }
 
     logger.info(

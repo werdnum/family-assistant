@@ -486,6 +486,25 @@ class TestApplyEnvVarOverrides:
             apply_env_var_overrides(config)
         assert config["pwa_config"]["vapid_public_key"] == "test-key"
 
+    def test_applies_apns_env_vars(self) -> None:
+        """APNs configuration is populated from environment variables."""
+        config: dict[str, Any] = {"apns": {}}
+        with mock.patch.dict(
+            os.environ,
+            {
+                "APNS_TEAM_ID": "TEAM123",
+                "APNS_KEY_ID": "KEY456",
+                "APNS_BUNDLE_ID": "com.example.app",
+                "APNS_USE_SANDBOX": "true",
+            },
+            clear=False,
+        ):
+            apply_env_var_overrides(config)
+        assert config["apns"]["team_id"] == "TEAM123"
+        assert config["apns"]["key_id"] == "KEY456"
+        assert config["apns"]["bundle_id"] == "com.example.app"
+        assert config["apns"]["use_sandbox"] is True
+
     def test_applies_int_env_var(self) -> None:
         """Test applying an integer environment variable."""
         config: dict[str, Any] = {"embedding_dimensions": 768}

@@ -35,6 +35,7 @@ if TYPE_CHECKING:
         EmailRepository,
         ErrorLogsRepository,
         EventsRepository,
+        IosPushTokenRepository,
         MessageHistoryRepository,
         NotesRepository,
         PushSubscriptionRepository,
@@ -174,6 +175,7 @@ class DatabaseContext:
         self._schedule_automations = None
         self._automations = None
         self._push_subscriptions = None
+        self._ios_push_tokens = None
         self._worker_tasks = None
         self._a2a_tasks = None
         self._scripts = None
@@ -513,6 +515,17 @@ class DatabaseContext:
 
             self._push_subscriptions = PushSubscriptionRepository(self)
         return self._push_subscriptions
+
+    @property
+    def ios_push_tokens(self) -> "IosPushTokenRepository":
+        """Get the iOS push tokens repository instance."""
+        if self._ios_push_tokens is None:
+            from family_assistant.storage.repositories import (  # noqa: PLC0415
+                IosPushTokenRepository,
+            )
+
+            self._ios_push_tokens = IosPushTokenRepository(self)
+        return self._ios_push_tokens
 
     @property
     def worker_tasks(self) -> "WorkerTasksRepository":

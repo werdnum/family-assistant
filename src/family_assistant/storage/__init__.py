@@ -39,6 +39,7 @@ from family_assistant.storage.events import (
     event_listeners_table,
     recent_events_table,
 )
+from family_assistant.storage.ios_push_token import ios_push_tokens_table
 from family_assistant.storage.message_history import message_history_table
 from family_assistant.storage.notes import notes_table
 from family_assistant.storage.push_subscription import push_subscriptions_table
@@ -329,6 +330,7 @@ __all__ = [
     "recent_events_table",
     "schedule_automations_table",
     "push_subscriptions_table",
+    "ios_push_tokens_table",
     "scripts_table",
     "metadata",
     "DatabaseContext",  # Export the new context manager
