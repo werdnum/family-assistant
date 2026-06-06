@@ -1,10 +1,10 @@
 """Unit tests for NotificationDispatcher fan-out behavior."""
 
-from typing import Any
-
 import pytest
 
 from family_assistant.services.notification_dispatcher import NotificationDispatcher
+from family_assistant.services.notifier import NotificationMetadata
+from family_assistant.storage.context import DatabaseContext
 
 
 class _FakeChannel:
@@ -14,15 +14,19 @@ class _FakeChannel:
         self.enabled = enabled
         self.fail = fail
         self.calls: list[tuple[str, str, str]] = []
+        self.metadata: list[NotificationMetadata | None] = []
 
     async def send_notification(
         self,
         user_identifier: str,
         title: str,
         body: str,
-        db_context: Any,  # noqa: ANN401
+        db_context: DatabaseContext,
+        *,
+        metadata: NotificationMetadata | None = None,
     ) -> None:
         self.calls.append((user_identifier, title, body))
+        self.metadata.append(metadata)
         if self.fail:
             raise RuntimeError("channel down")
 

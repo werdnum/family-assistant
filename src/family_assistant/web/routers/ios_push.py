@@ -16,9 +16,12 @@ logger = logging.getLogger(__name__)
 
 
 class IosPushTokenRequest(BaseModel):
-    """Request model for registering an iOS APNs device token."""
+    """Request model for registering an iOS APNs device token.
 
-    device_token: str
+    The payload key matches the iOS client, which posts ``token``.
+    """
+
+    token: str
     environment: Literal["production", "sandbox"] = "production"
     bundle_id: str | None = None
 
@@ -42,7 +45,7 @@ async def register_token(
     try:
         token_id = await db.ios_push_tokens.upsert(
             user_identifier=user["user_identifier"],
-            device_token=request.device_token,
+            device_token=request.token,
             environment=request.environment,
             bundle_id=request.bundle_id,
         )
@@ -59,16 +62,16 @@ async def register_token(
         ) from e
 
 
-@router.delete("/api/ios/push-tokens/{device_token}")
+@router.delete("/api/ios/push-tokens/{token}")
 async def unregister_token(
-    device_token: str,
+    token: str,
     user: Annotated[User, Depends(get_current_user)],
     db: Annotated[DatabaseContext, Depends(get_db)],
 ) -> dict[str, str]:
     """Unregister an iOS APNs device token belonging to the current user.
 
     Args:
-        device_token: The APNs device token to remove.
+        token: The APNs device token to remove.
         user: Current authenticated user.
         db: Database context.
 
@@ -76,7 +79,7 @@ async def unregister_token(
         Success response with status.
     """
     deleted_count = await db.ios_push_tokens.delete_for_user(
-        user_identifier=user["user_identifier"], device_token=device_token
+        user_identifier=user["user_identifier"], device_token=token
     )
     if deleted_count > 0:
         logger.info(

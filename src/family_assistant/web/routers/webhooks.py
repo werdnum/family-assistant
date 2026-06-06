@@ -31,6 +31,7 @@ from family_assistant.email_intake.security import (
     verify_sender_authorization,
 )
 from family_assistant.services.notification_targets import notify_conversation
+from family_assistant.services.notifier import MESSAGE_CATEGORY, NotificationMetadata
 from family_assistant.services.user_identity import (
     UserIdentityResolutionError,
     UserIdentityResolver,
@@ -696,14 +697,19 @@ async def _handle_worker_completion(
         if updated:
             logger.info(f"Updated worker task {task_id} status to {status}")
             if notification_dispatcher is not None:
+                conversation_id = task.get("conversation_id")
                 try:
                     await notify_conversation(
                         notification_dispatcher,
                         db_context,
                         interface_type=task.get("interface_type"),
-                        conversation_id=task.get("conversation_id"),
+                        conversation_id=conversation_id,
                         title="Worker task complete",
                         body=f"A spawned worker task finished ({status}).",
+                        metadata=NotificationMetadata(
+                            category=MESSAGE_CATEGORY,
+                            conversation_id=conversation_id,
+                        ),
                     )
                 except Exception:
                     logger.warning(

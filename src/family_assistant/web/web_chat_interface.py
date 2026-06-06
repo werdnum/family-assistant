@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING
 from family_assistant.interfaces import ChatInterface
 from family_assistant.llm.messages import AssistantMessage, MessageAttachmentMetadata
 from family_assistant.services.notification_targets import notify_conversation
+from family_assistant.services.notifier import MESSAGE_CATEGORY, NotificationMetadata
 from family_assistant.storage.context import get_db_context
 from family_assistant.utils.clock import SystemClock
 
@@ -103,6 +104,10 @@ class WebChatInterface(ChatInterface):
                             conversation_id=conversation_id,
                             title="New message",
                             body=text[:100],  # Truncate long messages
+                            metadata=NotificationMetadata(
+                                category=MESSAGE_CATEGORY,
+                                conversation_id=conversation_id,
+                            ),
                         )
                     except Exception as e:
                         logger.warning(

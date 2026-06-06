@@ -13,6 +13,11 @@ from sqlalchemy.ext.asyncio import AsyncEngine
 from family_assistant.llm.messages import UserMessage
 from family_assistant.services.confirmation_service import ConfirmationService
 from family_assistant.services.notification_targets import notify_conversation
+from family_assistant.services.notifier import (
+    CONFIRMATION_CATEGORY,
+    MESSAGE_CATEGORY,
+    NotificationMetadata,
+)
 from family_assistant.storage.context import DatabaseContext
 from family_assistant.utils.clock import SystemClock
 from family_assistant.web.app_creator import app as fastapi_app
@@ -24,6 +29,7 @@ class _RecordingNotifier:
     def __init__(self, *, enabled: bool = True) -> None:
         self.enabled = enabled
         self.calls: list[tuple[str, str, str]] = []
+        self.metadata: list[NotificationMetadata | None] = []
 
     async def send_notification(
         self,
@@ -31,8 +37,11 @@ class _RecordingNotifier:
         title: str,
         body: str,
         db_context: DatabaseContext,
+        *,
+        metadata: NotificationMetadata | None = None,
     ) -> None:
         self.calls.append((user_identifier, title, body))
+        self.metadata.append(metadata)
 
 
 async def _add_user_message(
@@ -132,6 +141,10 @@ async def test_pending_confirmation_notifies_target_user(
     assert notifier.calls == [
         ("user-1", "Confirmation needed", "Create calendar event: Flight")
     ]
+    metadata = notifier.metadata[0]
+    assert metadata is not None
+    assert metadata.category == CONFIRMATION_CATEGORY
+    assert metadata.request_id is not None
 
 
 @pytest.mark.asyncio
@@ -178,3 +191,7 @@ async def test_worker_completion_webhook_notifies_owner(
     user_identifier, title, _ = notifier.calls[0]
     assert user_identifier == "owner-9"
     assert title == "Worker task complete"
+    metadata = notifier.metadata[0]
+    assert metadata is not None
+    assert metadata.category == MESSAGE_CATEGORY
+    assert metadata.conversation_id == "conv-9"

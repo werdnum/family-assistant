@@ -7,6 +7,11 @@ import uuid
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
+from family_assistant.services.notifier import (
+    CONFIRMATION_CATEGORY,
+    NotificationMetadata,
+)
+
 if TYPE_CHECKING:
     from collections.abc import Callable
     from contextlib import AbstractAsyncContextManager
@@ -82,13 +87,16 @@ class ConfirmationService:
                 confirmation_prompt=confirmation_prompt,
                 expires_at=expires_at,
             )
-            await self._notify_pending(db, target_user_id, confirmation_prompt)
+            await self._notify_pending(
+                db, target_user_id, request_id, confirmation_prompt
+            )
             return request
 
     async def _notify_pending(
         self,
         db: DatabaseContext,
         target_user_id: str,
+        request_id: str,
         confirmation_prompt: str,
     ) -> None:
         """Send a push notification for a newly created pending confirmation."""
@@ -100,6 +108,10 @@ class ConfirmationService:
                 title="Confirmation needed",
                 body=confirmation_prompt[:150],
                 db_context=db,
+                metadata=NotificationMetadata(
+                    category=CONFIRMATION_CATEGORY,
+                    request_id=request_id,
+                ),
             )
         except Exception:
             logger.warning(

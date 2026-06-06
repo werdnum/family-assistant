@@ -6,6 +6,7 @@ import logging
 
 from pywebpush import WebPushException, webpush
 
+from family_assistant.services.notifier import NotificationMetadata
 from family_assistant.storage.context import DatabaseContext
 from family_assistant.storage.push_subscription import (
     PushSubscription as PushSubscriptionModel,
@@ -46,6 +47,8 @@ class PushNotificationService:
         title: str,
         body: str,
         db_context: DatabaseContext,
+        *,
+        metadata: NotificationMetadata | None = None,
     ) -> None:
         """Send push notification to all subscriptions for a user.
 
@@ -54,6 +57,8 @@ class PushNotificationService:
             title: Notification title.
             body: Notification body text.
             db_context: Database context for accessing subscriptions.
+            metadata: Optional structured metadata (category, deep-link fields) delivered to the
+                client under ``data`` for navigation/handling.
         """
         if not self.enabled:
             logger.debug(
@@ -65,7 +70,12 @@ class PushNotificationService:
         if not subscriptions:
             return
 
-        payload = json.dumps({"title": title, "body": body})
+        notification: dict[str, object] = {"title": title, "body": body}
+        if metadata is not None:
+            data = metadata.model_dump(exclude_none=True)
+            if data:
+                notification["data"] = data
+        payload = json.dumps(notification)
 
         # Send notifications concurrently to reduce latency for users with multiple subscriptions
         async def send_to_subscription(sub: PushSubscriptionModel) -> int | None:

@@ -74,8 +74,25 @@ was sent. It is the public seam exercised by tests.
 Both require authentication (`get_current_user`), matching the existing Web Push endpoints.
 
 - `POST /api/ios/push-tokens` — register/refresh a device token. Body:
-  `{ "device_token": str, "environment": "production"|"sandbox", "bundle_id": str | null }`.
-- `DELETE /api/ios/push-tokens/{device_token}` — unregister a device token for the current user.
+  `{ "token": str, "environment": "production"|"sandbox", "bundle_id": str | null }`. The payload
+  key is `token`, matching the iOS client.
+- `DELETE /api/ios/push-tokens/{token}` — unregister a device token for the current user.
+
+## Interactive notifications
+
+Notifications carry optional `NotificationMetadata` (`category`, `request_id`, `conversation_id`,
+`path`, `url`) so interactive clients can attach action buttons and deep-link:
+
+- For APNs, `category` becomes `aps.category` (driving the iOS client's registered actions) and the
+  remaining fields are sent as top-level custom `userInfo` keys.
+- For Web Push, the metadata is delivered under `data`.
+
+Send points set:
+
+- **Confirmations** → `category=FAMILY_ASSISTANT_CONFIRMATION` + `request_id` (so the approve/deny
+  actions can resolve the request).
+- **Messages, task failures, worker completions** → `category=FAMILY_ASSISTANT_MESSAGE` +
+  `conversation_id` (so a tap deep-links to the conversation).
 
 ## Send points
 

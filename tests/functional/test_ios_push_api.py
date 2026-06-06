@@ -17,7 +17,7 @@ async def test_register_token_creates_row(
     response = await api_client.post(
         "/api/ios/push-tokens",
         json={
-            "device_token": "abc123",
+            "token": "abc123",
             "environment": "sandbox",
             "bundle_id": "com.example.app",
         },
@@ -47,9 +47,7 @@ async def test_register_token_defaults_to_production(
     db_engine: AsyncEngine,
 ) -> None:
     """Environment defaults to production when omitted."""
-    response = await api_client.post(
-        "/api/ios/push-tokens", json={"device_token": "def456"}
-    )
+    response = await api_client.post("/api/ios/push-tokens", json={"token": "def456"})
 
     assert response.status_code == 200
     async with db_engine.begin() as conn:  # type: ignore[attr-defined]
@@ -67,11 +65,11 @@ async def test_register_token_is_idempotent(
     """Re-registering the same token updates it rather than duplicating."""
     await api_client.post(
         "/api/ios/push-tokens",
-        json={"device_token": "tok", "environment": "production"},
+        json={"token": "tok", "environment": "production"},
     )
     await api_client.post(
         "/api/ios/push-tokens",
-        json={"device_token": "tok", "environment": "sandbox"},
+        json={"token": "tok", "environment": "sandbox"},
     )
 
     async with db_engine.begin() as conn:  # type: ignore[attr-defined]
@@ -89,7 +87,7 @@ async def test_unregister_token_removes_row(
     """DELETE /api/ios/push-tokens/{token} removes the token."""
     await api_client.post(
         "/api/ios/push-tokens",
-        json={"device_token": "to-delete", "environment": "production"},
+        json={"token": "to-delete", "environment": "production"},
     )
 
     response = await api_client.delete("/api/ios/push-tokens/to-delete")

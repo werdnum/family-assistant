@@ -11,6 +11,7 @@ import asyncio
 import logging
 
 from family_assistant.services.apns import APNsService
+from family_assistant.services.notifier import NotificationMetadata
 from family_assistant.services.push_notification import PushNotificationService
 from family_assistant.storage.context import DatabaseContext
 
@@ -49,6 +50,8 @@ class NotificationDispatcher:
         title: str,
         body: str,
         db_context: DatabaseContext,
+        *,
+        metadata: NotificationMetadata | None = None,
     ) -> None:
         """Send a notification to the user across every enabled channel.
 
@@ -65,7 +68,9 @@ class NotificationDispatcher:
 
         results = await asyncio.gather(
             *(
-                service.send_notification(user_identifier, title, body, db_context)
+                service.send_notification(
+                    user_identifier, title, body, db_context, metadata=metadata
+                )
                 for _, service in channels
             ),
             return_exceptions=True,

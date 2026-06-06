@@ -15,6 +15,7 @@ from pathlib import Path
 import httpx
 import jwt
 
+from family_assistant.services.notifier import NotificationMetadata
 from family_assistant.storage.context import DatabaseContext
 from family_assistant.storage.ios_push_token import IosPushToken
 
@@ -63,6 +64,28 @@ def _is_permanently_invalid(status_code: int, reason: str | None) -> bool:
         or reason in _UNREGISTERED_REASONS
         or reason == "BadDeviceToken"
     )
+
+
+def _build_payload(
+    title: str, body: str, metadata: NotificationMetadata | None
+) -> bytes:
+    """Build the APNs JSON payload, embedding category and custom userInfo fields.
+
+    ``aps.category`` drives the client's interactive action buttons; the remaining metadata fields
+    are added as top-level custom keys (APNs ``userInfo``) so taps can deep-link.
+    """
+    aps: dict[str, object] = {
+        "alert": {"title": title, "body": body},
+        "sound": "default",
+    }
+    payload: dict[str, object] = {"aps": aps}
+    if metadata is not None:
+        fields = metadata.model_dump(exclude_none=True)
+        category = fields.pop("category", None)
+        if category:
+            aps["category"] = category
+        payload.update(fields)
+    return json.dumps(payload).encode("utf-8")
 
 
 class ApnsAuthKeyError(RuntimeError):
@@ -171,6 +194,8 @@ class APNsService:
         title: str,
         body: str,
         db_context: DatabaseContext,
+        *,
+        metadata: NotificationMetadata | None = None,
     ) -> None:
         """Send an APNs alert to all iOS tokens registered for a user.
 
@@ -179,6 +204,9 @@ class APNsService:
             title: Notification title.
             body: Notification body text.
             db_context: Database context for accessing and pruning tokens.
+            metadata: Optional structured metadata. ``category`` becomes ``aps.category`` (driving
+                the client's action buttons); the remaining fields are sent as custom ``userInfo``
+                keys for deep-linking.
         """
         if not self.enabled:
             logger.debug(
@@ -190,9 +218,7 @@ class APNsService:
         if not tokens:
             return
 
-        payload = json.dumps({
-            "aps": {"alert": {"title": title, "body": body}, "sound": "default"}
-        }).encode("utf-8")
+        payload = _build_payload(title, body, metadata)
 
         results = await asyncio.gather(
             *(self._deliver(token, payload) for token in tokens)

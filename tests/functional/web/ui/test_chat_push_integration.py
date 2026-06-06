@@ -212,11 +212,13 @@ async def test_web_chat_sends_push_notification_with_user_message(
     send_notification_called = False
     send_notification_args = {}
 
-    async def mock_send_notification(  # noqa: ANN401
+    async def mock_send_notification(
         user_identifier: str,
         title: str,
         body: str,
         db_context: Any,  # noqa: ANN401
+        *,
+        metadata: Any = None,  # noqa: ANN401
     ) -> None:
         nonlocal send_notification_called, send_notification_args
         send_notification_called = True

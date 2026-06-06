@@ -3,7 +3,7 @@
 import logging
 from datetime import timedelta
 
-from family_assistant.services.notifier import Notifier
+from family_assistant.services.notifier import NotificationMetadata, Notifier
 from family_assistant.storage.context import DatabaseContext
 
 logger = logging.getLogger(__name__)
@@ -48,6 +48,7 @@ async def notify_conversation(
     conversation_id: str | None,
     title: str,
     body: str,
+    metadata: NotificationMetadata | None = None,
 ) -> bool:
     """Notify the owner of a conversation, resolving the user from conversation history.
 
@@ -71,5 +72,6 @@ async def notify_conversation(
         title=title,
         body=body,
         db_context=db_context,
+        metadata=metadata,
     )
     return True

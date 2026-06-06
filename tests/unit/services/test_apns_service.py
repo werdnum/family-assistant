@@ -19,6 +19,7 @@ from family_assistant.services.apns import (
     APNsService,
     load_apns_auth_key,
 )
+from family_assistant.services.notifier import NotificationMetadata
 from family_assistant.storage.context import DatabaseContext
 
 
@@ -93,6 +94,38 @@ async def test_sends_alert_with_expected_headers_and_payload(
 
     # Token is still present (not deleted) after a successful send.
     assert len(await db_context.ios_push_tokens.get_by_user("user-1")) == 1
+
+
+@pytest.mark.asyncio
+async def test_metadata_sets_category_and_custom_fields(
+    db_context: DatabaseContext,
+) -> None:
+    """Notification metadata becomes aps.category plus top-level custom userInfo keys."""
+    await db_context.ios_push_tokens.upsert(
+        user_identifier="user-1", device_token="tok", environment="production"
+    )
+
+    seen: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(request)
+        return httpx.Response(200)
+
+    metadata = NotificationMetadata(
+        category="FAMILY_ASSISTANT_CONFIRMATION",
+        request_id="confirm_abc",
+        conversation_id="conv-1",
+    )
+    await _service(handler).send_notification(
+        "user-1", "Hi", "There", db_context, metadata=metadata
+    )
+
+    body = json.loads(seen[0].content)
+    assert body["aps"]["category"] == "FAMILY_ASSISTANT_CONFIRMATION"
+    # Custom fields are top-level userInfo keys, not nested under aps.
+    assert body["request_id"] == "confirm_abc"
+    assert body["conversation_id"] == "conv-1"
+    assert "category" not in body
 
 
 @pytest.mark.asyncio
