@@ -29,12 +29,11 @@ APNS_HOST_SANDBOX = "https://api.sandbox.push.apple.com"
 # that window to avoid ExpiredProviderToken responses.
 PROVIDER_TOKEN_REFRESH_SECONDS = 40 * 60
 
-# APNs reasons that mean the device token is permanently invalid and should be removed.
-_UNREGISTERED_REASONS = frozenset({
-    "Unregistered",
-    "ExpiredToken",
-    "DeviceTokenNotForTopic",
-})
+# APNs reasons that prove the device token is inactive and should be removed. Deliberately narrow:
+# `BadDeviceToken` is a format/environment problem (handled via the environment retry), and
+# `DeviceTokenNotForTopic` is an apns-topic/bundle-id misconfiguration — neither means the device
+# token itself is dead, so pruning on them would erase valid registrations on a bad deployment.
+_UNREGISTERED_REASONS = frozenset({"Unregistered"})
 # APNs reasons that mean our provider (JWT) token is invalid and should be regenerated.
 _PROVIDER_TOKEN_REASONS = frozenset({
     "ExpiredProviderToken",

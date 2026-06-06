@@ -172,6 +172,22 @@ async def test_unregistered_token_is_deleted(db_context: DatabaseContext) -> Non
 
 
 @pytest.mark.asyncio
+async def test_topic_mismatch_keeps_token(db_context: DatabaseContext) -> None:
+    """A DeviceTokenNotForTopic (bundle-id misconfig) must not prune a valid token."""
+    await db_context.ios_push_tokens.upsert(
+        user_identifier="user-1", device_token="tok", environment="production"
+    )
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(400, json={"reason": "DeviceTokenNotForTopic"})
+
+    await _service(handler).send_notification("user-1", "t", "b", db_context)
+
+    # Token is preserved so it recovers once the topic/bundle id is fixed.
+    assert len(await db_context.ios_push_tokens.get_by_user("user-1")) == 1
+
+
+@pytest.mark.asyncio
 async def test_bad_device_token_retries_other_environment(
     db_context: DatabaseContext,
 ) -> None:
