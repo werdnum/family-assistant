@@ -287,12 +287,10 @@ final class NotificationManager {
         guard let baseURL = authManager.validatedServerURL() else {
             throw NotificationError.invalidServerURL
         }
-        guard var request = authManager.authorizedRequest(
+        var request = try await authManager.authorizedRequest(
             url: baseURL.appendingPathComponent("api/ios/push-tokens"),
             method: "POST"
-        ) else {
-            throw NotificationError.notAuthenticated
-        }
+        )
 
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.httpBody = try JSONEncoder().encode(
@@ -313,14 +311,12 @@ final class NotificationManager {
         guard let baseURL = authManager.validatedServerURL() else {
             throw NotificationError.invalidServerURL
         }
-        guard var request = authManager.authorizedRequest(
+        var request = try await authManager.authorizedRequest(
             url: baseURL
                 .appendingPathComponent("api/ios/push-tokens")
                 .appendingPathComponent(token),
             method: "DELETE"
-        ) else {
-            throw NotificationError.notAuthenticated
-        }
+        )
 
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         try await performRequest(request)
@@ -363,12 +359,10 @@ final class NotificationManager {
         guard let baseURL = authManager.validatedServerURL() else {
             throw NotificationError.invalidServerURL
         }
-        guard var request = authManager.authorizedRequest(
+        var request = try await authManager.authorizedRequest(
             url: baseURL.appendingPathComponent("api/v1/chat/confirm_tool"),
             method: "POST"
-        ) else {
-            throw NotificationError.notAuthenticated
-        }
+        )
 
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.httpBody = try JSONEncoder().encode(

@@ -350,9 +350,18 @@ final class AuthManager {
         UserDefaults.standard.set(serverURL, forKey: Keys.serverURL)
     }
 
-    func authorizedRequest(url: URL, method: String) -> URLRequest? {
+    @MainActor
+    func authorizedRequest(url: URL, method: String) async throws -> URLRequest {
+        do {
+            try await refreshIfNeeded()
+        } catch AuthError.authRejected, AuthError.noCredentials {
+            clearLocalAuthState()
+            throw AuthError.noCredentials
+        }
+
         guard let apiToken = KeychainHelper.readString(key: Keys.apiToken) else {
-            return nil
+            clearLocalAuthState()
+            throw AuthError.noCredentials
         }
         var request = URLRequest(url: url)
         request.httpMethod = method
