@@ -20,6 +20,7 @@ Add a top-level `users` config block as the source of truth for application user
 ```yaml
 users:
   - id: "andrew@example.com"
+    label: "Andrew"
     oidc:
       emails: ["andrew@example.com"]
       subjects: []

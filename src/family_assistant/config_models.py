@@ -640,6 +640,7 @@ class UserIdentityConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     id: str = Field(min_length=1)
+    label: str | None = None
     oidc: OIDCUserIdentityConfig = Field(default_factory=OIDCUserIdentityConfig)
     telegram: TelegramUserIdentityConfig = Field(
         default_factory=TelegramUserIdentityConfig
@@ -656,6 +657,14 @@ class UserIdentityConfig(BaseModel):
             msg = "User id must not be empty"
             raise ValueError(msg)
         return normalized
+
+    @field_validator("label")
+    @classmethod
+    def normalize_label(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        normalized = value.strip()
+        return normalized or None
 
     @model_validator(mode="after")
     def require_identity(self) -> UserIdentityConfig:
