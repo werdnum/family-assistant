@@ -87,14 +87,13 @@ class ConfirmationService:
                 confirmation_prompt=confirmation_prompt,
                 expires_at=expires_at,
             )
-            await self._notify_pending(
-                db, target_user_id, request_id, confirmation_prompt
-            )
-            return request
+        # Notify only after the request transaction has committed, so a recipient that immediately
+        # approves/rejects (on a separate connection) can resolve the request_id.
+        await self._notify_pending(target_user_id, request_id, confirmation_prompt)
+        return request
 
     async def _notify_pending(
         self,
-        db: DatabaseContext,
         target_user_id: str,
         request_id: str,
         confirmation_prompt: str,
@@ -103,16 +102,17 @@ class ConfirmationService:
         if self._notifier is None or not self._notifier.enabled:
             return
         try:
-            await self._notifier.send_notification(
-                user_identifier=target_user_id,
-                title="Confirmation needed",
-                body=confirmation_prompt[:150],
-                db_context=db,
-                metadata=NotificationMetadata(
-                    category=CONFIRMATION_CATEGORY,
-                    request_id=request_id,
-                ),
-            )
+            async with self._db_context_factory() as db:
+                await self._notifier.send_notification(
+                    user_identifier=target_user_id,
+                    title="Confirmation needed",
+                    body=confirmation_prompt[:150],
+                    db_context=db,
+                    metadata=NotificationMetadata(
+                        category=CONFIRMATION_CATEGORY,
+                        request_id=request_id,
+                    ),
+                )
         except Exception:
             logger.warning(
                 "Failed to send confirmation push notification", exc_info=True

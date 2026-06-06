@@ -3,6 +3,8 @@
 import logging
 
 from sqlalchemy import select
+from sqlalchemy.dialects.postgresql import insert as postgresql_insert
+from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.sql import functions as func
 
 from family_assistant.storage.ios_push_token import (
@@ -35,36 +37,39 @@ class IosPushTokenRepository(BaseRepository):
         Returns:
             The ID of the created or updated token row.
         """
-        existing = await self._db.fetch_one(
-            select(ios_push_tokens_table.c.id).where(
-                ios_push_tokens_table.c.device_token == device_token
-            )
+        # Atomic upsert keyed on the device_token unique index. A database-level ON CONFLICT
+        # avoids a select-then-insert race in which two concurrent registrations of the same
+        # token both insert and one fails the unique constraint.
+        insert = (
+            postgresql_insert
+            if self._db.engine.dialect.name == "postgresql"
+            else sqlite_insert
         )
-        if existing is not None:
-            stmt = (
-                ios_push_tokens_table
-                .update()
-                .where(ios_push_tokens_table.c.device_token == device_token)
-                .values(
-                    user_identifier=user_identifier,
-                    environment=environment,
-                    bundle_id=bundle_id,
-                    updated_at=func.now(),
-                )
-            )
-            await self._db.execute_with_retry(stmt)
-            return existing["id"]
-
-        stmt = ios_push_tokens_table.insert().values(
+        stmt = insert(ios_push_tokens_table).values(
             user_identifier=user_identifier,
             device_token=device_token,
             environment=environment,
             bundle_id=bundle_id,
         )
-        result = await self._db.execute_with_retry(stmt)
-        if hasattr(result, "inserted_primary_key") and result.inserted_primary_key:
-            return result.inserted_primary_key[0]  # type: ignore[return-value]
-        return result.lastrowid  # type: ignore[attr-defined]
+        stmt = stmt.on_conflict_do_update(
+            index_elements=[ios_push_tokens_table.c.device_token],
+            set_={
+                "user_identifier": user_identifier,
+                "environment": environment,
+                "bundle_id": bundle_id,
+                "updated_at": func.now(),
+            },
+        )
+        await self._db.execute_with_retry(stmt)
+
+        row = await self._db.fetch_one(
+            select(ios_push_tokens_table.c.id).where(
+                ios_push_tokens_table.c.device_token == device_token
+            )
+        )
+        if row is None:  # pragma: no cover - row always exists after upsert
+            raise RuntimeError("iOS push token row missing after upsert")
+        return row["id"]
 
     async def get_by_user(self, user_identifier: str) -> list[IosPushToken]:
         """Get all iOS device tokens for a user."""
