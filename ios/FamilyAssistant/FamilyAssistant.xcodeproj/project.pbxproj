@@ -7,14 +7,16 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
-		A10001 /* FamilyAssistantApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10001; };
-		A10002 /* ContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10002; };
-		A10003 /* KeychainHelper.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10003; };
-		A10004 /* AuthManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10004; };
-		A10005 /* SetupView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10005; };
-		A10006 /* WebViewContainer.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10006; };
-		A10007 /* WebViewToolbar.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10007; };
-		A10008 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = B10008; };
+		A10001 /* FamilyAssistantApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10001 /* FamilyAssistantApp.swift */; };
+		A10002 /* ContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10002 /* ContentView.swift */; };
+		A10003 /* KeychainHelper.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10003 /* KeychainHelper.swift */; };
+		A10004 /* AuthManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10004 /* AuthManager.swift */; };
+		A10005 /* SetupView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10005 /* SetupView.swift */; };
+		A10006 /* WebViewContainer.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10006 /* WebViewContainer.swift */; };
+		A10007 /* WebViewToolbar.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10007 /* WebViewToolbar.swift */; };
+		A10008 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = B10008 /* Assets.xcassets */; };
+		A10009 /* AppDelegate.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10011 /* AppDelegate.swift */; };
+		A10010 /* NotificationManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10012 /* NotificationManager.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -28,6 +30,9 @@
 		B10008 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		B10009 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
 		B10010 /* FamilyAssistant.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = FamilyAssistant.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		B10011 /* AppDelegate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppDelegate.swift; sourceTree = "<group>"; };
+		B10012 /* NotificationManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NotificationManager.swift; sourceTree = "<group>"; };
+		B10013 /* FamilyAssistant.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = FamilyAssistant.entitlements; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -56,8 +61,10 @@
 				B10002 /* ContentView.swift */,
 				D10003 /* Auth */,
 				D10004 /* WebView */,
+				D10006 /* Notifications */,
 				B10008 /* Assets.xcassets */,
 				B10009 /* Info.plist */,
+				B10013 /* FamilyAssistant.entitlements */,
 			);
 			path = FamilyAssistant;
 			sourceTree = "<group>";
@@ -79,6 +86,15 @@
 				B10007 /* WebViewToolbar.swift */,
 			);
 			path = WebView;
+			sourceTree = "<group>";
+		};
+		D10006 /* Notifications */ = {
+			isa = PBXGroup;
+			children = (
+				B10011 /* AppDelegate.swift */,
+				B10012 /* NotificationManager.swift */,
+			);
+			path = Notifications;
 			sourceTree = "<group>";
 		};
 		D10005 /* Products */ = {
@@ -165,6 +181,8 @@
 				A10005 /* SetupView.swift in Sources */,
 				A10006 /* WebViewContainer.swift in Sources */,
 				A10007 /* WebViewToolbar.swift in Sources */,
+				A10009 /* AppDelegate.swift in Sources */,
+				A10010 /* NotificationManager.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -295,9 +313,11 @@
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				APS_ENVIRONMENT = development;
+				CODE_SIGN_ENTITLEMENTS = FamilyAssistant/FamilyAssistant.entitlements;
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
-				DEVELOPMENT_TEAM = "";
+				DEVELOPMENT_TEAM = H7NBC2S52X;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = FamilyAssistant/Info.plist;
 				INFOPLIST_KEY_CFBundleDisplayName = "Family Assistant";
@@ -311,7 +331,7 @@
 					"@executable_path/Frameworks",
 				);
 				MARKETING_VERSION = 1.0;
-				PRODUCT_BUNDLE_IDENTIFIER = com.familyassistant.app;
+				PRODUCT_BUNDLE_IDENTIFIER = dev.andrewgarrett.assistant;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SWIFT_EMIT_LOC_STRINGS = YES;
 				SWIFT_VERSION = 5.0;
@@ -324,9 +344,11 @@
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				APS_ENVIRONMENT = production;
+				CODE_SIGN_ENTITLEMENTS = FamilyAssistant/FamilyAssistant.entitlements;
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
-				DEVELOPMENT_TEAM = "";
+				DEVELOPMENT_TEAM = H7NBC2S52X;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = FamilyAssistant/Info.plist;
 				INFOPLIST_KEY_CFBundleDisplayName = "Family Assistant";
@@ -340,7 +362,7 @@
 					"@executable_path/Frameworks",
 				);
 				MARKETING_VERSION = 1.0;
-				PRODUCT_BUNDLE_IDENTIFIER = com.familyassistant.app;
+				PRODUCT_BUNDLE_IDENTIFIER = dev.andrewgarrett.assistant;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SWIFT_EMIT_LOC_STRINGS = YES;
 				SWIFT_VERSION = 5.0;
@@ -370,7 +392,6 @@
 			defaultConfigurationName = Release;
 		};
 /* End XCConfigurationList section */
-
 	};
 	rootObject = E10002 /* Project object */;
 }

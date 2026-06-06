@@ -447,6 +447,10 @@ various tasks with dark mode support and mobile optimization.
 - **Accessing it:**`{{ SERVER_URL }}` (This link will be replaced with the actual URL). The
   interface automatically opens to the chat page for immediate access.
 
+- **iOS App:** If the native iOS app is installed, it opens the same web interface after secure
+  sign-in. The gear menu includes native notification controls. When enabled, iOS notifications can
+  open the relevant chat or page, and confirmation notifications may include approve/deny actions.
+
 - **Chat Features:**
 
   - Real-time streaming responses - see the assistant's replies as they're being generated
