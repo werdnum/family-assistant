@@ -5,12 +5,12 @@
 	<key>CFBundleURLTypes</key>
 	<array>
 		<dict>
+			<key>CFBundleURLName</key>
+			<string>com.familyassistant.app</string>
 			<key>CFBundleURLSchemes</key>
 			<array>
 				<string>familyassistant</string>
 			</array>
-			<key>CFBundleURLName</key>
-			<string>com.familyassistant.app</string>
 		</dict>
 	</array>
 	<key>NSAppTransportSecurity</key>
