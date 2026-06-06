@@ -350,6 +350,16 @@ final class AuthManager {
         UserDefaults.standard.set(serverURL, forKey: Keys.serverURL)
     }
 
+    func authorizedRequest(url: URL, method: String) -> URLRequest? {
+        guard let apiToken = KeychainHelper.readString(key: Keys.apiToken) else {
+            return nil
+        }
+        var request = URLRequest(url: url)
+        request.httpMethod = method
+        request.setValue("Bearer \(apiToken)", forHTTPHeaderField: "Authorization")
+        return request
+    }
+
     private func saveTokens(_ tokens: TokenResponse) {
         KeychainHelper.save(key: Keys.apiToken, string: tokens.apiToken)
         if let refresh = tokens.refreshToken {

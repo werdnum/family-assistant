@@ -9,10 +9,18 @@ final class WebViewState {
     var isLoading = true
 
     fileprivate var webView: WKWebView?
+    fileprivate var pendingURL: URL?
 
     func goBack() { webView?.goBack() }
     func goForward() { webView?.goForward() }
     func reload() { webView?.reload() }
+    func load(_ url: URL) {
+        if let webView {
+            webView.load(URLRequest(url: url))
+        } else {
+            pendingURL = url
+        }
+    }
 }
 
 struct WebViewContainer: UIViewRepresentable {
@@ -38,7 +46,9 @@ struct WebViewContainer: UIViewRepresentable {
         webView.scrollView.refreshControl = refreshControl
 
         webViewState.webView = webView
-        webView.load(URLRequest(url: url))
+        let requestURL = webViewState.pendingURL ?? url
+        webViewState.pendingURL = nil
+        webView.load(URLRequest(url: requestURL))
 
         return webView
     }
