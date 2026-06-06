@@ -28,6 +28,21 @@ class NotificationMetadata(BaseModel):
     path: str | None = None
     url: str | None = None
 
+    def web_push_data(self) -> dict[str, str]:
+        """Return the set fields keyed for the Web Push service worker (camelCase).
+
+        The PWA service worker reads ``data.conversationId``; mirror its naming so notification
+        taps deep-link instead of falling back to the default view.
+        """
+        mapping = {
+            "category": self.category,
+            "conversationId": self.conversation_id,
+            "requestId": self.request_id,
+            "path": self.path,
+            "url": self.url,
+        }
+        return {key: value for key, value in mapping.items() if value is not None}
+
 
 class Notifier(Protocol):
     """A channel that can deliver notifications to a user.

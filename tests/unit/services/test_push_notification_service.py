@@ -8,6 +8,7 @@ import pytest
 from pywebpush import WebPushException
 from sqlalchemy.ext.asyncio import AsyncEngine
 
+from family_assistant.services.notifier import NotificationMetadata
 from family_assistant.services.push_notification import PushNotificationService
 from family_assistant.storage.context import DatabaseContext
 
@@ -77,6 +78,41 @@ async def test_send_notification_success(
         sent_payload = json.loads(call_args.kwargs["data"])
         assert sent_payload["title"] == "Test Title"
         assert sent_payload["body"] == "Test Body"
+
+
+@pytest.mark.asyncio
+@patch("family_assistant.services.push_notification.webpush", autospec=True)
+async def test_send_notification_serializes_metadata_for_service_worker(
+    mock_webpush: MagicMock, db_engine: AsyncEngine
+) -> None:
+    """Metadata is delivered under data using the service worker's camelCase keys."""
+    async with DatabaseContext(engine=db_engine) as db_context:
+        await db_context.push_subscriptions.add(
+            user_identifier="user1",
+            subscription_json={
+                "endpoint": "https://example.com/push",
+                "keys": {"p256dh": "key", "auth": "auth_key"},
+            },
+        )
+
+        service = PushNotificationService(
+            vapid_private_key=TEST_PRIVATE_KEY, vapid_contact_email=TEST_CONTACT_EMAIL
+        )
+        await service.send_notification(
+            "user1",
+            "Title",
+            "Body",
+            db_context,
+            metadata=NotificationMetadata(
+                category="FAMILY_ASSISTANT_MESSAGE", conversation_id="conv-1"
+            ),
+        )
+
+        sent_payload = json.loads(mock_webpush.call_args.kwargs["data"])
+        # The PWA service worker reads data.conversationId.
+        assert sent_payload["data"]["conversationId"] == "conv-1"
+        assert sent_payload["data"]["category"] == "FAMILY_ASSISTANT_MESSAGE"
+        assert "conversation_id" not in sent_payload["data"]
 
 
 @pytest.mark.asyncio

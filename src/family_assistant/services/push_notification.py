@@ -72,7 +72,7 @@ class PushNotificationService:
 
         notification: dict[str, object] = {"title": title, "body": body}
         if metadata is not None:
-            data = metadata.model_dump(exclude_none=True)
+            data = metadata.web_push_data()
             if data:
                 notification["data"] = data
         payload = json.dumps(notification)
