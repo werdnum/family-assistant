@@ -608,9 +608,13 @@ async def test_attachment_response_error_handling(
                 if message.get("role") == "error"
             ]
 
+        # Use a generous timeout consistent with the streaming waits above: the
+        # error message is persisted reliably, but under the heavy CPU
+        # contention of the full test run the persistence round-trip plus this
+        # extra API call can take well over a few seconds.
         history_error_messages = await wait_for_condition(
             get_history_error_messages,
-            timeout=5.0,
+            timeout=30.0,
             description="persisted conversation error message",
         )
         history_error_found = True
