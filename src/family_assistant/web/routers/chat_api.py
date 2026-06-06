@@ -87,6 +87,9 @@ logger = logging.getLogger(__name__)
 chat_api_router = APIRouter()
 
 
+_TOKEN_IDENTITY_SOURCES = {"api_token", "app_token_session"}
+
+
 def _user_name_for_chat(current_user: Mapping[str, object]) -> str:
     """Derive a human-friendly name for the authenticated web user.
 
@@ -94,8 +97,22 @@ def _user_name_for_chat(current_user: Mapping[str, object]) -> str:
     history, so prefer the explicitly configured user label, then the OIDC
     display name claim, then the canonical user identifier, before falling back
     to a generic label.
+
+    For token-based auth the "name" claim is only a copy of the token owner
+    identifier (which identity resolution may already have rewritten to a
+    canonical user id), not a real display name, so it is skipped in favour of
+    the canonical identifier.
     """
-    for key in ("user_label", "name", "user_identifier"):
+    is_token_auth = (
+        current_user.get("identity_source") in _TOKEN_IDENTITY_SOURCES
+        or current_user.get("source") in _TOKEN_IDENTITY_SOURCES
+    )
+    candidate_keys = (
+        ("user_label", "user_identifier")
+        if is_token_auth
+        else ("user_label", "name", "user_identifier")
+    )
+    for key in candidate_keys:
         value = current_user.get(key)
         if isinstance(value, str) and value.strip():
             return value.strip()

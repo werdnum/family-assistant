@@ -30,6 +30,30 @@ def test_falls_back_to_user_identifier_when_name_missing() -> None:
     assert _user_name_for_chat(current_user) == "andrew@example.com"
 
 
+def test_token_auth_skips_stale_name_claim() -> None:
+    # For API tokens the "name" claim is a copy of the (possibly legacy) token
+    # owner; resolution has rewritten user_identifier to the canonical id, so
+    # the canonical id should win over the stale name.
+    current_user = {
+        "name": "keycloak-subject-123",
+        "user_identifier": "andrew@example.com",
+        "identity_source": "api_token",
+    }
+
+    assert _user_name_for_chat(current_user) == "andrew@example.com"
+
+
+def test_token_auth_still_prefers_configured_label() -> None:
+    current_user = {
+        "user_label": "Andrew",
+        "name": "keycloak-subject-123",
+        "user_identifier": "andrew@example.com",
+        "source": "app_token_session",
+    }
+
+    assert _user_name_for_chat(current_user) == "Andrew"
+
+
 def test_blank_values_are_skipped() -> None:
     current_user = {
         "user_label": "   ",
