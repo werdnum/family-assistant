@@ -30,7 +30,7 @@ from family_assistant.email_intake.security import (
     verify_mailgun_signature,
     verify_sender_authorization,
 )
-from family_assistant.services.notification_targets import resolve_conversation_user
+from family_assistant.services.notification_targets import notify_conversation
 from family_assistant.services.user_identity import (
     UserIdentityResolutionError,
     UserIdentityResolver,
@@ -43,10 +43,7 @@ from family_assistant.web.models import WebhookEventPayload
 if TYPE_CHECKING:
     from family_assistant.config_models import AppConfig
     from family_assistant.events.webhook_source import WebhookEventSource
-    from family_assistant.services.notification_dispatcher import (
-        NotificationDispatcher,
-    )
-    from family_assistant.storage.repositories.worker_tasks import WorkerTaskDict
+    from family_assistant.services.notifier import Notifier
 
 logger = logging.getLogger(__name__)
 webhooks_router = APIRouter()
@@ -628,7 +625,7 @@ async def _handle_worker_completion(
     db_context: DatabaseContext,
     # ast-grep-ignore: no-dict-any - Webhook data is dynamic from external worker
     data: dict[str, Any] | None,
-    notification_dispatcher: "NotificationDispatcher | None" = None,
+    notification_dispatcher: "Notifier | None" = None,
 ) -> None:
     """Handle worker completion webhook by updating task status.
 
@@ -698,41 +695,22 @@ async def _handle_worker_completion(
 
         if updated:
             logger.info(f"Updated worker task {task_id} status to {status}")
-            await _notify_worker_completion(
-                db_context, task, status, notification_dispatcher
-            )
+            if notification_dispatcher is not None:
+                try:
+                    await notify_conversation(
+                        notification_dispatcher,
+                        db_context,
+                        interface_type=task.get("interface_type"),
+                        conversation_id=task.get("conversation_id"),
+                        title="Worker task complete",
+                        body=f"A spawned worker task finished ({status}).",
+                    )
+                except Exception:
+                    logger.warning(
+                        "Failed to send worker completion notification", exc_info=True
+                    )
         else:
             logger.warning(f"Worker task {task_id} not found for completion update")
 
     except Exception as e:
         logger.error(f"Failed to update worker task {task_id}: {e}", exc_info=True)
-
-
-async def _notify_worker_completion(
-    db_context: DatabaseContext,
-    task: "WorkerTaskDict",
-    status: str,
-    notification_dispatcher: "NotificationDispatcher | None",
-) -> None:
-    """Push-notify the conversation owner that a spawned worker task finished."""
-    if notification_dispatcher is None or not notification_dispatcher.enabled:
-        return
-    conversation_id = task.get("conversation_id")
-    interface_type = task.get("interface_type")
-    if not conversation_id or not interface_type:
-        return
-    try:
-        user_id = await resolve_conversation_user(
-            db_context,
-            interface_type=interface_type,
-            conversation_id=conversation_id,
-        )
-        if user_id:
-            await notification_dispatcher.send_notification(
-                user_identifier=user_id,
-                title="Worker task complete",
-                body=f"A spawned worker task finished ({status}).",
-                db_context=db_context,
-            )
-    except Exception:
-        logger.warning("Failed to send worker completion notification", exc_info=True)

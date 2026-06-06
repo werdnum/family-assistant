@@ -49,12 +49,23 @@ A device token is unique to a device/app install, so registration is an **upsert
   retry once.
 - All non-success responses log the APNs `reason` for debugging.
 
-### `NotificationDispatcher`
+### `Notifier` protocol and `NotificationDispatcher`
 
-A thin facade holding the optional Web Push service and optional APNs service. It exposes the same
-interface used today (`enabled`, `send_notification(user_identifier, title, body, db_context)`) so
-it slots directly into the existing `WebChatInterface` wiring and the new send points. It fans out
-to both channels concurrently and isolates per-channel failures.
+All notification channels implement an explicit `Notifier` protocol (`enabled` +
+`send_notification(user_identifier, title, body, db_context)`): the Web Push service, the APNs
+service, and the `NotificationDispatcher`. Consumers (`WebChatInterface`, `ConfirmationService`,
+`TaskWorker`, the worker webhook) depend on `Notifier` rather than a concrete service, so delivery
+is a type-checked contract rather than structural duck typing.
+
+`NotificationDispatcher` is a thin facade holding the optional Web Push and APNs services. It fans
+out to every enabled channel concurrently and isolates per-channel failures. In production it is the
+`Notifier` injected at every send point; the bare services are injected directly only in narrower
+contexts.
+
+The shared
+`notify_conversation(notifier, db_context, *, interface_type, conversation_id, title, body)` helper
+resolves the owning user from conversation history and dispatches, returning whether a notification
+was sent. It is the public seam exercised by tests.
 
 ## Endpoints
 

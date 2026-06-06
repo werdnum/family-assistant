@@ -11,9 +11,7 @@ if TYPE_CHECKING:
     from collections.abc import Callable
     from contextlib import AbstractAsyncContextManager
 
-    from family_assistant.services.notification_dispatcher import (
-        NotificationDispatcher,
-    )
+    from family_assistant.services.notifier import Notifier
     from family_assistant.storage.context import DatabaseContext
     from family_assistant.storage.repositories.confirmation_requests import (
         ConfirmationRequestRow,
@@ -55,10 +53,10 @@ class ConfirmationService:
         self,
         *,
         db_context_factory: Callable[[], AbstractAsyncContextManager[DatabaseContext]],
-        notification_dispatcher: NotificationDispatcher | None = None,
+        notifier: Notifier | None = None,
     ) -> None:
         self._db_context_factory = db_context_factory
-        self._notification_dispatcher = notification_dispatcher
+        self._notifier = notifier
 
     async def create_request(
         self,
@@ -94,12 +92,10 @@ class ConfirmationService:
         confirmation_prompt: str,
     ) -> None:
         """Send a push notification for a newly created pending confirmation."""
-        if self._notification_dispatcher is None or not (
-            self._notification_dispatcher.enabled
-        ):
+        if self._notifier is None or not self._notifier.enabled:
             return
         try:
-            await self._notification_dispatcher.send_notification(
+            await self._notifier.send_notification(
                 user_identifier=target_user_id,
                 title="Confirmation needed",
                 body=confirmation_prompt[:150],

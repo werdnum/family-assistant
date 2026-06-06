@@ -41,13 +41,12 @@ def upgrade() -> None:
         ),
         sa.Column("updated_at", sa.DateTime(timezone=True), nullable=True),
         sa.PrimaryKeyConstraint("id"),
-        sa.UniqueConstraint("device_token"),
     )
     op.create_index(
         op.f("ix_ios_push_tokens_device_token"),
         "ios_push_tokens",
         ["device_token"],
-        unique=False,
+        unique=True,
     )
     op.create_index(
         op.f("ix_ios_push_tokens_user_identifier"),

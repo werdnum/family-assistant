@@ -7,16 +7,14 @@ from typing import TYPE_CHECKING
 
 from family_assistant.interfaces import ChatInterface
 from family_assistant.llm.messages import AssistantMessage, MessageAttachmentMetadata
-from family_assistant.services.notification_targets import resolve_conversation_user
+from family_assistant.services.notification_targets import notify_conversation
 from family_assistant.storage.context import get_db_context
 from family_assistant.utils.clock import SystemClock
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncEngine
 
-    from family_assistant.services.push_notification import (
-        PushNotificationService,
-    )
+    from family_assistant.services.notifier import Notifier
 
 logger = logging.getLogger(__name__)
 
@@ -34,17 +32,18 @@ class WebChatInterface(ChatInterface):
     def __init__(
         self,
         database_engine: "AsyncEngine",
-        push_notification_service: "PushNotificationService | None" = None,
+        notifier: "Notifier | None" = None,
     ) -> None:
         """
         Initialize the WebChatInterface.
 
         Args:
             database_engine: SQLAlchemy async engine for database operations
-            push_notification_service: Optional push notification service for sending notifications
+            notifier: Optional notification channel (Web Push, iOS, or a dispatcher fanning out to
+                both) used to notify the conversation owner of new assistant replies.
         """
         self.database_engine = database_engine
-        self.push_notification_service = push_notification_service
+        self.notifier = notifier
 
     async def send_message(
         self,
@@ -94,25 +93,17 @@ class WebChatInterface(ChatInterface):
                     attachments=attachments,
                 )
 
-                # Send push notification if enabled
-                if (
-                    saved_message is not None
-                    and self.push_notification_service
-                    and self.push_notification_service.enabled
-                ):
+                # Notify the conversation owner about the new assistant reply.
+                if saved_message is not None and self.notifier is not None:
                     try:
-                        user_id = await resolve_conversation_user(
+                        await notify_conversation(
+                            self.notifier,
                             db_context,
                             interface_type="web",
                             conversation_id=conversation_id,
+                            title="New message",
+                            body=text[:100],  # Truncate long messages
                         )
-                        if user_id:
-                            await self.push_notification_service.send_notification(
-                                user_identifier=user_id,
-                                title="New message",
-                                body=text[:100],  # Truncate long messages
-                                db_context=db_context,
-                            )
                     except Exception as e:
                         logger.warning(
                             f"Failed to send push notification: {e}", exc_info=True

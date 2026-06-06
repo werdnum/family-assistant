@@ -1,8 +1,9 @@
-"""Helpers for resolving which user a notification should target."""
+"""Helpers for resolving and notifying the user a notification should target."""
 
 import logging
 from datetime import timedelta
 
+from family_assistant.services.notifier import Notifier
 from family_assistant.storage.context import DatabaseContext
 
 logger = logging.getLogger(__name__)
@@ -37,3 +38,38 @@ async def resolve_conversation_user(
         if message.get("role") == "user" and message.get("user_id"):
             return message["user_id"]
     return None
+
+
+async def notify_conversation(
+    notifier: Notifier,
+    db_context: DatabaseContext,
+    *,
+    interface_type: str | None,
+    conversation_id: str | None,
+    title: str,
+    body: str,
+) -> bool:
+    """Notify the owner of a conversation, resolving the user from conversation history.
+
+    Returns:
+        ``True`` if a notification was dispatched, ``False`` if the channel was disabled or the
+        owning user could not be determined.
+    """
+    if not notifier.enabled or not interface_type or not conversation_id:
+        return False
+
+    user_id = await resolve_conversation_user(
+        db_context,
+        interface_type=interface_type,
+        conversation_id=conversation_id,
+    )
+    if user_id is None:
+        return False
+
+    await notifier.send_notification(
+        user_identifier=user_id,
+        title=title,
+        body=body,
+        db_context=db_context,
+    )
+    return True

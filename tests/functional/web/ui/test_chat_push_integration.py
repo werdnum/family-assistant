@@ -34,13 +34,13 @@ async def test_web_chat_interface_initialized_with_push_service(
     # Act
     chat_interface = WebChatInterface(
         database_engine=db_engine,
-        push_notification_service=service,
+        notifier=service,
     )
 
     # Assert
-    assert chat_interface.push_notification_service is service
-    assert chat_interface.push_notification_service is not None
-    assert chat_interface.push_notification_service.enabled
+    assert chat_interface.notifier is service
+    assert chat_interface.notifier is not None
+    assert chat_interface.notifier.enabled
 
 
 @pytest.mark.asyncio
@@ -51,11 +51,11 @@ async def test_web_chat_accepts_none_push_service(
     # Act
     chat_interface = WebChatInterface(
         database_engine=db_engine,
-        push_notification_service=None,
+        notifier=None,
     )
 
     # Assert
-    assert chat_interface.push_notification_service is None
+    assert chat_interface.notifier is None
 
 
 @pytest.mark.asyncio
@@ -73,7 +73,7 @@ async def test_web_chat_message_saved_successfully(
 
     chat_interface = WebChatInterface(
         database_engine=db_engine,
-        push_notification_service=service,
+        notifier=service,
     )
 
     # Act
@@ -120,7 +120,7 @@ async def test_web_chat_no_notification_when_disabled(
 
     chat_interface = WebChatInterface(
         database_engine=db_engine,
-        push_notification_service=disabled_service,
+        notifier=disabled_service,
     )
 
     # Act
@@ -158,7 +158,7 @@ async def test_web_chat_handles_push_notification_error_gracefully(
 
     chat_interface = WebChatInterface(
         database_engine=db_engine,
-        push_notification_service=failing_service,
+        notifier=failing_service,
     )
 
     # Act
@@ -230,7 +230,7 @@ async def test_web_chat_sends_push_notification_with_user_message(
 
     chat_interface = WebChatInterface(
         database_engine=db_engine,
-        push_notification_service=service,
+        notifier=service,
     )
 
     # Act - send assistant message
@@ -256,7 +256,7 @@ async def test_web_chat_without_push_service(
     # Arrange
     chat_interface = WebChatInterface(
         database_engine=db_engine,
-        push_notification_service=None,
+        notifier=None,
     )
 
     # Act

@@ -46,9 +46,7 @@ if TYPE_CHECKING:
     from family_assistant.services.confirmation_waiters import (
         ConfirmationResultWaiterRegistry,
     )
-    from family_assistant.services.notification_dispatcher import (
-        NotificationDispatcher,
-    )
+    from family_assistant.services.notifier import Notifier
     from family_assistant.storage.repositories.confirmation_requests import (
         ConfirmationRequestRow,
     )
@@ -59,7 +57,7 @@ if TYPE_CHECKING:
 # handle_index_email is now a method of EmailIndexer and registered in __main__.py
 from family_assistant.processing import ProcessingService
 from family_assistant.processing.utils import get_file_extension_from_mime_type
-from family_assistant.services.notification_targets import resolve_conversation_user
+from family_assistant.services.notification_targets import notify_conversation
 from family_assistant.storage.context import DatabaseContext, get_db_context
 from family_assistant.storage.message_history import message_history_table
 from family_assistant.storage.tasks import enqueue_task, get_task_event
@@ -620,7 +618,7 @@ class TaskWorker:
         chat_interfaces: dict[str, ChatInterface] | None = None,
         confirmation_result_waiters: ConfirmationResultWaiterRegistry | None = None,
         confirmation_ui_managers: dict[str, ConfirmationUIManager] | None = None,
-        notification_dispatcher: NotificationDispatcher | None = None,
+        notification_dispatcher: Notifier | None = None,
     ) -> None:
         """Initializes the TaskWorker with its dependencies."""
         self.processing_service = processing_service
@@ -1032,28 +1030,18 @@ class TaskWorker:
         task: TaskDict,
     ) -> None:
         """Push-notify the conversation owner that a task failed after its retries."""
-        if self.notification_dispatcher is None or not (
-            self.notification_dispatcher.enabled
-        ):
+        if self.notification_dispatcher is None:
             return
         payload = task.get("payload") or {}
-        conversation_id = payload.get("conversation_id")
-        interface_type = payload.get("interface_type")
-        if not conversation_id or not interface_type:
-            return
         try:
-            user_id = await resolve_conversation_user(
+            await notify_conversation(
+                self.notification_dispatcher,
                 db_context,
-                interface_type=interface_type,
-                conversation_id=conversation_id,
+                interface_type=payload.get("interface_type"),
+                conversation_id=payload.get("conversation_id"),
+                title="Task failed",
+                body=f"A background task ({task['task_type']}) failed.",
             )
-            if user_id:
-                await self.notification_dispatcher.send_notification(
-                    user_identifier=user_id,
-                    title="Task failed",
-                    body=f"A background task ({task['task_type']}) failed.",
-                    db_context=db_context,
-                )
         except Exception:
             logger.warning("Failed to send task failure notification", exc_info=True)
 

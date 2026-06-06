@@ -427,10 +427,9 @@ class Assistant:
             apns=self.apns_service,
         )
 
-        # The dispatcher is API-compatible with the individual push services and is stored under
-        # the same app.state key so existing consumers (e.g. WebChatInterface) fan out to every
-        # configured channel.
-        self.fastapi_app.state.push_notification_service = self.notification_dispatcher
+        self.fastapi_app.state.push_notification_service = (
+            self.push_notification_service
+        )
         self.fastapi_app.state.notification_dispatcher = self.notification_dispatcher
         logger.info(
             "Notifications initialized (web_push=%s, apns=%s)",
@@ -570,7 +569,7 @@ class Assistant:
         assert database_engine is not None
         self.confirmation_service = ConfirmationService(
             db_context_factory=lambda: get_db_context(database_engine),
-            notification_dispatcher=self.notification_dispatcher,
+            notifier=self.notification_dispatcher,
         )
         self.confirmation_result_waiters = ConfirmationResultWaiterRegistry()
         self.fastapi_app.state.confirmation_service = self.confirmation_service
