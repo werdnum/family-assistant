@@ -1,0 +1,71 @@
+name: iOS Tests
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'ios/**'
+      - '.github/workflows/ios-tests.yml'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'ios/**'
+      - '.github/workflows/ios-tests.yml'
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+permissions:
+  contents: read
+jobs:
+  test:
+    # macos-26 (Apple Silicon, Xcode 26.x) is the current GA image. The exact
+    # simulator lineup changes with each Xcode release, so the simulator is
+    # resolved dynamically below rather than hardcoded to a device name.
+    runs-on: macos-26
+    timeout-minutes: 30
+    defaults:
+      run:
+        working-directory: ios/FamilyAssistant
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v6
+      - name: Show toolchain
+        run: |
+          xcodebuild -version
+          xcrun simctl list devices available
+      - name: Select iOS simulator
+        id: sim
+        run: |
+          UDID=$(xcrun simctl list devices available --json | python3 -c "
+          import json, sys
+          devices = json.load(sys.stdin)['devices']
+          candidates = [
+              device
+              for runtime, devs in devices.items()
+              if 'iOS' in runtime
+              for device in devs
+              if device.get('isAvailable') and device['name'].startswith('iPhone')
+          ]
+          print(candidates[0]['udid'] if candidates else '')
+          ")
+          if [ -z "$UDID" ]; then
+            echo "No available iPhone simulator found" >&2
+            exit 1
+          fi
+          echo "udid=$UDID" >> "$GITHUB_OUTPUT"
+      - name: Run unit tests
+        run: |
+          set -o pipefail
+          xcodebuild test \
+            -project FamilyAssistant.xcodeproj \
+            -scheme FamilyAssistant \
+            -destination "platform=iOS Simulator,id=${{ steps.sim.outputs.udid }}" \
+            -resultBundlePath TestResults.xcresult \
+            CODE_SIGNING_ALLOWED=NO
+      - name: Upload test results
+        uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: ios-test-results-${{ github.run_id }}
+          path: ios/FamilyAssistant/TestResults.xcresult
+          retention-days: 7
+          if-no-files-found: ignore
