@@ -31,7 +31,7 @@ jobs:
   detect-changes:
     runs-on: ubuntu-latest
     outputs:
-      has_code_changes: ${{ steps.filter.outputs.has_code_changes }}
+      has_code_changes: ${{ steps.code_changes.outputs.has_code_changes }}
       ast_grep_changes: ${{ steps.filter.outputs.ast_grep_changes }}
       frontend_source: ${{ steps.filter.outputs.frontend_source }}
       frontend_tests: ${{ steps.filter.outputs.frontend_tests }}
@@ -46,12 +46,17 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v6
-      - name: Detect changed paths
+      - name: Detect code changes
         uses: dorny/paths-filter@v4
-        id: filter
+        id: code_changes
         with:
+          # A file counts as a code change only when it falls outside *every*
+          # exclusion below. This requires predicate-quantifier: every -- with
+          # the default 'some', an all-negated list matches as soon as a file
+          # fails any single negation (e.g. an ios/ file still matches
+          # '!docs/**'), so the exclusions would never gate anything.
+          predicate-quantifier: every
           filters: |
-            # Detect if there are any code changes (anything NOT in the docs-only list)
             has_code_changes:
               - '!docs/**'
               - '!*.md'
@@ -61,6 +66,7 @@ jobs:
               - '!.ast-grep/**'
               - '!.github/workflows/gemini-*.yml'
               - '!.github/workflows/build-containers.yml'
+              - '!.github/workflows/ios-tests.yml'
               - '!.github/dependabot.yml'
               - '!.devcontainer/claude-wrapper.sh'
               - '!.devcontainer/throttle_backspaces.py'
@@ -78,6 +84,11 @@ jobs:
               - '!.mcp.json'
               - '!mcp_config.dev.json'
               - '!.build'
+      - name: Detect changed paths
+        uses: dorny/paths-filter@v4
+        id: filter
+        with:
+          filters: |
             ast_grep_changes:
               - '.ast-grep/**'
             frontend_source:
