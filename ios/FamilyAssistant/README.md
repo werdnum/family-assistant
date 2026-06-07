@@ -186,14 +186,15 @@ xcodebuild -project FamilyAssistant.xcodeproj \
 
 The `iOS Tests` GitHub Actions workflow (`.github/workflows/ios-tests.yml`) runs the
 `FamilyAssistantTests` unit tests on every push and pull request that touches `ios/**`. It builds
-the `FamilyAssistant` scheme on a `macos-15` runner (Apple Silicon, Xcode 16.x) against an iOS
-Simulator with code signing disabled:
+the `FamilyAssistant` scheme on a `macos-26` runner (Apple Silicon, Xcode 26.x) against an iOS
+Simulator with code signing disabled. The workflow resolves an available iPhone simulator
+dynamically (the device lineup changes between Xcode releases), so the effective command is roughly:
 
 ```bash
 xcodebuild test \
   -project FamilyAssistant.xcodeproj \
   -scheme FamilyAssistant \
-  -destination 'platform=iOS Simulator,name=iPhone 16' \
+  -destination "platform=iOS Simulator,id=<resolved-iphone-simulator-udid>" \
   CODE_SIGNING_ALLOWED=NO
 ```
 
