@@ -447,9 +447,12 @@ various tasks with dark mode support and mobile optimization.
 - **Accessing it:**`{{ SERVER_URL }}` (This link will be replaced with the actual URL). The
   interface automatically opens to the chat page for immediate access.
 
-- **iOS App:** If the native iOS app is installed, it opens the same web interface after secure
-  sign-in. The gear menu includes native notification controls. When enabled, iOS notifications can
-  open the relevant chat or page, and confirmation notifications may include approve/deny actions.
+- **iOS App:** If the native iOS app is installed, it opens Family Assistant after secure sign-in
+  and uses native screens for Notes. You can search, read, create, edit, and delete notes on iOS,
+  including changing whether a note is included in the assistant's system prompt. The rest of the
+  web interface remains available inside the app. The gear menu includes native notification
+  controls. When enabled, iOS notifications can open the relevant chat or page, and confirmation
+  notifications may include approve/deny actions.
 
 - **Chat Features:**
 

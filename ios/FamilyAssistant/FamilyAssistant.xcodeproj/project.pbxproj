@@ -17,7 +17,26 @@
 		A10008 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = B10008 /* Assets.xcassets */; };
 		A10009 /* AppDelegate.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10011 /* AppDelegate.swift */; };
 		A10010 /* NotificationManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10012 /* NotificationManager.swift */; };
+		A10011 /* AppRouting.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10014 /* AppRouting.swift */; };
+		A10012 /* AppSettingsMenu.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10015 /* AppSettingsMenu.swift */; };
+		A10013 /* NotesAPIClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10016 /* NotesAPIClient.swift */; };
+		A10014 /* NotesRootView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10017 /* NotesRootView.swift */; };
+		A10015 /* NotesListView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10018 /* NotesListView.swift */; };
+		A10016 /* NoteDetailView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10019 /* NoteDetailView.swift */; };
+		A10017 /* NoteEditorView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10020 /* NoteEditorView.swift */; };
+		A20001 /* RouteTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B20002 /* RouteTests.swift */; };
+		A20002 /* NotesModelTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B20003 /* NotesModelTests.swift */; };
 /* End PBXBuildFile section */
+
+/* Begin PBXContainerItemProxy section */
+		G20002 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = E10002 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = E10001;
+			remoteInfo = FamilyAssistant;
+		};
+/* End PBXContainerItemProxy section */
 
 /* Begin PBXFileReference section */
 		B10001 /* FamilyAssistantApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FamilyAssistantApp.swift; sourceTree = "<group>"; };
@@ -33,10 +52,27 @@
 		B10011 /* AppDelegate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppDelegate.swift; sourceTree = "<group>"; };
 		B10012 /* NotificationManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NotificationManager.swift; sourceTree = "<group>"; };
 		B10013 /* FamilyAssistant.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = FamilyAssistant.entitlements; sourceTree = "<group>"; };
+		B10014 /* AppRouting.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppRouting.swift; sourceTree = "<group>"; };
+		B10015 /* AppSettingsMenu.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppSettingsMenu.swift; sourceTree = "<group>"; };
+		B10016 /* NotesAPIClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NotesAPIClient.swift; sourceTree = "<group>"; };
+		B10017 /* NotesRootView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NotesRootView.swift; sourceTree = "<group>"; };
+		B10018 /* NotesListView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NotesListView.swift; sourceTree = "<group>"; };
+		B10019 /* NoteDetailView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NoteDetailView.swift; sourceTree = "<group>"; };
+		B10020 /* NoteEditorView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NoteEditorView.swift; sourceTree = "<group>"; };
+		B20001 /* FamilyAssistantTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = FamilyAssistantTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		B20002 /* RouteTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RouteTests.swift; sourceTree = "<group>"; };
+		B20003 /* NotesModelTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NotesModelTests.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
 		C10001 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		C20001 /* Frameworks */ = {
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
@@ -50,6 +86,7 @@
 			isa = PBXGroup;
 			children = (
 				D10002 /* FamilyAssistant */,
+				D20001 /* FamilyAssistantTests */,
 				D10005 /* Products */,
 			);
 			sourceTree = "<group>";
@@ -59,9 +96,12 @@
 			children = (
 				B10001 /* FamilyAssistantApp.swift */,
 				B10002 /* ContentView.swift */,
+				B10014 /* AppRouting.swift */,
+				B10015 /* AppSettingsMenu.swift */,
 				D10003 /* Auth */,
 				D10004 /* WebView */,
 				D10006 /* Notifications */,
+				D10007 /* Notes */,
 				B10008 /* Assets.xcassets */,
 				B10009 /* Info.plist */,
 				B10013 /* FamilyAssistant.entitlements */,
@@ -97,12 +137,34 @@
 			path = Notifications;
 			sourceTree = "<group>";
 		};
+		D10007 /* Notes */ = {
+			isa = PBXGroup;
+			children = (
+				B10016 /* NotesAPIClient.swift */,
+				B10017 /* NotesRootView.swift */,
+				B10018 /* NotesListView.swift */,
+				B10019 /* NoteDetailView.swift */,
+				B10020 /* NoteEditorView.swift */,
+			);
+			path = Notes;
+			sourceTree = "<group>";
+		};
 		D10005 /* Products */ = {
 			isa = PBXGroup;
 			children = (
 				B10010 /* FamilyAssistant.app */,
+				B20001 /* FamilyAssistantTests.xctest */,
 			);
 			name = Products;
+			sourceTree = "<group>";
+		};
+		D20001 /* FamilyAssistantTests */ = {
+			isa = PBXGroup;
+			children = (
+				B20002 /* RouteTests.swift */,
+				B20003 /* NotesModelTests.swift */,
+			);
+			path = FamilyAssistantTests;
 			sourceTree = "<group>";
 		};
 /* End PBXGroup section */
@@ -125,6 +187,24 @@
 			productReference = B10010 /* FamilyAssistant.app */;
 			productType = "com.apple.product-type.application";
 		};
+		E20001 /* FamilyAssistantTests */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = F20001 /* Build configuration list for PBXNativeTarget "FamilyAssistantTests" */;
+			buildPhases = (
+				C20003 /* Sources */,
+				C20001 /* Frameworks */,
+				C20002 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				G20001 /* PBXTargetDependency */,
+			);
+			name = FamilyAssistantTests;
+			productName = FamilyAssistantTests;
+			productReference = B20001 /* FamilyAssistantTests.xctest */;
+			productType = "com.apple.product-type.bundle.unit-test";
+		};
 /* End PBXNativeTarget section */
 
 /* Begin PBXProject section */
@@ -137,6 +217,10 @@
 				TargetAttributes = {
 					E10001 = {
 						CreatedOnToolsVersion = 15.4;
+					};
+					E20001 = {
+						CreatedOnToolsVersion = 15.4;
+						TestTargetID = E10001;
 					};
 				};
 			};
@@ -154,6 +238,7 @@
 			projectRoot = "";
 			targets = (
 				E10001 /* FamilyAssistant */,
+				E20001 /* FamilyAssistantTests */,
 			);
 		};
 /* End PBXProject section */
@@ -164,6 +249,13 @@
 			buildActionMask = 2147483647;
 			files = (
 				A10008 /* Assets.xcassets in Resources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		C20002 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -183,10 +275,34 @@
 				A10007 /* WebViewToolbar.swift in Sources */,
 				A10009 /* AppDelegate.swift in Sources */,
 				A10010 /* NotificationManager.swift in Sources */,
+				A10011 /* AppRouting.swift in Sources */,
+				A10012 /* AppSettingsMenu.swift in Sources */,
+				A10013 /* NotesAPIClient.swift in Sources */,
+				A10014 /* NotesRootView.swift in Sources */,
+				A10015 /* NotesListView.swift in Sources */,
+				A10016 /* NoteDetailView.swift in Sources */,
+				A10017 /* NoteEditorView.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		C20003 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				A20001 /* RouteTests.swift in Sources */,
+				A20002 /* NotesModelTests.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
 /* End PBXSourcesBuildPhase section */
+
+/* Begin PBXTargetDependency section */
+		G20001 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = E10001 /* FamilyAssistant */;
+			targetProxy = G20002 /* PBXContainerItemProxy */;
+		};
+/* End PBXTargetDependency section */
 
 /* Begin XCBuildConfiguration section */
 		F10004 /* Debug */ = {
@@ -370,6 +486,52 @@
 			};
 			name = Release;
 		};
+		F20002 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = H7NBC2S52X;
+				GENERATE_INFOPLIST_FILE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@loader_path/Frameworks",
+				);
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = dev.andrewgarrett.assistant.tests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/FamilyAssistant.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/FamilyAssistant";
+			};
+			name = Debug;
+		};
+		F20003 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = H7NBC2S52X;
+				GENERATE_INFOPLIST_FILE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@loader_path/Frameworks",
+				);
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = dev.andrewgarrett.assistant.tests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/FamilyAssistant.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/FamilyAssistant";
+			};
+			name = Release;
+		};
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
@@ -387,6 +549,15 @@
 			buildConfigurations = (
 				F10006 /* Debug */,
 				F10007 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		F20001 /* Build configuration list for PBXNativeTarget "FamilyAssistantTests" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				F20002 /* Debug */,
+				F20003 /* Release */,
 			);
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;
