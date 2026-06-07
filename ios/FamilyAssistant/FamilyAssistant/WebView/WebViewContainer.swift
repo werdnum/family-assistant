@@ -33,6 +33,8 @@ struct WebViewContainer: UIViewRepresentable {
         let config = WKWebViewConfiguration()
         config.websiteDataStore = .default()
         config.allowsInlineMediaPlayback = true
+        config.userContentController.addUserScript(Self.nativeNavigationScript)
+        config.userContentController.add(context.coordinator, name: Self.nativeNavigationMessageName)
 
         let webView = WKWebView(frame: .zero, configuration: config)
         webView.navigationDelegate = context.coordinator
@@ -61,6 +63,9 @@ struct WebViewContainer: UIViewRepresentable {
     }
 
     static func dismantleUIView(_ uiView: WKWebView, coordinator: Coordinator) {
+        uiView.configuration.userContentController.removeScriptMessageHandler(
+            forName: Self.nativeNavigationMessageName
+        )
         if coordinator.state.webView === uiView {
             coordinator.state.webView = nil
         }
@@ -74,7 +79,48 @@ struct WebViewContainer: UIViewRepresentable {
         )
     }
 
-    final class Coordinator: NSObject, WKNavigationDelegate {
+    private static let nativeNavigationMessageName = "familyAssistantNativeNavigation"
+
+    private static let nativeNavigationScript = WKUserScript(
+        source: """
+        (() => {
+          if (window.__familyAssistantNativeNavigationInstalled) {
+            return;
+          }
+          window.__familyAssistantNativeNavigationInstalled = true;
+
+          const postLocation = () => {
+            try {
+              window.webkit.messageHandlers.familyAssistantNativeNavigation.postMessage(window.location.href);
+            } catch (_) {
+              // WebKit may not expose the bridge in every loading context.
+            }
+          };
+
+          const postSoon = () => window.setTimeout(postLocation, 0);
+          const originalPushState = window.history.pushState;
+          const originalReplaceState = window.history.replaceState;
+
+          window.history.pushState = function() {
+            const result = originalPushState.apply(this, arguments);
+            postSoon();
+            return result;
+          };
+
+          window.history.replaceState = function() {
+            const result = originalReplaceState.apply(this, arguments);
+            postSoon();
+            return result;
+          };
+
+          window.addEventListener("popstate", postSoon);
+        })();
+        """,
+        injectionTime: .atDocumentEnd,
+        forMainFrameOnly: true
+    )
+
+    final class Coordinator: NSObject, WKNavigationDelegate, WKScriptMessageHandler {
         let state: WebViewState
         var serverBaseURL: URL
         var onInternalNavigation: (URL) -> Bool
@@ -137,11 +183,36 @@ struct WebViewContainer: UIViewRepresentable {
             decisionHandler(.allow)
         }
 
+        func userContentController(
+            _ userContentController: WKUserContentController,
+            didReceive message: WKScriptMessage
+        ) {
+            guard message.name == WebViewContainer.nativeNavigationMessageName,
+                  let value = message.body as? String,
+                  let url = URL(string: value)
+            else {
+                return
+            }
+
+            if handleInternalNavigation(url) {
+                state.webView?.stopLoading()
+            }
+        }
+
         private func updateState(_ webView: WKWebView) {
             state.canGoBack = webView.canGoBack
             state.canGoForward = webView.canGoForward
             state.title = webView.title ?? ""
             state.isLoading = webView.isLoading
+        }
+
+        private func handleInternalNavigation(_ url: URL) -> Bool {
+            guard url.scheme == "http" || url.scheme == "https",
+                  url.matchesOrigin(of: serverBaseURL)
+            else {
+                return false
+            }
+            return onInternalNavigation(url)
         }
     }
 }

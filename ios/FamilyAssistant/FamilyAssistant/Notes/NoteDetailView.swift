@@ -8,7 +8,7 @@ struct NoteDetailView: View {
     let onDeleted: () -> Void
 
     @State private var note: NativeNote?
-    @State private var isLoading = false
+    @State private var isLoading = true
     @State private var errorMessage: String?
     @State private var isConfirmingDelete = false
 
@@ -82,6 +82,9 @@ struct NoteDetailView: View {
                     }
                     .padding()
                 }
+            } else {
+                ProgressView("Loading note...")
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
         }
         .navigationTitle("Note")
@@ -106,6 +109,7 @@ struct NoteDetailView: View {
     private func loadNote() async {
         isLoading = true
         errorMessage = nil
+        note = nil
         do {
             note = try await NotesAPIClient(authManager: authManager).getNote(title: title)
         } catch {
