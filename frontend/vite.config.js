@@ -123,8 +123,8 @@ export default defineConfig(({ mode }) => ({
     manifest: true,
     // Output assets to the existing static directory structure
     outDir: path.resolve(__dirname, '../src/family_assistant/static/dist'),
-    // Empty the output directory on each build
-    emptyOutDir: true,
+    // The npm prebuild script cleans this directory with retries for macOS shared volumes.
+    emptyOutDir: false,
     // Increase chunk size warning limit since we're code splitting
     chunkSizeWarningLimit: 600,
     rollupOptions: {

@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import json
 import os
+import shlex
 import shutil
 import subprocess
 import sys
@@ -271,9 +272,12 @@ def main() -> int:
         shard_reports_dir.mkdir()
         env["PYTEST_ADAPTIVE_SHARD_REPORT_DIR"] = str(shard_reports_dir)
 
-    limit_command = (
-        f"{sys.executable} {(_repo_root() / 'scripts' / 'cgroup_memory_gate.py')} "
-        f"{mem_threshold}"
+    limit_command = " ".join(
+        [
+            shlex.quote(sys.executable),
+            shlex.quote(str(_repo_root() / "scripts" / "cgroup_memory_gate.py")),
+            shlex.quote(mem_threshold),
+        ]
     )
     shard_runner = _repo_root() / "scripts" / "run_pytest_shard.py"
     command = [
@@ -296,8 +300,8 @@ def main() -> int:
         "--results",
         str(results_dir),
         "--line-buffer",
-        sys.executable,
-        str(shard_runner),
+        shlex.quote(sys.executable),
+        shlex.quote(str(shard_runner)),
         "::::",
         str(nodeids_file),
     ]

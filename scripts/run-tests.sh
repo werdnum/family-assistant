@@ -12,6 +12,8 @@ SUMMARY_FILE=".poe-test-summary.txt"
 # Track all background processes for cleanup
 BACKGROUND_PIDS=()
 CLEANUP_RUNNING=0
+LOCK_DIR_ACQUIRED=0
+LOCK_DIR=""
 
 # Cleanup function - kills all background processes
 cleanup() {
@@ -23,23 +25,32 @@ cleanup() {
     fi
     CLEANUP_RUNNING=1
 
-    # If we have background processes, clean them up
-    if [ ${#BACKGROUND_PIDS[@]} -gt 0 ]; then
+    if [ "$LOCK_DIR_ACQUIRED" -eq 1 ] && [ -n "$LOCK_DIR" ]; then
+        rm -rf "$LOCK_DIR"
+    fi
+
+    # If we have live background processes, clean them up
+    local live_pids=()
+    for pid in "${BACKGROUND_PIDS[@]}"; do
+        if kill -0 "$pid" 2>/dev/null; then
+            live_pids+=("$pid")
+        fi
+    done
+
+    if [ ${#live_pids[@]} -gt 0 ]; then
         echo ""
         echo "${YELLOW}⚠️  Interrupted - cleaning up background processes...${NC}" >&2
 
         # Send SIGTERM to all background processes
-        for pid in "${BACKGROUND_PIDS[@]}"; do
-            if kill -0 "$pid" 2>/dev/null; then
-                kill "$pid" 2>/dev/null || true
-            fi
+        for pid in "${live_pids[@]}"; do
+            kill "$pid" 2>/dev/null || true
         done
 
         # Wait up to 3 seconds for graceful shutdown
         local wait_count=0
         while [ "$wait_count" -lt 30 ]; do
             local any_alive=0
-            for pid in "${BACKGROUND_PIDS[@]}"; do
+            for pid in "${live_pids[@]}"; do
                 if kill -0 "$pid" 2>/dev/null; then
                     # Check if process is a zombie
                     local state
@@ -60,7 +71,7 @@ cleanup() {
         done
 
         # Force kill any remaining processes
-        for pid in "${BACKGROUND_PIDS[@]}"; do
+        for pid in "${live_pids[@]}"; do
             if kill -0 "$pid" 2>/dev/null; then
                 echo "${YELLOW}  Force killing process $pid${NC}" >&2
                 kill -9 "$pid" 2>/dev/null || true
@@ -218,10 +229,30 @@ echo "${GREEN}✓ Dependencies are up to date${NC}"
 
 # Acquire exclusive lock to prevent concurrent test runs
 LOCK_FILE="$HOME/.poe-test.lock"
-exec 200>"$LOCK_FILE"
+LOCK_DIR="$LOCK_FILE.dir"
 
 echo "${BLUE}Acquiring test lock...${NC}"
-if ! flock --exclusive --timeout 300 200; then
+if command -v flock >/dev/null 2>&1; then
+    exec 200>"$LOCK_FILE"
+    lock_acquired=0
+    if flock --exclusive --timeout 300 200; then
+        lock_acquired=1
+    fi
+else
+    lock_acquired=0
+    lock_wait_start=$(date +%s)
+    while [ $(( $(date +%s) - lock_wait_start )) -lt 300 ]; do
+        if mkdir "$LOCK_DIR" 2>/dev/null; then
+            LOCK_DIR_ACQUIRED=1
+            printf '%s\n' "$$" > "$LOCK_DIR/pid"
+            lock_acquired=1
+            break
+        fi
+        sleep 1
+    done
+fi
+
+if [ "$lock_acquired" -ne 1 ]; then
     echo "${RED}❌ Error: Could not acquire lock after waiting 5 minutes.${NC}" >&2
     echo "${YELLOW}Tests are currently running in another process.${NC}" >&2
     echo "${YELLOW}  Lock file: $LOCK_FILE${NC}" >&2
@@ -233,6 +264,12 @@ if ! flock --exclusive --timeout 300 200; then
             echo "${YELLOW}  Process holding lock: PID $LOCK_HOLDER${NC}" >&2
             ps -p "$LOCK_HOLDER" -o pid,cmd 2>/dev/null | grep -v "PID CMD" | sed "s/^/${YELLOW}    /" | sed "s/$/${NC}/" >&2
         fi
+    fi
+
+    if [ -f "$LOCK_DIR/pid" ]; then
+        LOCK_HOLDER=$(cat "$LOCK_DIR/pid")
+        echo "${YELLOW}  Process holding fallback lock: PID $LOCK_HOLDER${NC}" >&2
+        ps -p "$LOCK_HOLDER" -o pid,cmd 2>/dev/null | grep -v "PID CMD" | sed "s/^/${YELLOW}    /" | sed "s/$/${NC}/" >&2
     fi
 
     echo "" >&2

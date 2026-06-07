@@ -11,6 +11,16 @@ beforeAll(() => {
   server.listen({
     onUnhandledRequest: 'warn', // Log unhandled requests during development
   });
+
+  // Node's fetch rejects jsdom AbortSignal instances before MSW can handle the request.
+  const mswFetch = globalThis.fetch.bind(globalThis);
+  globalThis.fetch = (input, init) => {
+    if (init?.signal) {
+      const { signal: _signal, ...initWithoutSignal } = init;
+      return mswFetch(input, initWithoutSignal);
+    }
+    return mswFetch(input, init);
+  };
 });
 
 // Reset handlers after each test (RTL auto-cleanup handles component unmount)
