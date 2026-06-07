@@ -143,6 +143,7 @@ records.
 ```yaml
 users:
   - id: "alice@example.com"
+    label: "Alice"
     oidc:
       emails:
         - "alice@example.com"
@@ -160,6 +161,11 @@ users:
 
 Use the stable Keycloak/OIDC email as `id` unless you have a stronger local convention. Telegram
 `user_ids` are Telegram user IDs, not chat IDs.
+
+The optional `label` is the human-friendly display name the assistant uses to address the user (for
+example in the web chat). When a web/OIDC or API-token user has a `label`, the assistant uses it
+instead of a generic placeholder; if it is omitted the assistant falls back to the OIDC display name
+and then the canonical `id`.
 
 When `users` is configured, unknown OIDC users, Telegram users, and required email mappings are
 rejected at the interface boundary. When it is empty, the app keeps the legacy behavior:

@@ -15,6 +15,7 @@ def _config_with_user() -> AppConfig:
         "users": [
             {
                 "id": "andrew@example.com",
+                "label": "Andrew",
                 "oidc": {
                     "emails": ["Andrew <Andrew@Example.com>"],
                     "subjects": ["keycloak-subject"],
@@ -48,6 +49,52 @@ def test_resolves_oidc_telegram_and_email_to_same_canonical_user() -> None:
         )
         == "andrew@example.com"
     )
+
+
+def test_resolved_identities_carry_configured_label() -> None:
+    resolver = UserIdentityResolver(_config_with_user())
+
+    assert (
+        resolver.resolve_oidc_user({
+            "email": "andrew@example.com",
+            "sub": "keycloak-subject",
+        }).label
+        == "Andrew"
+    )
+    assert resolver.resolve_api_token_user("andrew@example.com").label == "Andrew"
+    assert resolver.resolve_telegram_user(123456789).label == "Andrew"
+    assert resolver.get_user_label("andrew@example.com") == "Andrew"
+
+
+def test_label_is_none_when_not_configured() -> None:
+    config = AppConfig.model_validate({
+        "users": [
+            {
+                "id": "no-label@example.com",
+                "oidc": {"emails": ["no-label@example.com"]},
+            }
+        ]
+    })
+    resolver = UserIdentityResolver(config)
+
+    resolved = resolver.resolve_oidc_user({"email": "no-label@example.com"})
+    assert resolved.label is None
+    assert resolver.get_user_label("no-label@example.com") is None
+
+
+def test_blank_label_is_normalized_to_none() -> None:
+    config = AppConfig.model_validate({
+        "users": [
+            {
+                "id": "blank@example.com",
+                "label": "   ",
+                "oidc": {"emails": ["blank@example.com"]},
+            }
+        ]
+    })
+    resolver = UserIdentityResolver(config)
+
+    assert resolver.get_user_label("blank@example.com") is None
 
 
 def test_rejects_unknown_telegram_user_when_users_configured() -> None:

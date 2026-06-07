@@ -77,6 +77,7 @@ def resolve_current_user_payload(request: Request, user: dict) -> dict:
         "sub": resolved.user_id,
         "identity_source": resolved.source,
         "identity_source_identifier": resolved.source_identifier,
+        "user_label": resolved.label,
     }
 
 

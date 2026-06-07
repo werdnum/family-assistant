@@ -23,6 +23,7 @@ class ResolvedUserIdentity:
     source_identifier: str
     email: str | None = None
     subject: str | None = None
+    label: str | None = None
 
 
 class UserIdentityResolver:
@@ -37,8 +38,11 @@ class UserIdentityResolver:
         self._developer_telegram_user_ids: set[int] = set()
         self._email_sender_to_user_id: dict[str, str] = {}
         self._email_recipient_to_user_id: dict[str, str] = {}
+        self._user_id_to_label: dict[str, str] = {}
 
         for user in config.users:
+            if user.label is not None:
+                self._user_id_to_label[user.id] = user.label
             for email in user.oidc.emails:
                 self._oidc_email_to_user_id[email] = user.id
             for subject in user.oidc.subjects:
@@ -56,6 +60,10 @@ class UserIdentityResolver:
     def users_configured(self) -> bool:
         return self._users_configured
 
+    def get_user_label(self, user_id: str) -> str | None:
+        """Return the configured human-friendly label for a canonical user, if any."""
+        return self._user_id_to_label.get(user_id)
+
     def resolve_oidc_user(self, user_info: dict[str, object]) -> ResolvedUserIdentity:
         """Resolve an OIDC session or userinfo payload to a canonical user."""
         email = normalize_email_address(_string_or_none(user_info.get("email")))
@@ -72,12 +80,14 @@ class UserIdentityResolver:
                 msg = f"OIDC identity maps to multiple users: {sorted_user_ids}"
                 raise UserIdentityResolutionError(msg)
             if matched_user_ids:
+                matched_user_id = next(iter(matched_user_ids))
                 return ResolvedUserIdentity(
-                    user_id=next(iter(matched_user_ids)),
+                    user_id=matched_user_id,
                     source="oidc",
                     source_identifier=email or subject or "unknown",
                     email=email,
                     subject=subject,
+                    label=self._user_id_to_label.get(matched_user_id),
                 )
             msg = (
                 "OIDC identity is not mapped to a configured user "
@@ -135,6 +145,7 @@ class UserIdentityResolver:
             user_id=normalized_user_identifier,
             source="api_token",
             source_identifier=user_identifier,
+            label=self._user_id_to_label.get(normalized_user_identifier),
         )
 
     def resolve_telegram_user(self, telegram_user_id: int) -> ResolvedUserIdentity:
@@ -151,6 +162,7 @@ class UserIdentityResolver:
                 user_id=user_id,
                 source="telegram",
                 source_identifier=str(telegram_user_id),
+                label=self._user_id_to_label.get(user_id),
             )
 
         if (
