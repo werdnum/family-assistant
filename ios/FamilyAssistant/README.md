@@ -182,6 +182,24 @@ xcodebuild -project FamilyAssistant.xcodeproj \
 # build/Debug-iphonesimulator/FamilyAssistant.app
 ```
 
+## Continuous Integration
+
+The `iOS Tests` GitHub Actions workflow (`.github/workflows/ios-tests.yml`) runs the
+`FamilyAssistantTests` unit tests on every push and pull request that touches `ios/**`. It builds
+the `FamilyAssistant` scheme on a `macos-15` runner (Apple Silicon, Xcode 16.x) against an iOS
+Simulator with code signing disabled:
+
+```bash
+xcodebuild test \
+  -project FamilyAssistant.xcodeproj \
+  -scheme FamilyAssistant \
+  -destination 'platform=iOS Simulator,name=iPhone 16' \
+  CODE_SIGNING_ALLOWED=NO
+```
+
+Changes outside `ios/**` do not trigger this workflow, and iOS-only changes are excluded from the
+Linux devcontainer CI so the two suites stay independent.
+
 ## Local Development
 
 To test against a local server over HTTP, the app's Info.plist includes

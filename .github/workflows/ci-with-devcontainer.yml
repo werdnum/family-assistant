@@ -55,6 +55,7 @@ jobs:
             has_code_changes:
               - '!docs/**'
               - '!*.md'
+              - '!ios/**'
               - '!.claude/**'
               - '!.serena/**'
               - '!.ast-grep/**'
