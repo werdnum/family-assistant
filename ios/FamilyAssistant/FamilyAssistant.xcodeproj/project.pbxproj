@@ -17,6 +17,13 @@
 		A10008 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = B10008 /* Assets.xcassets */; };
 		A10009 /* AppDelegate.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10011 /* AppDelegate.swift */; };
 		A10010 /* NotificationManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10012 /* NotificationManager.swift */; };
+		A10011 /* AppRouting.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10014 /* AppRouting.swift */; };
+		A10012 /* AppSettingsMenu.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10015 /* AppSettingsMenu.swift */; };
+		A10013 /* NotesAPIClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10016 /* NotesAPIClient.swift */; };
+		A10014 /* NotesRootView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10017 /* NotesRootView.swift */; };
+		A10015 /* NotesListView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10018 /* NotesListView.swift */; };
+		A10016 /* NoteDetailView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10019 /* NoteDetailView.swift */; };
+		A10017 /* NoteEditorView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10020 /* NoteEditorView.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -33,6 +40,13 @@
 		B10011 /* AppDelegate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppDelegate.swift; sourceTree = "<group>"; };
 		B10012 /* NotificationManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NotificationManager.swift; sourceTree = "<group>"; };
 		B10013 /* FamilyAssistant.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = FamilyAssistant.entitlements; sourceTree = "<group>"; };
+		B10014 /* AppRouting.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppRouting.swift; sourceTree = "<group>"; };
+		B10015 /* AppSettingsMenu.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppSettingsMenu.swift; sourceTree = "<group>"; };
+		B10016 /* NotesAPIClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NotesAPIClient.swift; sourceTree = "<group>"; };
+		B10017 /* NotesRootView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NotesRootView.swift; sourceTree = "<group>"; };
+		B10018 /* NotesListView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NotesListView.swift; sourceTree = "<group>"; };
+		B10019 /* NoteDetailView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NoteDetailView.swift; sourceTree = "<group>"; };
+		B10020 /* NoteEditorView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NoteEditorView.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -59,9 +73,12 @@
 			children = (
 				B10001 /* FamilyAssistantApp.swift */,
 				B10002 /* ContentView.swift */,
+				B10014 /* AppRouting.swift */,
+				B10015 /* AppSettingsMenu.swift */,
 				D10003 /* Auth */,
 				D10004 /* WebView */,
 				D10006 /* Notifications */,
+				D10007 /* Notes */,
 				B10008 /* Assets.xcassets */,
 				B10009 /* Info.plist */,
 				B10013 /* FamilyAssistant.entitlements */,
@@ -95,6 +112,18 @@
 				B10012 /* NotificationManager.swift */,
 			);
 			path = Notifications;
+			sourceTree = "<group>";
+		};
+		D10007 /* Notes */ = {
+			isa = PBXGroup;
+			children = (
+				B10016 /* NotesAPIClient.swift */,
+				B10017 /* NotesRootView.swift */,
+				B10018 /* NotesListView.swift */,
+				B10019 /* NoteDetailView.swift */,
+				B10020 /* NoteEditorView.swift */,
+			);
+			path = Notes;
 			sourceTree = "<group>";
 		};
 		D10005 /* Products */ = {
@@ -183,6 +212,13 @@
 				A10007 /* WebViewToolbar.swift in Sources */,
 				A10009 /* AppDelegate.swift in Sources */,
 				A10010 /* NotificationManager.swift in Sources */,
+				A10011 /* AppRouting.swift in Sources */,
+				A10012 /* AppSettingsMenu.swift in Sources */,
+				A10013 /* NotesAPIClient.swift in Sources */,
+				A10014 /* NotesRootView.swift in Sources */,
+				A10015 /* NotesListView.swift in Sources */,
+				A10016 /* NoteDetailView.swift in Sources */,
+				A10017 /* NoteEditorView.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

@@ -25,7 +25,9 @@ final class WebViewState {
 
 struct WebViewContainer: UIViewRepresentable {
     let url: URL
+    let serverBaseURL: URL
     let webViewState: WebViewState
+    let onInternalNavigation: (URL) -> Bool
 
     func makeUIView(context: Context) -> WKWebView {
         let config = WKWebViewConfiguration()
@@ -53,20 +55,41 @@ struct WebViewContainer: UIViewRepresentable {
         return webView
     }
 
-    func updateUIView(_ webView: WKWebView, context: Context) {}
+    func updateUIView(_ webView: WKWebView, context: Context) {
+        context.coordinator.serverBaseURL = serverBaseURL
+        context.coordinator.onInternalNavigation = onInternalNavigation
+    }
+
+    static func dismantleUIView(_ uiView: WKWebView, coordinator: Coordinator) {
+        if coordinator.state.webView === uiView {
+            coordinator.state.webView = nil
+        }
+    }
 
     func makeCoordinator() -> Coordinator {
-        Coordinator(state: webViewState)
+        Coordinator(
+            state: webViewState,
+            serverBaseURL: serverBaseURL,
+            onInternalNavigation: onInternalNavigation
+        )
     }
 
     final class Coordinator: NSObject, WKNavigationDelegate {
         let state: WebViewState
+        var serverBaseURL: URL
+        var onInternalNavigation: (URL) -> Bool
         private var observation: NSKeyValueObservation?
         private var titleObservation: NSKeyValueObservation?
         private var loadingObservation: NSKeyValueObservation?
 
-        init(state: WebViewState) {
+        init(
+            state: WebViewState,
+            serverBaseURL: URL,
+            onInternalNavigation: @escaping (URL) -> Bool
+        ) {
             self.state = state
+            self.serverBaseURL = serverBaseURL
+            self.onInternalNavigation = onInternalNavigation
         }
 
         @objc func handleRefresh(_ refreshControl: UIRefreshControl) {
@@ -91,16 +114,25 @@ struct WebViewContainer: UIViewRepresentable {
             decidePolicyFor navigationAction: WKNavigationAction,
             decisionHandler: @escaping (WKNavigationActionPolicy) -> Void
         ) {
-            // Open external links in Safari
             if navigationAction.navigationType == .linkActivated,
-               let url = navigationAction.request.url,
-               let host = url.host,
-               let serverHost = state.webView?.url?.host,
-               host != serverHost
+               let url = navigationAction.request.url
             {
-                UIApplication.shared.open(url)
-                decisionHandler(.cancel)
-                return
+                guard url.scheme == "http" || url.scheme == "https" else {
+                    UIApplication.shared.open(url)
+                    decisionHandler(.cancel)
+                    return
+                }
+
+                if !url.matchesOrigin(of: serverBaseURL) {
+                    UIApplication.shared.open(url)
+                    decisionHandler(.cancel)
+                    return
+                }
+
+                if onInternalNavigation(url) {
+                    decisionHandler(.cancel)
+                    return
+                }
             }
             decisionHandler(.allow)
         }

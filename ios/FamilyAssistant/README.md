@@ -1,7 +1,7 @@
 # Family Assistant iOS App
 
-A native iOS app that wraps the Family Assistant web UI in a WKWebView with secure PKCE-based
-authentication and native APNs notification registration.
+A native iOS app that uses secure PKCE-based authentication, native APNs notification registration,
+native Notes screens, and a WKWebView fallback for the rest of the Family Assistant web UI.
 
 ## Requirements
 
@@ -38,6 +38,30 @@ The app uses a PKCE-based auth flow to securely obtain API credentials:
 - Refresh tokens expire after 90 days
 - On each launch, the app refreshes tokens if needed
 - If the refresh token is expired, the user is prompted to re-authenticate
+
+### Native Notes
+
+The app renders `/notes`, `/notes/add`, and `/notes/edit/<title>` as native SwiftUI screens instead
+of loading those pages in the web view. Notes support:
+
+- Searchable native list
+- Detail view with selectable text
+- Create, edit, and delete
+- `include_in_prompt` editing
+- Attachment and visibility metadata preservation when saving
+
+The native Notes client calls the existing authenticated API endpoints:
+
+```http
+GET /api/notes/
+GET /api/notes/{title}
+POST /api/notes/
+DELETE /api/notes/{title}
+```
+
+Attachment upload and preview still live in the web UI. The native editor preserves existing
+`attachment_ids` and `visibility_labels` values when saving so notes are not stripped of metadata
+that the native screen does not edit yet.
 
 ### Native Notifications
 
@@ -108,7 +132,9 @@ Manual APNs configuration:
 ```
 FamilyAssistant/
 ├── FamilyAssistantApp.swift      # App entry point, URL scheme handling
-├── ContentView.swift              # Root view: setup or web view
+├── ContentView.swift              # Root view: setup, native routes, or web fallback
+├── AppRouting.swift               # Native/web route selection
+├── AppSettingsMenu.swift          # Shared settings, notification, and sign-out menu
 ├── Auth/
 │   ├── KeychainHelper.swift       # iOS Keychain wrapper
 │   ├── AuthManager.swift          # Auth state + PKCE flow
@@ -119,6 +145,12 @@ FamilyAssistant/
 └── Notifications/
     ├── AppDelegate.swift          # APNs and notification response callbacks
     └── NotificationManager.swift  # Permission, token sync, notification routing
+└── Notes/
+    ├── NotesAPIClient.swift       # Authenticated Notes API calls
+    ├── NotesRootView.swift        # Notes route container
+    ├── NotesListView.swift        # Searchable native notes list
+    ├── NoteDetailView.swift       # Native note reader
+    └── NoteEditorView.swift       # Native create/edit form
 ```
 
 ## Dependencies
