@@ -52,6 +52,14 @@ def _sanitize_pytest_args(args: list[str]) -> list[str]:
             skip_next = False
             continue
 
+        if arg.startswith("-") and not arg.startswith("--") and len(arg) > 2:
+            compact_flags = arg[1:]
+            if set(compact_flags) <= {"q", "x"}:
+                compact_flags = compact_flags.replace("q", "")
+                if not compact_flags:
+                    continue
+                arg = f"-{compact_flags}"
+
         if arg in {
             "--disable-warnings",
             "--json-report",
