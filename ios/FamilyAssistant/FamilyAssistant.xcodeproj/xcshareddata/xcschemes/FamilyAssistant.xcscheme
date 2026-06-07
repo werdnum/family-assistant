@@ -35,6 +35,20 @@
                ReferencedContainer = "container:FamilyAssistant.xcodeproj">
             </BuildableReference>
          </BuildActionEntry>
+         <BuildActionEntry
+            buildForTesting = "YES"
+            buildForRunning = "NO"
+            buildForProfiling = "NO"
+            buildForArchiving = "NO"
+            buildForAnalyzing = "NO">
+            <BuildableReference
+               BuildableIdentifier = "primary"
+               BlueprintIdentifier = "E30001"
+               BuildableName = "FamilyAssistantUITests.xctest"
+               BlueprintName = "FamilyAssistantUITests"
+               ReferencedContainer = "container:FamilyAssistant.xcodeproj">
+            </BuildableReference>
+         </BuildActionEntry>
       </BuildActionEntries>
    </BuildAction>
    <TestAction
@@ -45,13 +59,22 @@
       shouldAutocreateTestPlan = "YES">
       <Testables>
          <TestableReference
-            skipped = "NO"
-            parallelizable = "YES">
+            skipped = "NO">
             <BuildableReference
                BuildableIdentifier = "primary"
                BlueprintIdentifier = "E20001"
                BuildableName = "FamilyAssistantTests.xctest"
                BlueprintName = "FamilyAssistantTests"
+               ReferencedContainer = "container:FamilyAssistant.xcodeproj">
+            </BuildableReference>
+         </TestableReference>
+         <TestableReference
+            skipped = "NO">
+            <BuildableReference
+               BuildableIdentifier = "primary"
+               BlueprintIdentifier = "E30001"
+               BuildableName = "FamilyAssistantUITests.xctest"
+               BlueprintName = "FamilyAssistantUITests"
                ReferencedContainer = "container:FamilyAssistant.xcodeproj">
             </BuildableReference>
          </TestableReference>

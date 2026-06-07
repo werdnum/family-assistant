@@ -49,6 +49,9 @@ final class NotificationManager {
     init() {
         notificationsEnabled = UserDefaults.standard.bool(forKey: Keys.notificationsEnabled)
         registrationState = notificationsEnabled ? .registering : .disabled
+        #if DEBUG
+        pendingNavigationPath = UITestConfiguration.initialNavigationPath
+        #endif
     }
 
     static func registerNotificationCategories() {
