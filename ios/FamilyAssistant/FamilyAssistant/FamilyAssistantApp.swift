@@ -3,8 +3,16 @@ import SwiftUI
 @main
 struct FamilyAssistantApp: App {
     @UIApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
-    @State private var authManager = AuthManager()
-    @State private var notificationManager = NotificationManager()
+    @State private var authManager: AuthManager
+    @State private var notificationManager: NotificationManager
+
+    init() {
+        #if DEBUG
+        UITestConfiguration.applyIfNeeded()
+        #endif
+        _authManager = State(initialValue: AuthManager())
+        _notificationManager = State(initialValue: NotificationManager())
+    }
 
     var body: some Scene {
         WindowGroup {

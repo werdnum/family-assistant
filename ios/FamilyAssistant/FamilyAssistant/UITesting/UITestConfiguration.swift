@@ -1,0 +1,257 @@
+import Foundation
+
+#if DEBUG
+enum UITestConfiguration {
+    static var isEnabled: Bool {
+        ProcessInfo.processInfo.arguments.contains("--ui-testing")
+    }
+
+    static var initialNavigationPath: String? {
+        guard isEnabled else { return nil }
+        return ProcessInfo.processInfo.environment["FAMILY_ASSISTANT_UITEST_INITIAL_PATH"]
+    }
+
+    static func applyIfNeeded() {
+        guard isEnabled else { return }
+
+        URLProtocol.registerClass(UITestBackendURLProtocol.self)
+        UITestBackendURLProtocol.reset()
+
+        KeychainHelper.delete(key: "fa_api_token")
+        KeychainHelper.delete(key: "fa_refresh_token")
+        KeychainHelper.save(key: "fa_api_token", string: "ui-test-api-token")
+        KeychainHelper.save(key: "fa_refresh_token", string: "ui-test-refresh-token")
+
+        UserDefaults.standard.set("https://assistant.example.test", forKey: "fa_server_url")
+        UserDefaults.standard.set(
+            ISO8601DateFormatter().string(from: Date().addingTimeInterval(7200)),
+            forKey: "fa_token_expiry"
+        )
+        UserDefaults.standard.set(false, forKey: "fa_notifications_enabled")
+        UserDefaults.standard.removeObject(forKey: "fa_apns_device_token")
+    }
+}
+
+private final class UITestBackendURLProtocol: URLProtocol {
+    private static let lock = NSLock()
+    private static var notes: [String: UITestNote] = [:]
+
+    static func reset() {
+        lock.withLock {
+            notes = [
+                "Shopping": UITestNote(
+                    title: "Shopping",
+                    content: "Buy milk and apples",
+                    includeInPrompt: true,
+                    attachmentIds: [],
+                    visibilityLabels: ["family"],
+                    isSkill: false,
+                    skillName: nil,
+                    skillDescription: nil
+                ),
+                "School Pickup": UITestNote(
+                    title: "School Pickup",
+                    content: "Pickup is at 3:15 by the north gate.",
+                    includeInPrompt: false,
+                    attachmentIds: ["calendar"],
+                    visibilityLabels: ["parents"],
+                    isSkill: false,
+                    skillName: nil,
+                    skillDescription: nil
+                ),
+            ]
+        }
+    }
+
+    override class func canInit(with request: URLRequest) -> Bool {
+        request.url?.host == "assistant.example.test"
+    }
+
+    override class func canonicalRequest(for request: URLRequest) -> URLRequest {
+        request
+    }
+
+    override func startLoading() {
+        let response = Self.response(for: request)
+        client?.urlProtocol(self, didReceive: response.httpResponse(for: request), cacheStoragePolicy: .notAllowed)
+        client?.urlProtocol(self, didLoad: response.data)
+        client?.urlProtocolDidFinishLoading(self)
+    }
+
+    override func stopLoading() {}
+
+    private static func response(for request: URLRequest) -> UITestResponse {
+        guard request.value(forHTTPHeaderField: "Authorization") == "Bearer ui-test-api-token"
+            || request.url?.path.hasPrefix("/api/auth/") == true
+        else {
+            return .json(#"{"detail":"missing auth"}"#, statusCode: 401)
+        }
+
+        switch (request.httpMethod ?? "GET", request.url?.path ?? "") {
+        case ("POST", "/api/auth/token-session"):
+            return .json("{}", headers: ["Set-Cookie": "session=ui-test; Path=/; HttpOnly"])
+        case ("POST", "/api/auth/refresh"):
+            return .json(
+                #"{"api_token":"ui-test-api-token","refresh_token":"ui-test-refresh-token","expires_in":7200}"#
+            )
+        case ("POST", "/api/auth/logout"):
+            return .json("{}")
+        case ("GET", "/api/notes"), ("GET", "/api/notes/"):
+            return encode(lock.withLock { notes.values.sorted { $0.title < $1.title } })
+        case ("POST", "/api/notes"), ("POST", "/api/notes/"):
+            return saveNote(from: request)
+        default:
+            if (request.httpMethod ?? "GET") == "GET", let title = noteTitle(from: request) {
+                guard let note = lock.withLock({ notes[title] }) else {
+                    return .json(#"{"detail":"Note not found."}"#, statusCode: 404)
+                }
+                return encode(note)
+            }
+            if request.httpMethod == "DELETE", let title = noteTitle(from: request) {
+                lock.withLock {
+                    notes.removeValue(forKey: title)
+                }
+                return .json("{}")
+            }
+            return .json(#"{"detail":"Unhandled UI test route."}"#, statusCode: 404)
+        }
+    }
+
+    private static func saveNote(from request: URLRequest) -> UITestResponse {
+        do {
+            let body = try JSONDecoder().decode(UITestNoteSaveRequest.self, from: request.bodyData)
+            let originalTitle = body.originalTitle ?? body.title
+            lock.withLock {
+                let existing = notes[originalTitle]
+                notes.removeValue(forKey: originalTitle)
+                notes[body.title] = UITestNote(
+                    title: body.title,
+                    content: body.content,
+                    includeInPrompt: body.includeInPrompt,
+                    attachmentIds: body.attachmentIds.isEmpty ? existing?.attachmentIds ?? [] : body.attachmentIds,
+                    visibilityLabels: body.visibilityLabels.isEmpty ? existing?.visibilityLabels ?? [] : body.visibilityLabels,
+                    isSkill: existing?.isSkill ?? false,
+                    skillName: existing?.skillName,
+                    skillDescription: existing?.skillDescription
+                )
+            }
+            return .json("{}")
+        } catch {
+            return .json(#"{"detail":"Invalid note payload."}"#, statusCode: 400)
+        }
+    }
+
+    private static func noteTitle(from request: URLRequest) -> String? {
+        guard let url = request.url,
+              let path = URLComponents(url: url, resolvingAgainstBaseURL: false)?.percentEncodedPath,
+              path.hasPrefix("/api/notes/")
+        else {
+            return nil
+        }
+        let encodedTitle = String(path.dropFirst("/api/notes/".count))
+        return encodedTitle.removingPercentEncoding
+    }
+
+    private static func encode<T: Encodable>(_ value: T) -> UITestResponse {
+        do {
+            return UITestResponse(
+                statusCode: 200,
+                data: try JSONEncoder().encode(value),
+                headers: ["Content-Type": "application/json"]
+            )
+        } catch {
+            return .json(#"{"detail":"Failed to encode response."}"#, statusCode: 500)
+        }
+    }
+}
+
+private struct UITestNote: Codable {
+    let title: String
+    let content: String
+    let includeInPrompt: Bool
+    let attachmentIds: [String]
+    let visibilityLabels: [String]
+    let isSkill: Bool
+    let skillName: String?
+    let skillDescription: String?
+
+    enum CodingKeys: String, CodingKey {
+        case title
+        case content
+        case includeInPrompt = "include_in_prompt"
+        case attachmentIds = "attachment_ids"
+        case visibilityLabels = "visibility_labels"
+        case isSkill = "is_skill"
+        case skillName = "skill_name"
+        case skillDescription = "skill_description"
+    }
+}
+
+private struct UITestNoteSaveRequest: Decodable {
+    let title: String
+    let content: String
+    let includeInPrompt: Bool
+    let originalTitle: String?
+    let attachmentIds: [String]
+    let visibilityLabels: [String]
+
+    enum CodingKeys: String, CodingKey {
+        case title
+        case content
+        case includeInPrompt = "include_in_prompt"
+        case originalTitle = "original_title"
+        case attachmentIds = "attachment_ids"
+        case visibilityLabels = "visibility_labels"
+    }
+}
+
+private struct UITestResponse {
+    let statusCode: Int
+    let data: Data
+    let headers: [String: String]
+
+    static func json(
+        _ json: String,
+        statusCode: Int = 200,
+        headers: [String: String] = ["Content-Type": "application/json"]
+    ) -> UITestResponse {
+        UITestResponse(statusCode: statusCode, data: Data(json.utf8), headers: headers)
+    }
+
+    func httpResponse(for request: URLRequest) -> HTTPURLResponse {
+        HTTPURLResponse(
+            url: request.url!,
+            statusCode: statusCode,
+            httpVersion: "HTTP/1.1",
+            headerFields: headers
+        )!
+    }
+}
+
+private extension URLRequest {
+    var bodyData: Data {
+        if let httpBody {
+            return httpBody
+        }
+        guard let stream = httpBodyStream else {
+            return Data()
+        }
+        var data = Data()
+        stream.open()
+        defer { stream.close() }
+
+        let bufferSize = 1024
+        let buffer = UnsafeMutablePointer<UInt8>.allocate(capacity: bufferSize)
+        defer { buffer.deallocate() }
+
+        while stream.hasBytesAvailable {
+            let bytesRead = stream.read(buffer, maxLength: bufferSize)
+            if bytesRead <= 0 {
+                break
+            }
+            data.append(buffer, count: bytesRead)
+        }
+        return data
+    }
+}
+#endif
