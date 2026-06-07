@@ -47,6 +47,7 @@ if TYPE_CHECKING:
     from family_assistant.events.indexing_source import IndexingSource
     from family_assistant.interfaces import ChatInterface
     from family_assistant.llm.content_parts import ContentPartDict
+    from family_assistant.processing.types import RequestConfirmationCallback
     from family_assistant.scripting.monty_engine import WakeRequest
     from family_assistant.services.confirmation_waiters import (
         ConfirmationResultWaiterRegistry,
@@ -79,6 +80,7 @@ from family_assistant.storage.tasks import (
     unregister_worker_wake_event,
 )
 from family_assistant.tools import ToolExecutionContext
+from family_assistant.tools.confirmation import TOOL_CONFIRMATION_RENDERERS
 from family_assistant.tools.stored_scripts import AUTOMATION_RUNTIME_GLOBALS
 from family_assistant.tools.types import (
     ConfirmationOutcome,
@@ -822,6 +824,9 @@ class TaskWorker:
                 exec_context,
                 run["interface_type"],
             )
+            request_confirmation_callback = (
+                self._build_delegation_confirmation_callback(exec_context, run)
+            )
             result = await target_service.handle_chat_interaction(
                 db_context=db_context,
                 interface_type=run["interface_type"],
@@ -834,7 +839,7 @@ class TaskWorker:
                 chat_interface=chat_interface,
                 chat_interfaces=exec_context.chat_interfaces,
                 confirmation_ui_managers=exec_context.confirmation_ui_managers,
-                request_confirmation_callback=None,
+                request_confirmation_callback=request_confirmation_callback,
                 subconversation_id=run["subconversation_id"],
             )
         except Exception:
@@ -872,6 +877,72 @@ class TaskWorker:
         if terminal_run is None:
             raise ValueError(f"Delegation run '{delegation_id}' disappeared")
         await self._notify_delegation_if_needed(exec_context, terminal_run)
+
+    def _build_delegation_confirmation_callback(
+        self,
+        exec_context: ToolExecutionContext,
+        run: DelegationRunDict,
+    ) -> RequestConfirmationCallback | None:
+        """Build a confirmation callback for a delegated profile background run."""
+        confirmation_ui_managers = (
+            exec_context.confirmation_ui_managers or self.confirmation_ui_managers
+        )
+        if confirmation_ui_managers is None:
+            return None
+
+        confirmation_manager = confirmation_ui_managers.get(run["interface_type"])
+        if confirmation_manager is None:
+            logger.info(
+                "Delegation run %s has no confirmation manager for interface %s.",
+                run["delegation_id"],
+                run["interface_type"],
+            )
+            return None
+
+        async def request_confirmation(
+            interface_type: str,
+            conversation_id: str,
+            turn_id: str | None,
+            tool_name: str,
+            call_id: str,
+            # ast-grep-ignore: no-dict-any - confirmation callback protocol carries arbitrary tool arguments
+            tool_args: dict[str, Any],
+            timeout_seconds: float,
+            context: ToolExecutionContext,
+        ) -> ConfirmationOutcome:
+            _ = interface_type
+            _ = conversation_id
+            renderer = TOOL_CONFIRMATION_RENDERERS.get(tool_name)
+            if renderer:
+                prompt_text = await renderer(tool_args, context)
+            else:
+                prompt_text = f"Confirm execution of tool: {tool_name}"
+
+            source_turn_id = run["source_turn_id"] or turn_id
+            source_message_internal_id = None
+            if source_turn_id is not None:
+                source_row = (
+                    await context.db_context.message_history.get_user_row_by_turn_id(
+                        source_turn_id
+                    )
+                )
+                if source_row is not None:
+                    source_message_internal_id = source_row["internal_id"]
+
+            return await confirmation_manager.request_confirmation(
+                conversation_id=run["conversation_id"],
+                interface_type=run["interface_type"],
+                turn_id=source_turn_id,
+                prompt_text=prompt_text,
+                tool_name=tool_name,
+                tool_args=tool_args,
+                timeout=timeout_seconds,
+                target_user_id=run["user_id"],
+                tool_call_id=call_id,
+                source_message_internal_id=source_message_internal_id,
+            )
+
+        return request_confirmation
 
     async def _fail_delegation_run(
         self,
