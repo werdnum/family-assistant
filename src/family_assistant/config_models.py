@@ -151,6 +151,9 @@ class ToolsConfig(BaseModel):
     on_demand_mcp_server_ids: list[str] = Field(default_factory=list)
     mcp_initialization_timeout_seconds: int = 60
     confirmation_timeout_seconds: float = 3600.0
+    delegate_handoff_after_seconds: float = 15.0
+    delegate_handoff_max_seconds: float = 120.0
+    delegate_status_poll_seconds: float = 0.25
 
     def get_on_demand_tool_names(self) -> set[str]:
         """Return tool names configured for on-demand loading."""

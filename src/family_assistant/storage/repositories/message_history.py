@@ -1663,6 +1663,7 @@ class MessageHistoryRepository(BaseRepository):
         after: datetime,
         interface_type: str | None = None,
         limit: int = 100,
+        subconversation_id: str | None = None,
     ) -> list[LLMMessage]:
         """
         Get messages created after a specific timestamp.
@@ -1674,6 +1675,8 @@ class MessageHistoryRepository(BaseRepository):
             after: Get messages created after this timestamp
             interface_type: Optional filter by interface type
             limit: Maximum number of messages to return (default 100)
+            subconversation_id: Filter by subconversation. None means main conversation
+                only; "*" includes all subconversations.
 
         Returns:
             List of typed LLMMessage objects in chronological order (oldest first)
@@ -1685,6 +1688,13 @@ class MessageHistoryRepository(BaseRepository):
 
         if interface_type:
             conditions.append(message_history_table.c.interface_type == interface_type)
+        if subconversation_id != "*":
+            if subconversation_id is None:
+                conditions.append(message_history_table.c.subconversation_id.is_(None))
+            else:
+                conditions.append(
+                    message_history_table.c.subconversation_id == subconversation_id
+                )
 
         stmt = (
             select(message_history_table)
@@ -1705,6 +1715,7 @@ class MessageHistoryRepository(BaseRepository):
         after: datetime,
         interface_type: str | None = None,
         limit: int = 100,
+        subconversation_id: str | None = None,
     ) -> list[MessageHistoryRow]:
         """
         Get messages created after a specific timestamp as dicts with database fields.
@@ -1716,6 +1727,8 @@ class MessageHistoryRepository(BaseRepository):
             after: Get messages created after this timestamp
             interface_type: Optional filter by interface type
             limit: Maximum number of messages to return (default 100)
+            subconversation_id: Filter by subconversation. None means main conversation
+                only; "*" includes all subconversations.
 
         Returns:
             List of MessageHistoryRow in chronological order (oldest first)
@@ -1727,6 +1740,13 @@ class MessageHistoryRepository(BaseRepository):
 
         if interface_type:
             conditions.append(message_history_table.c.interface_type == interface_type)
+        if subconversation_id != "*":
+            if subconversation_id is None:
+                conditions.append(message_history_table.c.subconversation_id.is_(None))
+            else:
+                conditions.append(
+                    message_history_table.c.subconversation_id == subconversation_id
+                )
 
         stmt = (
             select(message_history_table)

@@ -80,7 +80,7 @@ def primary_service_config(dummy_prompts: dict[str, str]) -> ProcessingServiceCo
         timezone=ZoneInfo("UTC"),
         max_history_messages=5,
         history_max_age_hours=24,
-        tools_config=ToolsConfig(),
+        tools_config=ToolsConfig(delegate_handoff_after_seconds=60.0),
         delegation_security_level=DelegationSecurityLevel.UNRESTRICTED,  # Primary can delegate freely
         id=PRIMARY_PROFILE_ID,
     )
@@ -98,7 +98,7 @@ def specialized_service_config_factory(
             timezone=ZoneInfo("UTC"),
             max_history_messages=5,
             history_max_age_hours=24,
-            tools_config=ToolsConfig(),
+            tools_config=ToolsConfig(delegate_handoff_after_seconds=60.0),
             delegation_security_level=delegation_security_level,
             id=SPECIALIZED_PROFILE_ID,  # Add id for specialized profile
         )
@@ -469,6 +469,7 @@ async def assert_message_history_contains(
 )  # Test with confirm_delegation=False and when arg is omitted
 async def test_delegation_unrestricted_target_no_forced_confirm(
     db_engine: AsyncEngine,
+    task_worker_manager: Callable[..., tuple[Any, Any, Any]],
     primary_processing_service: ProcessingService,  # Uses primary_llm_mock_factory(None) by default
     specialized_processing_service: Callable[
         [str], Awaitable[ProcessingService]
@@ -498,6 +499,11 @@ async def test_delegation_unrestricted_target_no_forced_confirm(
     }
     awaited_primary_service.processing_services_registry = registry
     target_service.processing_services_registry = registry
+    task_worker_manager(
+        awaited_primary_service,
+        MagicMock(spec=ChatInterface),
+        register_delegation_handler=True,
+    )
 
     user_query = USER_QUERY_TEMPLATE.format(task_description=DELEGATED_TASK_DESCRIPTION)
 
@@ -542,6 +548,7 @@ async def test_delegation_unrestricted_target_no_forced_confirm(
 @pytest.mark.asyncio
 async def test_delegation_confirm_target_granted(
     db_engine: AsyncEngine,
+    task_worker_manager: Callable[..., tuple[Any, Any, Any]],
     primary_processing_service: ProcessingService,  # Uses primary_llm_mock_factory(None) by default
     specialized_processing_service: Callable[
         [str], Awaitable[ProcessingService]
@@ -585,6 +592,11 @@ async def test_delegation_confirm_target_granted(
     }
     awaited_primary_service.processing_services_registry = registry
     target_service.processing_services_registry = registry
+    task_worker_manager(
+        awaited_primary_service,
+        MagicMock(spec=ChatInterface),
+        register_delegation_handler=True,
+    )
 
     user_query = USER_QUERY_TEMPLATE.format(task_description=DELEGATED_TASK_DESCRIPTION)
 
@@ -749,6 +761,7 @@ async def test_delegation_blocked_target(
 @pytest.mark.asyncio
 async def test_delegation_unrestricted_confirm_arg_granted(
     db_engine: AsyncEngine,
+    task_worker_manager: Callable[..., tuple[Any, Any, Any]],
     primary_processing_service: ProcessingService,  # Uses primary_llm_mock_factory(None) by default
     specialized_processing_service: Callable[
         [str], Awaitable[ProcessingService]
@@ -781,6 +794,11 @@ async def test_delegation_unrestricted_confirm_arg_granted(
     }
     awaited_primary_service.processing_services_registry = registry
     target_service.processing_services_registry = registry
+    task_worker_manager(
+        awaited_primary_service,
+        MagicMock(spec=ChatInterface),
+        register_delegation_handler=True,
+    )
 
     user_query = USER_QUERY_TEMPLATE.format(task_description=DELEGATED_TASK_DESCRIPTION)
 

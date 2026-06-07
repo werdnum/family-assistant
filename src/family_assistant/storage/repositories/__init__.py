@@ -4,6 +4,7 @@ from .a2a_tasks import A2ATasksRepository
 from .automations import AutomationsRepository
 from .base import BaseRepository
 from .confirmation_requests import ConfirmationRequestsRepository
+from .delegation_runs import DelegationRunsRepository
 from .email import EmailRepository
 from .error_logs import ErrorLogsRepository
 from .events import EventsRepository
@@ -22,6 +23,7 @@ __all__ = [
     "AutomationsRepository",
     "BaseRepository",
     "ConfirmationRequestsRepository",
+    "DelegationRunsRepository",
     "EmailRepository",
     "ErrorLogsRepository",
     "EventsRepository",

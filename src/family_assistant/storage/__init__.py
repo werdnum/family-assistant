@@ -30,6 +30,7 @@ from family_assistant.storage.base import (
 # Import table definitions for direct use
 from family_assistant.storage.confirmation_requests import confirmation_requests_table
 from family_assistant.storage.context import DatabaseContext, get_db_context
+from family_assistant.storage.delegation_runs import delegation_runs_table
 from family_assistant.storage.email import received_emails_table
 from family_assistant.storage.error_logs import error_logs_table
 from family_assistant.storage.events import (
@@ -339,6 +340,7 @@ __all__ = [
     "EventActionType",
     "EventSourceType",
     "InterfaceType",
+    "delegation_runs_table",
     # Vector Storage Exports are added conditionally below
     # The names themselves will be defined (real or placeholder)
     # __all__ controls `from .storage import *` and documents the public API

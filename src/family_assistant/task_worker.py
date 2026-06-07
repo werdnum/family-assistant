@@ -24,7 +24,11 @@ from opentelemetry.trace import StatusCode
 from sqlalchemy import select
 
 # Removed storage import - using repository pattern
-from family_assistant.llm.messages import MessageAttachmentMetadata, SystemMessage
+from family_assistant.llm.messages import (
+    AssistantMessage,
+    MessageAttachmentMetadata,
+    SystemMessage,
+)
 from family_assistant.scripting import (
     MontyEngine,
     ScriptError,
@@ -42,6 +46,7 @@ if TYPE_CHECKING:
     from family_assistant.embeddings import EmbeddingGenerator
     from family_assistant.events.indexing_source import IndexingSource
     from family_assistant.interfaces import ChatInterface
+    from family_assistant.llm.content_parts import ContentPartDict
     from family_assistant.scripting.monty_engine import WakeRequest
     from family_assistant.services.confirmation_waiters import (
         ConfirmationResultWaiterRegistry,
@@ -50,9 +55,11 @@ if TYPE_CHECKING:
     from family_assistant.storage.repositories.confirmation_requests import (
         ConfirmationRequestRow,
     )
+    from family_assistant.storage.repositories.delegation_runs import DelegationRunDict
     from family_assistant.storage.types import MessageHistoryRow, TaskDict
     from family_assistant.telegram.protocols import ConfirmationUIManager
     from family_assistant.tools import ToolsProvider
+    from family_assistant.web.conversation_stream_hub import ConversationStreamHub
 
 # handle_index_email is now a method of EmailIndexer and registered in __main__.py
 from family_assistant.processing import ProcessingService
@@ -174,6 +181,15 @@ class ConfirmationToolExecutionPayload(TypedDict, total=False):
     """Payload for durable confirmation tool execution tasks."""
 
     confirmation_request_id: str
+
+
+class DelegatedProfileRunPayload(TypedDict):
+    """Payload for delegated_profile_run tasks."""
+
+    delegation_id: str
+    interface_type: str
+    conversation_id: str
+    user_name: str
 
 
 class ConfirmationNotificationError(RuntimeError):
@@ -653,6 +669,7 @@ class TaskWorker:
         confirmation_result_waiters: ConfirmationResultWaiterRegistry | None = None,
         confirmation_ui_managers: dict[str, ConfirmationUIManager] | None = None,
         notification_dispatcher: Notifier | None = None,
+        stream_hub: ConversationStreamHub | None = None,
     ) -> None:
         """Initializes the TaskWorker with its dependencies."""
         self.processing_service = processing_service
@@ -661,6 +678,10 @@ class TaskWorker:
         self.confirmation_result_waiters = confirmation_result_waiters
         self.confirmation_ui_managers = confirmation_ui_managers
         self.notification_dispatcher = notification_dispatcher
+        self.stream_hub = stream_hub
+        # Strong references to in-flight stream-hub publish tasks scheduled from
+        # on_commit hooks, so the event loop doesn't garbage-collect them mid-flight.
+        self._hub_publish_tasks: set[asyncio.Task[object]] = set()
         # Use provided shutdown_event_instance or create a new instance-specific event
         # Don't use the module-level shutdown_event as it persists across test runs
         self.shutdown_event = (
@@ -728,6 +749,326 @@ class TaskWorker:
     ) -> dict[str, Callable[[ToolExecutionContext, Any], Awaitable[None]]]:
         """Return the current task handlers dictionary for this worker."""
         return self.task_handlers
+
+    async def handle_delegated_profile_run(
+        self,
+        exec_context: ToolExecutionContext,
+        payload: DelegatedProfileRunPayload,
+    ) -> None:
+        """Execute a durable asynchronous profile delegation run."""
+        delegation_id = payload.get("delegation_id")
+        if not delegation_id:
+            raise ValueError("delegated_profile_run payload missing delegation_id")
+
+        db_context = exec_context.db_context
+        clock = exec_context.clock or self.clock
+        run = await db_context.delegation_runs.get_by_delegation_id(delegation_id)
+        if run is None:
+            raise ValueError(f"Delegation run '{delegation_id}' not found")
+
+        if run["status"] in {"completed", "failed", "cancelled"}:
+            logger.info(
+                "Delegation run %s is already terminal with status %s.",
+                delegation_id,
+                run["status"],
+            )
+            return
+
+        processing_service = exec_context.processing_service
+        registry = (
+            processing_service.processing_services_registry
+            if processing_service is not None
+            else None
+        )
+        target_service = registry.get(run["target_service_id"]) if registry else None
+        if target_service is None:
+            await self._fail_delegation_run(
+                exec_context,
+                delegation_id=delegation_id,
+                error=f"Target service profile '{run['target_service_id']}' not found.",
+            )
+            return
+
+        allowed_sources = getattr(
+            target_service.service_config,
+            "allowed_delegation_sources",
+            None,
+        )
+        if (
+            allowed_sources is not None
+            and run["source_profile_id"] not in allowed_sources
+        ):
+            await self._fail_delegation_run(
+                exec_context,
+                delegation_id=delegation_id,
+                error=(
+                    f"Profile '{run['source_profile_id']}' is no longer permitted "
+                    f"to delegate to '{run['target_service_id']}'."
+                ),
+            )
+            return
+
+        await db_context.delegation_runs.mark_running(
+            delegation_id,
+            clock.now(),
+        )
+
+        try:
+            content_parts = cast(
+                "list[ContentPartDict]",
+                run["content_parts_json"],
+            )
+            chat_interface = self._chat_interface_for_interface(
+                exec_context,
+                run["interface_type"],
+            )
+            result = await target_service.handle_chat_interaction(
+                db_context=db_context,
+                interface_type=run["interface_type"],
+                conversation_id=run["conversation_id"],
+                trigger_content_parts=content_parts,
+                trigger_interface_message_id=None,
+                user_name=run["user_name"] or exec_context.user_name,
+                user_id=run["user_id"],
+                replied_to_interface_id=None,
+                chat_interface=chat_interface,
+                chat_interfaces=exec_context.chat_interfaces,
+                confirmation_ui_managers=exec_context.confirmation_ui_managers,
+                request_confirmation_callback=None,
+                subconversation_id=run["subconversation_id"],
+            )
+        except Exception:
+            error = traceback.format_exc()
+            logger.error(
+                "Delegated profile run %s raised during execution.",
+                delegation_id,
+                exc_info=True,
+            )
+            await self._fail_delegation_run(
+                exec_context,
+                delegation_id=delegation_id,
+                error=error,
+            )
+            return
+
+        completed_at = clock.now()
+        if result.error_traceback:
+            await db_context.delegation_runs.mark_failed(
+                delegation_id=delegation_id,
+                error=result.error_traceback,
+                completed_at=completed_at,
+            )
+        else:
+            await db_context.delegation_runs.mark_completed(
+                delegation_id=delegation_id,
+                result_text=result.text_reply,
+                result_attachment_ids=result.attachment_ids or [],
+                completed_at=completed_at,
+            )
+
+        terminal_run = await db_context.delegation_runs.get_by_delegation_id(
+            delegation_id
+        )
+        if terminal_run is None:
+            raise ValueError(f"Delegation run '{delegation_id}' disappeared")
+        await self._notify_delegation_if_needed(exec_context, terminal_run)
+
+    async def _fail_delegation_run(
+        self,
+        exec_context: ToolExecutionContext,
+        *,
+        delegation_id: str,
+        error: str,
+    ) -> None:
+        """Mark a delegation run failed and notify if it had already handed off."""
+        clock = exec_context.clock or self.clock
+        await exec_context.db_context.delegation_runs.mark_failed(
+            delegation_id=delegation_id,
+            error=error,
+            completed_at=clock.now(),
+        )
+        run = await exec_context.db_context.delegation_runs.get_by_delegation_id(
+            delegation_id
+        )
+        if run is not None:
+            await self._notify_delegation_if_needed(exec_context, run)
+
+    def _chat_interface_for_interface(
+        self,
+        exec_context: ToolExecutionContext,
+        interface_type: str,
+    ) -> ChatInterface | None:
+        """Select the chat interface for a delegated run's original interface."""
+        if (
+            exec_context.chat_interfaces
+            and interface_type in exec_context.chat_interfaces
+        ):
+            return exec_context.chat_interfaces[interface_type]
+        return exec_context.chat_interface
+
+    async def _notify_delegation_if_needed(
+        self,
+        exec_context: ToolExecutionContext,
+        run: DelegationRunDict,
+    ) -> None:
+        """Record and deliver a terminal delegation notification when needed."""
+        if run["notified_at"] is not None:
+            return
+
+        clock = exec_context.clock or self.clock
+        completed_at = run["completed_at"] or clock.now()
+        if run["handed_off_at"] is None and completed_at < run["handoff_after_at"]:
+            return
+
+        message_text = self._delegation_notification_text(run)
+        attachments = self._delegation_notification_attachments(run)
+        message_internal_id = await exec_context.db_context.message_history.add_message(
+            AssistantMessage(content=message_text),
+            interface_type=run["interface_type"],
+            conversation_id=run["conversation_id"],
+            timestamp=clock.now(),
+            attachments=attachments,
+        )
+
+        if run["interface_type"] == "web":
+            await self._push_notify_delegation_completion(
+                exec_context.db_context,
+                run,
+                message_text,
+            )
+            self._tickle_stream_hub_on_commit(
+                exec_context.db_context,
+                run["conversation_id"],
+            )
+        else:
+            chat_interface = self._chat_interface_for_interface(
+                exec_context,
+                run["interface_type"],
+            )
+            if chat_interface is None:
+                raise RuntimeError(
+                    f"No chat interface available for {run['interface_type']}"
+                )
+            sent_message_id = await chat_interface.send_message(
+                conversation_id=run["conversation_id"],
+                text=message_text,
+                parse_mode=None,
+                attachment_ids=run["result_attachment_ids_json"] or None,
+            )
+            if sent_message_id and message_internal_id is not None:
+                await exec_context.db_context.message_history.update_interface_id(
+                    internal_id=message_internal_id,
+                    interface_message_id=sent_message_id,
+                )
+
+        await exec_context.db_context.delegation_runs.mark_notified(
+            delegation_id=run["delegation_id"],
+            result_message_internal_id=message_internal_id,
+            notified_at=clock.now(),
+        )
+
+    def _delegation_notification_text(self, run: DelegationRunDict) -> str:
+        """Build concise terminal notification text for a delegation run."""
+        if run["status"] == "completed":
+            result_text = (
+                run["result_text"]
+                or "The delegated profile completed without a textual response."
+            )
+            return (
+                f"Delegated task {run['delegation_id']} completed via "
+                f"{run['target_service_id']}.\n\n{result_text}"
+            )
+        error_summary = "The delegated profile failed during processing."
+        if run["error"]:
+            error_summary = str(run["error"]).strip().splitlines()[-1]
+        return (
+            f"Delegated task {run['delegation_id']} failed via "
+            f"{run['target_service_id']}.\n\n{error_summary}"
+        )
+
+    def _delegation_notification_attachments(
+        self,
+        run: DelegationRunDict,
+    ) -> list[MessageAttachmentMetadata] | None:
+        """Return message attachment references for a completed delegation result."""
+        attachment_ids = run["result_attachment_ids_json"] or []
+        if not attachment_ids:
+            return None
+        return [
+            {
+                "type": "attachment_reference",
+                "attachment_id": attachment_id,
+            }
+            for attachment_id in attachment_ids
+        ]
+
+    async def _push_notify_delegation_completion(
+        self,
+        db_context: DatabaseContext,
+        run: DelegationRunDict,
+        message_text: str,
+    ) -> None:
+        """Send push notification for a web delegation completion."""
+        if self.notification_dispatcher is None:
+            return
+        try:
+            await notify_conversation(
+                self.notification_dispatcher,
+                db_context,
+                interface_type=run["interface_type"],
+                conversation_id=run["conversation_id"],
+                title="Delegated task finished",
+                body=message_text[:100],
+                metadata=NotificationMetadata(
+                    category=MESSAGE_CATEGORY,
+                    conversation_id=run["conversation_id"],
+                ),
+            )
+        except Exception:
+            logger.warning(
+                "Failed to send delegation completion push notification",
+                exc_info=True,
+            )
+
+    def _tickle_stream_hub_on_commit(
+        self,
+        db_context: DatabaseContext,
+        conversation_id: str,
+    ) -> None:
+        """Nudge open web follow-streams to reload once the message commits.
+
+        The delegation completion message is saved inside the task worker's
+        transaction; web clients with an open conversation stream learn about
+        it via a content-free ``message`` event on the ConversationStreamHub
+        (they then refetch history). This mirrors WebChatInterface's post-commit
+        hub tickle for messages written outside the streaming turn path.
+
+        ``hub.publish`` is async but must run only after the surrounding
+        transaction commits, so the new row is visible to a refetch. It is
+        scheduled from an ``on_commit`` hook onto the running loop; a strong
+        reference is held until the publish completes.
+        """
+        if self.stream_hub is None:
+            return
+        hub = self.stream_hub
+        loop = asyncio.get_running_loop()
+
+        def _schedule_publish() -> None:
+            task = loop.create_task(
+                hub.publish(
+                    conversation_id,
+                    "message",
+                    turn_id=None,
+                    payload={
+                        "conversation_id": conversation_id,
+                        "new_messages": True,
+                    },
+                )
+            )
+            self._hub_publish_tasks.add(task)
+            task.add_done_callback(self._hub_publish_tasks.discard)
+
+        db_context.on_commit(_schedule_publish)
 
     async def _handle_recurrence(
         self,
@@ -1270,7 +1611,9 @@ class TaskWorker:
                 # Split task processing into separate transactions for better isolation
                 # Transaction 1: Dequeue task (commits immediately)
                 task = None
-                async with get_db_context(engine=self.engine) as dequeue_context:
+                async with get_db_context(
+                    engine=self.engine,
+                ) as dequeue_context:
                     logger.debug(
                         "Polling for tasks on DB context: %s",
                         dequeue_context.engine.url,
@@ -1300,7 +1643,7 @@ class TaskWorker:
                     try:  # Inner try for task processing
                         # Transaction 2: Process task and update status (commits immediately)
                         async with get_db_context(
-                            engine=self.engine
+                            engine=self.engine,
                         ) as process_context:
                             await self._process_task(
                                 process_context, task, wake_up_event

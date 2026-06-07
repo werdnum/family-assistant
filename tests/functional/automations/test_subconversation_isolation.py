@@ -3,6 +3,8 @@
 import json
 import logging
 import uuid
+from collections.abc import Callable
+from typing import Any
 from unittest.mock import MagicMock
 from zoneinfo import ZoneInfo
 
@@ -68,7 +70,7 @@ def primary_service_config(dummy_prompts: dict[str, str]) -> ProcessingServiceCo
         timezone=ZoneInfo("UTC"),
         max_history_messages=10,
         history_max_age_hours=24,
-        tools_config=ToolsConfig(),
+        tools_config=ToolsConfig(delegate_handoff_after_seconds=60.0),
         delegation_security_level=DelegationSecurityLevel.UNRESTRICTED,
         id=PRIMARY_PROFILE_ID,
     )
@@ -81,7 +83,7 @@ def delegated_service_config(dummy_prompts: dict[str, str]) -> ProcessingService
         timezone=ZoneInfo("UTC"),
         max_history_messages=10,
         history_max_age_hours=24,
-        tools_config=ToolsConfig(),
+        tools_config=ToolsConfig(delegate_handoff_after_seconds=60.0),
         delegation_security_level=DelegationSecurityLevel.UNRESTRICTED,
         id=DELEGATED_PROFILE_ID,
     )
@@ -209,6 +211,7 @@ async def delegated_processing_service(
 @pytest.mark.asyncio
 async def test_subconversation_isolation(
     db_engine: AsyncEngine,
+    task_worker_manager: Callable[..., tuple[Any, Any, Any]],
     primary_processing_service: ProcessingService,
     delegated_processing_service: ProcessingService,
 ) -> None:
@@ -222,6 +225,11 @@ async def test_subconversation_isolation(
     }
     primary_processing_service.processing_services_registry = registry
     delegated_processing_service.processing_services_registry = registry
+    task_worker_manager(
+        primary_processing_service,
+        MagicMock(spec=ChatInterface),
+        register_delegation_handler=True,
+    )
 
     # Execute the interaction
     async with DatabaseContext(engine=db_engine) as db_context:

@@ -171,7 +171,7 @@ def _make_service_config(profile_id: str) -> ProcessingServiceConfig:
         timezone=ZoneInfo("UTC"),
         max_history_messages=5,
         history_max_age_hours=24,
-        tools_config=ToolsConfig(),
+        tools_config=ToolsConfig(delegate_handoff_after_seconds=60.0),
         delegation_security_level=DelegationSecurityLevel.CONFIRM,
         id=profile_id,
     )
@@ -187,6 +187,7 @@ async def mock_confirmation_callback() -> AsyncMock:
 @pytest.mark.asyncio
 async def test_self_delegation_succeeds_without_confirmation(
     db_engine: AsyncEngine,
+    task_worker_manager: Callable[..., tuple[Any, Any, Any]],
     mock_confirmation_callback: AsyncMock,
 ) -> None:
     """When a profile delegates to itself, no confirmation is required."""
@@ -253,6 +254,11 @@ async def test_self_delegation_succeeds_without_confirmation(
     registry = {PROFILE_ID: target_service}
     primary_service.processing_services_registry = registry
     target_service.processing_services_registry = registry
+    task_worker_manager(
+        primary_service,
+        MagicMock(spec=ChatInterface),
+        register_delegation_handler=True,
+    )
 
     async with DatabaseContext(engine=db_engine) as db_context:
         result = await primary_service.handle_chat_interaction(
@@ -275,6 +281,7 @@ async def test_self_delegation_succeeds_without_confirmation(
 @pytest.mark.asyncio
 async def test_cross_profile_delegation_still_requires_confirmation(
     db_engine: AsyncEngine,
+    task_worker_manager: Callable[..., tuple[Any, Any, Any]],
     mock_confirmation_callback: AsyncMock,
 ) -> None:
     """Delegating to a different profile with a confirm rule still triggers confirmation."""
@@ -338,6 +345,11 @@ async def test_cross_profile_delegation_still_requires_confirmation(
     registry = {PROFILE_ID: primary_service, OTHER_PROFILE_ID: target_service}
     primary_service.processing_services_registry = registry
     target_service.processing_services_registry = registry
+    task_worker_manager(
+        primary_service,
+        MagicMock(spec=ChatInterface),
+        register_delegation_handler=True,
+    )
 
     async with DatabaseContext(engine=db_engine) as db_context:
         result = await primary_service.handle_chat_interaction(

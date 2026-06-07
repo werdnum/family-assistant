@@ -214,6 +214,8 @@ from family_assistant.tools.script_testing import (
 from family_assistant.tools.services import (
     SERVICE_TOOLS_DEFINITION,
     delegate_to_service_tool,
+    get_delegation_status_tool,
+    list_delegations_tool,
 )
 from family_assistant.tools.stored_scripts import (
     STORED_SCRIPTS_TOOLS_DEFINITION,
@@ -309,6 +311,8 @@ __all__ = [
     "modify_pending_callback_tool",
     "cancel_pending_callback_tool",
     "delegate_to_service_tool",
+    "get_delegation_status_tool",
+    "list_delegations_tool",
     "send_message_to_user_tool",
     "get_user_documentation_content_tool",
     # Helper functions
@@ -516,6 +520,8 @@ _LOCAL_TOOL_IMPLEMENTATIONS: dict[str, ToolImplementation] = {
     "modify_calendar_event": modify_calendar_event_tool,
     "delete_calendar_event": delete_calendar_event_tool,
     "delegate_to_service": delegate_to_service_tool,
+    "get_delegation_status": get_delegation_status_tool,
+    "list_delegations": list_delegations_tool,
     "list_pending_callbacks": list_pending_callbacks_tool,
     "modify_pending_callback": modify_pending_callback_tool,
     "cancel_pending_callback": cancel_pending_callback_tool,
@@ -657,6 +663,18 @@ LOCAL_TOOL_METADATA_BY_NAME: dict[str, LocalToolMetadata] = {
     "delegate_to_service": _metadata(
         ToolTag.DELEGATION,
         ToolTag.OUTPUT_UNSPECIFIED,
+    ),
+    "get_delegation_status": _metadata(
+        ToolTag.DELEGATION,
+        ToolTag.READ_ONLY,
+        ToolTag.SENSITIVE_DATA,
+        ToolTag.OUTPUT_TRUSTED,
+    ),
+    "list_delegations": _metadata(
+        ToolTag.DELEGATION,
+        ToolTag.READ_ONLY,
+        ToolTag.SENSITIVE_DATA,
+        ToolTag.OUTPUT_TRUSTED,
     ),
     "schedule_reminder": _metadata(
         ToolTag.STATE_CHANGING,
