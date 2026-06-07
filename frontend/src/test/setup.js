@@ -1,6 +1,6 @@
 import '@testing-library/jest-dom';
-import { afterEach, afterAll, beforeAll } from 'vitest';
 import { setupServer } from 'msw/node';
+import { afterAll, afterEach, beforeAll } from 'vitest';
 import { handlers } from './mocks/handlers';
 
 // Set up MSW server
@@ -103,3 +103,33 @@ window.addEventListener('error', (event) => {
     event.preventDefault();
   }
 });
+
+// Swallow post-teardown jsdom races. When an async callback (a pending timer,
+// fetch continuation, or store effect) touches `window`/`document` after vitest
+// has torn down the test file's jsdom environment, Node throws a bare
+// `ReferenceError: window is not defined` as an unhandled rejection. While a
+// test is running these globals always exist (this file even defines
+// `window.matchMedia`), so this error can only originate after teardown and is
+// never a real assertion failure. Under the heavy CPU contention of the full
+// `poe test` run these stray callbacks are far more likely to land after
+// teardown, which intermittently fails the otherwise-passing suite.
+//
+// vitest's worker treats an unhandled rejection as user-handled when a second
+// listener is present (it returns early in that case), so we re-surface genuine
+// rejections as uncaught exceptions to keep them failing the run. The guard
+// symbol ensures we register exactly one listener per worker process even
+// though this setup module is re-evaluated for every test file.
+const TEARDOWN_RACE_PATTERN =
+  /\b(?:window|document|navigator|self|localStorage|sessionStorage|location)\b is not defined/;
+const UNHANDLED_GUARD = Symbol.for('familyAssistant.test.unhandledRejectionGuard');
+const nodeProcess = globalThis.process;
+if (nodeProcess && !nodeProcess[UNHANDLED_GUARD]) {
+  nodeProcess[UNHANDLED_GUARD] = true;
+  nodeProcess.on('unhandledRejection', (reason) => {
+    if (reason instanceof ReferenceError && TEARDOWN_RACE_PATTERN.test(reason.message)) {
+      return;
+    }
+    // Not a teardown race: re-surface so the test run still fails.
+    throw reason;
+  });
+}
