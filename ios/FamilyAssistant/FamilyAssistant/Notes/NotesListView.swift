@@ -100,6 +100,17 @@ struct NotesListView: View {
         } message: {
             Text("This removes the note from Family Assistant.")
         }
+        .alert(
+            "Could Not Update Notes",
+            isPresented: Binding(
+                get: { errorMessage != nil && !notes.isEmpty },
+                set: { if !$0 { errorMessage = nil } }
+            )
+        ) {
+            Button("OK", role: .cancel) {}
+        } message: {
+            Text(errorMessage ?? "")
+        }
     }
 
     private func loadNotes() async {

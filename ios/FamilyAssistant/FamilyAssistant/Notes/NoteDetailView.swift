@@ -104,6 +104,17 @@ struct NoteDetailView: View {
         } message: {
             Text("This removes the note from Family Assistant.")
         }
+        .alert(
+            "Could Not Delete Note",
+            isPresented: Binding(
+                get: { errorMessage != nil && note != nil },
+                set: { if !$0 { errorMessage = nil } }
+            )
+        ) {
+            Button("OK", role: .cancel) {}
+        } message: {
+            Text(errorMessage ?? "")
+        }
     }
 
     private func loadNote() async {
