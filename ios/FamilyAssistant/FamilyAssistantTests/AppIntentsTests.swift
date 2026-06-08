@@ -106,10 +106,12 @@ final class AppIntentsTests: XCTestCase {
     func testQuickCaptureIntentWrapsContentWithFilingInstruction() async throws {
         signIn()
         var capturedPrompt: String?
+        var capturedProfile: String?
         ChatMockBackendURLProtocol.respond { request in
             XCTAssertEqual(request.url?.path, "/api/v1/chat/send_message")
             let payload = try XCTUnwrap(Self.jsonObject(from: request) as? [String: Any])
             capturedPrompt = payload["prompt"] as? String
+            capturedProfile = payload["profile_id"] as? String
             return .json(#"{"reply":"Saved.","conversation_id":"web_conv_y","turn_id":"t1"}"#)
         }
 
@@ -120,6 +122,8 @@ final class AppIntentsTests: XCTestCase {
         let prompt = try XCTUnwrap(capturedPrompt)
         XCTAssertTrue(prompt.contains("https://example.com/article"))
         XCTAssertTrue(prompt.localizedCaseInsensitiveContains("file"))
+        // Untrusted shared content must run under the constrained profile.
+        XCTAssertEqual(capturedProfile, "email_intake")
     }
 
     // MARK: - CreateNoteIntent

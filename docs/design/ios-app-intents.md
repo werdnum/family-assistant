@@ -9,8 +9,9 @@ Share Sheet*) send content from other apps.
 
 All intents run **in the app's own process**, so they reuse the existing `AuthManager`,
 `ChatAPIClient`, and `NotesAPIClient` unchanged. No App Group, Keychain access group, new target, or
-new entitlement is required, and **no backend changes** are needed — the intents call existing
-endpoints.
+new entitlement is required. The only backend change is that the non-streaming
+`POST /api/v1/chat/send_message` endpoint now records **durable tool confirmations** (see
+[Tool confirmations](#tool-confirmations)) — it previously could not request approval at all.
 
 > A native Share Extension and Widgets are intentionally out of scope. Those run out-of-process and
 > would require sharing credentials via an App Group + Keychain access group. The deep-link
@@ -20,12 +21,12 @@ endpoints.
 
 All files live in `ios/FamilyAssistant/FamilyAssistant/Intents/`.
 
-| Intent                   | Action            | Behavior                                                                                                                  |
-| ------------------------ | ----------------- | ------------------------------------------------------------------------------------------------------------------------- |
-| `AskAssistantIntent`     | Ask the assistant | Non-streaming `POST /api/v1/chat/send_message`; shows the reply as a Siri dialog + snippet with a "Continue in app" link. |
-| `QuickCaptureIntent`     | Capture text/URL  | Sends the content wrapped in a "file this for me" instruction; same inline reply + snippet.                               |
-| `CreateNoteIntent`       | Create a note     | `POST /api/notes/` via `NotesAPIClient`; confirmation dialog.                                                             |
-| `OpenConversationIntent` | Open chat         | `openAppWhenRun`; foregrounds the app and (optionally) starts a new chat that auto-sends the message.                     |
+| Intent                   | Action            | Behavior                                                                                                                                      |
+| ------------------------ | ----------------- | --------------------------------------------------------------------------------------------------------------------------------------------- |
+| `AskAssistantIntent`     | Ask the assistant | Non-streaming `POST /api/v1/chat/send_message`; shows the reply as a Siri dialog + snippet with a "Continue in app" link.                     |
+| `QuickCaptureIntent`     | Capture text/URL  | Sends untrusted shared content (constrained `email_intake` profile) wrapped in a "file this for me" instruction; same inline reply + snippet. |
+| `CreateNoteIntent`       | Create a note     | `POST /api/notes/` via `NotesAPIClient`; confirmation dialog.                                                                                 |
+| `OpenConversationIntent` | Open chat         | `openAppWhenRun`; foregrounds the app and (optionally) starts a new chat that auto-sends the message.                                         |
 
 `FamilyAssistantAppShortcuts` (an `AppShortcutsProvider`) registers Siri phrases for each intent —
 every phrase contains the required `\(.applicationName)` token.
@@ -41,6 +42,16 @@ every phrase contains the required `\(.applicationName)` token.
   `web_conv_`-prefixed conversation ID, so they appear in the same conversation list as the native
   Chat tab.
 
+### Trust profile for Quick Capture
+
+`AskAssistantIntent` sends user-typed prompts, so it uses the trusted `default_assistant` profile
+(`IntentSupport.defaultProfileID`). `QuickCaptureIntent` forwards content the user did **not**
+author (a web page, an email), which is untrusted under the project's
+[Rule of Two](../../AGENTS.md). It therefore routes through the constrained `email_intake` profile
+(`IntentSupport.captureProfileID`), which denies destructive/browser/delegation tools, gates writes
+behind confirmation, and treats the supplied content as untrusted. This keeps untrusted input from
+reaching a profile that has both private-data access and state-changing actions.
+
 ## Inline reply + "Continue in app"
 
 `AskAssistantIntent` / `QuickCaptureIntent` return `.result(dialog:view:)` with
@@ -48,6 +59,19 @@ every phrase contains the required `\(.applicationName)` token.
 `familyassistant://chat?conversation_id=<id>`, which the app already routes (`onOpenURL` →
 `NotificationManager.handleDeepLink` → `AppRouter`). This is the path for any turn that needs
 interactive tool approval — approvals are handled in the app, not inside a Siri snippet.
+
+## Tool confirmations
+
+A headless intent cannot wait on a live confirmation channel the way the streaming chat UI does, so
+the non-streaming `POST /api/v1/chat/send_message` endpoint now installs a confirmation callback
+that records a **durable** pending confirmation (`ConfirmationService.create_request`) and returns a
+deferred "awaiting approval" tool result. The confirmation service push-notifies the user, and the
+request is later approvable from any client via `GET /api/v1/chat/confirmations/pending` +
+`POST /api/v1/chat/confirm_tool` — including the native Chat tab the "Continue in app" link opens.
+
+The durable-confirmation logic is factored into
+`family_assistant.services.confirmation_service.create_durable_confirmation`, shared by the
+non-streaming endpoint, the email-intake flow, and the durable half of the streaming endpoint.
 
 ## Opening the app from an intent
 

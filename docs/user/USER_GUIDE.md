@@ -468,7 +468,10 @@ various tasks with dark mode support and mobile optimization.
     action).
   - **"Capture this in Family Assistant"** — send a piece of text or a link and the assistant saves
     and files it for you. Add this to a Shortcut with *Show in Share Sheet* turned on to send things
-    to the assistant from other apps (Safari, Notes, etc.).
+    to the assistant from other apps (Safari, Notes, etc.). Because captured web pages and emails
+    are outside content, the assistant handles them in a restricted, safe mode: it can read your
+    information to file things sensibly but will ask you to approve any changes it wants to make
+    (you'll get a confirmation you can approve from the app).
   - **"Add a note to Family Assistant"** — quickly create a note by title and content.
   - **"Open Family Assistant chat"** — open the app on the Chat tab, optionally starting a new
     conversation with a message you provide.

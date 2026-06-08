@@ -34,6 +34,13 @@ enum IntentSupport {
     /// (`ChatViewModel`), so intent turns route through the same profile.
     static let defaultProfileID = "default_assistant"
 
+    /// Constrained profile for processing untrusted shared content (Quick
+    /// Capture). It denies destructive/browser/delegation tools and gates writes
+    /// behind confirmation, and treats the supplied content as untrusted — the
+    /// Rule-of-Two posture for content the user did not author. See the backend
+    /// `email_intake` service profile.
+    static let captureProfileID = "email_intake"
+
     private static let deepLinkScheme = "familyassistant"
 
     /// Builds an `AuthManager` only if the user is signed in, otherwise throws
@@ -92,13 +99,16 @@ enum IntentSupport {
     /// reply. Shared by `AskAssistantIntent` and `QuickCaptureIntent`. Throws
     /// `AssistantIntentError` (errors are mapped via ``intentError(from:)``).
     @MainActor
-    static func sendAssistantMessage(prompt: String) async throws -> ChatSendResult {
+    static func sendAssistantMessage(
+        prompt: String,
+        profileID: String = defaultProfileID
+    ) async throws -> ChatSendResult {
         let manager = try makeAuthenticatedManager()
         do {
             return try await ChatAPIClient(authManager: manager).sendMessage(
                 prompt: prompt,
                 conversationID: newConversationID(),
-                profileID: defaultProfileID
+                profileID: profileID
             )
         } catch {
             throw intentError(from: error)

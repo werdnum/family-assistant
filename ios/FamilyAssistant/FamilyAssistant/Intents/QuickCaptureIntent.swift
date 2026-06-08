@@ -25,7 +25,8 @@ struct QuickCaptureIntent: AppIntent {
     @MainActor
     func perform() async throws -> some IntentResult & ProvidesDialog & ShowsSnippetView {
         let result = try await IntentSupport.sendAssistantMessage(
-            prompt: IntentSupport.quickCapturePrompt(for: content)
+            prompt: IntentSupport.quickCapturePrompt(for: content),
+            profileID: IntentSupport.captureProfileID
         )
         return .result(
             dialog: IntentDialog(stringLiteral: result.reply),
