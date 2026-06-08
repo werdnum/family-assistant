@@ -547,6 +547,30 @@ class PendingToolConfirmationsResponse(BaseModel):
     )
 
 
+class ToolConfirmationDetail(BaseModel):
+    """A single durable tool confirmation, including its current status.
+
+    Unlike :class:`PendingToolConfirmation`, this is returned regardless of status so a client (for
+    example the iOS confirmation modal opened from a push notification) can render the request even
+    when it has already been approved, rejected, or expired.
+    """
+
+    request_id: str = Field(..., description="Confirmation request ID")
+    tool_name: str = Field(..., description="Tool awaiting approval")
+    tool_call_id: str | None = Field(None, description="Associated LLM tool call ID")
+    confirmation_prompt: str = Field(..., description="Prompt shown to the user")
+    # ast-grep-ignore: no-dict-any - Tool arguments vary per tool and cannot be statically typed
+    args: dict[str, Any] = Field(..., description="Tool arguments awaiting approval")
+    status: str = Field(
+        ..., description="Current status: pending, approved, rejected, or expired"
+    )
+    created_at: datetime = Field(..., description="Request creation timestamp")
+    expires_at: datetime = Field(..., description="Request expiration timestamp")
+    time_remaining_seconds: float = Field(
+        ..., description="Seconds from response generation until expiration"
+    )
+
+
 class ServiceProfile(BaseModel):
     """Information about an available service profile."""
 
@@ -1743,6 +1767,47 @@ async def list_pending_tool_confirmations(
         for row in rows
     ]
     return PendingToolConfirmationsResponse(confirmations=confirmations)
+
+
+@chat_api_router.get("/v1/chat/confirmations/{request_id}")
+async def get_tool_confirmation(
+    request_id: str,
+    request: Request,
+    current_user: Annotated[dict, Depends(get_current_user)],
+) -> ToolConfirmationDetail:
+    """Return a single durable tool confirmation owned by the current user.
+
+    Used by clients that open a confirmation directly (for example the iOS modal launched by
+    tapping a confirmation push notification) and need the full prompt, arguments, and current
+    status. Requests that do not exist or belong to another user return 404 so existence is not
+    leaked across users.
+    """
+    confirmation_service = _get_confirmation_service(request)
+    try:
+        row = await confirmation_service.get_for_user(
+            request_id=request_id,
+            user_id=current_user["user_identifier"],
+        )
+    except (ConfirmationNotFoundError, ConfirmationAuthorizationError) as exc:
+        logger.info(
+            "Confirmation %s not available to current user: %s", request_id, exc
+        )
+        raise HTTPException(
+            status_code=404, detail="Confirmation request not found"
+        ) from exc
+
+    now = datetime.now(UTC)
+    return ToolConfirmationDetail(
+        request_id=row["id"],
+        tool_name=row["tool_name"],
+        tool_call_id=row["tool_call_id"],
+        confirmation_prompt=row["confirmation_prompt"],
+        args=row["tool_args_json"],
+        status=row["status"],
+        created_at=row["created_at"],
+        expires_at=row["expires_at"],
+        time_remaining_seconds=max(0.0, (row["expires_at"] - now).total_seconds()),
+    )
 
 
 @chat_api_router.get("/v1/chat/events")

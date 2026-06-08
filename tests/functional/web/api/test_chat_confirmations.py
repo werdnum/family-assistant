@@ -104,6 +104,73 @@ async def test_pending_confirmations_lists_only_current_user_unexpired_requests(
 
 
 @pytest.mark.asyncio
+async def test_get_confirmation_returns_detail_for_owner(
+    api_test_client: AsyncClient,
+    db_engine: AsyncEngine,
+) -> None:
+    request_id = await _create_confirmation(db_engine)
+
+    response = await api_test_client.get(f"/api/v1/chat/confirmations/{request_id}")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["request_id"] == request_id
+    assert body["tool_name"] == "add_or_update_note"
+    assert body["tool_call_id"] == "tool-call-123"
+    assert body["confirmation_prompt"] == "Create a note for this itinerary?"
+    assert body["args"] == {"title": "Trip", "content": "Flight lands at 6pm"}
+    assert body["status"] == "pending"
+    assert body["time_remaining_seconds"] > 0
+
+
+@pytest.mark.asyncio
+async def test_get_confirmation_reports_status_after_resolution(
+    api_test_client: AsyncClient,
+    db_engine: AsyncEngine,
+) -> None:
+    request_id = await _create_confirmation(db_engine)
+
+    await api_test_client.post(
+        "/api/v1/chat/confirm_tool",
+        json={"request_id": request_id, "approved": False},
+    )
+
+    response = await api_test_client.get(f"/api/v1/chat/confirmations/{request_id}")
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "rejected"
+
+
+@pytest.mark.asyncio
+async def test_get_confirmation_unknown_request_returns_404(
+    api_test_client: AsyncClient,
+) -> None:
+    response = await api_test_client.get("/api/v1/chat/confirmations/confirm_missing")
+
+    assert response.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_get_confirmation_for_other_user_returns_404(
+    app_fixture: FastAPI,
+    api_test_client: AsyncClient,
+    db_engine: AsyncEngine,
+) -> None:
+    request_id = await _create_confirmation(db_engine, request_user_id="owner_user")
+
+    async def other_user() -> dict[str, object]:
+        return {"user_identifier": "other_user"}
+
+    app_fixture.dependency_overrides[get_current_user] = other_user
+    try:
+        response = await api_test_client.get(f"/api/v1/chat/confirmations/{request_id}")
+    finally:
+        app_fixture.dependency_overrides.pop(get_current_user, None)
+
+    assert response.status_code == 404
+
+
+@pytest.mark.asyncio
 async def test_approving_pending_confirmation_via_web_enqueues_execution_task(
     api_test_client: AsyncClient,
     db_engine: AsyncEngine,
