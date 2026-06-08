@@ -16,8 +16,8 @@ final class FamilyAssistantUITests: XCTestCase {
 
     func testNotesListSearchAndDetailFlow() {
         XCTAssertTrue(app.navigationBars["Notes"].waitForExistence(timeout: 8))
-        XCTAssertTrue(app.staticTexts["Shopping"].exists)
-        XCTAssertTrue(app.staticTexts["School Pickup"].exists)
+        XCTAssertTrue(app.staticTexts["Shopping"].waitForExistence(timeout: 4))
+        XCTAssertTrue(app.staticTexts["School Pickup"].waitForExistence(timeout: 4))
 
         app.searchFields.firstMatch.tap()
         app.searchFields.firstMatch.typeText("school")
@@ -56,6 +56,7 @@ final class FamilyAssistantUITests: XCTestCase {
 
     func testDeleteNoteRemovesItFromList() {
         XCTAssertTrue(app.navigationBars["Notes"].waitForExistence(timeout: 8))
+        XCTAssertTrue(app.staticTexts["Shopping"].waitForExistence(timeout: 4))
         app.staticTexts["Shopping"].tap()
 
         XCTAssertTrue(app.navigationBars["Note"].waitForExistence(timeout: 4))
