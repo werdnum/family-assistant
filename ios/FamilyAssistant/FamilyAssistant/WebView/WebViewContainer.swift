@@ -195,7 +195,16 @@ struct WebViewContainer: UIViewRepresentable {
             }
 
             if handleInternalNavigation(url) {
-                state.webView?.stopLoading()
+                // The location change reached us via the SPA's history.pushState,
+                // which already navigated *this* (source) web view before the
+                // native router took over (e.g. switched tabs). Undo that history
+                // entry so the source tab is left showing the page it had, not
+                // the destination we routed to natively.
+                let webView = state.webView
+                webView?.stopLoading()
+                if webView?.canGoBack == true {
+                    webView?.goBack()
+                }
             }
         }
 

@@ -39,13 +39,11 @@ final class FamilyAssistantUITests: XCTestCase {
         app.buttons["Add Note"].tap()
         XCTAssertTrue(app.navigationBars["Add Note"].waitForExistence(timeout: 3))
 
-        app.textFields["Note title"].tap()
-        app.textFields["Note title"].typeText("Dentist")
+        typeText("Dentist", into: app.textFields["Note title"])
 
-        let editor = app.textViews.firstMatch
-        XCTAssertTrue(editor.waitForExistence(timeout: 2))
-        editor.tap()
-        editor.typeText("Appointment is Tuesday at 10.")
+        let editor = app.textViews["note-content-editor"]
+        XCTAssertTrue(editor.waitForExistence(timeout: 4))
+        typeText("Appointment is Tuesday at 10.", into: editor)
 
         app.buttons["Save Note"].tap()
 
@@ -105,6 +103,77 @@ final class FamilyAssistantUITests: XCTestCase {
         attachScreenshot(named: "native-chat-initial-prompt")
     }
 
+    func testTabBarSwitchesBetweenFeatureTabs() {
+        XCTAssertTrue(app.navigationBars["Notes"].waitForExistence(timeout: 8))
+
+        let tabBar = app.tabBars.firstMatch
+        XCTAssertTrue(tabBar.buttons["Chat"].waitForExistence(timeout: 4))
+        XCTAssertTrue(tabBar.buttons["Notes"].exists)
+        XCTAssertTrue(tabBar.buttons["Documents"].exists)
+        XCTAssertTrue(tabBar.buttons["More"].exists)
+
+        tabBar.buttons["More"].tap()
+        XCTAssertTrue(app.navigationBars["More"].waitForExistence(timeout: 4))
+        XCTAssertTrue(app.staticTexts["Voice"].waitForExistence(timeout: 2))
+        XCTAssertTrue(app.staticTexts["Events"].exists)
+        attachScreenshot(named: "tab-more-list")
+
+        tabBar.buttons["Documents"].tap()
+        XCTAssertTrue(app.navigationBars["Documents"].waitForExistence(timeout: 6))
+
+        tabBar.buttons["Notes"].tap()
+        XCTAssertTrue(app.staticTexts["Shopping"].waitForExistence(timeout: 4))
+    }
+
+    func testMoreTabOpensSettingsAndSignsOut() {
+        XCTAssertTrue(app.navigationBars["Notes"].waitForExistence(timeout: 8))
+
+        openMoreSettings()
+
+        let signOut = app.buttons["settings-sign-out"]
+        XCTAssertTrue(signOut.waitForExistence(timeout: 4))
+        attachScreenshot(named: "settings-screen")
+
+        signOut.tap()
+        XCTAssertTrue(
+            app.staticTexts["Enter your server URL to get started"].waitForExistence(timeout: 8)
+        )
+    }
+
+    func testPerTabNavigationStateIsPreservedAcrossTabSwitches() {
+        XCTAssertTrue(app.navigationBars["Notes"].waitForExistence(timeout: 8))
+
+        openMoreSettings()
+
+        let tabBar = app.tabBars.firstMatch
+        tabBar.buttons["Chat"].tap()
+        tabBar.buttons["More"].tap()
+
+        // The More tab kept its pushed Settings screen across the tab switch.
+        XCTAssertTrue(app.navigationBars["Settings"].waitForExistence(timeout: 4))
+    }
+
+    /// Opens the More tab and drills into the Settings screen, scrolling the
+    /// long destination list if the Settings row is below the fold.
+    private func openMoreSettings() {
+        app.tabBars.firstMatch.buttons["More"].tap()
+        let settings = app.staticTexts["Settings"]
+        if !settings.waitForExistence(timeout: 3) {
+            app.swipeUp()
+        }
+        XCTAssertTrue(settings.waitForExistence(timeout: 4))
+        settings.tap()
+        XCTAssertTrue(app.navigationBars["Settings"].waitForExistence(timeout: 4))
+    }
+
+    func testDeepLinkSelectsDocumentsTab() {
+        relaunch(initialPath: "/documents/")
+
+        XCTAssertTrue(app.navigationBars["Documents"].waitForExistence(timeout: 8))
+        XCTAssertTrue(app.tabBars.firstMatch.buttons["Documents"].isSelected)
+        attachScreenshot(named: "deep-link-documents")
+    }
+
     private func launch(initialPath: String) {
         app = XCUIApplication()
         app.launchArguments = ["--ui-testing"]
@@ -131,6 +200,26 @@ final class FamilyAssistantUITests: XCTestCase {
         if row.waitForExistence(timeout: 6) {
             row.tap()
         }
+    }
+
+    /// Types into a field after ensuring it holds keyboard focus. On CI the
+    /// first tap can land before a previously focused field resigns first
+    /// responder, leaving `typeText` with no focused element; re-tapping until
+    /// the element reports keyboard focus makes the flow deterministic.
+    private func typeText(_ text: String, into element: XCUIElement, file: StaticString = #filePath, line: UInt = #line) {
+        element.tap()
+        var attempts = 0
+        while !(element.value(forKey: "hasKeyboardFocus") as? Bool ?? false), attempts < 5 {
+            element.tap()
+            attempts += 1
+        }
+        XCTAssertTrue(
+            element.value(forKey: "hasKeyboardFocus") as? Bool ?? false,
+            "element did not gain keyboard focus",
+            file: file,
+            line: line
+        )
+        element.typeText(text)
     }
 
     private func attachScreenshot(named name: String) {

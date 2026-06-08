@@ -447,15 +447,18 @@ various tasks with dark mode support and mobile optimization.
 - **Accessing it:**`{{ SERVER_URL }}` (This link will be replaced with the actual URL). The
   interface automatically opens to the chat page for immediate access.
 
-- **iOS App:** If the native iOS app is installed, it opens Family Assistant after secure sign-in
-  and uses native screens for Chat and Notes. Native Chat shares the same conversation history as
-  the browser, streams replies as they are generated, supports profile switching, shows Markdown and
+- **iOS App:** If the native iOS app is installed, it opens Family Assistant after secure sign-in.
+  The app is organized into four tabs along the bottom: **Chat**, **Notes**, **Documents**, and
+  **More**. Chat and Notes are native screens; Documents and the items under More open the
+  corresponding pages inside the app. Native Chat shares the same conversation history as the
+  browser, streams replies as they are generated, supports profile switching, shows Markdown and
   tool calls, handles approve/reject confirmations, and can upload images, PDFs, plain text, and
   Markdown files up to 100 MB. You can search, read, create, edit, and delete notes on iOS,
-  including changing whether a note is included in the assistant's system prompt. Other app pages
-  remain available inside the embedded web interface. The gear menu includes native notification
-  controls. When enabled, iOS notifications can open the relevant native chat or page, and
-  confirmation notifications may include approve/deny actions.
+  including changing whether a note is included in the assistant's system prompt. The **More** tab
+  gathers the long-tail destinations — Voice, Events, History, Automations, Tools, and more — and a
+  single **Settings** screen with notification controls and sign-out. Use the tab bar to move
+  between sections; each tab remembers where you were. When enabled, iOS notifications can open the
+  relevant tab or page, and confirmation notifications may include approve/deny actions.
 
 - **Chat Features:**
 

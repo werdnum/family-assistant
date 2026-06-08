@@ -13,12 +13,10 @@
 		A10004 /* AuthManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10004 /* AuthManager.swift */; };
 		A10005 /* SetupView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10005 /* SetupView.swift */; };
 		A10006 /* WebViewContainer.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10006 /* WebViewContainer.swift */; };
-		A10007 /* WebViewToolbar.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10007 /* WebViewToolbar.swift */; };
 		A10008 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = B10008 /* Assets.xcassets */; };
 		A10009 /* AppDelegate.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10011 /* AppDelegate.swift */; };
 		A10010 /* NotificationManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10012 /* NotificationManager.swift */; };
 		A10011 /* AppRouting.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10014 /* AppRouting.swift */; };
-		A10012 /* AppSettingsMenu.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10015 /* AppSettingsMenu.swift */; };
 		A10013 /* NotesAPIClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10016 /* NotesAPIClient.swift */; };
 		A10014 /* NotesRootView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10017 /* NotesRootView.swift */; };
 		A10015 /* NotesListView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10018 /* NotesListView.swift */; };
@@ -30,6 +28,9 @@
 		A10021 /* SSEParser.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10024 /* SSEParser.swift */; };
 		A10022 /* ChatViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10025 /* ChatViewModel.swift */; };
 		A10023 /* ChatViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10026 /* ChatViews.swift */; };
+		A10030 /* RootTabView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10030 /* RootTabView.swift */; };
+		A10031 /* WebDestinationView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10031 /* WebDestinationView.swift */; };
+		A10032 /* MoreTabView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10032 /* MoreTabView.swift */; };
 		A10024 /* Markdown in Frameworks */ = {isa = PBXBuildFile; productRef = H10002 /* Markdown */; };
 		A20001 /* RouteTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B20002 /* RouteTests.swift */; };
 		A20002 /* NotesModelTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B20003 /* NotesModelTests.swift */; };
@@ -68,7 +69,6 @@
 		B10004 /* AuthManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AuthManager.swift; sourceTree = "<group>"; };
 		B10005 /* SetupView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SetupView.swift; sourceTree = "<group>"; };
 		B10006 /* WebViewContainer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WebViewContainer.swift; sourceTree = "<group>"; };
-		B10007 /* WebViewToolbar.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WebViewToolbar.swift; sourceTree = "<group>"; };
 		B10008 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		B10009 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
 		B10010 /* FamilyAssistant.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = FamilyAssistant.app; sourceTree = BUILT_PRODUCTS_DIR; };
@@ -76,7 +76,6 @@
 		B10012 /* NotificationManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NotificationManager.swift; sourceTree = "<group>"; };
 		B10013 /* FamilyAssistant.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = FamilyAssistant.entitlements; sourceTree = "<group>"; };
 		B10014 /* AppRouting.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppRouting.swift; sourceTree = "<group>"; };
-		B10015 /* AppSettingsMenu.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppSettingsMenu.swift; sourceTree = "<group>"; };
 		B10016 /* NotesAPIClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NotesAPIClient.swift; sourceTree = "<group>"; };
 		B10017 /* NotesRootView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NotesRootView.swift; sourceTree = "<group>"; };
 		B10018 /* NotesListView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NotesListView.swift; sourceTree = "<group>"; };
@@ -88,6 +87,9 @@
 		B10024 /* SSEParser.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SSEParser.swift; sourceTree = "<group>"; };
 		B10025 /* ChatViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatViewModel.swift; sourceTree = "<group>"; };
 		B10026 /* ChatViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatViews.swift; sourceTree = "<group>"; };
+		B10030 /* RootTabView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RootTabView.swift; sourceTree = "<group>"; };
+		B10031 /* WebDestinationView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WebDestinationView.swift; sourceTree = "<group>"; };
+		B10032 /* MoreTabView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MoreTabView.swift; sourceTree = "<group>"; };
 		B20001 /* FamilyAssistantTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = FamilyAssistantTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		B20002 /* RouteTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RouteTests.swift; sourceTree = "<group>"; };
 		B20003 /* NotesModelTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NotesModelTests.swift; sourceTree = "<group>"; };
@@ -145,7 +147,8 @@
 				B10001 /* FamilyAssistantApp.swift */,
 				B10002 /* ContentView.swift */,
 				B10014 /* AppRouting.swift */,
-				B10015 /* AppSettingsMenu.swift */,
+				B10030 /* RootTabView.swift */,
+				B10032 /* MoreTabView.swift */,
 				D10003 /* Auth */,
 				D10004 /* WebView */,
 				D10006 /* Notifications */,
@@ -173,7 +176,7 @@
 			isa = PBXGroup;
 			children = (
 				B10006 /* WebViewContainer.swift */,
-				B10007 /* WebViewToolbar.swift */,
+				B10031 /* WebDestinationView.swift */,
 			);
 			path = WebView;
 			sourceTree = "<group>";
@@ -395,11 +398,12 @@
 				A10004 /* AuthManager.swift in Sources */,
 				A10005 /* SetupView.swift in Sources */,
 				A10006 /* WebViewContainer.swift in Sources */,
-				A10007 /* WebViewToolbar.swift in Sources */,
+				A10031 /* WebDestinationView.swift in Sources */,
 				A10009 /* AppDelegate.swift in Sources */,
 				A10010 /* NotificationManager.swift in Sources */,
 				A10011 /* AppRouting.swift in Sources */,
-				A10012 /* AppSettingsMenu.swift in Sources */,
+				A10030 /* RootTabView.swift in Sources */,
+				A10032 /* MoreTabView.swift in Sources */,
 				A10013 /* NotesAPIClient.swift in Sources */,
 				A10014 /* NotesRootView.swift in Sources */,
 				A10015 /* NotesListView.swift in Sources */,

@@ -49,3 +49,6 @@ fastlane/test_output
 
 # Code Injection
 iOSInjectionProject/
+
+# macOS
+.DS_Store
