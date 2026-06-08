@@ -324,7 +324,8 @@ final class AuthManager {
         KeychainHelper.delete(key: Keys.refreshToken)
         UserDefaults.standard.removeObject(forKey: Keys.tokenExpiry)
 
-        // Clear WKWebView data
+        // Clear WKWebView data before flipping the auth state, so a fast
+        // re-login's fresh session cookie cannot be wiped by this cleanup.
         let dataStore = WKWebsiteDataStore.default()
         let types = WKWebsiteDataStore.allWebsiteDataTypes()
         let records = await dataStore.dataRecords(ofTypes: types)
