@@ -31,7 +31,10 @@ final class ChatAPIClientTests: XCTestCase {
         ChatMockBackendURLProtocol.respond { request in
             XCTAssertEqual(request.httpMethod, "GET")
             XCTAssertEqual(request.url?.path, "/api/v1/chat/conversations")
-            XCTAssertEqual(request.url?.query, "interface_type=web")
+            let queryItems = Self.queryItems(from: request)
+            XCTAssertEqual(queryItems["interface_type"], "web")
+            XCTAssertEqual(queryItems["limit"], "100")
+            XCTAssertEqual(queryItems["offset"], "0")
             XCTAssertEqual(request.value(forHTTPHeaderField: "Authorization"), "Bearer \(self.apiToken)")
             return .json(
                 """
@@ -54,6 +57,58 @@ final class ChatAPIClientTests: XCTestCase {
 
         XCTAssertEqual(conversations.map(\.conversationID), ["web_conv_1"])
         XCTAssertEqual(conversations.first?.messageCount, 2)
+    }
+
+    func testListConversationsPaginatesUntilAllHistoryIsLoaded() async throws {
+        var offsets: [String] = []
+        ChatMockBackendURLProtocol.respond { request in
+            XCTAssertEqual(request.httpMethod, "GET")
+            XCTAssertEqual(request.url?.path, "/api/v1/chat/conversations")
+            let queryItems = Self.queryItems(from: request)
+            offsets.append(queryItems["offset"] ?? "")
+            XCTAssertEqual(queryItems["interface_type"], "web")
+            XCTAssertEqual(queryItems["limit"], "100")
+
+            if queryItems["offset"] == "0" {
+                return .json(
+                    """
+                    {
+                      "conversations": [
+                        {
+                          "conversation_id": "web_conv_1",
+                          "last_message": "First",
+                          "last_timestamp": "2026-06-08T12:00:00Z",
+                          "message_count": 2
+                        }
+                      ],
+                      "count": 2
+                    }
+                    """
+                )
+            }
+
+            XCTAssertEqual(queryItems["offset"], "1")
+            return .json(
+                """
+                {
+                  "conversations": [
+                    {
+                      "conversation_id": "web_conv_2",
+                      "last_message": "Second",
+                      "last_timestamp": "2026-06-08T12:01:00Z",
+                      "message_count": 4
+                    }
+                  ],
+                  "count": 2
+                }
+                """
+            )
+        }
+
+        let conversations = try await makeClient().listConversations()
+
+        XCTAssertEqual(offsets, ["0", "1"])
+        XCTAssertEqual(conversations.map(\.conversationID), ["web_conv_1", "web_conv_2"])
     }
 
     func testProfilesDecodeDirectChatProfiles() async throws {
@@ -136,9 +191,13 @@ final class ChatAPIClientTests: XCTestCase {
     }
 
     func testConfirmToolIncludesApprovingInterfaceIOS() async throws {
+        var sawConfirmRequest = false
         ChatMockBackendURLProtocol.respond { request in
+            guard request.url?.path == "/api/v1/chat/confirm_tool" else {
+                return .json(#"{"confirmations":[]}"#)
+            }
+            sawConfirmRequest = true
             XCTAssertEqual(request.httpMethod, "POST")
-            XCTAssertEqual(request.url?.path, "/api/v1/chat/confirm_tool")
             let payload = try XCTUnwrap(Self.jsonObject(from: request) as? [String: Any])
             XCTAssertEqual(payload["request_id"] as? String, "confirm-1")
             XCTAssertEqual(payload["approved"] as? Bool, true)
@@ -152,6 +211,7 @@ final class ChatAPIClientTests: XCTestCase {
             conversationID: "web_conv_1",
             approved: true
         )
+        XCTAssertTrue(sawConfirmRequest)
     }
 
     func testUploadAndDeleteAttachmentUseAuthenticatedEndpoints() async throws {
@@ -204,6 +264,13 @@ final class ChatAPIClientTests: XCTestCase {
 
     private static func jsonObject(from request: URLRequest) throws -> Any {
         try JSONSerialization.jsonObject(with: request.bodyData)
+    }
+
+    private static func queryItems(from request: URLRequest) -> [String: String] {
+        let items = URLComponents(url: request.url!, resolvingAgainstBaseURL: false)?.queryItems ?? []
+        return Dictionary(uniqueKeysWithValues: items.compactMap { item in
+            item.value.map { (item.name, $0) }
+        })
     }
 }
 

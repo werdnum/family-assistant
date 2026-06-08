@@ -5,15 +5,31 @@ import UniformTypeIdentifiers
 struct ChatAPIClient {
     let authManager: AuthManager
     var urlSession: URLSession = .shared
+    private static let conversationPageSize = 100
 
     func listConversations() async throws -> [ChatConversationSummary] {
+        var conversations: [ChatConversationSummary] = []
+        var offset = 0
+
+        while true {
+            let response = try await listConversationPage(limit: Self.conversationPageSize, offset: offset)
+            conversations.append(contentsOf: response.conversations)
+
+            if response.conversations.isEmpty || conversations.count >= response.count {
+                return conversations
+            }
+            offset += response.conversations.count
+        }
+    }
+
+    private func listConversationPage(limit: Int, offset: Int) async throws -> ChatConversationListResponse {
         let request = try await authManager.authorizedRequest(
-            url: apiURL("/api/v1/chat/conversations?interface_type=\(ChatConstants.interfaceType)"),
+            url: conversationListURL(limit: limit, offset: offset),
             method: "GET"
         )
         let (data, response) = try await urlSession.data(for: request)
         try validate(response: response, data: data)
-        return try JSONDecoder.chatDecoder.decode(ChatConversationListResponse.self, from: data).conversations
+        return try JSONDecoder.chatDecoder.decode(ChatConversationListResponse.self, from: data)
     }
 
     func getMessages(conversationID: String) async throws -> [ChatBackendMessage] {
@@ -159,7 +175,7 @@ struct ChatAPIClient {
         )
         let boundary = "Boundary-\(UUID().uuidString)"
         request.setValue("multipart/form-data; boundary=\(boundary)", forHTTPHeaderField: "Content-Type")
-        request.httpBody = try multipartBody(
+        request.httpBody = try await Self.multipartBody(
             fileURL: fileURL,
             filename: values.name ?? fileURL.lastPathComponent,
             mimeType: mimeType,
@@ -195,6 +211,19 @@ struct ChatAPIClient {
         }
         let ext = fileURL.pathExtension
         return UTType(filenameExtension: ext)?.preferredMIMEType ?? "application/octet-stream"
+    }
+
+    private func conversationListURL(limit: Int, offset: Int) throws -> URL {
+        var components = URLComponents(url: try apiURL("/api/v1/chat/conversations"), resolvingAgainstBaseURL: false)
+        components?.queryItems = [
+            URLQueryItem(name: "interface_type", value: ChatConstants.interfaceType),
+            URLQueryItem(name: "limit", value: String(limit)),
+            URLQueryItem(name: "offset", value: String(offset)),
+        ]
+        guard let url = components?.url else {
+            throw ChatAPIError.invalidServerURL
+        }
+        return url
     }
 
     private func apiURL(_ path: String) throws -> URL {
@@ -242,19 +271,21 @@ struct ChatAPIClient {
         }
     }
 
-    private func multipartBody(
+    private nonisolated static func multipartBody(
         fileURL: URL,
         filename: String,
         mimeType: String,
         boundary: String
-    ) throws -> Data {
-        var data = Data()
-        data.append("--\(boundary)\r\n")
-        data.append("Content-Disposition: form-data; name=\"file\"; filename=\"\(filename)\"\r\n")
-        data.append("Content-Type: \(mimeType)\r\n\r\n")
-        data.append(try Data(contentsOf: fileURL))
-        data.append("\r\n--\(boundary)--\r\n")
-        return data
+    ) async throws -> Data {
+        try await Task.detached(priority: .utility) {
+            var data = Data()
+            data.append("--\(boundary)\r\n")
+            data.append("Content-Disposition: form-data; name=\"file\"; filename=\"\(filename)\"\r\n")
+            data.append("Content-Type: \(mimeType)\r\n\r\n")
+            data.append(try Data(contentsOf: fileURL))
+            data.append("\r\n--\(boundary)--\r\n")
+            return data
+        }.value
     }
 
     private static func encodedPathComponent(_ value: String) -> String {
