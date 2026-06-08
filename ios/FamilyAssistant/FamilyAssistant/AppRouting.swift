@@ -140,7 +140,10 @@ final class AppRouter {
 
         switch tab {
         case .documents:
-            if !Self.isDocumentsRoot(url) {
+            if Self.isDocumentsRoot(url) {
+                // A link back to the Documents list pops to the tab root.
+                documentsPath = []
+            } else {
                 documentsPath.append(WebRoute(path: url.pathAndQuery))
             }
         case .more:

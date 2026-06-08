@@ -141,6 +141,15 @@ final class RouteTests: XCTestCase {
         XCTAssertEqual(router.documentsPath, [WebRoute(path: "/documents/42")])
     }
 
+    func testFollowWebLinkToDocumentsRootPopsToTabRoot() throws {
+        let router = AppRouter()
+        router.selectedTab = .documents
+        router.documentsPath = [WebRoute(path: "/documents/123")]
+        XCTAssertTrue(router.followWebLink(try url("/documents/"), from: .documents, relativeTo: baseURL))
+        XCTAssertEqual(router.selectedTab, .documents)
+        XCTAssertEqual(router.documentsPath, [])
+    }
+
     func testFollowWebLinkAppendsWithinMoreTab() throws {
         let router = AppRouter()
         router.selectedTab = .more
