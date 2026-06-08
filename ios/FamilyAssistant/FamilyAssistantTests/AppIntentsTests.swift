@@ -19,6 +19,9 @@ final class AppIntentsTests: XCTestCase {
     override func tearDown() {
         ChatMockBackendURLProtocol.reset()
         URLProtocol.unregisterClass(ChatMockBackendURLProtocol.self)
+        // The navigation center is a process-wide singleton; clear any pending
+        // path so it does not leak into the next test.
+        _ = IntentNavigationCenter.shared.consumePendingChatPath()
         resetStoredAuth()
         super.tearDown()
     }
@@ -76,16 +79,26 @@ final class AppIntentsTests: XCTestCase {
         let intent = AskAssistantIntent()
         intent.prompt = "Hello"
 
-        do {
-            _ = try await intent.perform()
-            XCTFail("Expected needsSignIn")
-        } catch let error as AssistantIntentError {
-            guard case .needsSignIn = error else {
-                return XCTFail("Expected needsSignIn, got \(error)")
-            }
-        } catch {
-            XCTFail("Expected AssistantIntentError, got \(error)")
+        await assertNeedsSignIn { try await intent.perform() }
+    }
+
+    func testExpiredSessionMapsToNeedsSignIn() async {
+        // Token present but expired, and the refresh is rejected by the server.
+        UserDefaults.standard.set(serverURL, forKey: "fa_server_url")
+        KeychainHelper.save(key: "fa_api_token", string: apiToken)
+        KeychainHelper.save(key: "fa_refresh_token", string: "stale-refresh")
+        UserDefaults.standard.set(
+            ISO8601DateFormatter().string(from: Date().addingTimeInterval(-60)),
+            forKey: "fa_token_expiry"
+        )
+        ChatMockBackendURLProtocol.respond { _ in
+            .json(#"{"detail":"expired"}"#, statusCode: 401)
         }
+
+        let intent = AskAssistantIntent()
+        intent.prompt = "Hi"
+
+        await assertNeedsSignIn { try await intent.perform() }
     }
 
     // MARK: - QuickCaptureIntent
@@ -133,6 +146,24 @@ final class AppIntentsTests: XCTestCase {
         XCTAssertTrue(sawSave)
     }
 
+    // MARK: - OpenConversationIntent
+
+    func testOpenConversationIntentQueuesPromptForChat() async throws {
+        let intent = OpenConversationIntent()
+        intent.prompt = "hello world"
+        _ = try await intent.perform()
+
+        XCTAssertEqual(IntentNavigationCenter.shared.consumePendingChatPath(), "/chat?q=hello%20world")
+    }
+
+    func testOpenConversationIntentWithoutPromptOpensChat() async throws {
+        let intent = OpenConversationIntent()
+        intent.prompt = nil
+        _ = try await intent.perform()
+
+        XCTAssertEqual(IntentNavigationCenter.shared.consumePendingChatPath(), "/chat")
+    }
+
     // MARK: - Deep links & shortcuts
 
     func testChatDeepLinkEncodesPromptAndConversation() {
@@ -174,6 +205,23 @@ final class AppIntentsTests: XCTestCase {
         KeychainHelper.delete(key: "fa_refresh_token")
         UserDefaults.standard.removeObject(forKey: "fa_token_expiry")
         UserDefaults.standard.removeObject(forKey: "fa_server_url")
+    }
+
+    private func assertNeedsSignIn<T>(
+        _ operation: () async throws -> T,
+        file: StaticString = #filePath,
+        line: UInt = #line
+    ) async {
+        do {
+            _ = try await operation()
+            XCTFail("Expected needsSignIn", file: file, line: line)
+        } catch let error as AssistantIntentError {
+            guard case .needsSignIn = error else {
+                return XCTFail("Expected needsSignIn, got \(error)", file: file, line: line)
+            }
+        } catch {
+            XCTFail("Expected AssistantIntentError, got \(error)", file: file, line: line)
+        }
     }
 
     private static func jsonObject(from request: URLRequest) throws -> Any {

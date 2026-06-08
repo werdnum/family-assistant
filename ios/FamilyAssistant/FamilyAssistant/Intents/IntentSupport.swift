@@ -87,6 +87,42 @@ enum IntentSupport {
         // fail; fall back to the bare chat link to keep a non-optional API.
         return components.url ?? URL(string: "\(deepLinkScheme)://chat")!
     }
+
+    /// Sends a prompt to the assistant in a fresh conversation and returns the
+    /// reply. Shared by `AskAssistantIntent` and `QuickCaptureIntent`. Throws
+    /// `AssistantIntentError` (errors are mapped via ``intentError(from:)``).
+    @MainActor
+    static func sendAssistantMessage(prompt: String) async throws -> ChatSendResult {
+        let manager = try makeAuthenticatedManager()
+        do {
+            return try await ChatAPIClient(authManager: manager).sendMessage(
+                prompt: prompt,
+                conversationID: newConversationID(),
+                profileID: defaultProfileID
+            )
+        } catch {
+            throw intentError(from: error)
+        }
+    }
+
+    /// Normalizes an error thrown during an intent into an `AssistantIntentError`.
+    /// A rejected/cleared session (e.g. an unrefreshable expired token) becomes
+    /// `needsSignIn` so the user is told to re-open the app, rather than a raw
+    /// "No stored credentials" message.
+    static func intentError(from error: Error) -> AssistantIntentError {
+        if let intentError = error as? AssistantIntentError {
+            return intentError
+        }
+        if let authError = error as? AuthError {
+            switch authError {
+            case .authRejected, .noCredentials, .invalidServerURL:
+                return .needsSignIn
+            case .exchangeFailed, .transient:
+                return .requestFailed(authError.localizedDescription)
+            }
+        }
+        return .requestFailed(error.localizedDescription)
+    }
 }
 
 /// Bridges an `openAppWhenRun` App Intent to the app's router.

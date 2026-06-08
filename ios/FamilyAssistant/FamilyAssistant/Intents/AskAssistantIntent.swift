@@ -25,22 +25,7 @@ struct AskAssistantIntent: AppIntent {
 
     @MainActor
     func perform() async throws -> some IntentResult & ProvidesDialog & ShowsSnippetView {
-        let manager = try IntentSupport.makeAuthenticatedManager()
-        let client = ChatAPIClient(authManager: manager)
-
-        let result: ChatSendResult
-        do {
-            result = try await client.sendMessage(
-                prompt: prompt,
-                conversationID: IntentSupport.newConversationID(),
-                profileID: IntentSupport.defaultProfileID
-            )
-        } catch let error as AssistantIntentError {
-            throw error
-        } catch {
-            throw AssistantIntentError.requestFailed(error.localizedDescription)
-        }
-
+        let result = try await IntentSupport.sendAssistantMessage(prompt: prompt)
         return .result(
             dialog: IntentDialog(stringLiteral: result.reply),
             view: AssistantReplySnippet(reply: result.reply, conversationID: result.conversationID)

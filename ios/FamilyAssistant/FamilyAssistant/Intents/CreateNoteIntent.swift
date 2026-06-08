@@ -37,10 +37,8 @@ struct CreateNoteIntent: AppIntent {
                     visibilityLabels: []
                 )
             )
-        } catch let error as AssistantIntentError {
-            throw error
         } catch {
-            throw AssistantIntentError.requestFailed(error.localizedDescription)
+            throw IntentSupport.intentError(from: error)
         }
 
         return .result(dialog: "Saved “\(title)” to your notes.")
