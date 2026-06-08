@@ -18,6 +18,7 @@ final class ChatViewModel {
     var isLoadingProfiles = false
     var isStreaming = false
     var errorMessage: String?
+    var liveUpdatesConnected = true
     var mobileShowsConversationList = false
 
     var canSendDraft: Bool {
@@ -401,6 +402,11 @@ final class ChatViewModel {
         }
     }
 
+    func reconnectLiveUpdates() async {
+        liveUpdatesConnected = true
+        startLiveEvents()
+    }
+
     private func startLiveEvents() {
         liveEventsTask?.cancel()
         guard let conversationID else {
@@ -420,15 +426,20 @@ final class ChatViewModel {
                             await loadMessages(conversationID: conversationID)
                             await refreshConversations()
                         }
-                    case .connected, .heartbeat:
+                    case .connected:
+                        liveUpdatesConnected = true
+                    case .heartbeat:
                         break
                     default:
                         break
                     }
                 }
+                if !Task.isCancelled {
+                    liveUpdatesConnected = false
+                }
             } catch {
                 if !Task.isCancelled {
-                    errorMessage = "Live updates disconnected. Pull to refresh."
+                    liveUpdatesConnected = false
                 }
             }
         }
