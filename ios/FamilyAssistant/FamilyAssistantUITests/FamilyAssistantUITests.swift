@@ -135,8 +135,10 @@ final class FamilyAssistantUITests: XCTestCase {
         attachScreenshot(named: "settings-screen")
 
         signOut.tap()
+        // Sign-out awaits a WKWebsiteDataStore cleanup that is slow in CI
+        // simulators, so allow a generous window for the sign-in screen.
         XCTAssertTrue(
-            app.staticTexts["Enter your server URL to get started"].waitForExistence(timeout: 8)
+            app.staticTexts["Enter your server URL to get started"].waitForExistence(timeout: 30)
         )
     }
 
