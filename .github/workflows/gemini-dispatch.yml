@@ -7,16 +7,6 @@ on:
   pull_request_review:
     types:
       - 'submitted'
-  pull_request:
-    types:
-      - 'opened'
-      - 'reopened'
-      - 'ready_for_review'
-      - 'synchronize'
-  issues:
-    types:
-      - 'opened'
-      - 'reopened'
   issue_comment:
     types:
       - 'created'
@@ -46,20 +36,10 @@ jobs:
           env | grep '^DEBUG_'
 
   dispatch:
-    # For PRs: only if not from a fork and not from dependabot
-    # For issues: only on open/reopen and not from dependabot
-    # For comments: only if user types @gemini-cli and is OWNER/MEMBER/COLLABORATOR
+    # Only on comments where the user types @gemini-cli and is OWNER/MEMBER/COLLABORATOR.
+    # Automatic PR review and issue triage have been removed (Codex handles auto-review).
     if: |-
       (
-        github.event_name == 'pull_request' &&
-        github.event.pull_request.head.repo.fork == false &&
-        github.event.pull_request.draft == false &&
-        github.event.pull_request.user.login != 'dependabot[bot]'
-      ) || (
-        github.event_name == 'issues' &&
-        contains(fromJSON('["opened", "reopened"]'), github.event.action) &&
-        github.event.issue.user.login != 'dependabot[bot]'
-      ) || (
         github.event.sender.type == 'User' &&
         github.event.sender.login != 'dependabot[bot]' &&
         startsWith(github.event.comment.body || github.event.review.body || github.event.issue.body, '@gemini-cli') &&
@@ -92,25 +72,13 @@ jobs:
         id: 'extract_command'
         uses: 'actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3' # ratchet:actions/github-script@v7
         env:
-          EVENT_TYPE: '${{ github.event_name }}.${{ github.event.action }}'
           REQUEST: '${{ github.event.comment.body || github.event.review.body || github.event.issue.body }}'
         with:
           script: |
-            const eventType = process.env.EVENT_TYPE;
             const request = process.env.REQUEST;
             core.setOutput('request', request);
 
-            const pullRequestReviewEvents = [
-              'pull_request.opened',
-              'pull_request.reopened',
-              'pull_request.ready_for_review',
-              'pull_request.synchronize',
-            ];
-            if (pullRequestReviewEvents.includes(eventType)) {
-              core.setOutput('command', 'review');
-            } else if (['issues.opened', 'issues.reopened'].includes(eventType)) {
-              core.setOutput('command', 'triage');
-            } else if (request.startsWith("@gemini-cli /review")) {
+            if (request.startsWith("@gemini-cli /review")) {
               core.setOutput('command', 'review');
               const additionalContext = request.replace(/^@gemini-cli \/review/, '').trim();
               core.setOutput('additional_context', additionalContext);
@@ -127,8 +95,6 @@ jobs:
             }
 
       - name: 'Acknowledge request'
-        if: |-
-          github.event_name != 'pull_request'
         env:
           GITHUB_TOKEN: '${{ steps.mint_identity_token.outputs.token || secrets.GITHUB_TOKEN || github.token }}'
           ISSUE_NUMBER: '${{ github.event.pull_request.number || github.event.issue.number }}'
@@ -234,3 +200,4 @@ jobs:
           gh issue comment "${ISSUE_NUMBER}" \
             --body "${MESSAGE}" \
             --repo "${REPOSITORY}"
+
