@@ -460,6 +460,23 @@ various tasks with dark mode support and mobile optimization.
   between sections; each tab remembers where you were. When enabled, iOS notifications can open the
   relevant tab or page, and confirmation notifications may include approve/deny actions.
 
+- **Siri & Shortcuts (iOS):** The iOS app adds actions you can run with Siri or the **Shortcuts**
+  app — no setup required. Just say or run:
+
+  - **"Ask Family Assistant…"** — ask a question and hear/read the reply inline. A **Continue in
+    app** button opens the full conversation (useful if the assistant needs you to approve an
+    action).
+  - **"Capture this in Family Assistant"** — send a piece of text or a link and the assistant saves
+    and files it for you. Add this to a Shortcut with *Show in Share Sheet* turned on to send things
+    to the assistant from other apps (Safari, Notes, etc.).
+  - **"Add a note to Family Assistant"** — quickly create a note by title and content.
+  - **"Open Family Assistant chat"** — open the app on the Chat tab, optionally starting a new
+    conversation with a message you provide.
+
+  These actions also appear as building blocks in the Shortcuts app, so you can combine them with
+  other automations (for example, capture the current Safari page on a tap). You must be signed in
+  to the app first; if you are signed out, the shortcut will ask you to open the app and sign in.
+
 - **Chat Features:**
 
   - Real-time streaming responses - see the assistant's replies as they're being generated
