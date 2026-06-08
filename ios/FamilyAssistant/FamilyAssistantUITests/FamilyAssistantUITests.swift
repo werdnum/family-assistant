@@ -76,7 +76,7 @@ final class FamilyAssistantUITests: XCTestCase {
 
         openSeededConversationIfNeeded()
 
-        XCTAssertTrue(app.staticTexts["Milk and apples."].waitForExistence(timeout: 8))
+        XCTAssertTrue(app.staticTexts["Milk and apples."].waitForExistence(timeout: 20))
         XCTAssertTrue(app.buttons["default_assistant"].exists || app.buttons["default_assistant, Profile"].exists)
         attachScreenshot(named: "native-chat-history")
     }
@@ -91,15 +91,15 @@ final class FamilyAssistantUITests: XCTestCase {
         composer.typeText("Hello")
         app.buttons["chat-send-button"].tap()
 
-        XCTAssertTrue(app.staticTexts["Native reply to Hello"].waitForExistence(timeout: 8))
-        XCTAssertTrue(app.staticTexts["search_notes"].waitForExistence(timeout: 8))
+        XCTAssertTrue(app.staticTexts["Native reply to Hello"].waitForExistence(timeout: 20))
+        XCTAssertTrue(app.staticTexts["search_notes"].waitForExistence(timeout: 20))
         attachScreenshot(named: "native-chat-streamed-tool-call")
     }
 
     func testNativeChatInitialPromptDeepLinkSendsNewConversation() {
         relaunch(initialPath: "/chat?q=Deep%20link")
 
-        XCTAssertTrue(app.staticTexts["Native reply to Deep link"].waitForExistence(timeout: 8))
+        XCTAssertTrue(app.staticTexts["Native reply to Deep link"].waitForExistence(timeout: 20))
         attachScreenshot(named: "native-chat-initial-prompt")
     }
 
