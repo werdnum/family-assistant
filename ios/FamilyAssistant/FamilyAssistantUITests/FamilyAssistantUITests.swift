@@ -39,13 +39,11 @@ final class FamilyAssistantUITests: XCTestCase {
         app.buttons["Add Note"].tap()
         XCTAssertTrue(app.navigationBars["Add Note"].waitForExistence(timeout: 3))
 
-        app.textFields["Note title"].tap()
-        app.textFields["Note title"].typeText("Dentist")
+        typeText("Dentist", into: app.textFields["Note title"])
 
-        let editor = app.textViews.firstMatch
-        XCTAssertTrue(editor.waitForExistence(timeout: 2))
-        editor.tap()
-        editor.typeText("Appointment is Tuesday at 10.")
+        let editor = app.textViews["note-content-editor"]
+        XCTAssertTrue(editor.waitForExistence(timeout: 4))
+        typeText("Appointment is Tuesday at 10.", into: editor)
 
         app.buttons["Save Note"].tap()
 
@@ -202,6 +200,26 @@ final class FamilyAssistantUITests: XCTestCase {
         if row.waitForExistence(timeout: 6) {
             row.tap()
         }
+    }
+
+    /// Types into a field after ensuring it holds keyboard focus. On CI the
+    /// first tap can land before a previously focused field resigns first
+    /// responder, leaving `typeText` with no focused element; re-tapping until
+    /// the element reports keyboard focus makes the flow deterministic.
+    private func typeText(_ text: String, into element: XCUIElement, file: StaticString = #filePath, line: UInt = #line) {
+        element.tap()
+        var attempts = 0
+        while !(element.value(forKey: "hasKeyboardFocus") as? Bool ?? false), attempts < 5 {
+            element.tap()
+            attempts += 1
+        }
+        XCTAssertTrue(
+            element.value(forKey: "hasKeyboardFocus") as? Bool ?? false,
+            "element did not gain keyboard focus",
+            file: file,
+            line: line
+        )
+        element.typeText(text)
     }
 
     private func attachScreenshot(named name: String) {

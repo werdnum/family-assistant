@@ -50,6 +50,7 @@ struct NoteEditorView: View {
                         TextEditor(text: $content)
                             .font(.body)
                             .frame(minHeight: 260)
+                            .accessibilityIdentifier("note-content-editor")
                     }
 
                     Section {
