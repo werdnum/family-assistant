@@ -105,6 +105,77 @@ final class FamilyAssistantUITests: XCTestCase {
         attachScreenshot(named: "native-chat-initial-prompt")
     }
 
+    func testTabBarSwitchesBetweenFeatureTabs() {
+        XCTAssertTrue(app.navigationBars["Notes"].waitForExistence(timeout: 8))
+
+        let tabBar = app.tabBars.firstMatch
+        XCTAssertTrue(tabBar.buttons["Chat"].waitForExistence(timeout: 4))
+        XCTAssertTrue(tabBar.buttons["Notes"].exists)
+        XCTAssertTrue(tabBar.buttons["Documents"].exists)
+        XCTAssertTrue(tabBar.buttons["More"].exists)
+
+        tabBar.buttons["More"].tap()
+        XCTAssertTrue(app.navigationBars["More"].waitForExistence(timeout: 4))
+        XCTAssertTrue(app.staticTexts["Voice"].waitForExistence(timeout: 2))
+        XCTAssertTrue(app.staticTexts["Events"].exists)
+        attachScreenshot(named: "tab-more-list")
+
+        tabBar.buttons["Documents"].tap()
+        XCTAssertTrue(app.navigationBars["Documents"].waitForExistence(timeout: 6))
+
+        tabBar.buttons["Notes"].tap()
+        XCTAssertTrue(app.staticTexts["Shopping"].waitForExistence(timeout: 4))
+    }
+
+    func testMoreTabOpensSettingsAndSignsOut() {
+        XCTAssertTrue(app.navigationBars["Notes"].waitForExistence(timeout: 8))
+
+        openMoreSettings()
+
+        let signOut = app.buttons["settings-sign-out"]
+        XCTAssertTrue(signOut.waitForExistence(timeout: 4))
+        attachScreenshot(named: "settings-screen")
+
+        signOut.tap()
+        XCTAssertTrue(
+            app.staticTexts["Enter your server URL to get started"].waitForExistence(timeout: 8)
+        )
+    }
+
+    func testPerTabNavigationStateIsPreservedAcrossTabSwitches() {
+        XCTAssertTrue(app.navigationBars["Notes"].waitForExistence(timeout: 8))
+
+        openMoreSettings()
+
+        let tabBar = app.tabBars.firstMatch
+        tabBar.buttons["Chat"].tap()
+        tabBar.buttons["More"].tap()
+
+        // The More tab kept its pushed Settings screen across the tab switch.
+        XCTAssertTrue(app.navigationBars["Settings"].waitForExistence(timeout: 4))
+    }
+
+    /// Opens the More tab and drills into the Settings screen, scrolling the
+    /// long destination list if the Settings row is below the fold.
+    private func openMoreSettings() {
+        app.tabBars.firstMatch.buttons["More"].tap()
+        let settings = app.staticTexts["Settings"]
+        if !settings.waitForExistence(timeout: 3) {
+            app.swipeUp()
+        }
+        XCTAssertTrue(settings.waitForExistence(timeout: 4))
+        settings.tap()
+        XCTAssertTrue(app.navigationBars["Settings"].waitForExistence(timeout: 4))
+    }
+
+    func testDeepLinkSelectsDocumentsTab() {
+        relaunch(initialPath: "/documents/")
+
+        XCTAssertTrue(app.navigationBars["Documents"].waitForExistence(timeout: 8))
+        XCTAssertTrue(app.tabBars.firstMatch.buttons["Documents"].isSelected)
+        attachScreenshot(named: "deep-link-documents")
+    }
+
     private func launch(initialPath: String) {
         app = XCUIApplication()
         app.launchArguments = ["--ui-testing"]

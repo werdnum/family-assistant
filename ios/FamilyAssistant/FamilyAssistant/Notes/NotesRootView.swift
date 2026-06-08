@@ -3,8 +3,6 @@ import SwiftUI
 struct NotesRootView: View {
     let route: NotesRoute
     let onRouteChange: (NotesRoute) -> Void
-    let onOpenChat: () -> Void
-    let onLogout: () -> Void
 
     @State private var listReloadToken = UUID()
 
@@ -16,9 +14,8 @@ struct NotesRootView: View {
                         leadingToolbarButton
                     }
 
-                    ToolbarItemGroup(placement: .topBarTrailing) {
+                    ToolbarItem(placement: .topBarTrailing) {
                         routeActionButton
-                        AppSettingsMenu(onLogout: onLogout)
                     }
                 }
         }
@@ -68,11 +65,7 @@ struct NotesRootView: View {
     private var leadingToolbarButton: some View {
         switch route {
         case .list:
-            Button {
-                onOpenChat()
-            } label: {
-                Label("Chat", systemImage: "message")
-            }
+            EmptyView()
         case .detail, .add, .edit:
             Button {
                 onRouteChange(.list)

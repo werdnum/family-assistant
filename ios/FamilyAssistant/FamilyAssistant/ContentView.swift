@@ -1,9 +1,9 @@
 import SwiftUI
+import UIKit
 
 struct ContentView: View {
     @Environment(AuthManager.self) private var authManager
     @Environment(NotificationManager.self) private var notificationManager
-    @State private var webViewState = WebViewState()
     @State private var appRouter = AppRouter()
 
     var body: some View {
@@ -18,81 +18,28 @@ struct ContentView: View {
                 .task {
                     await authManager.bootstrapSession()
                 }
-            } else {
-                Group {
-                    if let baseURL = authManager.validatedServerURL() {
-                        switch appRouter.route {
-                        case .chat(let conversationID, let initialPrompt):
-                            ChatRootView(
-                                authManager: authManager,
-                                conversationID: conversationID,
-                                initialPrompt: initialPrompt,
-                                onShowNotes: { appRouter.openNotesList() },
-                                onShowWebApp: { openWebPath("/") },
-                                onLogout: logout
-                            )
-                            .onChange(of: notificationManager.pendingNavigationPath) { _, path in
-                                navigateToPendingNotificationPath(path)
-                            }
-
-                        case .web(let path):
-                            VStack(spacing: 0) {
-                                WebViewContainer(
-                                    url: webURL(path: path, baseURL: baseURL),
-                                    serverBaseURL: baseURL,
-                                    webViewState: webViewState
-                                ) { url in
-                                    appRouter.openNativeURL(url, relativeTo: baseURL)
-                                }
-                                .onChange(of: notificationManager.pendingNavigationPath) { _, path in
-                                    navigateToPendingNotificationPath(path)
-                                }
-
-                                Divider()
-
-                                WebViewToolbar(
-                                    webViewState: webViewState,
-                                    onShowNotes: { appRouter.openNotesList() },
-                                    onLogout: logout
-                                )
-                            }
-
-                        case .notes(let route):
-                            NotesRootView(
-                                route: route,
-                                onRouteChange: { appRouter.route = .notes($0) },
-                                onOpenChat: { appRouter.openChat() },
-                                onLogout: logout
-                            )
-                            .onChange(of: notificationManager.pendingNavigationPath) { _, path in
-                                navigateToPendingNotificationPath(path)
-                            }
-                        }
-                    }
+            } else if let baseURL = authManager.validatedServerURL() {
+                RootTabView(
+                    appRouter: appRouter,
+                    authManager: authManager,
+                    baseURL: baseURL,
+                    onLogout: logout
+                )
+                .onChange(of: notificationManager.pendingNavigationPath) { _, path in
+                    navigateToPendingNotificationPath(path, baseURL: baseURL)
                 }
                 .task {
                     notificationManager.bind(authManager: authManager)
                     await notificationManager.syncRegistrationIfNeeded()
-                    navigateToPendingNotificationPath(notificationManager.pendingNavigationPath)
+                    navigateToPendingNotificationPath(
+                        notificationManager.pendingNavigationPath,
+                        baseURL: baseURL
+                    )
                 }
             }
         } else {
             SetupView()
         }
-    }
-
-    private func webURL(path: String, baseURL: URL) -> URL {
-        URL(string: path, relativeTo: baseURL)?.absoluteURL
-            ?? baseURL.appendingPathComponent("chat")
-    }
-
-    private func openWebPath(_ path: String) {
-        guard let baseURL = authManager.validatedServerURL() else {
-            return
-        }
-        let url = webURL(path: path, baseURL: baseURL)
-        appRouter.openWebPath(url.pathAndQuery)
-        webViewState.load(url)
     }
 
     private func logout() {
@@ -103,17 +50,16 @@ struct ContentView: View {
         }
     }
 
-    private func navigateToPendingNotificationPath(_ path: String?) {
+    private func navigateToPendingNotificationPath(_ path: String?, baseURL: URL) {
         guard let path,
-              let baseURL = authManager.validatedServerURL(),
               let url = URL(string: path, relativeTo: baseURL)?.absoluteURL
         else {
             return
         }
 
-        if !appRouter.openNativeURL(url, relativeTo: baseURL) {
-            appRouter.openWebPath(url.pathAndQuery)
-            webViewState.load(url)
+        if !appRouter.navigate(to: url, relativeTo: baseURL) {
+            // Foreign-origin deep link: hand off to the system browser.
+            UIApplication.shared.open(url)
         }
         notificationManager.clearPendingNavigationPath()
     }

@@ -8,17 +8,11 @@ struct ChatRootView: View {
     @State private var viewModel: ChatViewModel
     let routeConversationID: String?
     let initialPrompt: String?
-    let onShowNotes: () -> Void
-    let onShowWebApp: () -> Void
-    let onLogout: () -> Void
 
     init(
         authManager: AuthManager,
         conversationID: String?,
-        initialPrompt: String?,
-        onShowNotes: @escaping () -> Void,
-        onShowWebApp: @escaping () -> Void,
-        onLogout: @escaping () -> Void
+        initialPrompt: String?
     ) {
         _viewModel = State(
             initialValue: ChatViewModel(
@@ -29,9 +23,6 @@ struct ChatRootView: View {
         )
         routeConversationID = conversationID
         self.initialPrompt = initialPrompt
-        self.onShowNotes = onShowNotes
-        self.onShowWebApp = onShowWebApp
-        self.onLogout = onLogout
     }
 
     var body: some View {
@@ -39,26 +30,12 @@ struct ChatRootView: View {
             ConversationListView(viewModel: viewModel)
                 .navigationTitle("Chats")
                 .toolbar {
-                    ToolbarItemGroup(placement: .topBarLeading) {
-                        Button {
-                            onShowNotes()
-                        } label: {
-                            Label("Notes", systemImage: "note.text")
-                        }
-                        Button {
-                            onShowWebApp()
-                        } label: {
-                            Label("Web App", systemImage: "safari")
-                        }
-                        .accessibilityIdentifier("chat-open-web-button")
-                    }
-                    ToolbarItemGroup(placement: .topBarTrailing) {
+                    ToolbarItem(placement: .topBarTrailing) {
                         Button {
                             viewModel.startNewConversation()
                         } label: {
                             Label("New Chat", systemImage: "square.and.pencil")
                         }
-                        AppSettingsMenu(onLogout: onLogout)
                     }
                 }
         } detail: {
