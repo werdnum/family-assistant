@@ -20,6 +20,7 @@ from family_assistant.llm.messages import (
     ContentPartDict,
     MessageAttachmentMetadata,
     MessageReasoningInfo,
+    attachment_content,
     image_url_content,
     text_content,
 )
@@ -88,6 +89,14 @@ chat_api_router = APIRouter()
 
 
 _TOKEN_IDENTITY_SOURCES = {"api_token", "app_token_session"}
+
+
+def _content_part_for_attachment(
+    attachment_id: str, content_url: str, mime_type: str
+) -> ContentPartDict:
+    if mime_type.startswith("image/"):
+        return image_url_content(content_url)
+    return attachment_content(attachment_id)
 
 
 def _user_name_for_chat(current_user: Mapping[str, object]) -> str:
@@ -222,9 +231,12 @@ async def _process_user_attachments(
                                 detail="Attachment not found",
                             )
 
-                        # Add image content for LLM processing using the content_url
                         trigger_content_parts.append(
-                            image_url_content(attachment_record.content_url)
+                            _content_part_for_attachment(
+                                attachment_record.attachment_id,
+                                attachment_record.content_url,
+                                attachment_record.mime_type,
+                            )
                         )
 
                         # Store attachment metadata for message history
@@ -314,9 +326,12 @@ async def _process_user_attachments(
                                 detail="Failed to generate content URL for attachment",
                             )
 
-                        # Add image content for LLM processing using the content_url
                         trigger_content_parts.append(
-                            image_url_content(attachment_record.content_url)
+                            _content_part_for_attachment(
+                                attachment_record.attachment_id,
+                                attachment_record.content_url,
+                                attachment_record.mime_type,
+                            )
                         )
 
                         # Store attachment metadata for message history with stable attachment_id
