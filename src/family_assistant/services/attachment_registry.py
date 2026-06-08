@@ -113,6 +113,7 @@ DEFAULT_ALLOWED_MIME_TYPES: set[str] = {
     "image/gif",
     "image/webp",
     "text/plain",
+    "text/markdown",
     "application/json",
     "application/pdf",
     "video/mp4",

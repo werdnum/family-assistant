@@ -1,7 +1,7 @@
 # Family Assistant iOS App
 
 A native iOS app that uses secure PKCE-based authentication, native APNs notification registration,
-native Notes screens, and a WKWebView fallback for the rest of the Family Assistant web UI.
+native Chat and Notes screens, and a WKWebView fallback for the rest of the Family Assistant web UI.
 
 ## Requirements
 
@@ -30,7 +30,7 @@ The app uses a PKCE-based auth flow to securely obtain API credentials:
 4. Server redirects back with an authorization code
 5. App exchanges the code + PKCE verifier for API and refresh tokens
 6. Tokens are stored securely in the iOS Keychain
-7. App establishes a session cookie and loads the web UI
+7. App establishes a session cookie for fallback web pages and opens native Chat
 
 ### Token Lifecycle
 
@@ -38,6 +38,43 @@ The app uses a PKCE-based auth flow to securely obtain API credentials:
 - Refresh tokens expire after 90 days
 - On each launch, the app refreshes tokens if needed
 - If the refresh token is expired, the user is prompted to re-authenticate
+
+### Native Chat
+
+The app renders `/chat`, `/chat?conversation_id=<id>`, and `/chat?q=<prompt>` as native SwiftUI
+screens instead of loading the browser chat in a web view. Native Chat keeps parity with the web
+chat behavior rather than matching every pixel:
+
+- Shared browser/iOS history through `interface_type=web` and `web_conv_<UUID>` conversation IDs
+- Streaming assistant replies from `POST /api/v1/chat/send_message_stream`
+- Searchable conversation list and persisted last conversation
+- Profile picker with profile selection persisted locally
+- New conversation on profile switch
+- Markdown rendering via Swift Markdown plus native `AttributedString`
+- Tool-call cards and grouped completed tools
+- Pending approval banner and inline approve/reject actions
+- Image, PDF, plain text, and Markdown uploads up to 100 MB
+- Authenticated attachment previews/downloads
+- Live message update SSE connection and notification/deep-link routing
+- Stop-generating and reload/error recovery paths
+
+The native chat client calls these existing authenticated endpoints:
+
+```http
+GET /api/v1/chat/conversations?interface_type=web
+GET /api/v1/chat/conversations/{conversation_id}/messages
+GET /api/v1/profiles
+POST /api/v1/chat/send_message_stream
+GET /api/v1/chat/events?conversation_id=<id>&interface_type=web
+GET /api/v1/chat/confirmations/pending
+POST /api/v1/chat/confirm_tool
+POST /api/attachments/upload
+DELETE /api/attachments/{attachment_id}
+GET /api/attachments/{attachment_id}
+```
+
+Confirmation actions sent by the iOS app include `"approving_interface": "ios"` while the backend
+continues to default older web/APNs callers to `"web"`.
 
 ### Native Notes
 
@@ -102,7 +139,8 @@ Notification payload handling:
 
 - `path`: Relative app path to open, such as `/chat` or `/tasks`
 - `url`: Absolute or relative URL; the client strips external origins and navigates by path
-- `conversation_id`: Opens `/chat?conversation_id=<id>` when no explicit path is present
+- `conversation_id`: Opens native Chat at `/chat?conversation_id=<id>` when no explicit path is
+  present
 - `request_id`: Required for approval/denial actions on confirmation notifications
 
 For notification action buttons, send APNs notifications with category
@@ -114,7 +152,8 @@ return the user to the source conversation. The app posts action results to the 
 {
   "request_id": "<confirmation-request-id>",
   "approved": true,
-  "conversation_id": "<conversation-id-or-null>"
+  "conversation_id": "<conversation-id-or-null>",
+  "approving_interface": "ios"
 }
 ```
 
@@ -135,6 +174,12 @@ FamilyAssistant/
 ├── ContentView.swift              # Root view: setup, native routes, or web fallback
 ├── AppRouting.swift               # Native/web route selection
 ├── AppSettingsMenu.swift          # Shared settings, notification, and sign-out menu
+├── Chat/
+│   ├── ChatModels.swift           # Chat/profile/message/tool/attachment models
+│   ├── ChatAPIClient.swift        # Authenticated chat, SSE, approval, and attachment API calls
+│   ├── SSEParser.swift            # Server-Sent Events parser
+│   ├── ChatViewModel.swift        # Single owner of native chat state
+│   └── ChatViews.swift            # Native chat SwiftUI screens
 ├── Auth/
 │   ├── KeychainHelper.swift       # iOS Keychain wrapper
 │   ├── AuthManager.swift          # Auth state + PKCE flow
@@ -155,14 +200,15 @@ FamilyAssistant/
 
 ## Dependencies
 
-None. Uses only Apple frameworks:
-
 - **SwiftUI** - UI
 - **WebKit** - WKWebView
 - **Security** - Keychain
 - **AuthenticationServices** - ASWebAuthenticationSession
 - **CryptoKit** - SHA-256 for PKCE
 - **UserNotifications** - APNs permission, notification presentation, actions
+- **PhotosUI** - Native image picker
+- **UniformTypeIdentifiers** - Attachment MIME/type validation
+- **Swift Markdown 0.8.0** - GitHub-flavored Markdown parsing support
 
 ## Building from Command Line
 
@@ -200,6 +246,16 @@ xcodebuild test \
 
 Changes outside `ios/**` do not trigger this workflow, and iOS-only changes are excluded from the
 Linux devcontainer CI so the two suites stay independent.
+
+Native chat UI tests retain XCTest screenshots with `.keepAlways` for the key states reviewers need
+to inspect:
+
+- `native-chat-history`
+- `native-chat-streamed-tool-call`
+- `native-chat-initial-prompt`
+
+When opening a PR for native chat changes, include the iOS test result bundle or CI artifact that
+contains these attachments, and link it from the PR body or a PR comment.
 
 ## Local Development
 

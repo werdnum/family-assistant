@@ -25,11 +25,22 @@
 		A10016 /* NoteDetailView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10019 /* NoteDetailView.swift */; };
 		A10017 /* NoteEditorView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10020 /* NoteEditorView.swift */; };
 		A10018 /* UITestConfiguration.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10021 /* UITestConfiguration.swift */; };
+		A10019 /* ChatModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10022 /* ChatModels.swift */; };
+		A10020 /* ChatAPIClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10023 /* ChatAPIClient.swift */; };
+		A10021 /* SSEParser.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10024 /* SSEParser.swift */; };
+		A10022 /* ChatViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10025 /* ChatViewModel.swift */; };
+		A10023 /* ChatViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10026 /* ChatViews.swift */; };
+		A10024 /* Markdown in Frameworks */ = {isa = PBXBuildFile; productRef = H10002 /* Markdown */; };
 		A20001 /* RouteTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B20002 /* RouteTests.swift */; };
 		A20002 /* NotesModelTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B20003 /* NotesModelTests.swift */; };
 		A20003 /* NotesAPIClientTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B20004 /* NotesAPIClientTests.swift */; };
 		A20004 /* AuthManagerTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B20005 /* AuthManagerTests.swift */; };
 		A20005 /* NotificationManagerTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B20006 /* NotificationManagerTests.swift */; };
+		A20006 /* ChatAPIClientTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B20007 /* ChatAPIClientTests.swift */; };
+		A20007 /* SSEParserTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B20008 /* SSEParserTests.swift */; };
+		A20008 /* ChatViewModelTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B20009 /* ChatViewModelTests.swift */; };
+		A20009 /* MarkdownRendererTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B20010 /* MarkdownRendererTests.swift */; };
+		A20010 /* ToolRenderingTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B20011 /* ToolRenderingTests.swift */; };
 		A30001 /* FamilyAssistantUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B30002 /* FamilyAssistantUITests.swift */; };
 /* End PBXBuildFile section */
 
@@ -72,12 +83,22 @@
 		B10019 /* NoteDetailView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NoteDetailView.swift; sourceTree = "<group>"; };
 		B10020 /* NoteEditorView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NoteEditorView.swift; sourceTree = "<group>"; };
 		B10021 /* UITestConfiguration.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UITestConfiguration.swift; sourceTree = "<group>"; };
+		B10022 /* ChatModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatModels.swift; sourceTree = "<group>"; };
+		B10023 /* ChatAPIClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatAPIClient.swift; sourceTree = "<group>"; };
+		B10024 /* SSEParser.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SSEParser.swift; sourceTree = "<group>"; };
+		B10025 /* ChatViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatViewModel.swift; sourceTree = "<group>"; };
+		B10026 /* ChatViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatViews.swift; sourceTree = "<group>"; };
 		B20001 /* FamilyAssistantTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = FamilyAssistantTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		B20002 /* RouteTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RouteTests.swift; sourceTree = "<group>"; };
 		B20003 /* NotesModelTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NotesModelTests.swift; sourceTree = "<group>"; };
 		B20004 /* NotesAPIClientTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NotesAPIClientTests.swift; sourceTree = "<group>"; };
 		B20005 /* AuthManagerTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AuthManagerTests.swift; sourceTree = "<group>"; };
 		B20006 /* NotificationManagerTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NotificationManagerTests.swift; sourceTree = "<group>"; };
+		B20007 /* ChatAPIClientTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatAPIClientTests.swift; sourceTree = "<group>"; };
+		B20008 /* SSEParserTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SSEParserTests.swift; sourceTree = "<group>"; };
+		B20009 /* ChatViewModelTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatViewModelTests.swift; sourceTree = "<group>"; };
+		B20010 /* MarkdownRendererTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MarkdownRendererTests.swift; sourceTree = "<group>"; };
+		B20011 /* ToolRenderingTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ToolRenderingTests.swift; sourceTree = "<group>"; };
 		B30001 /* FamilyAssistantUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = FamilyAssistantUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		B30002 /* FamilyAssistantUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FamilyAssistantUITests.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
@@ -87,6 +108,7 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				A10024 /* Markdown in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -128,6 +150,7 @@
 				D10004 /* WebView */,
 				D10006 /* Notifications */,
 				D10007 /* Notes */,
+				D10009 /* Chat */,
 				D10008 /* UITesting */,
 				B10008 /* Assets.xcassets */,
 				B10009 /* Info.plist */,
@@ -184,6 +207,18 @@
 			path = UITesting;
 			sourceTree = "<group>";
 		};
+		D10009 /* Chat */ = {
+			isa = PBXGroup;
+			children = (
+				B10022 /* ChatModels.swift */,
+				B10023 /* ChatAPIClient.swift */,
+				B10024 /* SSEParser.swift */,
+				B10025 /* ChatViewModel.swift */,
+				B10026 /* ChatViews.swift */,
+			);
+			path = Chat;
+			sourceTree = "<group>";
+		};
 		D10005 /* Products */ = {
 			isa = PBXGroup;
 			children = (
@@ -202,6 +237,11 @@
 				B20004 /* NotesAPIClientTests.swift */,
 				B20005 /* AuthManagerTests.swift */,
 				B20006 /* NotificationManagerTests.swift */,
+				B20007 /* ChatAPIClientTests.swift */,
+				B20008 /* SSEParserTests.swift */,
+				B20009 /* ChatViewModelTests.swift */,
+				B20010 /* MarkdownRendererTests.swift */,
+				B20011 /* ToolRenderingTests.swift */,
 			);
 			path = FamilyAssistantTests;
 			sourceTree = "<group>";
@@ -230,6 +270,9 @@
 			dependencies = (
 			);
 			name = FamilyAssistant;
+			packageProductDependencies = (
+				H10002 /* Markdown */,
+			);
 			productName = FamilyAssistant;
 			productReference = B10010 /* FamilyAssistant.app */;
 			productType = "com.apple.product-type.application";
@@ -302,6 +345,9 @@
 				Base,
 			);
 			mainGroup = D10001;
+			packageReferences = (
+				H10001 /* XCRemoteSwiftPackageReference "swift-markdown" */,
+			);
 			productRefGroup = D10005 /* Products */;
 			projectDirPath = "";
 			projectRoot = "";
@@ -360,6 +406,11 @@
 				A10016 /* NoteDetailView.swift in Sources */,
 				A10017 /* NoteEditorView.swift in Sources */,
 				A10018 /* UITestConfiguration.swift in Sources */,
+				A10019 /* ChatModels.swift in Sources */,
+				A10020 /* ChatAPIClient.swift in Sources */,
+				A10021 /* SSEParser.swift in Sources */,
+				A10022 /* ChatViewModel.swift in Sources */,
+				A10023 /* ChatViews.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -372,6 +423,11 @@
 				A20003 /* NotesAPIClientTests.swift in Sources */,
 				A20004 /* AuthManagerTests.swift in Sources */,
 				A20005 /* NotificationManagerTests.swift in Sources */,
+				A20006 /* ChatAPIClientTests.swift in Sources */,
+				A20007 /* SSEParserTests.swift in Sources */,
+				A20008 /* ChatViewModelTests.swift in Sources */,
+				A20009 /* MarkdownRendererTests.swift in Sources */,
+				A20010 /* ToolRenderingTests.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -710,6 +766,25 @@
 			defaultConfigurationName = Release;
 		};
 /* End XCConfigurationList section */
+
+/* Begin XCRemoteSwiftPackageReference section */
+		H10001 /* XCRemoteSwiftPackageReference "swift-markdown" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/swiftlang/swift-markdown.git";
+			requirement = {
+				kind = exactVersion;
+				version = 0.8.0;
+			};
+		};
+/* End XCRemoteSwiftPackageReference section */
+
+/* Begin XCSwiftPackageProductDependency section */
+		H10002 /* Markdown */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = H10001 /* XCRemoteSwiftPackageReference "swift-markdown" */;
+			productName = Markdown;
+		};
+/* End XCSwiftPackageProductDependency section */
 	};
 	rootObject = E10002 /* Project object */;
 }

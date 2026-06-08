@@ -372,7 +372,8 @@ final class NotificationManager {
             ConfirmationActionRequest(
                 requestID: requestID,
                 approved: approved,
-                conversationID: conversationID
+                conversationID: conversationID,
+                approvingInterface: "ios"
             )
         )
 
@@ -473,11 +474,13 @@ private struct ConfirmationActionRequest: Encodable {
     let requestID: String
     let approved: Bool
     let conversationID: String?
+    let approvingInterface: String
 
     enum CodingKeys: String, CodingKey {
         case requestID = "request_id"
         case approved
         case conversationID = "conversation_id"
+        case approvingInterface = "approving_interface"
     }
 }
 

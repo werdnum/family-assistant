@@ -6,10 +6,7 @@ final class FamilyAssistantUITests: XCTestCase {
     override func setUp() {
         super.setUp()
         continueAfterFailure = false
-        app = XCUIApplication()
-        app.launchArguments = ["--ui-testing"]
-        app.launchEnvironment = ["FAMILY_ASSISTANT_UITEST_INITIAL_PATH": "/notes"]
-        app.launch()
+        launch(initialPath: "/notes")
     }
 
     override func tearDown() {
@@ -73,5 +70,72 @@ final class FamilyAssistantUITests: XCTestCase {
         XCTAssertTrue(app.navigationBars["Notes"].waitForExistence(timeout: 4))
         XCTAssertFalse(app.staticTexts["Shopping"].waitForExistence(timeout: 1))
         XCTAssertTrue(app.staticTexts["School Pickup"].exists)
+    }
+
+    func testNativeChatLoadsSeededConversationAndToolSurface() {
+        relaunch(initialPath: "/chat?conversation_id=web_conv_seed")
+
+        openSeededConversationIfNeeded()
+
+        XCTAssertTrue(app.staticTexts["Milk and apples."].waitForExistence(timeout: 8))
+        XCTAssertTrue(app.buttons["default_assistant"].exists || app.buttons["default_assistant, Profile"].exists)
+        attachScreenshot(named: "native-chat-history")
+    }
+
+    func testNativeChatSendsAndStreamsResponse() {
+        relaunch(initialPath: "/chat?conversation_id=web_conv_seed")
+
+        openSeededConversationIfNeeded()
+        let composer = app.textFields["chat-composer"]
+        XCTAssertTrue(composer.waitForExistence(timeout: 8))
+        composer.tap()
+        composer.typeText("Hello")
+        app.buttons["chat-send-button"].tap()
+
+        XCTAssertTrue(app.staticTexts["Native reply to Hello"].waitForExistence(timeout: 8))
+        XCTAssertTrue(app.staticTexts["search_notes"].waitForExistence(timeout: 8))
+        attachScreenshot(named: "native-chat-streamed-tool-call")
+    }
+
+    func testNativeChatInitialPromptDeepLinkSendsNewConversation() {
+        relaunch(initialPath: "/chat?q=Deep%20link")
+
+        XCTAssertTrue(app.staticTexts["Native reply to Deep link"].waitForExistence(timeout: 8))
+        attachScreenshot(named: "native-chat-initial-prompt")
+    }
+
+    private func launch(initialPath: String) {
+        app = XCUIApplication()
+        app.launchArguments = ["--ui-testing"]
+        app.launchEnvironment = ["FAMILY_ASSISTANT_UITEST_INITIAL_PATH": initialPath]
+        app.launch()
+    }
+
+    private func relaunch(initialPath: String) {
+        app.terminate()
+        launch(initialPath: initialPath)
+    }
+
+    private func openSeededConversationIfNeeded() {
+        if app.staticTexts["Milk and apples."].waitForExistence(timeout: 2) {
+            return
+        }
+        if app.staticTexts["Milk and apples."].exists {
+            return
+        }
+        if app.staticTexts["Milk and apples."].waitForExistence(timeout: 1) {
+            return
+        }
+        let row = app.descendants(matching: .any)["conversation-row-web_conv_seed"]
+        if row.waitForExistence(timeout: 6) {
+            row.tap()
+        }
+    }
+
+    private func attachScreenshot(named name: String) {
+        let attachment = XCTAttachment(screenshot: app.screenshot())
+        attachment.name = name
+        attachment.lifetime = .keepAlways
+        add(attachment)
     }
 }

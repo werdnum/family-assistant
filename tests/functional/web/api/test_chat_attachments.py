@@ -274,6 +274,58 @@ async def test_chat_api_rejects_other_user_attachment_reference(
 
 
 @pytest.mark.asyncio
+async def test_chat_api_accepts_native_ios_uploaded_attachment_reference_and_loads_history(
+    api_test_client: AsyncClient,
+    api_mock_llm_client: RuleBasedMockLLMClient,
+    attachment_registry_fixture: AttachmentRegistry,
+    db_engine: AsyncEngine,
+) -> None:
+    api_mock_llm_client.default_response = LLMOutput(
+        content="I received the uploaded document."
+    )
+    conversation_id = "web_conv_ios_attachment"
+    async with get_db_context(engine=db_engine) as db_context:
+        attachment = await attachment_registry_fixture.register_user_attachment(
+            db_context=db_context,
+            content=b"family trip notes",
+            filename="trip.md",
+            mime_type="text/markdown",
+            conversation_id=None,
+            user_id="test_user",
+        )
+
+    response = await api_test_client.post(
+        "/api/v1/chat/send_message_stream",
+        json={
+            "prompt": "Use this attachment",
+            "conversation_id": conversation_id,
+            "profile_id": "default_assistant",
+            "interface_type": "web",
+            "attachments": [
+                {
+                    "type": "document",
+                    "content": f"/api/attachments/{attachment.attachment_id}",
+                    "name": "trip.md",
+                }
+            ],
+        },
+    )
+
+    assert response.status_code == 200
+
+    history_response = await api_test_client.get(
+        f"/api/v1/chat/conversations/{conversation_id}/messages"
+    )
+    assert history_response.status_code == 200
+    messages = history_response.json()["messages"]
+    user_message = next(message for message in messages if message["role"] == "user")
+    assert user_message["attachments"][0]["attachment_id"] == attachment.attachment_id
+    assert user_message["attachments"][0]["content_url"] == (
+        f"/api/attachments/{attachment.attachment_id}"
+    )
+
+
+@pytest.mark.asyncio
 async def test_chat_api_no_attachments(
     api_test_client: AsyncClient, api_mock_llm_client: RuleBasedMockLLMClient
 ) -> None:

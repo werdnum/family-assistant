@@ -421,6 +421,10 @@ class ToolConfirmationRequest(BaseModel):
     conversation_id: str | None = Field(
         None, description="Optional conversation ID for validation"
     )
+    approving_interface: str = Field(
+        "web",
+        description="Interface that submitted the approval or rejection.",
+    )
 
 
 class ToolConfirmationResponse(BaseModel):
@@ -1529,7 +1533,7 @@ async def confirm_tool_execution(
             await confirmation_service.approve_and_enqueue_execution(
                 request_id=payload.request_id,
                 approving_user_id=current_user["user_identifier"],
-                approving_interface="web",
+                approving_interface=payload.approving_interface,
             )
             web_confirmation_manager.resolve_approved(payload.request_id)
             message = "Tool execution approved"
@@ -1537,7 +1541,7 @@ async def confirm_tool_execution(
             await confirmation_service.reject(
                 request_id=payload.request_id,
                 rejecting_user_id=current_user["user_identifier"],
-                rejecting_interface="web",
+                rejecting_interface=payload.approving_interface,
             )
             web_confirmation_manager.resolve_rejected(payload.request_id)
             confirmation_result_waiters.resolve_rejected(payload.request_id)

@@ -1,0 +1,237 @@
+import Foundation
+import XCTest
+
+@testable import FamilyAssistant
+
+@MainActor
+final class ChatViewModelTests: XCTestCase {
+    private let serverURL = "https://assistant.example.test"
+
+    override func setUp() {
+        super.setUp()
+        resetStoredAuth()
+        KeychainHelper.save(key: "fa_api_token", string: "chat-view-model-token")
+        UserDefaults.standard.set(
+            ISO8601DateFormatter().string(from: Date().addingTimeInterval(7200)),
+            forKey: "fa_token_expiry"
+        )
+        URLProtocol.registerClass(ChatMockBackendURLProtocol.self)
+        ChatMockBackendURLProtocol.reset()
+    }
+
+    override func tearDown() {
+        ChatMockBackendURLProtocol.reset()
+        URLProtocol.unregisterClass(ChatMockBackendURLProtocol.self)
+        resetStoredAuth()
+        super.tearDown()
+    }
+
+    func testNewChatGeneratesWebConversationID() {
+        let model = makeViewModel(conversationID: nil)
+
+        model.startNewConversation()
+
+        XCTAssertTrue(model.conversationID?.hasPrefix("web_conv_") == true)
+        XCTAssertTrue(model.messages.isEmpty)
+    }
+
+    func testProfileSwitchPersistsSelectionAndCreatesNewConversation() {
+        let model = makeViewModel(conversationID: "web_conv_existing")
+        model.profiles = [
+            ChatProfile(
+                id: "default_assistant",
+                description: "Default",
+                llmModel: nil,
+                availableTools: [],
+                enabledMCPServers: [],
+                delegationOnly: false
+            ),
+            ChatProfile(
+                id: "research",
+                description: "Research",
+                llmModel: nil,
+                availableTools: [],
+                enabledMCPServers: [],
+                delegationOnly: false
+            ),
+        ]
+
+        model.changeProfile(to: "research")
+
+        XCTAssertEqual(model.selectedProfileID, "research")
+        XCTAssertEqual(UserDefaults.standard.string(forKey: "selectedProfileId"), "research")
+        XCTAssertNotEqual(model.conversationID, "web_conv_existing")
+        XCTAssertTrue(model.conversationID?.hasPrefix("web_conv_") == true)
+    }
+
+    func testSendDraftStreamsAssistantTextAndReloadsPersistedMessages() async throws {
+        ChatMockBackendURLProtocol.respond { request in
+            switch (request.httpMethod ?? "GET", request.url?.path ?? "") {
+            case ("POST", "/api/v1/chat/send_message_stream"):
+                let payload = try XCTUnwrap(Self.jsonObject(from: request) as? [String: Any])
+                XCTAssertEqual(payload["interface_type"] as? String, "web")
+                XCTAssertEqual(payload["conversation_id"] as? String, "web_conv_send")
+                return .text(
+                    """
+                    event: text
+                    data: {"content":"Streamed"}
+
+                    event: end
+                    data: {}
+
+                    """
+                )
+            case ("GET", "/api/v1/chat/conversations"):
+                return .json(#"{"conversations":[],"count":0}"#)
+            case ("GET", "/api/v1/chat/conversations/web_conv_send/messages"):
+                return .json(
+                    """
+                    {
+                      "conversation_id":"web_conv_send",
+                      "messages":[
+                        {"internal_id":1,"role":"user","content":"Hi","timestamp":"2026-06-08T12:00:00Z"},
+                        {"internal_id":2,"role":"assistant","content":"Persisted reply","timestamp":"2026-06-08T12:00:01Z"}
+                      ],
+                      "count":2,
+                      "total_messages":2,
+                      "has_more_before":false,
+                      "has_more_after":false
+                    }
+                    """
+                )
+            default:
+                return .json(#"{"detail":"unexpected"}"#, statusCode: 404)
+            }
+        }
+
+        let model = makeViewModel(conversationID: "web_conv_send")
+        model.draftText = "Hi"
+
+        await model.sendDraft()
+        try await waitUntil { !model.isStreaming }
+
+        XCTAssertEqual(model.messages.map(\.text), ["Hi", "Persisted reply"])
+    }
+
+    func testPendingConfirmationsPollAndApprove() async throws {
+        var approvalPayload: [String: Any]?
+        ChatMockBackendURLProtocol.respond { request in
+            switch (request.httpMethod ?? "GET", request.url?.path ?? "") {
+            case ("GET", "/api/v1/chat/confirmations/pending"):
+                return .json(
+                    """
+                    {
+                      "confirmations": [
+                        {
+                          "request_id": "req-1",
+                          "tool_name": "calendar",
+                          "tool_call_id": "call-1",
+                          "confirmation_prompt": "Approve calendar?",
+                          "args": {"title":"Dentist"},
+                          "created_at": "2026-06-08T12:00:00Z",
+                          "expires_at": "2026-06-08T12:01:00Z",
+                          "timeout_seconds": 60,
+                          "time_remaining_seconds": 45
+                        }
+                      ]
+                    }
+                    """
+                )
+            case ("POST", "/api/v1/chat/confirm_tool"):
+                approvalPayload = try XCTUnwrap(Self.jsonObject(from: request) as? [String: Any])
+                return .json(#"{"success":true,"message":"approved"}"#)
+            default:
+                return .json(#"{"detail":"unexpected"}"#, statusCode: 404)
+            }
+        }
+
+        let model = makeViewModel(conversationID: "web_conv_confirm")
+        await model.confirm(
+            ChatPendingConfirmation(
+                requestID: "req-1",
+                toolName: "calendar",
+                toolCallID: "call-1",
+                confirmationPrompt: "Approve calendar?",
+                args: ["title": .string("Dentist")],
+                createdAt: nil,
+                expiresAt: nil,
+                timeoutSeconds: 60,
+                timeRemainingSeconds: 45
+            ),
+            approved: true
+        )
+
+        XCTAssertEqual(approvalPayload?["approving_interface"] as? String, "ios")
+        XCTAssertEqual(approvalPayload?["request_id"] as? String, "req-1")
+    }
+
+    func testAttachmentUploadStateTransitionAndRemoval() async throws {
+        let fileURL = FileManager.default.temporaryDirectory.appendingPathComponent("vm-upload.txt")
+        try Data("file".utf8).write(to: fileURL)
+
+        ChatMockBackendURLProtocol.respond { request in
+            switch (request.httpMethod ?? "GET", request.url?.path ?? "") {
+            case ("POST", "/api/attachments/upload"):
+                return .json(
+                    """
+                    {
+                      "attachment_id": "22222222-2222-2222-2222-222222222222",
+                      "filename": "vm-upload.txt",
+                      "content_type": "text/plain",
+                      "size": 4,
+                      "url": "/api/attachments/22222222-2222-2222-2222-222222222222"
+                    }
+                    """
+                )
+            case ("DELETE", "/api/attachments/22222222-2222-2222-2222-222222222222"):
+                return .json(#"{"message":"deleted"}"#)
+            default:
+                return .json(#"{"detail":"unexpected"}"#, statusCode: 404)
+            }
+        }
+
+        let model = makeViewModel(conversationID: "web_conv_upload")
+        await model.addAttachment(fileURL: fileURL)
+        try await waitUntil { model.draftAttachments.first?.uploadState == .uploaded }
+
+        let attachment = try XCTUnwrap(model.draftAttachments.first)
+        XCTAssertEqual(attachment.attachmentID, "22222222-2222-2222-2222-222222222222")
+
+        await model.removeDraftAttachment(attachment)
+
+        XCTAssertTrue(model.draftAttachments.isEmpty)
+    }
+
+    private func makeViewModel(conversationID: String?) -> ChatViewModel {
+        let authManager = AuthManager()
+        authManager.serverURL = serverURL
+        return ChatViewModel(authManager: authManager, conversationID: conversationID, initialPrompt: nil)
+    }
+
+    private func resetStoredAuth() {
+        KeychainHelper.delete(key: "fa_api_token")
+        KeychainHelper.delete(key: "fa_refresh_token")
+        UserDefaults.standard.removeObject(forKey: "fa_token_expiry")
+        UserDefaults.standard.removeObject(forKey: "fa_server_url")
+        UserDefaults.standard.removeObject(forKey: "lastConversationId")
+        UserDefaults.standard.removeObject(forKey: "selectedProfileId")
+    }
+
+    private static func jsonObject(from request: URLRequest) throws -> Any {
+        try JSONSerialization.jsonObject(with: request.bodyData)
+    }
+
+    private func waitUntil(
+        timeout: TimeInterval = 4,
+        predicate: @escaping @MainActor () -> Bool
+    ) async throws {
+        let deadline = Date().addingTimeInterval(timeout)
+        while Date() < deadline {
+            if predicate() {
+                return
+            }
+            try await Task.sleep(for: .milliseconds(50))
+        }
+        XCTFail("Timed out waiting for predicate")
+    }
+}

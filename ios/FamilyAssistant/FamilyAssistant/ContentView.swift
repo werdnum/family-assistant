@@ -22,6 +22,18 @@ struct ContentView: View {
                 Group {
                     if let baseURL = authManager.validatedServerURL() {
                         switch appRouter.route {
+                        case .chat(let conversationID, let initialPrompt):
+                            ChatRootView(
+                                authManager: authManager,
+                                conversationID: conversationID,
+                                initialPrompt: initialPrompt,
+                                onShowNotes: { appRouter.openNotesList() },
+                                onLogout: logout
+                            )
+                            .onChange(of: notificationManager.pendingNavigationPath) { _, path in
+                                navigateToPendingNotificationPath(path)
+                            }
+
                         case .web(let path):
                             VStack(spacing: 0) {
                                 WebViewContainer(
@@ -48,7 +60,7 @@ struct ContentView: View {
                             NotesRootView(
                                 route: route,
                                 onRouteChange: { appRouter.route = .notes($0) },
-                                onOpenWebPath: openWebPath,
+                                onOpenChat: { appRouter.openChat() },
                                 onLogout: logout
                             )
                             .onChange(of: notificationManager.pendingNavigationPath) { _, path in
