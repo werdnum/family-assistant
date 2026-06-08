@@ -448,17 +448,22 @@ various tasks with dark mode support and mobile optimization.
   interface automatically opens to the chat page for immediate access.
 
 - **iOS App:** If the native iOS app is installed, it opens Family Assistant after secure sign-in
-  and uses native screens for Notes. You can search, read, create, edit, and delete notes on iOS,
-  including changing whether a note is included in the assistant's system prompt. The rest of the
-  web interface remains available inside the app. The gear menu includes native notification
-  controls. When enabled, iOS notifications can open the relevant chat or page, and confirmation
-  notifications may include approve/deny actions.
+  and uses native screens for Chat and Notes. Native Chat shares the same conversation history as
+  the browser, streams replies as they are generated, supports profile switching, shows Markdown and
+  tool calls, handles approve/reject confirmations, and can upload images, PDFs, plain text, and
+  Markdown files up to 100 MB. You can search, read, create, edit, and delete notes on iOS,
+  including changing whether a note is included in the assistant's system prompt. Other app pages
+  remain available inside the embedded web interface. The gear menu includes native notification
+  controls. When enabled, iOS notifications can open the relevant native chat or page, and
+  confirmation notifications may include approve/deny actions.
 
 - **Chat Features:**
 
   - Real-time streaming responses - see the assistant's replies as they're being generated
   - Compact tool usage display - completed tool calls are summarized in collapsible groups
   - Easy conversation management and switching
+  - Native iOS conversation list, profile picker, attachment previews, file downloads, and pending
+    approval banners
   - Clear message formatting and display
 
   ![Chat Interface](../../screenshots/desktop/chat-empty.png) *The web chat interface provides

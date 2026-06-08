@@ -55,12 +55,28 @@ final class RouteTests: XCTestCase {
         XCTAssertEqual(router.route, .notes(.list))
     }
 
-    func testRouterKeepsWebRouteWhenURLIsNotNative() throws {
+    func testRouterClaimsNativeChatRoute() throws {
         let router = AppRouter()
         let url = try XCTUnwrap(URL(string: "https://assistant.example.test/chat"))
 
+        XCTAssertTrue(router.openNativeURL(url, relativeTo: baseURL))
+        XCTAssertEqual(router.route, .chat(conversationID: nil, initialPrompt: nil))
+    }
+
+    func testRouterClaimsNativeChatRouteWithConversationAndPrompt() throws {
+        let router = AppRouter()
+        let url = try XCTUnwrap(URL(string: "https://assistant.example.test/chat?conversation_id=web_conv_abc&q=Hello%20there"))
+
+        XCTAssertTrue(router.openNativeURL(url, relativeTo: baseURL))
+        XCTAssertEqual(router.route, .chat(conversationID: "web_conv_abc", initialPrompt: "Hello there"))
+    }
+
+    func testRouterKeepsWebRouteWhenURLIsNotNative() throws {
+        let router = AppRouter()
+        let url = try XCTUnwrap(URL(string: "https://assistant.example.test/tasks"))
+
         XCTAssertFalse(router.openNativeURL(url, relativeTo: baseURL))
-        XCTAssertEqual(router.route, .web(path: "/chat"))
+        XCTAssertEqual(router.route, .chat(conversationID: nil, initialPrompt: nil))
     }
 
     func testRouterExplicitRouteMethodsUpdateState() {
@@ -72,8 +88,11 @@ final class RouteTests: XCTestCase {
         router.openNotesList()
         XCTAssertEqual(router.route, .notes(.list))
 
+        router.openChat(conversationID: "web_conv_abc", initialPrompt: nil)
+        XCTAssertEqual(router.route, .chat(conversationID: "web_conv_abc", initialPrompt: nil))
+
         router.reset()
-        XCTAssertEqual(router.route, .web(path: "/chat"))
+        XCTAssertEqual(router.route, .chat(conversationID: nil, initialPrompt: nil))
     }
 
     func testPathAndQueryPreservesQueryAndFragment() throws {

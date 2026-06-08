@@ -35,6 +35,7 @@ enum UITestConfiguration {
 private final class UITestBackendURLProtocol: URLProtocol {
     private static let lock = NSLock()
     private static var notes: [String: UITestNote] = [:]
+    private static var chatMessages: [String: [UITestChatMessage]] = [:]
 
     static func reset() {
         lock.withLock {
@@ -59,6 +60,28 @@ private final class UITestBackendURLProtocol: URLProtocol {
                     skillName: nil,
                     skillDescription: nil
                 ),
+            ]
+            chatMessages = [
+                "web_conv_seed": [
+                    UITestChatMessage(
+                        internalID: 1,
+                        role: "user",
+                        content: "What is on the list?",
+                        timestamp: "2026-06-08T12:00:00Z",
+                        toolCalls: nil,
+                        toolCallID: nil,
+                        attachments: nil
+                    ),
+                    UITestChatMessage(
+                        internalID: 2,
+                        role: "assistant",
+                        content: "Milk and apples.",
+                        timestamp: "2026-06-08T12:00:01Z",
+                        toolCalls: nil,
+                        toolCallID: nil,
+                        attachments: nil
+                    ),
+                ],
             ]
         }
     }
@@ -96,11 +119,69 @@ private final class UITestBackendURLProtocol: URLProtocol {
             )
         case ("POST", "/api/auth/logout"):
             return .json("{}")
+        case ("GET", "/api/v1/profiles"):
+            return .json(
+                """
+                {
+                  "profiles": [
+                    {
+                      "id": "default_assistant",
+                      "description": "Default assistant",
+                      "llm_model": "ui-test-model",
+                      "available_tools": ["notes", "calendar"],
+                      "enabled_mcp_servers": [],
+                      "delegation_only": false
+                    },
+                    {
+                      "id": "research",
+                      "description": "Research profile",
+                      "llm_model": "ui-test-research",
+                      "available_tools": ["search"],
+                      "enabled_mcp_servers": [],
+                      "delegation_only": false
+                    }
+                  ],
+                  "default_profile_id": "default_assistant"
+                }
+                """
+            )
+        case ("GET", "/api/v1/chat/conversations"):
+            return encode(UITestConversationListResponse(
+                conversations: chatConversationSummaries(),
+                count: lock.withLock { chatMessages.count }
+            ))
+        case ("GET", "/api/v1/chat/confirmations/pending"):
+            return .json(#"{"confirmations":[]}"#)
+        case ("GET", "/api/v1/chat/events"):
+            return .json(
+                """
+                event: connected
+                data: {}
+
+                event: heartbeat
+                data: {}
+
+                """,
+                headers: ["Content-Type": "text/event-stream"]
+            )
+        case ("POST", "/api/v1/chat/send_message_stream"):
+            return streamChatResponse(from: request)
         case ("GET", "/api/notes"), ("GET", "/api/notes/"):
             return encode(lock.withLock { notes.values.sorted { $0.title < $1.title } })
         case ("POST", "/api/notes"), ("POST", "/api/notes/"):
             return saveNote(from: request)
         default:
+            if request.httpMethod == "GET", let conversationID = conversationID(from: request) {
+                let messages = lock.withLock { chatMessages[conversationID] ?? [] }
+                return encode(UITestConversationMessagesResponse(
+                    conversationID: conversationID,
+                    messages: messages,
+                    count: messages.count,
+                    totalMessages: messages.count,
+                    hasMoreBefore: false,
+                    hasMoreAfter: false
+                ))
+            }
             if (request.httpMethod ?? "GET") == "GET", let title = noteTitle(from: request) {
                 guard let note = lock.withLock({ notes[title] }) else {
                     return .json(#"{"detail":"Note not found."}"#, statusCode: 404)
@@ -114,6 +195,73 @@ private final class UITestBackendURLProtocol: URLProtocol {
                 return .json("{}")
             }
             return .json(#"{"detail":"Unhandled UI test route."}"#, statusCode: 404)
+        }
+    }
+
+    private static func streamChatResponse(from request: URLRequest) -> UITestResponse {
+        do {
+            let body = try JSONDecoder().decode(UITestChatStreamRequest.self, from: request.bodyData)
+            let conversationID = body.conversationID
+            let reply = "Native reply to \(body.prompt)"
+            lock.withLock {
+                var messages = chatMessages[conversationID] ?? []
+                let nextID = (messages.map(\.internalID).max() ?? 0) + 1
+                messages.append(UITestChatMessage(
+                    internalID: nextID,
+                    role: "user",
+                    content: body.prompt,
+                    timestamp: "2026-06-08T12:00:02Z",
+                    toolCalls: nil,
+                    toolCallID: nil,
+                    attachments: nil
+                ))
+                messages.append(UITestChatMessage(
+                    internalID: nextID + 1,
+                    role: "assistant",
+                    content: reply,
+                    timestamp: "2026-06-08T12:00:03Z",
+                    toolCalls: [
+                        UITestToolCall(
+                            id: "call-ui-test",
+                            type: "function",
+                            function: UITestToolFunction(
+                                name: "search_notes",
+                                arguments: #"{"query":"shopping"}"#
+                            )
+                        ),
+                    ],
+                    toolCallID: nil,
+                    attachments: [
+                        UITestAttachment(
+                            attachmentID: "33333333-3333-3333-3333-333333333333",
+                            name: "reply.md",
+                            contentURL: "/api/attachments/33333333-3333-3333-3333-333333333333",
+                            mimeType: "text/markdown",
+                            size: 20
+                        ),
+                    ]
+                ))
+                chatMessages[conversationID] = messages
+            }
+            return .json(
+                """
+                event: text
+                data: {"content":"\(reply)"}
+
+                event: tool_call
+                data: {"tool_call":{"id":"call-ui-test","type":"function","function":{"name":"search_notes","arguments":"{\\"query\\":\\"shopping\\"}"}}}
+
+                event: tool_result
+                data: {"tool_call_id":"call-ui-test","result":"Found shopping note"}
+
+                event: end
+                data: {}
+
+                """,
+                headers: ["Content-Type": "text/event-stream"]
+            )
+        } catch {
+            return .json(#"{"detail":"Invalid chat payload."}"#, statusCode: 400)
         }
     }
 
@@ -150,6 +298,33 @@ private final class UITestBackendURLProtocol: URLProtocol {
         }
         let encodedTitle = String(path.dropFirst("/api/notes/".count))
         return encodedTitle.removingPercentEncoding
+    }
+
+    private static func conversationID(from request: URLRequest) -> String? {
+        guard let url = request.url,
+              let path = URLComponents(url: url, resolvingAgainstBaseURL: false)?.percentEncodedPath,
+              path.hasPrefix("/api/v1/chat/conversations/"),
+              path.hasSuffix("/messages")
+        else {
+            return nil
+        }
+        let withoutPrefix = String(path.dropFirst("/api/v1/chat/conversations/".count))
+        let encodedID = String(withoutPrefix.dropLast("/messages".count))
+        return encodedID.removingPercentEncoding
+    }
+
+    private static func chatConversationSummaries() -> [UITestConversationSummary] {
+        lock.withLock {
+            chatMessages.map { conversationID, messages in
+                UITestConversationSummary(
+                    conversationID: conversationID,
+                    lastMessage: messages.last?.content ?? "",
+                    lastTimestamp: messages.last?.timestamp ?? "2026-06-08T12:00:00Z",
+                    messageCount: messages.count
+                )
+            }
+            .sorted { $0.lastTimestamp > $1.lastTimestamp }
+        }
     }
 
     private static func encode<T: Encodable>(_ value: T) -> UITestResponse {
@@ -202,6 +377,100 @@ private struct UITestNoteSaveRequest: Decodable {
         case originalTitle = "original_title"
         case attachmentIds = "attachment_ids"
         case visibilityLabels = "visibility_labels"
+    }
+}
+
+private struct UITestConversationSummary: Codable {
+    let conversationID: String
+    let lastMessage: String
+    let lastTimestamp: String
+    let messageCount: Int
+
+    enum CodingKeys: String, CodingKey {
+        case conversationID = "conversation_id"
+        case lastMessage = "last_message"
+        case lastTimestamp = "last_timestamp"
+        case messageCount = "message_count"
+    }
+}
+
+private struct UITestConversationListResponse: Codable {
+    let conversations: [UITestConversationSummary]
+    let count: Int
+}
+
+private struct UITestConversationMessagesResponse: Codable {
+    let conversationID: String
+    let messages: [UITestChatMessage]
+    let count: Int
+    let totalMessages: Int
+    let hasMoreBefore: Bool
+    let hasMoreAfter: Bool
+
+    enum CodingKeys: String, CodingKey {
+        case conversationID = "conversation_id"
+        case messages
+        case count
+        case totalMessages = "total_messages"
+        case hasMoreBefore = "has_more_before"
+        case hasMoreAfter = "has_more_after"
+    }
+}
+
+private struct UITestChatMessage: Codable {
+    let internalID: Int
+    let role: String
+    let content: String
+    let timestamp: String
+    let toolCalls: [UITestToolCall]?
+    let toolCallID: String?
+    let attachments: [UITestAttachment]?
+
+    enum CodingKeys: String, CodingKey {
+        case internalID = "internal_id"
+        case role
+        case content
+        case timestamp
+        case toolCalls = "tool_calls"
+        case toolCallID = "tool_call_id"
+        case attachments
+    }
+}
+
+private struct UITestToolCall: Codable {
+    let id: String
+    let type: String
+    let function: UITestToolFunction
+}
+
+private struct UITestToolFunction: Codable {
+    let name: String
+    let arguments: String
+}
+
+private struct UITestAttachment: Codable {
+    let attachmentID: String
+    let name: String
+    let contentURL: String
+    let mimeType: String
+    let size: Int
+
+    enum CodingKeys: String, CodingKey {
+        case attachmentID = "attachment_id"
+        case name
+        case contentURL = "content_url"
+        case mimeType = "mime_type"
+        case size
+    }
+}
+
+private struct UITestChatStreamRequest: Decodable {
+    let prompt: String
+    let conversationID: String
+
+    enum CodingKeys: String, CodingKey {
+        case prompt
+        case conversationID = "conversation_id"
     }
 }
 

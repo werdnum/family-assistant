@@ -496,6 +496,7 @@ class AttachmentConfig(BaseModel):
             "image/tiff",
             "application/pdf",
             "text/plain",
+            "text/markdown",
             "application/json",
             "text/csv",
             "video/mp4",

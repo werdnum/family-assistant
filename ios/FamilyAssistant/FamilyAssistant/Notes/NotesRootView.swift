@@ -3,7 +3,7 @@ import SwiftUI
 struct NotesRootView: View {
     let route: NotesRoute
     let onRouteChange: (NotesRoute) -> Void
-    let onOpenWebPath: (String) -> Void
+    let onOpenChat: () -> Void
     let onLogout: () -> Void
 
     @State private var listReloadToken = UUID()
@@ -69,7 +69,7 @@ struct NotesRootView: View {
         switch route {
         case .list:
             Button {
-                onOpenWebPath("/chat")
+                onOpenChat()
             } label: {
                 Label("Chat", systemImage: "message")
             }

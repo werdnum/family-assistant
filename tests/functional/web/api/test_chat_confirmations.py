@@ -9,6 +9,7 @@ from sqlalchemy import select
 from family_assistant.config_models import AppConfig
 from family_assistant.services.confirmation_service import ConfirmationService
 from family_assistant.services.user_identity import UserIdentityResolver
+from family_assistant.storage.confirmation_requests import confirmation_requests_table
 from family_assistant.storage.context import get_db_context
 from family_assistant.storage.tasks import tasks_table
 from family_assistant.web.dependencies import get_current_user
@@ -46,6 +47,16 @@ async def _task_exists(db_engine: AsyncEngine, task_id: str) -> bool:
             select(tasks_table.c.id).where(tasks_table.c.original_task_id == task_id)
         )
     return row is not None
+
+
+async def _resolved_interface(db_engine: AsyncEngine, request_id: str) -> str | None:
+    async with get_db_context(db_engine) as db:
+        row = await db.fetch_one(
+            select(confirmation_requests_table.c.resolved_via_interface).where(
+                confirmation_requests_table.c.id == request_id
+            )
+        )
+    return row["resolved_via_interface"] if row else None
 
 
 class _TokenAuthService:
@@ -129,6 +140,56 @@ async def test_rejecting_pending_confirmation_via_web_does_not_enqueue_task(
 
     assert response.status_code == 200
     assert response.json()["success"] is True
+    assert not await _task_exists(
+        db_engine,
+        f"confirmation_tool_execution:{request_id}",
+    )
+
+
+@pytest.mark.asyncio
+async def test_confirm_tool_accepts_optional_ios_approving_interface(
+    api_test_client: AsyncClient,
+    db_engine: AsyncEngine,
+) -> None:
+    request_id = await _create_confirmation(db_engine)
+
+    response = await api_test_client.post(
+        "/api/v1/chat/confirm_tool",
+        json={
+            "request_id": request_id,
+            "approved": True,
+            "conversation_id": "web_conv_ios",
+            "approving_interface": "ios",
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json()["success"] is True
+    assert await _resolved_interface(db_engine, request_id) == "ios"
+    assert await _task_exists(
+        db_engine,
+        f"confirmation_tool_execution:{request_id}",
+    )
+
+
+@pytest.mark.asyncio
+async def test_confirm_tool_rejects_unsupported_approving_interface(
+    api_test_client: AsyncClient,
+    db_engine: AsyncEngine,
+) -> None:
+    request_id = await _create_confirmation(db_engine)
+
+    response = await api_test_client.post(
+        "/api/v1/chat/confirm_tool",
+        json={
+            "request_id": request_id,
+            "approved": True,
+            "approving_interface": "x" * 51,
+        },
+    )
+
+    assert response.status_code == 422
+    assert await _resolved_interface(db_engine, request_id) is None
     assert not await _task_exists(
         db_engine,
         f"confirmation_tool_execution:{request_id}",

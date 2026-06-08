@@ -3,6 +3,26 @@ import Foundation
 enum AppRoute: Equatable {
     case web(path: String)
     case notes(NotesRoute)
+    case chat(conversationID: String?, initialPrompt: String?)
+}
+
+enum ChatRoute: Equatable {
+    static func route(for url: URL, relativeTo baseURL: URL) -> (conversationID: String?, initialPrompt: String?)? {
+        guard url.matchesOrigin(of: baseURL),
+              let components = URLComponents(url: url, resolvingAgainstBaseURL: false)
+        else {
+            return nil
+        }
+
+        let path = components.percentEncodedPath
+        guard path == "/chat" || path == "/chat/" else {
+            return nil
+        }
+
+        let conversationID = components.queryItems?.first { $0.name == "conversation_id" }?.value
+        let initialPrompt = components.queryItems?.first { $0.name == "q" }?.value
+        return (conversationID, initialPrompt)
+    }
 }
 
 enum NotesRoute: Equatable, Hashable {
@@ -40,10 +60,18 @@ enum NotesRoute: Equatable, Hashable {
 
 @Observable
 final class AppRouter {
-    var route: AppRoute = .web(path: "/chat")
+    var route: AppRoute = .chat(conversationID: nil, initialPrompt: nil)
 
     @discardableResult
     func openNativeURL(_ url: URL, relativeTo baseURL: URL) -> Bool {
+        if let chatRoute = ChatRoute.route(for: url, relativeTo: baseURL) {
+            route = .chat(
+                conversationID: chatRoute.conversationID,
+                initialPrompt: chatRoute.initialPrompt
+            )
+            return true
+        }
+
         guard let notesRoute = NotesRoute.route(for: url, relativeTo: baseURL) else {
             return false
         }
@@ -59,8 +87,12 @@ final class AppRouter {
         route = .notes(.list)
     }
 
+    func openChat(conversationID: String? = nil, initialPrompt: String? = nil) {
+        route = .chat(conversationID: conversationID, initialPrompt: initialPrompt)
+    }
+
     func reset() {
-        route = .web(path: "/chat")
+        route = .chat(conversationID: nil, initialPrompt: nil)
     }
 }
 
