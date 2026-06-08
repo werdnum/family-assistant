@@ -1,3 +1,4 @@
+import Combine
 import Observation
 import SwiftUI
 
@@ -28,11 +29,21 @@ final class ConfirmationModalModel {
     var isSubmitting = false
     var errorMessage: String?
     private(set) var didResolve = false
+    private(set) var didExpire = false
 
     @ObservationIgnored private let apiClient: ChatAPIClient
+    @ObservationIgnored private let now: () -> Date
+    /// Absolute deadline derived from the loaded pending request, so the modal can disable decisions
+    /// once it passes even though the detail was only fetched once.
+    @ObservationIgnored private var expiresAt: Date?
 
-    init(request: PendingConfirmationModal, authManager: AuthManager) {
+    init(
+        request: PendingConfirmationModal,
+        authManager: AuthManager,
+        now: @escaping () -> Date = Date.init
+    ) {
         self.request = request
+        self.now = now
         apiClient = ChatAPIClient(authManager: authManager)
     }
 
@@ -50,7 +61,7 @@ final class ConfirmationModalModel {
     /// back to the notification payload, letting the server arbitrate the decision rather than
     /// stranding the user.
     var canDecide: Bool {
-        guard !didResolve else {
+        guard !didResolve, !didExpire else {
             return false
         }
         switch loadState {
@@ -68,6 +79,9 @@ final class ConfirmationModalModel {
     }
 
     var statusMessage: String? {
+        if didExpire {
+            return "This request has expired."
+        }
         guard let detail else {
             return nil
         }
@@ -87,11 +101,28 @@ final class ConfirmationModalModel {
 
     func load() async {
         loadState = .loading
+        didExpire = false
+        expiresAt = nil
         do {
             let detail = try await apiClient.fetchConfirmation(requestID: request.requestID)
             loadState = .loaded(detail)
+            if detail.status.isPending {
+                expiresAt = now().addingTimeInterval(detail.timeRemainingSeconds)
+                refreshExpiry()
+            }
         } catch {
             loadState = .failed(error.localizedDescription)
+        }
+    }
+
+    /// Re-evaluate whether the captured deadline has passed. Driven by a timer while the sheet is
+    /// open so the buttons disappear once the request can no longer be approved or rejected.
+    func refreshExpiry() {
+        guard let expiresAt, !didResolve, !didExpire else {
+            return
+        }
+        if now() >= expiresAt {
+            didExpire = true
         }
     }
 
@@ -122,6 +153,8 @@ final class ConfirmationModalModel {
 struct ConfirmationModalView: View {
     @State private var model: ConfirmationModalModel
     let onFinished: () -> Void
+
+    private let expiryTimer = Timer.publish(every: 1, on: .main, in: .common).autoconnect()
 
     init(request: PendingConfirmationModal, authManager: AuthManager, onFinished: @escaping () -> Void) {
         _model = State(initialValue: ConfirmationModalModel(request: request, authManager: authManager))
@@ -172,6 +205,9 @@ struct ConfirmationModalView: View {
             .safeAreaInset(edge: .bottom) {
                 actionButtons
             }
+            .onReceive(expiryTimer) { _ in
+                model.refreshExpiry()
+            }
             .navigationTitle("Confirmation")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
@@ -194,7 +230,9 @@ struct ConfirmationModalView: View {
             VStack(alignment: .leading, spacing: 2) {
                 Text(model.detail?.toolName ?? model.request.title)
                     .font(.headline)
-                if let detail = model.detail, detail.status.isPending, detail.timeRemainingSeconds > 0 {
+                if let detail = model.detail, detail.status.isPending, !model.didExpire,
+                   detail.timeRemainingSeconds > 0
+                {
                     Text("Expires in \(Int(detail.timeRemainingSeconds))s")
                         .font(.caption)
                         .foregroundStyle(.secondary)

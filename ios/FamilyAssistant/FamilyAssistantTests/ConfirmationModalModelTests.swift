@@ -71,6 +71,27 @@ final class ConfirmationModalModelTests: XCTestCase {
         XCTAssertEqual(model.statusMessage, "This request has expired.")
     }
 
+    func testDecisionsDisabledOnceDeadlinePasses() async {
+        // detailJSON reports time_remaining_seconds: 1800.
+        var clock = Date(timeIntervalSince1970: 1_000_000)
+        ChatMockBackendURLProtocol.respond { _ in
+            .json(Self.detailJSON(status: "pending"))
+        }
+
+        let model = makeModel(requestID: "confirm_abc", now: { clock })
+        await model.load()
+
+        XCTAssertTrue(model.canDecide)
+        XCTAssertFalse(model.didExpire)
+
+        clock = clock.addingTimeInterval(2000)
+        model.refreshExpiry()
+
+        XCTAssertTrue(model.didExpire)
+        XCTAssertFalse(model.canDecide)
+        XCTAssertEqual(model.statusMessage, "This request has expired.")
+    }
+
     func testLoadFailureFallsBackToNotificationBody() async {
         ChatMockBackendURLProtocol.respond { _ in
             .json(#"{"detail":"not found"}"#, statusCode: 404)
@@ -137,7 +158,8 @@ final class ConfirmationModalModelTests: XCTestCase {
     private func makeModel(
         requestID: String,
         conversationID: String? = nil,
-        body: String = "Notification body"
+        body: String = "Notification body",
+        now: @escaping () -> Date = Date.init
     ) -> ConfirmationModalModel {
         let authManager = AuthManager()
         authManager.serverURL = serverURL
@@ -148,7 +170,8 @@ final class ConfirmationModalModelTests: XCTestCase {
                 title: "Confirmation needed",
                 body: body
             ),
-            authManager: authManager
+            authManager: authManager,
+            now: now
         )
     }
 
