@@ -66,6 +66,11 @@ struct ChatRootView: View {
                 .navigationTitle("Chat")
                 .navigationBarTitleDisplayMode(.inline)
                 .toolbar {
+                    if !viewModel.liveUpdatesConnected {
+                        ToolbarItem(placement: .topBarLeading) {
+                            LiveUpdatesIndicator(viewModel: viewModel)
+                        }
+                    }
                     ToolbarItem(placement: .topBarTrailing) {
                         ProfilePickerView(viewModel: viewModel)
                     }
@@ -286,26 +291,32 @@ private struct ChatComposerView: View {
     @State private var selectedPhotoItem: PhotosPickerItem?
     @State private var importsFiles = false
 
+    private var sendButtonEnabled: Bool {
+        viewModel.isStreaming || viewModel.canSendDraft
+    }
+
     var body: some View {
         VStack(spacing: 8) {
             if !viewModel.draftAttachments.isEmpty {
                 DraftAttachmentStrip(viewModel: viewModel)
             }
-            HStack(alignment: .bottom, spacing: 8) {
+            HStack(alignment: .bottom, spacing: 4) {
                 PhotosPicker(selection: $selectedPhotoItem, matching: .images) {
                     Image(systemName: "photo")
-                        .frame(width: 36, height: 36)
+                        .font(.title3)
+                        .foregroundStyle(.secondary)
+                        .frame(width: 32, height: 36)
                 }
-                .buttonStyle(.bordered)
                 .accessibilityLabel("Add Photo")
 
                 Button {
                     importsFiles = true
                 } label: {
                     Image(systemName: "paperclip")
-                        .frame(width: 36, height: 36)
+                        .font(.title3)
+                        .foregroundStyle(.secondary)
+                        .frame(width: 32, height: 36)
                 }
-                .buttonStyle(.bordered)
                 .accessibilityLabel("Add File")
 
                 TextField(
@@ -316,8 +327,10 @@ private struct ChatComposerView: View {
                     ),
                     axis: .vertical
                 )
-                    .textFieldStyle(.roundedBorder)
+                    .textFieldStyle(.plain)
                     .lineLimit(1...6)
+                    .frame(minHeight: 36)
+                    .padding(.horizontal, 4)
                     .accessibilityIdentifier("chat-composer")
 
                 Button {
@@ -328,14 +341,25 @@ private struct ChatComposerView: View {
                     }
                 } label: {
                     Image(systemName: viewModel.isStreaming ? "stop.fill" : "arrow.up")
-                        .frame(width: 36, height: 36)
+                        .font(.body.weight(.semibold))
+                        .foregroundStyle(.white)
+                        .frame(width: 30, height: 30)
+                        .background(sendButtonEnabled ? Color.accentColor : Color.secondary.opacity(0.4))
+                        .clipShape(Circle())
                 }
-                .buttonStyle(.borderedProminent)
+                .buttonStyle(.plain)
                 .disabled(!viewModel.isStreaming && !viewModel.canSendDraft)
+                .padding(.vertical, 3)
                 .accessibilityIdentifier(viewModel.isStreaming ? "chat-stop-button" : "chat-send-button")
             }
+            .padding(.horizontal, 6)
+            .background(
+                RoundedRectangle(cornerRadius: 22, style: .continuous)
+                    .fill(Color(.secondarySystemBackground))
+            )
         }
-        .padding()
+        .padding(.horizontal)
+        .padding(.vertical, 6)
         .background(.bar)
         .onChange(of: selectedPhotoItem) { _, item in
             guard let item else { return }
@@ -450,6 +474,21 @@ private struct DraftAttachmentStrip: View {
         case .file:
             "paperclip"
         }
+    }
+}
+
+private struct LiveUpdatesIndicator: View {
+    var viewModel: ChatViewModel
+
+    var body: some View {
+        Button {
+            Task { await viewModel.reconnectLiveUpdates() }
+        } label: {
+            Image(systemName: "wifi.slash")
+                .foregroundStyle(.orange)
+        }
+        .accessibilityLabel("Live updates disconnected. Tap to reconnect.")
+        .accessibilityIdentifier("chat-live-updates-disconnected")
     }
 }
 
