@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import logging
 import re
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING, TypedDict, cast
 
 from sqlalchemy import select
@@ -15,7 +15,10 @@ from family_assistant.email_intake.outbound import (
     email_conversation_id,
 )
 from family_assistant.llm.messages import text_content
-from family_assistant.services.confirmation_service import ConfirmationService
+from family_assistant.services.confirmation_service import (
+    ConfirmationService,
+    create_durable_confirmation,
+)
 from family_assistant.services.user_identity import UserIdentityResolver
 from family_assistant.storage.context import get_db_context
 from family_assistant.storage.email import received_emails_table
@@ -197,14 +200,6 @@ async def _create_email_confirmation_callback(
         )
     target_user_id = context.user_id
 
-    source_message_internal_id = None
-    if context.turn_id is not None:
-        source_row = await context.db_context.message_history.get_user_row_by_turn_id(
-            context.turn_id
-        )
-        if source_row is not None:
-            source_message_internal_id = source_row["internal_id"]
-
     confirmation_prompt = await _render_confirmation_prompt(
         tool_name=tool_name,
         tool_args=tool_args,
@@ -214,14 +209,17 @@ async def _create_email_confirmation_callback(
         db_context_factory=lambda: get_db_context(engine=context.db_context.engine)
     )
     now = context.clock.now() if context.clock is not None else datetime.now(UTC)
-    request = await confirmation_service.create_request(
+    request = await create_durable_confirmation(
+        confirmation_service=confirmation_service,
+        db_context=context.db_context,
         target_user_id=target_user_id,
         tool_name=tool_name,
-        tool_args=tool_args,
         tool_call_id=call_id,
-        source_message_internal_id=source_message_internal_id,
+        tool_args=tool_args,
         confirmation_prompt=confirmation_prompt,
-        expires_at=now + timedelta(seconds=timeout_seconds),
+        timeout_seconds=timeout_seconds,
+        turn_id=context.turn_id,
+        now=now,
     )
     logger.info(
         "Created durable confirmation %s for email-originated tool %s",
