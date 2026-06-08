@@ -173,6 +173,30 @@ async def test_confirm_tool_accepts_optional_ios_approving_interface(
 
 
 @pytest.mark.asyncio
+async def test_confirm_tool_rejects_unsupported_approving_interface(
+    api_test_client: AsyncClient,
+    db_engine: AsyncEngine,
+) -> None:
+    request_id = await _create_confirmation(db_engine)
+
+    response = await api_test_client.post(
+        "/api/v1/chat/confirm_tool",
+        json={
+            "request_id": request_id,
+            "approved": True,
+            "approving_interface": "x" * 51,
+        },
+    )
+
+    assert response.status_code == 422
+    assert await _resolved_interface(db_engine, request_id) is None
+    assert not await _task_exists(
+        db_engine,
+        f"confirmation_tool_execution:{request_id}",
+    )
+
+
+@pytest.mark.asyncio
 async def test_other_web_user_cannot_list_or_resolve_confirmation(
     app_fixture: FastAPI,
     api_test_client: AsyncClient,

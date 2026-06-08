@@ -272,6 +272,17 @@ final class ChatViewModelTests: XCTestCase {
         XCTAssertTrue(model.errorMessage?.contains("Could not remove attachment") == true)
     }
 
+    func testRemoveUploadingDraftAttachmentKeepsAttachmentUntilUploadFinishes() async {
+        let model = makeViewModel(conversationID: "web_conv_uploading_remove")
+        let attachment = makeAttachment(uploadState: .uploading)
+        model.draftAttachments = [attachment]
+
+        await model.removeDraftAttachment(attachment)
+
+        XCTAssertEqual(model.draftAttachments, [attachment])
+        XCTAssertEqual(model.errorMessage, "Wait for attachment upload to finish before removing.")
+    }
+
     func testAddImageDataUsesProvidedMimeTypeAndFilename() async throws {
         ChatMockBackendURLProtocol.respond { request in
             switch (request.httpMethod ?? "GET", request.url?.path ?? "") {

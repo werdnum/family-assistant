@@ -401,6 +401,7 @@ private struct DraftAttachmentStrip: View {
                         } label: {
                             Image(systemName: "xmark.circle.fill")
                         }
+                        .disabled(attachment.uploadState == .uploading)
                         .accessibilityLabel("Remove \(attachment.name)")
                     }
                     .font(.caption)
@@ -895,14 +896,20 @@ private struct AuthenticatedAttachmentImage: View {
 
 private struct LoadingDotsView: View {
     @State private var phase = 0
+    @State private var timer: Timer?
 
     var body: some View {
         Text(String(repeating: ".", count: phase + 1))
             .font(.title3.monospaced())
             .onAppear {
-                Timer.scheduledTimer(withTimeInterval: 0.4, repeats: true) { _ in
+                timer?.invalidate()
+                timer = Timer.scheduledTimer(withTimeInterval: 0.4, repeats: true) { _ in
                     phase = (phase + 1) % 3
                 }
+            }
+            .onDisappear {
+                timer?.invalidate()
+                timer = nil
             }
     }
 }

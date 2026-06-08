@@ -294,6 +294,10 @@ final class ChatViewModel {
     }
 
     func removeDraftAttachment(_ attachment: ChatAttachment) async {
+        guard attachment.uploadState != .uploading else {
+            errorMessage = "Wait for attachment upload to finish before removing."
+            return
+        }
         if let attachmentID = attachment.attachmentID {
             do {
                 try await apiClient.deleteAttachment(attachmentID: attachmentID)

@@ -8,7 +8,7 @@ import mimetypes
 import uuid
 from collections.abc import AsyncGenerator, Mapping
 from datetime import UTC, datetime, timedelta
-from typing import TYPE_CHECKING, Annotated, Any, TypedDict
+from typing import TYPE_CHECKING, Annotated, Any, Literal, TypedDict
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi.responses import StreamingResponse
@@ -413,6 +413,9 @@ class ConversationMessagesResponse(BaseModel):
     )
 
 
+ApprovingInterface = Literal["web", "ios", "telegram"]
+
+
 class ToolConfirmationRequest(BaseModel):
     """Request to confirm or reject a tool execution."""
 
@@ -421,7 +424,7 @@ class ToolConfirmationRequest(BaseModel):
     conversation_id: str | None = Field(
         None, description="Optional conversation ID for validation"
     )
-    approving_interface: str = Field(
+    approving_interface: ApprovingInterface = Field(
         "web",
         description="Interface that submitted the approval or rejection.",
     )
