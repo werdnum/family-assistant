@@ -142,6 +142,24 @@ async def test_get_confirmation_reports_status_after_resolution(
 
 
 @pytest.mark.asyncio
+async def test_get_confirmation_derives_expired_status_before_sweep(
+    api_test_client: AsyncClient,
+    db_engine: AsyncEngine,
+) -> None:
+    request_id = await _create_confirmation(
+        db_engine,
+        expires_at=datetime.now(UTC) - timedelta(seconds=1),
+    )
+
+    response = await api_test_client.get(f"/api/v1/chat/confirmations/{request_id}")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["status"] == "expired"
+    assert body["time_remaining_seconds"] == 0
+
+
+@pytest.mark.asyncio
 async def test_get_confirmation_unknown_request_returns_404(
     api_test_client: AsyncClient,
 ) -> None:

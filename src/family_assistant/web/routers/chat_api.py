@@ -1797,13 +1797,20 @@ async def get_tool_confirmation(
         ) from exc
 
     now = datetime.now(UTC)
+    # A pending row whose deadline has passed but that the background sweep (mark_expired) has not
+    # processed yet must still be reported as expired, so a client does not offer Approve/Reject for
+    # a request that confirm_tool would reject. The GET stays read-only; the sweep persists the
+    # transition.
+    status = row["status"]
+    if status == "pending" and row["expires_at"] <= now:
+        status = "expired"
     return ToolConfirmationDetail(
         request_id=row["id"],
         tool_name=row["tool_name"],
         tool_call_id=row["tool_call_id"],
         confirmation_prompt=row["confirmation_prompt"],
         args=row["tool_args_json"],
-        status=row["status"],
+        status=status,
         created_at=row["created_at"],
         expires_at=row["expires_at"],
         time_remaining_seconds=max(0.0, (row["expires_at"] - now).total_seconds()),
