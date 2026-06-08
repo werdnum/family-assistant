@@ -4,6 +4,10 @@ enum ChatConstants {
     static let interfaceType = "web"
     static let conversationPrefix = "web_conv_"
     static let maxAttachmentSizeBytes = 100 * 1024 * 1024
+    static let photoPickerTranscodedMIMETypes: Set<String> = [
+        "image/heic",
+        "image/heif",
+    ]
     static let allowedAttachmentMIMETypes: Set<String> = [
         "image/jpeg",
         "image/png",
@@ -13,6 +17,16 @@ enum ChatConstants {
         "text/markdown",
         "application/pdf",
     ]
+
+    static let allowedPhotoPickerMIMETypes = allowedAttachmentMIMETypes.union(photoPickerTranscodedMIMETypes)
+
+    static func uploadMIMEType(forPickedPhotoMIMEType mimeType: String) -> String {
+        photoPickerTranscodedMIMETypes.contains(mimeType) ? "image/jpeg" : mimeType
+    }
+
+    static func uploadFilenameExtension(forPickedPhotoMIMEType mimeType: String, fallback: String?) -> String {
+        photoPickerTranscodedMIMETypes.contains(mimeType) ? "jpg" : fallback ?? "jpg"
+    }
 }
 
 struct ChatConversationSummary: Codable, Equatable, Identifiable {

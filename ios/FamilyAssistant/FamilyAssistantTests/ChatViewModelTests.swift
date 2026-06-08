@@ -316,6 +316,22 @@ final class ChatViewModelTests: XCTestCase {
         XCTAssertEqual(attachment.mimeType, "image/png")
     }
 
+    func testPickedHEICPhotosAreAcceptedForJPEGUpload() {
+        XCTAssertTrue(ChatConstants.allowedPhotoPickerMIMETypes.contains("image/heic"))
+        XCTAssertTrue(ChatConstants.allowedPhotoPickerMIMETypes.contains("image/heif"))
+        XCTAssertFalse(ChatConstants.allowedAttachmentMIMETypes.contains("image/heic"))
+        XCTAssertEqual(ChatConstants.uploadMIMEType(forPickedPhotoMIMEType: "image/heic"), "image/jpeg")
+        XCTAssertEqual(ChatConstants.uploadMIMEType(forPickedPhotoMIMEType: "image/heif"), "image/jpeg")
+        XCTAssertEqual(
+            ChatConstants.uploadFilenameExtension(forPickedPhotoMIMEType: "image/heic", fallback: "heic"),
+            "jpg"
+        )
+        XCTAssertEqual(
+            ChatConstants.uploadFilenameExtension(forPickedPhotoMIMEType: "image/png", fallback: "png"),
+            "png"
+        )
+    }
+
     func testUploadingAttachmentBlocksSendAndPreservesDraft() async {
         let model = makeViewModel(conversationID: "web_conv_uploading")
         model.draftText = "Send later"

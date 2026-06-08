@@ -1,6 +1,7 @@
 import Markdown
 import PhotosUI
 import SwiftUI
+import UIKit
 import UniformTypeIdentifiers
 
 struct ChatRootView: View {
@@ -351,11 +352,16 @@ private struct ChatComposerView: View {
                         await viewModel.reportAttachmentImportError("Could not import the selected photo.")
                         return
                     }
-                    let fileExtension = contentType.preferredFilenameExtension ?? "jpg"
+                    let uploadData = try Self.uploadData(forPickedPhotoData: data, mimeType: mimeType)
+                    let uploadMIMEType = ChatConstants.uploadMIMEType(forPickedPhotoMIMEType: mimeType)
+                    let fileExtension = ChatConstants.uploadFilenameExtension(
+                        forPickedPhotoMIMEType: mimeType,
+                        fallback: contentType.preferredFilenameExtension
+                    )
                     await viewModel.addImageData(
-                        data,
+                        uploadData,
                         filename: "\(UUID().uuidString).\(fileExtension)",
-                        mimeType: mimeType
+                        mimeType: uploadMIMEType
                     )
                 } catch {
                     await viewModel.reportAttachmentImportError("Could not import the selected photo. \(error.localizedDescription)")
@@ -382,8 +388,20 @@ private struct ChatComposerView: View {
             else {
                 return false
             }
-            return ChatConstants.allowedAttachmentMIMETypes.contains(mimeType)
+            return ChatConstants.allowedPhotoPickerMIMETypes.contains(mimeType)
         }
+    }
+
+    private static func uploadData(forPickedPhotoData data: Data, mimeType: String) throws -> Data {
+        guard ChatConstants.photoPickerTranscodedMIMETypes.contains(mimeType) else {
+            return data
+        }
+        guard let image = UIImage(data: data),
+              let jpegData = image.jpegData(compressionQuality: 0.9)
+        else {
+            throw ChatAPIError.validation("Could not convert the selected photo to JPEG.")
+        }
+        return jpegData
     }
 }
 
