@@ -869,7 +869,7 @@ private struct AttachmentPreview: View {
                 Spacer()
                 Button {
                     Task {
-                        shareURL = try? await viewModel.downloadAttachment(attachment)
+                        shareURL = await viewModel.downloadAttachmentForSharing(attachment)
                     }
                 } label: {
                     Image(systemName: "square.and.arrow.down")
@@ -911,10 +911,19 @@ private struct AuthenticatedAttachmentImage: View {
             }
         }
         .task(id: attachment.contentURL) {
+            image = nil
+            failed = false
             do {
                 let data = try await viewModel.authenticatedImageData(for: attachment)
-                image = UIImage(data: data)
+                guard let decodedImage = UIImage(data: data) else {
+                    image = nil
+                    failed = true
+                    return
+                }
+                image = decodedImage
+                failed = false
             } catch {
+                image = nil
                 failed = true
             }
         }

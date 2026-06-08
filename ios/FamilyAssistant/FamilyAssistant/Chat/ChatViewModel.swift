@@ -335,6 +335,15 @@ final class ChatViewModel {
         return destination
     }
 
+    func downloadAttachmentForSharing(_ attachment: ChatAttachment) async -> URL? {
+        do {
+            return try await downloadAttachment(attachment)
+        } catch {
+            errorMessage = "Could not download attachment. \(error.localizedDescription)"
+            return nil
+        }
+    }
+
     func authenticatedImageData(for attachment: ChatAttachment) async throws -> Data {
         guard let contentURL = attachment.contentURL else {
             throw ChatAPIError.validation("Attachment does not have an image URL.")

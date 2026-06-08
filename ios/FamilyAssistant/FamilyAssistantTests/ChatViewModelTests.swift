@@ -283,6 +283,26 @@ final class ChatViewModelTests: XCTestCase {
         XCTAssertEqual(model.errorMessage, "Wait for attachment upload to finish before removing.")
     }
 
+    func testDownloadAttachmentForSharingSurfacesFailure() async {
+        ChatMockBackendURLProtocol.respond { request in
+            switch (request.httpMethod ?? "GET", request.url?.path ?? "") {
+            case ("GET", "/api/attachments/uploaded-id"):
+                return .json(#"{"detail":"expired token"}"#, statusCode: 401)
+            default:
+                return .json(#"{"detail":"unexpected"}"#, statusCode: 404)
+            }
+        }
+
+        let model = makeViewModel(conversationID: "web_conv_download_failure")
+        let attachment = makeAttachment(uploadState: .uploaded)
+
+        let shareURL = await model.downloadAttachmentForSharing(attachment)
+
+        XCTAssertNil(shareURL)
+        XCTAssertTrue(model.errorMessage?.contains("Could not download attachment") == true)
+        XCTAssertTrue(model.errorMessage?.contains("expired token") == true)
+    }
+
     func testAddImageDataUsesProvidedMimeTypeAndFilename() async throws {
         ChatMockBackendURLProtocol.respond { request in
             switch (request.httpMethod ?? "GET", request.url?.path ?? "") {
