@@ -518,20 +518,214 @@ private struct ConfirmationCard: View {
     }
 }
 
+indirect enum NativeMarkdownBlock: Equatable {
+    case paragraph(String)
+    case heading(level: Int, text: String)
+    case unorderedList([NativeMarkdownListItem])
+    case orderedList(startIndex: UInt, items: [NativeMarkdownListItem])
+    case blockQuote([NativeMarkdownBlock])
+    case codeBlock(language: String?, code: String)
+    case table(header: [String], rows: [[String]])
+    case thematicBreak
+    case fallback(String)
+}
+
+struct NativeMarkdownListItem: Equatable {
+    let checkbox: Checkbox?
+    let blocks: [NativeMarkdownBlock]
+}
+
+enum NativeMarkdownRenderer {
+    static func blocks(from markdown: String) -> [NativeMarkdownBlock] {
+        let document = Document(parsing: markdown)
+        let blocks = document.children.flatMap(blocks(from:))
+        return blocks.isEmpty ? [.paragraph(markdown)] : blocks
+    }
+
+    static func inlineAttributedString(from markdown: String) -> AttributedString? {
+        try? AttributedString(
+            markdown: markdown,
+            options: AttributedString.MarkdownParsingOptions(interpretedSyntax: .inlineOnlyPreservingWhitespace)
+        )
+    }
+
+    private static func blocks(from markup: Markup) -> [NativeMarkdownBlock] {
+        switch markup {
+        case let heading as Heading:
+            return [.heading(level: heading.level, text: heading.plainText)]
+        case let paragraph as Paragraph:
+            return [.paragraph(inlineMarkdown(from: paragraph))]
+        case let unorderedList as UnorderedList:
+            return [.unorderedList(unorderedList.listItems.map(listItem(from:)))]
+        case let orderedList as OrderedList:
+            return [.orderedList(startIndex: orderedList.startIndex, items: orderedList.listItems.map(listItem(from:)))]
+        case let blockQuote as BlockQuote:
+            return [.blockQuote(blockQuote.children.flatMap(blocks(from:)))]
+        case let codeBlock as CodeBlock:
+            return [.codeBlock(language: codeBlock.language, code: codeBlock.code.trimmingCharacters(in: CharacterSet.newlines))]
+        case let table as Markdown.Table:
+            return [.table(header: table.head.cells.map { $0.plainText }, rows: table.body.rows.map { $0.cells.map { $0.plainText } })]
+        case is ThematicBreak:
+            return [.thematicBreak]
+        default:
+            let fallback = inlineMarkdown(from: markup)
+            return fallback.isEmpty ? [] : [.fallback(fallback)]
+        }
+    }
+
+    private static func listItem(from item: ListItem) -> NativeMarkdownListItem {
+        NativeMarkdownListItem(checkbox: item.checkbox, blocks: item.children.flatMap(blocks(from:)))
+    }
+
+    private static func inlineMarkdown(from markup: Markup) -> String {
+        var formatter = MarkupFormatter()
+        formatter.visit(markup.detachedFromParent)
+        return formatter.result.trimmingCharacters(in: CharacterSet.whitespacesAndNewlines)
+    }
+}
+
 private struct NativeMarkdownView: View {
     let markdown: String
 
+    private var blocks: [NativeMarkdownBlock] {
+        NativeMarkdownRenderer.blocks(from: markdown)
+    }
+
     var body: some View {
-        let _ = Document(parsing: markdown)
-        if let attributed = try? AttributedString(
-            markdown: markdown,
-            options: AttributedString.MarkdownParsingOptions(interpretedSyntax: .inlineOnlyPreservingWhitespace)
-        ) {
-            Text(attributed)
+        VStack(alignment: .leading, spacing: 8) {
+            ForEach(Array(blocks.enumerated()), id: \.offset) { _, block in
+                MarkdownBlockView(block: block)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+}
+
+private struct MarkdownBlockView: View {
+    let block: NativeMarkdownBlock
+
+    var body: some View {
+        switch block {
+        case let .paragraph(markdown), let .fallback(markdown):
+            inlineText(markdown)
                 .frame(maxWidth: .infinity, alignment: .leading)
-        } else {
-            Text(markdown)
+        case let .heading(level, text):
+            Text(text)
+                .font(headingFont(for: level))
                 .frame(maxWidth: .infinity, alignment: .leading)
+        case let .unorderedList(items):
+            VStack(alignment: .leading, spacing: 6) {
+                ForEach(Array(items.enumerated()), id: \.offset) { _, item in
+                    MarkdownListItemView(marker: marker(for: item), item: item)
+                }
+            }
+        case let .orderedList(startIndex, items):
+            VStack(alignment: .leading, spacing: 6) {
+                ForEach(Array(items.enumerated()), id: \.offset) { offset, item in
+                    MarkdownListItemView(marker: "\(Int(startIndex) + offset).", item: item)
+                }
+            }
+        case let .blockQuote(blocks):
+            HStack(alignment: .top, spacing: 8) {
+                Rectangle()
+                    .fill(Color.secondary.opacity(0.35))
+                    .frame(width: 3)
+                VStack(alignment: .leading, spacing: 6) {
+                    ForEach(Array(blocks.enumerated()), id: \.offset) { _, block in
+                        MarkdownBlockView(block: block)
+                    }
+                }
+            }
+            .foregroundStyle(.secondary)
+        case let .codeBlock(language, code):
+            VStack(alignment: .leading, spacing: 4) {
+                if let language, !language.isEmpty {
+                    Text(language)
+                        .font(.caption2.monospaced())
+                        .foregroundStyle(.secondary)
+                }
+                ScrollView(.horizontal, showsIndicators: false) {
+                    Text(code)
+                        .font(.caption.monospaced())
+                        .textSelection(.enabled)
+                        .padding(8)
+                }
+            }
+            .background(Color(.tertiarySystemFill), in: RoundedRectangle(cornerRadius: 6))
+        case let .table(header, rows):
+            ScrollView(.horizontal, showsIndicators: false) {
+                Grid(alignment: .leading, horizontalSpacing: 0, verticalSpacing: 0) {
+                    markdownTableRow(header, isHeader: true)
+                    ForEach(Array(rows.enumerated()), id: \.offset) { _, row in
+                        markdownTableRow(row, isHeader: false)
+                    }
+                }
+            }
+        case .thematicBreak:
+            Divider()
+        }
+    }
+
+    private func marker(for item: NativeMarkdownListItem) -> String {
+        switch item.checkbox {
+        case .checked:
+            "[x]"
+        case .unchecked:
+            "[ ]"
+        case nil:
+            "•"
+        }
+    }
+
+    private func headingFont(for level: Int) -> Font {
+        switch level {
+        case 1:
+            .title3.bold()
+        case 2:
+            .headline
+        default:
+            .subheadline.bold()
+        }
+    }
+
+    @ViewBuilder
+    private func markdownTableRow(_ cells: [String], isHeader: Bool) -> some View {
+        GridRow {
+            ForEach(Array(cells.enumerated()), id: \.offset) { _, cell in
+                inlineText(cell)
+                    .font(isHeader ? .caption.bold() : .caption)
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 6)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(isHeader ? Color(.tertiarySystemFill) : Color(.secondarySystemFill).opacity(0.45))
+                    .border(Color(.separator), width: 0.5)
+            }
+        }
+    }
+
+    private func inlineText(_ markdown: String) -> SwiftUI.Text {
+        if let attributed = NativeMarkdownRenderer.inlineAttributedString(from: markdown) {
+            return Text(attributed)
+        }
+        return Text(markdown)
+    }
+}
+
+private struct MarkdownListItemView: View {
+    let marker: String
+    let item: NativeMarkdownListItem
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 8) {
+            Text(marker)
+                .font(.caption.monospaced())
+                .foregroundStyle(.secondary)
+                .frame(width: 24, alignment: .trailing)
+            VStack(alignment: .leading, spacing: 6) {
+                ForEach(Array(item.blocks.enumerated()), id: \.offset) { _, block in
+                    MarkdownBlockView(block: block)
+                }
+            }
         }
     }
 }
