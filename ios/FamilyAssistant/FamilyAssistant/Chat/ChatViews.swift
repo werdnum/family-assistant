@@ -330,10 +330,27 @@ private struct ChatComposerView: View {
         .onChange(of: selectedPhotoItem) { _, item in
             guard let item else { return }
             Task {
-                if let data = try? await item.loadTransferable(type: Data.self) {
-                    await viewModel.addImageData(data)
+                defer { selectedPhotoItem = nil }
+                guard let contentType = Self.supportedPhotoContentType(for: item),
+                      let mimeType = contentType.preferredMIMEType
+                else {
+                    await viewModel.reportAttachmentImportError("Selected image type is not supported.")
+                    return
                 }
-                selectedPhotoItem = nil
+                do {
+                    guard let data = try await item.loadTransferable(type: Data.self) else {
+                        await viewModel.reportAttachmentImportError("Could not import the selected photo.")
+                        return
+                    }
+                    let fileExtension = contentType.preferredFilenameExtension ?? "jpg"
+                    await viewModel.addImageData(
+                        data,
+                        filename: "\(UUID().uuidString).\(fileExtension)",
+                        mimeType: mimeType
+                    )
+                } catch {
+                    await viewModel.reportAttachmentImportError("Could not import the selected photo. \(error.localizedDescription)")
+                }
             }
         }
         .fileImporter(
@@ -346,6 +363,17 @@ private struct ChatComposerView: View {
                     Task { await viewModel.addAttachment(fileURL: url) }
                 }
             }
+        }
+    }
+
+    private static func supportedPhotoContentType(for item: PhotosPickerItem) -> UTType? {
+        item.supportedContentTypes.first { contentType in
+            guard contentType.conforms(to: .image),
+                  let mimeType = contentType.preferredMIMEType
+            else {
+                return false
+            }
+            return ChatConstants.allowedAttachmentMIMETypes.contains(mimeType)
         }
     }
 }

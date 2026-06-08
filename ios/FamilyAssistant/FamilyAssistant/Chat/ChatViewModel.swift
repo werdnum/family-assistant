@@ -264,14 +264,22 @@ final class ChatViewModel {
         }
     }
 
-    func addImageData(_ data: Data, filename: String = "\(UUID().uuidString).jpg") async {
+    func addImageData(
+        _ data: Data,
+        filename: String = "\(UUID().uuidString).jpg",
+        mimeType: String = "image/jpeg"
+    ) async {
         do {
             let url = FileManager.default.temporaryDirectory.appendingPathComponent(filename)
             try data.write(to: url)
-            await addAttachment(fileURL: url, mimeType: "image/jpeg", displayName: filename)
+            await addAttachment(fileURL: url, mimeType: mimeType, displayName: filename)
         } catch {
             errorMessage = error.localizedDescription
         }
+    }
+
+    func reportAttachmentImportError(_ message: String) {
+        errorMessage = message
     }
 
     func addAttachment(fileURL: URL) async {
@@ -299,8 +307,8 @@ final class ChatViewModel {
                 conversationID: conversationID,
                 approved: approved
             )
+            updateToolConfirmation(toolCallID: confirmation.toolCallID, approved: approved)
             pendingConfirmations.removeAll { $0.requestID == confirmation.requestID }
-            updateToolConfirmation(requestID: confirmation.requestID, approved: approved)
         } catch {
             if let index = pendingConfirmations.firstIndex(where: { $0.requestID == confirmation.requestID }) {
                 pendingConfirmations[index].errorMessage = error.localizedDescription
@@ -452,8 +460,9 @@ final class ChatViewModel {
             }
         case .toolConfirmationResult:
             if let result = event.confirmationResult {
+                let toolCallID = pendingConfirmations.first { $0.requestID == result.requestID }?.toolCallID
+                updateToolConfirmation(toolCallID: toolCallID, approved: result.approved)
                 pendingConfirmations.removeAll { $0.requestID == result.requestID }
-                updateToolConfirmation(requestID: result.requestID, approved: result.approved)
             }
         case .error:
             appendStreamError(event.errorMessage ?? "An error occurred.", assistantMessageID: assistantMessageID)
@@ -519,11 +528,9 @@ final class ChatViewModel {
         }
     }
 
-    private func updateToolConfirmation(requestID: String, approved: Bool) {
+    private func updateToolConfirmation(toolCallID: String?, approved: Bool) {
         let status: ChatToolStatus = approved ? .approved : .rejected
-        if let confirmation = pendingConfirmations.first(where: { $0.requestID == requestID }) {
-            updateToolCall(toolCallID: confirmation.toolCallID, resultText: nil, attachments: [], status: status)
-        }
+        updateToolCall(toolCallID: toolCallID, resultText: nil, attachments: [], status: status)
     }
 
     private func upsertPendingConfirmation(_ confirmation: ChatPendingConfirmation) {

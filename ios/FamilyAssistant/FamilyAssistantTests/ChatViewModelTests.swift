@@ -202,6 +202,39 @@ final class ChatViewModelTests: XCTestCase {
         XCTAssertTrue(model.draftAttachments.isEmpty)
     }
 
+    func testAddImageDataUsesProvidedMimeTypeAndFilename() async throws {
+        ChatMockBackendURLProtocol.respond { request in
+            switch (request.httpMethod ?? "GET", request.url?.path ?? "") {
+            case ("POST", "/api/attachments/upload"):
+                let body = String(data: request.bodyData, encoding: .utf8)
+                XCTAssertTrue(body?.contains(#"filename="photo.png""#) == true)
+                XCTAssertTrue(body?.contains("Content-Type: image/png") == true)
+                return .json(
+                    """
+                    {
+                      "attachment_id": "33333333-3333-3333-3333-333333333333",
+                      "filename": "photo.png",
+                      "content_type": "image/png",
+                      "size": 4,
+                      "url": "/api/attachments/33333333-3333-3333-3333-333333333333"
+                    }
+                    """
+                )
+            default:
+                return .json(#"{"detail":"unexpected"}"#, statusCode: 404)
+            }
+        }
+
+        let model = makeViewModel(conversationID: "web_conv_image")
+
+        await model.addImageData(Data("file".utf8), filename: "photo.png", mimeType: "image/png")
+        try await waitUntil { model.draftAttachments.first?.uploadState == .uploaded }
+
+        let attachment = try XCTUnwrap(model.draftAttachments.first)
+        XCTAssertEqual(attachment.name, "photo.png")
+        XCTAssertEqual(attachment.mimeType, "image/png")
+    }
+
     func testUploadingAttachmentBlocksSendAndPreservesDraft() async {
         let model = makeViewModel(conversationID: "web_conv_uploading")
         model.draftText = "Send later"
@@ -232,6 +265,59 @@ final class ChatViewModelTests: XCTestCase {
         XCTAssertEqual(model.draftAttachments.first?.uploadState, .failed)
         XCTAssertTrue(model.messages.isEmpty)
         XCTAssertEqual(model.errorMessage, "Remove failed attachments before sending.")
+    }
+
+    func testConfirmUpdatesToolStatusBeforeRemovingPendingConfirmation() async {
+        ChatMockBackendURLProtocol.respond { request in
+            switch (request.httpMethod ?? "GET", request.url?.path ?? "") {
+            case ("POST", "/api/v1/chat/confirm_tool"):
+                return .json(#"{"success":true,"message":"approved"}"#)
+            default:
+                return .json(#"{"detail":"unexpected"}"#, statusCode: 404)
+            }
+        }
+
+        let confirmation = ChatPendingConfirmation(
+            requestID: "req-status",
+            toolName: "calendar",
+            toolCallID: "call-status",
+            confirmationPrompt: "Approve?",
+            args: [:],
+            createdAt: nil,
+            expiresAt: nil,
+            timeoutSeconds: 60,
+            timeRemainingSeconds: 45
+        )
+        let model = makeViewModel(conversationID: "web_conv_status")
+        model.pendingConfirmations = [confirmation]
+        model.messages = [
+            ChatMessage(
+                id: "assistant-status",
+                role: .assistant,
+                text: "",
+                createdAt: Date(),
+                toolCalls: [
+                    ChatToolCall(
+                        id: "call-status",
+                        name: "calendar",
+                        argumentsText: "{}",
+                        resultText: nil,
+                        attachments: [],
+                        status: .awaitingApproval
+                    ),
+                ],
+                attachments: [],
+                isLoading: false,
+                status: .running,
+                processingProfileID: "default_assistant",
+                errorTraceback: nil
+            ),
+        ]
+
+        await model.confirm(confirmation, approved: true)
+
+        XCTAssertTrue(model.pendingConfirmations.isEmpty)
+        XCTAssertEqual(model.messages.first?.toolCalls.first?.status, .approved)
     }
 
     private func makeViewModel(conversationID: String?) -> ChatViewModel {
