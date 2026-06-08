@@ -1,3 +1,4 @@
+import asyncio
 import json
 import logging
 from collections.abc import AsyncGenerator
@@ -26,6 +27,7 @@ from family_assistant.llm import (
 )
 from family_assistant.llm.messages import MessageReasoningInfo
 from family_assistant.processing import ProcessingService, ProcessingServiceConfig
+from family_assistant.services.notifier import MESSAGE_CATEGORY, NotificationMetadata
 from family_assistant.storage import init_db
 from family_assistant.storage.context import DatabaseContext, get_db_context
 from family_assistant.storage.repositories.notes import NoteModel
@@ -719,3 +721,122 @@ async def test_streaming_no_database_connection_errors(
     assert db_error_messages == [], (
         f"Database connection errors found in logs: {db_error_messages}"
     )
+
+
+class _SpyNotifier:
+    """In-memory notifier capturing dispatched notifications for assertions."""
+
+    def __init__(self) -> None:
+        self.notified = asyncio.Event()
+        self.calls: list[tuple[str, str, str, NotificationMetadata | None]] = []
+
+    @property
+    def enabled(self) -> bool:
+        return True
+
+    async def send_notification(
+        self,
+        user_identifier: str,
+        title: str,
+        body: str,
+        db_context: DatabaseContext,
+        *,
+        metadata: NotificationMetadata | None = None,
+    ) -> None:
+        self.calls.append((user_identifier, title, body, metadata))
+        self.notified.set()
+
+
+async def test_streaming_continues_and_notifies_after_client_disconnect(
+    app_fixture: FastAPI,
+    test_client: AsyncClient,
+    mock_llm_client: RuleBasedMockLLMClient,
+    db_engine: AsyncEngine,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """If the client disconnects mid-turn, processing finishes in the background
+    and the final reply is delivered via push notification."""
+    user_prompt = "Keep working even if I close the app"
+    llm_response = "All done in the background!"
+    conversation_id = "disconnect-conv-1"
+
+    mock_llm_client.rules.append((
+        lambda args: any(
+            msg.role == "user" and user_prompt in str(msg.content or "")
+            for msg in args.get("messages", [])
+        ),
+        LLMOutput(
+            content=llm_response,
+            tool_calls=None,
+            reasoning_info=MessageReasoningInfo(
+                prompt_tokens=10, completion_tokens=10, total_tokens=20
+            ),
+        ),
+    ))
+
+    # Gate the LLM so the turn is still in flight when we simulate the disconnect.
+    started = asyncio.Event()
+    release = asyncio.Event()
+    original_generate = mock_llm_client.generate_response
+
+    async def gated_generate_response(*args: object, **kwargs: object) -> LLMOutput:
+        started.set()
+        await release.wait()
+        return await original_generate(*args, **kwargs)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(mock_llm_client, "generate_response", gated_generate_response)
+
+    # Wire a spy notifier so we can observe the push delivery.
+    spy = _SpyNotifier()
+    app_fixture.state.web_chat_interface = WebChatInterface(db_engine, notifier=spy)
+
+    # Start the streaming request and wait until processing is underway.
+    request_task = asyncio.create_task(
+        test_client.post(
+            "/api/v1/chat/send_message_stream",
+            json={
+                "prompt": user_prompt,
+                "interface_type": "web",
+                "conversation_id": conversation_id,
+            },
+        )
+    )
+    await asyncio.wait_for(started.wait(), timeout=5)
+
+    # Simulate the client closing the app: cancel the in-flight request.
+    request_task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await request_task
+
+    # Processing should continue in the background; let the LLM finish.
+    release.set()
+
+    # The completed reply must be delivered as a push notification.
+    await asyncio.wait_for(spy.notified.wait(), timeout=5)
+
+    # Let the detached background task fully settle before assertions/teardown.
+    background_tasks = list(getattr(app_fixture.state, "background_chat_tasks", set()))
+    if background_tasks:
+        await asyncio.gather(*background_tasks, return_exceptions=True)
+
+    assert len(spy.calls) == 1
+    user_identifier, _title, body, metadata = spy.calls[0]
+    assert user_identifier == "test_user"
+    assert llm_response in body
+    assert metadata is not None
+    assert metadata.category == MESSAGE_CATEGORY
+    assert metadata.conversation_id == conversation_id
+
+    # The assistant reply must also have been persisted despite the disconnect.
+    async with get_db_context(engine=db_engine) as fresh_ctx:
+        messages = await fresh_ctx.message_history.get_recent_with_metadata(
+            interface_type="web",
+            conversation_id=conversation_id,
+            limit=20,
+        )
+    assistant_messages = [
+        m
+        for m in messages
+        if m["role"] == "assistant" and llm_response in str(m.get("content") or "")
+    ]
+    assert assistant_messages, "Assistant reply should be persisted after disconnect"

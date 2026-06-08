@@ -10,7 +10,7 @@ from collections.abc import AsyncGenerator, Mapping
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Annotated, Any, Literal, TypedDict
 
-from fastapi import APIRouter, Depends, HTTPException, Request, status
+from fastapi import APIRouter, Depends, FastAPI, HTTPException, Request, status
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
@@ -38,6 +38,8 @@ from family_assistant.services.confirmation_service import (
 from family_assistant.services.confirmation_waiters import (
     ConfirmationResultWaiterRegistry,
 )
+from family_assistant.services.notification_targets import notify_conversation
+from family_assistant.services.notifier import MESSAGE_CATEGORY, NotificationMetadata
 from family_assistant.storage.context import DatabaseContext, get_db_context
 from family_assistant.tools import MCPToolsProvider, find_provider_by_type
 from family_assistant.tools.infrastructure import ToolDescriptorProvider
@@ -86,6 +88,70 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 chat_api_router = APIRouter()
+
+
+def _get_background_chat_tasks(app: FastAPI) -> set[asyncio.Task[None]]:
+    """Return the set tracking detached chat-processing tasks for this app.
+
+    When a streaming client disconnects mid-turn the processing keeps running in
+    the background. The resulting task is parked here so it is not garbage
+    collected before it finishes and delivers the reply via push notification.
+    """
+    tasks = getattr(app.state, "background_chat_tasks", None)
+    if tasks is None:
+        tasks = set()
+        app.state.background_chat_tasks = tasks
+    return tasks
+
+
+def _log_detached_stream_result(task: asyncio.Task[None]) -> None:
+    """Log unexpected failures from a detached background chat task."""
+    if task.cancelled():
+        return
+    exc = task.exception()
+    if exc is not None:
+        logger.error(
+            "Background chat processing task failed after client disconnect: %s",
+            exc,
+            exc_info=exc,
+        )
+
+
+async def _notify_disconnected_reply(
+    db_context: DatabaseContext,
+    web_chat_interface: "WebChatInterface",
+    *,
+    interface_type: str,
+    conversation_id: str,
+    reply_text: str,
+) -> None:
+    """Deliver a completed assistant reply via push when the SSE client is gone.
+
+    The streaming path relays the reply over SSE and persists it directly, so it
+    never calls ``WebChatInterface.send_message`` (where push delivery lives). A
+    client that closed the app would otherwise never learn the turn finished.
+    This sends the same message-category push used for other background replies.
+    """
+    notifier = getattr(web_chat_interface, "notifier", None)
+    if not reply_text or notifier is None:
+        return
+    try:
+        await notify_conversation(
+            notifier,
+            db_context,
+            interface_type=interface_type,
+            conversation_id=conversation_id,
+            title="New message",
+            body=reply_text[:200],
+            metadata=NotificationMetadata(
+                category=MESSAGE_CATEGORY,
+                conversation_id=conversation_id,
+            ),
+        )
+    except Exception as e:
+        logger.warning(
+            f"Failed to send disconnect push notification: {e}", exc_info=True
+        )
 
 
 _TOKEN_IDENTITY_SOURCES = {"api_token", "app_token_session"}
@@ -998,6 +1064,19 @@ async def api_chat_send_message_stream(
         # ast-grep-ignore: no-dict-any - SSE event queue carries heterogeneous event types (stream, confirmation, error)
         confirmation_queue: asyncio.Queue[dict[str, Any]] = asyncio.Queue()
 
+        # Set when the SSE client goes away mid-turn (e.g. the app is closed or
+        # backgrounded). When set, processing continues in the background and the
+        # final reply is delivered via push notification instead of the now-dead
+        # SSE stream.
+        client_disconnected = asyncio.Event()
+
+        # Set when the consumer (this generator) has stopped consuming events,
+        # whether because the stream was fully delivered, the client
+        # disconnected, or an error occurred. process_stream waits on this before
+        # making its final push-notification decision so the decision reflects
+        # the true delivery outcome rather than racing the disconnect signal.
+        consumer_finished = asyncio.Event()
+
         # Create confirmation callback that queues events
         async def web_confirmation_callback(
             interface_type: str,
@@ -1238,6 +1317,11 @@ async def api_chat_send_message_stream(
         )
 
         async def process_stream() -> None:
+            # Accumulate the final assistant reply text so it can be delivered via
+            # push notification if the client disconnects before the turn finishes.
+            # Text from earlier agentic turns (preamble before a tool call) is
+            # discarded so the notification reflects the final answer.
+            final_reply_parts: list[str] = []
             try:
                 async with get_db_context(
                     request.app.state.database_engine
@@ -1263,20 +1347,47 @@ async def api_chat_send_message_stream(
                         request_confirmation_callback=web_confirmation_callback,
                         trigger_attachments=attachment_metadata,
                     ):
-                        if event.type == "error":
+                        if event.type == "content" and event.content:
+                            final_reply_parts.append(event.content)
+                        elif event.type == "tool_call":
+                            # A new tool round means more turns follow; drop any
+                            # preamble so only the final answer is notified.
+                            final_reply_parts.clear()
+                        elif event.type == "error":
                             logger.error(f"Stream event error: {event.error}")
-                        # Add events to queue
-                        await confirmation_queue.put({
-                            "type": "stream_event",
-                            "event": event,
-                        })
+                        # Once the client is gone nothing drains the queue, so
+                        # stop queuing events to avoid buffering the entire
+                        # response in memory -- only final_reply_parts is needed
+                        # for the push notification.
+                        if not client_disconnected.is_set():
+                            await confirmation_queue.put({
+                                "type": "stream_event",
+                                "event": event,
+                            })
 
-                    # Signal end of stream
-                    await confirmation_queue.put({"type": "stream_end"})
+                    # Signal end of stream (skip if nobody is listening).
+                    if not client_disconnected.is_set():
+                        await confirmation_queue.put({"type": "stream_end"})
+
+                    # Wait for the consumer to finish delivering (or to observe the
+                    # disconnect) before deciding whether to notify, so the
+                    # decision reflects the true delivery outcome instead of racing
+                    # the disconnect signal. If the reply never reached the client,
+                    # deliver it as a push notification.
+                    await consumer_finished.wait()
+                    if client_disconnected.is_set():
+                        await _notify_disconnected_reply(
+                            stream_db_context,
+                            web_chat_interface,
+                            interface_type=interface_type,
+                            conversation_id=conversation_id,
+                            reply_text="".join(final_reply_parts).strip(),
+                        )
             except Exception as e:
                 # Queue error event
                 logger.error(f"Error in process_stream: {e}", exc_info=True)
-                await confirmation_queue.put({"type": "error", "error": str(e)})
+                if not client_disconnected.is_set():
+                    await confirmation_queue.put({"type": "error", "error": str(e)})
 
         # Emit attachment events for user-uploaded attachments first
         if attachment_metadata:
@@ -1463,7 +1574,12 @@ async def api_chat_send_message_stream(
                     break
 
         except asyncio.CancelledError:
+            # The SSE client went away (e.g. the app was closed or backgrounded).
+            # Mark the turn as disconnected so the background task delivers the
+            # reply via push notification, and skip the close event on the now
+            # dead connection.
             send_close_event = False
+            client_disconnected.set()
             raise
         except Exception as e:
             error_id = str(uuid.uuid4())
@@ -1479,10 +1595,25 @@ async def api_chat_send_message_stream(
                 error_msg = str(e)
             yield f"event: error\ndata: {json.dumps({'error': error_msg, 'error_id': error_id})}\n\n"
         finally:
+            # Unblock process_stream's final notify decision (it waits on this so
+            # the decision reflects the true delivery outcome).
+            consumer_finished.set()
             if not stream_task.done():
-                stream_task.cancel()
-                with contextlib.suppress(asyncio.CancelledError):
-                    await stream_task
+                if client_disconnected.is_set():
+                    # Detach the processing task so it runs to completion in the
+                    # background and delivers the reply via push notification,
+                    # instead of being cancelled with the request. Keep a strong
+                    # reference so it isn't garbage collected before it finishes.
+                    background_tasks = _get_background_chat_tasks(request.app)
+                    background_tasks.add(stream_task)
+                    stream_task.add_done_callback(background_tasks.discard)
+                    stream_task.add_done_callback(_log_detached_stream_result)
+                else:
+                    # Normal (or consumer-error) completion: consumer_finished is
+                    # set, so let process_stream finish its wrap-up and commit its
+                    # DB context rather than cancelling it mid-write.
+                    with contextlib.suppress(asyncio.CancelledError):
+                        await stream_task
             if send_close_event:
                 # Send a final close event to ensure client knows stream is done
                 yield f"event: close\ndata: {json.dumps({})}\n\n"
