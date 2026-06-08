@@ -563,6 +563,11 @@ various tasks with dark mode support and mobile optimization.
   - **When you're notified:** a new assistant reply arrives in a web conversation, a confirmation is
     waiting for your approval, a background task fails after retrying, or a spawned worker task
     finishes. Notifications are sent to every device you've registered.
+  - **Closing the app mid-reply:** If you send a message and then close or background the app (web
+    or iOS) before the assistant finishes, processing keeps running on the server. When it
+    completes, the reply is delivered as a push notification — tap it to jump back to the
+    conversation. (You'll only get this push if the connection actually dropped; while you're
+    watching the response stream live, no extra notification is sent.)
 
 ## 8. Tips for Best Results
 

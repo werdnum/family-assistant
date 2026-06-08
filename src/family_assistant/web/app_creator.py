@@ -200,6 +200,11 @@ def create_app() -> FastAPI:
     new_app.state.server_url = SERVER_URL
     new_app.state.docs_user_dir = docs_user_dir
 
+    # Tracks chat-processing tasks detached from disconnected streaming requests
+    # so they keep running (and deliver a push notification) instead of being
+    # cancelled. See chat_api._get_background_chat_tasks.
+    new_app.state.background_chat_tasks = set()
+
     # Initialize tool_definitions for development mode
     # This will be populated by Assistant.setup_dependencies() in production
     # For development, we load them directly here
