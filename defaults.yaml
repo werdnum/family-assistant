@@ -1491,6 +1491,7 @@ attachment_config:
     - "image/tiff"
     - "application/pdf"
     - "text/plain"
+    - "text/markdown"
     - "application/json"
     - "text/csv"
     - "video/mp4"
@@ -1547,4 +1548,3 @@ otel:
   debug_console_exporter: false
 # Secrets (telegram_token, api_keys, database_url) are primarily from env.
 # Model, embedding_model, server_url, storage_paths are also top-level or env.
-

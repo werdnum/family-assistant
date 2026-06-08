@@ -1237,6 +1237,32 @@ class TestLoadConfig:
         assert config.model == "defaults-model"
         assert config.server_url == "http://defaults.example.com"
 
+    def test_shipped_defaults_allow_markdown_attachments(self, tmp_path: Path) -> None:
+        """Shipped defaults must match native chat's Markdown attachment support."""
+        config_file = tmp_path / "nonexistent_config.yaml"
+        prompts_file = tmp_path / "nonexistent_prompts.yaml"
+
+        env_to_clear = [m.env_var for m in ENV_VAR_MAPPINGS]
+        env_to_clear.extend([
+            "CALDAV_USERNAME",
+            "CALDAV_PASSWORD",
+            "CALDAV_CALENDAR_URLS",
+            "ICAL_URLS",
+            "MCP_CONFIG_PATH",
+            "INDEXING_PIPELINE_CONFIG_JSON",
+        ])
+        clean_env = {k: v for k, v in os.environ.items() if k not in env_to_clear}
+
+        with mock.patch.dict(os.environ, clean_env, clear=True):
+            config = load_config(
+                defaults_file_path="defaults.yaml",
+                config_file_path=str(config_file),
+                prompts_file_path=str(prompts_file),
+                load_dotenv_file=False,
+            )
+
+        assert "text/markdown" in config.attachment_config.allowed_mime_types
+
     def test_load_config_applies_user_identities_file(self, tmp_path: Path) -> None:
         """Test loading user identity overlays from a configured file."""
         defaults_file = tmp_path / "defaults.yaml"
