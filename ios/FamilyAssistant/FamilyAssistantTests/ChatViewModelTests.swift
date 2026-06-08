@@ -113,6 +113,56 @@ final class ChatViewModelTests: XCTestCase {
         XCTAssertEqual(model.messages.map(\.text), ["Hi", "Persisted reply"])
     }
 
+    func testApplyRouteProcessesEachNewInitialPrompt() async throws {
+        var sentPrompts: [String] = []
+        var conversationIDs: [String] = []
+        ChatMockBackendURLProtocol.respond { request in
+            let path = request.url?.path ?? ""
+            switch (request.httpMethod ?? "GET", path) {
+            case ("POST", "/api/v1/chat/send_message_stream"):
+                let payload = try XCTUnwrap(Self.jsonObject(from: request) as? [String: Any])
+                sentPrompts.append(try XCTUnwrap(payload["prompt"] as? String))
+                conversationIDs.append(try XCTUnwrap(payload["conversation_id"] as? String))
+                return .text(
+                    """
+                    event: end
+                    data: {}
+
+                    """
+                )
+            case ("GET", "/api/v1/chat/conversations"):
+                return .json(#"{"conversations":[],"count":0}"#)
+            default:
+                if request.httpMethod == "GET", path.hasSuffix("/messages") {
+                    return .json(
+                        """
+                        {
+                          "conversation_id":"web_conv_route",
+                          "messages":[],
+                          "count":0,
+                          "total_messages":0,
+                          "has_more_before":false,
+                          "has_more_after":false
+                        }
+                        """
+                    )
+                }
+                return .json(#"{"detail":"unexpected"}"#, statusCode: 404)
+            }
+        }
+
+        let model = makeViewModel(conversationID: "web_conv_seed")
+
+        await model.applyRoute(conversationID: nil, initialPrompt: "First")
+        try await waitUntil { !model.isStreaming }
+        await model.applyRoute(conversationID: nil, initialPrompt: "Second")
+        try await waitUntil { !model.isStreaming }
+
+        XCTAssertEqual(sentPrompts, ["First", "Second"])
+        XCTAssertEqual(conversationIDs.count, 2)
+        XCTAssertNotEqual(conversationIDs.first, conversationIDs.last)
+    }
+
     func testPendingConfirmationsPollAndApprove() async throws {
         var approvalPayload: [String: Any]?
         ChatMockBackendURLProtocol.respond { request in
@@ -200,6 +250,26 @@ final class ChatViewModelTests: XCTestCase {
         await model.removeDraftAttachment(attachment)
 
         XCTAssertTrue(model.draftAttachments.isEmpty)
+    }
+
+    func testRemoveUploadedDraftAttachmentSurfacesDeleteFailureAndKeepsAttachment() async {
+        ChatMockBackendURLProtocol.respond { request in
+            switch (request.httpMethod ?? "GET", request.url?.path ?? "") {
+            case ("DELETE", "/api/attachments/uploaded-id"):
+                return .json(#"{"detail":"expired token"}"#, statusCode: 401)
+            default:
+                return .json(#"{"detail":"unexpected"}"#, statusCode: 404)
+            }
+        }
+
+        let model = makeViewModel(conversationID: "web_conv_delete_failure")
+        let attachment = makeAttachment(uploadState: .uploaded)
+        model.draftAttachments = [attachment]
+
+        await model.removeDraftAttachment(attachment)
+
+        XCTAssertEqual(model.draftAttachments, [attachment])
+        XCTAssertTrue(model.errorMessage?.contains("Could not remove attachment") == true)
     }
 
     func testAddImageDataUsesProvidedMimeTypeAndFilename() async throws {

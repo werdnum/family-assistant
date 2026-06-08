@@ -31,7 +31,7 @@ final class ChatViewModel {
     @ObservationIgnored private var streamTask: Task<Void, Never>?
     @ObservationIgnored private var liveEventsTask: Task<Void, Never>?
     @ObservationIgnored private var pendingConfirmationsTask: Task<Void, Never>?
-    @ObservationIgnored private var processedInitialPrompt = false
+    @ObservationIgnored private var lastProcessedInitialPrompt: String?
 
     private enum Keys {
         static let lastConversationID = "lastConversationId"
@@ -68,19 +68,19 @@ final class ChatViewModel {
             await selectConversation(conversationID, shouldLoadMessages: true)
         }
         startPendingConfirmationsPolling()
-        if let initialPrompt, !initialPrompt.isEmpty, !processedInitialPrompt {
-            processedInitialPrompt = true
+        if let initialPrompt, shouldProcessInitialPrompt(initialPrompt) {
+            lastProcessedInitialPrompt = initialPrompt
             draftText = initialPrompt
             await sendDraft()
-        } else if !draftText.isEmpty, !processedInitialPrompt {
-            processedInitialPrompt = true
+        } else if shouldProcessInitialPrompt(draftText) {
+            lastProcessedInitialPrompt = draftText
             await sendDraft()
         }
     }
 
     func applyRoute(conversationID: String?, initialPrompt: String?) async {
-        if let initialPrompt, !initialPrompt.isEmpty, !processedInitialPrompt {
-            processedInitialPrompt = true
+        if let initialPrompt, shouldProcessInitialPrompt(initialPrompt) {
+            lastProcessedInitialPrompt = initialPrompt
             startNewConversation()
             draftText = initialPrompt
             await sendDraft()
@@ -294,10 +294,15 @@ final class ChatViewModel {
     }
 
     func removeDraftAttachment(_ attachment: ChatAttachment) async {
-        draftAttachments.removeAll { $0.id == attachment.id }
         if let attachmentID = attachment.attachmentID {
-            try? await apiClient.deleteAttachment(attachmentID: attachmentID)
+            do {
+                try await apiClient.deleteAttachment(attachmentID: attachmentID)
+            } catch {
+                errorMessage = "Could not remove attachment. \(error.localizedDescription)"
+                return
+            }
         }
+        draftAttachments.removeAll { $0.id == attachment.id }
     }
 
     func confirm(_ confirmation: ChatPendingConfirmation, approved: Bool) async {
@@ -549,6 +554,13 @@ final class ChatViewModel {
 
     static func generateConversationID() -> String {
         "\(ChatConstants.conversationPrefix)\(UUID().uuidString)"
+    }
+
+    private func shouldProcessInitialPrompt(_ prompt: String?) -> Bool {
+        guard let prompt, !prompt.isEmpty else {
+            return false
+        }
+        return prompt != lastProcessedInitialPrompt
     }
 
     nonisolated static func renderMessages(from backendMessages: [ChatBackendMessage]) -> [ChatMessage] {
