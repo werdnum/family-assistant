@@ -177,6 +177,128 @@ final class NotificationManagerTests: XCTestCase {
         XCTAssertNil(UserDefaults.standard.string(forKey: "fa_apns_device_token"))
     }
 
+    func testApproveActionSubmitsApprovalToConfirmEndpoint() async throws {
+        seedStoredAuth()
+        // NotificationManager holds authManager weakly, so keep a strong reference for the test.
+        let authManager = makeAuthManager()
+        let manager = NotificationManager()
+        manager.bind(authManager: authManager)
+
+        let requestCompleted = expectation(description: "confirm_tool POST")
+        NotificationBackendURLProtocol.respond { request in
+            XCTAssertEqual(request.httpMethod, "POST")
+            XCTAssertEqual(request.url?.path, "/api/v1/chat/confirm_tool")
+            let payload = try XCTUnwrap(Self.jsonObject(from: request) as? [String: Any])
+            XCTAssertEqual(payload["request_id"] as? String, "confirm_abc")
+            XCTAssertEqual(payload["approved"] as? Bool, true)
+            XCTAssertEqual(payload["approving_interface"] as? String, "ios")
+            requestCompleted.fulfill()
+            return .json(#"{"success":true}"#)
+        }
+
+        manager.handleNotificationAction(
+            actionIdentifier: "FAMILY_ASSISTANT_APPROVE",
+            categoryIdentifier: "FAMILY_ASSISTANT_CONFIRMATION",
+            title: "Confirmation needed",
+            body: "Create a note?",
+            userInfo: ["request_id": "confirm_abc", "conversation_id": "web_conv_1"]
+        )
+
+        await fulfillment(of: [requestCompleted], timeout: 2.0)
+        XCTAssertNil(manager.pendingConfirmationModal)
+    }
+
+    func testDenyActionSubmitsRejectionToConfirmEndpoint() async throws {
+        seedStoredAuth()
+        // NotificationManager holds authManager weakly, so keep a strong reference for the test.
+        let authManager = makeAuthManager()
+        let manager = NotificationManager()
+        manager.bind(authManager: authManager)
+
+        let requestCompleted = expectation(description: "confirm_tool POST")
+        NotificationBackendURLProtocol.respond { request in
+            let payload = try XCTUnwrap(Self.jsonObject(from: request) as? [String: Any])
+            XCTAssertEqual(payload["request_id"] as? String, "confirm_def")
+            XCTAssertEqual(payload["approved"] as? Bool, false)
+            requestCompleted.fulfill()
+            return .json(#"{"success":true}"#)
+        }
+
+        manager.handleNotificationAction(
+            actionIdentifier: "FAMILY_ASSISTANT_DENY",
+            categoryIdentifier: "FAMILY_ASSISTANT_CONFIRMATION",
+            title: "Confirmation needed",
+            body: "Create a note?",
+            userInfo: ["request_id": "confirm_def"]
+        )
+
+        await fulfillment(of: [requestCompleted], timeout: 2.0)
+    }
+
+    func testDefaultTapOnConfirmationPresentsModalWithoutNavigating() throws {
+        let manager = NotificationManager()
+
+        manager.handleNotificationAction(
+            actionIdentifier: UNNotificationDefaultActionIdentifier,
+            categoryIdentifier: "FAMILY_ASSISTANT_CONFIRMATION",
+            title: "Confirmation needed",
+            body: "Create a note for this itinerary?",
+            userInfo: ["request_id": "confirm_xyz", "conversation_id": "web_conv_9"]
+        )
+
+        let modal = try XCTUnwrap(manager.pendingConfirmationModal)
+        XCTAssertEqual(modal.requestID, "confirm_xyz")
+        XCTAssertEqual(modal.conversationID, "web_conv_9")
+        XCTAssertEqual(modal.body, "Create a note for this itinerary?")
+        XCTAssertNil(manager.pendingNavigationPath)
+    }
+
+    func testDefaultTapOnMessageNotificationSetsNavigationPathWithoutModal() {
+        let manager = NotificationManager()
+
+        manager.handleNotificationAction(
+            actionIdentifier: UNNotificationDefaultActionIdentifier,
+            categoryIdentifier: "FAMILY_ASSISTANT_MESSAGE",
+            title: "New message",
+            body: "Hello there",
+            userInfo: ["conversation_id": "web_conv_5"]
+        )
+
+        XCTAssertNil(manager.pendingConfirmationModal)
+        XCTAssertEqual(manager.pendingNavigationPath, "/chat?conversation_id=web_conv_5")
+    }
+
+    func testDismissingConfirmationDoesNothing() {
+        let manager = NotificationManager()
+
+        manager.handleNotificationAction(
+            actionIdentifier: UNNotificationDismissActionIdentifier,
+            categoryIdentifier: "FAMILY_ASSISTANT_CONFIRMATION",
+            title: "Confirmation needed",
+            body: "Create a note?",
+            userInfo: ["request_id": "confirm_dismissed"]
+        )
+
+        XCTAssertNil(manager.pendingConfirmationModal)
+        XCTAssertNil(manager.pendingNavigationPath)
+    }
+
+    func testClearPendingConfirmationModalResetsState() {
+        let manager = NotificationManager()
+        manager.handleNotificationAction(
+            actionIdentifier: UNNotificationDefaultActionIdentifier,
+            categoryIdentifier: "FAMILY_ASSISTANT_CONFIRMATION",
+            title: "Confirmation needed",
+            body: "Create a note?",
+            userInfo: ["request_id": "confirm_clear"]
+        )
+        XCTAssertNotNil(manager.pendingConfirmationModal)
+
+        manager.clearPendingConfirmationModal()
+
+        XCTAssertNil(manager.pendingConfirmationModal)
+    }
+
     private func makeAuthManager() -> AuthManager {
         let authManager = AuthManager()
         authManager.serverURL = "https://assistant.example.test"

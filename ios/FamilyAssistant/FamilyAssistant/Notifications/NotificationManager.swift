@@ -23,6 +23,7 @@ final class NotificationManager {
     }
     var errorMessage: String?
     var pendingNavigationPath: String?
+    var pendingConfirmationModal: PendingConfirmationModal?
 
     @ObservationIgnored private weak var authManager: AuthManager?
     @ObservationIgnored private let logger = Logger(
@@ -183,17 +184,48 @@ final class NotificationManager {
     }
 
     func handleNotificationResponse(_ response: UNNotificationResponse) {
-        let userInfo = response.notification.request.content.userInfo
+        let content = response.notification.request.content
+        handleNotificationAction(
+            actionIdentifier: response.actionIdentifier,
+            categoryIdentifier: content.categoryIdentifier,
+            title: content.title,
+            body: content.body,
+            userInfo: content.userInfo
+        )
+    }
 
-        switch response.actionIdentifier {
+    /// Route a notification response to confirmation submission, a confirmation modal, or a deep
+    /// link. Exposed separately from ``handleNotificationResponse(_:)`` because
+    /// ``UNNotificationResponse`` cannot be constructed directly in unit tests.
+    func handleNotificationAction(
+        actionIdentifier: String,
+        categoryIdentifier: String,
+        title: String,
+        body: String,
+        userInfo: [AnyHashable: Any]
+    ) {
+        switch actionIdentifier {
         case Actions.approve:
             submitConfirmation(from: userInfo, approved: true)
         case Actions.deny:
             submitConfirmation(from: userInfo, approved: false)
-        default:
-            if let path = navigationPath(from: userInfo) {
+        case UNNotificationDefaultActionIdentifier:
+            // Tapping the notification body opens the in-app confirmation modal when the
+            // notification is a confirmation; otherwise it deep-links like any other notification.
+            if categoryIdentifier == Categories.confirmation,
+               let requestID = stringValue(userInfo["request_id"])
+            {
+                pendingConfirmationModal = PendingConfirmationModal(
+                    requestID: requestID,
+                    conversationID: stringValue(userInfo["conversation_id"]),
+                    title: title,
+                    body: body
+                )
+            } else if let path = navigationPath(from: userInfo) {
                 pendingNavigationPath = path
             }
+        default:
+            break
         }
     }
 
@@ -227,6 +259,10 @@ final class NotificationManager {
 
     func clearPendingNavigationPath() {
         pendingNavigationPath = nil
+    }
+
+    func clearPendingConfirmationModal() {
+        pendingConfirmationModal = nil
     }
 
     var statusLabel: String {

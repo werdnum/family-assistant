@@ -430,6 +430,10 @@ When the assistant needs to perform important actions, you'll be asked to confir
   - In Telegram: You'll see inline buttons to "Approve" or "Deny" the action
   - In the Web Interface: A dialog box will appear with details about the action and options to
     approve or deny
+  - On the iOS app: confirmation push notifications are actionable. Long-press (or pull down) the
+    notification to "Approve" or "Reject" it directly from the lock screen, or **tap the
+    notification** to open a confirmation dialog inside the app that shows the full request and lets
+    you approve or reject it there.
   - Pending web approvals are stored durably. If you reload the page or the assistant process
     restarts, the web interface can show the pending approval again and your approval still uses the
     background task queue for execution.
@@ -458,7 +462,9 @@ various tasks with dark mode support and mobile optimization.
   gathers the long-tail destinations — Voice, Events, History, Automations, Tools, and more — and a
   single **Settings** screen with notification controls and sign-out. Use the tab bar to move
   between sections; each tab remembers where you were. When enabled, iOS notifications can open the
-  relevant tab or page, and confirmation notifications may include approve/deny actions.
+  relevant tab or page, and confirmation notifications are actionable: they include approve/reject
+  actions, and tapping the notification opens an in-app confirmation dialog showing the full
+  request.
 
 - **Siri & Shortcuts (iOS):** The iOS app adds actions you can run with Siri or the **Shortcuts**
   app — no setup required. Just say or run:
