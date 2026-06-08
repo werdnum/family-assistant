@@ -70,6 +70,9 @@ class EventsPage(BasePage):
             state="hidden",
             timeout=5000,
         )
+        await expect(self.page.locator(self.TIME_FILTER_TRIGGER)).to_contain_text(
+            option_text
+        )
 
     async def get_hours_filter_value(self) -> str:
         """Get the current hours filter value from the shadcn Select.
@@ -134,6 +137,9 @@ class EventsPage(BasePage):
             state="hidden",
             timeout=5000,
         )
+        await expect(self.page.locator(self.SOURCE_FILTER_TRIGGER)).to_contain_text(
+            option_text
+        )
 
     async def get_source_filter_value(self) -> str:
         """Get the current source filter value from the shadcn Select.
@@ -146,7 +152,7 @@ class EventsPage(BasePage):
         )
         if not trigger:
             return "_all"  # Default value if trigger not found
-        text = await trigger.text_content()
+        text = (await trigger.text_content() or "").strip()
 
         # Parse the text to get the source ID
         text_source_map = {
@@ -155,7 +161,7 @@ class EventsPage(BasePage):
             "Indexing": "indexing",
             "Test Source": "test_source",
         }
-        return text_source_map.get(text or "", "_all")
+        return text_source_map.get(text, "_all")
 
     async def set_only_triggered_filter(self, checked: bool) -> None:
         """Set the only triggered filter checkbox.
