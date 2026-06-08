@@ -28,6 +28,7 @@ struct ContentView: View {
                                 conversationID: conversationID,
                                 initialPrompt: initialPrompt,
                                 onShowNotes: { appRouter.openNotesList() },
+                                onShowWebApp: { openWebPath("/") },
                                 onLogout: logout
                             )
                             .onChange(of: notificationManager.pendingNavigationPath) { _, path in

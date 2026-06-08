@@ -8,6 +8,7 @@ struct ChatRootView: View {
     let routeConversationID: String?
     let initialPrompt: String?
     let onShowNotes: () -> Void
+    let onShowWebApp: () -> Void
     let onLogout: () -> Void
 
     init(
@@ -15,6 +16,7 @@ struct ChatRootView: View {
         conversationID: String?,
         initialPrompt: String?,
         onShowNotes: @escaping () -> Void,
+        onShowWebApp: @escaping () -> Void,
         onLogout: @escaping () -> Void
     ) {
         _viewModel = State(
@@ -27,6 +29,7 @@ struct ChatRootView: View {
         routeConversationID = conversationID
         self.initialPrompt = initialPrompt
         self.onShowNotes = onShowNotes
+        self.onShowWebApp = onShowWebApp
         self.onLogout = onLogout
     }
 
@@ -35,12 +38,18 @@ struct ChatRootView: View {
             ConversationListView(viewModel: viewModel)
                 .navigationTitle("Chats")
                 .toolbar {
-                    ToolbarItem(placement: .topBarLeading) {
+                    ToolbarItemGroup(placement: .topBarLeading) {
                         Button {
                             onShowNotes()
                         } label: {
                             Label("Notes", systemImage: "note.text")
                         }
+                        Button {
+                            onShowWebApp()
+                        } label: {
+                            Label("Web App", systemImage: "safari")
+                        }
+                        .accessibilityIdentifier("chat-open-web-button")
                     }
                     ToolbarItemGroup(placement: .topBarTrailing) {
                         Button {
