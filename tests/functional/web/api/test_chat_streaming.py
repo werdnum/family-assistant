@@ -1,6 +1,8 @@
 import asyncio
+import contextlib
 import json
 import logging
+import uuid
 from collections.abc import AsyncGenerator
 from typing import TYPE_CHECKING, Any, TypedDict, cast
 from unittest.mock import AsyncMock
@@ -46,6 +48,7 @@ from family_assistant.tools import (
 )
 from family_assistant.web.app_creator import app as actual_app
 from family_assistant.web.web_chat_interface import WebChatInterface
+from tests.functional.web.conftest import run_chat_turn_stream
 from tests.helpers import wait_for_condition
 from tests.mocks.mock_llm import MatcherArgs, RuleBasedMockLLMClient
 
@@ -269,9 +272,9 @@ async def test_api_chat_send_message_stream_minimal(
     ))
 
     # Act - Make streaming request
-    response = await test_client.post(
-        "/api/v1/chat/send_message_stream",
-        json={"prompt": user_prompt},
+    response = await run_chat_turn_stream(
+        test_client,
+        {"prompt": user_prompt},
     )
 
     # Assert response basics
@@ -283,19 +286,18 @@ async def test_api_chat_send_message_stream_minimal(
 
     # Assert we got the expected events
     text_events = [e for e in events if e["type"] == "text"]
-    end_events = [e for e in events if e["type"] == "end"]
-    close_events = [e for e in events if e["type"] == "close"]
+    turn_started_events = [e for e in events if e["type"] == "turn_started"]
+    turn_ended_events = [e for e in events if e["type"] == "turn_ended"]
 
     # Should have text content
     assert len(text_events) > 0
     combined_text = "".join(e["data"]["content"] for e in text_events)
     assert combined_text == llm_response
 
-    # Should have end event
-    assert len(end_events) == 1
-
-    # Should have close event
-    assert len(close_events) == 1
+    # Should bracket the turn with exactly one turn_started and one turn_ended
+    assert len(turn_started_events) == 1
+    assert len(turn_ended_events) == 1
+    assert turn_ended_events[0]["data"]["status"] == "complete"
 
     # Check database state - messages should be saved
     # Need to extract conversation_id from the stream (it's generated)
@@ -392,9 +394,9 @@ async def test_api_chat_send_message_stream_with_tools(
     ))
 
     # Act - Make streaming request
-    response = await test_client.post(
-        "/api/v1/chat/send_message_stream",
-        json={"prompt": user_prompt},
+    response = await run_chat_turn_stream(
+        test_client,
+        {"prompt": user_prompt},
     )
 
     # Assert response basics
@@ -408,8 +410,8 @@ async def test_api_chat_send_message_stream_with_tools(
     assert "tool_call" in event_types
     assert "tool_result" in event_types
     assert "text" in event_types
-    assert "end" in event_types
-    assert "close" in event_types
+    assert "turn_started" in event_types
+    assert "turn_ended" in event_types
 
     # Check tool call event
     tool_call_events = [e for e in events if e["type"] == "tool_call"]
@@ -506,9 +508,9 @@ async def test_streaming_continues_after_tool_error(
     ))
 
     # Act
-    response = await test_client.post(
-        "/api/v1/chat/send_message_stream",
-        json={"prompt": user_prompt},
+    response = await run_chat_turn_stream(
+        test_client,
+        {"prompt": user_prompt},
     )
 
     assert response.status_code == 200
@@ -540,15 +542,15 @@ async def test_streaming_continues_after_tool_error(
     combined_text = "".join(e["data"]["content"] for e in text_events)
     assert combined_text == llm_final_reply
 
-    # Should complete normally with end and close events
-    assert "end" in event_types, f"Missing end event. Events: {event_types}"
-    assert "close" in event_types, f"Missing close event. Events: {event_types}"
-
-    # Should have exactly 1 end event (deferred to stream_end, not per-turn)
-    end_events = [e for e in events if e["type"] == "end"]
-    assert len(end_events) == 1, (
-        f"Expected exactly 1 end event (at stream_end), got {len(end_events)}: {event_types}"
+    # Should complete normally with a single turn_ended event
+    assert "turn_ended" in event_types, (
+        f"Missing turn_ended event. Events: {event_types}"
     )
+    turn_ended_events = [e for e in events if e["type"] == "turn_ended"]
+    assert len(turn_ended_events) == 1, (
+        f"Expected exactly 1 turn_ended event, got {len(turn_ended_events)}: {event_types}"
+    )
+    assert turn_ended_events[0]["data"]["status"] == "complete"
 
     # Should NOT have error events
     error_events = [e for e in events if e["type"] == "error"]
@@ -627,9 +629,9 @@ async def test_streaming_continues_after_tool_execution_exception(
     test_processing_service.tools_provider.execute_tool = raise_on_target_call  # type: ignore[assignment]  # test monkey-patch
 
     try:
-        response = await test_client.post(
-            "/api/v1/chat/send_message_stream",
-            json={"prompt": user_prompt},
+        response = await run_chat_turn_stream(
+            test_client,
+            {"prompt": user_prompt},
         )
 
         assert response.status_code == 200
@@ -663,8 +665,9 @@ async def test_streaming_continues_after_tool_execution_exception(
         assert combined_text == llm_final_reply
 
         # Should complete normally
-        assert "end" in event_types, f"Missing end event. Events: {event_types}"
-        assert "close" in event_types, f"Missing close event. Events: {event_types}"
+        assert "turn_ended" in event_types, (
+            f"Missing turn_ended event. Events: {event_types}"
+        )
 
         # Should NOT have error events (tool errors are returned as tool_results, not errors)
         error_events = [e for e in events if e["type"] == "error"]
@@ -703,9 +706,9 @@ async def test_streaming_no_database_connection_errors(
     ))
 
     with caplog.at_level(logging.ERROR):
-        response = await test_client.post(
-            "/api/v1/chat/send_message_stream",
-            json={"prompt": user_prompt},
+        response = await run_chat_turn_stream(
+            test_client,
+            {"prompt": user_prompt},
         )
 
     assert response.status_code == 200
@@ -790,34 +793,46 @@ async def test_streaming_continues_and_notifies_after_client_disconnect(
     spy = _SpyNotifier()
     app_fixture.state.web_chat_interface = WebChatInterface(db_engine, notifier=spy)
 
-    # Start the streaming request and wait until processing is underway.
-    request_task = asyncio.create_task(
-        test_client.post(
-            "/api/v1/chat/send_message_stream",
-            json={
-                "prompt": user_prompt,
-                "interface_type": "web",
-                "conversation_id": conversation_id,
-            },
+    # Start the turn. The producer runs in the hub, decoupled from any HTTP
+    # request, so it survives the subscriber disconnecting.
+    turn_id = str(uuid.uuid4())
+    post_response = await test_client.post(
+        "/api/v1/chat/turns",
+        json={
+            "turn_id": turn_id,
+            "prompt": user_prompt,
+            "interface_type": "web",
+            "conversation_id": conversation_id,
+        },
+    )
+    assert post_response.status_code == 200
+
+    # Open a stream subscription and wait until processing is underway.
+    subscribe_task = asyncio.create_task(
+        test_client.get(
+            f"/api/v1/chat/conversations/{conversation_id}/stream",
+            params={"from_seq": 0},
         )
     )
     await asyncio.wait_for(started.wait(), timeout=5)
 
-    # Simulate the client closing the app: cancel the in-flight request.
-    request_task.cancel()
-    with pytest.raises(asyncio.CancelledError):
-        await request_task
+    # Simulate the client closing the app: cancel the in-flight subscription
+    # before it can observe (and acknowledge) the turn_ended event.
+    subscribe_task.cancel()
+    with contextlib.suppress(asyncio.CancelledError):
+        await subscribe_task
 
     # Processing should continue in the background; let the LLM finish.
     release.set()
 
     # The completed reply must be delivered as a push notification.
-    await asyncio.wait_for(spy.notified.wait(), timeout=5)
+    await asyncio.wait_for(spy.notified.wait(), timeout=10)
 
-    # Let the detached background task fully settle before assertions/teardown.
-    background_tasks = list(getattr(app_fixture.state, "background_chat_tasks", set()))
-    if background_tasks:
-        await asyncio.gather(*background_tasks, return_exceptions=True)
+    # Let the background producer task fully settle before assertions/teardown.
+    hub = app_fixture.state.conversation_stream_hub
+    producer_tasks = hub.get_active_producer_tasks(conversation_id)
+    if producer_tasks:
+        await asyncio.gather(*producer_tasks, return_exceptions=True)
 
     assert len(spy.calls) == 1
     user_identifier, _title, body, metadata = spy.calls[0]

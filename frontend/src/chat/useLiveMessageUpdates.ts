@@ -61,25 +61,40 @@ export function useLiveMessageUpdates({
         return;
       }
 
-      // Construct SSE endpoint URL
-      const url = new URL('/api/v1/chat/events', window.location.origin);
-      url.searchParams.set('conversation_id', conversationId);
-      url.searchParams.set('interface_type', interfaceType);
+      // Subscribe to the conversation event stream in follow mode so the
+      // connection stays open across turns and surfaces turns started from
+      // other devices/tabs. (The send-and-watch flow uses a separate
+      // follow=false subscription via useStreamingResponse.)
+      const url = new URL(
+        `/api/v1/chat/conversations/${encodeURIComponent(conversationId)}/stream`,
+        window.location.origin
+      );
+      url.searchParams.set('follow', 'true');
 
       // Create EventSource connection
       const eventSource = new EventSource(url.toString());
       eventSourceRef.current = eventSource;
 
-      eventSource.addEventListener('connected', () => {
-        // Successfully connected to SSE
-      });
+      // A completed turn means new persisted messages are available. The hub
+      // stream doesn't carry full message rows, so signal a reload rather
+      // than the message body; ChatApp re-fetches conversation history.
+      const notifyTurnEnded = () => {
+        callbackRef.current?.({
+          internal_id: '',
+          timestamp: new Date().toISOString(),
+          new_messages: true,
+          conversation_id: conversationId,
+        });
+      };
 
+      eventSource.addEventListener('turn_ended', notifyTurnEnded);
+      // Backwards-compatible: some flows may still emit a `message` event.
       eventSource.addEventListener('message', (event) => {
         try {
           const update: LiveMessageUpdate = JSON.parse(event.data);
           callbackRef.current?.(update);
-        } catch (error) {
-          console.error('[SSE] Failed to parse message update:', error);
+        } catch {
+          notifyTurnEnded();
         }
       });
 

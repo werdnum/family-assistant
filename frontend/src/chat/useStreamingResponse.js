@@ -29,6 +29,7 @@ export const useStreamingResponse = ({
       profileId = 'default_assistant',
       interfaceType = 'web',
       attachments = undefined,
+      turnId = undefined,
     }) => {
       setIsStreaming(true);
       abortControllerRef.current = new AbortController();
@@ -37,19 +38,58 @@ export const useStreamingResponse = ({
       const toolCalls = [];
       let buffer = '';
 
+      // Client-generated turn id makes the kickoff idempotent: a retried POST
+      // with the same id returns the existing turn instead of starting a
+      // second producer.
+      const effectiveTurnId =
+        turnId ||
+        (typeof crypto !== 'undefined' && crypto.randomUUID
+          ? crypto.randomUUID()
+          : `turn_${Date.now()}_${Math.random().toString(36).slice(2)}`);
+
       try {
-        const response = await fetch('/api/v1/chat/send_message_stream', {
+        // Step 1: kick off the turn. This persists the user message, seeds the
+        // turn_started event, and starts the background producer.
+        const startResponse = await fetch('/api/v1/chat/turns', {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
           },
           body: JSON.stringify({
+            turn_id: effectiveTurnId,
             prompt,
             conversation_id: conversationId,
             profile_id: profileId,
             interface_type: interfaceType,
             attachments: attachments,
           }),
+          signal: abortControllerRef.current.signal,
+        });
+
+        if (!startResponse.ok) {
+          if (startResponse.status === 401) {
+            window.location.href = `/login?next=${encodeURIComponent(window.location.pathname + window.location.search)}`;
+            return;
+          }
+          const errorData = await startResponse.json().catch(() => ({}));
+          throw new Error(errorData.detail || `HTTP error! status: ${startResponse.status}`);
+        }
+
+        const { conversation_id: streamConversationId, first_seq: firstSeq } =
+          await startResponse.json();
+        const resolvedConversationId = streamConversationId || conversationId;
+
+        // Step 2: subscribe to the conversation event stream from the turn's
+        // first seq. follow=false closes the stream once the turn completes.
+        const streamUrl =
+          `/api/v1/chat/conversations/${encodeURIComponent(resolvedConversationId)}/stream` +
+          `?from_seq=${encodeURIComponent(String(firstSeq ?? 0))}`;
+
+        const response = await fetch(streamUrl, {
+          method: 'GET',
+          headers: {
+            Accept: 'text/event-stream',
+          },
           signal: abortControllerRef.current.signal,
         });
 
@@ -104,6 +144,16 @@ export const useStreamingResponse = ({
 
               try {
                 const payload = JSON.parse(data);
+
+                // The turn_ended event terminates this turn's stream. Done is
+                // signalled both by the SSE event name and the payload status.
+                if (currentEventType === 'turn_ended' || payload.status) {
+                  return;
+                }
+                // turn_started / heartbeat carry no renderable content.
+                if (currentEventType === 'turn_started' || currentEventType === 'heartbeat') {
+                  continue;
+                }
 
                 // A single payload can contain multiple parts.
                 // We don't rely on `currentEventType` but inspect the payload directly.

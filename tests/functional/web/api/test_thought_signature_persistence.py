@@ -5,6 +5,7 @@ user journey via the HTTP API using Gemini SDK record/replay.
 """
 
 import os
+import uuid
 from collections.abc import AsyncGenerator
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -227,13 +228,27 @@ async def test_streaming_multiturn_with_tool_calls_reproduces_bug(
     The web UI uses streaming, and this should fail with "Corrupted thought signature"
     on turn 2 because the streaming code path still has the base64 encoding bug.
     """
-    # Turn 1: Ask question requiring tool use (streaming)
+    # Turn 1: Ask question requiring tool use (streaming).
+    # Resumable-streaming flow: POST /turns to start, then stream the
+    # conversation's event stream.
+    turn1_id = str(uuid.uuid4())
+    conversation_id = f"thought-sig-{uuid.uuid4().hex[:8]}"
+    post1 = await llm_integration_client.post(
+        "/api/v1/chat/turns",
+        json={
+            "turn_id": turn1_id,
+            "conversation_id": conversation_id,
+            "prompt": "Use Python to calculate 5 + 5. Use the execute_script tool.",
+        },
+    )
+    assert post1.status_code == 200, f"Turn 1 start failed: {post1.text}"
+
     response1_chunks = []
     tool_call_seen = False
     async with llm_integration_client.stream(
-        "POST",
-        "/api/v1/chat/send_message_stream",
-        json={"prompt": "Use Python to calculate 5 + 5. Use the execute_script tool."},
+        "GET",
+        f"/api/v1/chat/conversations/{conversation_id}/stream",
+        params={"from_seq": 0},
     ) as response1:
         assert response1.status_code == 200, f"Turn 1 failed: {await response1.aread()}"
 
@@ -253,10 +268,20 @@ async def test_streaming_multiturn_with_tool_calls_reproduces_bug(
         pytest.skip("LLM didn't use tool in turn 1 - can't test thought signature bug")
 
     # Turn 2: Ask follow-up (streaming) - THIS SHOULD FAIL WITH CORRUPTED SIGNATURE
+    turn2_id = str(uuid.uuid4())
+    post2 = await llm_integration_client.post(
+        "/api/v1/chat/turns",
+        json={
+            "turn_id": turn2_id,
+            "conversation_id": conversation_id,
+            "prompt": "Now calculate 10 + 10 using Python.",
+        },
+    )
+    assert post2.status_code == 200, f"Turn 2 start failed: {post2.text}"
     async with llm_integration_client.stream(
-        "POST",
-        "/api/v1/chat/send_message_stream",
-        json={"prompt": "Now calculate 10 + 10 using Python."},
+        "GET",
+        f"/api/v1/chat/conversations/{conversation_id}/stream",
+        params={"from_seq": 0},
     ) as response2:
         # This is where the bug manifests
         assert response2.status_code == 200, (

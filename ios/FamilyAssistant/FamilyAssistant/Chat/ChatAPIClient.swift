@@ -52,8 +52,8 @@ struct ChatAPIClient {
 
     /// Sends a prompt and waits for the assistant's full reply.
     ///
-    /// Unlike ``streamMessage(prompt:conversationID:profileID:attachments:)`` this
-    /// uses the non-streaming `/send_message` endpoint, which suits headless
+    /// Unlike ``streamMessage(turnID:prompt:conversationID:profileID:attachments:)``
+    /// this uses the non-streaming `/send_message` endpoint, which suits headless
     /// callers (App Intents / Siri) that present a single completed reply rather
     /// than a live token stream.
     func sendMessage(
@@ -81,19 +81,27 @@ struct ChatAPIClient {
         return ChatSendResult(reply: decoded.reply, conversationID: decoded.conversationID)
     }
 
+    /// Kick off a chat turn and return a live stream of its events.
+    ///
+    /// Two-step resumable-streaming flow:
+    /// 1. POST /api/v1/chat/turns starts the turn (idempotent on `turnID`).
+    /// 2. GET /api/v1/chat/conversations/{id}/stream?from_seq=… delivers the
+    ///    SSE events; with follow=false it closes once the turn completes.
     func streamMessage(
+        turnID: String,
         prompt: String,
         conversationID: String,
         profileID: String?,
         attachments: [ChatAttachment]
     ) async throws -> AsyncThrowingStream<ChatStreamEvent, Error> {
-        var request = try await authManager.authorizedRequest(
-            url: apiURL("/api/v1/chat/send_message_stream"),
+        var startRequest = try await authManager.authorizedRequest(
+            url: apiURL("/api/v1/chat/turns"),
             method: "POST"
         )
-        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        request.httpBody = try JSONEncoder.chatEncoder.encode(
+        startRequest.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        startRequest.httpBody = try JSONEncoder.chatEncoder.encode(
             ChatStreamRequest(
+                turnID: turnID,
                 prompt: prompt,
                 conversationID: conversationID,
                 profileID: profileID,
@@ -101,39 +109,43 @@ struct ChatAPIClient {
                 attachments: attachments.map(ChatStreamAttachment.init(attachment:))
             )
         )
+        let (startData, startResponse) = try await urlSession.data(for: startRequest)
+        try validate(response: startResponse, data: startData)
+        let turn = try JSONDecoder.chatDecoder.decode(ChatTurnResponse.self, from: startData)
 
-        return AsyncThrowingStream { continuation in
-            let task = Task {
-                do {
-                    let (bytes, response) = try await urlSession.bytes(for: request)
-                    try validate(response: response, data: Data())
-                    let parser = SSEParser()
-                    try await streamServerSentEvents(bytes: bytes, parser: parser, continuation: continuation)
-                    continuation.finish()
-                } catch {
-                    continuation.finish(throwing: error)
-                }
-            }
-            continuation.onTermination = { _ in
-                task.cancel()
-            }
-        }
+        return try await streamConversation(
+            conversationID: turn.conversationID,
+            fromSeq: turn.firstSeq,
+            follow: false
+        )
     }
 
+    /// Connect to a conversation's event stream for live updates. With
+    /// `follow=true` the connection stays open across turns so replies started
+    /// from other devices/tabs surface here too.
     func connectEvents(
         conversationID: String,
-        after: Date? = nil
+        fromSeq: Int = 0
     ) async throws -> AsyncThrowingStream<ChatStreamEvent, Error> {
-        var components = URLComponents(url: try apiURL("/api/v1/chat/events"), resolvingAgainstBaseURL: false)
+        try await streamConversation(conversationID: conversationID, fromSeq: fromSeq, follow: true)
+    }
+
+    private func streamConversation(
+        conversationID: String,
+        fromSeq: Int,
+        follow: Bool
+    ) async throws -> AsyncThrowingStream<ChatStreamEvent, Error> {
+        let encodedConversation =
+            conversationID.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed)
+            ?? conversationID
+        var components = URLComponents(
+            url: try apiURL("/api/v1/chat/conversations/\(encodedConversation)/stream"),
+            resolvingAgainstBaseURL: false
+        )
         components?.queryItems = [
-            URLQueryItem(name: "conversation_id", value: conversationID),
-            URLQueryItem(name: "interface_type", value: ChatConstants.interfaceType),
+            URLQueryItem(name: "from_seq", value: String(fromSeq)),
+            URLQueryItem(name: "follow", value: follow ? "true" : "false"),
         ]
-        if let after {
-            components?.queryItems?.append(
-                URLQueryItem(name: "after", value: ISO8601DateFormatter().string(from: after))
-            )
-        }
         guard let url = components?.url else {
             throw ChatAPIError.invalidServerURL
         }
@@ -368,6 +380,7 @@ private struct ChatSendMessageResponse: Decodable {
 }
 
 private struct ChatStreamRequest: Encodable {
+    let turnID: String
     let prompt: String
     let conversationID: String
     let profileID: String?
@@ -375,11 +388,24 @@ private struct ChatStreamRequest: Encodable {
     let attachments: [ChatStreamAttachment]?
 
     enum CodingKeys: String, CodingKey {
+        case turnID = "turn_id"
         case prompt
         case conversationID = "conversation_id"
         case profileID = "profile_id"
         case interfaceType = "interface_type"
         case attachments
+    }
+}
+
+private struct ChatTurnResponse: Decodable {
+    let turnID: String
+    let conversationID: String
+    let firstSeq: Int
+
+    enum CodingKeys: String, CodingKey {
+        case turnID = "turn_id"
+        case conversationID = "conversation_id"
+        case firstSeq = "first_seq"
     }
 }
 

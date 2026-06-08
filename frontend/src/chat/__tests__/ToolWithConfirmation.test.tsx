@@ -17,61 +17,59 @@ describe('ToolWithConfirmation', () => {
     async () => {
       // Override the streaming handler to return a tool call
       server.use(
-        http.post('/api/v1/chat/send_message_stream', async ({ request }) => {
-          const body = (await request.json()) as {
-            prompt: string;
-            conversation_id: string;
-            profile_id?: string;
-          };
+        http.get('/api/v1/chat/conversations/:conversationId/stream', () => {
+          const encoder = new TextEncoder();
+          const stream = new ReadableStream({
+            start(controller) {
+              controller.enqueue(
+                encoder.encode(
+                  `event: turn_started\ndata: ${JSON.stringify({ turn_id: 'mock-turn', seq: 0 })}\n\n`
+                )
+              );
+              // Send initial content
+              controller.enqueue(
+                encoder.encode('data: {"content": "I\'ll add that note for you."}\n\n')
+              );
 
-          if (body.prompt.includes('add a note')) {
-            const encoder = new TextEncoder();
-            const stream = new ReadableStream({
-              start(controller) {
-                // Send initial content
+              // Send tool call
+              setTimeout(() => {
                 controller.enqueue(
-                  encoder.encode('data: {"content": "I\'ll add that note for you."}\n\n')
+                  encoder.encode(
+                    `data: ${JSON.stringify({
+                      tool_calls: [
+                        {
+                          id: 'call-123',
+                          type: 'function',
+                          function: {
+                            name: 'add_or_update_note',
+                            arguments: JSON.stringify({
+                              title: 'Test Note',
+                              content: 'This is a test note',
+                            }),
+                          },
+                        },
+                      ],
+                    })}\n\n`
+                  )
                 );
 
-                // Send tool call
-                setTimeout(() => {
-                  controller.enqueue(
-                    encoder.encode(
-                      `data: ${JSON.stringify({
-                        tool_calls: [
-                          {
-                            id: 'call-123',
-                            type: 'function',
-                            function: {
-                              name: 'add_or_update_note',
-                              arguments: JSON.stringify({
-                                title: 'Test Note',
-                                content: 'This is a test note',
-                              }),
-                            },
-                          },
-                        ],
-                      })}\n\n`
-                    )
-                  );
+                controller.enqueue(
+                  encoder.encode(
+                    `event: turn_ended\ndata: ${JSON.stringify({ turn_id: 'mock-turn', status: 'complete' })}\n\n`
+                  )
+                );
+                controller.close();
+              }, 100);
+            },
+          });
 
-                  controller.enqueue(encoder.encode('data: {"done": true}\n\n'));
-                  controller.close();
-                }, 100);
-              },
-            });
-
-            return new HttpResponse(stream, {
-              headers: {
-                'Content-Type': 'text/event-stream',
-                'Cache-Control': 'no-cache',
-                Connection: 'keep-alive',
-              },
-            });
-          }
-
-          // Fallback to default handler
-          return HttpResponse.json({ error: 'No matching handler' }, { status: 404 });
+          return new HttpResponse(stream, {
+            headers: {
+              'Content-Type': 'text/event-stream',
+              'Cache-Control': 'no-cache',
+              Connection: 'keep-alive',
+            },
+          });
         })
       );
 
@@ -176,7 +174,7 @@ describe('ToolWithConfirmation', () => {
   it('shows tool call results in message history', async () => {
     // Mock tool execution result
     server.use(
-      http.post('/api/v1/chat/send_message_stream', async () => {
+      http.get('/api/v1/chat/conversations/:conversationId/stream', async () => {
         const encoder = new TextEncoder();
         const stream = new ReadableStream({
           start(controller) {
@@ -208,68 +206,67 @@ describe('ToolWithConfirmation', () => {
     async () => {
       // Mock streaming response that sends tool call first, then result
       server.use(
-        http.post('/api/v1/chat/send_message_stream', async ({ request }) => {
-          const body = (await request.json()) as {
-            prompt: string;
-            conversation_id: string;
-          };
+        http.get('/api/v1/chat/conversations/:conversationId/stream', () => {
+          const encoder = new TextEncoder();
+          const stream = new ReadableStream({
+            start(controller) {
+              controller.enqueue(encoder.encode('event: turn_started\n'));
+              controller.enqueue(
+                encoder.encode(`data: ${JSON.stringify({ turn_id: 'mock-turn', seq: 0 })}\n\n`)
+              );
+              // Send initial tool call (running state)
+              controller.enqueue(encoder.encode('event: tool_call\n'));
+              controller.enqueue(
+                encoder.encode(
+                  `data: ${JSON.stringify({
+                    tool_call: {
+                      id: 'call-status-test',
+                      function: {
+                        name: 'add_or_update_note',
+                        arguments: JSON.stringify({
+                          title: 'Test Status',
+                          content: 'Testing status updates',
+                        }),
+                      },
+                    },
+                  })}\n\n`
+                )
+              );
 
-          if (body.prompt.includes('add a note')) {
-            const encoder = new TextEncoder();
-            const stream = new ReadableStream({
-              start(controller) {
-                // Send initial tool call (running state)
-                controller.enqueue(encoder.encode('event: tool_call\n'));
+              // Send tool result after a delay (complete state)
+              setTimeout(() => {
+                controller.enqueue(encoder.encode('event: tool_result\n'));
                 controller.enqueue(
                   encoder.encode(
                     `data: ${JSON.stringify({
-                      tool_call: {
-                        id: 'call-status-test',
-                        function: {
-                          name: 'add_or_update_note',
-                          arguments: JSON.stringify({
-                            title: 'Test Status',
-                            content: 'Testing status updates',
-                          }),
-                        },
-                      },
+                      tool_call_id: 'call-status-test',
+                      result: 'Note added successfully',
                     })}\n\n`
                   )
                 );
 
-                // Send tool result after a delay (complete state)
-                setTimeout(() => {
-                  controller.enqueue(encoder.encode('event: tool_result\n'));
-                  controller.enqueue(
-                    encoder.encode(
-                      `data: ${JSON.stringify({
-                        tool_call_id: 'call-status-test',
-                        result: 'Note added successfully',
-                      })}\n\n`
-                    )
-                  );
+                // Send final text response
+                controller.enqueue(encoder.encode('event: text\n'));
+                controller.enqueue(encoder.encode('data: {"content": "Done!"}\n\n'));
 
-                  // Send final text response
-                  controller.enqueue(encoder.encode('event: text\n'));
-                  controller.enqueue(encoder.encode('data: {"content": "Done!"}\n\n'));
+                controller.enqueue(encoder.encode('event: turn_ended\n'));
+                controller.enqueue(
+                  encoder.encode(
+                    `data: ${JSON.stringify({ turn_id: 'mock-turn', status: 'complete' })}\n\n`
+                  )
+                );
+                controller.close();
+              }, 100);
+            },
+          });
 
-                  controller.enqueue(encoder.encode('event: done\n'));
-                  controller.enqueue(encoder.encode('data: {"done": true}\n\n'));
-                  controller.close();
-                }, 100);
-              },
-            });
-
-            return new HttpResponse(stream, {
-              headers: {
-                'Content-Type': 'text/event-stream',
-                'Cache-Control': 'no-cache',
-                Connection: 'keep-alive',
-              },
-            });
-          }
-
-          return HttpResponse.json({ error: 'No matching handler' }, { status: 404 });
+          return new HttpResponse(stream, {
+            headers: {
+              'Content-Type': 'text/event-stream',
+              'Cache-Control': 'no-cache',
+              Connection: 'keep-alive',
+            },
+          });
         })
       );
 

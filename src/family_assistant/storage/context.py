@@ -46,7 +46,6 @@ if TYPE_CHECKING:
         WorkerTasksRepository,
     )
     from family_assistant.storage.repositories.a2a_tasks import A2ATasksRepository
-    from family_assistant.web.message_notifier import MessageNotifier
 
 
 # Use absolute package path
@@ -145,7 +144,6 @@ class DatabaseContext:
         engine: AsyncEngine,
         max_retries: int = 3,
         base_delay: float = 0.5,
-        message_notifier: "MessageNotifier | None" = None,
     ) -> None:
         """
         Initialize the database context.
@@ -154,12 +152,10 @@ class DatabaseContext:
             engine: Required SQLAlchemy AsyncEngine for dependency injection.
             max_retries: Maximum number of retries for database operations.
             base_delay: Base delay in seconds for exponential backoff.
-            message_notifier: Optional MessageNotifier instance for live message updates.
         """
         self.engine = engine
         self.max_retries = max_retries
         self.base_delay = base_delay
-        self.message_notifier = message_notifier
         self.conn: AsyncConnection | None = None
         self._transaction_cm: AbstractAsyncContextManager[AsyncConnection] | None = None
 
@@ -217,12 +213,11 @@ class DatabaseContext:
         return self.engine.dialect.name == "postgresql"
 
     def create_isolated_context(self) -> "DatabaseContext":
-        """Create a new context sharing this context's engine/notifier settings."""
+        """Create a new context sharing this context's engine settings."""
         return DatabaseContext(
             engine=self.engine,
             max_retries=self.max_retries,
             base_delay=self.base_delay,
-            message_notifier=self.message_notifier,
         )
 
     # Removed begin, commit, rollback methods
@@ -573,7 +568,6 @@ def get_db_context(
     engine: AsyncEngine,
     max_retries: int = 3,
     base_delay: float = 0.5,
-    message_notifier: "MessageNotifier | None" = None,
 ) -> DatabaseContext:
     """
     Creates an instance of DatabaseContext.
@@ -585,7 +579,6 @@ def get_db_context(
         engine: Required SQLAlchemy AsyncEngine for dependency injection.
         max_retries: Maximum number of retries for database operations.
         base_delay: Base delay in seconds for exponential backoff.
-        message_notifier: Optional MessageNotifier instance for live message updates.
 
     Returns:
         A DatabaseContext instance.
@@ -597,4 +590,4 @@ def get_db_context(
             result = await db.fetch_all(...)
         ```
     """
-    return DatabaseContext(engine, max_retries, base_delay, message_notifier)
+    return DatabaseContext(engine, max_retries, base_delay)

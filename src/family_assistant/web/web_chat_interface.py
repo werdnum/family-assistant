@@ -25,9 +25,11 @@ class WebChatInterface(ChatInterface):
     ChatInterface implementation for web UI.
 
     Unlike TelegramChatInterface which sends messages via the Telegram API,
-    WebChatInterface saves messages to the database. The SSE notification
-    mechanism (via MessageNotifier) is triggered automatically by the database
-    on_commit hook, which delivers the message to connected web clients.
+    WebChatInterface saves messages to the database and, when a notifier is
+    configured, delivers a push notification to the conversation owner. Live
+    in-app delivery for an open session is handled separately by the
+    ConversationStreamHub (see web/conversation_stream_hub.py), which the
+    chat turn producer publishes to directly.
     """
 
     def __init__(
@@ -57,8 +59,9 @@ class WebChatInterface(ChatInterface):
         """
         Sends a message to the web UI by saving it to the database.
 
-        The message will be automatically delivered to connected web clients
-        via SSE (Server-Sent Events) through the MessageNotifier on_commit hook.
+        Connected clients watching the conversation stream receive live
+        updates via the ConversationStreamHub; offline recipients get a push
+        notification (when a notifier is configured).
 
         Args:
             conversation_id: The web conversation UUID

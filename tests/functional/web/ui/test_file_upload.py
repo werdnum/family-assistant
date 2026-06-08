@@ -401,7 +401,7 @@ async def test_api_request_includes_attachments(
     requests = []
 
     def handle_request(request: Any) -> None:  # noqa: ANN401  # playwright request object
-        if "/api/v1/chat/send_message_stream" in request.url:
+        if "/api/v1/chat/turns" in request.url and request.method == "POST":
             requests.append({
                 "url": request.url,
                 "method": request.method,

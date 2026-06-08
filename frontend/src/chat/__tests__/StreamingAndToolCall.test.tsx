@@ -18,7 +18,7 @@ describe('Streaming with Tool Calls', () => {
       // This is the crucial part: we mock the SSE stream to send a single
       // event that contains both content and a tool call.
       server.use(
-        http.post('/api/v1/chat/send_message_stream', () => {
+        http.get('/api/v1/chat/conversations/:conversationId/stream', () => {
           const encoder = new TextEncoder();
           const stream = new ReadableStream({
             start(controller) {

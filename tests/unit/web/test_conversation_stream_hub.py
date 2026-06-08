@@ -1,0 +1,417 @@
+"""Unit tests for ConversationStreamHub.
+
+The hub is the load-bearing primitive behind resumable streaming. These tests
+exercise it in isolation: publish/subscribe ordering, ring buffer eviction,
+turn idempotency, and ack-based delivery tracking. Integration with the LLM
+producer task lives in tests/functional/web/api/test_chat_streaming.py.
+"""
+
+import asyncio
+from datetime import UTC, datetime
+
+import pytest
+
+from family_assistant.web.conversation_stream_hub import (
+    ConversationStreamHub,
+    OutOfBufferError,
+    TurnAlreadyExistsError,
+)
+
+
+def _now() -> datetime:
+    return datetime.now(UTC)
+
+
+@pytest.mark.asyncio
+@pytest.mark.no_db
+async def test_publish_assigns_monotonic_seq() -> None:
+    """Each publish on the same conversation produces a strictly increasing
+    seq."""
+    hub = ConversationStreamHub()
+    e1 = await hub.publish("conv", "text", turn_id="t1", payload={"content": "a"})
+    e2 = await hub.publish("conv", "text", turn_id="t1", payload={"content": "b"})
+    e3 = await hub.publish("conv", "text", turn_id="t1", payload={"content": "c"})
+
+    assert e1.seq == 0
+    assert e2.seq == 1
+    assert e3.seq == 2
+
+
+@pytest.mark.asyncio
+@pytest.mark.no_db
+async def test_publish_is_per_conversation() -> None:
+    """Two conversations have independent seq counters and buffers."""
+    hub = ConversationStreamHub()
+    a = await hub.publish("conv_a", "text", turn_id="t1", payload={"content": "x"})
+    b = await hub.publish("conv_b", "text", turn_id="t1", payload={"content": "y"})
+
+    assert a.seq == 0
+    assert b.seq == 0
+    assert hub.buffer_size("conv_a") == 1
+    assert hub.buffer_size("conv_b") == 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.no_db
+async def test_subscribe_from_zero_replays_full_buffer() -> None:
+    """A late subscriber starting from seq=0 sees every event in the buffer."""
+    hub = ConversationStreamHub()
+    await hub.start_turn("conv", turn_id="t1", user_id="u1", started_at=_now())
+    await hub.publish("conv", "text", turn_id="t1", payload={"content": "a"})
+    await hub.publish("conv", "text", turn_id="t1", payload={"content": "b"})
+
+    handle = await hub.subscribe("conv", from_seq=0)
+    assert [e.type for e in handle.replayed_events] == ["turn_started", "text", "text"]
+    assert [e.seq for e in handle.replayed_events] == [0, 1, 2]
+
+
+@pytest.mark.asyncio
+@pytest.mark.no_db
+async def test_subscribe_from_midstream_skips_old_events() -> None:
+    """Subscribing with from_seq>0 replays only events at or after that seq."""
+    hub = ConversationStreamHub()
+    await hub.publish("conv", "text", turn_id="t1", payload={"content": "a"})
+    await hub.publish("conv", "text", turn_id="t1", payload={"content": "b"})
+    await hub.publish("conv", "text", turn_id="t1", payload={"content": "c"})
+
+    handle = await hub.subscribe("conv", from_seq=2)
+    assert [e.seq for e in handle.replayed_events] == [2]
+
+
+@pytest.mark.asyncio
+@pytest.mark.no_db
+async def test_subscriber_receives_live_events() -> None:
+    """Events published after subscription land in the subscriber's queue."""
+    hub = ConversationStreamHub()
+    handle = await hub.subscribe("conv", from_seq=0)
+    assert handle.replayed_events == []
+
+    await hub.publish("conv", "text", turn_id="t1", payload={"content": "live"})
+    event = await asyncio.wait_for(handle.queue.get(), timeout=1.0)
+    assert event.type == "text"
+    assert event.payload == {"content": "live"}
+
+
+@pytest.mark.asyncio
+@pytest.mark.no_db
+async def test_multiple_subscribers_see_identical_stream() -> None:
+    """Two subscribers attached at different points still see the same
+    ordering for events they both observe."""
+    hub = ConversationStreamHub()
+    handle_a = await hub.subscribe("conv", from_seq=0)
+    await hub.publish("conv", "text", turn_id="t1", payload={"content": "1"})
+    handle_b = await hub.subscribe("conv", from_seq=0)
+    await hub.publish("conv", "text", turn_id="t1", payload={"content": "2"})
+
+    # A reads live events (no replay since it was subscribed at seq=0 before
+    # any publish).
+    a_first = await asyncio.wait_for(handle_a.queue.get(), timeout=1.0)
+    a_second = await asyncio.wait_for(handle_a.queue.get(), timeout=1.0)
+    assert [a_first.seq, a_second.seq] == [0, 1]
+
+    # B sees seq=0 in replayed and seq=1 live.
+    assert [e.seq for e in handle_b.replayed_events] == [0]
+    b_second = await asyncio.wait_for(handle_b.queue.get(), timeout=1.0)
+    assert b_second.seq == 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.no_db
+async def test_ring_buffer_evicts_oldest_events() -> None:
+    """When the buffer is full, the oldest event drops off and resubscribing
+    from below the new floor raises OutOfBufferError."""
+    hub = ConversationStreamHub(buffer_max_events=3)
+    for i in range(5):
+        await hub.publish("conv", "text", turn_id="t1", payload={"i": i})
+
+    assert hub.buffer_size("conv") == 3
+    assert hub.min_available_seq("conv") == 2
+
+    with pytest.raises(OutOfBufferError) as excinfo:
+        await hub.subscribe("conv", from_seq=0)
+    assert excinfo.value.requested_from_seq == 0
+    assert excinfo.value.min_available_seq == 2
+
+    # Subscribing at the new floor works.
+    handle = await hub.subscribe("conv", from_seq=2)
+    assert [e.payload["i"] for e in handle.replayed_events] == [2, 3, 4]
+
+
+@pytest.mark.asyncio
+@pytest.mark.no_db
+async def test_unsubscribe_removes_subscriber() -> None:
+    """After unsubscribe, no further events land in the queue."""
+    hub = ConversationStreamHub()
+    handle = await hub.subscribe("conv", from_seq=0)
+    assert hub.subscriber_count("conv") == 1
+
+    hub.unsubscribe("conv", handle.queue)
+    assert hub.subscriber_count("conv") == 0
+
+    await hub.publish("conv", "text", turn_id="t1", payload={"content": "x"})
+    assert handle.queue.empty()
+
+
+@pytest.mark.asyncio
+@pytest.mark.no_db
+async def test_start_turn_publishes_turn_started_and_records_metadata() -> None:
+    """start_turn registers the turn, publishes turn_started, and exposes the
+    record via active_turns."""
+    hub = ConversationStreamHub()
+    started_at = _now()
+    turn = await hub.start_turn(
+        "conv", turn_id="t1", user_id="u1", started_at=started_at
+    )
+
+    assert turn.first_seq == 0
+    assert turn.latest_seq == 0
+    assert turn.status == "running"
+    active = hub.active_turns("conv")
+    assert len(active) == 1
+    assert active[0].turn_id == "t1"
+
+    # turn_started landed in the buffer.
+    handle = await hub.subscribe("conv", from_seq=0)
+    assert handle.replayed_events[0].type == "turn_started"
+    assert handle.replayed_events[0].payload["turn_id"] == "t1"
+
+
+@pytest.mark.asyncio
+@pytest.mark.no_db
+async def test_start_turn_is_idempotent_by_turn_id() -> None:
+    """A second start_turn with the same turn_id raises TurnAlreadyExistsError
+    carrying the existing record (chat_api uses this for the idempotent
+    POST /turns retry path)."""
+    hub = ConversationStreamHub()
+    first = await hub.start_turn("conv", turn_id="t1", user_id="u1", started_at=_now())
+
+    with pytest.raises(TurnAlreadyExistsError) as excinfo:
+        await hub.start_turn("conv", turn_id="t1", user_id="u1", started_at=_now())
+    assert excinfo.value.turn is first
+
+
+@pytest.mark.asyncio
+@pytest.mark.no_db
+async def test_end_turn_publishes_and_marks_complete() -> None:
+    """end_turn flips status and publishes the turn_ended event with the
+    declared status payload."""
+    hub = ConversationStreamHub()
+    await hub.start_turn("conv", turn_id="t1", user_id="u1", started_at=_now())
+    await hub.publish("conv", "text", turn_id="t1", payload={"content": "hi"})
+    await hub.end_turn(
+        "conv",
+        turn_id="t1",
+        status="complete",
+        reasoning_info={"total_tokens": 12},
+    )
+
+    turn = hub.get_turn("conv", "t1")
+    assert turn is not None
+    assert turn.status == "complete"
+    assert turn.ended_seq == 2
+
+    handle = await hub.subscribe("conv", from_seq=0)
+    types = [e.type for e in handle.replayed_events]
+    assert types == ["turn_started", "text", "turn_ended"]
+    end_event = handle.replayed_events[-1]
+    assert end_event.payload["status"] == "complete"
+    assert end_event.payload["reasoning_info"] == {"total_tokens": 12}
+
+
+@pytest.mark.asyncio
+@pytest.mark.no_db
+async def test_ack_marks_turn_delivered_when_covering_end_seq() -> None:
+    """An ack at or beyond turn_ended.seq flips turn.delivered, which the
+    chat_api layer reads to decide whether to suppress the disconnect push."""
+    hub = ConversationStreamHub()
+    await hub.start_turn("conv", turn_id="t1", user_id="u1", started_at=_now())
+    await hub.publish("conv", "text", turn_id="t1", payload={"content": "x"})
+    await hub.end_turn("conv", turn_id="t1", status="complete")
+
+    handle = await hub.subscribe("conv", from_seq=0, ack_seq=2)
+
+    turn = hub.get_turn("conv", "t1")
+    assert turn is not None
+    assert turn.delivered is True
+
+    # Free the handle warning.
+    hub.unsubscribe("conv", handle.queue)
+
+
+@pytest.mark.asyncio
+@pytest.mark.no_db
+async def test_ack_below_end_seq_keeps_undelivered() -> None:
+    """A subscriber that hasn't acked past turn_ended.seq leaves delivered
+    False, so the push path still fires."""
+    hub = ConversationStreamHub()
+    await hub.start_turn("conv", turn_id="t1", user_id="u1", started_at=_now())
+    await hub.publish("conv", "text", turn_id="t1", payload={"content": "x"})
+    await hub.end_turn("conv", turn_id="t1", status="complete")
+
+    handle = await hub.subscribe("conv", from_seq=0, ack_seq=1)
+
+    turn = hub.get_turn("conv", "t1")
+    assert turn is not None
+    assert turn.delivered is False
+
+    # Ack catches up and flips the flag.
+    await hub.ack("conv", handle.queue, ack_seq=2)
+    assert turn.delivered is True
+
+    hub.unsubscribe("conv", handle.queue)
+
+
+@pytest.mark.asyncio
+@pytest.mark.no_db
+async def test_subscribe_on_unknown_conversation_returns_empty() -> None:
+    """Subscribing to a conversation that has never been published to yields
+    no replayed events and a fresh queue. This is what fresh page loads see
+    before the user sends anything."""
+    hub = ConversationStreamHub()
+    handle = await hub.subscribe("brand_new_conv", from_seq=0)
+    assert handle.replayed_events == []
+    assert handle.queue.empty()
+
+
+@pytest.mark.asyncio
+@pytest.mark.no_db
+async def test_attach_producer_task_holds_strong_reference() -> None:
+    """The hub keeps the producer task alive after the originating request
+    closes. Without this, a detached SSE client would let the GC drop the
+    task and the background turn would never finish."""
+    hub = ConversationStreamHub()
+    await hub.start_turn("conv", turn_id="t1", user_id="u1", started_at=_now())
+
+    done = asyncio.Event()
+
+    async def fake_producer() -> None:
+        await done.wait()
+
+    task = asyncio.create_task(fake_producer())
+    hub.attach_producer_task("conv", "t1", task)
+
+    assert task in hub.get_active_producer_tasks("conv")
+
+    done.set()
+    await task
+    assert task not in hub.get_active_producer_tasks("conv")
+
+
+@pytest.mark.asyncio
+@pytest.mark.no_db
+async def test_producer_task_reference_released_on_completion() -> None:
+    """When the producer task finishes, the hub drops its strong reference so
+    the task (and its coroutine frame: DB context, buffers) can be GC'd. The
+    lightweight TurnRecord itself remains for active_turns/resume lookups."""
+    hub = ConversationStreamHub()
+    await hub.start_turn("conv", turn_id="t1", user_id="u1", started_at=_now())
+
+    done = asyncio.Event()
+
+    async def fake_producer() -> None:
+        await done.wait()
+
+    task = asyncio.create_task(fake_producer())
+    hub.attach_producer_task("conv", "t1", task)
+    attached = hub.get_turn("conv", "t1")
+    assert attached is not None
+    assert attached.task is task
+
+    done.set()
+    await task
+
+    # The done_callback that clears the reference runs on a subsequent loop
+    # tick after the task completes; poll until it has fired.
+    record = hub.get_turn("conv", "t1")
+    assert record is not None
+    deadline = 100
+    while record.task is not None and deadline > 0:
+        # ast-grep-ignore: no-asyncio-sleep-in-tests - yields to the loop so the task's done_callback can run; bounded poll, not an arbitrary wait
+        await asyncio.sleep(0)
+        deadline -= 1
+    assert record.task is None
+
+
+@pytest.mark.asyncio
+@pytest.mark.no_db
+async def test_completed_turns_pruned_beyond_cap() -> None:
+    """Completed turns are evicted oldest-first once the retention cap is hit,
+    so the registry doesn't grow without bound; running turns are kept."""
+    hub = ConversationStreamHub(max_retained_turns=3)
+    for i in range(6):
+        await hub.start_turn("conv", turn_id=f"t{i}", user_id="u1", started_at=_now())
+        await hub.end_turn("conv", turn_id=f"t{i}", status="complete")
+
+    remaining = {t.turn_id for t in hub.active_turns("conv")}
+    assert len(remaining) == 3
+    # The three most recent turns survive; the oldest were pruned.
+    assert remaining == {"t3", "t4", "t5"}
+
+
+@pytest.mark.asyncio
+@pytest.mark.no_db
+async def test_running_turns_not_pruned() -> None:
+    """A still-running turn is never pruned even past the cap."""
+    hub = ConversationStreamHub(max_retained_turns=2)
+    # One long-running turn that never ends.
+    await hub.start_turn("conv", turn_id="running", user_id="u1", started_at=_now())
+    for i in range(5):
+        await hub.start_turn(
+            "conv", turn_id=f"done{i}", user_id="u1", started_at=_now()
+        )
+        await hub.end_turn("conv", turn_id=f"done{i}", status="complete")
+
+    remaining = {t.turn_id for t in hub.active_turns("conv")}
+    assert "running" in remaining
+
+
+@pytest.mark.asyncio
+@pytest.mark.no_db
+async def test_idle_conversations_evicted_beyond_cap() -> None:
+    """The hub bounds the number of retained conversations, evicting idle ones
+    (no subscribers, no running turn) oldest-first so it can't grow without
+    bound when many distinct conversation_ids are touched."""
+    hub = ConversationStreamHub(max_conversations=3)
+    for i in range(6):
+        await hub.start_turn(f"conv{i}", turn_id="t", user_id="u1", started_at=_now())
+        await hub.end_turn(f"conv{i}", turn_id="t", status="complete")
+
+    # Only the most recent few conversations survive.
+    surviving = [f"conv{i}" for i in range(6) if hub.buffer_size(f"conv{i}") > 0]
+    assert len(surviving) <= 3
+    assert "conv5" in surviving
+
+
+@pytest.mark.asyncio
+@pytest.mark.no_db
+async def test_conversation_with_subscriber_not_evicted() -> None:
+    """A conversation with a live subscriber is never evicted even past the
+    cap, so an active watcher's buffer survives."""
+    hub = ConversationStreamHub(max_conversations=2)
+    # Keep a live subscriber on conv_keep.
+    handle = await hub.subscribe("conv_keep", from_seq=0)
+    await hub.publish("conv_keep", "text", turn_id="t", payload={"content": "x"})
+
+    for i in range(5):
+        await hub.start_turn(f"other{i}", turn_id="t", user_id="u1", started_at=_now())
+        await hub.end_turn(f"other{i}", turn_id="t", status="complete")
+
+    assert hub.subscriber_count("conv_keep") == 1
+    assert hub.buffer_size("conv_keep") > 0
+    hub.unsubscribe("conv_keep", handle.queue)
+
+
+@pytest.mark.asyncio
+@pytest.mark.no_db
+async def test_publish_to_turn_updates_latest_seq() -> None:
+    """Each publish under a turn updates that turn's latest_seq so the hub's
+    active_turns surface reflects the current progression."""
+    hub = ConversationStreamHub()
+    turn = await hub.start_turn("conv", turn_id="t1", user_id="u1", started_at=_now())
+    assert turn.latest_seq == 0
+
+    await hub.publish("conv", "text", turn_id="t1", payload={"content": "a"})
+    assert turn.latest_seq == 1
+
+    await hub.publish("conv", "text", turn_id="t1", payload={"content": "b"})
+    assert turn.latest_seq == 2

@@ -22,6 +22,7 @@ from family_assistant.services.attachment_registry import (
 )
 from family_assistant.storage.base import attachment_metadata_table
 from family_assistant.storage.context import get_db_context
+from tests.functional.web.conftest import run_chat_turn_stream
 
 
 @pytest.fixture
@@ -142,30 +143,28 @@ class TestUserAttachmentProcessing:
             ],
         }
 
-        async with api_test_client.stream(
-            "POST", "/api/v1/chat/send_message_stream", json=payload
-        ) as response:
-            assert response.status_code == 200
-            assert response.headers["content-type"].startswith("text/event-stream")
+        response = await run_chat_turn_stream(api_test_client, payload)
+        assert response.status_code == 200
+        assert response.headers["content-type"].startswith("text/event-stream")
 
-            # Collect all SSE events
-            events = []
-            async for line in response.aiter_lines():
-                if line.startswith("data: "):
-                    try:
-                        data = json.loads(line[6:])  # Remove "data: " prefix
-                        events.append(data)
-                    except json.JSONDecodeError:
-                        continue
+        # Collect all SSE events
+        events = []
+        for line in response.text.split("\n"):
+            if line.startswith("data: "):
+                try:
+                    data = json.loads(line[6:])  # Remove "data: " prefix
+                    events.append(data)
+                except json.JSONDecodeError:
+                    continue
 
-            # Should have attachment events
-            attachment_events = [e for e in events if e.get("type") == "attachment"]
-            assert len(attachment_events) >= 1
+        # Should have attachment events
+        attachment_events = [e for e in events if e.get("type") == "attachment"]
+        assert len(attachment_events) >= 1
 
-            # Check first attachment event
-            first_attachment = attachment_events[0]
-            assert "attachment_id" in first_attachment
-            assert "url" in first_attachment
+        # Check first attachment event
+        first_attachment = attachment_events[0]
+        assert "attachment_id" in first_attachment
+        assert "url" in first_attachment
 
     @pytest.mark.asyncio
     async def test_multiple_attachments(

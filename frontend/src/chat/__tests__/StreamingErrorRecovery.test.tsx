@@ -79,7 +79,7 @@ describe.sequential('Streaming Error Recovery', () => {
     async () => {
       // Simulate: text content → error → more text content → done
       server.use(
-        http.post('/api/v1/chat/send_message_stream', () => {
+        http.get('/api/v1/chat/conversations/:conversationId/stream', () => {
           return createSSEStream([
             { content: 'Starting response... ' },
             { error: 'Tool execution failed: timeout' },
@@ -117,7 +117,7 @@ describe.sequential('Streaming Error Recovery', () => {
     async () => {
       // Simulate: error only → done (no text content, no tool calls)
       server.use(
-        http.post('/api/v1/chat/send_message_stream', () => {
+        http.get('/api/v1/chat/conversations/:conversationId/stream', () => {
           return createSSEStream([{ error: 'Failed to process request' }, { done: true }]);
         })
       );
@@ -145,7 +145,7 @@ describe.sequential('Streaming Error Recovery', () => {
     async () => {
       // Simulate: tool call → error → done (with text content to finalize)
       server.use(
-        http.post('/api/v1/chat/send_message_stream', () => {
+        http.get('/api/v1/chat/conversations/:conversationId/stream', () => {
           return createSSEStream([
             {
               content: 'Let me look that up.',
@@ -198,7 +198,7 @@ describe.sequential('Streaming Error Recovery', () => {
       let callCount = 0;
 
       server.use(
-        http.post('/api/v1/chat/send_message_stream', () => {
+        http.get('/api/v1/chat/conversations/:conversationId/stream', () => {
           callCount++;
 
           if (callCount === 1) {
@@ -314,9 +314,8 @@ describe.sequential('Streaming Error Recovery', () => {
             ],
           });
         }),
-        http.post('/api/v1/chat/send_message_stream', async ({ request }) => {
-          const body = (await request.json()) as { conversation_id: string };
-          expect(body.conversation_id).toBe('web_conv_activate_tools_race');
+        http.get('/api/v1/chat/conversations/:conversationId/stream', ({ params }) => {
+          expect(String(params.conversationId)).toBe('web_conv_activate_tools_race');
 
           const encoder = new TextEncoder();
           const stream = new ReadableStream({

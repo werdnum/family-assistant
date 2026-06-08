@@ -46,7 +46,8 @@ screens instead of loading the browser chat in a web view. Native Chat keeps par
 chat behavior rather than matching every pixel:
 
 - Shared browser/iOS history through `interface_type=web` and `web_conv_<UUID>` conversation IDs
-- Streaming assistant replies from `POST /api/v1/chat/send_message_stream`
+- Streaming assistant replies via the resumable-streaming flow: `POST /api/v1/chat/turns` to start a
+  turn, then `GET /api/v1/chat/conversations/{id}/stream` to consume its SSE events
 - Searchable conversation list and persisted last conversation
 - Profile picker with profile selection persisted locally
 - New conversation on profile switch
@@ -64,8 +65,8 @@ The native chat client calls these existing authenticated endpoints:
 GET /api/v1/chat/conversations?interface_type=web
 GET /api/v1/chat/conversations/{conversation_id}/messages
 GET /api/v1/profiles
-POST /api/v1/chat/send_message_stream
-GET /api/v1/chat/events?conversation_id=<id>&interface_type=web
+POST /api/v1/chat/turns
+GET /api/v1/chat/conversations/{conversation_id}/stream?from_seq=<n>&follow=<bool>
 GET /api/v1/chat/confirmations/pending
 POST /api/v1/chat/confirm_tool
 POST /api/attachments/upload

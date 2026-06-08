@@ -1259,3 +1259,34 @@ async def api_test_client(app_fixture: FastAPI) -> AsyncGenerator[AsyncClient]:
     transport = ASGITransport(app=app_fixture)
     async with AsyncClient(transport=transport, base_url="http://testserver") as client:
         yield client
+
+
+async def run_chat_turn_stream(
+    client: AsyncClient,
+    payload: dict,
+) -> httpx.Response:
+    """Run a chat turn through the resumable-streaming API and return the SSE
+    response.
+
+    Bridges the old single-call ``POST /v1/chat/send_message_stream`` test
+    pattern onto the new two-step flow:
+
+    1. ``POST /v1/chat/turns`` (kicks off the turn; client supplies turn_id)
+    2. ``GET /v1/chat/conversations/{id}/stream?from_seq=0`` (collects events)
+
+    The returned object is the GET stream's ``httpx.Response`` so callers can
+    keep inspecting ``.status_code``, ``.content``/``.text`` and parse the SSE
+    body exactly as before. The stream uses ``follow=false`` so it terminates
+    once the turn completes. If the POST itself errors (e.g. attachment
+    validation), that error response is returned instead.
+    """
+    body = dict(payload)
+    body.setdefault("turn_id", str(uuid.uuid4()))
+    post = await client.post("/api/v1/chat/turns", json=body)
+    if post.status_code != 200:
+        return post
+    conversation_id = post.json()["conversation_id"]
+    return await client.get(
+        f"/api/v1/chat/conversations/{conversation_id}/stream",
+        params={"from_seq": 0},
+    )

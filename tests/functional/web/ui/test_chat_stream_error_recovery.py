@@ -86,7 +86,7 @@ async def test_refresh_recovers_after_activate_tools_stream_error(
     chat_page = ChatPage(page, web_test_fixture.base_url)
 
     async with page.expect_response(
-        lambda response: "/api/v1/chat/events" in response.url and response.ok,
+        lambda response: "/stream" in response.url and response.ok,
         timeout=30000,
     ):
         await chat_page.navigate_to_chat()

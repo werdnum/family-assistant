@@ -36,6 +36,9 @@ private final class UITestBackendURLProtocol: URLProtocol {
     private static let lock = NSLock()
     private static var notes: [String: UITestNote] = [:]
     private static var chatMessages: [String: [UITestChatMessage]] = [:]
+    // Reply text captured at POST /turns time so the follow-up GET stream can
+    // replay it (mirrors the production two-step resumable-streaming flow).
+    private static var pendingChatReplies: [String: String] = [:]
 
     static func reset() {
         lock.withLock {
@@ -83,6 +86,7 @@ private final class UITestBackendURLProtocol: URLProtocol {
                     ),
                 ],
             ]
+            pendingChatReplies = [:]
         }
     }
 
@@ -152,25 +156,16 @@ private final class UITestBackendURLProtocol: URLProtocol {
             ))
         case ("GET", "/api/v1/chat/confirmations/pending"):
             return .json(#"{"confirmations":[]}"#)
-        case ("GET", "/api/v1/chat/events"):
-            return .json(
-                """
-                event: connected
-                data: {}
-
-                event: heartbeat
-                data: {}
-
-                """,
-                headers: ["Content-Type": "text/event-stream"]
-            )
-        case ("POST", "/api/v1/chat/send_message_stream"):
-            return streamChatResponse(from: request)
+        case ("POST", "/api/v1/chat/turns"):
+            return startChatTurn(from: request)
         case ("GET", "/api/notes"), ("GET", "/api/notes/"):
             return encode(lock.withLock { notes.values.sorted { $0.title < $1.title } })
         case ("POST", "/api/notes"), ("POST", "/api/notes/"):
             return saveNote(from: request)
         default:
+            if request.httpMethod == "GET", let conversationID = streamConversationID(from: request) {
+                return chatStreamResponse(conversationID: conversationID)
+            }
             if request.httpMethod == "GET", let conversationID = conversationID(from: request) {
                 let messages = lock.withLock { chatMessages[conversationID] ?? [] }
                 return encode(UITestConversationMessagesResponse(
@@ -198,7 +193,7 @@ private final class UITestBackendURLProtocol: URLProtocol {
         }
     }
 
-    private static func streamChatResponse(from request: URLRequest) -> UITestResponse {
+    private static func startChatTurn(from request: URLRequest) -> UITestResponse {
         do {
             let body = try JSONDecoder().decode(UITestChatStreamRequest.self, from: request.bodyData)
             let conversationID = body.conversationID
@@ -242,27 +237,54 @@ private final class UITestBackendURLProtocol: URLProtocol {
                     ]
                 ))
                 chatMessages[conversationID] = messages
+                pendingChatReplies[conversationID] = reply
             }
-            return .json(
-                """
-                event: text
-                data: {"content":"\(reply)"}
-
-                event: tool_call
-                data: {"tool_call":{"id":"call-ui-test","type":"function","function":{"name":"search_notes","arguments":"{\\"query\\":\\"shopping\\"}"}}}
-
-                event: tool_result
-                data: {"tool_call_id":"call-ui-test","result":"Found shopping note"}
-
-                event: end
-                data: {}
-
-                """,
-                headers: ["Content-Type": "text/event-stream"]
-            )
+            return encode(UITestChatTurnResponse(
+                turnID: body.turnID,
+                conversationID: conversationID,
+                firstSeq: 0
+            ))
         } catch {
             return .json(#"{"detail":"Invalid chat payload."}"#, statusCode: 400)
         }
+    }
+
+    private static func chatStreamResponse(conversationID: String) -> UITestResponse {
+        let reply = lock.withLock { pendingChatReplies[conversationID] } ?? "Native reply"
+        let escapedReply = reply.replacingOccurrences(of: "\"", with: "\\\"")
+        return .json(
+            """
+            event: turn_started
+            data: {"turn_id":"mock-turn","seq":0}
+
+            event: text
+            data: {"content":"\(escapedReply)"}
+
+            event: tool_call
+            data: {"tool_call":{"id":"call-ui-test","type":"function","function":{"name":"search_notes","arguments":"{\\"query\\":\\"shopping\\"}"}}}
+
+            event: tool_result
+            data: {"tool_call_id":"call-ui-test","result":"Found shopping note"}
+
+            event: turn_ended
+            data: {"turn_id":"mock-turn","status":"complete"}
+
+            """,
+            headers: ["Content-Type": "text/event-stream"]
+        )
+    }
+
+    private static func streamConversationID(from request: URLRequest) -> String? {
+        guard let url = request.url,
+              let path = URLComponents(url: url, resolvingAgainstBaseURL: false)?.percentEncodedPath,
+              path.hasPrefix("/api/v1/chat/conversations/"),
+              path.hasSuffix("/stream")
+        else {
+            return nil
+        }
+        let withoutPrefix = String(path.dropFirst("/api/v1/chat/conversations/".count))
+        let encodedID = String(withoutPrefix.dropLast("/stream".count))
+        return encodedID.removingPercentEncoding
     }
 
     private static func saveNote(from request: URLRequest) -> UITestResponse {
@@ -465,12 +487,26 @@ private struct UITestAttachment: Codable {
 }
 
 private struct UITestChatStreamRequest: Decodable {
+    let turnID: String
     let prompt: String
     let conversationID: String
 
     enum CodingKeys: String, CodingKey {
+        case turnID = "turn_id"
         case prompt
         case conversationID = "conversation_id"
+    }
+}
+
+private struct UITestChatTurnResponse: Encodable {
+    let turnID: String
+    let conversationID: String
+    let firstSeq: Int
+
+    enum CodingKeys: String, CodingKey {
+        case turnID = "turn_id"
+        case conversationID = "conversation_id"
+        case firstSeq = "first_seq"
     }
 }
 

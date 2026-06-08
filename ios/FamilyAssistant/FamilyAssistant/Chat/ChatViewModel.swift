@@ -246,10 +246,12 @@ final class ChatViewModel {
         isStreaming = true
         persistConversationID()
 
+        let turnID = UUID().uuidString
         streamTask = Task { [weak self] in
             guard let self else { return }
             do {
                 let stream = try await apiClient.streamMessage(
+                    turnID: turnID,
                     prompt: prompt,
                     conversationID: id,
                     profileID: selectedProfileID,
@@ -260,7 +262,7 @@ final class ChatViewModel {
                         break
                     }
                     apply(streamEvent: event, assistantMessageID: assistantMessageID)
-                    if event.type == .end || event.type == .close {
+                    if event.type == .turnEnded || event.type == .end || event.type == .close {
                         break
                     }
                 }
@@ -444,12 +446,16 @@ final class ChatViewModel {
             guard let self else { return }
             do {
                 let stream = try await apiClient.connectEvents(conversationID: conversationID)
+                liveUpdatesConnected = true
                 for try await event in stream {
                     if Task.isCancelled {
                         break
                     }
                     switch event.type {
-                    case .message:
+                    case .turnEnded, .message:
+                        // A turn finished (possibly started on another device);
+                        // refresh persisted history unless this device is the
+                        // one actively streaming the turn.
                         if !isStreaming {
                             await loadMessages(conversationID: conversationID)
                             await refreshConversations()
@@ -523,10 +529,10 @@ final class ChatViewModel {
             }
         case .error:
             appendStreamError(event.errorMessage ?? "An error occurred.", assistantMessageID: assistantMessageID)
-        case .end, .close:
+        case .turnEnded, .end, .close:
             messages[index].isLoading = false
             messages[index].status = .complete
-        case .connected, .message, .heartbeat:
+        case .turnStarted, .connected, .message, .heartbeat, .streamDropped:
             break
         }
     }

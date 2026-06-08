@@ -365,12 +365,17 @@ curl -X POST http://devcontainer-backend-1:8000/api/v1/chat/send_message \
   -d '{"prompt": "Hello, can you tell me what 2+2 equals?"}'
 ```
 
-**Streaming chat:**
+**Streaming chat (resumable, two-step):**
 
 ```bash
-curl -X POST http://devcontainer-backend-1:8000/api/v1/chat/send_message_stream \
+# 1. Kick off a turn (client supplies a UUID turn_id; idempotent on retry).
+curl -X POST http://devcontainer-backend-1:8000/api/v1/chat/turns \
   -H "Content-Type: application/json" \
-  -d '{"prompt": "What is 5+7? Please calculate it for me."}'
+  -d '{"turn_id": "'"$(uuidgen)"'", "conversation_id": "demo", "prompt": "What is 5+7?"}'
+
+# 2. Subscribe to the conversation event stream (replays from from_seq, then
+#    tails live; follow=false closes once the turn ends).
+curl -N "http://devcontainer-backend-1:8000/api/v1/chat/conversations/demo/stream?from_seq=0"
 ```
 
 **Debug Logging:** To see detailed LLM request/response debugging, set the `DEBUG_LLM_MESSAGES=true`

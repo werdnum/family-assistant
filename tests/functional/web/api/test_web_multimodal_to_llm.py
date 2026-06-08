@@ -52,6 +52,7 @@ from family_assistant.tools import (
 )
 from family_assistant.web.app_creator import app as actual_app
 from family_assistant.web.web_chat_interface import WebChatInterface
+from tests.functional.web.conftest import run_chat_turn_stream
 from tests.mocks.mock_llm import MatcherArgs, RuleBasedMockLLMClient
 
 if TYPE_CHECKING:
@@ -371,9 +372,9 @@ class TestWebImageUpload:
 
         image_url = create_test_image_base64()
 
-        response = await test_client.post(
-            "/api/v1/chat/send_message_stream",
-            json={
+        response = await run_chat_turn_stream(
+            test_client,
+            {
                 "prompt": "What do you see in this image?",
                 "attachments": [
                     {"type": "image", "content": image_url, "name": "test_image.png"}
@@ -408,9 +409,9 @@ class TestWebVideoUpload:
 
         video_url = create_test_video_base64()
 
-        response = await test_client.post(
-            "/api/v1/chat/send_message_stream",
-            json={
+        response = await run_chat_turn_stream(
+            test_client,
+            {
                 "prompt": "What's happening in this video?",
                 "attachments": [
                     {"type": "video", "content": video_url, "name": "test_video.mp4"}
@@ -446,9 +447,9 @@ class TestWebAudioUpload:
 
         audio_url = create_test_audio_base64()
 
-        response = await test_client.post(
-            "/api/v1/chat/send_message_stream",
-            json={
+        response = await run_chat_turn_stream(
+            test_client,
+            {
                 "prompt": "What song is playing?",
                 "attachments": [
                     {"type": "audio", "content": audio_url, "name": "song.mp3"}
@@ -484,9 +485,9 @@ class TestWebDocumentUpload:
 
         pdf_url = create_test_pdf_base64()
 
-        response = await test_client.post(
-            "/api/v1/chat/send_message_stream",
-            json={
+        response = await run_chat_turn_stream(
+            test_client,
+            {
                 "prompt": "Summarize this document",
                 "attachments": [
                     {"type": "document", "content": pdf_url, "name": "report.pdf"}

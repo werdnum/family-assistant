@@ -25,11 +25,14 @@ enum ChatStreamEventType: String, Equatable {
     case toolConfirmationRequest
     case toolConfirmationResult
     case error
+    case turnStarted
+    case turnEnded
     case end
     case close
     case connected
     case message
     case heartbeat
+    case streamDropped
 }
 
 struct ChatConfirmationResult: Equatable {
@@ -243,6 +246,12 @@ final class SSEParser {
             "toolConfirmationRequest"
         case "tool_confirmation_result":
             "toolConfirmationResult"
+        case "turn_started":
+            "turnStarted"
+        case "turn_ended":
+            "turnEnded"
+        case "stream_dropped":
+            "streamDropped"
         default:
             value
         }

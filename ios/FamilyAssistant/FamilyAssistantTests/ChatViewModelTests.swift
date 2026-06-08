@@ -148,17 +148,24 @@ final class ChatViewModelTests: XCTestCase {
     func testSendDraftStreamsAssistantTextAndReloadsPersistedMessages() async throws {
         ChatMockBackendURLProtocol.respond { request in
             switch (request.httpMethod ?? "GET", request.url?.path ?? "") {
-            case ("POST", "/api/v1/chat/send_message_stream"):
+            case ("POST", "/api/v1/chat/turns"):
                 let payload = try XCTUnwrap(Self.jsonObject(from: request) as? [String: Any])
                 XCTAssertEqual(payload["interface_type"] as? String, "web")
                 XCTAssertEqual(payload["conversation_id"] as? String, "web_conv_send")
+                return .json(
+                    #"{"turn_id":"turn-send","conversation_id":"web_conv_send","first_seq":0}"#
+                )
+            case ("GET", "/api/v1/chat/conversations/web_conv_send/stream"):
                 return .text(
                     """
+                    event: turn_started
+                    data: {"turn_id":"turn-send","seq":0}
+
                     event: text
                     data: {"content":"Streamed"}
 
-                    event: end
-                    data: {}
+                    event: turn_ended
+                    data: {"turn_id":"turn-send","status":"complete"}
 
                     """
                 )
@@ -200,20 +207,28 @@ final class ChatViewModelTests: XCTestCase {
         ChatMockBackendURLProtocol.respond { request in
             let path = request.url?.path ?? ""
             switch (request.httpMethod ?? "GET", path) {
-            case ("POST", "/api/v1/chat/send_message_stream"):
+            case ("POST", "/api/v1/chat/turns"):
                 let payload = try XCTUnwrap(Self.jsonObject(from: request) as? [String: Any])
                 sentPrompts.append(try XCTUnwrap(payload["prompt"] as? String))
-                conversationIDs.append(try XCTUnwrap(payload["conversation_id"] as? String))
-                return .text(
+                let conversationID = try XCTUnwrap(payload["conversation_id"] as? String)
+                conversationIDs.append(conversationID)
+                return .json(
                     """
-                    event: end
-                    data: {}
-
+                    {"turn_id":"turn-route","conversation_id":"\(conversationID)","first_seq":0}
                     """
                 )
             case ("GET", "/api/v1/chat/conversations"):
                 return .json(#"{"conversations":[],"count":0}"#)
             default:
+                if request.httpMethod == "GET", path.hasSuffix("/stream") {
+                    return .text(
+                        """
+                        event: turn_ended
+                        data: {"turn_id":"turn-route","status":"complete"}
+
+                        """
+                    )
+                }
                 if request.httpMethod == "GET", path.hasSuffix("/messages") {
                     return .json(
                         """

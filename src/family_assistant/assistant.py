@@ -126,7 +126,6 @@ from family_assistant.tools.worker import reconcile_stale_tasks
 from family_assistant.utils.logging_handler import setup_error_logging
 from family_assistant.utils.scraping import PlaywrightScraper
 from family_assistant.web.app_creator import configure_app_auth, create_app
-from family_assistant.web.message_notifier import MessageNotifier
 
 from .telegram.service import TelegramService
 
@@ -445,11 +444,6 @@ class Assistant:
         user_identity_resolver = UserIdentityResolver(self.config)
         self.fastapi_app.state.user_identity_resolver = user_identity_resolver
         logger.info("Stored configuration in FastAPI app state.")
-
-        # Create MessageNotifier for live message updates
-        message_notifier = MessageNotifier()
-        self.fastapi_app.state.message_notifier = message_notifier
-        logger.info("MessageNotifier created and stored in FastAPI app state")
 
         # Store shutdown event for SSE and other async endpoints
         self.fastapi_app.state.shutdown_event = self.shutdown_event

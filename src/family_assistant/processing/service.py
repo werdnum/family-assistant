@@ -653,6 +653,7 @@ class ProcessingService:
         trigger_attachments: list[MessageAttachmentMetadata] | None = None,
         subconversation_id: str | None = None,
         mid_turn_input_provider: MidTurnInputProvider | None = None,
+        turn_id: str | None = None,
     ) -> ChatInteractionResult:
         """
         Handles a complete chat interaction from user input to final response.
@@ -688,7 +689,8 @@ class ProcessingService:
             - attachment_ids: Response attachment IDs (list[str] | None)
         """
 
-        turn_id = str(uuid.uuid4())
+        if turn_id is None:
+            turn_id = str(uuid.uuid4())
         logger.info(
             f"Starting handle_chat_interaction for conversation {conversation_id}, turn {turn_id}"
         )
@@ -829,6 +831,7 @@ class ProcessingService:
         trigger_attachments: list[MessageAttachmentMetadata] | None = None,
         subconversation_id: str | None = None,
         mid_turn_input_provider: MidTurnInputProvider | None = None,
+        turn_id: str | None = None,
     ) -> AsyncIterator[LLMStreamEvent]:
         """
         Streaming version of handle_chat_interaction.
@@ -842,7 +845,8 @@ class ProcessingService:
         Yields:
             LLMStreamEvent objects representing different stages of processing
         """
-        turn_id = str(uuid.uuid4())
+        if turn_id is None:
+            turn_id = str(uuid.uuid4())
         span = tracer.start_span(
             "conversation.process",
             attributes={

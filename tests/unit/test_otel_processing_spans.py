@@ -449,7 +449,6 @@ class TestConversationProcessSpan:
         mock_db_context.engine = MagicMock()
         mock_db_context.engine.dialect = MagicMock()
         mock_db_context.engine.dialect.name = "sqlite"
-        mock_db_context.message_notifier = None
         mock_db_context.message_history = AsyncMock()
         mock_db_context.message_history.get_recent = AsyncMock(return_value=[])
         mock_db_context.message_history.add_message = AsyncMock(return_value=1)
@@ -489,7 +488,6 @@ class TestConversationProcessSpan:
         mock_db_context.engine = MagicMock()
         mock_db_context.engine.dialect = MagicMock()
         mock_db_context.engine.dialect.name = "sqlite"
-        mock_db_context.message_notifier = None
         mock_db_context.message_history = AsyncMock()
         mock_db_context.message_history.get_recent = AsyncMock(return_value=[])
         mock_db_context.message_history.add_message = AsyncMock(return_value=1)
