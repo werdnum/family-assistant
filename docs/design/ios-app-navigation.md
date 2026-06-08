@@ -188,6 +188,22 @@ Notes on resolution:
 - Selecting a tab via `resolve` sets that tab's path *and* `selectedTab`; it does not disturb the
   other tabs' stacks, preserving the "independent state per tab" goal.
 
+### In-tab web navigation belongs to the web view
+
+A web-backed tab is a browser: in-page navigation (real link clicks *and* React Router
+`history.pushState`) is owned by the WKWebView itself, with the back/forward swipe gesture and
+pull-to-refresh providing back/reload. The native stack is **not** a mirror of the web view's
+history — it is only for switching tabs and for deep-link landing.
+
+This matters because the link-interception bridge usually runs *after* the SPA has already
+navigated the current web view (`pushState` fires first). Pushing a native `WebRoute` in that case
+would stack a second web view over a now-mutated root, so native Back would reveal the wrong page.
+So `followWebLink(_:from:relativeTo:)` leaves same-tab destinations to the web view (returns
+`false`, letting `WebViewContainer` proceed) and only switches tabs for cross-tab links (returns
+`true` after `navigate`). Deep links still push a single landing entry via `navigate` (a freshly
+loaded web view, not a `pushState` mutation), so `/documents/123` opens over the list root with a
+working Back.
+
 ## More tab destination map
 
 The More list is generated from the canonical web nav in
@@ -237,8 +253,9 @@ Each milestone is independently testable and leaves the app in a shippable state
   auth, pull-to-refresh, same-origin link interception, navigation title). Internal-link taps push
   a `WebRoute` onto the *current tab's* stack instead of calling the old global router.
 - Documents tab root = `WebDestinationView(/documents/)`.
-- **Done when**: Documents renders its web page, in-page links push within the tab, system back
-  works, no bottom toolbar. (`WebDestinationView` is then reused by every More web row in M3.)
+- **Done when**: Documents renders its web page, in-page links navigate within the tab's web view
+  (back/forward swipe + pull-to-refresh), and cross-tab links switch tabs; no bottom toolbar.
+  (`WebDestinationView` is then reused by every More web row in M3.)
 
 ### M3 — More tab (native list + Settings)
 

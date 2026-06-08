@@ -124,34 +124,24 @@ final class AppRouter {
         return true
     }
 
-    /// A link tapped inside a web view currently shown in `currentTab`. When the
-    /// destination belongs to the same tab it is pushed onto that tab's stack;
-    /// otherwise it switches tabs via `navigate`. Returns `false` for
-    /// foreign-origin URLs so the caller can open them externally.
+    /// A link tap (or in-page SPA navigation) inside a web view shown in
+    /// `currentTab`.
+    ///
+    /// A web-backed tab is a browser: it owns its in-tab navigation via the
+    /// WKWebView back/forward swipe gesture and pull-to-refresh. Mirroring the
+    /// web view's own history into a native stack double-pushes — the web view
+    /// has usually already navigated (React Router calls `history.pushState`
+    /// before this runs), so a native push would leave a duplicate view over a
+    /// mutated root. So same-tab destinations are left to the web view
+    /// (`false`), and only cross-tab destinations switch tabs via `navigate`.
+    /// Foreign-origin URLs also return `false` so the caller can open them
+    /// externally.
     @discardableResult
     func followWebLink(_ url: URL, from currentTab: AppTab, relativeTo baseURL: URL) -> Bool {
-        guard let tab = Self.owningTab(for: url, relativeTo: baseURL) else {
+        guard let tab = Self.owningTab(for: url, relativeTo: baseURL), tab != currentTab else {
             return false
         }
-
-        guard tab == currentTab else {
-            return navigate(to: url, relativeTo: baseURL)
-        }
-
-        switch tab {
-        case .documents:
-            if Self.isDocumentsRoot(url) {
-                // A link back to the Documents list pops to the tab root.
-                documentsPath = []
-            } else {
-                documentsPath.append(WebRoute(path: url.pathAndQuery))
-            }
-        case .more:
-            morePath.append(.web(WebRoute(path: url.pathAndQuery)))
-        case .chat, .notes:
-            break
-        }
-        return true
+        return navigate(to: url, relativeTo: baseURL)
     }
 
     func reset() {

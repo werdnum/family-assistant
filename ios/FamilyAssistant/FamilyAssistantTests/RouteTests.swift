@@ -133,29 +133,23 @@ final class RouteTests: XCTestCase {
 
     // MARK: - followWebLink (in-page link taps)
 
-    func testFollowWebLinkPushesWithinSameDocumentsTab() throws {
+    func testFollowWebLinkWithinSameDocumentsTabIsLeftToWebView() throws {
+        // Same-tab navigation is handled by the web view itself (no native
+        // push), so the call returns false and the documents stack is untouched.
         let router = AppRouter()
         router.selectedTab = .documents
-        XCTAssertTrue(router.followWebLink(try url("/documents/42"), from: .documents, relativeTo: baseURL))
+        router.documentsPath = [WebRoute(path: "/documents/1")]
+        XCTAssertFalse(router.followWebLink(try url("/documents/42"), from: .documents, relativeTo: baseURL))
         XCTAssertEqual(router.selectedTab, .documents)
-        XCTAssertEqual(router.documentsPath, [WebRoute(path: "/documents/42")])
+        XCTAssertEqual(router.documentsPath, [WebRoute(path: "/documents/1")])
     }
 
-    func testFollowWebLinkToDocumentsRootPopsToTabRoot() throws {
-        let router = AppRouter()
-        router.selectedTab = .documents
-        router.documentsPath = [WebRoute(path: "/documents/123")]
-        XCTAssertTrue(router.followWebLink(try url("/documents/"), from: .documents, relativeTo: baseURL))
-        XCTAssertEqual(router.selectedTab, .documents)
-        XCTAssertEqual(router.documentsPath, [])
-    }
-
-    func testFollowWebLinkAppendsWithinMoreTab() throws {
+    func testFollowWebLinkWithinSameMoreTabIsLeftToWebView() throws {
         let router = AppRouter()
         router.selectedTab = .more
         router.morePath = [.web(WebRoute(path: "/events"))]
-        XCTAssertTrue(router.followWebLink(try url("/automations"), from: .more, relativeTo: baseURL))
-        XCTAssertEqual(router.morePath, [.web(WebRoute(path: "/events")), .web(WebRoute(path: "/automations"))])
+        XCTAssertFalse(router.followWebLink(try url("/automations"), from: .more, relativeTo: baseURL))
+        XCTAssertEqual(router.morePath, [.web(WebRoute(path: "/events"))])
     }
 
     func testFollowWebLinkCrossesTabsWhenDestinationBelongsElsewhere() throws {
