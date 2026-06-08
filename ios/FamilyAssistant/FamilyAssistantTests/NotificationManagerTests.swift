@@ -179,8 +179,10 @@ final class NotificationManagerTests: XCTestCase {
 
     func testApproveActionSubmitsApprovalToConfirmEndpoint() async throws {
         seedStoredAuth()
+        // NotificationManager holds authManager weakly, so keep a strong reference for the test.
+        let authManager = makeAuthManager()
         let manager = NotificationManager()
-        manager.bind(authManager: makeAuthManager())
+        manager.bind(authManager: authManager)
 
         let requestCompleted = expectation(description: "confirm_tool POST")
         NotificationBackendURLProtocol.respond { request in
@@ -208,8 +210,10 @@ final class NotificationManagerTests: XCTestCase {
 
     func testDenyActionSubmitsRejectionToConfirmEndpoint() async throws {
         seedStoredAuth()
+        // NotificationManager holds authManager weakly, so keep a strong reference for the test.
+        let authManager = makeAuthManager()
         let manager = NotificationManager()
-        manager.bind(authManager: makeAuthManager())
+        manager.bind(authManager: authManager)
 
         let requestCompleted = expectation(description: "confirm_tool POST")
         NotificationBackendURLProtocol.respond { request in
