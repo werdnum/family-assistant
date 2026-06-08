@@ -20,6 +20,13 @@ final class ChatViewModel {
     var errorMessage: String?
     var mobileShowsConversationList = false
 
+    var canSendDraft: Bool {
+        let prompt = draftText.trimmingCharacters(in: .whitespacesAndNewlines)
+        let hasContent = !prompt.isEmpty || !draftAttachments.isEmpty
+        let attachmentsReady = draftAttachments.allSatisfy { $0.uploadState == .uploaded }
+        return hasContent && attachmentsReady
+    }
+
     @ObservationIgnored private let apiClient: ChatAPIClient
     @ObservationIgnored private var streamTask: Task<Void, Never>?
     @ObservationIgnored private var liveEventsTask: Task<Void, Never>?
@@ -160,6 +167,14 @@ final class ChatViewModel {
     func sendDraft() async {
         let prompt = draftText.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !prompt.isEmpty || !draftAttachments.isEmpty else {
+            return
+        }
+        guard draftAttachments.allSatisfy({ $0.uploadState != .uploading }) else {
+            errorMessage = "Wait for attachments to finish uploading before sending."
+            return
+        }
+        guard draftAttachments.allSatisfy({ $0.uploadState == .uploaded }) else {
+            errorMessage = "Remove failed attachments before sending."
             return
         }
         guard let id = conversationID else {

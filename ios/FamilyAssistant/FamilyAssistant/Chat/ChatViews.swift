@@ -321,7 +321,7 @@ private struct ChatComposerView: View {
                         .frame(width: 36, height: 36)
                 }
                 .buttonStyle(.borderedProminent)
-                .disabled(!viewModel.isStreaming && viewModel.draftText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && viewModel.draftAttachments.isEmpty)
+                .disabled(!viewModel.isStreaming && !viewModel.canSendDraft)
                 .accessibilityIdentifier(viewModel.isStreaming ? "chat-stop-button" : "chat-send-button")
             }
         }

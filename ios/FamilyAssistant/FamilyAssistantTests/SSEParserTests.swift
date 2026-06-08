@@ -71,6 +71,16 @@ final class SSEParserTests: XCTestCase {
         XCTAssertTrue(decoded.errorMessage?.contains("Malformed stream event") == true)
     }
 
+    func testMessageEventWithContentStaysMessageForLiveUpdates() {
+        let parser = SSEParser()
+        let event = ServerSentEvent(event: "message", data: #"{"content":"new message"}"#)
+
+        let decoded = parser.decode(event)
+
+        XCTAssertEqual(decoded.type, .message)
+        XCTAssertNil(decoded.text)
+    }
+
     func testCloseConnectedHeartbeatEventsDecodeWithoutPayload() {
         let parser = SSEParser()
 

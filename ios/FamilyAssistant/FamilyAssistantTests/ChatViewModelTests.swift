@@ -202,10 +202,57 @@ final class ChatViewModelTests: XCTestCase {
         XCTAssertTrue(model.draftAttachments.isEmpty)
     }
 
+    func testUploadingAttachmentBlocksSendAndPreservesDraft() async {
+        let model = makeViewModel(conversationID: "web_conv_uploading")
+        model.draftText = "Send later"
+        model.draftAttachments = [
+            makeAttachment(uploadState: .uploading),
+        ]
+
+        await model.sendDraft()
+
+        XCTAssertFalse(model.canSendDraft)
+        XCTAssertEqual(model.draftText, "Send later")
+        XCTAssertEqual(model.draftAttachments.first?.uploadState, .uploading)
+        XCTAssertTrue(model.messages.isEmpty)
+        XCTAssertEqual(model.errorMessage, "Wait for attachments to finish uploading before sending.")
+    }
+
+    func testFailedAttachmentBlocksSendAndPreservesDraft() async {
+        let model = makeViewModel(conversationID: "web_conv_failed")
+        model.draftText = "Fix attachment"
+        model.draftAttachments = [
+            makeAttachment(uploadState: .failed),
+        ]
+
+        await model.sendDraft()
+
+        XCTAssertFalse(model.canSendDraft)
+        XCTAssertEqual(model.draftText, "Fix attachment")
+        XCTAssertEqual(model.draftAttachments.first?.uploadState, .failed)
+        XCTAssertTrue(model.messages.isEmpty)
+        XCTAssertEqual(model.errorMessage, "Remove failed attachments before sending.")
+    }
+
     private func makeViewModel(conversationID: String?) -> ChatViewModel {
         let authManager = AuthManager()
         authManager.serverURL = serverURL
         return ChatViewModel(authManager: authManager, conversationID: conversationID, initialPrompt: nil)
+    }
+
+    private func makeAttachment(uploadState: ChatAttachmentUploadState) -> ChatAttachment {
+        ChatAttachment(
+            id: "attachment-\(uploadState.rawValue)",
+            attachmentID: uploadState == .uploaded ? "uploaded-id" : nil,
+            type: .document,
+            name: "draft.txt",
+            contentURL: uploadState == .uploaded ? "/api/attachments/uploaded-id" : nil,
+            mimeType: "text/plain",
+            size: 5,
+            localFileURL: nil,
+            uploadState: uploadState,
+            errorMessage: uploadState == .failed ? "Upload failed" : nil
+        )
     }
 
     private func resetStoredAuth() {

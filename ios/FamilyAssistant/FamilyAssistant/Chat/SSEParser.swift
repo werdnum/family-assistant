@@ -97,7 +97,7 @@ final class SSEParser {
             )
         }
 
-        if case .string(let content) = payload["content"] {
+        if eventType == .text, case .string(let content) = payload["content"] {
             return baseEvent(type: .text, text: content)
         }
 
