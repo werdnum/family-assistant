@@ -36,6 +36,16 @@ struct ContentView: View {
                         baseURL: baseURL
                     )
                 }
+                .sheet(item: Binding(
+                    get: { notificationManager.pendingConfirmationModal },
+                    set: { if $0 == nil { notificationManager.clearPendingConfirmationModal() } }
+                )) { modal in
+                    ConfirmationModalView(
+                        request: modal,
+                        authManager: authManager,
+                        onFinished: { notificationManager.clearPendingConfirmationModal() }
+                    )
+                }
             }
         } else {
             SetupView()

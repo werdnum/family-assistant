@@ -262,6 +262,70 @@ struct ChatPendingConfirmationsResponse: Decodable {
     let confirmations: [ChatPendingConfirmation]
 }
 
+enum ChatConfirmationStatus: String, Decodable, Equatable {
+    case pending
+    case approved
+    case rejected
+    case expired
+    case unknown
+
+    init(from decoder: Decoder) throws {
+        let raw = try decoder.singleValueContainer().decode(String.self)
+        self = ChatConfirmationStatus(rawValue: raw) ?? .unknown
+    }
+
+    var isPending: Bool { self == .pending }
+}
+
+struct ChatConfirmationDetail: Decodable, Equatable {
+    let requestID: String
+    let toolName: String
+    let toolCallID: String?
+    let confirmationPrompt: String
+    let args: [String: JSONValue]
+    let status: ChatConfirmationStatus
+    let timeRemainingSeconds: Double
+
+    enum CodingKeys: String, CodingKey {
+        case requestID = "request_id"
+        case toolName = "tool_name"
+        case toolCallID = "tool_call_id"
+        case confirmationPrompt = "confirmation_prompt"
+        case args
+        case status
+        case timeRemainingSeconds = "time_remaining_seconds"
+    }
+
+    init(
+        requestID: String,
+        toolName: String,
+        toolCallID: String?,
+        confirmationPrompt: String,
+        args: [String: JSONValue],
+        status: ChatConfirmationStatus,
+        timeRemainingSeconds: Double
+    ) {
+        self.requestID = requestID
+        self.toolName = toolName
+        self.toolCallID = toolCallID
+        self.confirmationPrompt = confirmationPrompt
+        self.args = args
+        self.status = status
+        self.timeRemainingSeconds = timeRemainingSeconds
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        requestID = try container.decode(String.self, forKey: .requestID)
+        toolName = try container.decode(String.self, forKey: .toolName)
+        toolCallID = try container.decodeIfPresent(String.self, forKey: .toolCallID)
+        confirmationPrompt = try container.decode(String.self, forKey: .confirmationPrompt)
+        args = try container.decodeIfPresent([String: JSONValue].self, forKey: .args) ?? [:]
+        status = try container.decode(ChatConfirmationStatus.self, forKey: .status)
+        timeRemainingSeconds = try container.decodeIfPresent(Double.self, forKey: .timeRemainingSeconds) ?? 0
+    }
+}
+
 struct ChatConversationMessagesResponse: Decodable {
     let conversationID: String
     let messages: [ChatBackendMessage]

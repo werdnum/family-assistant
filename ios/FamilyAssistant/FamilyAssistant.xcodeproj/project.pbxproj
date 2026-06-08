@@ -31,6 +31,7 @@
 		A10030 /* RootTabView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10030 /* RootTabView.swift */; };
 		A10031 /* WebDestinationView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10031 /* WebDestinationView.swift */; };
 		A10032 /* MoreTabView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10032 /* MoreTabView.swift */; };
+		A10025 /* ConfirmationModalView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10027 /* ConfirmationModalView.swift */; };
 		A10024 /* Markdown in Frameworks */ = {isa = PBXBuildFile; productRef = H10002 /* Markdown */; };
 		A20001 /* RouteTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B20002 /* RouteTests.swift */; };
 		A20002 /* NotesModelTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B20003 /* NotesModelTests.swift */; };
@@ -42,6 +43,7 @@
 		A20008 /* ChatViewModelTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B20009 /* ChatViewModelTests.swift */; };
 		A20009 /* MarkdownRendererTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B20010 /* MarkdownRendererTests.swift */; };
 		A20010 /* ToolRenderingTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B20011 /* ToolRenderingTests.swift */; };
+		A20011 /* ConfirmationModalModelTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B20012 /* ConfirmationModalModelTests.swift */; };
 		A30001 /* FamilyAssistantUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B30002 /* FamilyAssistantUITests.swift */; };
 /* End PBXBuildFile section */
 
@@ -90,6 +92,7 @@
 		B10030 /* RootTabView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RootTabView.swift; sourceTree = "<group>"; };
 		B10031 /* WebDestinationView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WebDestinationView.swift; sourceTree = "<group>"; };
 		B10032 /* MoreTabView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MoreTabView.swift; sourceTree = "<group>"; };
+		B10027 /* ConfirmationModalView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ConfirmationModalView.swift; sourceTree = "<group>"; };
 		B20001 /* FamilyAssistantTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = FamilyAssistantTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		B20002 /* RouteTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RouteTests.swift; sourceTree = "<group>"; };
 		B20003 /* NotesModelTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NotesModelTests.swift; sourceTree = "<group>"; };
@@ -101,6 +104,7 @@
 		B20009 /* ChatViewModelTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatViewModelTests.swift; sourceTree = "<group>"; };
 		B20010 /* MarkdownRendererTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MarkdownRendererTests.swift; sourceTree = "<group>"; };
 		B20011 /* ToolRenderingTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ToolRenderingTests.swift; sourceTree = "<group>"; };
+		B20012 /* ConfirmationModalModelTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ConfirmationModalModelTests.swift; sourceTree = "<group>"; };
 		B30001 /* FamilyAssistantUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = FamilyAssistantUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		B30002 /* FamilyAssistantUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FamilyAssistantUITests.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
@@ -186,6 +190,7 @@
 			children = (
 				B10011 /* AppDelegate.swift */,
 				B10012 /* NotificationManager.swift */,
+				B10027 /* ConfirmationModalView.swift */,
 			);
 			path = Notifications;
 			sourceTree = "<group>";
@@ -245,6 +250,7 @@
 				B20009 /* ChatViewModelTests.swift */,
 				B20010 /* MarkdownRendererTests.swift */,
 				B20011 /* ToolRenderingTests.swift */,
+				B20012 /* ConfirmationModalModelTests.swift */,
 			);
 			path = FamilyAssistantTests;
 			sourceTree = "<group>";
@@ -415,6 +421,7 @@
 				A10021 /* SSEParser.swift in Sources */,
 				A10022 /* ChatViewModel.swift in Sources */,
 				A10023 /* ChatViews.swift in Sources */,
+				A10025 /* ConfirmationModalView.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -432,6 +439,7 @@
 				A20008 /* ChatViewModelTests.swift in Sources */,
 				A20009 /* MarkdownRendererTests.swift in Sources */,
 				A20010 /* ToolRenderingTests.swift in Sources */,
+				A20011 /* ConfirmationModalModelTests.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

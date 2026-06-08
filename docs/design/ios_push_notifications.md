@@ -77,6 +77,12 @@ Both require authentication (`get_current_user`), matching the existing Web Push
   `{ "token": str, "environment": "production"|"sandbox", "bundle_id": str | null }`. The payload
   key is `token`, matching the iOS client.
 - `DELETE /api/ios/push-tokens/{token}` — unregister a device token for the current user.
+- `GET /api/v1/chat/confirmations/{request_id}` — fetch a single durable confirmation owned by the
+  current user, including its current `status` (`pending`/`approved`/`rejected`/`expired`). Used by
+  the iOS confirmation modal (see below) so it can render the full prompt, arguments, and live
+  status when opened from a notification. Requests that do not exist or belong to another user
+  return `404` so existence is not leaked across users. This complements
+  `GET /api/v1/chat/confirmations/pending` (which only lists `pending` requests).
 
 ## Interactive notifications
 
@@ -93,6 +99,28 @@ Send points set:
   actions can resolve the request).
 - **Messages, task failures, worker completions** → `category=FAMILY_ASSISTANT_MESSAGE` +
   `conversation_id` (so a tap deep-links to the conversation).
+
+### iOS confirmation notification behaviour
+
+Confirmation notifications are **actionable** on iOS. The native app registers the
+`FAMILY_ASSISTANT_CONFIRMATION` category with two buttons:
+
+- **Approve / Reject buttons** (long-press or pull-down the notification) → the app submits the
+  decision directly to `POST /api/v1/chat/confirm_tool` (`approving_interface: "ios"`) without
+  opening any UI.
+- **Tapping the notification body** → the app opens an in-app **confirmation modal**
+  (`ConfirmationModalView`). The modal fetches the request via
+  `GET /api/v1/chat/confirmations/{request_id}` to show the tool name, prompt, arguments, and live
+  status, and offers Approve/Reject buttons backed by the same `confirm_tool` endpoint. A request
+  that already resolved or expired (on another device, via the action buttons, or by timeout) is
+  shown read-only with an explanatory status line. If the detail fetch fails, the modal falls back
+  to the notification's own title/body and still lets the user respond, letting the server
+  arbitrate.
+
+The `NotificationManager.handleNotificationAction(...)` seam routes the action identifier to either
+direct submission (approve/deny actions) or the modal (default tap on a confirmation). This split is
+exposed separately from `handleNotificationResponse(_:)` because `UNNotificationResponse` cannot be
+constructed in unit tests.
 
 ## Send points
 
@@ -130,4 +158,11 @@ owning user is resolved from the most recent user message in that conversation (
 - `APNsService`: an injected `httpx` client backed by `httpx.MockTransport` simulates APNs
   responses, allowing deterministic tests of success, `Unregistered` deletion, sandbox/production
   retry, and JWT refresh without contacting Apple.
-- Endpoints: functional tests through the FastAPI app, mirroring `test_push_api.py`.
+- Endpoints: functional tests through the FastAPI app, mirroring `test_push_api.py`. The single
+  confirmation `GET` endpoint is covered in `tests/functional/web/api/test_chat_confirmations.py`
+  (owner detail, status after resolution, `404` for unknown/other-user requests).
+- iOS client: `NotificationManagerTests` covers action routing (approve/deny submit to
+  `confirm_tool`, default tap presents the modal, message taps still deep-link), and
+  `ConfirmationModalModelTests` covers the modal's load/submit logic (detail fetch, read-only
+  resolved/expired states, offline fallback, and approve/reject submission) against a mocked
+  backend. These run in CI on macOS (`.github/workflows/ios-tests.yml`).
