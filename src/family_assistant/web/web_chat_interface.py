@@ -136,7 +136,10 @@ class WebChatInterface(ChatInterface):
                         conversation_id,
                         "message",
                         turn_id=None,
-                        payload={"new_messages": True},
+                        payload={
+                            "conversation_id": conversation_id,
+                            "new_messages": True,
+                        },
                     )
 
                 logger.info(

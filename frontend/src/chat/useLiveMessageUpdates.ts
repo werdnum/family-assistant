@@ -101,11 +101,15 @@ export function useLiveMessageUpdates({
       eventSource.addEventListener('open', notifyTurnEnded);
 
       eventSource.addEventListener('turn_ended', notifyTurnEnded);
-      // Backwards-compatible: some flows may still emit a `message` event.
+      // Out-of-band assistant messages (scheduled callbacks, task-worker flows)
+      // arrive as a `message` event. This EventSource is scoped to a single
+      // conversation, so force the bound conversationId regardless of the
+      // payload — ChatApp keys its reload on conversation_id and an out-of-band
+      // tickle may omit it.
       eventSource.addEventListener('message', (event) => {
         try {
           const update: LiveMessageUpdate = JSON.parse(event.data);
-          callbackRef.current?.(update);
+          callbackRef.current?.({ ...update, conversation_id: conversationId });
         } catch {
           notifyTurnEnded();
         }

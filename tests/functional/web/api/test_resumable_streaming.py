@@ -761,4 +761,7 @@ async def test_web_chat_interface_publishes_live_update_to_hub(
 
     event = await asyncio.wait_for(handle.queue.get(), timeout=2.0)
     assert event.type == "message"
+    # The payload must carry conversation_id so the web client can route the
+    # reload to the right open conversation.
+    assert event.payload["conversation_id"] == conversation_id
     hub.unsubscribe(conversation_id, handle.queue)
