@@ -413,6 +413,60 @@ async def test_running_turns_not_pruned() -> None:
 
 @pytest.mark.asyncio
 @pytest.mark.no_db
+async def test_completed_turn_with_live_task_not_pruned() -> None:
+    """A turn that has ended but whose producer task is still running (e.g.
+    inside its ack-grace / disconnect-push window) must not be pruned past the
+    cap: the TurnRecord holds the hub's only strong reference to that task, so
+    discarding it would let the task be garbage-collected mid-flight."""
+    hub = ConversationStreamHub(max_retained_turns=1)
+
+    blocker = asyncio.Event()
+
+    async def fake_producer() -> None:
+        await blocker.wait()
+
+    await hub.start_turn("conv", turn_id="lingering", user_id="u1", started_at=_now())
+    await hub.end_turn("conv", turn_id="lingering", status="complete")
+    task = asyncio.create_task(fake_producer())
+    hub.attach_producer_task("conv", "lingering", task)
+
+    # Blow well past the retention cap with fully-finished turns.
+    for i in range(3):
+        await hub.start_turn(
+            "conv", turn_id=f"done{i}", user_id="u1", started_at=_now()
+        )
+        await hub.end_turn("conv", turn_id=f"done{i}", status="complete")
+
+    remaining = {t.turn_id for t in hub.active_turns("conv")}
+    assert "lingering" in remaining
+    lingering = hub.get_turn("conv", "lingering")
+    assert lingering is not None
+    assert lingering.task is task
+
+    # Cleanup: let the task finish.
+    blocker.set()
+    await task
+
+
+@pytest.mark.asyncio
+@pytest.mark.no_db
+async def test_is_subscribed_tracks_drop_on_queue_overflow() -> None:
+    """``is_subscribed`` flips to False once the hub drops a subscriber whose
+    queue overflowed, so the SSE generator can emit ``stream_dropped`` and close
+    instead of heartbeating into a discarded subscription."""
+    hub = ConversationStreamHub(subscriber_queue_max=2)
+    handle = await hub.subscribe("conv", from_seq=0)
+    assert hub.is_subscribed("conv", handle.queue) is True
+
+    # Publish more than the queue can hold without anyone draining it.
+    for i in range(5):
+        await hub.publish("conv", "text", turn_id=None, payload={"content": str(i)})
+
+    assert hub.is_subscribed("conv", handle.queue) is False
+
+
+@pytest.mark.asyncio
+@pytest.mark.no_db
 async def test_idle_conversations_evicted_beyond_cap() -> None:
     """The hub bounds the number of retained conversations, evicting idle ones
     (no subscribers, no running turn) oldest-first so it can't grow without

@@ -1,5 +1,7 @@
 import { useCallback, useRef, useState } from 'react';
 
+import { conversationStreamUrl, redirectToLogin } from './conversationStream';
+
 /**
  * Hook for handling streaming responses from the chat API
  * @param {Object} options - Hook options
@@ -76,7 +78,7 @@ export const useStreamingResponse = ({
 
         if (!startResponse.ok) {
           if (startResponse.status === 401) {
-            window.location.href = `/login?next=${encodeURIComponent(window.location.pathname + window.location.search)}`;
+            redirectToLogin();
             return;
           }
           const errorData = await startResponse.json().catch(() => ({}));
@@ -89,9 +91,9 @@ export const useStreamingResponse = ({
 
         // Step 2: subscribe to the conversation event stream from the turn's
         // first seq. follow=false closes the stream once the turn completes.
-        const streamUrl =
-          `/api/v1/chat/conversations/${encodeURIComponent(resolvedConversationId)}/stream` +
-          `?from_seq=${encodeURIComponent(String(firstSeq ?? 0))}`;
+        const streamUrl = conversationStreamUrl(resolvedConversationId, {
+          fromSeq: firstSeq ?? 0,
+        });
 
         const response = await fetch(streamUrl, {
           method: 'GET',
@@ -103,7 +105,7 @@ export const useStreamingResponse = ({
 
         if (!response.ok) {
           if (response.status === 401) {
-            window.location.href = `/login?next=${encodeURIComponent(window.location.pathname + window.location.search)}`;
+            redirectToLogin();
             return;
           }
           if (response.status === 410) {
@@ -343,7 +345,6 @@ export const useStreamingResponse = ({
                   autoAttachments.push({
                     type: 'attachment',
                     attachment_id: payload.attachment_id,
-                    url: payload.url,
                     content_url: payload.content_url,
                     mime_type: payload.mime_type,
                     description: payload.description,
@@ -365,7 +366,7 @@ export const useStreamingResponse = ({
         }
       } catch (error) {
         if (error.name !== 'AbortError') {
-          onError(error.message || error.toString());
+          onError(error instanceof Error ? error : new Error(String(error)));
         }
       } finally {
         setIsStreaming(false);

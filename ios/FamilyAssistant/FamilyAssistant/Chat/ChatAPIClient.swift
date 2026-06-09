@@ -155,9 +155,7 @@ struct ChatAPIClient {
         fromSeq: Int,
         follow: Bool
     ) async throws -> AsyncThrowingStream<ChatStreamEvent, Error> {
-        let encodedConversation =
-            conversationID.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed)
-            ?? conversationID
+        let encodedConversation = Self.encodedPathComponent(conversationID)
         var components = URLComponents(
             url: try apiURL("/api/v1/chat/conversations/\(encodedConversation)/stream"),
             resolvingAgainstBaseURL: false

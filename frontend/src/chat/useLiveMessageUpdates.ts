@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 
+import { conversationStreamUrl } from './conversationStream';
+
 export interface LiveMessageUpdate {
   internal_id: string;
   timestamp: string;
@@ -65,19 +67,18 @@ export function useLiveMessageUpdates({
       // connection stays open across turns and surfaces turns started from
       // other devices/tabs. (The send-and-watch flow uses a separate
       // follow=false subscription via useStreamingResponse.)
-      const url = new URL(
-        `/api/v1/chat/conversations/${encodeURIComponent(conversationId)}/stream`,
-        window.location.origin
-      );
-      url.searchParams.set('follow', 'true');
-      // Tail from the current head (from_seq=-1): a follow-only listener wants
-      // future events, not a replay. Subscribing from 0 would 410 once the
-      // conversation's hub buffer has rotated, trapping EventSource in a
-      // permanent reconnect loop.
-      url.searchParams.set('from_seq', '-1');
+      // follow=true keeps the connection open across turns and surfaces turns
+      // started from other devices/tabs. Tail from the current head
+      // (from_seq=-1): a follow-only listener wants future events, not a replay
+      // — subscribing from 0 would 410 once the conversation's hub buffer has
+      // rotated, trapping EventSource in a permanent reconnect loop.
+      const url = conversationStreamUrl(conversationId, {
+        follow: true,
+        fromSeq: -1,
+      });
 
       // Create EventSource connection
-      const eventSource = new EventSource(url.toString());
+      const eventSource = new EventSource(url);
       eventSourceRef.current = eventSource;
 
       // A completed turn means new persisted messages are available. The hub

@@ -164,7 +164,7 @@ class TestUserAttachmentProcessing:
         # Check first attachment event
         first_attachment = attachment_events[0]
         assert "attachment_id" in first_attachment
-        assert "url" in first_attachment
+        assert "content_url" in first_attachment
 
     @pytest.mark.asyncio
     async def test_multiple_attachments(

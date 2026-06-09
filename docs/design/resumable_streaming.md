@@ -25,6 +25,22 @@ streamed the response over the same connection) is replaced by two endpoints:
   `{turn_id, conversation_id, first_seq}`. **Idempotent**: a retried POST with the same `turn_id`
   returns the existing turn instead of starting a second producer — so a network-timed-out send is
   safe to retry.
+
+  Idempotency is enforced at two layers, because the hub is in-memory and a restart wipes its turn
+  registry:
+
+  1. **In-memory fast path** — `hub.get_turn` recognizes a turn that is still live (or recently
+     completed and not yet pruned). `start_turn` additionally reserves the `turn_id` under a
+     per-conversation lock, so two near-simultaneous POSTs can't both spawn a producer.
+  2. **Durable fallback** — before starting a producer the endpoint consults the database
+     (`get_user_row_by_turn_id`). The persisted user message is the durable record that "this turn
+     was already started", so a `turn_id` retried after a backend restart (or after the completed
+     turn was pruned from the hub) returns the existing identity instead of persisting a second user
+     message and re-driving the LLM. The lookup is scoped to the caller and conversation (404 on
+     mismatch) so it can't echo back a foreign turn. Note `message_history.turn_id` is intentionally
+     **not** unique — a turn owns several rows (user message, assistant reply, tool messages) — so
+     this is an application-level check, not a DB constraint.
+
 - `GET /api/v1/chat/conversations/{conversation_id}/stream?from_seq=<n>&ack_seq=<n>&follow=<bool>` —
   subscribes to the conversation's event stream. Replays buffered events from `from_seq`, then tails
   live events. This is the **only** SSE endpoint; the original sender and any later reconnect use
@@ -108,8 +124,10 @@ per-conversation `seq`) is already shaped to allow that without a client-visible
   web/iOS UIs do not yet render a dedicated placeholder/affordance from it. (Milestone 1.)
 - No live token-by-token resume wired through the clients on background→foreground (the plumbing
   exists; the iOS/web UX that re-attaches with a stored cursor is Milestone 2.)
-- No multi-subscriber backpressure hardening / `stream_dropped` client handling beyond the event
-  existing in the protocol. (Milestone 2.)
+- No multi-subscriber backpressure hardening. The server now emits `stream_dropped` when it drops a
+  subscriber whose queue overflowed (the SSE generator notices the dropped subscription on its next
+  heartbeat tick and closes), but the clients don't yet react to it with a reconnect-then-history
+  fallback. (Milestone 2.)
 
 ## Key files
 

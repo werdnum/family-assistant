@@ -556,6 +556,117 @@ async def test_post_turn_is_idempotent_on_turn_id_retry(
     assert user_rows[0].get("turn_id") == turn_id
 
 
+async def test_post_turn_idempotent_across_hub_restart(
+    test_client: AsyncClient,
+    app_fixture: FastAPI,
+    mock_llm_client: RuleBasedMockLLMClient,
+    db_engine: AsyncEngine,
+) -> None:
+    """A turn_id retried after a backend restart must not duplicate the turn.
+
+    The hub is in-memory, so a restart wipes its turn registry. The DB is the
+    durable record: the endpoint consults ``get_user_row_by_turn_id`` and
+    short-circuits to the existing identity instead of persisting a second user
+    message and starting a second producer.
+    """
+    user_prompt = "Restart idempotency check"
+    _add_simple_llm_rule(mock_llm_client, prompt_marker=user_prompt, reply="ok")
+
+    turn_id = str(uuid.uuid4())
+    conversation_id = f"conv_restart_{uuid.uuid4().hex[:8]}"
+    body = {
+        "turn_id": turn_id,
+        "conversation_id": conversation_id,
+        "prompt": user_prompt,
+        "interface_type": "web",
+    }
+
+    first = await test_client.post("/api/v1/chat/turns", json=body)
+    assert first.status_code == 200, first.text
+
+    # Let the first producer finish and persist the user message.
+    await asyncio.wait_for(
+        collect_sse_stream(
+            test_client,
+            f"/api/v1/chat/conversations/{conversation_id}/stream",
+            params={"from_seq": 0},
+        ),
+        timeout=10.0,
+    )
+
+    # Simulate a backend restart: the durable DB row survives, the in-memory
+    # hub does not.
+    fresh_hub = ConversationStreamHub()
+    app_fixture.state.conversation_stream_hub = fresh_hub
+
+    second = await test_client.post("/api/v1/chat/turns", json=body)
+    assert second.status_code == 200, second.text
+    assert second.json() == {
+        "turn_id": turn_id,
+        "conversation_id": conversation_id,
+        "first_seq": 0,
+    }
+
+    # No producer was started on the fresh hub, and no duplicate row was
+    # persisted.
+    assert fresh_hub.get_active_producer_tasks(conversation_id) == []
+    assert fresh_hub.get_turn(conversation_id, turn_id) is None
+
+    async with get_db_context(engine=db_engine) as ctx:
+        rows = await ctx.message_history.get_recent_with_metadata(
+            interface_type="web",
+            conversation_id=conversation_id,
+            limit=20,
+        )
+    user_rows = [r for r in rows if r["role"] == "user"]
+    assert len(user_rows) == 1, (
+        f"Expected exactly one user message across the restart, got "
+        f"{len(user_rows)}: {[r.get('content') for r in user_rows]}"
+    )
+
+
+async def test_post_turn_rejects_turn_id_from_another_conversation(
+    test_client: AsyncClient,
+    db_engine: AsyncEngine,
+) -> None:
+    """The durable idempotency short-circuit must be scoped to the conversation.
+
+    A turn_id that already exists in a DIFFERENT conversation must not be echoed
+    back as this conversation's identity — the endpoint 404s instead of leaking
+    the foreign turn. (turn_ids are UUIDs so this shouldn't happen in practice;
+    this guards the defense-in-depth check.)
+    """
+    turn_id = str(uuid.uuid4())
+    other_conversation = f"conv_a_{uuid.uuid4().hex[:8]}"
+    target_conversation = f"conv_b_{uuid.uuid4().hex[:8]}"
+
+    # The caller (test_user) already used this turn_id in another conversation.
+    async with get_db_context(engine=db_engine) as ctx:
+        await ctx.message_history.add_message(
+            message=UserMessage(content="original turn"),
+            interface_type="web",
+            conversation_id=other_conversation,
+            interface_message_id=f"temp_{turn_id}",
+            turn_id=turn_id,
+            thread_root_id=None,
+            timestamp=datetime.now(UTC),
+            user_id="test_user",
+        )
+
+    # Reusing it in a brand-new conversation passes the (allow_new) ownership
+    # gate but must be rejected by the conversation-scoped idempotency check.
+    response = await test_client.post(
+        "/api/v1/chat/turns",
+        json={
+            "turn_id": turn_id,
+            "conversation_id": target_conversation,
+            "prompt": "reuse across conversations",
+            "interface_type": "web",
+        },
+    )
+    assert response.status_code == 404, response.text
+
+
 async def test_410_during_active_turn_includes_active_turn_metadata(
     app_fixture: FastAPI,
     test_client: AsyncClient,

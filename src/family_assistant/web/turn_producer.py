@@ -309,7 +309,6 @@ async def run_turn_producer(
                         payload={
                             "type": "attachment",
                             "attachment_id": attachment.get("attachment_id"),
-                            "url": attachment.get("content_url"),
                             "content_url": attachment.get("content_url"),
                             "mime_type": attachment.get("mime_type"),
                             "description": attachment.get("description"),
@@ -506,7 +505,6 @@ async def _publish_llm_event(
                     payload={
                         "type": "attachment",
                         "attachment_id": attachment_id,
-                        "url": attachment_info.content_url,
                         "content_url": attachment_info.content_url,
                         "mime_type": attachment_info.mime_type,
                         "description": attachment_info.description,

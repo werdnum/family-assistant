@@ -131,6 +131,16 @@ class WebChatInterface(ChatInterface):
                 # web/iOS live-update hooks refetch conversation history on it.
                 # This is an in-memory publish: a failure here is a programming
                 # error, so let it propagate (fail fast) rather than swallow it.
+                #
+                # NOTE: this hub tickle replaces the old MessageNotifier on_commit
+                # hook, which fired for EVERY message_history write. The hub is
+                # only nudged here, on WebChatInterface saves. Messages written by
+                # other interfaces (Telegram, email intake) land in their own
+                # conversations, which the web UI doesn't surface and whose
+                # multi-owner streams the auth layer 404s — so no live-update is
+                # owed there. If a future surface lets the web UI watch a
+                # conversation that receives writes from a non-web path, that path
+                # must publish its own hub tickle.
                 if self.stream_hub is not None:
                     await self.stream_hub.publish(
                         conversation_id,

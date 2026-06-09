@@ -83,7 +83,6 @@ class TurnRecord:
     """Bookkeeping for a single turn produced through the hub."""
 
     turn_id: str
-    conversation_id: str
     user_id: str
     started_at: datetime
     first_seq: int
@@ -235,12 +234,24 @@ class ConversationStreamHub:
 
     def _prune_completed_turns(self, state: _ConversationState) -> None:
         """Drop the oldest completed/failed turns once the per-conversation cap
-        is exceeded. Running turns are never pruned. Caller holds ``state.lock``.
+        is exceeded. Caller holds ``state.lock``.
+
+        A turn is only prunable once it is both not ``running`` AND its producer
+        task has finished. Pruning drops the TurnRecord, which holds the hub's
+        only strong reference to the producer task (see ``attach_producer_task``)
+        — discarding a record whose task is still live (e.g. a just-completed
+        turn inside its ack-grace / disconnect-push window) would let that task
+        be garbage-collected mid-flight. This mirrors the ``has_live_turn`` guard
+        in ``_evict_idle_conversations``.
         """
         if len(state.turns) <= self._max_retained_turns:
             return
         prunable = sorted(
-            (t for t in state.turns.values() if t.status != "running"),
+            (
+                t
+                for t in state.turns.values()
+                if t.status != "running" and (t.task is None or t.task.done())
+            ),
             key=lambda t: t.first_seq,
         )
         excess = len(state.turns) - self._max_retained_turns
@@ -371,7 +382,6 @@ class ConversationStreamHub:
             state.next_seq += 1
             turn = TurnRecord(
                 turn_id=turn_id,
-                conversation_id=conversation_id,
                 user_id=user_id,
                 started_at=started_at,
                 first_seq=seq,
@@ -589,6 +599,21 @@ class ConversationStreamHub:
         if state is None:
             return
         state.subscribers.pop(queue, None)
+
+    def is_subscribed(
+        self, conversation_id: str, queue: asyncio.Queue[StreamEvent]
+    ) -> bool:
+        """Return True if ``queue`` is still a registered subscriber.
+
+        ``_fan_out`` drops a subscriber whose queue is full (a broken/too-slow
+        client). The SSE generator polls this so it can surface the documented
+        ``stream_dropped`` event and close, rather than emitting heartbeats into
+        a subscription the hub has already discarded. Synchronous + lock-free to
+        match ``unsubscribe`` (safe to call from a generator)."""
+        state = self._get_state(conversation_id)
+        if state is None:
+            return False
+        return queue in state.subscribers
 
     async def ack(
         self,

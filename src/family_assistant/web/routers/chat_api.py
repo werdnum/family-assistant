@@ -652,6 +652,29 @@ async def api_chat_create_turn(
             first_seq=existing.first_seq,
         )
 
+    # Durable idempotency: the hub is in-memory, so a turn_id retried after a
+    # backend restart (or after the completed turn was pruned from the hub) is
+    # invisible to the fast-path above. Without this the producer would persist
+    # a SECOND user message under the same turn_id and re-drive the LLM. Consult
+    # the database — the user message is the durable record of "this turn was
+    # already started" — and return the existing identity instead of starting a
+    # duplicate producer.
+    async with get_db_context(request.app.state.database_engine) as idem_db:
+        existing_user_row = await idem_db.message_history.get_user_row_by_turn_id(
+            payload.turn_id
+        )
+    if existing_user_row is not None:
+        if (
+            existing_user_row.get("conversation_id") != conversation_id
+            or existing_user_row.get("user_id") != user_id
+        ):
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND)
+        return ChatTurnResponse(
+            turn_id=payload.turn_id,
+            conversation_id=conversation_id,
+            first_seq=0,
+        )
+
     # Resolve processing service profile.
     selected_processing_service: ProcessingService = default_processing_service
     if payload.profile_id:
@@ -829,6 +852,15 @@ async def api_chat_conversation_stream(
                 try:
                     event = await asyncio.wait_for(handle.queue.get(), timeout=30.0)
                 except TimeoutError:
+                    # If the hub dropped this subscriber (its queue overflowed),
+                    # tell the client to reconnect instead of silently heart-
+                    # beating into a discarded subscription.
+                    if not hub.is_subscribed(conversation_id, handle.queue):
+                        yield (
+                            "event: stream_dropped\n"
+                            'data: {"reason": "queue_overflow"}\n\n'
+                        )
+                        return
                     yield "event: heartbeat\ndata: {}\n\n"
                     if not follow and not _has_running_turn():
                         return
