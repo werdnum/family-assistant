@@ -95,10 +95,10 @@ private struct ConversationListView: View {
     }
 
     var body: some View {
-        List(selection: Binding(get: { viewModel.conversationID }, set: { value in
-            guard let value else { return }
-            Task { await viewModel.selectConversation(value) }
-        })) {
+        List(selection: Binding(
+            get: { viewModel.conversationSelection },
+            set: { viewModel.updateSelection($0) }
+        )) {
             if filteredConversations.isEmpty && !viewModel.isLoadingConversations {
                 ContentUnavailableView("No Chats", systemImage: "message", description: Text("Start a new chat."))
             } else {

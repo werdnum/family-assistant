@@ -35,6 +35,87 @@ final class ChatViewModelTests: XCTestCase {
         XCTAssertTrue(model.messages.isEmpty)
     }
 
+    func testBackNavigationClearsSelectionButKeepsActiveConversation() async throws {
+        ChatMockBackendURLProtocol.respond { request in
+            let path = request.url?.path ?? ""
+            if request.httpMethod == "GET", path.hasSuffix("/messages") {
+                return .json(
+                    """
+                    {
+                      "conversation_id":"web_conv_back",
+                      "messages":[],
+                      "count":0,
+                      "total_messages":0,
+                      "has_more_before":false,
+                      "has_more_after":false
+                    }
+                    """
+                )
+            }
+            if request.httpMethod == "GET", path == "/api/v1/chat/conversations" {
+                return .json(#"{"conversations":[],"count":0}"#)
+            }
+            return .json(#"{"detail":"unexpected"}"#, statusCode: 404)
+        }
+
+        let model = makeViewModel(conversationID: nil)
+
+        // Open a conversation from the sidebar list.
+        model.updateSelection("web_conv_back")
+        try await waitUntil { model.conversationID == "web_conv_back" }
+        XCTAssertEqual(model.conversationSelection, "web_conv_back")
+
+        // NavigationSplitView writes nil when the user taps Back in compact width.
+        model.updateSelection(nil)
+        XCTAssertNil(model.conversationSelection)
+        // The active conversation is preserved so the detail stays populated.
+        XCTAssertEqual(model.conversationID, "web_conv_back")
+
+        // Re-selecting the same conversation must take effect again. Before the
+        // fix the selection was stuck on this id, so the tap was a no-op.
+        model.updateSelection("web_conv_back")
+        XCTAssertEqual(model.conversationSelection, "web_conv_back")
+        try await waitUntil { model.conversationID == "web_conv_back" }
+    }
+
+    func testRouteToActiveConversationAfterBackRestoresSelection() async throws {
+        ChatMockBackendURLProtocol.respond { request in
+            let path = request.url?.path ?? ""
+            if request.httpMethod == "GET", path.hasSuffix("/messages") {
+                return .json(
+                    """
+                    {
+                      "conversation_id":"web_conv_route_back",
+                      "messages":[],
+                      "count":0,
+                      "total_messages":0,
+                      "has_more_before":false,
+                      "has_more_after":false
+                    }
+                    """
+                )
+            }
+            if request.httpMethod == "GET", path == "/api/v1/chat/conversations" {
+                return .json(#"{"conversations":[],"count":0}"#)
+            }
+            return .json(#"{"detail":"unexpected"}"#, statusCode: 404)
+        }
+
+        let model = makeViewModel(conversationID: "web_conv_route_back")
+        await model.selectConversation("web_conv_route_back")
+
+        // User navigates back to the list, clearing the selection.
+        model.updateSelection(nil)
+        XCTAssertNil(model.conversationSelection)
+
+        // A deep link/notification routes to the still-active conversation. The
+        // selection must be restored so the thread reopens.
+        await model.applyRoute(conversationID: "web_conv_route_back", initialPrompt: nil)
+
+        XCTAssertEqual(model.conversationSelection, "web_conv_route_back")
+        XCTAssertEqual(model.conversationID, "web_conv_route_back")
+    }
+
     func testProfileSwitchPersistsSelectionAndCreatesNewConversation() {
         let model = makeViewModel(conversationID: "web_conv_existing")
         model.profiles = [

@@ -81,6 +81,46 @@ final class FamilyAssistantUITests: XCTestCase {
         attachScreenshot(named: "native-chat-history")
     }
 
+    func testReopenConversationAfterBackNavigation() {
+        // Start a fresh chat so the seeded conversation is listed in the sidebar
+        // but not auto-opened: the bug only manifests when a row is opened by a
+        // tap (driving the list selection) rather than via a deep link.
+        relaunch(initialPath: "/chat")
+
+        let row = app.descendants(matching: .any).matching(identifier: "conversation-row-web_conv_seed").firstMatch
+        showConversationList(row: row)
+
+        // Open the seeded conversation by tapping its row.
+        row.tap()
+        XCTAssertTrue(app.staticTexts["Milk and apples."].waitForExistence(timeout: 20))
+
+        // Navigate back to the conversation list (compact width).
+        let backButton = app.navigationBars.buttons["Chats"]
+        XCTAssertTrue(backButton.waitForExistence(timeout: 8))
+        backButton.tap()
+
+        // Re-open the same conversation. Before the fix the row stayed selected
+        // after returning, so the selection value never changed and this tap was
+        // a no-op: the thread would never load.
+        XCTAssertTrue(row.waitForExistence(timeout: 8))
+        row.tap()
+        XCTAssertTrue(app.staticTexts["Milk and apples."].waitForExistence(timeout: 20))
+        attachScreenshot(named: "native-chat-reopen-after-back")
+    }
+
+    /// Ensures the conversation list is visible. In compact width the fresh chat
+    /// detail can be pushed on launch, so pop back to the sidebar if needed.
+    private func showConversationList(row: XCUIElement) {
+        if row.waitForExistence(timeout: 4) {
+            return
+        }
+        let backButton = app.navigationBars.buttons["Chats"]
+        if backButton.waitForExistence(timeout: 4) {
+            backButton.tap()
+        }
+        XCTAssertTrue(row.waitForExistence(timeout: 8))
+    }
+
     func testNativeChatSendsAndStreamsResponse() {
         relaunch(initialPath: "/chat?conversation_id=web_conv_seed")
 
