@@ -72,6 +72,9 @@ def get_unique_test_chat_id() -> int:
     return int(str(uuid.uuid4().int)[:8])
 
 
+# Flaky under xdist on SQLite: the llm_callback task can stall in `processing`
+# (task-worker / SQLite write contention) and time out. See issue #889.
+@pytest.mark.flaky(reruns=3, reruns_delay=2)
 @pytest.mark.asyncio
 async def test_schedule_and_execute_callback(
     db_engine: AsyncEngine,
