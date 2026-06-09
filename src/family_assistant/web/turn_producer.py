@@ -317,6 +317,12 @@ async def run_turn_producer(
                         },
                     )
 
+            # Track the most recent reasoning_info (token/model usage) emitted
+            # on a per-turn `done` event so it can be attached to turn_ended,
+            # matching what the old streaming endpoint put on its final event.
+            # ast-grep-ignore: no-dict-any - holds the provider's reasoning_info blob (token counts, model id, optional vendor fields) passed through verbatim to turn_ended
+            last_reasoning_info: dict[str, Any] | None = None
+
             async for event in processing_service.handle_chat_interaction_stream(
                 db_context=stream_db_context,
                 interface_type=interface_type,
@@ -333,7 +339,7 @@ async def run_turn_producer(
                 trigger_attachments=trigger_attachments,
                 turn_id=turn_id,
             ):
-                await _publish_llm_event(
+                reasoning_info = await _publish_llm_event(
                     hub=hub,
                     conversation_id=conversation_id,
                     turn_id=turn_id,
@@ -343,6 +349,8 @@ async def run_turn_producer(
                     db_context=stream_db_context,
                     attachment_registry=attachment_registry,
                 )
+                if reasoning_info is not None:
+                    last_reasoning_info = reasoning_info
 
             trailing = latex_normalizer.flush()
             if trailing:
@@ -353,7 +361,12 @@ async def run_turn_producer(
                     payload={"content": trailing},
                 )
 
-            await hub.end_turn(conversation_id, turn_id=turn_id, status="complete")
+            await hub.end_turn(
+                conversation_id,
+                turn_id=turn_id,
+                status="complete",
+                reasoning_info=last_reasoning_info,
+            )
 
             delivered = await hub.wait_for_delivery(
                 conversation_id, turn_id, timeout=ack_grace_seconds
@@ -401,11 +414,16 @@ async def _publish_llm_event(
     final_reply_parts: list[str],
     db_context: DatabaseContext,
     attachment_registry: "AttachmentRegistry | None",
-) -> None:
+    # ast-grep-ignore: no-dict-any - returns the provider's reasoning_info blob (token counts, model id, optional vendor fields) verbatim for the turn_ended payload
+) -> dict[str, Any] | None:
     """Translate a single LLMStreamEvent into hub publishes.
 
     LaTeX normalization runs producer-side so every subscriber sees identical
     bytes regardless of when they joined.
+
+    Returns the ``reasoning_info`` carried on a ``done`` event (token/model
+    usage), if any, so the caller can attach it to ``turn_ended``; ``None`` for
+    every other event type.
     """
     if event.type == "content":
         if event.content:
@@ -495,6 +513,12 @@ async def _publish_llm_event(
                         "size": attachment_info.size,
                     },
                 )
+        if event.metadata:
+            reasoning_info = event.metadata.get("reasoning_info")
+            # MessageReasoningInfo is a TypedDict; widen to a plain dict so the
+            # hub stays decoupled from the LLM message types and the payload
+            # serializes cleanly on the wire.
+            return dict(reasoning_info) if reasoning_info is not None else None
     elif event.type == "error":
         # ast-grep-ignore: no-dict-any - error event payload carries free-form error string plus optional error_id from provider; structured typing belongs to a future error-codes design, not the hub
         error_payload: dict[str, Any] = {"error": event.error or "An error occurred"}

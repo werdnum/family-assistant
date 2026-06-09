@@ -394,10 +394,12 @@ async def test_post_turn_then_subscribe_replays_in_progress_turn(
     text_chunks = [e["data"]["content"] for e in events if e["type"] == "text"]
     assert "".join(text_chunks) == llm_response
 
-    # turn_ended carries the same turn_id and a complete status.
+    # turn_ended carries the same turn_id, a complete status, and the LLM's
+    # reasoning_info (token/model usage) the mock attached to its response.
     turn_ended = next(e for e in events if e["type"] == "turn_ended")
     assert turn_ended["data"]["turn_id"] == turn_id
     assert turn_ended["data"]["status"] == "complete"
+    assert turn_ended["data"]["reasoning_info"]["total_tokens"] == 20
 
 
 async def test_post_turn_rejects_conversation_owned_by_another_user(
