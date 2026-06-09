@@ -89,8 +89,17 @@ final class ChatViewModel {
             await sendDraft()
             return
         }
-        if let conversationID, conversationID != self.conversationID {
+        guard let conversationID else {
+            return
+        }
+        if conversationID != self.conversationID {
             await selectConversation(conversationID, shouldLoadMessages: true)
+        } else if conversationSelection != conversationID {
+            // The active conversation is still loaded, but the user navigated
+            // back to the list so the selection was cleared. Restore it so a
+            // deep link to the same thread reopens it instead of leaving the
+            // user stranded on the conversation list.
+            conversationSelection = conversationID
         }
     }
 
