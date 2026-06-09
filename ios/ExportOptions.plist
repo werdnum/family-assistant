@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <!-- Distribution method for App Store Connect / TestFlight. -->
+    <key>method</key>
+    <string>app-store-connect</string>
+
+    <!-- Hand the .ipa straight to App Store Connect during -exportArchive,
+         so there is no separate altool/Transporter upload step. -->
+    <key>destination</key>
+    <string>upload</string>
+
+    <!-- Automatic signing; the team's distribution cert + provisioning
+         profile are created/refreshed via -allowProvisioningUpdates. -->
+    <key>signingStyle</key>
+    <string>automatic</string>
+    <key>teamID</key>
+    <string>H7NBC2S52X</string>
+
+    <!-- Let App Store Connect manage the build's version/bundle symbols. -->
+    <key>manageAppVersionAndBuildNumber</key>
+    <false/>
+    <key>uploadSymbols</key>
+    <true/>
+    <key>generateAppStoreInformation</key>
+    <false/>
+</dict>
+</plist>
