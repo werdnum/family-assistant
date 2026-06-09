@@ -69,6 +69,24 @@ LaTeX normalization now runs in the producer (`turn_producer.py`) before events 
 every subscriber — original or resumed — sees identical normalized text. The hub buffers typed
 events, not pre-serialized SSE bytes, so the wire format can evolve without invalidating buffers.
 
+### Authorization: conversations are single-user on the hub
+
+On the web/iOS surface a conversation is owned by exactly one user: each client mints its own
+client-side UUID `conversation_id`, and `_ensure_user_owns_conversation` is the **sole**
+authorization boundary (404, not 403, on mismatch). Because of that, the hub does **no**
+per-subscriber filtering: every registered subscriber is entitled to every event. The check enforces
+that invariant:
+
+- Create/read endpoints (`POST /turns`, `POST /send_message`, `GET /messages`) require the caller be
+  *an* owner, or the conversation to be brand-new.
+- Subscribe/ack endpoints (`GET /stream`, `POST /ack`) require the caller be the **sole** owner of a
+  non-empty conversation. A genuinely multi-author conversation (e.g. a Telegram group `chat_id`,
+  which `get_conversation_owner_ids` legitimately returns several owners for) is refused — the
+  unfiltered hub would otherwise leak co-owners' turns to each other.
+- An empty (brand-new) conversation is allowed to subscribe: the always-on live-update stream
+  attaches to the user's own new conversation before any message is sent. `conversation_id`s are
+  unguessable UUIDs, so this is not a meaningful way to wait on someone else's future conversation.
+
 ## Deployment constraints (load-bearing)
 
 This is a **single-process** FastAPI deployment serving 1–2 users. The hub is **in-memory only**:

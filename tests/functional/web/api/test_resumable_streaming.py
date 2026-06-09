@@ -445,6 +445,54 @@ async def test_post_turn_rejects_conversation_owned_by_another_user(
     assert rows[0]["user_id"] == "someone_else"
 
 
+async def test_stream_on_empty_conversation_is_allowed(
+    test_client: AsyncClient,
+) -> None:
+    """Subscribing (GET /stream) to a brand-new empty conversation is allowed:
+    the always-on live-update stream attaches to the user's own freshly-created
+    conversation before any message is sent, so it must not 404. With no running
+    turn, a follow=false stream simply closes immediately (200)."""
+    conversation_id = f"conv_empty_{uuid.uuid4().hex[:8]}"
+    response = await test_client.get(
+        f"/api/v1/chat/conversations/{conversation_id}/stream",
+        params={"from_seq": 0},
+    )
+    assert response.status_code == 200, response.text
+
+
+async def test_stream_on_multi_owner_conversation_returns_404(
+    test_client: AsyncClient,
+    db_engine: AsyncEngine,
+) -> None:
+    """The hub fans out every event to every subscriber, so a stream is only
+    allowed for a conversation the caller *solely* owns. A multi-owner
+    conversation (e.g. a Telegram group chat_id, which has several user authors)
+    is refused with 404 — it can't be streamed through this hub without leaking
+    co-owners' turns. The caller here (``test_user``) is one of two owners."""
+    conversation_id = f"conv_multi_{uuid.uuid4().hex[:8]}"
+    async with get_db_context(engine=db_engine) as ctx:
+        await ctx.message_history.add_message(
+            UserMessage(content="from the caller"),
+            interface_type="web",
+            conversation_id=conversation_id,
+            timestamp=datetime.now(UTC),
+            user_id="test_user",
+        )
+        await ctx.message_history.add_message(
+            UserMessage(content="from another group member"),
+            interface_type="web",
+            conversation_id=conversation_id,
+            timestamp=datetime.now(UTC),
+            user_id="someone_else",
+        )
+
+    response = await test_client.get(
+        f"/api/v1/chat/conversations/{conversation_id}/stream",
+        params={"from_seq": 0},
+    )
+    assert response.status_code == 404, response.text
+
+
 async def test_post_turn_is_idempotent_on_turn_id_retry(
     test_client: AsyncClient,
     mock_llm_client: RuleBasedMockLLMClient,

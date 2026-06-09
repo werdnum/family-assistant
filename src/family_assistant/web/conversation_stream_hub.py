@@ -67,11 +67,6 @@ class StreamEvent:
             ``turn_ended``, ``heartbeat``, ``stream_dropped``.
         turn_id: Owning turn UUID. ``None`` for connection-level events
             (heartbeat, stream_dropped).
-        owner_user_id: The user that owns this event's turn, captured at
-            publish time so cross-user delivery filtering survives turn
-            pruning (the TurnRecord may be evicted while the event lingers in
-            the ring buffer). ``None`` for connection-level events, which are
-            delivered to every subscriber.
         payload: Type-specific JSON-serializable data. The wire-layer
             serializes this verbatim as the SSE ``data:`` line.
     """
@@ -79,7 +74,6 @@ class StreamEvent:
     seq: int
     type: str
     turn_id: str | None
-    owner_user_id: str | None
     # ast-grep-ignore: no-dict-any - StreamEvent payloads are heterogeneous across event types (text/tool/confirmation/etc.) and serialized verbatim to the SSE wire format
     payload: dict[str, Any]
 
@@ -103,16 +97,10 @@ class TurnRecord:
 
 @dataclass(slots=True)
 class _Subscription:
-    """A live subscriber's queue plus its latest ack and bound user."""
+    """A live subscriber's queue plus its latest ack."""
 
     queue: asyncio.Queue[StreamEvent]
     last_ack_seq: int  # highest seq the client has acknowledged receiving
-    # The authenticated user this subscription belongs to. Turn-scoped events
-    # (those with a turn_id) are only delivered to subscribers whose user_id
-    # matches the turn's owner, so a subscriber that attached to a not-yet-owned
-    # conversation never receives a different user's later prompt/reply.
-    # ``None`` means "unrestricted" (used by internal/test subscribers).
-    user_id: str | None = None
 
 
 @dataclass(slots=True)
@@ -217,8 +205,9 @@ class ConversationStreamHub:
 
     def _evict_idle_conversations(self) -> None:
         """Bound the number of retained conversations. Evict the oldest
-        conversations that are idle — no live subscribers and no running turn —
-        once the cap is exceeded. Caller holds ``self._registry_lock``.
+        conversations that are idle — no live subscribers, no running turn, and
+        no live producer task — once the cap is exceeded. Caller holds
+        ``self._registry_lock``.
         """
         if len(self._conversations) <= self._max_conversations:
             return
@@ -227,8 +216,16 @@ class ConversationStreamHub:
         for conversation_id, state in list(self._conversations.items()):
             if excess <= 0:
                 break
-            has_running = any(t.status == "running" for t in state.turns.values())
-            if state.subscribers or has_running:
+            # A turn whose producer task is still alive (e.g. a just-completed
+            # turn inside its ack-grace / disconnect-push window) must keep its
+            # conversation: the hub holds the task's only strong reference, and
+            # wait_for_delivery still needs the TurnRecord. Such a turn may
+            # already be status!="running", so check the task explicitly.
+            has_live_turn = any(
+                t.status == "running" or (t.task is not None and not t.task.done())
+                for t in state.turns.values()
+            )
+            if state.subscribers or has_live_turn:
                 continue
             del self._conversations[conversation_id]
             excess -= 1
@@ -306,7 +303,6 @@ class ConversationStreamHub:
                 seq=seq,
                 type=event_type,
                 turn_id=turn_id,
-                owner_user_id=turn.user_id if turn is not None else None,
                 payload=payload,
             )
 
@@ -322,39 +318,18 @@ class ConversationStreamHub:
 
         return event
 
-    @staticmethod
-    def _can_deliver(event: StreamEvent, subscriber_user_id: str | None) -> bool:
-        """Whether ``event`` may be delivered to a subscriber bound to
-        ``subscriber_user_id``.
-
-        Connection-level events (``turn_id is None``: heartbeat, message,
-        stream_dropped) reach everyone. Turn-scoped events reach a user-bound
-        subscriber only on a *positive* owner match; if the owner is unknown
-        (``owner_user_id is None`` — e.g. the TurnRecord was pruned before the
-        event was published) the event fails closed and is withheld from
-        user-bound subscribers rather than broadcast. Unrestricted subscribers
-        (``subscriber_user_id is None``, internal/test only) receive everything.
-        Keying on the owner stamped on the event keeps replay and live fan-out
-        consistent and independent of turn pruning.
-        """
-        if event.turn_id is None:
-            return True
-        if subscriber_user_id is None:
-            return True
-        return (
-            event.owner_user_id is not None
-            and subscriber_user_id == event.owner_user_id
-        )
-
     def _fan_out(self, state: _ConversationState, event: StreamEvent) -> None:
-        """Deliver ``event`` to eligible subscribers (see ``_can_deliver``).
-        Caller holds the lock. M0 uses ``put_nowait`` with a permissive cap; a
-        subscriber that fills its queue is treated as broken and dropped.
+        """Deliver ``event`` to every active subscriber. Caller holds the lock.
+
+        A conversation is single-user on this hub — the only authorization
+        boundary is ``_ensure_user_owns_conversation`` at the HTTP layer, which
+        rejects any subscriber who isn't a persisted owner — so every registered
+        subscriber is entitled to every event. M0 uses ``put_nowait`` with a
+        permissive cap; a subscriber that fills its queue is treated as broken
+        and dropped.
         """
         dead: list[asyncio.Queue[StreamEvent]] = []
-        for queue, sub in list(state.subscribers.items()):
-            if not self._can_deliver(event, sub.user_id):
-                continue
+        for queue in list(state.subscribers):
             try:
                 queue.put_nowait(event)
             except asyncio.QueueFull:
@@ -409,7 +384,6 @@ class ConversationStreamHub:
                 seq=seq,
                 type="turn_started",
                 turn_id=turn_id,
-                owner_user_id=user_id,
                 payload={
                     "turn_id": turn_id,
                     "started_at": started_at.isoformat(),
@@ -442,6 +416,25 @@ class ConversationStreamHub:
         state = await self._get_or_create_state(conversation_id)
         async with state.lock:
             turn = state.turns.get(turn_id)
+            if turn is not None and turn.ended_seq is not None:
+                # Idempotent: the turn already ended. This happens when the
+                # producer's success path publishes turn_ended(complete) and
+                # then its post-completion code (wait_for_delivery, DB teardown)
+                # raises, sending control into the except handler which calls
+                # end_turn(failed). Don't publish a second, contradictory
+                # turn_ended; return a representation of the existing one
+                # without re-fanning-out or bumping the sequence.
+                logger.debug(
+                    "end_turn ignored; turn %s already ended at seq %s",
+                    turn_id,
+                    turn.ended_seq,
+                )
+                return StreamEvent(
+                    seq=turn.ended_seq,
+                    type="turn_ended",
+                    turn_id=turn_id,
+                    payload={"turn_id": turn_id, "status": turn.status},
+                )
             if turn is None:
                 # Defensive: end_turn for an unknown turn shouldn't happen,
                 # but if it does, synthesize a record so the event still goes
@@ -468,7 +461,6 @@ class ConversationStreamHub:
                 seq=seq,
                 type="turn_ended",
                 turn_id=turn_id,
-                owner_user_id=turn.user_id if turn is not None else None,
                 payload=payload,
             )
 
@@ -483,22 +475,13 @@ class ConversationStreamHub:
 
             self._fan_out(state, event)
 
-            # Re-check delivered under the same lock: a subscriber owned by this
-            # turn's user may already have acked past this seq. Only acks from
-            # the turn owner (or an unrestricted internal subscriber) count, so a
-            # different user's ack can't suppress this turn's push.
-            if turn is not None:
-                max_ack = max(
-                    (
-                        sub.last_ack_seq
-                        for sub in state.subscribers.values()
-                        if sub.user_id is None or sub.user_id == turn.user_id
-                    ),
-                    default=-1,
-                )
-                self._refresh_delivered_under_lock(
-                    state, ack_seq=max_ack, acking_user_id=turn.user_id
-                )
+            # Re-check delivered under the same lock: a subscriber may already
+            # have acked past this seq before turn_ended was published.
+            max_ack = max(
+                (sub.last_ack_seq for sub in state.subscribers.values()),
+                default=-1,
+            )
+            self._refresh_delivered_under_lock(state, ack_seq=max_ack)
 
         return event
 
@@ -512,7 +495,6 @@ class ConversationStreamHub:
         *,
         from_seq: int,
         ack_seq: int = -1,
-        user_id: str | None = None,
     ) -> SubscriptionHandle:
         """Subscribe to the conversation's event stream from ``from_seq``.
 
@@ -525,10 +507,6 @@ class ConversationStreamHub:
 
         ``ack_seq`` records the highest seq the client has already received
         (e.g. on reconnect after a network blip). Used for push suppression.
-
-        ``user_id`` binds the subscription to an authenticated user; turn-scoped
-        events are only delivered to it when the turn's owner matches (see
-        ``_fan_out``). ``None`` leaves it unrestricted (internal/test callers).
 
         A negative ``from_seq`` means "tail from the current head": replay
         nothing, just receive events published from now on. This never raises
@@ -545,25 +523,27 @@ class ConversationStreamHub:
             if tail_only:
                 # Subscribe at the current head: no replay, just future events.
                 from_seq = state.next_seq
-            elif state.buffer and from_seq < state.buffer[0].seq:
-                raise OutOfBufferError(
-                    requested_from_seq=from_seq,
-                    min_available_seq=state.buffer[0].seq,
-                )
+            else:
+                # The serveable non-tail range is [min_available, next_seq]:
+                # events still in the buffer can be replayed, and from_seq ==
+                # next_seq is "subscribe at the head, nothing to replay". A
+                # cursor below the buffer floor (events evicted) OR above
+                # next_seq (the client is ahead of a counter that reset after
+                # eviction+recreate) can't be served — 410 so the client reloads
+                # history instead of silently tailing renumbered events.
+                min_available = state.buffer[0].seq if state.buffer else state.next_seq
+                if from_seq < min_available or from_seq > state.next_seq:
+                    raise OutOfBufferError(
+                        requested_from_seq=from_seq,
+                        min_available_seq=min_available,
+                    )
 
             # Snapshot the relevant slice of the buffer. The caller will
-            # yield these synthetically before tailing the live queue. Replayed
-            # events are filtered by the same cross-user rule as live fan-out,
-            # so a subscriber can't read another user's buffered turn events by
-            # connecting with a positive from_seq.
+            # yield these synthetically before tailing the live queue.
             replayed = (
                 []
                 if tail_only
-                else [
-                    event
-                    for event in state.buffer
-                    if event.seq >= from_seq and self._can_deliver(event, user_id)
-                ]
+                else [event for event in state.buffer if event.seq >= from_seq]
             )
 
             # Fresh queue. Cap is generous; we only drop on truly slow
@@ -573,17 +553,22 @@ class ConversationStreamHub:
             queue: asyncio.Queue[StreamEvent] = asyncio.Queue(
                 maxsize=self._subscriber_queue_max
             )
-            initial_ack = max(ack_seq, from_seq - 1)
+            # A positive from_seq is a resume: the client genuinely already has
+            # everything below it, so from_seq-1 is an implicit ack. A tail
+            # subscription (from_seq<0) has received NOTHING and replays nothing,
+            # so it must NOT implicitly ack the current head — doing so would
+            # mark just-ended, never-delivered turns as delivered and suppress
+            # their disconnect push. Tail subscribers only carry the explicit
+            # ack_seq (default -1 = nothing acked).
+            initial_ack = ack_seq if tail_only else max(ack_seq, from_seq - 1)
             state.subscribers[queue] = _Subscription(
-                queue=queue, last_ack_seq=initial_ack, user_id=user_id
+                queue=queue, last_ack_seq=initial_ack
             )
 
             # The ack at subscribe time may already be enough to mark a
             # turn as delivered (e.g. resume-with-ack after a clean
-            # round-trip). Scoped to this subscriber's user.
-            self._refresh_delivered_under_lock(
-                state, ack_seq=initial_ack, acking_user_id=user_id
-            )
+            # round-trip).
+            self._refresh_delivered_under_lock(state, ack_seq=initial_ack)
 
         return SubscriptionHandle(queue=queue, replayed_events=replayed)
 
@@ -624,52 +609,33 @@ class ConversationStreamHub:
             if sub is None:
                 return
             sub.last_ack_seq = max(sub.last_ack_seq, ack_seq)
-            self._refresh_delivered_under_lock(
-                state, ack_seq=ack_seq, acking_user_id=sub.user_id
-            )
+            self._refresh_delivered_under_lock(state, ack_seq=ack_seq)
 
-    async def ack_conversation(
-        self, conversation_id: str, ack_seq: int, *, user_id: str | None = None
-    ) -> None:
-        """Record a conversation-wide acknowledgement up to ``ack_seq`` from
-        ``user_id``.
+    async def ack_conversation(self, conversation_id: str, ack_seq: int) -> None:
+        """Record a conversation-wide acknowledgement up to ``ack_seq``.
 
         Used by the ``POST /ack`` endpoint for clients that acknowledge receipt
         out-of-band (e.g. after handling a push) rather than over an open SSE
-        subscription. Only the acking user's own turns are flipped to delivered
-        (``user_id is None`` is an unrestricted internal/test ack). Bumps that
-        user's current subscribers' acks.
+        subscription. Bumps every current subscriber's ack and flips any turn
+        whose ``ended_seq`` is now covered. The conversation is single-user
+        (the HTTP ownership check is the boundary), so no per-user scoping is
+        needed here.
         """
         state = self._get_state(conversation_id)
         if state is None:
             return
         async with state.lock:
             for sub in state.subscribers.values():
-                if user_id is None or sub.user_id == user_id:
-                    sub.last_ack_seq = max(sub.last_ack_seq, ack_seq)
-            self._refresh_delivered_under_lock(
-                state, ack_seq=ack_seq, acking_user_id=user_id
-            )
+                sub.last_ack_seq = max(sub.last_ack_seq, ack_seq)
+            self._refresh_delivered_under_lock(state, ack_seq=ack_seq)
 
     def _refresh_delivered_under_lock(
-        self,
-        state: _ConversationState,
-        *,
-        ack_seq: int,
-        acking_user_id: str | None,
+        self, state: _ConversationState, *, ack_seq: int
     ) -> None:
-        """Mark a turn ``delivered`` when ``ack_seq`` covers its ``ended_seq``
-        AND the ack came from the turn's owner. ``acking_user_id is None`` is an
-        unrestricted ack (internal/test callers) that matches any owner.
-
-        Scoping by owner prevents one user, in a shared conversation, from
-        suppressing another user's disconnect push by acking their own later
-        turn (turn-scoped events are already owner-filtered). Caller holds
-        ``state.lock``."""
+        """Mark every turn ``delivered`` whose ``ended_seq`` is covered by
+        ``ack_seq``. Caller holds ``state.lock``."""
         for turn in state.turns.values():
             if turn.ended_seq is None or ack_seq < turn.ended_seq:
-                continue
-            if acking_user_id is not None and acking_user_id != turn.user_id:
                 continue
             turn.delivered = True
             turn.delivered_event.set()

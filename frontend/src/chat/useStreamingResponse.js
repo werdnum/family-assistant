@@ -37,6 +37,11 @@ export const useStreamingResponse = ({
       let currentMessage = '';
       const toolCalls = [];
       let buffer = '';
+      // The SSE event name (`event:` line) must persist across read chunks: an
+      // event can be split so its `event:` line lands in one chunk and its
+      // `data:` line in the next. Declared here (not per-chunk) so the name
+      // isn't lost at a chunk boundary; it's reset after each event is handled.
+      let currentEventType = null;
       // Per-file `attachment` events are accumulated into a single synthetic
       // attach_to_response tool call so queued attachments render in the UI.
       const autoAttachments = [];
@@ -101,6 +106,15 @@ export const useStreamingResponse = ({
             window.location.href = `/login?next=${encodeURIComponent(window.location.pathname + window.location.search)}`;
             return;
           }
+          if (response.status === 410) {
+            // The turn's events have rotated out of the hub buffer (or the
+            // conversation was evicted). There's nothing to replay, but the
+            // reply is durably persisted — complete gracefully (the finally
+            // clears the loading state) and let the live-updates stream /
+            // history reload surface it, rather than showing an error for a
+            // turn that likely succeeded.
+            return;
+          }
           const errorData = await response.json().catch(() => ({}));
           throw new Error(errorData.detail || `HTTP error! status: ${response.status}`);
         }
@@ -144,8 +158,6 @@ export const useStreamingResponse = ({
           const lines = buffer.split('\n');
           buffer = lines[lines.length - 1]; // Keep incomplete line in buffer
 
-          let currentEventType = null;
-
           for (let i = 0; i < lines.length - 1; i++) {
             const line = lines[i].trim();
 
@@ -162,6 +174,15 @@ export const useStreamingResponse = ({
             // Handle data lines
             if (line.startsWith('data: ')) {
               const data = line.slice(6);
+
+              // Consume the pending SSE event name for THIS data line and clear
+              // the shared one immediately. The name only needs to persist
+              // across a chunk boundary until its data line arrives; clearing
+              // here means a branch that `continue`s/`return`s (turn_started,
+              // heartbeat, foreign-turn filter) can't leak its type onto the
+              // next event.
+              const eventType = currentEventType;
+              currentEventType = null;
 
               // Skip the [DONE] marker
               if (data === '[DONE]') {
@@ -182,8 +203,15 @@ export const useStreamingResponse = ({
                 }
 
                 // The turn_ended event terminates this turn's stream. Done is
-                // signalled both by the SSE event name and the payload status.
-                if (currentEventType === 'turn_ended' || payload.status) {
+                // signalled both by the SSE event name and a terminal payload
+                // status. Match only the known terminal statuses (not any truthy
+                // `status` field) so a tool result that happens to carry a
+                // status can't end the stream mid-turn.
+                if (
+                  eventType === 'turn_ended' ||
+                  payload.status === 'complete' ||
+                  payload.status === 'failed'
+                ) {
                   // Explicitly acknowledge receipt so the server suppresses the
                   // "you have a new reply" disconnect push. The server never
                   // treats writing the SSE chunk as delivery — only this ack
@@ -224,7 +252,7 @@ export const useStreamingResponse = ({
                   return;
                 }
                 // turn_started / heartbeat carry no renderable content.
-                if (currentEventType === 'turn_started' || currentEventType === 'heartbeat') {
+                if (eventType === 'turn_started' || eventType === 'heartbeat') {
                   continue;
                 }
 
@@ -323,31 +351,6 @@ export const useStreamingResponse = ({
                   });
                 }
 
-                // Handle done event with auto-attachments
-                // When tools return attachments without explicit attach_to_response call,
-                // synthesize a tool call to display them in the UI
-                if (
-                  payload.attachment_ids &&
-                  payload.attachments &&
-                  Array.isArray(payload.attachments)
-                ) {
-                  const syntheticToolCall = {
-                    id: `web_attach_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
-                    name: 'attach_to_response',
-                    arguments: JSON.stringify({ attachment_ids: payload.attachment_ids }),
-                    result: JSON.stringify({
-                      status: 'attachments_queued',
-                      count: payload.attachments.length,
-                      attachments: payload.attachments,
-                    }),
-                    attachments: payload.attachments,
-                    _synthetic: true,
-                  };
-
-                  toolCalls.push(syntheticToolCall);
-                  onToolCall([...toolCalls]);
-                }
-
                 // Handle error
                 if (payload.error) {
                   onError(new Error(payload.error || 'Unknown error'));
@@ -355,9 +358,8 @@ export const useStreamingResponse = ({
               } catch (e) {
                 console.error('Failed to parse SSE event:', e, 'Data:', data);
               }
-
-              // Reset event type after processing
-              currentEventType = null;
+              // currentEventType was already consumed/cleared above when this
+              // data line was dispatched.
             }
           }
         }

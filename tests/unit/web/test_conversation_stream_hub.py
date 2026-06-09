@@ -139,117 +139,6 @@ async def test_ring_buffer_evicts_oldest_events() -> None:
 
 @pytest.mark.asyncio
 @pytest.mark.no_db
-async def test_turn_events_only_delivered_to_matching_user() -> None:
-    """A subscriber bound to user B never receives user A's turn-scoped events,
-    even if it attached to the conversation before A's turn started. This is
-    the cross-user protection for the conversation-wide stream: a user can
-    pre-subscribe to a predictable conversation id but cannot read a different
-    user's later prompt/reply. Connection-level events (no turn_id) still go
-    to everyone."""
-    hub = ConversationStreamHub()
-    # User B subscribes to a conversation that is not yet owned.
-    handle_b = await hub.subscribe("conv", from_seq=0, user_id="user_b")
-    # User A's subscription (e.g. their own tab) also attached.
-    handle_a = await hub.subscribe("conv", from_seq=0, user_id="user_a")
-
-    # User A starts and streams a turn.
-    await hub.start_turn("conv", turn_id="tA", user_id="user_a", started_at=_now())
-    await hub.publish("conv", "text", turn_id="tA", payload={"content": "secret"})
-    await hub.end_turn("conv", turn_id="tA", status="complete")
-
-    # A receives the full turn.
-    a_types = []
-    while not handle_a.queue.empty():
-        a_types.append(handle_a.queue.get_nowait().type)
-    assert a_types == ["turn_started", "text", "turn_ended"]
-
-    # B receives none of A's turn-scoped events.
-    assert handle_b.queue.empty()
-
-    # A connection-level event (no turn_id) reaches B.
-    await hub.publish("conv", "message", turn_id=None, payload={"new_messages": True})
-    event = await asyncio.wait_for(handle_b.queue.get(), timeout=1.0)
-    assert event.type == "message"
-
-    hub.unsubscribe("conv", handle_a.queue)
-    hub.unsubscribe("conv", handle_b.queue)
-
-
-@pytest.mark.asyncio
-@pytest.mark.no_db
-async def test_ack_does_not_deliver_another_users_turn() -> None:
-    """In a shared conversation, an ack from user B (covering B's later turn)
-    must not mark user A's earlier turn delivered — otherwise B could suppress
-    A's disconnect push for a reply A never received."""
-    hub = ConversationStreamHub()
-
-    # User A's turn ends at some seq.
-    await hub.start_turn("conv", turn_id="tA", user_id="user_a", started_at=_now())
-    await hub.publish("conv", "text", turn_id="tA", payload={"content": "a"})
-    await hub.end_turn("conv", turn_id="tA", status="complete")
-    turn_a = hub.get_turn("conv", "tA")
-    assert turn_a is not None
-    a_end = turn_a.ended_seq
-    assert a_end is not None
-
-    # User B acks well past A's ended_seq (e.g. for B's own later activity).
-    await hub.ack_conversation("conv", a_end + 5, user_id="user_b")
-    assert turn_a.delivered is False
-
-    # A's own ack delivers A's turn.
-    await hub.ack_conversation("conv", a_end, user_id="user_a")
-    assert turn_a.delivered is True
-
-
-@pytest.mark.asyncio
-@pytest.mark.no_db
-async def test_turn_scoped_event_with_unknown_owner_fails_closed() -> None:
-    """A turn-scoped event whose owner can't be determined (no TurnRecord, e.g.
-    pruned) is withheld from user-bound subscribers rather than broadcast — it
-    must not be misclassified as a connection-level event. Unrestricted
-    subscribers still receive it."""
-    hub = ConversationStreamHub()
-    bound = await hub.subscribe("conv", from_seq=0, user_id="user_b")
-    unrestricted = await hub.subscribe("conv", from_seq=0, user_id=None)
-
-    # Publish a turn-scoped event for a turn that was never registered.
-    await hub.publish("conv", "text", turn_id="ghost", payload={"content": "x"})
-
-    # The user-bound subscriber must NOT receive it (fail closed).
-    assert bound.queue.empty()
-    # The unrestricted subscriber receives it.
-    event = await asyncio.wait_for(unrestricted.queue.get(), timeout=1.0)
-    assert event.type == "text"
-
-    hub.unsubscribe("conv", bound.queue)
-    hub.unsubscribe("conv", unrestricted.queue)
-
-
-@pytest.mark.asyncio
-@pytest.mark.no_db
-async def test_replay_is_user_filtered() -> None:
-    """A user-bound subscriber connecting with a positive from_seq does not get
-    another user's buffered turn events in its replay snapshot."""
-    hub = ConversationStreamHub()
-    await hub.start_turn("conv", turn_id="tA", user_id="user_a", started_at=_now())
-    await hub.publish("conv", "text", turn_id="tA", payload={"content": "secret"})
-    await hub.end_turn("conv", turn_id="tA", status="complete")
-
-    # User B subscribes from the start: replay must exclude A's turn events.
-    handle = await hub.subscribe("conv", from_seq=0, user_id="user_b")
-    assert handle.replayed_events == []
-
-    # User A subscribing from the start sees the full replay.
-    handle_a = await hub.subscribe("conv", from_seq=0, user_id="user_a")
-    assert [e.type for e in handle_a.replayed_events] == [
-        "turn_started",
-        "text",
-        "turn_ended",
-    ]
-
-
-@pytest.mark.asyncio
-@pytest.mark.no_db
 async def test_tail_subscribe_replays_nothing_and_never_410s() -> None:
     """A negative from_seq tails from the current head: no replay, and it
     never raises OutOfBufferError even after the buffer has rotated. This is
@@ -272,6 +161,26 @@ async def test_tail_subscribe_replays_nothing_and_never_410s() -> None:
     await hub.publish("conv", "text", turn_id="t1", payload={"i": 99})
     event = await asyncio.wait_for(handle.queue.get(), timeout=1.0)
     assert event.payload == {"i": 99}
+
+
+@pytest.mark.asyncio
+@pytest.mark.no_db
+async def test_empty_buffer_positive_from_seq_410s_unless_at_head() -> None:
+    """On an empty buffer (fresh, or evicted+recreated with next_seq reset), the
+    only valid non-tail cursor is exactly next_seq. A cursor below it (events
+    gone) OR above it (client ahead of a reset counter) must 410 so the client
+    reloads history instead of silently tailing renumbered events. from_seq ==
+    next_seq is the legitimate 'subscribe at head' case."""
+    hub = ConversationStreamHub()  # fresh: next_seq == 0, empty buffer
+
+    # from_seq == next_seq (0): valid, subscribe at head, no replay.
+    handle = await hub.subscribe("conv", from_seq=0)
+    assert handle.replayed_events == []
+    hub.unsubscribe("conv", handle.queue)
+
+    # from_seq above the head (e.g. a stale cursor after eviction reset): 410.
+    with pytest.raises(OutOfBufferError):
+        await hub.subscribe("conv", from_seq=5)
 
 
 @pytest.mark.asyncio

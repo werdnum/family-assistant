@@ -31,6 +31,10 @@ final class ChatViewModel {
 
     @ObservationIgnored private let apiClient: ChatAPIClient
     @ObservationIgnored private var streamTask: Task<Void, Never>?
+    // Identifies the active send. A superseded (cancelled) streamTask resuming
+    // across an await must not clobber the turn that replaced it, so its tail
+    // work is gated on this token still matching.
+    @ObservationIgnored private var currentStreamToken: UUID?
     @ObservationIgnored private var liveEventsTask: Task<Void, Never>?
     @ObservationIgnored private var pendingConfirmationsTask: Task<Void, Never>?
     @ObservationIgnored private var lastProcessedInitialPrompt: String?
@@ -247,6 +251,8 @@ final class ChatViewModel {
         persistConversationID()
 
         let turnID = UUID().uuidString
+        let streamToken = UUID()
+        currentStreamToken = streamToken
         streamTask = Task { [weak self] in
             guard let self else { return }
             do {
@@ -278,12 +284,16 @@ final class ChatViewModel {
                         break
                     }
                 }
+                // If a newer send (or conversation switch) superseded this task,
+                // stop here: the post-completion reloads and shared-state resets
+                // below belong to the turn that replaced us.
+                guard !Task.isCancelled, currentStreamToken == streamToken else {
+                    return
+                }
                 // Explicitly acknowledge the highest received seq so the server
                 // suppresses the disconnect push for a reply we actually saw.
-                // Skip on cancellation (backgrounded mid-turn): there the push
-                // is the intended delivery path. Fire-and-forget so UI
-                // completion isn't blocked on the ack roundtrip.
-                if let lastSeq, !Task.isCancelled {
+                // Fire-and-forget so UI completion isn't blocked on the ack.
+                if let lastSeq {
                     let ackClient = apiClient
                     Task { try? await ackClient.acknowledge(conversationID: id, ackSeq: lastSeq) }
                 }
@@ -295,8 +305,12 @@ final class ChatViewModel {
             } catch {
                 appendStreamError(error.localizedDescription, assistantMessageID: assistantMessageID)
             }
-            isStreaming = false
-            streamTask = nil
+            // Only the still-current send resets shared streaming state; a
+            // superseded task must not nil out the new turn's streamTask.
+            if currentStreamToken == streamToken {
+                isStreaming = false
+                streamTask = nil
+            }
         }
     }
 

@@ -540,39 +540,67 @@ async def _ensure_user_owns_conversation(
     request: Request,
     current_user: Mapping[str, object],
     conversation_id: str,
+    *,
+    allow_new: bool,
 ) -> str:
     """Verify ``current_user`` may act on ``conversation_id``. Returns the
     authoritative user_id. 404 (not 403) on mismatch so the API doesn't leak
-    the existence of other users' conversations.
+    the existence of other users' conversations. This ownership check is the
+    *only* authorization boundary for the stream — the hub does no per-subscriber
+    filtering — so it also enforces the hub's single-user invariant.
 
-    The check is short-circuited if the hub has a running turn for this
-    conversation owned by the user (fast path). Otherwise we look at the
-    persisted user messages across all interfaces: if any belong to a different
-    user, deny. A brand-new conversation with no persisted state is allowed
-    through — there is nothing to leak, and the actual cross-user protection
-    for the long-lived stream is enforced by binding each subscriber to its
-    user and filtering turn-scoped fan-out (see ConversationStreamHub).
+    ``allow_new`` governs the brand-new-conversation case (no hub turn, no
+    persisted user message):
+    * ``True`` for endpoints that *create* into the conversation
+      (``POST /turns``, ``POST /send_message``) and for the point-in-time
+      ``GET /messages`` read: the client's URL is the only authority for the id
+      it just picked, and an empty read leaks nothing. The caller must be *an*
+      owner (or the conversation must be new).
+    * ``False`` for the long-lived subscribe/ack endpoints (``GET /stream``,
+      ``POST /ack``): if the conversation already has owners, the caller must be
+      its **sole** owner — a multi-owner conversation (e.g. a Telegram group
+      chat_id, which ``get_conversation_owner_ids`` legitimately returns multiple
+      owners for) is refused, since the hub fans out every event to every
+      subscriber with no per-user isolation and would leak co-owners' turns. An
+      empty (brand-new) conversation is still allowed: the always-on live-update
+      stream attaches to the user's own new conversation before any message, and
+      ids are unguessable UUIDs.
     """
     raw_user_id = current_user.get("user_identifier")
     if not isinstance(raw_user_id, str) or not raw_user_id:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED)
 
+    # Fast path (create/read only): if the hub already has a turn for this
+    # conversation owned by the caller, they own it — no DB hit needed. The
+    # subscribe/ack path needs the full owner set for the sole-owner check, so
+    # it always queries below.
     hub = _get_hub(request)
-    for turn in hub.active_turns(conversation_id):
-        if turn.user_id == raw_user_id:
-            return raw_user_id
-        # Hub knows the conversation but the running turn belongs to someone
-        # else. Treat as not-found rather than 403.
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND)
+    caller_owns_hub_turn = any(
+        turn.user_id == raw_user_id for turn in hub.active_turns(conversation_id)
+    )
+    if allow_new and caller_owns_hub_turn:
+        return raw_user_id
 
-    # Look at the persisted owners across ALL interface types — a conversation
-    # created via any interface (web, iOS, api, telegram) must not be readable
-    # by a different user.
+    # Persisted owners across ALL interface types.
     async with get_db_context(request.app.state.database_engine) as db_context:
         owners = await db_context.message_history.get_conversation_owner_ids(
             conversation_id
         )
-    if owners and raw_user_id not in owners:
+    if not owners:
+        # Brand-new / empty conversation: allowed for everyone, including the
+        # subscribe path. The always-on live-update stream attaches to the
+        # user's own freshly-created conversation BEFORE any message is sent, so
+        # this must not 404. Conversation ids are unguessable UUIDs, so an empty
+        # subscribe is not a meaningful way to wait on someone else's future
+        # conversation.
+        return raw_user_id
+    if raw_user_id not in owners:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND)
+    if not allow_new and owners != {raw_user_id}:
+        # Subscribe/ack require SOLE ownership: a multi-owner conversation
+        # (e.g. a Telegram group chat_id) can't be streamed through this hub,
+        # which fans out every event to every subscriber with no per-user
+        # isolation. (Empty conversations are handled above.)
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND)
     return raw_user_id
 
@@ -609,7 +637,7 @@ async def api_chat_create_turn(
     # message is written, otherwise an attacker could "self-add" to a victim's
     # conversation and then pass the owner check on subsequent calls.
     user_id = await _ensure_user_owns_conversation(
-        request, current_user, conversation_id
+        request, current_user, conversation_id, allow_new=True
     )
 
     # Idempotency short-circuit: if we already have this turn registered,
@@ -753,13 +781,13 @@ async def api_chat_conversation_stream(
           a reconnect loop can keep using ``follow=false`` and re-subscribe.
     """
     user_id = await _ensure_user_owns_conversation(
-        request, current_user, conversation_id
+        request, current_user, conversation_id, allow_new=False
     )
     hub = _get_hub(request)
 
     try:
         handle = await hub.subscribe(
-            conversation_id, from_seq=from_seq, ack_seq=ack_seq, user_id=user_id
+            conversation_id, from_seq=from_seq, ack_seq=ack_seq
         )
     except OutOfBufferError as exc:
         return JSONResponse(
@@ -843,13 +871,11 @@ async def api_chat_ack(
     SSE stream open: send the highest received seq after handling a notify
     push, and the hub will mark any covered turn as delivered.
     """
-    user_id = await _ensure_user_owns_conversation(
-        request, current_user, payload.conversation_id
+    await _ensure_user_owns_conversation(
+        request, current_user, payload.conversation_id, allow_new=False
     )
     hub = _get_hub(request)
-    await hub.ack_conversation(
-        payload.conversation_id, payload.ack_seq, user_id=user_id
-    )
+    await hub.ack_conversation(payload.conversation_id, payload.ack_seq)
     return AckResponse(ok=True)
 
 
@@ -978,7 +1004,9 @@ async def api_chat_send_message(
 
     # Enforce conversation ownership before processing: a client may not post
     # into a conversation that already belongs to another user (404, not 403).
-    await _ensure_user_owns_conversation(request, current_user, conversation_id)
+    await _ensure_user_owns_conversation(
+        request, current_user, conversation_id, allow_new=True
+    )
 
     # Determine which processing service to use
     selected_processing_service = default_processing_service
@@ -1181,6 +1209,17 @@ async def api_chat_send_message(
                 elif isinstance(tc, dict):
                     tool_calls_response.append(tc)
 
+    # This non-streaming path persists the reply but never published to the hub,
+    # so a second device of the same user with an open follow-stream wouldn't
+    # reload. Publish a content-free `message` event (the same nudge
+    # WebChatInterface uses) so open follow-streams refetch history.
+    await _get_hub(request).publish(
+        conversation_id,
+        "message",
+        turn_id=None,
+        payload={"conversation_id": conversation_id, "new_messages": True},
+    )
+
     return ChatMessageResponse(
         reply=final_reply_content,  # Back to original field name
         conversation_id=conversation_id,  # Return the used/generated conversation_id
@@ -1294,10 +1333,9 @@ async def get_conversation_messages(
         describing any in-flight turns the client can resume.
     """
     # /messages is a point-in-time read: an empty conversation just returns an
-    # empty list (no future fan-out leaks through it), so a brand-new
-    # conversation id is allowed.
+    # empty list, so a brand-new conversation id is allowed.
     user_id = await _ensure_user_owns_conversation(
-        request, current_user, conversation_id
+        request, current_user, conversation_id, allow_new=True
     )
     # Parse timestamp parameters
     before_dt = None
