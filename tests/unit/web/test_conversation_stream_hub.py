@@ -177,6 +177,32 @@ async def test_turn_events_only_delivered_to_matching_user() -> None:
 
 @pytest.mark.asyncio
 @pytest.mark.no_db
+async def test_ack_does_not_deliver_another_users_turn() -> None:
+    """In a shared conversation, an ack from user B (covering B's later turn)
+    must not mark user A's earlier turn delivered — otherwise B could suppress
+    A's disconnect push for a reply A never received."""
+    hub = ConversationStreamHub()
+
+    # User A's turn ends at some seq.
+    await hub.start_turn("conv", turn_id="tA", user_id="user_a", started_at=_now())
+    await hub.publish("conv", "text", turn_id="tA", payload={"content": "a"})
+    await hub.end_turn("conv", turn_id="tA", status="complete")
+    turn_a = hub.get_turn("conv", "tA")
+    assert turn_a is not None
+    a_end = turn_a.ended_seq
+    assert a_end is not None
+
+    # User B acks well past A's ended_seq (e.g. for B's own later activity).
+    await hub.ack_conversation("conv", a_end + 5, user_id="user_b")
+    assert turn_a.delivered is False
+
+    # A's own ack delivers A's turn.
+    await hub.ack_conversation("conv", a_end, user_id="user_a")
+    assert turn_a.delivered is True
+
+
+@pytest.mark.asyncio
+@pytest.mark.no_db
 async def test_turn_scoped_event_with_unknown_owner_fails_closed() -> None:
     """A turn-scoped event whose owner can't be determined (no TurnRecord, e.g.
     pruned) is withheld from user-bound subscribers rather than broadcast — it

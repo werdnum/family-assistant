@@ -483,13 +483,22 @@ class ConversationStreamHub:
 
             self._fan_out(state, event)
 
-            # Re-check delivered under the same lock: a subscriber may already
-            # have acked past this seq before we published turn_ended.
-            max_ack = max(
-                (sub.last_ack_seq for sub in state.subscribers.values()),
-                default=-1,
-            )
-            self._refresh_delivered_under_lock(state, ack_seq=max_ack)
+            # Re-check delivered under the same lock: a subscriber owned by this
+            # turn's user may already have acked past this seq. Only acks from
+            # the turn owner (or an unrestricted internal subscriber) count, so a
+            # different user's ack can't suppress this turn's push.
+            if turn is not None:
+                max_ack = max(
+                    (
+                        sub.last_ack_seq
+                        for sub in state.subscribers.values()
+                        if sub.user_id is None or sub.user_id == turn.user_id
+                    ),
+                    default=-1,
+                )
+                self._refresh_delivered_under_lock(
+                    state, ack_seq=max_ack, acking_user_id=turn.user_id
+                )
 
         return event
 
@@ -571,8 +580,10 @@ class ConversationStreamHub:
 
             # The ack at subscribe time may already be enough to mark a
             # turn as delivered (e.g. resume-with-ack after a clean
-            # round-trip).
-            self._refresh_delivered_under_lock(state, ack_seq=initial_ack)
+            # round-trip). Scoped to this subscriber's user.
+            self._refresh_delivered_under_lock(
+                state, ack_seq=initial_ack, acking_user_id=user_id
+            )
 
         return SubscriptionHandle(queue=queue, replayed_events=replayed)
 
@@ -613,33 +624,55 @@ class ConversationStreamHub:
             if sub is None:
                 return
             sub.last_ack_seq = max(sub.last_ack_seq, ack_seq)
-            self._refresh_delivered_under_lock(state, ack_seq=ack_seq)
+            self._refresh_delivered_under_lock(
+                state, ack_seq=ack_seq, acking_user_id=sub.user_id
+            )
 
-    async def ack_conversation(self, conversation_id: str, ack_seq: int) -> None:
-        """Record a conversation-wide acknowledgement up to ``ack_seq``.
+    async def ack_conversation(
+        self, conversation_id: str, ack_seq: int, *, user_id: str | None = None
+    ) -> None:
+        """Record a conversation-wide acknowledgement up to ``ack_seq`` from
+        ``user_id``.
 
         Used by the ``POST /ack`` endpoint for clients that acknowledge receipt
         out-of-band (e.g. after handling a push) rather than over an open SSE
-        subscription. Bumps every current subscriber's ack and flips any turn
-        whose ``ended_seq`` is now covered.
+        subscription. Only the acking user's own turns are flipped to delivered
+        (``user_id is None`` is an unrestricted internal/test ack). Bumps that
+        user's current subscribers' acks.
         """
         state = self._get_state(conversation_id)
         if state is None:
             return
         async with state.lock:
             for sub in state.subscribers.values():
-                sub.last_ack_seq = max(sub.last_ack_seq, ack_seq)
-            self._refresh_delivered_under_lock(state, ack_seq=ack_seq)
+                if user_id is None or sub.user_id == user_id:
+                    sub.last_ack_seq = max(sub.last_ack_seq, ack_seq)
+            self._refresh_delivered_under_lock(
+                state, ack_seq=ack_seq, acking_user_id=user_id
+            )
 
     def _refresh_delivered_under_lock(
-        self, state: _ConversationState, *, ack_seq: int
+        self,
+        state: _ConversationState,
+        *,
+        ack_seq: int,
+        acking_user_id: str | None,
     ) -> None:
-        """Update ``delivered`` flags for every turn whose ``ended_seq`` is
-        covered by ``ack_seq``. Caller holds ``state.lock``."""
+        """Mark a turn ``delivered`` when ``ack_seq`` covers its ``ended_seq``
+        AND the ack came from the turn's owner. ``acking_user_id is None`` is an
+        unrestricted ack (internal/test callers) that matches any owner.
+
+        Scoping by owner prevents one user, in a shared conversation, from
+        suppressing another user's disconnect push by acking their own later
+        turn (turn-scoped events are already owner-filtered). Caller holds
+        ``state.lock``."""
         for turn in state.turns.values():
-            if turn.ended_seq is not None and ack_seq >= turn.ended_seq:
-                turn.delivered = True
-                turn.delivered_event.set()
+            if turn.ended_seq is None or ack_seq < turn.ended_seq:
+                continue
+            if acking_user_id is not None and acking_user_id != turn.user_id:
+                continue
+            turn.delivered = True
+            turn.delivered_event.set()
 
     async def wait_for_delivery(
         self,

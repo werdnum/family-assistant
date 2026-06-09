@@ -37,6 +37,9 @@ export const useStreamingResponse = ({
       let currentMessage = '';
       const toolCalls = [];
       let buffer = '';
+      // Per-file `attachment` events are accumulated into a single synthetic
+      // attach_to_response tool call so queued attachments render in the UI.
+      const autoAttachments = [];
 
       // Client-generated turn id makes the kickoff idempotent: a retried POST
       // with the same id returns the existing turn instead of starting a
@@ -189,6 +192,29 @@ export const useStreamingResponse = ({
                   if (typeof payload.seq === 'number') {
                     void ackTurn(resolvedConversationId, payload.seq);
                   }
+                  // Materialize accumulated per-file attachments into a single
+                  // synthetic tool call, but only if the assistant didn't make a
+                  // real attach_to_response call (which already renders them).
+                  if (
+                    autoAttachments.length > 0 &&
+                    !toolCalls.some((tc) => tc.name === 'attach_to_response')
+                  ) {
+                    toolCalls.push({
+                      id: `web_attach_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+                      name: 'attach_to_response',
+                      arguments: JSON.stringify({
+                        attachment_ids: autoAttachments.map((a) => a.attachment_id),
+                      }),
+                      result: JSON.stringify({
+                        status: 'attachments_queued',
+                        count: autoAttachments.length,
+                        attachments: autoAttachments,
+                      }),
+                      attachments: [...autoAttachments],
+                      _synthetic: true,
+                    });
+                    onToolCall([...toolCalls]);
+                  }
                   // A failed turn carries its error on the terminal event;
                   // surface it before exiting so the UI shows the error rather
                   // than silently clearing the loading state.
@@ -277,6 +303,23 @@ export const useStreamingResponse = ({
                   onToolConfirmationResult({
                     request_id: payload.request_id,
                     approved: payload.approved,
+                  });
+                }
+
+                // Accumulate per-file `attachment` events. The turn producer
+                // emits one per queued attachment; they're materialized into a
+                // synthetic attach_to_response tool call at turn_ended, but only
+                // when the assistant didn't already make a real attach_to_response
+                // call (otherwise the same files would render twice).
+                if (payload.type === 'attachment' && payload.attachment_id) {
+                  autoAttachments.push({
+                    type: 'attachment',
+                    attachment_id: payload.attachment_id,
+                    url: payload.url,
+                    content_url: payload.content_url,
+                    mime_type: payload.mime_type,
+                    description: payload.description,
+                    size: payload.size,
                   });
                 }
 

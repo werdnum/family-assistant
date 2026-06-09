@@ -101,6 +101,91 @@ describe('Streaming with Tool Calls', () => {
   );
 
   it(
+    'renders per-file attachment events emitted by the turn producer',
+    async () => {
+      let ourTurnId = '';
+      server.use(
+        http.post('/api/v1/chat/turns', async ({ request }) => {
+          const body = (await request.json()) as {
+            turn_id: string;
+            conversation_id?: string;
+          };
+          ourTurnId = body.turn_id;
+          return HttpResponse.json({
+            turn_id: body.turn_id,
+            conversation_id: body.conversation_id || 'web_conv_attach',
+            first_seq: 0,
+          });
+        }),
+        http.get('/api/v1/chat/conversations/:conversationId/stream', () => {
+          const encoder = new TextEncoder();
+          const stream = new ReadableStream({
+            start(controller) {
+              controller.enqueue(
+                encoder.encode(
+                  `event: text\ndata: ${JSON.stringify({
+                    turn_id: ourTurnId,
+                    content: 'Here is your photo',
+                  })}\n\n`
+                )
+              );
+              // The producer emits one `attachment` event per queued file.
+              controller.enqueue(
+                encoder.encode(
+                  `event: attachment\ndata: ${JSON.stringify({
+                    turn_id: ourTurnId,
+                    type: 'attachment',
+                    attachment_id: 'att-1',
+                    url: '/api/attachments/att-1',
+                    content_url: '/api/attachments/att-1',
+                    mime_type: 'image/png',
+                    description: 'A photo',
+                    size: 100,
+                  })}\n\n`
+                )
+              );
+              controller.enqueue(
+                encoder.encode(
+                  `event: turn_ended\ndata: ${JSON.stringify({
+                    turn_id: ourTurnId,
+                    status: 'complete',
+                  })}\n\n`
+                )
+              );
+              controller.close();
+            },
+          });
+          return new HttpResponse(stream, {
+            headers: { 'Content-Type': 'text/event-stream' },
+          });
+        })
+      );
+
+      const user = userEvent.setup();
+      await renderChatApp({ waitForReady: true });
+
+      const messageInput = screen.getByPlaceholderText('Message Family Assistant...');
+      await user.type(messageInput, 'Send the image');
+      await user.keyboard('{Enter}');
+
+      await waitFor(
+        () => {
+          expect(screen.getByTestId('tool-group-trigger')).toBeInTheDocument();
+        },
+        { timeout: 5000 }
+      );
+      await user.click(screen.getByTestId('tool-group-trigger'));
+      await waitFor(
+        () => {
+          expect(screen.getByText('📎 Attachments')).toBeInTheDocument();
+        },
+        { timeout: 5000 }
+      );
+    },
+    { timeout: 30000 }
+  );
+
+  it(
     'ignores events tagged with a different turn_id (concurrent foreign turn)',
     async () => {
       // Capture the turn_id the client generates so the mock stream can emit

@@ -843,9 +843,13 @@ async def api_chat_ack(
     SSE stream open: send the highest received seq after handling a notify
     push, and the hub will mark any covered turn as delivered.
     """
-    await _ensure_user_owns_conversation(request, current_user, payload.conversation_id)
+    user_id = await _ensure_user_owns_conversation(
+        request, current_user, payload.conversation_id
+    )
     hub = _get_hub(request)
-    await hub.ack_conversation(payload.conversation_id, payload.ack_seq)
+    await hub.ack_conversation(
+        payload.conversation_id, payload.ack_seq, user_id=user_id
+    )
     return AckResponse(ok=True)
 
 
