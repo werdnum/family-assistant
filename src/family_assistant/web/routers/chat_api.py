@@ -34,6 +34,7 @@ from family_assistant.services.confirmation_service import (
     ConfirmationExpiredError,
     ConfirmationNotFoundError,
     ConfirmationService,
+    create_durable_confirmation,
 )
 from family_assistant.services.confirmation_waiters import (
     ConfirmationResultWaiterRegistry,
@@ -696,6 +697,47 @@ async def api_chat_send_message(
         None,
     )
 
+    # Non-streaming callers (e.g. iOS App Intents / Siri) cannot wait on a live
+    # confirmation channel, so a tool needing approval records a durable pending
+    # confirmation the user can approve later from another client (the
+    # confirmation service push-notifies them). The deferred tool result tells
+    # the model the action is awaiting approval so the reply reflects that.
+    api_confirmation_service = _get_confirmation_service(request)
+
+    async def api_confirmation_callback(
+        interface_type: str,
+        conversation_id: str,
+        turn_id: str | None,
+        tool_name: str,
+        call_id: str,
+        # ast-grep-ignore: no-dict-any - Tool arguments vary per tool and cannot be statically typed
+        tool_args: dict[str, Any],
+        timeout_seconds: float,
+        context: ToolExecutionContext,
+    ) -> ConfirmationOutcome:
+        durable_request = await create_durable_confirmation(
+            confirmation_service=api_confirmation_service,
+            db_context=context.db_context,
+            target_user_id=current_user["user_identifier"],
+            tool_name=tool_name,
+            tool_call_id=call_id,
+            tool_args=tool_args,
+            confirmation_prompt=(
+                f"Do you want to execute '{tool_name}' with these parameters?"
+            ),
+            timeout_seconds=timeout_seconds,
+            turn_id=turn_id,
+            now=datetime.now(UTC),
+        )
+        return ConfirmationOutcome(
+            kind="completed",
+            result=(
+                f"I've requested your approval to run '{tool_name}' "
+                f"(request {durable_request['id']}). It hasn't run yet — approve it "
+                "from your pending confirmations to continue."
+            ),
+        )
+
     result = await selected_processing_service.handle_chat_interaction(
         db_context=db_context,
         interface_type=interface_type,  # Use the interface_type from request or default "api"
@@ -708,7 +750,7 @@ async def api_chat_send_message(
         chat_interface=web_chat_interface,  # Use WebChatInterface for message delivery
         chat_interfaces=chat_interfaces,  # Pass all registered chat interfaces
         confirmation_ui_managers=confirmation_ui_managers,
-        request_confirmation_callback=None,  # No confirmation callback for API (yet)
+        request_confirmation_callback=api_confirmation_callback,
         trigger_attachments=trigger_attachments,  # Pass attachment metadata
     )
 
@@ -1125,27 +1167,19 @@ async def api_chat_send_message_stream(
                 f"Do you want to execute '{tool_name}' with these parameters?"
             )
 
-            source_message_internal_id = None
-            if turn_id is not None:
-                source_row = (
-                    await context.db_context.message_history.get_user_row_by_turn_id(
-                        turn_id
-                    )
-                )
-                if source_row is not None:
-                    source_message_internal_id = source_row["internal_id"]
-
             confirmation_service = _get_confirmation_service(request)
             confirmation_result_waiters = _get_confirmation_result_waiters(request)
-            expires_at = datetime.now(UTC) + timedelta(seconds=timeout_seconds)
-            durable_request = await confirmation_service.create_request(
+            durable_request = await create_durable_confirmation(
+                confirmation_service=confirmation_service,
+                db_context=context.db_context,
                 target_user_id=current_user["user_identifier"],
                 tool_name=tool_name,
-                tool_args=tool_args,
                 tool_call_id=call_id,
-                source_message_internal_id=source_message_internal_id,
+                tool_args=tool_args,
                 confirmation_prompt=confirmation_prompt,
-                expires_at=expires_at,
+                timeout_seconds=timeout_seconds,
+                turn_id=turn_id,
+                now=datetime.now(UTC),
             )
             request_id = durable_request["id"]
             execution_future = confirmation_result_waiters.register(request_id)

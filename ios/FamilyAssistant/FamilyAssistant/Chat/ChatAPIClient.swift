@@ -50,6 +50,37 @@ struct ChatAPIClient {
         return try JSONDecoder.chatDecoder.decode(ChatProfilesResponse.self, from: data)
     }
 
+    /// Sends a prompt and waits for the assistant's full reply.
+    ///
+    /// Unlike ``streamMessage(prompt:conversationID:profileID:attachments:)`` this
+    /// uses the non-streaming `/send_message` endpoint, which suits headless
+    /// callers (App Intents / Siri) that present a single completed reply rather
+    /// than a live token stream.
+    func sendMessage(
+        prompt: String,
+        conversationID: String,
+        profileID: String?
+    ) async throws -> ChatSendResult {
+        var request = try await authManager.authorizedRequest(
+            url: apiURL("/api/v1/chat/send_message"),
+            method: "POST"
+        )
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.httpBody = try JSONEncoder.chatEncoder.encode(
+            ChatSendMessageRequest(
+                prompt: prompt,
+                conversationID: conversationID,
+                profileID: profileID,
+                interfaceType: ChatConstants.interfaceType
+            )
+        )
+
+        let (data, response) = try await urlSession.data(for: request)
+        try validate(response: response, data: data)
+        let decoded = try JSONDecoder.chatDecoder.decode(ChatSendMessageResponse.self, from: data)
+        return ChatSendResult(reply: decoded.reply, conversationID: decoded.conversationID)
+    }
+
     func streamMessage(
         prompt: String,
         conversationID: String,
@@ -303,6 +334,36 @@ struct ChatAPIClient {
         var allowedCharacters = CharacterSet.urlPathAllowed
         allowedCharacters.remove(charactersIn: "/?#")
         return value.addingPercentEncoding(withAllowedCharacters: allowedCharacters) ?? value
+    }
+}
+
+/// The completed result of a non-streaming chat send.
+struct ChatSendResult: Equatable {
+    let reply: String
+    let conversationID: String
+}
+
+private struct ChatSendMessageRequest: Encodable {
+    let prompt: String
+    let conversationID: String
+    let profileID: String?
+    let interfaceType: String
+
+    enum CodingKeys: String, CodingKey {
+        case prompt
+        case conversationID = "conversation_id"
+        case profileID = "profile_id"
+        case interfaceType = "interface_type"
+    }
+}
+
+private struct ChatSendMessageResponse: Decodable {
+    let reply: String
+    let conversationID: String
+
+    enum CodingKeys: String, CodingKey {
+        case reply
+        case conversationID = "conversation_id"
     }
 }
 

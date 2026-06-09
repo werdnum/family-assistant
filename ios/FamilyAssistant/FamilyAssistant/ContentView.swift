@@ -28,6 +28,9 @@ struct ContentView: View {
                 .onChange(of: notificationManager.pendingNavigationPath) { _, path in
                     navigateToPendingNotificationPath(path, baseURL: baseURL)
                 }
+                .onChange(of: IntentNavigationCenter.shared.pendingChatPath) { _, _ in
+                    navigateToPendingIntentPath(baseURL: baseURL)
+                }
                 .task {
                     notificationManager.bind(authManager: authManager)
                     await notificationManager.syncRegistrationIfNeeded()
@@ -35,6 +38,7 @@ struct ContentView: View {
                         notificationManager.pendingNavigationPath,
                         baseURL: baseURL
                     )
+                    navigateToPendingIntentPath(baseURL: baseURL)
                 }
                 .sheet(item: Binding(
                     get: { notificationManager.pendingConfirmationModal },
@@ -72,5 +76,14 @@ struct ContentView: View {
             UIApplication.shared.open(url)
         }
         notificationManager.clearPendingNavigationPath()
+    }
+
+    private func navigateToPendingIntentPath(baseURL: URL) {
+        guard let path = IntentNavigationCenter.shared.consumePendingChatPath(),
+              let url = URL(string: path, relativeTo: baseURL)?.absoluteURL
+        else {
+            return
+        }
+        appRouter.navigate(to: url, relativeTo: baseURL)
     }
 }

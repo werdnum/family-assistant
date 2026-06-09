@@ -239,3 +239,11 @@ bytes API.
 - Backend addition: APNs provider alongside existing VAPID web push
 - Store device tokens via new `/api/push/apns/register` endpoint
 - Rich notifications with conversation context
+
+## Phase 5: App Intents / Siri / Shortcuts (Done)
+
+In-app App Intents expose core actions (ask the assistant, quick capture, create a note, open a
+chat) to Siri and the Shortcuts app, with an `AppShortcutsProvider` registering Siri phrases
+automatically. No new targets or entitlements — the intents run in the app's process and reuse
+`AuthManager` and the existing API clients. See [ios-app-intents.md](ios-app-intents.md) for the
+full design.

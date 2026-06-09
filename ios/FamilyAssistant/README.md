@@ -159,6 +159,22 @@ return the user to the source conversation. The app posts action results to the 
 
 Use category `FAMILY_ASSISTANT_MESSAGE` for normal message notifications.
 
+### App Intents (Siri & Shortcuts)
+
+The app exposes its core actions to Siri and the Shortcuts app via App Intents. They run in the
+app's own process and reuse `AuthManager` and the existing API clients — no new target, entitlement,
+or backend change is required. `FamilyAssistantAppShortcuts` registers Siri phrases automatically.
+
+- **Ask Family Assistant** — non-streaming `POST /api/v1/chat/send_message`; presents the reply as a
+  dialog + snippet with a "Continue in app" deep link.
+- **Quick Capture** — sends text/links wrapped in a filing instruction (also reachable from the
+  Share Sheet via a Shortcut).
+- **Create Note** — `POST /api/notes/`.
+- **Open Chat** — `openAppWhenRun`; foregrounds the Chat tab and can auto-send a message.
+
+If the user is signed out, intents throw a "sign in" error rather than attempting interactive login.
+See [docs/design/ios-app-intents.md](../../docs/design/ios-app-intents.md) for the full design.
+
 Manual APNs configuration:
 
 - Enable Push Notifications for the App ID in Apple Developer
@@ -191,11 +207,19 @@ FamilyAssistant/
     ├── AppDelegate.swift          # APNs and notification response callbacks
     └── NotificationManager.swift  # Permission, token sync, notification routing
 └── Notes/
-    ├── NotesAPIClient.swift       # Authenticated Notes API calls
-    ├── NotesRootView.swift        # Notes route container
-    ├── NotesListView.swift        # Searchable native notes list
-    ├── NoteDetailView.swift       # Native note reader
-    └── NoteEditorView.swift       # Native create/edit form
+│   ├── NotesAPIClient.swift       # Authenticated Notes API calls
+│   ├── NotesRootView.swift        # Notes route container
+│   ├── NotesListView.swift        # Searchable native notes list
+│   ├── NoteDetailView.swift       # Native note reader
+│   └── NoteEditorView.swift       # Native create/edit form
+└── Intents/
+    ├── IntentSupport.swift              # Auth helper, deep links, IntentNavigationCenter
+    ├── AskAssistantIntent.swift         # "Ask Family Assistant"
+    ├── QuickCaptureIntent.swift         # "Capture this in Family Assistant"
+    ├── CreateNoteIntent.swift           # "Add a note to Family Assistant"
+    ├── OpenConversationIntent.swift     # "Open Family Assistant chat"
+    ├── AssistantReplySnippet.swift      # Inline reply + "Continue in app" snippet
+    └── FamilyAssistantAppShortcuts.swift # Siri phrase registration
 ```
 
 ## Dependencies

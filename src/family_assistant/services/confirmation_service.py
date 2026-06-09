@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import logging
 import uuid
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING
 
 from family_assistant.services.notifier import (
@@ -286,3 +286,41 @@ class ConfirmationService:
         raise ConfirmationAlreadyResolvedError(
             f"Confirmation request {request['id']} is already {request['status']}"
         )
+
+
+async def create_durable_confirmation(
+    *,
+    confirmation_service: ConfirmationService,
+    db_context: DatabaseContext,
+    target_user_id: str,
+    tool_name: str,
+    tool_call_id: str | None,
+    tool_args: ToolArgumentsView,
+    confirmation_prompt: str,
+    timeout_seconds: float,
+    turn_id: str | None,
+    now: datetime,
+) -> ConfirmationRequestRow:
+    """Record a durable pending confirmation for a tool that needs approval.
+
+    Shared by callers that persist a confirmation for later approval rather than
+    waiting on a live channel (email intake, the non-streaming chat API, and the
+    durable half of the streaming chat path). Resolves the originating user
+    message from ``turn_id`` so the approval threads back to the right
+    conversation.
+    """
+    source_message_internal_id: int | None = None
+    if turn_id is not None:
+        source_row = await db_context.message_history.get_user_row_by_turn_id(turn_id)
+        if source_row is not None:
+            source_message_internal_id = source_row["internal_id"]
+
+    return await confirmation_service.create_request(
+        target_user_id=target_user_id,
+        tool_name=tool_name,
+        tool_args=tool_args,
+        tool_call_id=tool_call_id,
+        source_message_internal_id=source_message_internal_id,
+        confirmation_prompt=confirmation_prompt,
+        expires_at=now + timedelta(seconds=timeout_seconds),
+    )
