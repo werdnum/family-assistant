@@ -64,9 +64,10 @@ if mountpoint -q /home/claude 2>/dev/null || [ -n "$(findmnt -n -o SOURCE --targ
     HOME_IS_MOUNTED=true
 fi
 
-# Install npm tools individually if missing (e.g., when home is mounted from an older image).
-# We check each binary in /home/claude/.npm-global/bin directly: relying on `which claude`
+# Install CLI tools individually if missing (e.g., when home is mounted from an older image).
+# We check each binary at its real install location directly: relying on `which claude`
 # would falsely succeed because the wrapper symlink in /usr/local/bin always exists.
+# Claude Code ships via the native installer (~/.local/bin); the others via npm.
 if [ "$HOME_IS_MOUNTED" = "true" ]; then
     NPM_BIN_DIR=/home/claude/.npm-global/bin
     mkdir -p "$NPM_BIN_DIR"
@@ -83,7 +84,11 @@ if [ "$HOME_IS_MOUNTED" = "true" ]; then
         fi
     }
 
-    install_npm_tool claude "@anthropic-ai/claude-code"
+    if [ ! -x "/home/claude/.local/bin/claude" ]; then
+        echo "Installing Claude Code (native installer)..."
+        curl -fsSL https://claude.ai/install.sh | HOME=/home/claude bash
+        installed_any=true
+    fi
     install_npm_tool gemini "@google/gemini-cli@nightly"
     install_npm_tool codex "@openai/codex"
     install_npm_tool playwright playwright
@@ -365,7 +370,8 @@ UVX_PATH=$(which uvx 2>/dev/null || echo "uvx")
 NPX_PATH=$(which npx 2>/dev/null || echo "npx")
 
 # Configure MCP servers with full paths (bypass wrapper to avoid git pull)
-CLAUDE_BIN="/home/claude/.npm-global/bin/claude"
+# Claude Code is installed via the native installer to ~/.local/bin.
+CLAUDE_BIN="/home/claude/.local/bin/claude"
 # Remove existing servers if any exist
 # Filter out status messages like "Checking MCP server health..." by only matching lines
 # that look like server entries (start with alphanumeric, no spaces before colon)

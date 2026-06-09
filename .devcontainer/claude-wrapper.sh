@@ -27,12 +27,17 @@ if [ -f "/home/claude/.claude/CLAUDE.local.md" ] && [ ! -f ".claude/CLAUDE.local
     cp /home/claude/.claude/CLAUDE.local.md .claude/
 fi
 
+# The native installer (https://claude.ai/install.sh) installs the real binary
+# to ~/.local/bin/claude. Invoke it directly to bypass the wrapper symlink in
+# /usr/local/bin and avoid infinite recursion.
+CLAUDE_BIN=/home/claude/.local/bin/claude
+
 # Update Claude plugin marketplaces (fetches latest from GitHub)
 echo "🔄 Updating Claude plugin marketplaces..."
-/home/claude/.npm-global/bin/claude plugin marketplace update >/dev/null 2>&1 || {
+"$CLAUDE_BIN" plugin marketplace update >/dev/null 2>&1 || {
     echo "⚠️  Warning: Failed to update plugin marketplaces"
 }
 
 export CLAUDE_BASH_MAINTAIN_PROJECT_WORKING_DIR=1
 
-exec /home/claude/.npm-global/bin/claude "$@"
+exec "$CLAUDE_BIN" "$@"
