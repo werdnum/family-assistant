@@ -120,6 +120,68 @@ describe.sequential('ErrorHandling', () => {
     expect(screen.getByText('Chat')).toBeInTheDocument();
   }, 30000); // Increased timeout for parallel test runs
 
+  it('surfaces a failed turn_ended error instead of silently completing', async () => {
+    // The producer reports a failed turn as turn_ended with status "failed" and
+    // an error field. The client must surface that before exiting, not clear
+    // loading as if it completed normally.
+    let ourTurnId = '';
+    server.use(
+      http.post('/api/v1/chat/turns', async ({ request }) => {
+        const body = (await request.json()) as {
+          turn_id: string;
+          conversation_id?: string;
+        };
+        ourTurnId = body.turn_id;
+        return HttpResponse.json({
+          turn_id: body.turn_id,
+          conversation_id: body.conversation_id || 'web_conv_failed',
+          first_seq: 0,
+        });
+      }),
+      http.get('/api/v1/chat/conversations/:conversationId/stream', () => {
+        const encoder = new TextEncoder();
+        const stream = new ReadableStream({
+          start(controller) {
+            controller.enqueue(
+              encoder.encode(
+                `event: turn_started\ndata: ${JSON.stringify({ turn_id: ourTurnId, seq: 0 })}\n\n`
+              )
+            );
+            controller.enqueue(
+              encoder.encode(
+                `event: turn_ended\ndata: ${JSON.stringify({
+                  turn_id: ourTurnId,
+                  status: 'failed',
+                  error: 'The model provider is unavailable.',
+                })}\n\n`
+              )
+            );
+            controller.close();
+          },
+        });
+        return new HttpResponse(stream, {
+          headers: { 'Content-Type': 'text/event-stream' },
+        });
+      })
+    );
+
+    const user = userEvent.setup();
+    await renderChatApp({ waitForReady: true });
+
+    const messageInput = await findMessageInput();
+    await user.type(messageInput, 'This turn will fail');
+    await user.keyboard('{Enter}');
+
+    await waitFor(
+      () => {
+        expect(
+          screen.getByText(/encountered an error processing your message/i)
+        ).toBeInTheDocument();
+      },
+      { timeout: 5000 }
+    );
+  }, 30000);
+
   it('handles conversation loading errors', async () => {
     // Mock error loading conversations
     server.use(

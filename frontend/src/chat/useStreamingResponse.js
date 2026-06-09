@@ -158,6 +158,12 @@ export const useStreamingResponse = ({
                 // The turn_ended event terminates this turn's stream. Done is
                 // signalled both by the SSE event name and the payload status.
                 if (currentEventType === 'turn_ended' || payload.status) {
+                  // A failed turn carries its error on the terminal event;
+                  // surface it before exiting so the UI shows the error rather
+                  // than silently clearing the loading state.
+                  if (payload.status === 'failed' || payload.error) {
+                    onError(new Error(payload.error || 'The assistant stopped unexpectedly.'));
+                  }
                   return;
                 }
                 // turn_started / heartbeat carry no renderable content.
