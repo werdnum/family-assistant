@@ -455,6 +455,14 @@ final class ChatViewModel {
             do {
                 let stream = try await apiClient.connectEvents(conversationID: conversationID)
                 liveUpdatesConnected = true
+                // Reload on (re)connect: the stream tails from the live head, so
+                // a reconnect after a drop resumes at the new head and misses
+                // events published while offline. Message content always comes
+                // from persisted history, so a reload closes that gap.
+                if !isStreaming {
+                    await loadMessages(conversationID: conversationID)
+                    await refreshConversations()
+                }
                 for try await event in stream {
                     if Task.isCancelled {
                         break

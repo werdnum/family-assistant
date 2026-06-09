@@ -70,6 +70,11 @@ export function useLiveMessageUpdates({
         window.location.origin
       );
       url.searchParams.set('follow', 'true');
+      // Tail from the current head (from_seq=-1): a follow-only listener wants
+      // future events, not a replay. Subscribing from 0 would 410 once the
+      // conversation's hub buffer has rotated, trapping EventSource in a
+      // permanent reconnect loop.
+      url.searchParams.set('from_seq', '-1');
 
       // Create EventSource connection
       const eventSource = new EventSource(url.toString());
@@ -86,6 +91,14 @@ export function useLiveMessageUpdates({
           conversation_id: conversationId,
         });
       };
+
+      // On every (re)connect, trigger a history reload. Because we tail from
+      // the live head (from_seq=-1), the browser's native EventSource
+      // auto-reconnect after a network blip resumes at the new head and drops
+      // any events published while offline; reloading on open closes that gap
+      // since message content is always read from persisted history, not the
+      // (content-free) live event.
+      eventSource.addEventListener('open', notifyTurnEnded);
 
       eventSource.addEventListener('turn_ended', notifyTurnEnded);
       // Backwards-compatible: some flows may still emit a `message` event.

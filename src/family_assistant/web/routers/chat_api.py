@@ -545,15 +545,17 @@ async def _ensure_user_owns_conversation(
     current_user: Mapping[str, object],
     conversation_id: str,
 ) -> str:
-    """Verify ``current_user`` owns ``conversation_id``. Returns the
+    """Verify ``current_user`` may act on ``conversation_id``. Returns the
     authoritative user_id. 404 (not 403) on mismatch so the API doesn't leak
     the existence of other users' conversations.
 
     The check is short-circuited if the hub has a running turn for this
     conversation owned by the user (fast path). Otherwise we look at the
-    persisted user messages: if any belong to a different user, deny.
-    A brand-new conversation with no persisted state is allowed through —
-    the client's URL is the only authority for "the conv id I just picked".
+    persisted user messages across all interfaces: if any belong to a different
+    user, deny. A brand-new conversation with no persisted state is allowed
+    through — there is nothing to leak, and the actual cross-user protection
+    for the long-lived stream is enforced by binding each subscriber to its
+    user and filtering turn-scoped fan-out (see ConversationStreamHub).
     """
     raw_user_id = current_user.get("user_identifier")
     if not isinstance(raw_user_id, str) or not raw_user_id:
@@ -569,9 +571,7 @@ async def _ensure_user_owns_conversation(
 
     # Look at the persisted owners across ALL interface types — a conversation
     # created via any interface (web, iOS, api, telegram) must not be readable
-    # by a different user. An empty set means a brand-new conversation with no
-    # persisted user message yet, which is allowed (the client's URL is the
-    # only authority for the id it just picked).
+    # by a different user.
     async with get_db_context(request.app.state.database_engine) as db_context:
         owners = await db_context.message_history.get_conversation_owner_ids(
             conversation_id
@@ -763,7 +763,7 @@ async def api_chat_conversation_stream(
 
     try:
         handle = await hub.subscribe(
-            conversation_id, from_seq=from_seq, ack_seq=ack_seq
+            conversation_id, from_seq=from_seq, ack_seq=ack_seq, user_id=user_id
         )
     except OutOfBufferError as exc:
         return JSONResponse(
@@ -1290,6 +1290,9 @@ async def get_conversation_messages(
         Paginated list of messages in the conversation, plus ``active_turns``
         describing any in-flight turns the client can resume.
     """
+    # /messages is a point-in-time read: an empty conversation just returns an
+    # empty list (no future fan-out leaks through it), so a brand-new
+    # conversation id is allowed.
     user_id = await _ensure_user_owns_conversation(
         request, current_user, conversation_id
     )

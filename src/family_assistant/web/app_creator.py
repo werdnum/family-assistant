@@ -157,6 +157,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         app.state.web_chat_interface = WebChatInterface(
             app.state.database_engine,
             notifier=notifier,
+            stream_hub=getattr(app.state, "conversation_stream_hub", None),
         )
         # Register web chat interface in the registry
         if not hasattr(app.state, "chat_interfaces"):

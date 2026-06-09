@@ -734,3 +734,31 @@ async def test_subscriber_ack_suppresses_disconnect_push(
     assert not spy.calls, (
         f"Expected no disconnect push when client acked turn_ended; got {spy.calls}"
     )
+
+
+async def test_web_chat_interface_publishes_live_update_to_hub(
+    db_engine: AsyncEngine,
+) -> None:
+    """WebChatInterface.send_message (scheduled callbacks / task-worker flows)
+    publishes a ``message`` event to the hub so an open follow-stream reloads —
+    these messages never go through the /turns producer."""
+    async with get_db_context(engine=db_engine) as ctx:
+        await init_db(db_engine)
+        await ctx.init_vector_db()
+
+    hub = ConversationStreamHub()
+    interface = WebChatInterface(db_engine, stream_hub=hub)
+    conversation_id = f"conv_oob_{uuid.uuid4().hex[:8]}"
+
+    # A follow-style tail subscriber attached before the out-of-band message.
+    handle = await hub.subscribe(conversation_id, from_seq=-1)
+
+    saved = await interface.send_message(
+        conversation_id=conversation_id,
+        text="Reply from a scheduled callback",
+    )
+    assert saved is not None
+
+    event = await asyncio.wait_for(handle.queue.get(), timeout=2.0)
+    assert event.type == "message"
+    hub.unsubscribe(conversation_id, handle.queue)

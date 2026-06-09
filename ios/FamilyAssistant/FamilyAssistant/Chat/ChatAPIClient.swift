@@ -123,9 +123,13 @@ struct ChatAPIClient {
     /// Connect to a conversation's event stream for live updates. With
     /// `follow=true` the connection stays open across turns so replies started
     /// from other devices/tabs surface here too.
+    ///
+    /// Defaults to `fromSeq = -1` (tail from the current head): a follow-only
+    /// listener wants future events, not a replay, and subscribing from 0 would
+    /// 410 once the conversation's hub buffer has rotated.
     func connectEvents(
         conversationID: String,
-        fromSeq: Int = 0
+        fromSeq: Int = -1
     ) async throws -> AsyncThrowingStream<ChatStreamEvent, Error> {
         try await streamConversation(conversationID: conversationID, fromSeq: fromSeq, follow: true)
     }

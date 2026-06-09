@@ -16,6 +16,7 @@ if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncEngine
 
     from family_assistant.services.notifier import Notifier
+    from family_assistant.web.conversation_stream_hub import ConversationStreamHub
 
 logger = logging.getLogger(__name__)
 
@@ -26,16 +27,19 @@ class WebChatInterface(ChatInterface):
 
     Unlike TelegramChatInterface which sends messages via the Telegram API,
     WebChatInterface saves messages to the database and, when a notifier is
-    configured, delivers a push notification to the conversation owner. Live
-    in-app delivery for an open session is handled separately by the
-    ConversationStreamHub (see web/conversation_stream_hub.py), which the
-    chat turn producer publishes to directly.
+    configured, delivers a push notification to the conversation owner. It also
+    publishes a lightweight ``message`` event to the ConversationStreamHub so
+    that clients with an open follow-stream reload — this covers assistant
+    messages produced *outside* the ``/turns`` streaming path (scheduled
+    callbacks, task-worker flows, cross-interface delegation), which the turn
+    producer never publishes for.
     """
 
     def __init__(
         self,
         database_engine: "AsyncEngine",
         notifier: "Notifier | None" = None,
+        stream_hub: "ConversationStreamHub | None" = None,
     ) -> None:
         """
         Initialize the WebChatInterface.
@@ -44,9 +48,13 @@ class WebChatInterface(ChatInterface):
             database_engine: SQLAlchemy async engine for database operations
             notifier: Optional notification channel (Web Push, iOS, or a dispatcher fanning out to
                 both) used to notify the conversation owner of new assistant replies.
+            stream_hub: Optional ConversationStreamHub. When set, a ``message``
+                event is published after a successful save so open follow-streams
+                reload for messages sent outside the streaming turn path.
         """
         self.database_engine = database_engine
         self.notifier = notifier
+        self.stream_hub = stream_hub
 
     async def send_message(
         self,
@@ -118,9 +126,22 @@ class WebChatInterface(ChatInterface):
                         )
 
             if saved_message is not None:
+                # Nudge any open follow-stream to reload. The hub stream doesn't
+                # carry full message rows, so this is a content-free signal; the
+                # web/iOS live-update hooks refetch conversation history on it.
+                # This is an in-memory publish: a failure here is a programming
+                # error, so let it propagate (fail fast) rather than swallow it.
+                if self.stream_hub is not None:
+                    await self.stream_hub.publish(
+                        conversation_id,
+                        "message",
+                        turn_id=None,
+                        payload={"new_messages": True},
+                    )
+
                 logger.info(
                     f"WebChatInterface: Saved message to conversation {conversation_id}, "
-                    f"internal_id={saved_message}. SSE notification will be sent automatically."
+                    f"internal_id={saved_message}."
                 )
                 return str(saved_message)
 
