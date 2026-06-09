@@ -369,6 +369,11 @@ export const handlers = [
     });
   }),
 
+  http.post('/api/v1/chat/ack', () => {
+    // Client acknowledges receipt of a turn to suppress the disconnect push.
+    return HttpResponse.json({ ok: true });
+  }),
+
   http.get('/api/v1/chat/conversations/:conversationId/stream', ({ params }) => {
     const conversationId = String(params.conversationId);
     const prompt = pendingTurnPrompts.get(conversationId) ?? '';

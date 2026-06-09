@@ -257,6 +257,7 @@ final class ChatViewModel {
                     profileID: selectedProfileID,
                     attachments: uploadedAttachments
                 )
+                var lastSeq: Int?
                 for try await event in stream {
                     if Task.isCancelled {
                         break
@@ -269,10 +270,22 @@ final class ChatViewModel {
                     if let eventTurnID = event.turnID, eventTurnID != turnID {
                         continue
                     }
+                    if let seq = event.seq {
+                        lastSeq = seq
+                    }
                     apply(streamEvent: event, assistantMessageID: assistantMessageID)
                     if event.type == .turnEnded || event.type == .end || event.type == .close {
                         break
                     }
+                }
+                // Explicitly acknowledge the highest received seq so the server
+                // suppresses the disconnect push for a reply we actually saw.
+                // Skip on cancellation (backgrounded mid-turn): there the push
+                // is the intended delivery path. Fire-and-forget so UI
+                // completion isn't blocked on the ack roundtrip.
+                if let lastSeq, !Task.isCancelled {
+                    let ackClient = apiClient
+                    Task { try? await ackClient.acknowledge(conversationID: id, ackSeq: lastSeq) }
                 }
                 completeStream(assistantMessageID: assistantMessageID)
                 await refreshConversations()

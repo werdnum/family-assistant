@@ -8,6 +8,7 @@ struct ServerSentEvent: Equatable {
 struct ChatStreamEvent: Equatable {
     let type: ChatStreamEventType
     let turnID: String?
+    let seq: Int?
     let text: String?
     let toolCall: ChatBackendToolCall?
     let toolCallID: String?
@@ -46,6 +47,9 @@ final class SSEParser {
     // turn_id of the event currently being decoded, threaded into baseEvent so
     // every event carries its owning turn for client-side filtering.
     private var currentTurnID: String?
+    // seq of the event currently being decoded, so the client can acknowledge
+    // the highest received seq after processing turn_ended.
+    private var currentSeq: Int?
 
     func append(_ chunk: String) -> [ServerSentEvent] {
         buffer += chunk.replacingOccurrences(of: "\r\n", with: "\n")
@@ -74,11 +78,13 @@ final class SSEParser {
 
     func decode(_ event: ServerSentEvent) -> ChatStreamEvent {
         currentTurnID = nil
+        currentSeq = nil
         let eventType = ChatStreamEventType(rawValue: camelCase(event.event)) ?? .message
         guard !event.data.isEmpty, event.data != "[DONE]" else {
             return ChatStreamEvent(
                 type: eventType,
                 turnID: nil,
+                seq: nil,
                 text: nil,
                 toolCall: nil,
                 toolCallID: nil,
@@ -96,6 +102,7 @@ final class SSEParser {
             return ChatStreamEvent(
                 type: .error,
                 turnID: nil,
+                seq: nil,
                 text: nil,
                 toolCall: nil,
                 toolCallID: nil,
@@ -108,6 +115,7 @@ final class SSEParser {
         }
 
         currentTurnID = payload["turn_id"]?.stringValue
+        currentSeq = payload["seq"]?.doubleValue.map { Int($0) }
 
         if eventType == .text, case .string(let content) = payload["content"] {
             return baseEvent(type: .text, text: content)
@@ -235,6 +243,7 @@ final class SSEParser {
         ChatStreamEvent(
             type: type,
             turnID: currentTurnID,
+            seq: currentSeq,
             text: text,
             toolCall: toolCall,
             toolCallID: toolCallID,

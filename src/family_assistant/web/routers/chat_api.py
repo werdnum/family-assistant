@@ -782,12 +782,15 @@ async def api_chat_conversation_stream(
         )
 
     async def event_generator() -> AsyncGenerator[str]:
+        # NOTE: writing an event to this SSE socket is NOT proof the client read
+        # and handled it. Delivery (which suppresses the disconnect push) is only
+        # recorded on an *explicit* client ack — the ``ack_seq`` query param on
+        # (re)subscribe or ``POST /v1/chat/ack`` after the client processes
+        # turn_ended — never here on send.
         try:
             # Replay the snapshot first; then tail live events from the queue.
             for replayed in handle.replayed_events:
                 yield format_sse_event(replayed)
-                if replayed.type == "turn_ended":
-                    await hub.ack(conversation_id, handle.queue, replayed.seq)
 
             # In non-follow mode, if nothing is running after the replay there
             # is nothing left to watch, so close the stream.
@@ -803,10 +806,12 @@ async def api_chat_conversation_stream(
                         return
                     continue
                 yield format_sse_event(event)
-                if event.type == "turn_ended":
-                    await hub.ack(conversation_id, handle.queue, event.seq)
-                    if not follow and not _has_running_turn():
-                        return
+                if (
+                    event.type == "turn_ended"
+                    and not follow
+                    and not _has_running_turn()
+                ):
+                    return
         except asyncio.CancelledError:
             raise
         finally:

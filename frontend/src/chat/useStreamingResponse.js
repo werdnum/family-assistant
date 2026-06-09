@@ -105,6 +105,29 @@ export const useStreamingResponse = ({
         const reader = response.body.getReader();
         const decoder = new TextDecoder();
 
+        // Acknowledge a processed turn so the server can suppress the disconnect
+        // push. Best-effort: a failed ack must not break stream completion.
+        const ackTurn = async (ackConversationId, ackSeq) => {
+          try {
+            const ackResponse = await fetch('/api/v1/chat/ack', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                conversation_id: ackConversationId,
+                ack_seq: ackSeq,
+              }),
+            });
+            // fetch only rejects on network errors, so surface HTTP error
+            // statuses too instead of swallowing a misbehaving ack endpoint.
+            if (!ackResponse.ok) {
+              console.warn(`Turn ack failed: HTTP ${ackResponse.status}`);
+            }
+          } catch (e) {
+            // A missed ack only means a possibly-redundant push; never fatal.
+            console.warn('Turn ack request failed:', e);
+          }
+        };
+
         while (true) {
           const { done, value } = await reader.read();
           if (done) {
@@ -158,6 +181,14 @@ export const useStreamingResponse = ({
                 // The turn_ended event terminates this turn's stream. Done is
                 // signalled both by the SSE event name and the payload status.
                 if (currentEventType === 'turn_ended' || payload.status) {
+                  // Explicitly acknowledge receipt so the server suppresses the
+                  // "you have a new reply" disconnect push. The server never
+                  // treats writing the SSE chunk as delivery — only this ack
+                  // (sent after we've actually processed turn_ended) counts.
+                  // Fire-and-forget: never block UI completion on the ack.
+                  if (typeof payload.seq === 'number') {
+                    void ackTurn(resolvedConversationId, payload.seq);
+                  }
                   // A failed turn carries its error on the terminal event;
                   // surface it before exiting so the UI shows the error rather
                   // than silently clearing the loading state.

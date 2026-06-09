@@ -134,6 +134,22 @@ struct ChatAPIClient {
         try await streamConversation(conversationID: conversationID, fromSeq: fromSeq, follow: true)
     }
 
+    /// Acknowledge the highest received seq for a conversation so the server
+    /// suppresses the "new reply" disconnect push. The server never treats
+    /// writing the SSE chunk as delivery — only this explicit ack counts.
+    func acknowledge(conversationID: String, ackSeq: Int) async throws {
+        var request = try await authManager.authorizedRequest(
+            url: apiURL("/api/v1/chat/ack"),
+            method: "POST"
+        )
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.httpBody = try JSONEncoder.chatEncoder.encode(
+            ChatAckRequest(conversationID: conversationID, ackSeq: ackSeq)
+        )
+        let (data, response) = try await urlSession.data(for: request)
+        try validate(response: response, data: data)
+    }
+
     private func streamConversation(
         conversationID: String,
         fromSeq: Int,
@@ -410,6 +426,16 @@ private struct ChatTurnResponse: Decodable {
         case turnID = "turn_id"
         case conversationID = "conversation_id"
         case firstSeq = "first_seq"
+    }
+}
+
+private struct ChatAckRequest: Encodable {
+    let conversationID: String
+    let ackSeq: Int
+
+    enum CodingKeys: String, CodingKey {
+        case conversationID = "conversation_id"
+        case ackSeq = "ack_seq"
     }
 }
 
