@@ -228,20 +228,18 @@ async def _process_user_attachments(
                         )
 
                         # Store attachment metadata for message history
-                        trigger_attachments.append(
-                            {
-                                "type": attachment.get("type", "image"),
-                                "attachment_id": attachment_record.attachment_id,
-                                "url": attachment_record.content_url,
-                                "content_url": attachment_record.content_url,
-                                "mime_type": attachment_record.mime_type,
-                                "description": attachment_record.description,
-                                "filename": attachment_record.metadata.get(
-                                    "original_filename", "unknown"
-                                ),
-                                "size": attachment_record.size,
-                            }
-                        )
+                        trigger_attachments.append({
+                            "type": attachment.get("type", "image"),
+                            "attachment_id": attachment_record.attachment_id,
+                            "url": attachment_record.content_url,
+                            "content_url": attachment_record.content_url,
+                            "mime_type": attachment_record.mime_type,
+                            "description": attachment_record.description,
+                            "filename": attachment_record.metadata.get(
+                                "original_filename", "unknown"
+                            ),
+                            "size": attachment_record.size,
+                        })
 
                     else:
                         # Legacy flow: Handle base64 data (for backwards compatibility)
@@ -325,18 +323,16 @@ async def _process_user_attachments(
                         )
 
                         # Store attachment metadata for message history with stable attachment_id
-                        trigger_attachments.append(
-                            {
-                                "type": attachment.get("type", "image"),
-                                "attachment_id": attachment_record.attachment_id,
-                                "url": attachment_record.content_url,
-                                "content_url": attachment_record.content_url,
-                                "mime_type": attachment_record.mime_type,
-                                "description": attachment_record.description,
-                                "filename": filename,
-                                "size": attachment_record.size,
-                            }
-                        )
+                        trigger_attachments.append({
+                            "type": attachment.get("type", "image"),
+                            "attachment_id": attachment_record.attachment_id,
+                            "url": attachment_record.content_url,
+                            "content_url": attachment_record.content_url,
+                            "mime_type": attachment_record.mime_type,
+                            "description": attachment_record.description,
+                            "filename": filename,
+                            "size": attachment_record.size,
+                        })
 
                 except (ValueError, binascii.Error) as e:
                     # Invalid base64 or data URL format
@@ -1165,16 +1161,14 @@ async def api_chat_send_message(
                     args = tc.function.arguments
                     if not isinstance(args, str):
                         args = json.dumps(args)
-                    tool_calls_response.append(
-                        {
-                            "id": tc.id,
-                            "type": tc.type,
-                            "function": {
-                                "name": tc.function.name,
-                                "arguments": args,
-                            },
-                        }
-                    )
+                    tool_calls_response.append({
+                        "id": tc.id,
+                        "type": tc.type,
+                        "function": {
+                            "name": tc.function.name,
+                            "arguments": args,
+                        },
+                    })
                 elif isinstance(tc, dict):
                     tool_calls_response.append(tc)
 
@@ -1645,14 +1639,12 @@ async def get_available_profiles(
         if isinstance(descriptor_provider, ToolDescriptorProvider):
             try:
                 descriptors = await descriptor_provider.get_tool_descriptors()
-                enabled_mcp_servers = sorted(
-                    {
-                        descriptor.mcp_server_id
-                        for descriptor in descriptors
-                        if descriptor.origin == "mcp"
-                        and descriptor.mcp_server_id is not None
-                    }
-                )
+                enabled_mcp_servers = sorted({
+                    descriptor.mcp_server_id
+                    for descriptor in descriptors
+                    if descriptor.origin == "mcp"
+                    and descriptor.mcp_server_id is not None
+                })
                 mcp_servers_derived = True
             except Exception:
                 logger.exception(
