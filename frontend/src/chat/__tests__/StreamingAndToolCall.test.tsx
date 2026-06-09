@@ -99,4 +99,83 @@ describe('Streaming with Tool Calls', () => {
     },
     { timeout: 30000 }
   );
+
+  it(
+    'ignores events tagged with a different turn_id (concurrent foreign turn)',
+    async () => {
+      // Capture the turn_id the client generates so the mock stream can emit
+      // both a matching event and a foreign-turn event interleaved.
+      let ourTurnId = '';
+      server.use(
+        http.post('/api/v1/chat/turns', async ({ request }) => {
+          const body = (await request.json()) as {
+            turn_id: string;
+            conversation_id?: string;
+          };
+          ourTurnId = body.turn_id;
+          return HttpResponse.json({
+            turn_id: body.turn_id,
+            conversation_id: body.conversation_id || 'web_conv_foreign',
+            first_seq: 0,
+          });
+        }),
+        http.get('/api/v1/chat/conversations/:conversationId/stream', () => {
+          const encoder = new TextEncoder();
+          const stream = new ReadableStream({
+            start(controller) {
+              // A turn started concurrently from another tab/device publishes
+              // into the same conversation stream — must be ignored here.
+              controller.enqueue(
+                encoder.encode(
+                  `event: text\ndata: ${JSON.stringify({
+                    turn_id: 'some-other-turn',
+                    content: 'FOREIGN-REPLY',
+                  })}\n\n`
+                )
+              );
+              // Our turn's reply.
+              controller.enqueue(
+                encoder.encode(
+                  `event: text\ndata: ${JSON.stringify({
+                    turn_id: ourTurnId,
+                    content: 'My own reply',
+                  })}\n\n`
+                )
+              );
+              controller.enqueue(
+                encoder.encode(
+                  `event: turn_ended\ndata: ${JSON.stringify({
+                    turn_id: ourTurnId,
+                    status: 'complete',
+                  })}\n\n`
+                )
+              );
+              controller.close();
+            },
+          });
+          return new HttpResponse(stream, {
+            headers: { 'Content-Type': 'text/event-stream' },
+          });
+        })
+      );
+
+      const user = userEvent.setup();
+      await renderChatApp({ waitForReady: true });
+
+      const messageInput = screen.getByPlaceholderText('Message Family Assistant...');
+      await user.type(messageInput, 'Hello there');
+      await user.keyboard('{Enter}');
+
+      await waitFor(
+        () => {
+          expect(screen.getByText('My own reply')).toBeInTheDocument();
+        },
+        { timeout: 5000 }
+      );
+      // The concurrent foreign turn's text must never have been rendered into
+      // this send's assistant message.
+      expect(screen.queryByText(/FOREIGN-REPLY/)).not.toBeInTheDocument();
+    },
+    { timeout: 30000 }
+  );
 });

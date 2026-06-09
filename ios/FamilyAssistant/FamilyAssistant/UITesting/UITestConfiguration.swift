@@ -36,9 +36,11 @@ private final class UITestBackendURLProtocol: URLProtocol {
     private static let lock = NSLock()
     private static var notes: [String: UITestNote] = [:]
     private static var chatMessages: [String: [UITestChatMessage]] = [:]
-    // Reply text captured at POST /turns time so the follow-up GET stream can
-    // replay it (mirrors the production two-step resumable-streaming flow).
+    // Reply text + client turn_id captured at POST /turns time so the
+    // follow-up GET stream can replay them (mirrors the production two-step
+    // resumable-streaming flow).
     private static var pendingChatReplies: [String: String] = [:]
+    private static var pendingChatTurnIDs: [String: String] = [:]
 
     static func reset() {
         lock.withLock {
@@ -87,6 +89,7 @@ private final class UITestBackendURLProtocol: URLProtocol {
                 ],
             ]
             pendingChatReplies = [:]
+            pendingChatTurnIDs = [:]
         }
     }
 
@@ -238,6 +241,7 @@ private final class UITestBackendURLProtocol: URLProtocol {
                 ))
                 chatMessages[conversationID] = messages
                 pendingChatReplies[conversationID] = reply
+                pendingChatTurnIDs[conversationID] = body.turnID
             }
             return encode(UITestChatTurnResponse(
                 turnID: body.turnID,
@@ -250,24 +254,29 @@ private final class UITestBackendURLProtocol: URLProtocol {
     }
 
     private static func chatStreamResponse(conversationID: String) -> UITestResponse {
-        let reply = lock.withLock { pendingChatReplies[conversationID] } ?? "Native reply"
+        let (reply, turnID) = lock.withLock {
+            (pendingChatReplies[conversationID] ?? "Native reply",
+             pendingChatTurnIDs[conversationID] ?? "mock-turn")
+        }
         let escapedReply = reply.replacingOccurrences(of: "\"", with: "\\\"")
+        // Stamp every event with the real (client-supplied) turn_id so the
+        // native client's send-and-watch turn filter accepts them.
         return .json(
             """
             event: turn_started
-            data: {"turn_id":"mock-turn","seq":0}
+            data: {"turn_id":"\(turnID)","seq":0}
 
             event: text
-            data: {"content":"\(escapedReply)"}
+            data: {"turn_id":"\(turnID)","content":"\(escapedReply)"}
 
             event: tool_call
-            data: {"tool_call":{"id":"call-ui-test","type":"function","function":{"name":"search_notes","arguments":"{\\"query\\":\\"shopping\\"}"}}}
+            data: {"turn_id":"\(turnID)","tool_call":{"id":"call-ui-test","type":"function","function":{"name":"search_notes","arguments":"{\\"query\\":\\"shopping\\"}"}}}
 
             event: tool_result
-            data: {"tool_call_id":"call-ui-test","result":"Found shopping note"}
+            data: {"turn_id":"\(turnID)","tool_call_id":"call-ui-test","result":"Found shopping note"}
 
             event: turn_ended
-            data: {"turn_id":"mock-turn","status":"complete"}
+            data: {"turn_id":"\(turnID)","status":"complete"}
 
             """,
             headers: ["Content-Type": "text/event-stream"]

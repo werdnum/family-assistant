@@ -145,6 +145,16 @@ export const useStreamingResponse = ({
               try {
                 const payload = JSON.parse(data);
 
+                // The conversation stream carries events for every turn in the
+                // conversation. In this send-and-watch flow we only care about
+                // the turn we just started: ignore events tagged with a
+                // different turn_id (e.g. a turn started concurrently from
+                // another tab/device). Connection-level events (heartbeat,
+                // stream_dropped) carry no turn_id and fall through.
+                if (payload.turn_id && payload.turn_id !== effectiveTurnId) {
+                  continue;
+                }
+
                 // The turn_ended event terminates this turn's stream. Done is
                 // signalled both by the SSE event name and the payload status.
                 if (currentEventType === 'turn_ended' || payload.status) {

@@ -261,6 +261,14 @@ final class ChatViewModel {
                     if Task.isCancelled {
                         break
                     }
+                    // The conversation stream carries every turn's events. In
+                    // this send-and-watch flow only apply events for the turn we
+                    // started; ignore a turn started concurrently elsewhere in
+                    // the same conversation. Connection-level events carry no
+                    // turn id and fall through.
+                    if let eventTurnID = event.turnID, eventTurnID != turnID {
+                        continue
+                    }
                     apply(streamEvent: event, assistantMessageID: assistantMessageID)
                     if event.type == .turnEnded || event.type == .end || event.type == .close {
                         break
