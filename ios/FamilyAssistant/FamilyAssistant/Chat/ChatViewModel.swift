@@ -10,6 +10,7 @@ final class ChatViewModel {
     var defaultProfileID = "default_assistant"
     var selectedProfileID: String
     var conversationID: String?
+    var conversationSelection: String?
     var draftText = ""
     var draftAttachments: [ChatAttachment] = []
     var pendingConfirmations: [ChatPendingConfirmation] = []
@@ -53,6 +54,7 @@ final class ChatViewModel {
             self.conversationID = Self.generateConversationID()
             draftText = initialPrompt
         }
+        conversationSelection = self.conversationID
         persistConversationID()
     }
 
@@ -103,9 +105,25 @@ final class ChatViewModel {
         isLoadingConversations = false
     }
 
+    /// Drives the conversation list selection binding in the sidebar.
+    ///
+    /// In compact width, `NavigationSplitView` writes `nil` here when the user
+    /// taps Back out of a conversation. Honoring that nil clears the row
+    /// highlight so the same conversation can be reopened with a single tap.
+    /// Swallowing it (the previous behavior) left the row stuck selected, and
+    /// because the selection value never changed, tapping it again was a no-op.
+    func updateSelection(_ id: String?) {
+        conversationSelection = id
+        guard let id else {
+            return
+        }
+        Task { await selectConversation(id) }
+    }
+
     func selectConversation(_ id: String, shouldLoadMessages: Bool = true) async {
         cancelStream()
         conversationID = id
+        conversationSelection = id
         persistConversationID()
         mobileShowsConversationList = false
         startLiveEvents()
@@ -117,6 +135,7 @@ final class ChatViewModel {
     func startNewConversation() {
         cancelStream()
         conversationID = Self.generateConversationID()
+        conversationSelection = conversationID
         messages = []
         draftAttachments = []
         mobileShowsConversationList = false
