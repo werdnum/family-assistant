@@ -11,6 +11,19 @@ enum UITestConfiguration {
         return ProcessInfo.processInfo.environment["FAMILY_ASSISTANT_UITEST_INITIAL_PATH"]
     }
 
+    /// True when this app process is hosting the XCTest unit-test bundle.
+    ///
+    /// Xcode sets `XCTestConfigurationFilePath` in the host app's environment for
+    /// app-hosted unit tests, but not for the separately-launched app under UI
+    /// test (that env var lives on the UI-test runner instead). When true the app
+    /// must not boot its real UI: `ContentView` would run `AuthManager`
+    /// bootstrap and start the chat live-events stream against the unit tests'
+    /// shared `URLProtocol` mock, racing stray `GET …/stream` requests into
+    /// unrelated tests (e.g. `AppIntentsTests`) and making them flaky.
+    static var isHostingUnitTests: Bool {
+        ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] != nil
+    }
+
     static func applyIfNeeded() {
         guard isEnabled else { return }
 
