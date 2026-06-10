@@ -1796,10 +1796,13 @@ async def handle_script_execution(
         tools_provider = processing_service.tools_provider
         # Re-point the execution context at the resolved profile so tool policy,
         # visibility grants and note labels all reflect the creating profile.
+        # The owner also becomes the acting user, so anything the script itself
+        # creates (e.g. via create_automation) inherits the same owner.
         exec_context = replace(
             exec_context,
             processing_service=processing_service,
             processing_profile_id=processing_service.service_config.id,
+            user_id=payload.get("created_by_user_id") or exec_context.user_id,
             tools_provider=tools_provider,
             visibility_grants=(
                 set(processing_service.service_config.visibility_grants)
