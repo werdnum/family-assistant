@@ -2,7 +2,7 @@
 
 ## Status
 
-Implementation in progress. Addresses the findings from the high-effort code review of
+Implemented. Addresses the findings from the high-effort code review of
 `codex/implement-async-profile-delegation` (commits `4809f1333`, `5d2c8df09`).
 
 ## Background
@@ -125,14 +125,19 @@ worker resolves result attachments it uses its own committed context.
 - **C14** trim `DelegationRunStatus` to the states actually written; one terminal-status set.
 - **C15** flip the conftest `register_delegation_handler` default / register by default.
 - **C16** single shared web-confirmation implementation (see §5).
-- **C17** web completion notification reuses `WebChatInterface` semantics rather than re-deriving
-  add_message + push + hub-tickle.
+- **C17** _kept deliberately._ The web completion notification keeps its explicit add_message + push
+  \+ hub-tickle path rather than calling `WebChatInterface.send_message`: the notification is written
+  from the TaskWorker inside an isolated transaction, while `WebChatInterface.send_message` opens
+  its own database context, so the swap the review suggested is not safe. The notification now runs
+  inside one isolated context for durability.
 - **C18** state transitions return their updated row (RETURNING) instead of update-then-refetch;
   remove the duplicated fail path.
 - **C19** index set trimmed to those actually queried plus a `(conversation_id, created_at)`
   composite for `list_for_conversation`.
 - **C20** batch the delegated-attachment metadata lookups instead of N+1 sequential awaits.
-- **C22** reuse the shared JSON-list normalizer; drop the dead `str` branch.
+- **C22** the delegation-runs JSON normalizers were simplified (list-first); the broader
+  cross-module extraction of one shared JSON-list helper (notes / worker_tasks / scripts /
+  delegation) is left out of scope here as it touches unrelated modules.
 - **C23** `_now` uses the `exec_context.clock or SystemClock()` idiom.
 - **C24** collapse the triplicated subconversation filter in `message_history` into one helper.
 
