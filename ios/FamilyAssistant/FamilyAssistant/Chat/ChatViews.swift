@@ -345,12 +345,12 @@ private struct ChatComposerView: View {
                 guard let contentType = Self.supportedPhotoContentType(for: item),
                       let mimeType = contentType.preferredMIMEType
                 else {
-                    await viewModel.reportAttachmentImportError("Selected image type is not supported.")
+                    viewModel.reportAttachmentImportError("Selected image type is not supported.")
                     return
                 }
                 do {
                     guard let data = try await item.loadTransferable(type: Data.self) else {
-                        await viewModel.reportAttachmentImportError("Could not import the selected photo.")
+                        viewModel.reportAttachmentImportError("Could not import the selected photo.")
                         return
                     }
                     let uploadData = try Self.uploadData(forPickedPhotoData: data, mimeType: mimeType)
@@ -365,7 +365,7 @@ private struct ChatComposerView: View {
                         mimeType: uploadMIMEType
                     )
                 } catch {
-                    await viewModel.reportAttachmentImportError("Could not import the selected photo. \(error.localizedDescription)")
+                    viewModel.reportAttachmentImportError("Could not import the selected photo. \(error.localizedDescription)")
                 }
             }
         }

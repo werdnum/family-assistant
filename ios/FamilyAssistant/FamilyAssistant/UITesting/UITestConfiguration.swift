@@ -201,7 +201,7 @@ private final class UITestBackendURLProtocol: URLProtocol {
             }
             if request.httpMethod == "DELETE", let title = noteTitle(from: request) {
                 lock.withLock {
-                    notes.removeValue(forKey: title)
+                    _ = notes.removeValue(forKey: title)
                 }
                 return .json("{}")
             }
