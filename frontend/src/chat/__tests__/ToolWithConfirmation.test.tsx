@@ -22,9 +22,7 @@ describe('ToolWithConfirmation', () => {
           const stream = new ReadableStream({
             start(controller) {
               controller.enqueue(
-                encoder.encode(
-                  `event: turn_started\ndata: ${JSON.stringify({ turn_id: 'mock-turn', seq: 0 })}\n\n`
-                )
+                encoder.encode(`event: turn_started\ndata: ${JSON.stringify({ seq: 0 })}\n\n`)
               );
               // Send initial content
               controller.enqueue(
@@ -55,7 +53,7 @@ describe('ToolWithConfirmation', () => {
 
                 controller.enqueue(
                   encoder.encode(
-                    `event: turn_ended\ndata: ${JSON.stringify({ turn_id: 'mock-turn', status: 'complete' })}\n\n`
+                    `event: turn_ended\ndata: ${JSON.stringify({ status: 'complete' })}\n\n`
                   )
                 );
                 controller.close();
@@ -211,9 +209,7 @@ describe('ToolWithConfirmation', () => {
           const stream = new ReadableStream({
             start(controller) {
               controller.enqueue(encoder.encode('event: turn_started\n'));
-              controller.enqueue(
-                encoder.encode(`data: ${JSON.stringify({ turn_id: 'mock-turn', seq: 0 })}\n\n`)
-              );
+              controller.enqueue(encoder.encode(`data: ${JSON.stringify({ seq: 0 })}\n\n`));
               // Send initial tool call (running state)
               controller.enqueue(encoder.encode('event: tool_call\n'));
               controller.enqueue(
@@ -251,9 +247,7 @@ describe('ToolWithConfirmation', () => {
 
                 controller.enqueue(encoder.encode('event: turn_ended\n'));
                 controller.enqueue(
-                  encoder.encode(
-                    `data: ${JSON.stringify({ turn_id: 'mock-turn', status: 'complete' })}\n\n`
-                  )
+                  encoder.encode(`data: ${JSON.stringify({ status: 'complete' })}\n\n`)
                 );
                 controller.close();
               }, 100);

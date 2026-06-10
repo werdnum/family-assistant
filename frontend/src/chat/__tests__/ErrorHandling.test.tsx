@@ -224,29 +224,25 @@ describe.sequential('ErrorHandling', () => {
         const stream = new ReadableStream({
           start(controller) {
             controller.enqueue(
-              encoder.encode(
-                `event: turn_started\ndata: ${JSON.stringify({ turn_id: 'mock-turn', seq: 0 })}\n\n`
-              )
+              encoder.encode(`event: turn_started\ndata: ${JSON.stringify({ seq: 0 })}\n\n`)
             );
             controller.enqueue(
               encoder.encode(
                 `data: ${JSON.stringify({
-                  tool_calls: [
-                    {
-                      id: 'call-error-test',
-                      type: 'function',
-                      function: {
-                        name: 'add_or_update_note',
-                        arguments: JSON.stringify({ title: 'Test', content: 'Test' }),
-                      },
+                  tool_call: {
+                    id: 'call-error-test',
+                    type: 'function',
+                    function: {
+                      name: 'add_or_update_note',
+                      arguments: JSON.stringify({ title: 'Test', content: 'Test' }),
                     },
-                  ],
+                  },
                 })}\n\n`
               )
             );
             controller.enqueue(
               encoder.encode(
-                `event: turn_ended\ndata: ${JSON.stringify({ turn_id: 'mock-turn', status: 'complete' })}\n\n`
+                `event: turn_ended\ndata: ${JSON.stringify({ status: 'complete' })}\n\n`
               )
             );
             controller.close();
@@ -360,7 +356,11 @@ describe.sequential('ErrorHandling', () => {
                 encoder.encode(`data: {"content": "Chunk ${i} of a long response. "}\n\n`)
               );
             }
-            controller.enqueue(encoder.encode('data: {"done": true}\n\n'));
+            controller.enqueue(
+              encoder.encode(
+                `event: turn_ended\ndata: ${JSON.stringify({ status: 'complete' })}\n\n`
+              )
+            );
             controller.close();
           },
         });

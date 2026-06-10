@@ -8,13 +8,18 @@ export interface ConversationStreamParams {
   fromSeq?: number;
   follow?: boolean;
   ackSeq?: number;
+  /** Comma-separated allow-list of event types to receive (e.g.
+   * `message,turn_ended`). Lifecycle frames (turn_ended, heartbeat,
+   * stream_dropped) are always delivered regardless. Follow streams use this
+   * to skip the token firehose they don't render. */
+  eventTypes?: string;
 }
 
 /** Build the SSE subscribe URL for a conversation. Returns a root-relative
  * path with query string; EventSource and fetch both resolve it correctly. */
 export function conversationStreamUrl(
   conversationId: string,
-  { fromSeq, follow, ackSeq }: ConversationStreamParams = {}
+  { fromSeq, follow, ackSeq, eventTypes }: ConversationStreamParams = {}
 ): string {
   const params = new URLSearchParams();
   if (fromSeq !== undefined) {
@@ -25,6 +30,9 @@ export function conversationStreamUrl(
   }
   if (ackSeq !== undefined) {
     params.set('ack_seq', String(ackSeq));
+  }
+  if (eventTypes !== undefined) {
+    params.set('event_types', eventTypes);
   }
   const query = params.toString();
   const base = `/api/v1/chat/conversations/${encodeURIComponent(conversationId)}/stream`;

@@ -24,16 +24,14 @@ describe('Streaming with Tool Calls', () => {
             start(controller) {
               const payload = {
                 content: 'Of course, here is your photo',
-                tool_calls: [
-                  {
-                    id: 'attach_tool_call',
-                    type: 'function',
-                    function: {
-                      name: 'attach_to_response',
-                      arguments: JSON.stringify({ attachment_ids: ['some-id'] }),
-                    },
+                tool_call: {
+                  id: 'attach_tool_call',
+                  type: 'function',
+                  function: {
+                    name: 'attach_to_response',
+                    arguments: JSON.stringify({ attachment_ids: ['some-id'] }),
                   },
-                ],
+                },
               };
               // Note: We send a single 'data' packet with both fields.
               // We also don't specify an 'event' type, so it defaults to 'message'.
@@ -42,7 +40,11 @@ describe('Streaming with Tool Calls', () => {
 
 `)
               );
-              controller.enqueue(encoder.encode('data: {"done": true}\n\n'));
+              controller.enqueue(
+                encoder.encode(
+                  `event: turn_ended\ndata: ${JSON.stringify({ status: 'complete' })}\n\n`
+                )
+              );
               controller.close();
             },
           });

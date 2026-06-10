@@ -31,11 +31,23 @@ export function useLiveMessageUpdates({
   const reconnectTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const callbackRef = useRef(onMessageReceived);
   const [reconnectTrigger, setReconnectTrigger] = useState(0);
+  // Highest seq this follow stream has acked for the current conversation.
+  // Passed as ?ack_seq= on (re)subscribe so the hub can mark covered turns
+  // delivered (suppressing the redundant disconnect push), and updated after
+  // each turn_ended ack. Reset when the conversation changes.
+  const ackedSeqRef = useRef<number>(-1);
 
   // Update callback ref when it changes
   useEffect(() => {
     callbackRef.current = onMessageReceived;
   }, [onMessageReceived]);
+
+  // Reset the acked-seq baseline when switching conversations. Keyed only on
+  // conversationId (not reconnectTrigger) so a reconnect keeps the prior ack
+  // position rather than re-acking from scratch.
+  useEffect(() => {
+    ackedSeqRef.current = -1;
+  }, [conversationId]);
 
   const cleanup = useCallback(() => {
     if (eventSourceRef.current) {
@@ -72,14 +84,42 @@ export function useLiveMessageUpdates({
       // (from_seq=-1): a follow-only listener wants future events, not a replay
       // — subscribing from 0 would 410 once the conversation's hub buffer has
       // rotated, trapping EventSource in a permanent reconnect loop.
+      //
+      // event_types=message,turn_ended: this listener only reloads history on
+      // those frames, so skip the token firehose (the server still always
+      // delivers heartbeat/stream_dropped/turn_ended control frames).
+      //
+      // ack_seq: tell the hub the highest seq we've already acked so it can
+      // suppress the redundant disconnect push for turns we've seen.
       const url = conversationStreamUrl(conversationId, {
         follow: true,
         fromSeq: -1,
+        ackSeq: ackedSeqRef.current,
+        eventTypes: 'message,turn_ended',
       });
 
       // Create EventSource connection
       const eventSource = new EventSource(url);
       eventSourceRef.current = eventSource;
+
+      // Acknowledge a handled turn so the server suppresses the disconnect
+      // push. Best-effort: a failed ack must not break the live stream.
+      const ackConversation = (ackSeq: number) => {
+        ackedSeqRef.current = Math.max(ackedSeqRef.current, ackSeq);
+        void fetch('/api/v1/chat/ack', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ conversation_id: conversationId, ack_seq: ackSeq }),
+        })
+          .then((response) => {
+            if (!response.ok) {
+              console.warn(`Live-update ack failed: HTTP ${response.status}`);
+            }
+          })
+          .catch((error) => {
+            console.warn('Live-update ack request failed:', error);
+          });
+      };
 
       // A completed turn means new persisted messages are available. The hub
       // stream doesn't carry full message rows, so signal a reload rather
@@ -101,7 +141,19 @@ export function useLiveMessageUpdates({
       // (content-free) live event.
       eventSource.addEventListener('open', notifyTurnEnded);
 
-      eventSource.addEventListener('turn_ended', notifyTurnEnded);
+      eventSource.addEventListener('turn_ended', (event) => {
+        notifyTurnEnded();
+        // Ack the completed turn so the disconnect push is suppressed. Every
+        // SSE event carries its seq in the data payload.
+        try {
+          const data = JSON.parse((event as MessageEvent).data) as { seq?: unknown };
+          if (typeof data.seq === 'number') {
+            ackConversation(data.seq);
+          }
+        } catch {
+          // A malformed payload only costs us the ack; the reload still fired.
+        }
+      });
       // Out-of-band assistant messages (scheduled callbacks, task-worker flows)
       // arrive as a `message` event. This EventSource is scoped to a single
       // conversation, so force the bound conversationId regardless of the

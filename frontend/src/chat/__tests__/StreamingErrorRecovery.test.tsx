@@ -84,7 +84,7 @@ describe.sequential('Streaming Error Recovery', () => {
             { content: 'Starting response... ' },
             { error: 'Tool execution failed: timeout' },
             { content: 'But I can continue answering.' },
-            { done: true },
+            { status: 'complete' },
           ]);
         })
       );
@@ -118,7 +118,7 @@ describe.sequential('Streaming Error Recovery', () => {
       // Simulate: error only → done (no text content, no tool calls)
       server.use(
         http.get('/api/v1/chat/conversations/:conversationId/stream', () => {
-          return createSSEStream([{ error: 'Failed to process request' }, { done: true }]);
+          return createSSEStream([{ error: 'Failed to process request' }, { status: 'complete' }]);
         })
       );
 
@@ -149,16 +149,14 @@ describe.sequential('Streaming Error Recovery', () => {
           return createSSEStream([
             {
               content: 'Let me look that up.',
-              tool_calls: [
-                {
-                  id: 'call-recovery-test',
-                  type: 'function',
-                  function: {
-                    name: 'search_notes',
-                    arguments: JSON.stringify({ query: 'test' }),
-                  },
+              tool_call: {
+                id: 'call-recovery-test',
+                type: 'function',
+                function: {
+                  name: 'search_notes',
+                  arguments: JSON.stringify({ query: 'test' }),
                 },
-              ],
+              },
             },
             { error: 'Minor hiccup during processing' },
             {
@@ -166,7 +164,7 @@ describe.sequential('Streaming Error Recovery', () => {
               result: JSON.stringify({ notes: ['Test note'] }),
             },
             { content: ' Found some results.' },
-            { done: true },
+            { status: 'complete' },
           ]);
         })
       );
@@ -203,11 +201,11 @@ describe.sequential('Streaming Error Recovery', () => {
 
           if (callCount === 1) {
             // First message: error only
-            return createSSEStream([{ error: 'Something went wrong' }, { done: true }]);
+            return createSSEStream([{ error: 'Something went wrong' }, { status: 'complete' }]);
           }
 
           // Second message: successful response
-          return createSSEStream([{ content: 'This works fine!' }, { done: true }]);
+          return createSSEStream([{ content: 'This works fine!' }, { status: 'complete' }]);
         })
       );
 
@@ -366,7 +364,11 @@ describe.sequential('Streaming Error Recovery', () => {
                     })}\n\n`
                   )
                 );
-                controller.enqueue(encoder.encode('data: {"done": true}\n\n'));
+                controller.enqueue(
+                  encoder.encode(
+                    `event: turn_ended\ndata: ${JSON.stringify({ status: 'complete' })}\n\n`
+                  )
+                );
                 controller.close();
               })();
             },
