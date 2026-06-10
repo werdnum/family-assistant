@@ -87,9 +87,13 @@ entirely. Fixes C1 (no drop, no double-delivery).
 
 ### 4. Stale-run reaper (defense in depth, C21)
 
-A reaper mirrors `worker_tasks.mark_stale_tasks`: delegation runs left `running` (or `queued`)
-beyond a threshold are marked failed and notified. This guarantees no run is stranded even if a
-process is killed before the `running` entry guard runs on retry.
+A reaper mirrors `worker_tasks.mark_stale_tasks`: non-terminal delegation runs (`queued` **or**
+`running`) whose `created_at` is older than a threshold are marked failed and notified. Keying on
+`created_at` (not `started_at`) means a run lost while still `queued` — its owning task killed
+before `mark_running` — is also reaped, not just interrupted `running` runs. The reaper notifies
+with `force=True`: a reaped run has no live caller waiting to deliver inline, so the normal "notify
+only if handed off" gate is bypassed. This guarantees no run is stranded even if a process is killed
+before the `running` entry guard runs on retry.
 
 ### 5. Web confirmations for background runs (C7)
 
@@ -145,5 +149,28 @@ worker resolves result attachments it uses its own committed context.
 
 Extend `tests/functional/automations/test_async_delegation.py` and add cases for: handoff/notify
 single-delivery, terminal-on-entry re-notification, `running`-on-entry interruption (no
-re-execution), web confirmation via the new manager, and the reaper. Run on both SQLite and
-PostgreSQL via `db_engine`.
+re-execution), web confirmation via the new manager, and the reaper (queued and running, including a
+never-handed-off run via the force-notify path). Run on both SQLite and PostgreSQL via `db_engine`.
+
+## Known constraints / follow-ups (out of scope here)
+
+These are pre-existing limitations of the delegation feature that this change surfaces but does not
+fix, because the proper fixes are architectural and would risk regressions disproportionate to this
+robustness pass:
+
+- **Generic 300s handler timeout vs. confirmation-gated delegated runs.** A delegated run executes
+  under the worker's generic `TASK_HANDLER_TIMEOUT` (300s). A run that pauses for a user
+  confirmation can wait far longer, so it is cancelled at 300s and then failed by the `running`
+  entry guard. Raising the timeout is not safe under the current **single sequential worker**: one
+  confirmation-waiting delegation would block all other background tasks (reminders, automations,
+  cleanups) for the whole wait. The real fix is to stop occupying a worker slot while blocked on a
+  human decision (e.g. suspend/resume the run on the confirmation result) or to run delegated turns
+  off the single task-handler slot. Until then, web confirmations (C7) work for decisions made
+  within ~5 minutes; slower ones fail with a clear "interrupted" notification. The reaper threshold
+  (`DELEGATION_RUN_STALE_SECONDS`) is deliberately well above `300s + retry backoff` so it never
+  reaps a legitimately-running run.
+- **Only `telegram` and `web` have confirmation managers.**
+  `_build_delegation_confirmation_callback` returns `None` for any interface without a registered
+  `ConfirmationUIManager`, so a delegated run on `a2a`/`asterisk` cannot run confirmation-gated
+  tools. A general fix would assert at startup that every delegation-capable interface has a manager
+  rather than registering them one at a time.

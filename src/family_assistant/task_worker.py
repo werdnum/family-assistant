@@ -926,23 +926,23 @@ class TaskWorker:
         exec_context: ToolExecutionContext,
         payload: DelegationRunCleanupPayload,
     ) -> None:
-        """Fail and notify delegation runs stranded in ``running``.
+        """Fail and notify delegation runs stranded ``queued`` or ``running``.
 
         Backstop for the rare case where a run's owning task never retries (e.g.
         the process was killed): the retry "running" entry guard normally fails
-        an interrupted run quickly, but a run with no further attempts would
-        otherwise stay ``running`` forever.
+        an interrupted run quickly, but a run with no further attempts — or one
+        lost while still ``queued`` — would otherwise stay non-terminal forever.
         """
         clock = exec_context.clock or self.clock
         now = clock.now()
         running_timeout_seconds = payload.get(
             "running_timeout_seconds", DELEGATION_RUN_STALE_SECONDS
         )
-        running_before = now - timedelta(seconds=running_timeout_seconds)
+        created_before = now - timedelta(seconds=running_timeout_seconds)
         async with exec_context.db_context.create_isolated_context() as isolated_db:
-            reaped = await isolated_db.delegation_runs.reap_stale_running(
+            reaped = await isolated_db.delegation_runs.reap_stale(
                 now=now,
-                running_before=running_before,
+                created_before=created_before,
                 error=(
                     "The delegated run did not complete within the allowed time "
                     "and was marked failed."
@@ -954,8 +954,10 @@ class TaskWorker:
                 len(reaped),
                 running_timeout_seconds,
             )
+        # A reaped run has no live caller waiting to deliver inline, so notify
+        # unconditionally even if it was never handed off.
         for run in reaped:
-            await self._notify_delegation_if_needed(exec_context, run)
+            await self._notify_delegation_if_needed(exec_context, run, force=True)
 
     def _build_delegation_confirmation_callback(
         self,
@@ -1058,6 +1060,8 @@ class TaskWorker:
         self,
         exec_context: ToolExecutionContext,
         run: DelegationRunDict,
+        *,
+        force: bool = False,
     ) -> None:
         """Record and deliver a terminal delegation notification when needed.
 
@@ -1070,7 +1074,10 @@ class TaskWorker:
         """
         if run["notified_at"] is not None:
             return
-        if run["handed_off_at"] is None:
+        # Normally the worker only notifies once the caller handed off (otherwise
+        # the caller delivers inline). The reaper sets force=True because a
+        # reaped run has no live caller waiting to deliver the result.
+        if not force and run["handed_off_at"] is None:
             return
 
         clock = exec_context.clock or self.clock

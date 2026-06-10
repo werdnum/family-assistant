@@ -227,22 +227,24 @@ class DelegationRunsRepository(BaseRepository):
             notified_at=notified_at,
         )
 
-    async def reap_stale_running(
+    async def reap_stale(
         self,
         *,
         now: datetime,
-        running_before: datetime,
+        created_before: datetime,
         error: str,
     ) -> list[DelegationRunDict]:
-        """Fail delegation runs stuck ``running`` past ``running_before``.
+        """Fail non-terminal delegation runs created before ``created_before``.
 
-        Returns the rows that were transitioned so the caller can deliver a
-        terminal notification for each.
+        Covers both ``queued`` runs (whose owning task was lost before it ever
+        started) and ``running`` runs (interrupted mid-flight), keyed on
+        ``created_at`` so a run with no ``started_at`` is still reaped. Returns
+        the rows that were transitioned so the caller can notify for each.
         """
         stmt = (
             update(delegation_runs_table)
-            .where(delegation_runs_table.c.status == "running")
-            .where(delegation_runs_table.c.started_at < running_before)
+            .where(delegation_runs_table.c.status.in_(["queued", "running"]))
+            .where(delegation_runs_table.c.created_at < created_before)
             .values(
                 status="failed",
                 error=error,

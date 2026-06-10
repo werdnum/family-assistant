@@ -9,7 +9,7 @@ from unittest.mock import AsyncMock, MagicMock
 from zoneinfo import ZoneInfo
 
 import pytest
-from sqlalchemy import select
+from sqlalchemy import select, update
 
 from family_assistant.config_models import ToolsConfig
 from family_assistant.interfaces import ChatInterface
@@ -17,6 +17,7 @@ from family_assistant.llm.messages import AssistantMessage, UserMessage
 from family_assistant.processing.types import ChatInteractionResult
 from family_assistant.storage import message_history_table
 from family_assistant.storage.context import DatabaseContext
+from family_assistant.storage.delegation_runs import delegation_runs_table
 from family_assistant.task_worker import DelegatedProfileRunPayload, TaskWorker
 from family_assistant.tools.services import (
     delegate_to_service_tool,
@@ -472,24 +473,34 @@ async def test_running_run_is_failed_not_reexecuted(db_engine: AsyncEngine) -> N
 
 
 @pytest.mark.asyncio
-async def test_reaper_fails_and_notifies_stale_running_run(
+@pytest.mark.parametrize("status", ["queued", "running"])
+async def test_reaper_fails_and_notifies_stale_run(
     db_engine: AsyncEngine,
+    status: str,
 ) -> None:
-    """The cleanup task fails and notifies runs stranded in 'running' (C21)."""
+    """The cleanup task fails and notifies runs stranded queued or running (C21).
+
+    The run is never handed off, so this also exercises the reaper's
+    force-notify path: a reaped run has no live caller to deliver inline.
+    """
     target_service = FakeDelegatableService()
     processing_service = _source_processing_service(target_service)
     chat_interface = AsyncMock(spec=ChatInterface)
     chat_interface.send_message.return_value = "external_message_id"
 
     clock = SystemClock()
-    stale_started_at = clock.now() - timedelta(hours=2)
+    stale_created_at = clock.now() - timedelta(hours=2)
     async with DatabaseContext(engine=db_engine) as db_context:
         await _create_run(db_context, delegation_id="delegation_stale")
-        await db_context.delegation_runs.mark_handed_off(
-            "delegation_stale", clock.now()
-        )
-        await db_context.delegation_runs.mark_running(
-            "delegation_stale", stale_started_at
+        if status == "running":
+            await db_context.delegation_runs.mark_running(
+                "delegation_stale", stale_created_at
+            )
+        # Backdate created_at so the reaper's created_at threshold matches.
+        await db_context.execute_with_retry(
+            update(delegation_runs_table)
+            .where(delegation_runs_table.c.delegation_id == "delegation_stale")
+            .values(created_at=stale_created_at)
         )
 
     worker = _build_worker(db_engine, processing_service, chat_interface)
@@ -505,6 +516,30 @@ async def test_reaper_fails_and_notifies_stale_running_run(
         assert run is not None
         assert run["status"] == "failed"
         assert run["notified_at"] is not None
+
+
+@pytest.mark.asyncio
+async def test_reaper_leaves_recent_runs_untouched(db_engine: AsyncEngine) -> None:
+    """A freshly-created run is not reaped (its created_at is within threshold)."""
+    target_service = FakeDelegatableService()
+    processing_service = _source_processing_service(target_service)
+    chat_interface = AsyncMock(spec=ChatInterface)
+
+    async with DatabaseContext(engine=db_engine) as db_context:
+        await _create_run(db_context, delegation_id="delegation_recent")
+
+    worker = _build_worker(db_engine, processing_service, chat_interface)
+    async with DatabaseContext(engine=db_engine) as db_context:
+        await worker.handle_delegation_run_cleanup(
+            _tool_context(db_context, processing_service, chat_interface),
+            {"running_timeout_seconds": 3600.0},
+        )
+
+    chat_interface.send_message.assert_not_awaited()
+    async with DatabaseContext(engine=db_engine) as db_context:
+        run = await db_context.delegation_runs.get_by_delegation_id("delegation_recent")
+        assert run is not None
+        assert run["status"] == "queued"
 
 
 @pytest.mark.asyncio

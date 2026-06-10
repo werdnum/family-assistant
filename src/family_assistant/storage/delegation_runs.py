@@ -64,8 +64,8 @@ delegation_runs_table = Table(
         "created_at",
     ),
     Index(
-        "ix_delegation_runs_status_started",
+        "ix_delegation_runs_status_created",
         "status",
-        "started_at",
+        "created_at",
     ),
 )

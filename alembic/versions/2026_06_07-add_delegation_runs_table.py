@@ -74,9 +74,9 @@ def upgrade() -> None:
         unique=False,
     )
     op.create_index(
-        "ix_delegation_runs_status_started",
+        "ix_delegation_runs_status_created",
         "delegation_runs",
-        ["status", "started_at"],
+        ["status", "created_at"],
         unique=False,
     )
 
@@ -84,7 +84,7 @@ def upgrade() -> None:
 def downgrade() -> None:
     """Downgrade schema."""
     op.drop_index(
-        "ix_delegation_runs_status_started",
+        "ix_delegation_runs_status_created",
         table_name="delegation_runs",
     )
     op.drop_index(
