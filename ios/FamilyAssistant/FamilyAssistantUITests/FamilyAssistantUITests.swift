@@ -211,7 +211,11 @@ final class FamilyAssistantUITests: XCTestCase {
     func testDeepLinkSelectsDocumentsTab() {
         relaunch(initialPath: "/documents/")
 
-        XCTAssertTrue(app.navigationBars["Documents"].waitForExistence(timeout: 8))
+        // A launch deep link must finish the cold start, the AuthManager session
+        // bootstrap, and the tab routing before the Documents tab appears. That
+        // chain runs long on CI simulators (observed >8s after the app idles), so
+        // allow a generous window like the other launch-sensitive assertions.
+        XCTAssertTrue(app.navigationBars["Documents"].waitForExistence(timeout: 30))
         XCTAssertTrue(app.tabBars.firstMatch.buttons["Documents"].isSelected)
         attachScreenshot(named: "deep-link-documents")
     }
