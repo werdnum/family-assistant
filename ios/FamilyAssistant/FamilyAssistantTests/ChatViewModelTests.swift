@@ -203,18 +203,28 @@ final class ChatViewModelTests: XCTestCase {
 
     func testSendDraftAcknowledgesHighestSeqAfterTurnEnds() async throws {
         var ackedSeq: Int?
+        // The client generates the turn_id and the server echoes it; the producer
+        // tags every event with it and the send-and-watch flow filters events to
+        // that turn. Echo the posted turn_id so the mock matches that contract.
+        var streamedTurnID = "turn-ack"
         ChatMockBackendURLProtocol.respond { request in
             switch (request.httpMethod ?? "GET", request.url?.path ?? "") {
             case ("POST", "/api/v1/chat/turns"):
-                return .json(#"{"turn_id":"turn-ack","conversation_id":"web_conv_ack","first_seq":0}"#)
+                if let body = Self.jsonObject(from: request) as? [String: Any],
+                   let postedTurnID = body["turn_id"] as? String {
+                    streamedTurnID = postedTurnID
+                }
+                return .json(
+                    #"{"turn_id":"\#(streamedTurnID)","conversation_id":"web_conv_ack","first_seq":0}"#
+                )
             case ("GET", "/api/v1/chat/conversations/web_conv_ack/stream"):
                 return .text(
                     """
                     event: text
-                    data: {"turn_id":"turn-ack","content":"Hi","seq":4}
+                    data: {"turn_id":"\(streamedTurnID)","content":"Hi","seq":4}
 
                     event: turn_ended
-                    data: {"turn_id":"turn-ack","status":"complete","seq":5}
+                    data: {"turn_id":"\(streamedTurnID)","status":"complete","seq":5}
 
                     """
                 )
