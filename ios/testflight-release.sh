@@ -114,6 +114,20 @@ if [[ "$DO_UPLOAD" -eq 1 ]]; then
     fi
 fi
 
+# Authentication flags shared by the archive and export steps. Automatic
+# signing under -allowProvisioningUpdates needs an App Store Connect key on a
+# host that is not already signed into Xcode Accounts, so the archive step
+# needs them too -- not just the export/upload. Populated whenever a key is
+# available (always so for an upload; best-effort for --build-only).
+ASC_AUTH_ARGS=()
+if [[ -n "$ASC_KEY_ID" && -n "$ASC_ISSUER_ID" && -f "$ASC_KEY_PATH" ]]; then
+    ASC_AUTH_ARGS=(
+        -authenticationKeyPath "$ASC_KEY_PATH"
+        -authenticationKeyID "$ASC_KEY_ID"
+        -authenticationKeyIssuerID "$ASC_ISSUER_ID"
+    )
+fi
+
 # --- 4. Archive -----------------------------------------------------------
 BUILD_ROOT="$PROJECT_DIR/build/testflight"
 ARCHIVE_PATH="$BUILD_ROOT/FamilyAssistant.xcarchive"
@@ -129,18 +143,13 @@ xcodebuild \
     -destination 'generic/platform=iOS' \
     -archivePath "$ARCHIVE_PATH" \
     -allowProvisioningUpdates \
+    "${ASC_AUTH_ARGS[@]}" \
     CURRENT_PROJECT_VERSION="$BUILD_NUMBER" \
     archive
 
 # --- 5. Export (+ upload to TestFlight when destination=upload) -----------
-EXPORT_AUTH_ARGS=()
 if [[ "$DO_UPLOAD" -eq 1 ]]; then
     echo "Exporting and uploading to TestFlight..."
-    EXPORT_AUTH_ARGS=(
-        -authenticationKeyPath "$ASC_KEY_PATH"
-        -authenticationKeyID "$ASC_KEY_ID"
-        -authenticationKeyIssuerID "$ASC_ISSUER_ID"
-    )
 else
     echo "Exporting .ipa only (--build-only); skipping upload..."
     # destination=upload in ExportOptions.plist would still try to upload, so
@@ -157,7 +166,7 @@ xcodebuild \
     -exportPath "$EXPORT_PATH" \
     -exportOptionsPlist "$EXPORT_OPTIONS" \
     -allowProvisioningUpdates \
-    "${EXPORT_AUTH_ARGS[@]}"
+    "${ASC_AUTH_ARGS[@]}"
 
 echo
 if [[ "$DO_UPLOAD" -eq 1 ]]; then
