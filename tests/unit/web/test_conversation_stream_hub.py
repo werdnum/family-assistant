@@ -301,8 +301,35 @@ async def test_ack_below_end_seq_keeps_undelivered() -> None:
     assert turn.delivered is False
 
     # Ack catches up and flips the flag.
-    await hub.ack("conv", handle.queue, ack_seq=2)
+    await hub.ack_conversation("conv", ack_seq=2)
     assert turn.delivered is True
+
+    hub.unsubscribe("conv", handle.queue)
+
+
+@pytest.mark.asyncio
+@pytest.mark.no_db
+async def test_subscribe_at_new_turn_does_not_ack_prior_turn() -> None:
+    """A send-and-watch client subscribes at a new turn's server-assigned
+    first_seq without having received the prior turn's events. The hub must NOT
+    treat from_seq-1 as an implicit ack: doing so would falsely mark the just-
+    ended prior turn as delivered and suppress its disconnect push. Delivery is
+    recorded only on an explicit client ack."""
+    hub = ConversationStreamHub()
+    await hub.start_turn("conv", turn_id="t1", user_id="u1", started_at=_now())
+    await hub.publish("conv", "text", turn_id="t1", payload={"content": "x"})
+    ended = await hub.end_turn("conv", turn_id="t1", status="complete")
+
+    # A second turn starts; its turn_started seq is end_seq + 1. The new
+    # subscriber resumes at that first_seq but has never received turn t1.
+    second = await hub.start_turn("conv", turn_id="t2", user_id="u1", started_at=_now())
+    assert second.first_seq == ended.seq + 1
+
+    handle = await hub.subscribe("conv", from_seq=second.first_seq)
+
+    prior = hub.get_turn("conv", "t1")
+    assert prior is not None
+    assert prior.delivered is False
 
     hub.unsubscribe("conv", handle.queue)
 

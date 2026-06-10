@@ -107,8 +107,10 @@ class _ConversationState:
     """Per-conversation hub state."""
 
     conversation_id: str
+    # Bounded ring buffer: appending past ``maxlen`` evicts the oldest event
+    # automatically, so the buffer floor is always ``buffer[0].seq``.
+    buffer: deque[StreamEvent]
     next_seq: int = 0
-    buffer: deque[StreamEvent] = field(default_factory=deque)
     subscribers: dict[asyncio.Queue[StreamEvent], _Subscription] = field(
         default_factory=dict
     )
@@ -193,7 +195,10 @@ class ConversationStreamHub:
         async with self._registry_lock:
             state = self._conversations.get(conversation_id)
             if state is None:
-                state = _ConversationState(conversation_id=conversation_id)
+                state = _ConversationState(
+                    conversation_id=conversation_id,
+                    buffer=deque(maxlen=self._buffer_max_events),
+                )
                 self._conversations[conversation_id] = state
                 self._evict_idle_conversations()
             else:
@@ -274,18 +279,6 @@ class ConversationStreamHub:
             return []
         return list(state.turns.values())
 
-    def conversations_with_running_turn_for_user(
-        self, user_id: str
-    ) -> list[tuple[str, TurnRecord]]:
-        """Return ``(conversation_id, turn)`` for every running turn owned by
-        ``user_id``. Used for debugging/admin only; not on the hot path."""
-        result: list[tuple[str, TurnRecord]] = []
-        for conversation_id, state in self._conversations.items():
-            for turn in state.turns.values():
-                if turn.status == "running" and turn.user_id == user_id:
-                    result.append((conversation_id, turn))
-        return result
-
     # ------------------------------------------------------------------ #
     # Publishing
     # ------------------------------------------------------------------ #
@@ -307,26 +300,45 @@ class ConversationStreamHub:
         """
         state = await self._get_or_create_state(conversation_id)
         async with state.lock:
-            seq = state.next_seq
-            state.next_seq += 1
             turn = state.turns.get(turn_id) if turn_id is not None else None
-            event = StreamEvent(
-                seq=seq,
-                type=event_type,
+            event = self._append_and_fanout_under_lock(
+                state,
+                event_type=event_type,
                 turn_id=turn_id,
                 payload=payload,
             )
-
-            # Ring buffer: drop oldest when full.
-            if len(state.buffer) >= self._buffer_max_events:
-                state.buffer.popleft()
-            state.buffer.append(event)
-
             if turn is not None:
-                turn.latest_seq = seq
+                turn.latest_seq = event.seq
 
-            self._fan_out(state, event)
+        return event
 
+    def _append_and_fanout_under_lock(
+        self,
+        state: _ConversationState,
+        *,
+        event_type: str,
+        turn_id: str | None,
+        # ast-grep-ignore: no-dict-any - heterogeneous StreamEvent payloads serialized verbatim to the SSE wire format
+        payload: dict[str, Any],
+    ) -> StreamEvent:
+        """Assign the next seq, build the event, append it to the ring buffer,
+        and fan it out to every subscriber. Returns the published event with
+        its seq filled in. Caller holds ``state.lock``.
+
+        The ring buffer is a ``deque`` with a fixed ``maxlen`` so the oldest
+        event is evicted automatically on append; the buffer floor is always
+        ``buffer[0].seq``.
+        """
+        seq = state.next_seq
+        state.next_seq += 1
+        event = StreamEvent(
+            seq=seq,
+            type=event_type,
+            turn_id=turn_id,
+            payload=payload,
+        )
+        state.buffer.append(event)
+        self._fan_out(state, event)
         return event
 
     def _fan_out(self, state: _ConversationState, event: StreamEvent) -> None:
@@ -378,32 +390,24 @@ class ConversationStreamHub:
             if existing is not None:
                 raise TurnAlreadyExistsError(existing)
 
-            seq = state.next_seq
-            state.next_seq += 1
-            turn = TurnRecord(
-                turn_id=turn_id,
-                user_id=user_id,
-                started_at=started_at,
-                first_seq=seq,
-                latest_seq=seq,
-            )
-            state.turns[turn_id] = turn
-            self._prune_completed_turns(state)
-
-            event = StreamEvent(
-                seq=seq,
-                type="turn_started",
+            event = self._append_and_fanout_under_lock(
+                state,
+                event_type="turn_started",
                 turn_id=turn_id,
                 payload={
                     "turn_id": turn_id,
                     "started_at": started_at.isoformat(),
                 },
             )
-            if len(state.buffer) >= self._buffer_max_events:
-                state.buffer.popleft()
-            state.buffer.append(event)
-
-            self._fan_out(state, event)
+            turn = TurnRecord(
+                turn_id=turn_id,
+                user_id=user_id,
+                started_at=started_at,
+                first_seq=event.seq,
+                latest_seq=event.seq,
+            )
+            state.turns[turn_id] = turn
+            self._prune_completed_turns(state)
 
         return turn
 
@@ -465,25 +469,17 @@ class ConversationStreamHub:
             if error is not None:
                 payload["error"] = error
 
-            seq = state.next_seq
-            state.next_seq += 1
-            event = StreamEvent(
-                seq=seq,
-                type="turn_ended",
+            event = self._append_and_fanout_under_lock(
+                state,
+                event_type="turn_ended",
                 turn_id=turn_id,
                 payload=payload,
             )
 
-            if len(state.buffer) >= self._buffer_max_events:
-                state.buffer.popleft()
-            state.buffer.append(event)
-
             if turn is not None:
                 turn.status = status
-                turn.latest_seq = seq
-                turn.ended_seq = seq
-
-            self._fan_out(state, event)
+                turn.latest_seq = event.seq
+                turn.ended_seq = event.seq
 
             # Re-check delivered under the same lock: a subscriber may already
             # have acked past this seq before turn_ended was published.
@@ -563,22 +559,19 @@ class ConversationStreamHub:
             queue: asyncio.Queue[StreamEvent] = asyncio.Queue(
                 maxsize=self._subscriber_queue_max
             )
-            # A positive from_seq is a resume: the client genuinely already has
-            # everything below it, so from_seq-1 is an implicit ack. A tail
-            # subscription (from_seq<0) has received NOTHING and replays nothing,
-            # so it must NOT implicitly ack the current head — doing so would
-            # mark just-ended, never-delivered turns as delivered and suppress
-            # their disconnect push. Tail subscribers only carry the explicit
-            # ack_seq (default -1 = nothing acked).
-            initial_ack = ack_seq if tail_only else max(ack_seq, from_seq - 1)
-            state.subscribers[queue] = _Subscription(
-                queue=queue, last_ack_seq=initial_ack
-            )
+            # Delivery is recorded ONLY on an explicit client ack, never
+            # implied by from_seq. from_seq controls solely WHERE replay
+            # starts: a send-and-watch client subscribes at a new turn's
+            # server-assigned first_seq without having received the prior
+            # turn's events, so treating from_seq-1 as an implicit ack would
+            # falsely mark a just-ended, never-delivered turn as delivered and
+            # suppress its disconnect push.
+            state.subscribers[queue] = _Subscription(queue=queue, last_ack_seq=ack_seq)
 
-            # The ack at subscribe time may already be enough to mark a
-            # turn as delivered (e.g. resume-with-ack after a clean
+            # The explicit ack at subscribe time may already be enough to mark
+            # a turn as delivered (e.g. resume-with-ack after a clean
             # round-trip).
-            self._refresh_delivered_under_lock(state, ack_seq=initial_ack)
+            self._refresh_delivered_under_lock(state, ack_seq=ack_seq)
 
         return SubscriptionHandle(queue=queue, replayed_events=replayed)
 
@@ -614,27 +607,6 @@ class ConversationStreamHub:
         if state is None:
             return False
         return queue in state.subscribers
-
-    async def ack(
-        self,
-        conversation_id: str,
-        queue: asyncio.Queue[StreamEvent],
-        ack_seq: int,
-    ) -> None:
-        """Record that this subscriber has received events up to ``ack_seq``.
-
-        If the ack covers a ``turn_ended`` seq, the turn's ``delivered`` flag
-        is flipped so the disconnect-push logic knows not to fire.
-        """
-        state = self._get_state(conversation_id)
-        if state is None:
-            return
-        async with state.lock:
-            sub = state.subscribers.get(queue)
-            if sub is None:
-                return
-            sub.last_ack_seq = max(sub.last_ack_seq, ack_seq)
-            self._refresh_delivered_under_lock(state, ack_seq=ack_seq)
 
     async def ack_conversation(self, conversation_id: str, ack_seq: int) -> None:
         """Record a conversation-wide acknowledgement up to ``ack_seq``.
