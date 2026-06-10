@@ -210,7 +210,7 @@ final class ChatViewModelTests: XCTestCase {
         ChatMockBackendURLProtocol.respond { request in
             switch (request.httpMethod ?? "GET", request.url?.path ?? "") {
             case ("POST", "/api/v1/chat/turns"):
-                if let body = Self.jsonObject(from: request) as? [String: Any],
+                if let body = (try? Self.jsonObject(from: request)) as? [String: Any],
                    let postedTurnID = body["turn_id"] as? String {
                     streamedTurnID = postedTurnID
                 }
