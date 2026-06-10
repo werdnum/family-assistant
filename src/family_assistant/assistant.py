@@ -127,6 +127,7 @@ from family_assistant.tools.worker import reconcile_stale_tasks
 from family_assistant.utils.logging_handler import setup_error_logging
 from family_assistant.utils.scraping import PlaywrightScraper
 from family_assistant.web.app_creator import configure_app_auth, create_app
+from family_assistant.web.web_confirmation_ui_manager import WebConfirmationUIManager
 
 from .telegram.service import TelegramService
 
@@ -604,6 +605,18 @@ class Assistant:
         self.fastapi_app.state.confirmation_service = self.confirmation_service
         self.fastapi_app.state.confirmation_result_waiters = (
             self.confirmation_result_waiters
+        )
+        # Register a durable web confirmation manager so confirmations work for
+        # background runs (e.g. async profile delegation) on the web interface,
+        # not just inside a live streaming turn.
+        self.fastapi_app.state.confirmation_ui_managers["web"] = (
+            WebConfirmationUIManager(
+                confirmation_service=self.confirmation_service,
+                confirmation_result_waiters=self.confirmation_result_waiters,
+                stream_hub=getattr(
+                    self.fastapi_app.state, "conversation_stream_hub", None
+                ),
+            )
         )
         outbound_email_client = None
         email_config = self.config.email_intake
