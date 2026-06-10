@@ -125,6 +125,7 @@ struct NoteDetailView: View {
             note = try await NotesAPIClient(authManager: authManager).getNote(title: title)
         } catch {
             errorMessage = error.localizedDescription
+            ErrorReporter.shared.report(error, component: "Notes.detail.load")
         }
         isLoading = false
     }
@@ -136,6 +137,7 @@ struct NoteDetailView: View {
             onDeleted()
         } catch {
             errorMessage = error.localizedDescription
+            ErrorReporter.shared.report(error, component: "Notes.detail.delete")
         }
     }
 }

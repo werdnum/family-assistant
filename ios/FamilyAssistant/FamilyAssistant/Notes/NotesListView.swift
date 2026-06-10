@@ -120,6 +120,7 @@ struct NotesListView: View {
             notes = try await NotesAPIClient(authManager: authManager).listNotes()
         } catch {
             errorMessage = error.localizedDescription
+            ErrorReporter.shared.report(error, component: "Notes.list.load")
         }
         isLoading = false
     }
@@ -132,6 +133,7 @@ struct NotesListView: View {
             notes.removeAll { $0.title == note.title }
         } catch {
             errorMessage = error.localizedDescription
+            ErrorReporter.shared.report(error, component: "Notes.list.delete")
         }
     }
 }

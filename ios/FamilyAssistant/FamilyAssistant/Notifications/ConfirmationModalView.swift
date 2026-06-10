@@ -145,6 +145,7 @@ final class ConfirmationModalModel {
             return true
         } catch {
             errorMessage = error.localizedDescription
+            ErrorReporter.shared.report(error, component: "Confirmation.submit")
             return false
         }
     }

@@ -121,6 +121,7 @@ struct NoteEditorView: View {
             visibilityLabels = note.visibilityLabels
         } catch {
             errorMessage = error.localizedDescription
+            ErrorReporter.shared.report(error, component: "Notes.editor.load")
         }
         isLoading = false
     }
@@ -148,6 +149,7 @@ struct NoteEditorView: View {
             onSaved(trimmedTitle)
         } catch {
             errorMessage = error.localizedDescription
+            ErrorReporter.shared.report(error, component: "Notes.editor.save")
         }
         isSaving = false
     }
