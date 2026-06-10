@@ -608,20 +608,22 @@ final class ChatViewModel {
                     // delivered regardless of this filter.
                     eventTypes: ["message", "turn_ended"]
                 )
-                guard let self else { return }
-                await self.handleLiveReconnect(conversationID: conversationID)
+                // Call through the weak `self?` at each suspension point instead
+                // of binding a strong `self`: a binding would keep the view model
+                // (and its open SSE connection) alive across the indefinite follow
+                // loop, so logout/deinit could never tear it down.
+                await self?.handleLiveReconnect(conversationID: conversationID)
                 for try await event in stream {
                     if Task.isCancelled {
                         break
                     }
-                    // Re-acquire `self` weakly each iteration so the view model
-                    // is not retained between events across the indefinite loop.
-                    guard let self else { break }
-                    let shouldContinue = await self.handleLiveEvent(
+                    let shouldContinue = await self?.handleLiveEvent(
                         event,
                         conversationID: conversationID,
                         client: client
                     )
+                    // `self` deallocated mid-loop -> nil -> stop following.
+                    guard let shouldContinue else { break }
                     if !shouldContinue {
                         break
                     }
