@@ -546,27 +546,29 @@ async def delegate_to_service_tool(
                 "Attachment IDs provided but AttachmentRegistry not available - ignoring attachments"
             )
         else:
-            attachment_registry = exec_context.attachment_registry
-
-            for attachment_id in attachment_ids:
-                try:
-                    # Validate attachment exists and is accessible
-                    attachment = await attachment_registry.get_attachment(
-                        exec_context.db_context, attachment_id
-                    )
-
-                    if not attachment:
-                        logger.warning(
-                            f"Attachment {attachment_id} not found - skipping"
-                        )
-                        continue
-
-                    content_parts.append(attachment_content(attachment_id))
-                    logger.debug(f"Added attachment {attachment_id} to delegation")
-
-                except Exception as e:
-                    logger.error(f"Error validating attachment {attachment_id}: {e}")
-                    continue
+            # Validate against a committed view (an isolated context) so the
+            # background worker — which runs on its own connection and cannot see
+            # the caller's uncommitted turn — sees exactly the attachments
+            # validated here. A referenced attachment that is not yet committed
+            # is reported now rather than failing opaquely inside the worker.
+            async with exec_context.db_context.create_isolated_context() as isolated_db:
+                found = await exec_context.attachment_registry.get_attachments(
+                    isolated_db, attachment_ids
+                )
+            missing = [aid for aid in attachment_ids if aid not in found]
+            if missing:
+                return ToolResult(
+                    text=(
+                        f"Error: Cannot delegate to '{target_service_id}': "
+                        f"attachment(s) {', '.join(missing)} are not available to "
+                        "the delegated run. They may not be saved yet — try again "
+                        "once they are committed."
+                    ),
+                    attachments=None,
+                )
+            content_parts.extend(
+                attachment_content(attachment_id) for attachment_id in attachment_ids
+            )
 
     if delivery_hint not in {"auto", "background"}:
         return ToolResult(

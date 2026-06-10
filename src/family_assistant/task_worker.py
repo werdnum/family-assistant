@@ -196,6 +196,19 @@ class DelegatedProfileRunPayload(TypedDict):
     user_name: str
 
 
+class DelegationRunCleanupPayload(TypedDict, total=False):
+    """Payload for delegation_run_cleanup tasks."""
+
+    running_timeout_seconds: float
+
+
+# Delegation runs left "running" longer than this are considered stranded (a
+# crash or exhausted retries) and are failed + notified by the reaper. It must
+# comfortably exceed the handler timeout plus retry backoff so it never reaps a
+# run that is still legitimately executing.
+DELEGATION_RUN_STALE_SECONDS = 3600.0
+
+
 class ConfirmationNotificationError(RuntimeError):
     """Raised when a confirmation result notification cannot be delivered."""
 
@@ -907,6 +920,42 @@ class TaskWorker:
         if terminal_run is None:
             raise ValueError(f"Delegation run '{delegation_id}' disappeared")
         await self._notify_delegation_if_needed(exec_context, terminal_run)
+
+    async def handle_delegation_run_cleanup(
+        self,
+        exec_context: ToolExecutionContext,
+        payload: DelegationRunCleanupPayload,
+    ) -> None:
+        """Fail and notify delegation runs stranded in ``running``.
+
+        Backstop for the rare case where a run's owning task never retries (e.g.
+        the process was killed): the retry "running" entry guard normally fails
+        an interrupted run quickly, but a run with no further attempts would
+        otherwise stay ``running`` forever.
+        """
+        clock = exec_context.clock or self.clock
+        now = clock.now()
+        running_timeout_seconds = payload.get(
+            "running_timeout_seconds", DELEGATION_RUN_STALE_SECONDS
+        )
+        running_before = now - timedelta(seconds=running_timeout_seconds)
+        async with exec_context.db_context.create_isolated_context() as isolated_db:
+            reaped = await isolated_db.delegation_runs.reap_stale_running(
+                now=now,
+                running_before=running_before,
+                error=(
+                    "The delegated run did not complete within the allowed time "
+                    "and was marked failed."
+                ),
+            )
+        if reaped:
+            logger.warning(
+                "Reaped %d stale delegation run(s) older than %.0fs.",
+                len(reaped),
+                running_timeout_seconds,
+            )
+        for run in reaped:
+            await self._notify_delegation_if_needed(exec_context, run)
 
     def _build_delegation_confirmation_callback(
         self,

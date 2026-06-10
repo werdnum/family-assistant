@@ -1574,6 +1574,21 @@ class Assistant:
                 except Exception as e:
                     logger.info(f"Worker task cleanup task setup: {e}")
 
+                # Upsert the stale delegation run reaper (runs hourly so a
+                # stranded run that never retried is surfaced reasonably soon).
+                try:
+                    await db_ctx.tasks.enqueue(
+                        task_id="system_delegation_run_cleanup_hourly",
+                        task_type="delegation_run_cleanup",
+                        payload={},
+                        scheduled_at=datetime.now(UTC),
+                        recurrence_rule="FREQ=HOURLY;BYMINUTE=0",
+                        max_retries_override=5,
+                    )
+                    logger.info("Delegation run cleanup task scheduled (hourly)")
+                except Exception as e:
+                    logger.info(f"Delegation run cleanup task setup: {e}")
+
                 # Upsert the completed automation cleanup task
                 try:
                     await db_ctx.tasks.enqueue(
