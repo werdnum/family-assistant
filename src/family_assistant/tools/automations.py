@@ -364,7 +364,7 @@ def _validate_automation_type(automation_type: str) -> AutomationType:
     return automation_type  # type: ignore[return-value]
 
 
-async def _validate_inline_script_code(
+async def validate_inline_script_code(
     exec_context: ToolExecutionContext,
     script_code: str,
 ) -> str | None:
@@ -446,7 +446,7 @@ async def create_automation_tool(
                     text=f"Error: {script_error}", data={"error": script_error}
                 )
             if action_config.get("script_code"):
-                validation_error = await _validate_inline_script_code(
+                validation_error = await validate_inline_script_code(
                     exec_context, action_config["script_code"]
                 )
                 if validation_error:
@@ -803,7 +803,7 @@ async def update_automation_tool(
             restamp_user_id = exec_context.user_id
             script_code = action_config.get("script_code")
             if script_code:
-                validation_error = await _validate_inline_script_code(
+                validation_error = await validate_inline_script_code(
                     exec_context, script_code
                 )
                 if validation_error:

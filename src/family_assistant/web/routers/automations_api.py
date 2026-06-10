@@ -15,7 +15,11 @@ from family_assistant.storage.types import (
     ScheduleExecutionStatsDict,
 )
 from family_assistant.tools.stored_scripts import validate_script_action_config
-from family_assistant.web.dependencies import get_db, get_processing_service
+from family_assistant.web.dependencies import (
+    get_current_user,
+    get_db,
+    get_processing_service,
+)
 
 if TYPE_CHECKING:
     from family_assistant.storage.types import ActionConfig
@@ -240,6 +244,8 @@ async def get_automation(
 async def create_event_automation(
     request: CreateEventAutomationRequest,
     db: Annotated[DatabaseContext, Depends(get_db)],
+    processing_service: Annotated[ProcessingService, Depends(get_processing_service)],
+    current_user: Annotated[dict, Depends(get_current_user)],
 ) -> AutomationResponse:
     """Create a new event automation."""
     # Validate source_id
@@ -285,6 +291,8 @@ async def create_event_automation(
             condition_script=request.condition_script,
             one_time=request.one_time,
             enabled=request.enabled,
+            processing_profile_id=processing_service.service_config.id,
+            created_by_user_id=str(current_user["user_identifier"]),
         )
 
         # Fetch the created automation
@@ -317,6 +325,7 @@ async def create_schedule_automation(
     request: CreateScheduleAutomationRequest,
     db: Annotated[DatabaseContext, Depends(get_db)],
     processing_service: Annotated[ProcessingService, Depends(get_processing_service)],
+    current_user: Annotated[dict, Depends(get_current_user)],
 ) -> AutomationResponse:
     """Create a new schedule automation."""
     # Validate action_type
@@ -352,6 +361,8 @@ async def create_schedule_automation(
             description=request.description,
             enabled=request.enabled,
             timezone=processing_service.service_config.timezone,
+            processing_profile_id=processing_service.service_config.id,
+            created_by_user_id=str(current_user["user_identifier"]),
         )
 
         # Fetch the created automation
@@ -387,6 +398,7 @@ async def update_automation(
     request_body: Annotated[dict[str, Any], Body(...)],
     db: Annotated[DatabaseContext, Depends(get_db)],
     processing_service: Annotated[ProcessingService, Depends(get_processing_service)],
+    current_user: Annotated[dict, Depends(get_current_user)],
 ) -> AutomationResponse:
     """Update an existing automation."""
     # Validate automation_type
@@ -484,6 +496,18 @@ async def update_automation(
                     if request.condition_script is not _UNSET
                     else existing.condition_script,
                 ),
+                # Re-stamp creator provenance when the script/action changes so
+                # the updated script executes under the updater's profile.
+                processing_profile_id=(
+                    processing_service.service_config.id
+                    if request.action_config is not _UNSET
+                    else None
+                ),
+                created_by_user_id=(
+                    str(current_user["user_identifier"])
+                    if request.action_config is not _UNSET
+                    else None
+                ),
             )
         else:  # schedule
             # Update schedule automation
@@ -502,6 +526,18 @@ async def update_automation(
                 action_config=request.action_config,
                 enabled=request.enabled,
                 timezone=processing_service.service_config.timezone,
+                # Re-stamp creator provenance when the script/action changes so
+                # the updated script executes under the updater's profile.
+                processing_profile_id=(
+                    processing_service.service_config.id
+                    if request.action_config is not _UNSET
+                    else _UNSET
+                ),
+                created_by_user_id=(
+                    str(current_user["user_identifier"])
+                    if request.action_config is not _UNSET
+                    else _UNSET
+                ),
             )
 
         if not success:
