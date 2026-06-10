@@ -44,13 +44,24 @@ task, and resolve it at execution time:
 2. **Capture** — `create_automation_tool` stores `exec_context.processing_profile_id` and
    `exec_context.user_id`. `update_automation_tool` re-validates a changed inline script and
    re-stamps the provenance with the *updating* profile/user, so the updater's authority governs.
+   The web automations API stamps the default profile and the authenticated web user the same way
+   (re-stamping on updates that change the action config), and the `schedule_action` tool threads
+   the acting profile/user into one-time scheduled script payloads via `execute_action`.
 3. **Thread** — the `script_execution` task payload carries `processing_profile_id` (and
    `created_by_user_id`). For schedule automations this flows through `_build_script_payload`; for
-   event automations it flows through the event processor's action context.
+   event automations and one-time scheduled actions it flows through `execute_action`.
 4. **Resolve** — `handle_script_execution` resolves the recorded profile via the processing services
    registry (`_resolve_script_execution_service`) and re-points the execution context (tools
    provider, visibility grants, note labels) at it. Validation, which already uses the creating
    profile's tools provider, is therefore consistent with execution by construction.
+
+### Known limitation: stored scripts
+
+Automations can reference a stored script by `script_name` instead of inline code. Stored scripts
+are validated against the tools of the profile that *saved* them, while an automation referencing
+one executes it under the *automation creator's* profile. Creation-time validation for the
+`script_name` case only checks that the script exists, so a saved-vs-referenced profile mismatch is
+still possible there; the tool policy is enforced at runtime either way.
 
 ### Fallback
 
