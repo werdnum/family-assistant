@@ -14,7 +14,7 @@ final class SSEParserTests: XCTestCase {
         ])
     }
 
-    func testDecodesTextToolCallToolResultAndEnd() {
+    func testDecodesTextToolCallToolResultAndTurnEnded() {
         let parser = SSEParser()
         let rawEvents = parser.append(
             """
@@ -27,19 +27,80 @@ final class SSEParserTests: XCTestCase {
             event: tool_result
             data: {"tool_call_id":"call_1","result":"Found it","attachments":[{"attachment_id":"att-1","name":"result.pdf","content_url":"/api/attachments/att-1","mime_type":"application/pdf"}]}
 
-            event: end
-            data: {}
+            event: turn_ended
+            data: {"turn_id":"turn-1","status":"complete","seq":7}
 
             """
         ) + parser.flush()
         let decoded = rawEvents.map(parser.decode)
 
-        XCTAssertEqual(decoded.map(\.type), [.text, .toolCall, .toolResult, .end])
+        XCTAssertEqual(decoded.map(\.type), [.text, .toolCall, .toolResult, .turnEnded])
         XCTAssertEqual(decoded[0].text, "Hello")
         XCTAssertEqual(decoded[1].toolCall?.displayName, "search_notes")
         XCTAssertEqual(decoded[2].toolCallID, "call_1")
         XCTAssertEqual(decoded[2].toolResult, "Found it")
         XCTAssertEqual(decoded[2].attachments.first?.name, "result.pdf")
+        XCTAssertEqual(decoded[3].seq, 7)
+    }
+
+    func testFailedTurnEndedDispatchesOnEventNameNotErrorPayload() {
+        let parser = SSEParser()
+
+        let decoded = parser.decode(
+            ServerSentEvent(
+                event: "turn_ended",
+                data: #"{"turn_id":"turn-1","status":"failed","error":"boom","seq":9}"#
+            )
+        )
+
+        // A named turn_ended is authoritative even when its payload carries an
+        // `error` string: it must route to the live-events reload path, not the
+        // generic error renderer.
+        XCTAssertEqual(decoded.type, .turnEnded)
+        XCTAssertEqual(decoded.errorMessage, "boom")
+        XCTAssertEqual(decoded.seq, 9)
+    }
+
+    func testAttachmentSourceDistinguishesTriggerFromResponse() {
+        let parser = SSEParser()
+
+        let response = parser.decode(
+            ServerSentEvent(
+                event: "attachment",
+                data: #"{"attachment_id":"att-r","name":"reply.pdf","content_url":"/api/attachments/att-r","source":"response"}"#
+            )
+        )
+        let trigger = parser.decode(
+            ServerSentEvent(
+                event: "attachment",
+                data: #"{"attachment_id":"att-t","name":"upload.pdf","content_url":"/api/attachments/att-t","source":"trigger"}"#
+            )
+        )
+        let absent = parser.decode(
+            ServerSentEvent(
+                event: "attachment",
+                data: #"{"attachment_id":"att-a","name":"legacy.pdf","content_url":"/api/attachments/att-a"}"#
+            )
+        )
+
+        XCTAssertEqual(response.attachmentSource, .response)
+        XCTAssertEqual(trigger.attachmentSource, .trigger)
+        XCTAssertEqual(absent.attachmentSource, .response)
+    }
+
+    func testCRLFNormalizedAcrossByteAtATimeFeed() {
+        let parser = SSEParser()
+        let raw = "event: text\r\ndata: {\"content\":\"Hi\"}\r\n\r\n"
+
+        var events: [ServerSentEvent] = []
+        for character in raw {
+            events.append(contentsOf: parser.append(String(character)))
+        }
+        events.append(contentsOf: parser.flush())
+
+        XCTAssertEqual(events.count, 1)
+        XCTAssertEqual(parser.decode(events[0]).type, .text)
+        XCTAssertEqual(parser.decode(events[0]).text, "Hi")
     }
 
     func testDecodesConfirmationEvents() {
@@ -81,11 +142,11 @@ final class SSEParserTests: XCTestCase {
         XCTAssertNil(decoded.text)
     }
 
-    func testCloseConnectedHeartbeatEventsDecodeWithoutPayload() {
+    func testLifecycleEventsDecodeWithoutPayload() {
         let parser = SSEParser()
 
-        XCTAssertEqual(parser.decode(ServerSentEvent(event: "close", data: "{}")).type, .close)
         XCTAssertEqual(parser.decode(ServerSentEvent(event: "connected", data: "{}")).type, .connected)
         XCTAssertEqual(parser.decode(ServerSentEvent(event: "heartbeat", data: "{}")).type, .heartbeat)
+        XCTAssertEqual(parser.decode(ServerSentEvent(event: "stream_dropped", data: "{}")).type, .streamDropped)
     }
 }

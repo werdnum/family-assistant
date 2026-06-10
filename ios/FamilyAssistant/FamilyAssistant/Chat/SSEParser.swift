@@ -14,9 +14,18 @@ struct ChatStreamEvent: Equatable {
     let toolCallID: String?
     let toolResult: String?
     let attachments: [ChatAttachment]
+    // Origin of an `attachment` event: "response" (assistant reply) or "trigger"
+    // (the user's own upload republished onto the stream). Only response
+    // attachments belong in the assistant bubble. Absent → treat as "response".
+    let attachmentSource: ChatAttachmentSource
     let confirmation: ChatPendingConfirmation?
     let confirmationResult: ChatConfirmationResult?
     let errorMessage: String?
+}
+
+enum ChatAttachmentSource: String, Equatable {
+    case response
+    case trigger
 }
 
 enum ChatStreamEventType: String, Equatable {
@@ -29,8 +38,6 @@ enum ChatStreamEventType: String, Equatable {
     case error
     case turnStarted
     case turnEnded
-    case end
-    case close
     case connected
     case message
     case heartbeat
@@ -52,7 +59,12 @@ final class SSEParser {
     private var currentSeq: Int?
 
     func append(_ chunk: String) -> [ServerSentEvent] {
-        buffer += chunk.replacingOccurrences(of: "\r\n", with: "\n")
+        buffer += chunk
+        // Normalize across the accumulated buffer, not per chunk: with a
+        // byte-at-a-time feed the CR and LF of a CRLF arrive in separate chunks,
+        // so per-chunk replacement never matches. A trailing lone "\r" is left
+        // in the buffer until its following byte arrives.
+        buffer = buffer.replacingOccurrences(of: "\r\n", with: "\n")
         var events: [ServerSentEvent] = []
 
         while let range = buffer.range(of: "\n\n") {
@@ -79,6 +91,7 @@ final class SSEParser {
     func decode(_ event: ServerSentEvent) -> ChatStreamEvent {
         currentTurnID = nil
         currentSeq = nil
+        let isNamedEvent = event.event != "message"
         let eventType = ChatStreamEventType(rawValue: camelCase(event.event)) ?? .message
         guard !event.data.isEmpty, event.data != "[DONE]" else {
             return ChatStreamEvent(
@@ -90,6 +103,7 @@ final class SSEParser {
                 toolCallID: nil,
                 toolResult: nil,
                 attachments: [],
+                attachmentSource: .response,
                 confirmation: nil,
                 confirmationResult: nil,
                 errorMessage: nil
@@ -108,6 +122,7 @@ final class SSEParser {
                 toolCallID: nil,
                 toolResult: nil,
                 attachments: [],
+                attachmentSource: .response,
                 confirmation: nil,
                 confirmationResult: nil,
                 errorMessage: "Malformed stream event: \(event.data)"
@@ -116,6 +131,23 @@ final class SSEParser {
 
         currentTurnID = payload["turn_id"]?.stringValue
         currentSeq = payload["seq"]?.doubleValue.map { Int($0) }
+
+        // Dispatch on the SSE event-name first. A named lifecycle/control frame
+        // (e.g. `turn_ended`) is authoritative even when its payload carries a
+        // shape that the heuristics below would otherwise sniff differently — a
+        // FAILED turn_ended whose payload has an `error` string must still
+        // decode as `.turnEnded`, not `.error`, so the live-events path reloads
+        // history. Payload-shape sniffing is the fallback for unnamed/legacy
+        // frames only.
+        if isNamedEvent {
+            switch eventType {
+            case .turnEnded, .turnStarted, .heartbeat, .streamDropped, .connected:
+                let errorMessage = payload["error"]?.stringValue
+                return baseEvent(type: eventType, errorMessage: errorMessage)
+            default:
+                break
+            }
+        }
 
         if eventType == .text, case .string(let content) = payload["content"] {
             return baseEvent(type: .text, text: content)
@@ -166,7 +198,15 @@ final class SSEParser {
         }
 
         if payload["attachment_id"] != nil || payload["content_url"] != nil || payload["url"] != nil {
-            return baseEvent(type: .attachment, attachments: decodeAttachments(.object(payload)))
+            // Absent `source` defaults to `.response` (backend always sets it now;
+            // legacy frames are response attachments).
+            let source = payload["source"]?.stringValue
+                .flatMap(ChatAttachmentSource.init(rawValue:)) ?? .response
+            return baseEvent(
+                type: .attachment,
+                attachments: decodeAttachments(.object(payload)),
+                attachmentSource: source
+            )
         }
 
         if case .string(let error) = payload["error"] {
@@ -236,6 +276,7 @@ final class SSEParser {
         toolCallID: String? = nil,
         toolResult: String? = nil,
         attachments: [ChatAttachment] = [],
+        attachmentSource: ChatAttachmentSource = .response,
         confirmation: ChatPendingConfirmation? = nil,
         confirmationResult: ChatConfirmationResult? = nil,
         errorMessage: String? = nil
@@ -249,6 +290,7 @@ final class SSEParser {
             toolCallID: toolCallID,
             toolResult: toolResult,
             attachments: attachments,
+            attachmentSource: attachmentSource,
             confirmation: confirmation,
             confirmationResult: confirmationResult,
             errorMessage: errorMessage
