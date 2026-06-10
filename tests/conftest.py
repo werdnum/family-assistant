@@ -727,7 +727,11 @@ async def task_worker_manager(
     ) -> tuple[TaskWorker, asyncio.Event, asyncio.Event]:
         nonlocal worker_task_handle
         timezone = kwargs.pop("timezone", ZoneInfo("UTC"))
-        register_delegation_handler = kwargs.pop("register_delegation_handler", False)
+        # Register the delegation handlers by default so a worker behaves like
+        # production; otherwise a test that enqueues a delegated run would
+        # silently strand it as "queued". Opt out with
+        # register_delegation_handler=False.
+        register_delegation_handler = kwargs.pop("register_delegation_handler", True)
         worker = TaskWorker(
             processing_service=processing_service,
             chat_interface=chat_interface,
@@ -743,6 +747,10 @@ async def task_worker_manager(
             worker.register_task_handler(
                 "delegated_profile_run",
                 worker.handle_delegated_profile_run,
+            )
+            worker.register_task_handler(
+                "delegation_run_cleanup",
+                worker.handle_delegation_run_cleanup,
             )
         worker_task_handle = asyncio.create_task(worker.run(new_task_event_for_worker))
         logger.info("Started background TaskWorker (factory).")

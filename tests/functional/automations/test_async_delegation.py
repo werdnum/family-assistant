@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import timedelta
 from types import SimpleNamespace
 from typing import TYPE_CHECKING, Any, TypedDict, cast
 from unittest.mock import AsyncMock, MagicMock
@@ -16,7 +17,7 @@ from family_assistant.llm.messages import AssistantMessage, UserMessage
 from family_assistant.processing.types import ChatInteractionResult
 from family_assistant.storage import message_history_table
 from family_assistant.storage.context import DatabaseContext
-from family_assistant.task_worker import TaskWorker
+from family_assistant.task_worker import DelegatedProfileRunPayload, TaskWorker
 from family_assistant.tools.services import (
     delegate_to_service_tool,
     get_delegation_status_tool,
@@ -312,6 +313,270 @@ async def test_delegate_to_service_background_reference_and_completion_notificat
         )
         assert len(notification_rows) == 1
         assert notification_rows[0]["subconversation_id"] is None
+
+
+async def _create_run(
+    db_context: DatabaseContext,
+    *,
+    delegation_id: str,
+    interface_type: str = TEST_INTERFACE_TYPE,
+) -> str:
+    """Create a queued delegation run and return its delegation_id."""
+    await db_context.delegation_runs.create_run({
+        "delegation_id": delegation_id,
+        "task_id": f"task_{delegation_id}",
+        "source_profile_id": "source_profile",
+        "target_service_id": "target_profile",
+        "interface_type": interface_type,
+        "conversation_id": TEST_CONVERSATION_ID,
+        "user_id": "async-delegation-user",
+        "user_name": TEST_USER_NAME,
+        "source_turn_id": "turn_async_delegation",
+        "subconversation_id": f"sub_{delegation_id}",
+        "request_text": "do the thing",
+        "content_parts_json": [],
+    })
+    return delegation_id
+
+
+def _payload(delegation_id: str) -> DelegatedProfileRunPayload:
+    return DelegatedProfileRunPayload(
+        delegation_id=delegation_id,
+        interface_type=TEST_INTERFACE_TYPE,
+        conversation_id=TEST_CONVERSATION_ID,
+        user_name=TEST_USER_NAME,
+    )
+
+
+def _build_worker(
+    db_engine: AsyncEngine,
+    processing_service: ProcessingService,
+    chat_interface: ChatInterface,
+    confirmation_ui_managers: dict[str, ConfirmationUIManager] | None = None,
+) -> TaskWorker:
+    return TaskWorker(
+        processing_service=processing_service,
+        chat_interface=chat_interface,
+        calendar_config={},
+        timezone=ZoneInfo("UTC"),
+        embedding_generator=MagicMock(),
+        engine=db_engine,
+        confirmation_ui_managers=confirmation_ui_managers,
+    )
+
+
+@pytest.mark.asyncio
+async def test_worker_does_not_notify_when_caller_did_not_hand_off(
+    db_engine: AsyncEngine,
+) -> None:
+    """If the caller never handed off, it delivers inline; the worker must not notify."""
+    target_service = FakeDelegatableService()
+    processing_service = _source_processing_service(target_service)
+    chat_interface = AsyncMock(spec=ChatInterface)
+
+    async with DatabaseContext(engine=db_engine) as db_context:
+        await _create_run(db_context, delegation_id="delegation_no_handoff")
+
+    worker = _build_worker(db_engine, processing_service, chat_interface)
+    async with DatabaseContext(engine=db_engine) as db_context:
+        await worker.handle_delegated_profile_run(
+            _tool_context(db_context, processing_service, chat_interface),
+            _payload("delegation_no_handoff"),
+        )
+
+    chat_interface.send_message.assert_not_awaited()
+    async with DatabaseContext(engine=db_engine) as db_context:
+        run = await db_context.delegation_runs.get_by_delegation_id(
+            "delegation_no_handoff"
+        )
+        assert run is not None
+        assert run["status"] == "completed"
+        assert run["notified_at"] is None
+
+
+@pytest.mark.asyncio
+async def test_terminal_run_renotifies_when_not_yet_notified(
+    db_engine: AsyncEngine,
+) -> None:
+    """A terminal run whose notification never landed is re-notified on retry (C3)."""
+    target_service = FakeDelegatableService()
+    processing_service = _source_processing_service(target_service)
+    chat_interface = AsyncMock(spec=ChatInterface)
+    chat_interface.send_message.return_value = "external_message_id"
+
+    clock = SystemClock()
+    async with DatabaseContext(engine=db_engine) as db_context:
+        await _create_run(db_context, delegation_id="delegation_renotify")
+        await db_context.delegation_runs.mark_handed_off(
+            "delegation_renotify", clock.now()
+        )
+        await db_context.delegation_runs.mark_completed(
+            delegation_id="delegation_renotify",
+            result_text="already done",
+            result_attachment_ids=[],
+            completed_at=clock.now(),
+        )
+
+    worker = _build_worker(db_engine, processing_service, chat_interface)
+    async with DatabaseContext(engine=db_engine) as db_context:
+        await worker.handle_delegated_profile_run(
+            _tool_context(db_context, processing_service, chat_interface),
+            _payload("delegation_renotify"),
+        )
+
+    # The terminal run was not re-executed, but the notification was delivered.
+    assert target_service.calls == []
+    chat_interface.send_message.assert_awaited_once()
+    async with DatabaseContext(engine=db_engine) as db_context:
+        run = await db_context.delegation_runs.get_by_delegation_id(
+            "delegation_renotify"
+        )
+        assert run is not None
+        assert run["notified_at"] is not None
+
+
+@pytest.mark.asyncio
+async def test_running_run_is_failed_not_reexecuted(db_engine: AsyncEngine) -> None:
+    """A run found 'running' on entry was interrupted; fail it, don't re-run (C6)."""
+    target_service = FakeDelegatableService()
+    processing_service = _source_processing_service(target_service)
+    chat_interface = AsyncMock(spec=ChatInterface)
+    chat_interface.send_message.return_value = "external_message_id"
+
+    clock = SystemClock()
+    async with DatabaseContext(engine=db_engine) as db_context:
+        await _create_run(db_context, delegation_id="delegation_interrupted")
+        await db_context.delegation_runs.mark_handed_off(
+            "delegation_interrupted", clock.now()
+        )
+        await db_context.delegation_runs.mark_running(
+            "delegation_interrupted", clock.now()
+        )
+
+    worker = _build_worker(db_engine, processing_service, chat_interface)
+    async with DatabaseContext(engine=db_engine) as db_context:
+        await worker.handle_delegated_profile_run(
+            _tool_context(db_context, processing_service, chat_interface),
+            _payload("delegation_interrupted"),
+        )
+
+    assert target_service.calls == []
+    chat_interface.send_message.assert_awaited_once()
+    async with DatabaseContext(engine=db_engine) as db_context:
+        run = await db_context.delegation_runs.get_by_delegation_id(
+            "delegation_interrupted"
+        )
+        assert run is not None
+        assert run["status"] == "failed"
+        assert run["error"] is not None
+
+
+@pytest.mark.asyncio
+async def test_reaper_fails_and_notifies_stale_running_run(
+    db_engine: AsyncEngine,
+) -> None:
+    """The cleanup task fails and notifies runs stranded in 'running' (C21)."""
+    target_service = FakeDelegatableService()
+    processing_service = _source_processing_service(target_service)
+    chat_interface = AsyncMock(spec=ChatInterface)
+    chat_interface.send_message.return_value = "external_message_id"
+
+    clock = SystemClock()
+    stale_started_at = clock.now() - timedelta(hours=2)
+    async with DatabaseContext(engine=db_engine) as db_context:
+        await _create_run(db_context, delegation_id="delegation_stale")
+        await db_context.delegation_runs.mark_handed_off(
+            "delegation_stale", clock.now()
+        )
+        await db_context.delegation_runs.mark_running(
+            "delegation_stale", stale_started_at
+        )
+
+    worker = _build_worker(db_engine, processing_service, chat_interface)
+    async with DatabaseContext(engine=db_engine) as db_context:
+        await worker.handle_delegation_run_cleanup(
+            _tool_context(db_context, processing_service, chat_interface),
+            {"running_timeout_seconds": 60.0},
+        )
+
+    chat_interface.send_message.assert_awaited_once()
+    async with DatabaseContext(engine=db_engine) as db_context:
+        run = await db_context.delegation_runs.get_by_delegation_id("delegation_stale")
+        assert run is not None
+        assert run["status"] == "failed"
+        assert run["notified_at"] is not None
+
+
+@pytest.mark.asyncio
+async def test_mark_handed_off_is_refused_once_terminal(
+    db_engine: AsyncEngine,
+) -> None:
+    """The handoff claim wins only while non-terminal, so it never strands a result (C1)."""
+    clock = SystemClock()
+    async with DatabaseContext(engine=db_engine) as db_context:
+        await _create_run(db_context, delegation_id="delegation_claimable")
+        claimed = await db_context.delegation_runs.mark_handed_off(
+            "delegation_claimable", clock.now()
+        )
+        assert claimed is True
+
+        await _create_run(db_context, delegation_id="delegation_terminal")
+        await db_context.delegation_runs.mark_completed(
+            delegation_id="delegation_terminal",
+            result_text="done",
+            result_attachment_ids=[],
+            completed_at=clock.now(),
+        )
+        refused = await db_context.delegation_runs.mark_handed_off(
+            "delegation_terminal", clock.now()
+        )
+        assert refused is False
+
+
+@pytest.mark.asyncio
+async def test_web_delegation_can_request_confirmation(db_engine: AsyncEngine) -> None:
+    """A web-interface delegation gets a confirmation callback from the web manager (C7)."""
+    target_service = FakeDelegatableService(request_confirmation=True)
+    processing_service = _source_processing_service(target_service)
+    confirmation_manager = FakeConfirmationUIManager()
+    confirmation_ui_managers: dict[str, ConfirmationUIManager] = {
+        "web": confirmation_manager
+    }
+    chat_interface = AsyncMock(spec=ChatInterface)
+    chat_interface.send_message.return_value = "external_message_id"
+
+    async with DatabaseContext(engine=db_engine) as db_context:
+        await _create_run(
+            db_context, delegation_id="delegation_web", interface_type="web"
+        )
+        await db_context.delegation_runs.mark_handed_off(
+            "delegation_web", SystemClock().now()
+        )
+
+    worker = _build_worker(
+        db_engine, processing_service, chat_interface, confirmation_ui_managers
+    )
+    async with DatabaseContext(engine=db_engine) as db_context:
+        await worker.handle_delegated_profile_run(
+            _tool_context(
+                db_context,
+                processing_service,
+                chat_interface,
+                confirmation_ui_managers,
+            ),
+            {
+                "delegation_id": "delegation_web",
+                "interface_type": "web",
+                "conversation_id": TEST_CONVERSATION_ID,
+                "user_name": TEST_USER_NAME,
+            },
+        )
+
+    assert len(target_service.calls) == 1
+    assert target_service.calls[0]["request_confirmation_callback"] is not None
+    assert len(confirmation_manager.requests) == 1
+    assert confirmation_manager.requests[0]["interface_type"] == "web"
+    assert confirmation_manager.requests[0]["tool_name"] == "confirmable_delegated_tool"
 
 
 @pytest.mark.asyncio
