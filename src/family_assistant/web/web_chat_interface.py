@@ -81,6 +81,13 @@ class WebChatInterface(ChatInterface):
         Returns:
             The internal_id of the saved message as a string, or None if saving failed
         """
+        # The save + notify path is wrapped so a delivery failure (DB write or
+        # push notification) surfaces as a failed send (returns None). The hub
+        # publish below is deliberately OUTSIDE this guard: it runs AFTER the
+        # message is durably committed, so swallowing its failure would make a
+        # saved message look like a failed send — callers would then resend or
+        # retry an already-approved confirmation, causing duplicate side
+        # effects. A publish failure is a programming error; let it propagate.
         try:
             clock = SystemClock()
 
@@ -124,48 +131,47 @@ class WebChatInterface(ChatInterface):
                         logger.warning(
                             f"Failed to send push notification: {e}", exc_info=True
                         )
-
-            if saved_message is not None:
-                # Nudge any open follow-stream to reload. The hub stream doesn't
-                # carry full message rows, so this is a content-free signal; the
-                # web/iOS live-update hooks refetch conversation history on it.
-                # This is an in-memory publish: a failure here is a programming
-                # error, so let it propagate (fail fast) rather than swallow it.
-                #
-                # NOTE: this hub tickle replaces the old MessageNotifier on_commit
-                # hook, which fired for EVERY message_history write. The hub is
-                # only nudged here, on WebChatInterface saves. Messages written by
-                # other interfaces (Telegram, email intake) land in their own
-                # conversations, which the web UI doesn't surface and whose
-                # multi-owner streams the auth layer 404s — so no live-update is
-                # owed there. If a future surface lets the web UI watch a
-                # conversation that receives writes from a non-web path, that path
-                # must publish its own hub tickle.
-                if self.stream_hub is not None:
-                    await self.stream_hub.publish(
-                        conversation_id,
-                        "message",
-                        turn_id=None,
-                        payload={
-                            "conversation_id": conversation_id,
-                            "new_messages": True,
-                        },
-                    )
-
-                logger.info(
-                    f"WebChatInterface: Saved message to conversation {conversation_id}, "
-                    f"internal_id={saved_message}."
-                )
-                return str(saved_message)
-
-            logger.error(
-                f"WebChatInterface: Failed to save message to conversation {conversation_id}"
-            )
-            return None
-
         except Exception as e:
             logger.error(
                 f"WebChatInterface: Error sending message to {conversation_id}: {e}",
                 exc_info=True,
             )
             return None
+
+        if saved_message is None:
+            logger.error(
+                f"WebChatInterface: Failed to save message to conversation {conversation_id}"
+            )
+            return None
+
+        # Nudge any open follow-stream to reload. The hub stream doesn't carry
+        # full message rows, so this is a content-free signal; the web/iOS
+        # live-update hooks refetch conversation history on it. This is an
+        # in-memory publish: a failure here is a programming error, so let it
+        # propagate (fail fast) rather than swallow it — see the note above on
+        # why a post-commit publish failure must not look like a failed send.
+        #
+        # NOTE: this hub tickle replaces the old MessageNotifier on_commit
+        # hook, which fired for EVERY message_history write. The hub is only
+        # nudged here, on WebChatInterface saves. Messages written by other
+        # interfaces (Telegram, email intake) land in their own conversations,
+        # which the web UI doesn't surface and whose multi-owner streams the
+        # auth layer 404s — so no live-update is owed there. If a future
+        # surface lets the web UI watch a conversation that receives writes
+        # from a non-web path, that path must publish its own hub tickle.
+        if self.stream_hub is not None:
+            await self.stream_hub.publish(
+                conversation_id,
+                "message",
+                turn_id=None,
+                payload={
+                    "conversation_id": conversation_id,
+                    "new_messages": True,
+                },
+            )
+
+        logger.info(
+            f"WebChatInterface: Saved message to conversation {conversation_id}, "
+            f"internal_id={saved_message}."
+        )
+        return str(saved_message)

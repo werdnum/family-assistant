@@ -13,12 +13,15 @@ from telegram.error import BadRequest, TelegramError
 
 from family_assistant.services.confirmation_service import (
     DURABLE_CONFIRMATION_EXECUTION_WAIT_SECONDS,
-    DURABLE_CONFIRMATION_STATUS_POLL_SECONDS,
     ConfirmationAlreadyResolvedError,
     ConfirmationAuthorizationError,
     ConfirmationError,
     ConfirmationExpiredError,
     ConfirmationNotFoundError,
+)
+from family_assistant.services.confirmation_wait import (
+    ConfirmationWaitStrategy,
+    wait_for_confirmation_resolution,
 )
 from family_assistant.services.user_identity import (
     UserIdentityResolutionError,
@@ -439,140 +442,101 @@ class TelegramConfirmationUIManager(ConfirmationUIManager):
             ) -> str:
                 return markdown_suffix if parse_mode is not None else plain_suffix
 
-            logger.debug(
-                f"Waiting for confirmation response (UUID: {confirm_uuid}, Timeout: {effective_timeout}s)"
-            )
-            deadline = asyncio.get_running_loop().time() + effective_timeout
-            while True:
-                remaining = deadline - asyncio.get_running_loop().time()
-                if remaining <= 0:
-                    break
-
-                wait_futures: set[asyncio.Future[ConfirmationOutcome]] = {
-                    decision_future
-                }
-                if execution_future is not None:
-                    wait_futures.add(execution_future)
-                done, _ = await asyncio.wait(
-                    wait_futures,
-                    timeout=min(DURABLE_CONFIRMATION_STATUS_POLL_SECONDS, remaining),
-                    return_when=asyncio.FIRST_COMPLETED,
-                )
-
-                if decision_future in done:
-                    decision_outcome = decision_future.result()
-                    logger.info(
-                        f"Confirmation response received for {confirm_uuid}: {decision_outcome.kind}"
-                    )
-                    if not durable_confirmation:
-                        return decision_outcome
-                    if decision_outcome.kind != "approved":
-                        return decision_outcome
-                    self.pending_confirmations.pop(confirm_uuid, None)
-                    return await wait_for_execution_result()
-                if execution_future in done:
-                    durable_status = await get_durable_request_status()
-                    if durable_status == "approved":
-                        await edit_confirmation_status(
-                            confirmation_status_suffix(
-                                "\n\n*Resolved externally* ✅",
-                                "\n\nResolved externally ✅",
-                            )
-                        )
-                    elif durable_status == "rejected":
-                        await edit_confirmation_status(
-                            confirmation_status_suffix(
-                                "\n\n*Resolved externally* ❌",
-                                "\n\nResolved externally ❌",
-                            )
-                        )
-                    return execution_future.result()
-
-                durable_status = await get_durable_request_status()
-                if durable_status == "approved" and execution_future is not None:
-                    await edit_confirmation_status(
-                        confirmation_status_suffix(
-                            "\n\n*Resolved externally* ✅",
-                            "\n\nResolved externally ✅",
-                        )
-                    )
-                    self.pending_confirmations.pop(confirm_uuid, None)
-                    return await wait_for_execution_result()
-                if durable_status == "rejected":
-                    await edit_confirmation_status(
-                        confirmation_status_suffix(
-                            "\n\n*Resolved externally* ❌",
-                            "\n\nResolved externally ❌",
-                        )
-                    )
-                    return ConfirmationOutcome(kind="rejected")
-                if durable_status in {"expired", "missing", "unauthorized", "error"}:
-                    await edit_confirmation_status(
-                        confirmation_status_suffix(
-                            "\n\n*Error: confirmation could not be resolved*",
-                            "\n\nError: confirmation could not be resolved",
-                        )
-                    )
-                    return ConfirmationOutcome(
-                        kind="failed",
-                        result="Confirmation request could not be resolved.",
-                    )
-
-            logger.warning(
-                f"Confirmation {confirm_uuid} timed out after {effective_timeout}s."
-            )
-            durable_status = await get_durable_request_status()
-            if durable_status == "approved" and execution_future is not None:
+            async def edit_resolved_externally_approved() -> None:
                 await edit_confirmation_status(
                     confirmation_status_suffix(
                         "\n\n*Resolved externally* ✅",
                         "\n\nResolved externally ✅",
                     )
                 )
-                self.pending_confirmations.pop(confirm_uuid, None)
-                return await wait_for_execution_result()
-            if durable_status == "rejected":
+
+            async def edit_resolved_externally_rejected() -> None:
                 await edit_confirmation_status(
                     confirmation_status_suffix(
                         "\n\n*Resolved externally* ❌",
                         "\n\nResolved externally ❌",
                     )
                 )
-                return ConfirmationOutcome(kind="rejected")
-            if durable_status in {"missing", "unauthorized", "error"}:
+
+            async def on_decision(decision_outcome: ConfirmationOutcome) -> None:
+                logger.info(
+                    f"Confirmation response received for {confirm_uuid}: {decision_outcome.kind}"
+                )
+
+            async def on_decision_approved() -> None:
+                self.pending_confirmations.pop(confirm_uuid, None)
+
+            async def on_execution_done(
+                execution_outcome: ConfirmationOutcome,
+            ) -> None:
+                durable_status = await get_durable_request_status()
+                if durable_status == "approved":
+                    await edit_resolved_externally_approved()
+                elif durable_status == "rejected":
+                    await edit_resolved_externally_rejected()
+
+            async def on_resolved_approved() -> None:
+                await edit_resolved_externally_approved()
+                self.pending_confirmations.pop(confirm_uuid, None)
+
+            async def on_resolved_rejected() -> None:
+                await edit_resolved_externally_rejected()
+
+            async def on_resolved_failed() -> None:
                 await edit_confirmation_status(
                     confirmation_status_suffix(
                         "\n\n*Error: confirmation could not be resolved*",
                         "\n\nError: confirmation could not be resolved",
                     )
                 )
-                return ConfirmationOutcome(
-                    kind="failed",
-                    result="Confirmation request could not be resolved.",
-                )
-            if durable_confirmation and self.confirmation_service is not None:
-                await self.confirmation_service.mark_expired(now=datetime.now(UTC))
-            try:
-                await self.application.bot.edit_message_reply_markup(
-                    chat_id=chat_id_int,
-                    message_id=sent_message.message_id,
-                    reply_markup=None,
-                )
-                await self.application.bot.edit_message_text(
-                    chat_id=chat_id_int,
-                    message_id=sent_message.message_id,
-                    text=text_to_send
-                    + confirmation_status_suffix(
-                        "\n\n\\(Confirmation timed out\\)",
-                        "\n\n(Confirmation timed out)",
-                    ),
-                    parse_mode=parse_mode,
-                )
-            except TelegramError as edit_err:
+
+            async def on_timed_out() -> None:
                 logger.warning(
-                    f"Failed to edit confirmation message {sent_message.message_id} on timeout: {edit_err}"
+                    f"Confirmation {confirm_uuid} timed out after {effective_timeout}s."
                 )
-            return ConfirmationOutcome(kind="timed_out")
+                if durable_confirmation and self.confirmation_service is not None:
+                    await self.confirmation_service.mark_expired(now=datetime.now(UTC))
+                try:
+                    await self.application.bot.edit_message_reply_markup(
+                        chat_id=chat_id_int,
+                        message_id=sent_message.message_id,
+                        reply_markup=None,
+                    )
+                    await self.application.bot.edit_message_text(
+                        chat_id=chat_id_int,
+                        message_id=sent_message.message_id,
+                        text=text_to_send
+                        + confirmation_status_suffix(
+                            "\n\n\\(Confirmation timed out\\)",
+                            "\n\n(Confirmation timed out)",
+                        ),
+                        parse_mode=parse_mode,
+                    )
+                except TelegramError as edit_err:
+                    logger.warning(
+                        f"Failed to edit confirmation message {sent_message.message_id} on timeout: {edit_err}"
+                    )
+
+            logger.debug(
+                f"Waiting for confirmation response (UUID: {confirm_uuid}, Timeout: {effective_timeout}s)"
+            )
+            return await wait_for_confirmation_resolution(
+                ConfirmationWaitStrategy(
+                    decision=decision_future,
+                    execution=execution_future,
+                    durable=durable_confirmation,
+                    get_durable_status=get_durable_request_status,
+                    wait_for_execution_result=wait_for_execution_result,
+                    on_decision=on_decision,
+                    on_execution_done=on_execution_done,
+                    on_decision_approved=on_decision_approved,
+                    on_resolved_approved=on_resolved_approved,
+                    on_resolved_rejected=on_resolved_rejected,
+                    on_resolved_failed=on_resolved_failed,
+                    on_timed_out=on_timed_out,
+                ),
+                timeout_seconds=effective_timeout,
+            )
         finally:
             self.pending_confirmations.pop(confirm_uuid, None)
             if durable_confirmation and execution_future is not None:

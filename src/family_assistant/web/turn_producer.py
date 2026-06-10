@@ -30,11 +30,14 @@ from family_assistant.llm.messages import (
 )
 from family_assistant.services.confirmation_service import (
     DURABLE_CONFIRMATION_EXECUTION_WAIT_SECONDS,
-    DURABLE_CONFIRMATION_STATUS_POLL_SECONDS,
     ConfirmationAuthorizationError,
     ConfirmationError,
     ConfirmationNotFoundError,
     ConfirmationService,
+)
+from family_assistant.services.confirmation_wait import (
+    ConfirmationWaitStrategy,
+    wait_for_confirmation_resolution,
 )
 from family_assistant.services.confirmation_waiters import (
     ConfirmationResultWaiterRegistry,
@@ -74,6 +77,7 @@ class _AppStateProtocol:
     database_engine: "AsyncEngine"
     chat_interfaces: dict[str, "ChatInterface"] | None
     confirmation_ui_managers: dict[str, ConfirmationUIManager] | None
+    debug_mode: bool
 
 
 logger = logging.getLogger(__name__)
@@ -85,6 +89,11 @@ logger = logging.getLogger(__name__)
 # real clients without delaying push for genuinely disconnected ones too
 # long.
 DEFAULT_ACK_GRACE_SECONDS = 2.0
+
+# Generic message published to subscribers when a turn fails and the server is
+# not in debug mode. The real exception is always logged server-side; only the
+# detail surfaced (and retained in the replay buffer) is gated.
+GENERIC_TURN_ERROR_MESSAGE = "An internal error occurred."
 
 
 def format_sse_event(event: StreamEvent) -> str:
@@ -211,6 +220,31 @@ async def run_turn_producer(
                 payload={"request_id": request_id, "approved": approved},
             )
 
+        async def on_decision(decision_outcome: ConfirmationOutcome) -> None:
+            if decision_outcome.kind == "timed_out":
+                await confirmation_service.mark_expired(now=datetime.now(UTC))
+            if decision_outcome.kind != "approved":
+                await publish_result(approved=False)
+
+        async def on_execution_done(execution_outcome: ConfirmationOutcome) -> None:
+            await publish_result(
+                approved=execution_outcome.kind in {"completed", "failed"}
+            )
+
+        async def on_resolved_approved() -> None:
+            await publish_result(approved=True)
+            web_confirmation_manager.remove_confirmation(request_id)
+
+        async def on_resolved_rejected() -> None:
+            await publish_result(approved=False)
+
+        async def on_resolved_failed() -> None:
+            await publish_result(approved=False)
+
+        async def on_timed_out() -> None:
+            await confirmation_service.mark_expired(now=datetime.now(UTC))
+            await publish_result(approved=False)
+
         try:
             decision_future = await web_confirmation_manager.request_confirmation(
                 request_id=request_id,
@@ -236,64 +270,23 @@ async def run_turn_producer(
                 },
             )
 
-            deadline = asyncio.get_running_loop().time() + timeout_seconds
-            while True:
-                remaining = deadline - asyncio.get_running_loop().time()
-                if remaining <= 0:
-                    break
-                done, _pending = await asyncio.wait(
-                    {decision_future, execution_future},
-                    timeout=min(DURABLE_CONFIRMATION_STATUS_POLL_SECONDS, remaining),
-                    return_when=asyncio.FIRST_COMPLETED,
-                )
-                if decision_future in done:
-                    decision_outcome = decision_future.result()
-                    if decision_outcome.kind == "timed_out":
-                        await confirmation_service.mark_expired(now=datetime.now(UTC))
-                    await publish_result(approved=decision_outcome.kind == "approved")
-                    if decision_outcome.kind != "approved":
-                        return decision_outcome
-                    web_confirmation_manager.remove_confirmation(request_id)
-                    return await wait_for_execution_result()
-                if execution_future in done:
-                    execution_outcome = execution_future.result()
-                    await publish_result(
-                        approved=execution_outcome.kind in {"completed", "failed"}
-                    )
-                    return execution_outcome
-
-                durable_status = await get_durable_status()
-                if durable_status == "approved":
-                    await publish_result(approved=True)
-                    web_confirmation_manager.remove_confirmation(request_id)
-                    return await wait_for_execution_result()
-                if durable_status == "rejected":
-                    await publish_result(approved=False)
-                    return ConfirmationOutcome(kind="rejected")
-                if durable_status in {"expired", "missing", "unauthorized", "error"}:
-                    await publish_result(approved=False)
-                    return ConfirmationOutcome(
-                        kind="failed",
-                        result="Confirmation request could not be resolved.",
-                    )
-
-            final_status = await get_durable_status()
-            if final_status == "approved":
-                await publish_result(approved=True)
-                web_confirmation_manager.remove_confirmation(request_id)
-                return await wait_for_execution_result()
-            if final_status == "rejected":
-                await publish_result(approved=False)
-                return ConfirmationOutcome(kind="rejected")
-            if final_status in {"missing", "unauthorized", "error"}:
-                await publish_result(approved=False)
-                return ConfirmationOutcome(
-                    kind="failed",
-                    result="Confirmation request could not be resolved.",
-                )
-            await confirmation_service.mark_expired(now=datetime.now(UTC))
-            await publish_result(approved=False)
-            return ConfirmationOutcome(kind="timed_out")
+            return await wait_for_confirmation_resolution(
+                ConfirmationWaitStrategy(
+                    decision=decision_future,
+                    execution=execution_future,
+                    durable=True,
+                    get_durable_status=get_durable_status,
+                    wait_for_execution_result=wait_for_execution_result,
+                    on_decision=on_decision,
+                    on_execution_done=on_execution_done,
+                    on_decision_approved=on_resolved_approved,
+                    on_resolved_approved=on_resolved_approved,
+                    on_resolved_rejected=on_resolved_rejected,
+                    on_resolved_failed=on_resolved_failed,
+                    on_timed_out=on_timed_out,
+                ),
+                timeout_seconds=timeout_seconds,
+            )
         finally:
             web_confirmation_manager.remove_confirmation(request_id)
             confirmation_result_waiters.unregister(request_id, execution_future)
@@ -308,6 +301,7 @@ async def run_turn_producer(
                         turn_id=turn_id,
                         payload={
                             "type": "attachment",
+                            "source": "trigger",
                             "attachment_id": attachment.get("attachment_id"),
                             "content_url": attachment.get("content_url"),
                             "mime_type": attachment.get("mime_type"),
@@ -378,6 +372,20 @@ async def run_turn_producer(
                     conversation_id=conversation_id,
                     reply_text="".join(final_reply_parts).strip(),
                 )
+    except asyncio.CancelledError:
+        # The producer task was cancelled (loop teardown today; a stop-generation
+        # button or task supervisor tomorrow). Without ending the turn here the
+        # TurnRecord stays status='running' forever — pruning/eviction skip
+        # running turns, so the conversation wedges. Best-effort end_turn, then
+        # re-raise so cancellation still propagates.
+        await _fail_turn_best_effort(
+            hub,
+            conversation_id=conversation_id,
+            turn_id=turn_id,
+            latex_normalizer=latex_normalizer,
+            error="cancelled",
+        )
+        raise
     except Exception as exc:
         logger.error(
             "Turn producer failed for conv=%s turn=%s: %s",
@@ -386,21 +394,60 @@ async def run_turn_producer(
             exc,
             exc_info=True,
         )
-        # Best-effort: surface to subscribers via turn_ended(status=failed) so
-        # they don't hang waiting for an end event that never comes.
-        try:
-            await hub.end_turn(
+        debug_mode = getattr(app_state, "debug_mode", False)
+        error_detail = str(exc) if debug_mode else GENERIC_TURN_ERROR_MESSAGE
+        await _fail_turn_best_effort(
+            hub,
+            conversation_id=conversation_id,
+            turn_id=turn_id,
+            latex_normalizer=latex_normalizer,
+            error=error_detail,
+        )
+
+
+async def _fail_turn_best_effort(
+    hub: ConversationStreamHub,
+    *,
+    conversation_id: str,
+    turn_id: str,
+    latex_normalizer: StreamingLatexNormalizer,
+    error: str,
+) -> None:
+    """End a turn as failed, flushing any buffered trailing text first.
+
+    Used by both the exception and cancellation paths so a wedged turn is
+    always closed out. Every step is guarded so a secondary failure (e.g. the
+    loop tearing down during cancellation) can't mask the original cause or
+    leave the turn ``running``.
+    """
+    try:
+        trailing = latex_normalizer.flush()
+        if trailing:
+            await hub.publish(
                 conversation_id,
+                "text",
                 turn_id=turn_id,
-                status="failed",
-                error=str(exc),
+                payload={"content": trailing},
             )
-        except Exception:
-            logger.exception(
-                "Failed to publish turn_ended(failed) for conv=%s turn=%s",
-                conversation_id,
-                turn_id,
-            )
+    except Exception:
+        logger.exception(
+            "Failed to flush trailing text on failed turn for conv=%s turn=%s",
+            conversation_id,
+            turn_id,
+        )
+    try:
+        await hub.end_turn(
+            conversation_id,
+            turn_id=turn_id,
+            status="failed",
+            error=error,
+        )
+    except Exception:
+        logger.exception(
+            "Failed to publish turn_ended(failed) for conv=%s turn=%s",
+            conversation_id,
+            turn_id,
+        )
 
 
 async def _publish_llm_event(
@@ -504,6 +551,7 @@ async def _publish_llm_event(
                     turn_id=turn_id,
                     payload={
                         "type": "attachment",
+                        "source": "response",
                         "attachment_id": attachment_id,
                         "content_url": attachment_info.content_url,
                         "mime_type": attachment_info.mime_type,
