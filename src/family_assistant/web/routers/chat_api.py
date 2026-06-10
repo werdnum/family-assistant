@@ -36,6 +36,10 @@ from family_assistant.services.confirmation_service import (
 from family_assistant.services.confirmation_waiters import (
     ConfirmationResultWaiterRegistry,
 )
+from family_assistant.services.user_identity import (
+    UserIdentityResolutionError,
+    UserIdentityResolver,
+)
 from family_assistant.storage.context import DatabaseContext, get_db_context
 from family_assistant.tools import MCPToolsProvider, find_provider_by_type
 from family_assistant.tools.infrastructure import ToolDescriptorProvider
@@ -44,6 +48,7 @@ from family_assistant.web.confirmation_manager import web_confirmation_manager
 from family_assistant.web.conversation_stream_hub import (
     ConversationStreamHub,
     OutOfBufferError,
+    StreamEvent,
     TurnAlreadyExistsError,
     TurnRecord,
 )
@@ -52,12 +57,14 @@ from family_assistant.web.dependencies import (
     get_current_user,
     get_db,
     get_processing_service,
+    get_user_identity_resolver,
     get_web_chat_interface,
 )
 from family_assistant.web.models import (
     ChatAttachmentRequest,
     ChatMessageResponse,
     ChatPromptRequest,
+    ToolCallResponseItem,
 )
 from family_assistant.web.turn_producer import (
     format_sse_event,
@@ -482,6 +489,15 @@ class ChatTurnResponse(BaseModel):
             "?from_seq= when subscribing to the conversation stream."
         ),
     )
+    already_complete: bool = Field(
+        default=False,
+        description=(
+            "True when the turn was resolved from the durable record (turn_id "
+            "found in the DB but not in the in-memory hub: restart / pruned / "
+            "evicted). The turn already finished and is NOT replayable from the "
+            "hub, so clients must reload history instead of opening /stream."
+        ),
+    )
 
 
 class AckRequest(BaseModel):
@@ -516,6 +532,95 @@ def _get_hub(request: Request) -> ConversationStreamHub:
     return hub
 
 
+# Lifecycle/control frames that an ``event_types`` allow-list must never filter
+# out: they are how the client knows when to stop, reload, or reconnect.
+_ALWAYS_EMITTED_EVENT_TYPES = frozenset({"turn_ended", "heartbeat", "stream_dropped"})
+
+
+def _parse_event_types(event_types: str | None) -> frozenset[str] | None:
+    """Parse the comma-separated ``event_types`` query param into a set.
+
+    Returns ``None`` (no filtering) when unset or effectively empty; otherwise a
+    frozenset of the requested event-type names.
+    """
+    if event_types is None:
+        return None
+    requested = {part.strip() for part in event_types.split(",") if part.strip()}
+    return frozenset(requested) if requested else None
+
+
+def _should_emit(event_type: str, allowed_event_types: frozenset[str] | None) -> bool:
+    """Whether an event of ``event_type`` passes the ``event_types`` filter."""
+    if allowed_event_types is None:
+        return True
+    return (
+        event_type in allowed_event_types or event_type in _ALWAYS_EMITTED_EVENT_TYPES
+    )
+
+
+async def _existing_send_message_response(
+    db_context: DatabaseContext,
+    conversation_id: str,
+    turn_id: str,
+) -> ChatMessageResponse | None:
+    """Return the persisted reply for a previously-handled ``turn_id``, if any.
+
+    ``/send_message`` is idempotent on ``turn_id`` (durable fallback, mirroring
+    ``/turns``): a retried request reads the already-persisted assistant reply
+    instead of re-driving the LLM and double-persisting. Returns ``None`` when no
+    assistant reply exists yet for the turn (so the caller drives it fresh).
+    """
+    messages = await db_context.message_history.get_by_turn_id(turn_id)
+    assistant_message = next(
+        (
+            msg
+            for msg in reversed(messages)
+            if isinstance(msg, AssistantMessage) and msg.content
+        ),
+        None,
+    )
+    if assistant_message is None or not isinstance(assistant_message.content, str):
+        return None
+
+    tool_calls_response: list[ToolCallResponseItem] | None = None
+    if assistant_message.tool_calls:
+        tool_calls_response = []
+        for tc in assistant_message.tool_calls:
+            arguments = tc.function.arguments
+            if not isinstance(arguments, str):
+                arguments = json.dumps(arguments)
+            tool_calls_response.append({
+                "id": tc.id,
+                "type": tc.type,
+                "function": {"name": tc.function.name, "arguments": arguments},
+            })
+
+    return ChatMessageResponse(
+        reply=assistant_message.content,
+        conversation_id=conversation_id,
+        turn_id=turn_id,
+        attachments=None,
+        tool_calls=tool_calls_response,
+        already_complete=True,
+    )
+
+
+def _get_shutdown_event(request: Request) -> asyncio.Event:
+    """Return the app-wide shutdown event, creating an unset one if absent.
+
+    ``assistant.py`` installs the real event on ``app.state.shutdown_event`` and
+    sets it on SIGTERM; the SSE generator races ``queue.get()`` against it so a
+    follow stream closes promptly instead of heartbeating forever during a
+    graceful shutdown. Tests that build a bare app get an inert event.
+    """
+    shutdown_event = getattr(request.app.state, "shutdown_event", None)
+    if isinstance(shutdown_event, asyncio.Event):
+        return shutdown_event
+    shutdown_event = asyncio.Event()
+    request.app.state.shutdown_event = shutdown_event
+    return shutdown_event
+
+
 def _serialize_active_turn(turn: TurnRecord) -> ActiveTurnInfo:
     return ActiveTurnInfo(
         turn_id=turn.turn_id,
@@ -536,6 +641,57 @@ def _running_active_turns(
     ]
 
 
+def _canonicalize_owner_id(
+    resolver: UserIdentityResolver | None, raw_owner_id: str
+) -> str:
+    """Map a stored ``user_id`` to its canonical application user id.
+
+    ``get_conversation_owner_ids`` returns the raw ``user_id`` persisted on each
+    user message. Most interfaces already store the canonical id, but a Telegram
+    conversation may be stored under the numeric Telegram user id, which must map
+    to the same canonical id the web/API session resolves to so a user's own
+    Telegram conversation stays visible and openable. Unresolvable ids are
+    returned unchanged so distinct unknown owners stay distinct (rather than
+    collapsing together and hiding a genuine multi-owner conversation).
+    """
+    if resolver is None:
+        return raw_owner_id
+    if raw_owner_id.isdigit():
+        try:
+            return resolver.resolve_telegram_user(int(raw_owner_id)).user_id
+        except UserIdentityResolutionError:
+            return raw_owner_id
+    try:
+        return resolver.resolve_api_token_user(raw_owner_id).user_id
+    except UserIdentityResolutionError:
+        return raw_owner_id
+
+
+def _canonical_owners(
+    resolver: UserIdentityResolver | None, owners: set[str]
+) -> set[str]:
+    """Canonicalize a set of stored owner ids (see ``_canonicalize_owner_id``)."""
+    return {_canonicalize_owner_id(resolver, owner) for owner in owners}
+
+
+def _caller_is_sole_canonical_owner(
+    resolver: UserIdentityResolver | None,
+    owners: set[str],
+    caller_user_id: str,
+) -> bool:
+    """Return whether ``caller_user_id`` is the single canonical owner.
+
+    An empty owner set (brand-new / empty conversation) counts as owned: the id
+    is an unguessable UUID and an empty read leaks nothing. A conversation with
+    more than one distinct canonical owner (e.g. a Telegram group) is NOT solely
+    owned and cannot be streamed through the single-user hub.
+    """
+    canonical_owners = _canonical_owners(resolver, owners)
+    if not canonical_owners:
+        return True
+    return canonical_owners == {_canonicalize_owner_id(resolver, caller_user_id)}
+
+
 async def _ensure_user_owns_conversation(
     request: Request,
     current_user: Mapping[str, object],
@@ -549,26 +705,28 @@ async def _ensure_user_owns_conversation(
     *only* authorization boundary for the stream — the hub does no per-subscriber
     filtering — so it also enforces the hub's single-user invariant.
 
-    ``allow_new`` governs the brand-new-conversation case (no hub turn, no
-    persisted user message):
-    * ``True`` for endpoints that *create* into the conversation
-      (``POST /turns``, ``POST /send_message``) and for the point-in-time
-      ``GET /messages`` read: the client's URL is the only authority for the id
-      it just picked, and an empty read leaks nothing. The caller must be *an*
-      owner (or the conversation must be new).
-    * ``False`` for the long-lived subscribe/ack endpoints (``GET /stream``,
-      ``POST /ack``): if the conversation already has owners, the caller must be
-      its **sole** owner — a multi-owner conversation (e.g. a Telegram group
-      chat_id, which ``get_conversation_owner_ids`` legitimately returns multiple
-      owners for) is refused, since the hub fans out every event to every
-      subscriber with no per-user isolation and would leak co-owners' turns. An
-      empty (brand-new) conversation is still allowed: the always-on live-update
-      stream attaches to the user's own new conversation before any message, and
-      ids are unguessable UUIDs.
+    Ownership is identity-aware: stored owner ids are canonicalized via the
+    ``UserIdentityResolver`` before comparison, so the same human acting through
+    web, API and Telegram resolves to one canonical owner. The predicate is the
+    same across every endpoint (create, read, subscribe, ack): the caller must
+    be the conversation's **sole** canonical owner. A genuine multi-canonical-
+    owner conversation (a Telegram group) is refused everywhere, since the hub
+    fans out every event to every subscriber with no per-user isolation. This
+    resolves the create/subscribe asymmetry where a turn could be started on a
+    conversation that then could not be watched or acked.
+
+    ``allow_new`` governs only the hub fast path: endpoints that *create* into
+    the conversation (``POST /turns``, ``POST /send_message``) and the
+    point-in-time ``GET /messages`` read may short-circuit on an in-memory hub
+    turn the caller owns. Brand-new / empty conversations are allowed for every
+    endpoint regardless of ``allow_new`` (the always-on live-update stream
+    attaches to the user's own freshly-created conversation before any message).
     """
     raw_user_id = current_user.get("user_identifier")
     if not isinstance(raw_user_id, str) or not raw_user_id:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED)
+
+    resolver = get_user_identity_resolver(request)
 
     # Fast path (create/read only): if the hub already has a turn for this
     # conversation owned by the caller, they own it — no DB hit needed. The
@@ -594,11 +752,9 @@ async def _ensure_user_owns_conversation(
         # subscribe is not a meaningful way to wait on someone else's future
         # conversation.
         return raw_user_id
-    if raw_user_id not in owners:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND)
-    if not allow_new and owners != {raw_user_id}:
-        # Subscribe/ack require SOLE ownership: a multi-owner conversation
-        # (e.g. a Telegram group chat_id) can't be streamed through this hub,
+    if not _caller_is_sole_canonical_owner(resolver, owners, raw_user_id):
+        # The caller is not the conversation's sole canonical owner: either they
+        # are not an owner at all, or it is a genuine multi-owner conversation
         # which fans out every event to every subscriber with no per-user
         # isolation. (Empty conversations are handled above.)
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND)
@@ -673,6 +829,7 @@ async def api_chat_create_turn(
             turn_id=payload.turn_id,
             conversation_id=conversation_id,
             first_seq=0,
+            already_complete=True,
         )
 
     # Resolve processing service profile.
@@ -783,6 +940,7 @@ async def api_chat_conversation_stream(
     from_seq: int = 0,
     ack_seq: int = -1,
     follow: bool = False,
+    event_types: str | None = None,
 ) -> StreamingResponse | JSONResponse:
     """Subscribe to a conversation's resumable event stream from ``from_seq``.
 
@@ -793,6 +951,13 @@ async def api_chat_conversation_stream(
     * ``ack_seq`` lets a reconnecting client tell the server it already
       received events up to that seq; the hub uses this to suppress redundant
       disconnect-push notifications.
+    * ``event_types`` is an optional comma-separated allow-list (e.g.
+      ``event_types=message,turn_ended``). When set, only events whose type is
+      in the set are emitted — EXCEPT the lifecycle/control frames
+      ``turn_ended``, ``heartbeat`` and ``stream_dropped``, which are always
+      emitted so the client still knows when to stop / reload / reconnect. The
+      filter applies to both replayed and live events. Follow clients that only
+      reload history use this to skip the token firehose.
     * ``follow`` controls lifetime:
         - ``false`` (default): "watch my reply / resume" mode. Drain the
           buffer and stream any in-flight turn through its ``turn_ended``,
@@ -807,6 +972,8 @@ async def api_chat_conversation_stream(
         request, current_user, conversation_id, allow_new=False
     )
     hub = _get_hub(request)
+    allowed_event_types = _parse_event_types(event_types)
+    shutdown_event = _get_shutdown_event(request)
 
     try:
         handle = await hub.subscribe(
@@ -832,6 +999,24 @@ async def api_chat_conversation_stream(
             for turn in hub.active_turns(conversation_id)
         )
 
+    def _drain_queue() -> list[StreamEvent]:
+        """Pop everything currently sitting in the live queue, non-blocking.
+
+        ``subscribe`` atomically splits events into the replay snapshot and the
+        live queue, and ``end_turn`` flips the turn non-running while enqueuing
+        ``turn_ended``. A turn that ends in the window between the snapshot and
+        the running-turn check leaves its tail + ``turn_ended`` ONLY in the
+        queue, so a non-follow early return must flush the queue first or it
+        silently drops the reply's tail and the turn_ended frame.
+        """
+        drained: list[StreamEvent] = []
+        while True:
+            try:
+                drained.append(handle.queue.get_nowait())
+            except asyncio.QueueEmpty:
+                break
+        return drained
+
     async def event_generator() -> AsyncGenerator[str]:
         # NOTE: writing an event to this SSE socket is NOT proof the client read
         # and handled it. Delivery (which suppresses the disconnect push) is only
@@ -841,20 +1026,46 @@ async def api_chat_conversation_stream(
         try:
             # Replay the snapshot first; then tail live events from the queue.
             for replayed in handle.replayed_events:
-                yield format_sse_event(replayed)
+                if _should_emit(replayed.type, allowed_event_types):
+                    yield format_sse_event(replayed)
 
             # In non-follow mode, if nothing is running after the replay there
-            # is nothing left to watch, so close the stream.
+            # is nothing left to watch. Drain anything that landed in the queue
+            # in the snapshot/check window (a turn that just ended leaves its
+            # tail + turn_ended there) before closing, or those events are lost.
             if not follow and not _has_running_turn():
+                for drained in _drain_queue():
+                    if _should_emit(drained.type, allowed_event_types):
+                        yield format_sse_event(drained)
                 return
 
             while True:
+                queue_get = asyncio.ensure_future(handle.queue.get())
+                shutdown_wait = asyncio.ensure_future(shutdown_event.wait())
                 try:
-                    event = await asyncio.wait_for(handle.queue.get(), timeout=30.0)
-                except TimeoutError:
-                    # If the hub dropped this subscriber (its queue overflowed),
-                    # tell the client to reconnect instead of silently heart-
-                    # beating into a discarded subscription.
+                    done, _pending = await asyncio.wait(
+                        {queue_get, shutdown_wait},
+                        timeout=30.0,
+                        return_when=asyncio.FIRST_COMPLETED,
+                    )
+                finally:
+                    if not queue_get.done():
+                        queue_get.cancel()
+                    shutdown_wait.cancel()
+
+                if shutdown_event.is_set():
+                    # Graceful SIGTERM: close promptly so the server can drain.
+                    # The client reconnects (or reloads history) once the backend
+                    # is back, rather than holding a heartbeat stream open forever.
+                    yield (
+                        'event: stream_dropped\ndata: {"reason": "server_shutdown"}\n\n'
+                    )
+                    return
+
+                if queue_get not in done:
+                    # Heartbeat timeout. If the hub dropped this subscriber (its
+                    # queue overflowed), tell the client to reconnect instead of
+                    # silently heartbeating into a discarded subscription.
                     if not hub.is_subscribed(conversation_id, handle.queue):
                         yield (
                             "event: stream_dropped\n"
@@ -863,9 +1074,15 @@ async def api_chat_conversation_stream(
                         return
                     yield "event: heartbeat\ndata: {}\n\n"
                     if not follow and not _has_running_turn():
+                        for drained in _drain_queue():
+                            if _should_emit(drained.type, allowed_event_types):
+                                yield format_sse_event(drained)
                         return
                     continue
-                yield format_sse_event(event)
+
+                event = queue_get.result()
+                if _should_emit(event.type, allowed_event_types):
+                    yield format_sse_event(event)
                 if (
                     event.type == "turn_ended"
                     and not follow
@@ -1031,14 +1248,36 @@ async def api_chat_send_message(
     ProcessingService, and returns the assistant's reply.
     """
     conversation_id = payload.conversation_id or str(uuid.uuid4())
-    # turn_id is generated internally by handle_chat_interaction.
-    # We will use a placeholder for the response model if needed, or remove it from response.
 
     # Enforce conversation ownership before processing: a client may not post
     # into a conversation that already belongs to another user (404, not 403).
-    await _ensure_user_owns_conversation(
+    user_id = await _ensure_user_owns_conversation(
         request, current_user, conversation_id, allow_new=True
     )
+
+    # turn_id idempotency (minimal): the client may supply a UUID so a retried
+    # /send_message returns the already-persisted reply instead of re-driving
+    # the LLM and double-persisting. Mirrors /turns — in-memory hub fast path
+    # plus durable DB fallback — but without the hub turn lifecycle.
+    response_turn_id = payload.turn_id or str(uuid.uuid4())
+    if payload.turn_id is not None:
+        hub = _get_hub(request)
+        existing_turn = hub.get_turn(conversation_id, payload.turn_id)
+        if existing_turn is not None and existing_turn.user_id != user_id:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND)
+        existing_user_row = await db_context.message_history.get_user_row_by_turn_id(
+            payload.turn_id
+        )
+        if existing_user_row is not None and (
+            existing_user_row.get("conversation_id") != conversation_id
+            or existing_user_row.get("user_id") != user_id
+        ):
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND)
+        existing_response = await _existing_send_message_response(
+            db_context, conversation_id, payload.turn_id
+        )
+        if existing_response is not None:
+            return existing_response
 
     # Determine which processing service to use
     selected_processing_service = default_processing_service
@@ -1095,21 +1334,6 @@ async def api_chat_send_message(
     # user_name surfaces in the system prompt and message history, so derive it
     # from the authenticated user rather than a generic placeholder.
     user_name_for_api = _user_name_for_chat(current_user)
-
-    # The `turn_id` will be generated by `handle_chat_interaction`
-    # We can retrieve it from the response if needed by the client,
-    # but the ChatMessageResponse model currently expects it.
-    # Let's assume for now the client might want the turn_id.
-    # The `handle_chat_interaction` doesn't return turn_id directly,
-    # but it's logged and associated with messages.
-    # For the API response, we might need to reconsider if turn_id is essential.
-    # The current ChatMessageResponse model includes it.
-    # Let's generate it here for the response, though the one used internally will be from handle_chat_interaction.
-    # This is a slight divergence; ideally, the one from handle_chat_interaction would be returned.
-    # For now, to match the existing response model:
-    response_turn_id = (
-        str(uuid.uuid4())  # This is for the *response model only*
-    )
 
     # Get chat_interfaces registry from app state for cross-interface messaging
     chat_interfaces = getattr(request.app.state, "chat_interfaces", None)
@@ -1174,6 +1398,7 @@ async def api_chat_send_message(
         confirmation_ui_managers=confirmation_ui_managers,
         request_confirmation_callback=api_confirmation_callback,
         trigger_attachments=trigger_attachments,  # Pass attachment metadata
+        turn_id=response_turn_id,  # Persist under the (idempotency) turn_id
     )
 
     final_reply_content = result.text_reply
@@ -1263,6 +1488,8 @@ async def api_chat_send_message(
 
 @chat_api_router.get("/v1/chat/conversations")
 async def get_conversations(
+    request: Request,
+    current_user: Annotated[dict, Depends(get_current_user)],
     db_context: Annotated[DatabaseContext, Depends(get_db)],
     limit: int = 20,
     offset: int = 0,
@@ -1274,6 +1501,12 @@ async def get_conversations(
     """
     Get a list of chat conversations for the web interface.
 
+    Filtered to conversations the current user owns, using the same identity-
+    aware, sole-canonical-owner predicate as ``GET /messages`` and
+    ``GET /stream`` (see ``_ensure_user_owns_conversation``). This keeps the
+    History list and the per-conversation open consistent: the UI never lists a
+    conversation it then 404s on opening.
+
     Args:
         limit: Maximum number of conversations to return
         offset: Number of conversations to skip for pagination
@@ -1283,8 +1516,13 @@ async def get_conversations(
         date_to: Filter conversations with messages before this date (YYYY-MM-DD)
 
     Returns:
-        List of conversation summaries with metadata
+        List of conversation summaries the caller owns, with metadata
     """
+    raw_user_id = current_user.get("user_identifier")
+    if not isinstance(raw_user_id, str) or not raw_user_id:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED)
+    resolver = get_user_identity_resolver(request)
+
     # Parse date strings to datetime objects
     date_from_dt = None
     date_to_dt = None
@@ -1321,16 +1559,27 @@ async def get_conversations(
         date_to=date_to_dt,
     )
 
-    # Convert to response format
-    conversations = [
-        ConversationSummary(
-            conversation_id=summary["conversation_id"],
-            last_message=summary["last_message"],
-            last_timestamp=summary["last_timestamp"],
-            message_count=summary["message_count"],
+    # Filter the returned page to conversations the caller solely (canonically)
+    # owns, so the UI never lists a conversation it then 404s on opening. ``count``
+    # stays the DB-level total to preserve pagination semantics (the per-page
+    # filter can only narrow a page; it does not change how many pages exist).
+    conversations: list[ConversationSummary] = []
+    for summary in summaries:
+        owners = await db_context.message_history.get_conversation_owner_ids(
+            summary["conversation_id"]
         )
-        for summary in summaries
-    ]
+        if owners and not _caller_is_sole_canonical_owner(
+            resolver, owners, raw_user_id
+        ):
+            continue
+        conversations.append(
+            ConversationSummary(
+                conversation_id=summary["conversation_id"],
+                last_message=summary["last_message"],
+                last_timestamp=summary["last_timestamp"],
+                message_count=summary["message_count"],
+            )
+        )
 
     return ConversationListResponse(
         conversations=conversations,

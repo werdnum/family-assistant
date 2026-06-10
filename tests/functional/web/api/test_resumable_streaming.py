@@ -32,7 +32,12 @@ from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
 from sqlalchemy.ext.asyncio import AsyncEngine
 
-from family_assistant.config_models import AppConfig, ToolsConfig
+from family_assistant.config_models import (
+    AppConfig,
+    TelegramUserIdentityConfig,
+    ToolsConfig,
+    UserIdentityConfig,
+)
 from family_assistant.context_providers import (
     CalendarContextProvider,
     KnownUsersContextProvider,
@@ -46,6 +51,7 @@ from family_assistant.llm import (
 from family_assistant.llm.messages import MessageReasoningInfo, UserMessage
 from family_assistant.processing import ProcessingService, ProcessingServiceConfig
 from family_assistant.services.notifier import MESSAGE_CATEGORY, NotificationMetadata
+from family_assistant.services.user_identity import UserIdentityResolver
 from family_assistant.storage import init_db
 from family_assistant.storage.context import DatabaseContext, get_db_context
 from family_assistant.tools import (
@@ -62,7 +68,10 @@ from family_assistant.tools import (
     ToolsProvider,
 )
 from family_assistant.web.app_creator import app as actual_app
-from family_assistant.web.conversation_stream_hub import ConversationStreamHub
+from family_assistant.web.conversation_stream_hub import (
+    ConversationStreamHub,
+    SubscriptionHandle,
+)
 from family_assistant.web.web_chat_interface import WebChatInterface
 from tests.mocks.mock_llm import RuleBasedMockLLMClient
 
@@ -605,6 +614,10 @@ async def test_post_turn_idempotent_across_hub_restart(
         "turn_id": turn_id,
         "conversation_id": conversation_id,
         "first_seq": 0,
+        # The durable fallback signals the turn already finished and is NOT
+        # replayable from the (fresh) hub, so clients reload history instead of
+        # opening /stream.
+        "already_complete": True,
     }
 
     # No producer was started on the fresh hub, and no duplicate row was
@@ -924,3 +937,327 @@ async def test_web_chat_interface_publishes_live_update_to_hub(
     # reload to the right open conversation.
     assert event.payload["conversation_id"] == conversation_id
     hub.unsubscribe(conversation_id, handle.queue)
+
+
+# --------------------------------------------------------------------------- #
+# Queue-drain race (finding #1)
+# --------------------------------------------------------------------------- #
+
+
+class _EndOnSubscribeHub(ConversationStreamHub):
+    """Hub that ends the registered turn the instant a subscriber attaches.
+
+    This deterministically reproduces the snapshot/queue race (finding #1): the
+    new subscriber's queue is registered before ``subscribe`` returns, so the
+    ``end_turn`` here lands its tail + ``turn_ended`` ONLY in the live queue (the
+    replay snapshot was already taken). A correct generator must drain that queue
+    before its non-follow early return, or those events are silently dropped.
+    """
+
+    def __init__(self, *, end_turn_id: str) -> None:
+        super().__init__()
+        self._end_turn_id = end_turn_id
+        self._ended = False
+
+    async def subscribe(
+        self,
+        conversation_id: str,
+        *,
+        from_seq: int,
+        ack_seq: int = -1,
+    ) -> SubscriptionHandle:
+        handle = await super().subscribe(
+            conversation_id, from_seq=from_seq, ack_seq=ack_seq
+        )
+        if not self._ended:
+            self._ended = True
+            await self.publish(
+                conversation_id,
+                "text",
+                turn_id=self._end_turn_id,
+                payload={"content": "tail-after-snapshot"},
+            )
+            await self.end_turn(
+                conversation_id, turn_id=self._end_turn_id, status="complete"
+            )
+        return handle
+
+
+async def test_stream_drains_queue_before_non_follow_close(
+    app_fixture: FastAPI,
+    test_client: AsyncClient,
+) -> None:
+    """Finding #1: a turn that ends in the snapshot/check window leaves its tail
+    and ``turn_ended`` only in the live queue. A non-follow stream must drain the
+    queue before closing, or the client sees a truncated reply and never sees
+    turn_ended (thinking it completed cleanly)."""
+    turn_id = str(uuid.uuid4())
+    conversation_id = f"conv_drain_{uuid.uuid4().hex[:8]}"
+
+    hub = _EndOnSubscribeHub(end_turn_id=turn_id)
+    app_fixture.state.conversation_stream_hub = hub
+    await hub.start_turn(
+        conversation_id,
+        turn_id=turn_id,
+        user_id="test_user",
+        started_at=datetime.now(UTC),
+    )
+
+    events = await asyncio.wait_for(
+        collect_sse_stream(
+            test_client,
+            f"/api/v1/chat/conversations/{conversation_id}/stream",
+            params={"from_seq": 0},
+        ),
+        timeout=10.0,
+    )
+    types = [e["type"] for e in events]
+    assert "turn_ended" in types, f"turn_ended dropped by early return: {types}"
+    text_chunks = [e["data"]["content"] for e in events if e["type"] == "text"]
+    assert "tail-after-snapshot" in text_chunks, (
+        f"reply tail dropped by early return: {types}"
+    )
+
+
+# --------------------------------------------------------------------------- #
+# Graceful shutdown (finding #6)
+# --------------------------------------------------------------------------- #
+
+
+async def test_follow_stream_closes_on_shutdown(
+    app_fixture: FastAPI,
+    test_client: AsyncClient,
+) -> None:
+    """Finding #6: a follow=true stream heartbeats forever unless it observes the
+    app shutdown event. When shutdown is signalled it must emit a
+    ``stream_dropped`` frame (reason=server_shutdown) and close promptly so a
+    graceful SIGTERM is not blocked."""
+    # Signal shutdown before subscribing so the follow stream observes it on its
+    # first loop and closes immediately. (With ASGITransport the stream's first
+    # body chunk is what unblocks the client's stream context, so the
+    # stream_dropped frame must be the first thing the generator yields here.)
+    shutdown_event = asyncio.Event()
+    shutdown_event.set()
+    app_fixture.state.shutdown_event = shutdown_event
+    conversation_id = f"conv_shutdown_{uuid.uuid4().hex[:8]}"
+
+    events: list[SSEEvent] = []
+    async with test_client.stream(
+        "GET",
+        f"/api/v1/chat/conversations/{conversation_id}/stream",
+        params={"from_seq": 0, "follow": "true"},
+    ) as response:
+        assert response.status_code == 200, response.text
+        async for chunk in response.aiter_text():
+            for line in chunk.split("\n"):
+                if line.startswith("event:"):
+                    events.append(SSEEvent(type=line.split(":", 1)[1].strip(), data={}))
+            if any(e["type"] == "stream_dropped" for e in events):
+                break
+
+    assert any(e["type"] == "stream_dropped" for e in events), (
+        f"expected stream_dropped on shutdown, got {[e['type'] for e in events]}"
+    )
+
+
+# --------------------------------------------------------------------------- #
+# event_types filter (spec §B / finding C3)
+# --------------------------------------------------------------------------- #
+
+
+async def test_event_types_filter_drops_text_keeps_lifecycle(
+    test_client: AsyncClient,
+    mock_llm_client: RuleBasedMockLLMClient,
+) -> None:
+    """spec §B: ``event_types=message`` filters out the token firehose (``text``)
+    but ALWAYS keeps lifecycle frames (``turn_started`` is filtered, but
+    ``turn_ended`` is always emitted so the client knows when to stop)."""
+    user_prompt = "Filter test"
+    _add_simple_llm_rule(mock_llm_client, prompt_marker=user_prompt, reply="hello")
+
+    turn_id = str(uuid.uuid4())
+    conversation_id = f"conv_filter_{uuid.uuid4().hex[:8]}"
+    post = await test_client.post(
+        "/api/v1/chat/turns",
+        json={
+            "turn_id": turn_id,
+            "conversation_id": conversation_id,
+            "prompt": user_prompt,
+            "interface_type": "web",
+        },
+    )
+    assert post.status_code == 200, post.text
+
+    events = await asyncio.wait_for(
+        collect_sse_stream(
+            test_client,
+            f"/api/v1/chat/conversations/{conversation_id}/stream",
+            params={"from_seq": 0, "event_types": "message"},
+        ),
+        timeout=10.0,
+    )
+    types = [e["type"] for e in events]
+    assert "text" not in types, f"event_types filter let text through: {types}"
+    assert "turn_started" not in types, (
+        f"event_types filter should drop turn_started: {types}"
+    )
+    assert "turn_ended" in types, (
+        f"turn_ended must always be emitted regardless of filter: {types}"
+    )
+
+
+# --------------------------------------------------------------------------- #
+# /send_message turn_id idempotency (finding #8)
+# --------------------------------------------------------------------------- #
+
+
+async def test_send_message_idempotent_on_turn_id(
+    test_client: AsyncClient,
+    mock_llm_client: RuleBasedMockLLMClient,
+    db_engine: AsyncEngine,
+) -> None:
+    """Finding #8: /send_message is idempotent on a client-supplied turn_id. A
+    retried request returns the already-persisted reply (already_complete=true)
+    instead of re-driving the LLM and double-persisting the user message."""
+    user_prompt = "Send-message idempotency"
+    _add_simple_llm_rule(mock_llm_client, prompt_marker=user_prompt, reply="reply-once")
+
+    turn_id = str(uuid.uuid4())
+    conversation_id = f"conv_sm_idem_{uuid.uuid4().hex[:8]}"
+    body = {
+        "prompt": user_prompt,
+        "conversation_id": conversation_id,
+        "interface_type": "api",
+        "turn_id": turn_id,
+    }
+
+    first = await test_client.post("/api/v1/chat/send_message", json=body)
+    assert first.status_code == 200, first.text
+    assert first.json()["already_complete"] is False
+    assert first.json()["turn_id"] == turn_id
+    assert first.json()["reply"] == "reply-once"
+
+    second = await test_client.post("/api/v1/chat/send_message", json=body)
+    assert second.status_code == 200, second.text
+    assert second.json()["already_complete"] is True
+    assert second.json()["turn_id"] == turn_id
+    assert second.json()["reply"] == "reply-once"
+
+    async with get_db_context(engine=db_engine) as ctx:
+        rows = await ctx.message_history.get_recent_with_metadata(
+            interface_type="api",
+            conversation_id=conversation_id,
+            limit=20,
+        )
+    user_rows = [r for r in rows if r["role"] == "user"]
+    assert len(user_rows) == 1, (
+        f"retried /send_message double-persisted the user message: "
+        f"{[r.get('content') for r in user_rows]}"
+    )
+    assert user_rows[0].get("turn_id") == turn_id
+
+
+# --------------------------------------------------------------------------- #
+# Conversation-list ownership filter + identity mapping (findings #4, #5)
+# --------------------------------------------------------------------------- #
+
+
+async def test_conversation_list_filters_to_owned(
+    test_client: AsyncClient,
+    db_engine: AsyncEngine,
+) -> None:
+    """Findings #4/#5: GET /conversations is filtered to conversations the caller
+    solely (canonically) owns, so the History UI never lists a conversation it
+    then 404s on opening. A conversation owned only by another user is hidden; a
+    multi-owner conversation (which /stream refuses) is also hidden."""
+    owned = f"conv_owned_{uuid.uuid4().hex[:8]}"
+    foreign = f"conv_foreign_{uuid.uuid4().hex[:8]}"
+    multi = f"conv_multi_{uuid.uuid4().hex[:8]}"
+
+    async with get_db_context(engine=db_engine) as ctx:
+        await init_db(db_engine)
+        await ctx.init_vector_db()
+        await ctx.message_history.add_message(
+            UserMessage(content="mine"),
+            interface_type="web",
+            conversation_id=owned,
+            timestamp=datetime.now(UTC),
+            user_id="test_user",
+        )
+        await ctx.message_history.add_message(
+            UserMessage(content="theirs"),
+            interface_type="web",
+            conversation_id=foreign,
+            timestamp=datetime.now(UTC),
+            user_id="someone_else",
+        )
+        await ctx.message_history.add_message(
+            UserMessage(content="mine in group"),
+            interface_type="web",
+            conversation_id=multi,
+            timestamp=datetime.now(UTC),
+            user_id="test_user",
+        )
+        await ctx.message_history.add_message(
+            UserMessage(content="theirs in group"),
+            interface_type="web",
+            conversation_id=multi,
+            timestamp=datetime.now(UTC),
+            user_id="someone_else",
+        )
+
+    response = await test_client.get("/api/v1/chat/conversations")
+    assert response.status_code == 200, response.text
+    listed = {c["conversation_id"] for c in response.json()["conversations"]}
+    assert owned in listed
+    assert foreign not in listed
+    assert multi not in listed
+
+
+async def test_conversation_list_identity_maps_telegram_owner(
+    app_fixture: FastAPI,
+    test_client: AsyncClient,
+    db_engine: AsyncEngine,
+) -> None:
+    """Findings #4/#5: ownership is identity-aware. A conversation stored under a
+    user's Telegram id must canonicalize to their web identity so it stays
+    visible in the list and openable, not 404'd as someone else's. Here a real
+    resolver maps Telegram id 4242 -> the canonical user ``test_user``."""
+    resolver_config = AppConfig(
+        users=[
+            UserIdentityConfig(
+                id="test_user",
+                telegram=TelegramUserIdentityConfig(user_ids={4242}),
+            )
+        ]
+    )
+    app_fixture.state.user_identity_resolver = UserIdentityResolver(resolver_config)
+
+    telegram_conv = f"conv_tg_{uuid.uuid4().hex[:8]}"
+    async with get_db_context(engine=db_engine) as ctx:
+        await init_db(db_engine)
+        await ctx.init_vector_db()
+        # Stored under the raw Telegram numeric id, which canonicalizes to
+        # test_user via the resolver.
+        await ctx.message_history.add_message(
+            UserMessage(content="from telegram"),
+            interface_type="telegram",
+            conversation_id=telegram_conv,
+            timestamp=datetime.now(UTC),
+            user_id="4242",
+        )
+
+    list_response = await test_client.get("/api/v1/chat/conversations")
+    assert list_response.status_code == 200, list_response.text
+    listed = {c["conversation_id"] for c in list_response.json()["conversations"]}
+    assert telegram_conv in listed, (
+        "Telegram-owned conversation should canonicalize to the web identity "
+        "and stay visible"
+    )
+
+    # And it must be openable (not 404) through the identity-aware stream check.
+    stream_response = await test_client.get(
+        f"/api/v1/chat/conversations/{telegram_conv}/stream",
+        params={"from_seq": 0},
+    )
+    assert stream_response.status_code == 200, stream_response.text

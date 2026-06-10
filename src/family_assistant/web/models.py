@@ -255,6 +255,14 @@ class ChatPromptRequest(BaseModel):
     profile_id: str | None = None  # Added to specify processing profile
     interface_type: str | None = None  # Interface type (e.g., 'web', 'api', 'mobile')
     attachments: list[ChatAttachmentRequest] | None = None
+    turn_id: str | None = Field(
+        default=None,
+        description=(
+            "Optional client-supplied UUIDv4 for idempotency. Retrying "
+            "/send_message with the same turn_id returns the existing reply "
+            "instead of re-driving the LLM."
+        ),
+    )
 
 
 class ChatMessageResponse(BaseModel):
@@ -263,6 +271,13 @@ class ChatMessageResponse(BaseModel):
     turn_id: str
     attachments: list[MessageAttachmentMetadata] | None = None  # Add attachments field
     tool_calls: list[ToolCallResponseItem] | None = None
+    already_complete: bool = Field(
+        default=False,
+        description=(
+            "True when the reply was served from an existing turn (idempotent "
+            "retry) rather than freshly generated."
+        ),
+    )
 
 
 # --- App Auth / Token Exchange Models ---

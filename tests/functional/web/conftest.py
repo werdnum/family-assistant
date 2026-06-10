@@ -50,6 +50,7 @@ from family_assistant.tools import (
     ToolPolicyDecision,
     ToolsProvider,
 )
+from family_assistant.web.conversation_stream_hub import ConversationStreamHub
 from family_assistant.web.web_chat_interface import WebChatInterface
 from tests.mocks.mock_llm import LLMOutput as MockLLMOutput
 from tests.mocks.mock_llm import RuleBasedMockLLMClient
@@ -1242,8 +1243,18 @@ async def app_fixture(
     # Use the dependency-injected attachment registry
     app.state.attachment_registry = attachment_registry_fixture
 
+    # Wire a real ConversationStreamHub exactly as production does (see
+    # app_creator.create_app / lifespan): the hub holds in-flight turn state and
+    # producer task references, and WebChatInterface publishes a `message` event
+    # to it after a save so open follow-streams reload. Without this the
+    # interface→hub publish path goes untested.
+    app.state.conversation_stream_hub = ConversationStreamHub()
+
     # Initialize WebChatInterface for web API tests
-    app.state.web_chat_interface = WebChatInterface(db_engine)
+    app.state.web_chat_interface = WebChatInterface(
+        db_engine,
+        stream_hub=app.state.conversation_stream_hub,
+    )
 
     # Ensure database is initialized for this app instance
     async with get_db_context(engine=db_engine) as temp_db_ctx:
