@@ -148,17 +148,24 @@ final class ChatViewModelTests: XCTestCase {
     func testSendDraftStreamsAssistantTextAndReloadsPersistedMessages() async throws {
         ChatMockBackendURLProtocol.respond { request in
             switch (request.httpMethod ?? "GET", request.url?.path ?? "") {
-            case ("POST", "/api/v1/chat/send_message_stream"):
+            case ("POST", "/api/v1/chat/turns"):
                 let payload = try XCTUnwrap(Self.jsonObject(from: request) as? [String: Any])
                 XCTAssertEqual(payload["interface_type"] as? String, "web")
                 XCTAssertEqual(payload["conversation_id"] as? String, "web_conv_send")
+                return .json(
+                    #"{"turn_id":"turn-send","conversation_id":"web_conv_send","first_seq":0}"#
+                )
+            case ("GET", "/api/v1/chat/conversations/web_conv_send/stream"):
                 return .text(
                     """
+                    event: turn_started
+                    data: {"turn_id":"turn-send","seq":0}
+
                     event: text
                     data: {"content":"Streamed"}
 
-                    event: end
-                    data: {}
+                    event: turn_ended
+                    data: {"turn_id":"turn-send","status":"complete"}
 
                     """
                 )
@@ -194,26 +201,138 @@ final class ChatViewModelTests: XCTestCase {
         XCTAssertEqual(model.messages.map(\.text), ["Hi", "Persisted reply"])
     }
 
+    func testSendDraftAcknowledgesHighestSeqAfterTurnEnds() async throws {
+        var ackedSeq: Int?
+        // The client generates the turn_id and the server echoes it; the producer
+        // tags every event with it and the send-and-watch flow filters events to
+        // that turn. Echo the posted turn_id so the mock matches that contract.
+        var streamedTurnID = "turn-ack"
+        ChatMockBackendURLProtocol.respond { request in
+            switch (request.httpMethod ?? "GET", request.url?.path ?? "") {
+            case ("POST", "/api/v1/chat/turns"):
+                if let body = (try? Self.jsonObject(from: request)) as? [String: Any],
+                   let postedTurnID = body["turn_id"] as? String {
+                    streamedTurnID = postedTurnID
+                }
+                return .json(
+                    #"{"turn_id":"\#(streamedTurnID)","conversation_id":"web_conv_ack","first_seq":0}"#
+                )
+            case ("GET", "/api/v1/chat/conversations/web_conv_ack/stream"):
+                return .text(
+                    """
+                    event: text
+                    data: {"turn_id":"\(streamedTurnID)","content":"Hi","seq":4}
+
+                    event: turn_ended
+                    data: {"turn_id":"\(streamedTurnID)","status":"complete","seq":5}
+
+                    """
+                )
+            case ("POST", "/api/v1/chat/ack"):
+                let payload = try XCTUnwrap(Self.jsonObject(from: request) as? [String: Any])
+                ackedSeq = payload["ack_seq"] as? Int
+                return .json("{}")
+            case ("GET", "/api/v1/chat/conversations"):
+                return .json(#"{"conversations":[],"count":0}"#)
+            case ("GET", "/api/v1/chat/conversations/web_conv_ack/messages"):
+                return .json(
+                    """
+                    {
+                      "conversation_id":"web_conv_ack",
+                      "messages":[],
+                      "count":0,
+                      "total_messages":0,
+                      "has_more_before":false,
+                      "has_more_after":false
+                    }
+                    """
+                )
+            default:
+                return .json(#"{"detail":"unexpected"}"#, statusCode: 404)
+            }
+        }
+
+        let model = makeViewModel(conversationID: "web_conv_ack")
+        model.draftText = "Hi"
+        await model.sendDraft()
+        try await waitUntil { !model.isStreaming }
+        try await waitUntil { ackedSeq == 5 }
+
+        XCTAssertEqual(ackedSeq, 5)
+    }
+
+    func testSendDraftAlreadyCompleteReloadsHistoryWithoutStreaming() async throws {
+        var sawStream = false
+        ChatMockBackendURLProtocol.respond { request in
+            switch (request.httpMethod ?? "GET", request.url?.path ?? "") {
+            case ("POST", "/api/v1/chat/turns"):
+                return .json(
+                    #"{"turn_id":"turn-dup","conversation_id":"web_conv_dup","first_seq":0,"already_complete":true}"#
+                )
+            case ("GET", "/api/v1/chat/conversations/web_conv_dup/messages"):
+                return .json(
+                    """
+                    {
+                      "conversation_id":"web_conv_dup",
+                      "messages":[
+                        {"internal_id":1,"role":"user","content":"Hi","timestamp":"2026-06-08T12:00:00Z"},
+                        {"internal_id":2,"role":"assistant","content":"Durable reply","timestamp":"2026-06-08T12:00:01Z"}
+                      ],
+                      "count":2,
+                      "total_messages":2,
+                      "has_more_before":false,
+                      "has_more_after":false
+                    }
+                    """
+                )
+            case ("GET", "/api/v1/chat/conversations"):
+                return .json(#"{"conversations":[],"count":0}"#)
+            default:
+                if request.httpMethod == "GET", (request.url?.path ?? "").hasSuffix("/stream") {
+                    sawStream = true
+                    return .text("event: turn_ended\ndata: {\"turn_id\":\"turn-dup\"}\n\n")
+                }
+                return .json(#"{"detail":"unexpected"}"#, statusCode: 404)
+            }
+        }
+
+        let model = makeViewModel(conversationID: "web_conv_dup")
+        model.draftText = "Hi"
+        await model.sendDraft()
+        try await waitUntil { !model.isStreaming }
+
+        XCTAssertEqual(model.messages.map(\.text), ["Hi", "Durable reply"])
+        XCTAssertFalse(sawStream)
+    }
+
     func testApplyRouteProcessesEachNewInitialPrompt() async throws {
         var sentPrompts: [String] = []
         var conversationIDs: [String] = []
         ChatMockBackendURLProtocol.respond { request in
             let path = request.url?.path ?? ""
             switch (request.httpMethod ?? "GET", path) {
-            case ("POST", "/api/v1/chat/send_message_stream"):
+            case ("POST", "/api/v1/chat/turns"):
                 let payload = try XCTUnwrap(Self.jsonObject(from: request) as? [String: Any])
                 sentPrompts.append(try XCTUnwrap(payload["prompt"] as? String))
-                conversationIDs.append(try XCTUnwrap(payload["conversation_id"] as? String))
-                return .text(
+                let conversationID = try XCTUnwrap(payload["conversation_id"] as? String)
+                conversationIDs.append(conversationID)
+                return .json(
                     """
-                    event: end
-                    data: {}
-
+                    {"turn_id":"turn-route","conversation_id":"\(conversationID)","first_seq":0}
                     """
                 )
             case ("GET", "/api/v1/chat/conversations"):
                 return .json(#"{"conversations":[],"count":0}"#)
             default:
+                if request.httpMethod == "GET", path.hasSuffix("/stream") {
+                    return .text(
+                        """
+                        event: turn_ended
+                        data: {"turn_id":"turn-route","status":"complete"}
+
+                        """
+                    )
+                }
                 if request.httpMethod == "GET", path.hasSuffix("/messages") {
                     return .json(
                         """

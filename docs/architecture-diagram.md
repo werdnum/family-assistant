@@ -648,40 +648,72 @@ sequenceDiagram
     Context->>Conn: Close connection
 ```
 
-### 9. Real-time Streaming Flow (SSE)
+### 9. Resumable Streaming Flow (SSE)
+
+Streaming is a two-step, resumable flow built on a per-conversation event hub
+(`ConversationStreamHub`) rather than a single request/response stream. A background **turn
+producer** (`run_turn_producer`) drives the LLM and publishes typed events into a per-conversation
+ring buffer in the hub. One or more SSE subscribers — opened via
+`GET /v1/chat/conversations/{id}/stream` — replay the buffered events from a `from_seq` cursor and
+then tail live ones. Because the producer runs independently of any connection, a client can
+disconnect mid-turn and reconnect (from its saved `seq`) without losing the reply, and a second
+device watching the same conversation sees the same event stream.
 
 ```mermaid
 sequenceDiagram
     participant Browser as Web Browser
-    participant API as FastAPI
+    participant API as FastAPI (chat_api)
+    participant Hub as ConversationStreamHub
+    participant Producer as Turn Producer (background task)
     participant Processing as ProcessingService
     participant LLM
-    participant SSE as SSE Stream
 
-    Browser->>API: POST /v1/chat/send_message_stream
-    API->>SSE: Create EventSourceResponse
-    API->>Processing: handle_chat_interaction_stream()
-    
-    Processing->>LLM: Stream completion
-    
-    loop Streaming Response
-        LLM-->>Processing: Content chunk
-        Processing->>SSE: Send "text" event
-        SSE-->>Browser: Update UI
-        
-        alt Tool Call
-            LLM-->>Processing: Tool call
-            Processing->>SSE: Send "tool_call" event
-            Processing->>Processing: Execute tool
-            Processing->>SSE: Send "tool_result" event
-        end
+    Note over Browser,Producer: Step 1 — start the turn (idempotent on turn_id)
+    Browser->>API: POST /v1/chat/turns {turn_id, prompt, ...}
+    API->>Hub: start_turn() — publish turn_started synchronously
+    alt turn_id already finished durably (restart/pruned)
+        API-->>Browser: {already_complete: true} → reload history, do NOT stream
+    else new turn
+        API->>Producer: create background task run_turn_producer()
+        API-->>Browser: {conversation_id, first_seq}
     end
-    
-    LLM-->>Processing: Complete
-    Processing->>SSE: Send "end" event
-    SSE-->>Browser: Finalize display
-    API->>API: Close stream
+
+    Note over Browser,Producer: Step 2 — subscribe (replay from from_seq, then tail live)
+    Browser->>API: GET /conversations/{id}/stream?from_seq=first_seq
+    API->>Hub: subscribe(from_seq, ack_seq) → snapshot + live queue
+    Hub-->>API: replayed snapshot events
+    API-->>Browser: replay buffered events (seq >= from_seq)
+
+    Producer->>Processing: handle_chat_interaction()
+    loop Streaming response
+        Processing->>LLM: stream completion
+        LLM-->>Processing: content chunk / tool call
+        Processing->>Producer: events
+        Producer->>Hub: publish "text" / "tool_call" / "tool_result" / "attachment"
+        Hub-->>API: live event (per subscriber queue)
+        API-->>Browser: SSE event (filtered by event_types)
+    end
+    Producer->>Hub: end_turn() — publish "turn_ended"
+    Hub-->>Browser: turn_ended (follow=false stream then closes)
+
+    Note over Browser,Hub: Step 3 — acknowledge delivery
+    Browser->>API: POST /v1/chat/ack {conversation_id, ack_seq}
+    API->>Hub: ack_conversation() — suppress disconnect-push fallback
 ```
+
+Notes:
+
+- Every SSE event's `data` carries a monotonic `seq` (and `turn_id` when it belongs to a turn). The
+  client persists the highest applied `seq` to resume.
+- `follow=false` ("watch / resume"): drains the buffer and streams the in-flight turn through
+  `turn_ended`, then closes. `follow=true` ("always-on"): stays open with heartbeats to surface
+  turns started later (e.g. from another device).
+- `event_types` is an optional allow-list; the lifecycle frames `turn_ended`, `heartbeat` and
+  `stream_dropped` are always emitted regardless.
+- A `410 Gone` means `from_seq` is below the oldest buffered seq; the body's `active_turns` lets the
+  client show a "still thinking" placeholder and reload history.
+- The non-streaming `/v1/chat/send_message` path persists the reply and publishes a content-free
+  `message` nudge to the hub so any open follow-stream reloads.
 
 ### 10. Home Assistant Integration Flow
 

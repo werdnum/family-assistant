@@ -31,14 +31,28 @@ final class ChatViewModel {
 
     @ObservationIgnored private let apiClient: ChatAPIClient
     @ObservationIgnored private var streamTask: Task<Void, Never>?
+    // Identifies the active send. A superseded (cancelled) streamTask resuming
+    // across an await must not clobber the turn that replaced it, so its tail
+    // work is gated on this token still matching.
+    @ObservationIgnored private var currentStreamToken: UUID?
     @ObservationIgnored private var liveEventsTask: Task<Void, Never>?
     @ObservationIgnored private var pendingConfirmationsTask: Task<Void, Never>?
     @ObservationIgnored private var lastProcessedInitialPrompt: String?
+    // Highest stream seq applied for the active conversation, threaded into the
+    // follow subscribe's `ack_seq` and the `/ack` POST after a turn_ended so the
+    // server suppresses the disconnect push for events this client has seen.
+    // Reset whenever the active conversation changes.
+    @ObservationIgnored private var highestAppliedSeq: Int?
 
     private enum Keys {
         static let lastConversationID = "lastConversationId"
         static let selectedProfileID = "selectedProfileId"
     }
+
+    // Page size for incremental `after`-timestamp message loads. The server's
+    // paginated path ignores `after` when limit=0, so a bounded page is needed;
+    // `mergeNewMessages` pages through on `hasMoreAfter`.
+    private static let messageDeltaPageSize = 100
 
     init(
         authManager: AuthManager,
@@ -114,6 +128,24 @@ final class ChatViewModel {
         isLoadingConversations = false
     }
 
+    /// Refresh only the most recent page of conversation summaries.
+    ///
+    /// Used after a turn or live event: the changed conversation surfaces on the
+    /// first (most-recent-first) page, so paging the entire history each time is
+    /// wasteful. Merges the page over the held list, preserving older summaries
+    /// the page didn't include.
+    private func refreshRecentConversations() async {
+        do {
+            let recent = try await apiClient.listRecentConversations()
+            let recentIDs = Set(recent.map(\.conversationID))
+            let untouched = conversations.filter { !recentIDs.contains($0.conversationID) }
+            conversations = recent + untouched
+            errorMessage = nil
+        } catch {
+            errorMessage = error.localizedDescription
+        }
+    }
+
     /// Drives the conversation list selection binding in the sidebar.
     ///
     /// In compact width, `NavigationSplitView` writes `nil` here when the user
@@ -131,6 +163,7 @@ final class ChatViewModel {
 
     func selectConversation(_ id: String, shouldLoadMessages: Bool = true) async {
         cancelStream()
+        highestAppliedSeq = nil
         conversationID = id
         conversationSelection = id
         persistConversationID()
@@ -143,6 +176,7 @@ final class ChatViewModel {
 
     func startNewConversation() {
         cancelStream()
+        highestAppliedSeq = nil
         conversationID = Self.generateConversationID()
         conversationSelection = conversationID
         messages = []
@@ -174,6 +208,71 @@ final class ChatViewModel {
             errorMessage = error.localizedDescription
         }
         isLoadingMessages = false
+    }
+
+    /// Reconcile the held thread with newly persisted messages without refetching
+    /// the entire history. Fetches only messages newer than the latest persisted
+    /// one held, drops any local optimistic placeholders, then appends the delta
+    /// de-duped by id. Falls back to a full load when nothing persisted is held
+    /// yet (e.g. the very first turn in a conversation).
+    private func mergeNewMessages(conversationID id: String) async {
+        guard let after = latestPersistedTimestamp() else {
+            await loadMessages(conversationID: id)
+            return
+        }
+        do {
+            let delta = try await fetchMessages(conversationID: id, after: after)
+            guard !delta.isEmpty else {
+                errorMessage = nil
+                return
+            }
+            let rendered = Self.renderMessages(from: delta)
+            // Drop optimistic local placeholders now that persisted copies exist,
+            // then append any rendered messages not already present.
+            var merged = messages.filter { !$0.id.hasPrefix("local_") }
+            let existingIDs = Set(merged.map(\.id))
+            merged.append(contentsOf: rendered.filter { !existingIDs.contains($0.id) })
+            messages = merged
+            errorMessage = nil
+        } catch {
+            errorMessage = error.localizedDescription
+        }
+    }
+
+    /// Page through all persisted messages newer than `after`.
+    private func fetchMessages(conversationID id: String, after: Date) async throws -> [ChatBackendMessage] {
+        var collected: [ChatBackendMessage] = []
+        var cursor = after
+        while true {
+            let page = try await apiClient.getMessagesPage(
+                conversationID: id,
+                after: cursor,
+                limit: Self.messageDeltaPageSize
+            )
+            collected.append(contentsOf: page.messages)
+            guard page.hasMoreAfter, let last = page.messages.last else {
+                return collected
+            }
+            cursor = last.timestamp
+        }
+    }
+
+    /// Timestamp of the newest persisted (server-backed) message currently held,
+    /// or nil if only local placeholders are present.
+    private func latestPersistedTimestamp() -> Date? {
+        messages.filter { $0.id.hasPrefix("msg_") }.map(\.createdAt).max()
+    }
+
+    private func recordAppliedSeq(_ seq: Int) {
+        if let current = highestAppliedSeq {
+            highestAppliedSeq = max(current, seq)
+        } else {
+            highestAppliedSeq = seq
+        }
+    }
+
+    private func removeLocalAssistantPlaceholder(_ assistantMessageID: String) {
+        messages.removeAll { $0.id == assistantMessageID }
     }
 
     func loadProfiles() async {
@@ -246,34 +345,84 @@ final class ChatViewModel {
         isStreaming = true
         persistConversationID()
 
+        let turnID = UUID().uuidString
+        let streamToken = UUID()
+        currentStreamToken = streamToken
         streamTask = Task { [weak self] in
             guard let self else { return }
             do {
-                let stream = try await apiClient.streamMessage(
+                let turnStream = try await apiClient.streamMessage(
+                    turnID: turnID,
                     prompt: prompt,
                     conversationID: id,
                     profileID: selectedProfileID,
                     attachments: uploadedAttachments
                 )
-                for try await event in stream {
+                guard let events = turnStream.events else {
+                    // already_complete: the retried turn finished durably but is
+                    // not replayable from the hub. Don't open a stream; reload
+                    // persisted history to surface the saved reply.
+                    guard !Task.isCancelled, currentStreamToken == streamToken else {
+                        return
+                    }
+                    removeLocalAssistantPlaceholder(assistantMessageID)
+                    await refreshRecentConversations()
+                    await loadMessages(conversationID: id)
+                    if currentStreamToken == streamToken {
+                        isStreaming = false
+                        streamTask = nil
+                    }
+                    return
+                }
+                var lastSeq: Int?
+                for try await event in events {
                     if Task.isCancelled {
                         break
                     }
+                    // The conversation stream carries every turn's events. In
+                    // this send-and-watch flow only apply events for the turn we
+                    // started; ignore a turn started concurrently elsewhere in
+                    // the same conversation. Connection-level events carry no
+                    // turn id and fall through.
+                    if let eventTurnID = event.turnID, eventTurnID != turnID {
+                        continue
+                    }
+                    if let seq = event.seq {
+                        lastSeq = seq
+                        recordAppliedSeq(seq)
+                    }
                     apply(streamEvent: event, assistantMessageID: assistantMessageID)
-                    if event.type == .end || event.type == .close {
+                    if event.type == .turnEnded {
                         break
                     }
                 }
+                // If a newer send (or conversation switch) superseded this task,
+                // stop here: the post-completion reloads and shared-state resets
+                // below belong to the turn that replaced us.
+                guard !Task.isCancelled, currentStreamToken == streamToken else {
+                    return
+                }
+                // Explicitly acknowledge the highest received seq so the server
+                // suppresses the disconnect push for a reply we actually saw.
+                // Fire-and-forget so UI completion isn't blocked on the ack.
+                if let lastSeq {
+                    let ackClient = apiClient
+                    Task { try? await ackClient.acknowledge(conversationID: id, ackSeq: lastSeq) }
+                }
                 completeStream(assistantMessageID: assistantMessageID)
-                await refreshConversations()
-                await loadMessages(conversationID: id)
+                await refreshRecentConversations()
+                await mergeNewMessages(conversationID: id)
             } catch is CancellationError {
                 markStreamStopped(assistantMessageID: assistantMessageID)
             } catch {
                 appendStreamError(error.localizedDescription, assistantMessageID: assistantMessageID)
             }
-            isStreaming = false
-            streamTask = nil
+            // Only the still-current send resets shared streaming state; a
+            // superseded task must not nil out the new turn's streamTask.
+            if currentStreamToken == streamToken {
+                isStreaming = false
+                streamTask = nil
+            }
         }
     }
 
@@ -440,36 +589,99 @@ final class ChatViewModel {
         guard let conversationID else {
             return
         }
+        // Capture the API client (a value type whose only reference is the
+        // AuthManager, never the view model) and the subscribe parameters up
+        // front. The follow loop below never binds a strong `self` across its
+        // awaits — every mutation goes through a weak `self?` hop — so releasing
+        // the view model (e.g. on logout) lets `deinit` run, which cancels this
+        // task and tears down the open SSE connection instead of stranding it.
+        let client = apiClient
+        let ackSeq = highestAppliedSeq ?? -1
         liveEventsTask = Task { [weak self] in
-            guard let self else { return }
             do {
-                let stream = try await apiClient.connectEvents(conversationID: conversationID)
+                let stream = try await client.connectEvents(
+                    conversationID: conversationID,
+                    ackSeq: ackSeq,
+                    // Follow streams only reload persisted history on these; the
+                    // token firehose is ignored, so don't ask for it. Lifecycle
+                    // frames (turn_ended, heartbeat, stream_dropped) are always
+                    // delivered regardless of this filter.
+                    eventTypes: ["message", "turn_ended"]
+                )
+                // Call through the weak `self?` at each suspension point instead
+                // of binding a strong `self`: a binding would keep the view model
+                // (and its open SSE connection) alive across the indefinite follow
+                // loop, so logout/deinit could never tear it down.
+                await self?.handleLiveReconnect(conversationID: conversationID)
                 for try await event in stream {
                     if Task.isCancelled {
                         break
                     }
-                    switch event.type {
-                    case .message:
-                        if !isStreaming {
-                            await loadMessages(conversationID: conversationID)
-                            await refreshConversations()
-                        }
-                    case .connected:
-                        liveUpdatesConnected = true
-                    case .heartbeat:
-                        break
-                    default:
+                    let shouldContinue = await self?.handleLiveEvent(
+                        event,
+                        conversationID: conversationID,
+                        client: client
+                    )
+                    // `self` deallocated mid-loop -> nil -> stop following.
+                    guard let shouldContinue else { break }
+                    if !shouldContinue {
                         break
                     }
                 }
-                if !Task.isCancelled {
-                    liveUpdatesConnected = false
-                }
+                self?.markLiveUpdatesDisconnectedIfActive()
             } catch {
-                if !Task.isCancelled {
-                    liveUpdatesConnected = false
-                }
+                self?.markLiveUpdatesDisconnectedIfActive()
             }
+        }
+    }
+
+    private func handleLiveReconnect(conversationID: String) async {
+        liveUpdatesConnected = true
+        // Reload on (re)connect: the stream tails from the live head, so a
+        // reconnect after a drop resumes at the new head and misses events
+        // published while offline. Message content always comes from persisted
+        // history, so a reload closes that gap.
+        if !isStreaming {
+            await mergeNewMessages(conversationID: conversationID)
+            await refreshRecentConversations()
+        }
+    }
+
+    /// Handle one follow-stream event. Returns false when the loop should stop.
+    private func handleLiveEvent(
+        _ event: ChatStreamEvent,
+        conversationID: String,
+        client: ChatAPIClient
+    ) async -> Bool {
+        if let seq = event.seq {
+            recordAppliedSeq(seq)
+        }
+        switch event.type {
+        case .turnEnded, .message:
+            // A turn finished (possibly started on another device); refresh
+            // persisted history unless this device is actively streaming it.
+            if !isStreaming {
+                await mergeNewMessages(conversationID: conversationID)
+                await refreshRecentConversations()
+            }
+            // Acknowledge the turn_ended seq so the server marks the reply
+            // delivered and suppresses the disconnect push. Fire-and-forget.
+            if event.type == .turnEnded, let seq = event.seq {
+                Task { try? await client.acknowledge(conversationID: conversationID, ackSeq: seq) }
+            }
+        case .connected:
+            liveUpdatesConnected = true
+        case .heartbeat:
+            break
+        default:
+            break
+        }
+        return true
+    }
+
+    private func markLiveUpdatesDisconnectedIfActive() {
+        if !Task.isCancelled {
+            liveUpdatesConnected = false
         }
     }
 
@@ -504,7 +716,13 @@ final class ChatViewModel {
                 status: .complete
             )
         case .attachment:
-            messages[index].attachments.append(contentsOf: event.attachments)
+            // Only assistant-response attachments belong on this bubble. A
+            // `trigger` attachment is the user's own upload republished onto the
+            // stream; it already renders on the user message, so ignore it here.
+            // Absent source defaults to `.response` (backend always sets it).
+            if event.attachmentSource == .response {
+                messages[index].attachments.append(contentsOf: event.attachments)
+            }
         case .toolConfirmationRequest:
             if let confirmation = event.confirmation {
                 upsertPendingConfirmation(confirmation)
@@ -523,10 +741,10 @@ final class ChatViewModel {
             }
         case .error:
             appendStreamError(event.errorMessage ?? "An error occurred.", assistantMessageID: assistantMessageID)
-        case .end, .close:
+        case .turnEnded:
             messages[index].isLoading = false
             messages[index].status = .complete
-        case .connected, .message, .heartbeat:
+        case .turnStarted, .connected, .message, .heartbeat, .streamDropped:
             break
         }
     }

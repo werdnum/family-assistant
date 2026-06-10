@@ -12,6 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncEngine
 from family_assistant.llm import LLMOutput, ToolCallFunction, ToolCallItem
 from family_assistant.services.attachment_registry import AttachmentRegistry
 from family_assistant.storage.context import get_db_context
+from tests.functional.web.conftest import run_chat_turn_stream
 from tests.mocks.mock_llm import (
     RuleBasedMockLLMClient,
     extract_text_from_content,
@@ -71,9 +72,7 @@ async def test_chat_api_with_image_attachment(
     }
 
     # Send request to streaming endpoint
-    response = await api_test_client.post(
-        "/api/v1/chat/send_message_stream", json=payload
-    )
+    response = await run_chat_turn_stream(api_test_client, payload)
 
     assert response.status_code == 200
     assert response.headers["content-type"] == "text/event-stream; charset=utf-8"
@@ -118,9 +117,7 @@ async def test_chat_api_attachment_validation_size(
     }
 
     # API should handle this gracefully without crashing
-    response = await api_test_client.post(
-        "/api/v1/chat/send_message_stream", json=payload
-    )
+    response = await run_chat_turn_stream(api_test_client, payload)
 
     # Should still return 200 (validation happens on frontend)
     assert response.status_code == 200
@@ -171,9 +168,7 @@ async def test_chat_api_multiple_attachments(
 
     payload = {"prompt": "Compare these images", "attachments": attachments}
 
-    response = await api_test_client.post(
-        "/api/v1/chat/send_message_stream", json=payload
-    )
+    response = await run_chat_turn_stream(api_test_client, payload)
 
     assert response.status_code == 200
 
@@ -215,9 +210,7 @@ async def test_chat_api_attachment_format_validation(
     }
 
     # API should properly validate and return 400 for missing content
-    response = await api_test_client.post(
-        "/api/v1/chat/send_message_stream", json=payload
-    )
+    response = await run_chat_turn_stream(api_test_client, payload)
     assert response.status_code == 400
 
     # Test with invalid base64 (also should return 400)
@@ -232,9 +225,7 @@ async def test_chat_api_attachment_format_validation(
         ],
     }
 
-    response = await api_test_client.post(
-        "/api/v1/chat/send_message_stream", json=payload
-    )
+    response = await run_chat_turn_stream(api_test_client, payload)
     assert response.status_code == 400
 
 
@@ -254,9 +245,9 @@ async def test_chat_api_rejects_other_user_attachment_reference(
             user_id="other_user",
         )
 
-    response = await api_test_client.post(
-        "/api/v1/chat/send_message_stream",
-        json={
+    response = await run_chat_turn_stream(
+        api_test_client,
+        {
             "prompt": "Use this attachment",
             "conversation_id": "current-conversation",
             "attachments": [
@@ -314,9 +305,9 @@ async def test_chat_api_accepts_native_ios_uploaded_attachment_reference_and_loa
         content="Attachment injection was missing."
     )
 
-    response = await api_test_client.post(
-        "/api/v1/chat/send_message_stream",
-        json={
+    response = await run_chat_turn_stream(
+        api_test_client,
+        {
             "prompt": "Use this attachment",
             "conversation_id": conversation_id,
             "profile_id": "default_assistant",
@@ -366,9 +357,7 @@ async def test_chat_api_no_attachments(
         # No attachments field
     }
 
-    response = await api_test_client.post(
-        "/api/v1/chat/send_message_stream", json=payload
-    )
+    response = await run_chat_turn_stream(api_test_client, payload)
 
     assert response.status_code == 200
 
@@ -392,9 +381,7 @@ async def test_chat_api_empty_attachments_array(
         "attachments": [],  # Empty array
     }
 
-    response = await api_test_client.post(
-        "/api/v1/chat/send_message_stream", json=payload
-    )
+    response = await run_chat_turn_stream(api_test_client, payload)
 
     assert response.status_code == 200
 
@@ -414,9 +401,7 @@ async def test_chat_api_null_attachments(
 
     payload = {"prompt": "Test message", "attachments": None}
 
-    response = await api_test_client.post(
-        "/api/v1/chat/send_message_stream", json=payload
-    )
+    response = await run_chat_turn_stream(api_test_client, payload)
 
     assert response.status_code == 200
 
@@ -482,9 +467,7 @@ async def test_tool_result_attachments_include_complete_metadata(
         "interface_type": "web",
     }
 
-    response = await api_test_client.post(
-        "/api/v1/chat/send_message_stream", json=payload
-    )
+    response = await run_chat_turn_stream(api_test_client, payload)
 
     assert response.status_code == 200
 

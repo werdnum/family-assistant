@@ -1,5 +1,14 @@
 import { HttpResponse, http } from 'msw';
 
+// Captures the prompt supplied to POST /v1/chat/turns so the follow-up
+// GET /conversations/:id/stream can derive a mock response from it.
+const pendingTurnPrompts = new Map<string, string>();
+// Captures the turn_id from POST /v1/chat/turns so the SSE stream can echo it
+// on per-turn events. The send-and-watch client only renders events whose
+// turn_id matches the one it sent, so the mock must use the real id (not a
+// fixed placeholder) for the turn_ended terminator to be recognized.
+const pendingTurnIds = new Map<string, string>();
+
 export const handlers = [
   // Mock profiles endpoint
   http.get('/api/v1/profiles', () => {
@@ -345,34 +354,62 @@ export const handlers = [
     });
   }),
 
-  // Mock streaming chat endpoint - this is the key one for ChatApp
-  http.post('/api/v1/chat/send_message_stream', async ({ request }) => {
+  // Resumable streaming: POST /turns kicks off a turn (returns identity),
+  // GET /conversations/:id/stream delivers the SSE events. This mirrors the
+  // production two-step flow. The prompt captured at POST time is stashed so
+  // the GET stream can derive a response from it.
+  http.post('/api/v1/chat/turns', async ({ request }) => {
     const body = (await request.json()) as {
+      turn_id: string;
       prompt: string;
-      conversation_id: string;
+      conversation_id?: string;
       profile_id?: string;
     };
+    const conversationId = body.conversation_id || `web_conv_${Date.now()}`;
+    pendingTurnPrompts.set(conversationId, body.prompt);
+    pendingTurnIds.set(conversationId, body.turn_id);
+    return HttpResponse.json({
+      turn_id: body.turn_id,
+      conversation_id: conversationId,
+      first_seq: 0,
+    });
+  }),
 
-    // Create a simple streaming response
+  http.post('/api/v1/chat/ack', () => {
+    // Client acknowledges receipt of a turn to suppress the disconnect push.
+    return HttpResponse.json({ ok: true });
+  }),
+
+  http.get('/api/v1/chat/conversations/:conversationId/stream', ({ params }) => {
+    const conversationId = String(params.conversationId);
+    const prompt = pendingTurnPrompts.get(conversationId) ?? '';
+    const turnId = pendingTurnIds.get(conversationId) ?? 'mock-turn';
     const encoder = new TextEncoder();
     const stream = new ReadableStream({
       start(controller) {
-        // Simulate streaming response based on the prompt
-        const response = getTestResponse(body.prompt);
+        controller.enqueue(
+          encoder.encode(
+            `event: turn_started\ndata: ${JSON.stringify({ turn_id: turnId, seq: 0 })}\n\n`
+          )
+        );
+        const response = getTestResponse(prompt);
         const words = response.split(' ');
-
         words.forEach((word, index) => {
           setTimeout(() => {
-            controller.enqueue(encoder.encode(`data: {"content": "${word} "}\n\n`));
-
-            // Send done signal after last word
+            controller.enqueue(
+              encoder.encode(`event: text\ndata: ${JSON.stringify({ content: `${word} ` })}\n\n`)
+            );
             if (index === words.length - 1) {
               setTimeout(() => {
-                controller.enqueue(encoder.encode('data: {"done": true}\n\n'));
+                controller.enqueue(
+                  encoder.encode(
+                    `event: turn_ended\ndata: ${JSON.stringify({ turn_id: turnId, status: 'complete' })}\n\n`
+                  )
+                );
                 controller.close();
               }, 50);
             }
-          }, index * 100); // 100ms delay between words
+          }, index * 100);
         });
       },
     });
@@ -553,20 +590,35 @@ function getTestResponse(prompt: string): string {
   return "I received your message and I'm here to help!";
 }
 
-// Helper function to create test responses for streaming
-export function createStreamingResponse(chunks: string[]): ReadableStream {
+// Helper function to create test responses for streaming. Emits the
+// resumable-streaming wire format: turn_started, text events, turn_ended.
+export function createStreamingResponse(
+  chunks: string[],
+  turnId: string = 'mock-turn'
+): ReadableStream {
   const encoder = new TextEncoder();
 
   return new ReadableStream({
     start(controller) {
+      controller.enqueue(
+        encoder.encode(
+          `event: turn_started\ndata: ${JSON.stringify({ turn_id: turnId, seq: 0 })}\n\n`
+        )
+      );
       chunks.forEach((chunk, index) => {
         // Add delay between chunks to simulate streaming
         setTimeout(() => {
-          controller.enqueue(encoder.encode(`data: ${JSON.stringify({ content: chunk })}\n\n`));
+          controller.enqueue(
+            encoder.encode(`event: text\ndata: ${JSON.stringify({ content: chunk })}\n\n`)
+          );
 
           // Close stream after last chunk
           if (index === chunks.length - 1) {
-            controller.enqueue(encoder.encode('data: {"done": true}\n\n'));
+            controller.enqueue(
+              encoder.encode(
+                `event: turn_ended\ndata: ${JSON.stringify({ turn_id: turnId, status: 'complete' })}\n\n`
+              )
+            );
             controller.close();
           }
         }, index * 100);
@@ -575,55 +627,66 @@ export function createStreamingResponse(chunks: string[]): ReadableStream {
   });
 }
 
-// Export test-specific handlers that can be used in individual tests
+const STREAM_HEADERS = {
+  'Content-Type': 'text/event-stream',
+  'Cache-Control': 'no-cache',
+  Connection: 'keep-alive',
+};
+
+// Export test-specific handlers that can be used in individual tests.
+// With the resumable-streaming split, the SSE body is served by the GET
+// stream endpoint, so overrides target that route (a default POST /turns
+// handler in `handlers` supplies the kickoff identity).
 export const testHandlers = {
   // Handler for streaming chat responses
   streamingChat: (responseChunks: string[]) =>
-    http.post('/api/v1/chat/send_message_stream', () => {
-      const stream = createStreamingResponse(responseChunks);
-      return new HttpResponse(stream, {
-        headers: {
-          'Content-Type': 'text/event-stream',
-          'Cache-Control': 'no-cache',
-          Connection: 'keep-alive',
-        },
-      });
+    http.get('/api/v1/chat/conversations/:conversationId/stream', ({ params }) => {
+      const turnId = pendingTurnIds.get(String(params.conversationId)) ?? 'mock-turn';
+      const stream = createStreamingResponse(responseChunks, turnId);
+      return new HttpResponse(stream, { headers: STREAM_HEADERS });
     }),
 
   // Handler for tool calls in responses
   toolCallResponse: (toolName: string, args: Record<string, unknown>) =>
-    http.post('/api/v1/chat/send_message_stream', () => {
+    http.get('/api/v1/chat/conversations/:conversationId/stream', ({ params }) => {
+      const turnId = pendingTurnIds.get(String(params.conversationId)) ?? 'mock-turn';
       const encoder = new TextEncoder();
       const stream = new ReadableStream({
         start(controller) {
-          // Send tool call first
           controller.enqueue(
             encoder.encode(
-              `data: ${JSON.stringify({
-                tool_calls: [
-                  {
-                    id: 'tool-call-1',
+              `event: turn_started\ndata: ${JSON.stringify({ turn_id: turnId, seq: 0 })}\n\n`
+            )
+          );
+          // Send a single tool call, matching the turn producer's `tool_call`
+          // event shape (payload.tool_call.function.name / .arguments).
+          controller.enqueue(
+            encoder.encode(
+              `event: tool_call\ndata: ${JSON.stringify({
+                tool_call: {
+                  id: 'tool-call-1',
+                  type: 'function',
+                  function: {
                     name: toolName,
                     arguments: JSON.stringify(args),
                   },
-                ],
+                },
               })}\n\n`
             )
           );
 
-          // Then send done
+          // Then end the turn
           setTimeout(() => {
-            controller.enqueue(encoder.encode('data: {"done": true}\n\n'));
+            controller.enqueue(
+              encoder.encode(
+                `event: turn_ended\ndata: ${JSON.stringify({ turn_id: turnId, status: 'complete' })}\n\n`
+              )
+            );
             controller.close();
           }, 50);
         },
       });
 
-      return new HttpResponse(stream, {
-        headers: {
-          'Content-Type': 'text/event-stream',
-          'Cache-Control': 'no-cache',
-        },
-      });
+      return new HttpResponse(stream, { headers: STREAM_HEADERS });
     }),
 };

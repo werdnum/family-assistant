@@ -107,10 +107,7 @@ async def get_db(request: Request) -> AsyncGenerator[DatabaseContext]:
     if not engine:
         raise RuntimeError("Database engine not initialized in app.state")
 
-    # Get message_notifier from app.state (optional, for live message updates)
-    message_notifier = getattr(request.app.state, "message_notifier", None)
-
-    async with get_db_context(engine, message_notifier=message_notifier) as db_context:
+    async with get_db_context(engine) as db_context:
         yield db_context
 
 

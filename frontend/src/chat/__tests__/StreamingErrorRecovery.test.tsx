@@ -79,12 +79,12 @@ describe.sequential('Streaming Error Recovery', () => {
     async () => {
       // Simulate: text content → error → more text content → done
       server.use(
-        http.post('/api/v1/chat/send_message_stream', () => {
+        http.get('/api/v1/chat/conversations/:conversationId/stream', () => {
           return createSSEStream([
             { content: 'Starting response... ' },
             { error: 'Tool execution failed: timeout' },
             { content: 'But I can continue answering.' },
-            { done: true },
+            { status: 'complete' },
           ]);
         })
       );
@@ -117,8 +117,8 @@ describe.sequential('Streaming Error Recovery', () => {
     async () => {
       // Simulate: error only → done (no text content, no tool calls)
       server.use(
-        http.post('/api/v1/chat/send_message_stream', () => {
-          return createSSEStream([{ error: 'Failed to process request' }, { done: true }]);
+        http.get('/api/v1/chat/conversations/:conversationId/stream', () => {
+          return createSSEStream([{ error: 'Failed to process request' }, { status: 'complete' }]);
         })
       );
 
@@ -145,20 +145,18 @@ describe.sequential('Streaming Error Recovery', () => {
     async () => {
       // Simulate: tool call → error → done (with text content to finalize)
       server.use(
-        http.post('/api/v1/chat/send_message_stream', () => {
+        http.get('/api/v1/chat/conversations/:conversationId/stream', () => {
           return createSSEStream([
             {
               content: 'Let me look that up.',
-              tool_calls: [
-                {
-                  id: 'call-recovery-test',
-                  type: 'function',
-                  function: {
-                    name: 'search_notes',
-                    arguments: JSON.stringify({ query: 'test' }),
-                  },
+              tool_call: {
+                id: 'call-recovery-test',
+                type: 'function',
+                function: {
+                  name: 'search_notes',
+                  arguments: JSON.stringify({ query: 'test' }),
                 },
-              ],
+              },
             },
             { error: 'Minor hiccup during processing' },
             {
@@ -166,7 +164,7 @@ describe.sequential('Streaming Error Recovery', () => {
               result: JSON.stringify({ notes: ['Test note'] }),
             },
             { content: ' Found some results.' },
-            { done: true },
+            { status: 'complete' },
           ]);
         })
       );
@@ -198,16 +196,16 @@ describe.sequential('Streaming Error Recovery', () => {
       let callCount = 0;
 
       server.use(
-        http.post('/api/v1/chat/send_message_stream', () => {
+        http.get('/api/v1/chat/conversations/:conversationId/stream', () => {
           callCount++;
 
           if (callCount === 1) {
             // First message: error only
-            return createSSEStream([{ error: 'Something went wrong' }, { done: true }]);
+            return createSSEStream([{ error: 'Something went wrong' }, { status: 'complete' }]);
           }
 
           // Second message: successful response
-          return createSSEStream([{ content: 'This works fine!' }, { done: true }]);
+          return createSSEStream([{ content: 'This works fine!' }, { status: 'complete' }]);
         })
       );
 
@@ -314,9 +312,8 @@ describe.sequential('Streaming Error Recovery', () => {
             ],
           });
         }),
-        http.post('/api/v1/chat/send_message_stream', async ({ request }) => {
-          const body = (await request.json()) as { conversation_id: string };
-          expect(body.conversation_id).toBe('web_conv_activate_tools_race');
+        http.get('/api/v1/chat/conversations/:conversationId/stream', ({ params }) => {
+          expect(String(params.conversationId)).toBe('web_conv_activate_tools_race');
 
           const encoder = new TextEncoder();
           const stream = new ReadableStream({
@@ -367,7 +364,11 @@ describe.sequential('Streaming Error Recovery', () => {
                     })}\n\n`
                   )
                 );
-                controller.enqueue(encoder.encode('data: {"done": true}\n\n'));
+                controller.enqueue(
+                  encoder.encode(
+                    `event: turn_ended\ndata: ${JSON.stringify({ status: 'complete' })}\n\n`
+                  )
+                );
                 controller.close();
               })();
             },

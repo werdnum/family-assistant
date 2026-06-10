@@ -141,53 +141,148 @@ final class ChatAPIClientTests: XCTestCase {
     }
 
     func testStreamMessageSendsWebPayloadAndDecodesSSE() async throws {
+        var sawStartRequest = false
         var sawStreamRequest = false
         ChatMockBackendURLProtocol.respond { request in
-            if request.url?.path == "/api/v1/chat/events" {
-                return .text(
-                    """
-                    event: heartbeat
-                    data: {}
-
-                    """
+            let path = request.url?.path ?? ""
+            if request.httpMethod == "POST", path == "/api/v1/chat/turns" {
+                XCTAssertEqual(request.value(forHTTPHeaderField: "Content-Type"), "application/json")
+                let payload = try XCTUnwrap(Self.jsonObject(from: request) as? [String: Any])
+                XCTAssertNotNil(payload["turn_id"] as? String)
+                XCTAssertEqual(payload["prompt"] as? String, "Hi")
+                XCTAssertEqual(payload["conversation_id"] as? String, "web_conv_stream")
+                XCTAssertEqual(payload["profile_id"] as? String, "default_assistant")
+                XCTAssertEqual(payload["interface_type"] as? String, "web")
+                sawStartRequest = true
+                return .json(
+                    #"{"turn_id":"turn-1","conversation_id":"web_conv_stream","first_seq":0}"#
                 )
             }
-            XCTAssertEqual(request.httpMethod, "POST")
-            XCTAssertEqual(request.url?.path, "/api/v1/chat/send_message_stream")
-            XCTAssertEqual(request.value(forHTTPHeaderField: "Content-Type"), "application/json")
-            let payload = try XCTUnwrap(Self.jsonObject(from: request) as? [String: Any])
-            XCTAssertEqual(payload["prompt"] as? String, "Hi")
-            XCTAssertEqual(payload["conversation_id"] as? String, "web_conv_stream")
-            XCTAssertEqual(payload["profile_id"] as? String, "default_assistant")
-            XCTAssertEqual(payload["interface_type"] as? String, "web")
+            XCTAssertEqual(request.httpMethod, "GET")
+            XCTAssertEqual(path, "/api/v1/chat/conversations/web_conv_stream/stream")
             sawStreamRequest = true
             return .text(
                 """
+                event: turn_started
+                data: {"turn_id":"turn-1","seq":0}
+
                 event: text
                 data: {"content":"Hello"}
 
-                event: end
-                data: {}
+                event: turn_ended
+                data: {"turn_id":"turn-1","status":"complete"}
 
                 """
             )
         }
 
-        let stream = try await makeClient().streamMessage(
+        let turnStream = try await makeClient().streamMessage(
+            turnID: "turn-1",
             prompt: "Hi",
             conversationID: "web_conv_stream",
             profileID: "default_assistant",
             attachments: []
         )
 
+        XCTAssertFalse(turnStream.alreadyComplete)
+        let stream = try XCTUnwrap(turnStream.events)
         var events: [ChatStreamEvent] = []
         for try await event in stream {
             events.append(event)
         }
 
-        XCTAssertEqual(events.map(\.type), [.text, .end])
-        XCTAssertEqual(events.first?.text, "Hello")
+        XCTAssertEqual(events.map(\.type), [.turnStarted, .text, .turnEnded])
+        XCTAssertEqual(events.first { $0.type == .text }?.text, "Hello")
+        XCTAssertTrue(sawStartRequest)
         XCTAssertTrue(sawStreamRequest)
+    }
+
+    func testStreamMessageAlreadyCompleteSkipsStream() async throws {
+        var sawStreamRequest = false
+        ChatMockBackendURLProtocol.respond { request in
+            let path = request.url?.path ?? ""
+            if request.httpMethod == "POST", path == "/api/v1/chat/turns" {
+                return .json(
+                    #"{"turn_id":"turn-dup","conversation_id":"web_conv_dup","first_seq":0,"already_complete":true}"#
+                )
+            }
+            sawStreamRequest = true
+            return .text("event: turn_ended\ndata: {\"turn_id\":\"turn-dup\"}\n\n")
+        }
+
+        let turnStream = try await makeClient().streamMessage(
+            turnID: "turn-dup",
+            prompt: "Hi again",
+            conversationID: "web_conv_dup",
+            profileID: "default_assistant",
+            attachments: []
+        )
+
+        XCTAssertTrue(turnStream.alreadyComplete)
+        XCTAssertNil(turnStream.events)
+        XCTAssertFalse(sawStreamRequest)
+    }
+
+    func testConnectEventsSendsAckSeqAndEventTypeFilter() async throws {
+        var queryItems: [String: String] = [:]
+        ChatMockBackendURLProtocol.respond { request in
+            queryItems = Self.queryItems(from: request)
+            return .text("event: heartbeat\ndata: {}\n\n")
+        }
+
+        let stream = try await makeClient().connectEvents(
+            conversationID: "web_conv_follow",
+            ackSeq: 12,
+            eventTypes: ["message", "turn_ended"]
+        )
+        for try await _ in stream {}
+
+        XCTAssertEqual(queryItems["follow"], "true")
+        XCTAssertEqual(queryItems["from_seq"], "-1")
+        XCTAssertEqual(queryItems["ack_seq"], "12")
+        XCTAssertEqual(queryItems["event_types"], "message,turn_ended")
+    }
+
+    func testAcknowledgePostsConversationAndSeq() async throws {
+        var payload: [String: Any]?
+        var path: String?
+        ChatMockBackendURLProtocol.respond { request in
+            path = request.url?.path
+            payload = try Self.jsonObject(from: request) as? [String: Any]
+            return .json("{}")
+        }
+
+        try await makeClient().acknowledge(conversationID: "web_conv_ack", ackSeq: 5)
+
+        XCTAssertEqual(path, "/api/v1/chat/ack")
+        XCTAssertEqual(payload?["conversation_id"] as? String, "web_conv_ack")
+        XCTAssertEqual(payload?["ack_seq"] as? Int, 5)
+    }
+
+    func testGetMessagesPageSendsAfterTimestamp() async throws {
+        var queryItems: [String: String] = [:]
+        ChatMockBackendURLProtocol.respond { request in
+            queryItems = Self.queryItems(from: request)
+            return .json(
+                """
+                {
+                  "conversation_id":"web_conv_after",
+                  "messages":[],
+                  "count":0,
+                  "total_messages":0,
+                  "has_more_before":false,
+                  "has_more_after":false
+                }
+                """
+            )
+        }
+
+        let after = Date(timeIntervalSince1970: 1_700_000_000)
+        _ = try await makeClient().getMessagesPage(conversationID: "web_conv_after", after: after, limit: 100)
+
+        XCTAssertEqual(queryItems["limit"], "100")
+        XCTAssertNotNil(queryItems["after"])
+        XCTAssertTrue(queryItems["after"]?.hasPrefix("2023-11-14T") == true)
     }
 
     func testConfirmToolIncludesApprovingInterfaceIOS() async throws {

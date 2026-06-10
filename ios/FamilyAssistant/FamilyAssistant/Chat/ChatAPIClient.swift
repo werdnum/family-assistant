@@ -6,6 +6,11 @@ struct ChatAPIClient {
     let authManager: AuthManager
     var urlSession: URLSession = .shared
     private static let conversationPageSize = 100
+    private static let iso8601Formatter: ISO8601DateFormatter = {
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        return formatter
+    }()
 
     func listConversations() async throws -> [ChatConversationSummary] {
         var conversations: [ChatConversationSummary] = []
@@ -22,6 +27,15 @@ struct ChatAPIClient {
         }
     }
 
+    /// Fetch only the most recent page of conversation summaries.
+    ///
+    /// Used for incremental refreshes after a turn or live event: the list is
+    /// ordered most-recent-first, so the conversation that just changed is on
+    /// the first page. Paging the entire history on every event is wasteful.
+    func listRecentConversations() async throws -> [ChatConversationSummary] {
+        try await listConversationPage(limit: Self.conversationPageSize, offset: 0).conversations
+    }
+
     private func listConversationPage(limit: Int, offset: Int) async throws -> ChatConversationListResponse {
         let request = try await authManager.authorizedRequest(
             url: conversationListURL(limit: limit, offset: offset),
@@ -32,15 +46,40 @@ struct ChatAPIClient {
         return try JSONDecoder.chatDecoder.decode(ChatConversationListResponse.self, from: data)
     }
 
+    /// Load a conversation's full persisted history (oldest → newest).
     func getMessages(conversationID: String) async throws -> [ChatBackendMessage] {
+        try await getMessagesPage(conversationID: conversationID, after: nil, limit: 0).messages
+    }
+
+    /// Load only messages newer than `after` (ISO-8601 timestamp).
+    ///
+    /// Incremental loads after a turn or live event pass the timestamp of the
+    /// newest message already held, so only the delta crosses the wire instead
+    /// of the entire history. The server's paginated path honors `after` only
+    /// with a non-zero limit (limit=0 falls back to returning everything), so a
+    /// page size is required; the caller pages on `hasMoreAfter`.
+    func getMessagesPage(
+        conversationID: String,
+        after: Date?,
+        limit: Int
+    ) async throws -> ChatConversationMessagesResponse {
         let encodedID = Self.encodedPathComponent(conversationID)
-        let request = try await authManager.authorizedRequest(
-            url: apiURL("/api/v1/chat/conversations/\(encodedID)/messages?limit=0"),
-            method: "GET"
+        var components = URLComponents(
+            url: try apiURL("/api/v1/chat/conversations/\(encodedID)/messages"),
+            resolvingAgainstBaseURL: false
         )
+        var queryItems = [URLQueryItem(name: "limit", value: String(limit))]
+        if let after {
+            queryItems.append(URLQueryItem(name: "after", value: Self.iso8601Formatter.string(from: after)))
+        }
+        components?.queryItems = queryItems
+        guard let url = components?.url else {
+            throw ChatAPIError.invalidServerURL
+        }
+        let request = try await authManager.authorizedRequest(url: url, method: "GET")
         let (data, response) = try await urlSession.data(for: request)
         try validate(response: response, data: data)
-        return try JSONDecoder.chatDecoder.decode(ChatConversationMessagesResponse.self, from: data).messages
+        return try JSONDecoder.chatDecoder.decode(ChatConversationMessagesResponse.self, from: data)
     }
 
     func listProfiles() async throws -> ChatProfilesResponse {
@@ -52,8 +91,8 @@ struct ChatAPIClient {
 
     /// Sends a prompt and waits for the assistant's full reply.
     ///
-    /// Unlike ``streamMessage(prompt:conversationID:profileID:attachments:)`` this
-    /// uses the non-streaming `/send_message` endpoint, which suits headless
+    /// Unlike ``streamMessage(turnID:prompt:conversationID:profileID:attachments:)``
+    /// this uses the non-streaming `/send_message` endpoint, which suits headless
     /// callers (App Intents / Siri) that present a single completed reply rather
     /// than a live token stream.
     func sendMessage(
@@ -81,19 +120,27 @@ struct ChatAPIClient {
         return ChatSendResult(reply: decoded.reply, conversationID: decoded.conversationID)
     }
 
+    /// Kick off a chat turn and return a live stream of its events.
+    ///
+    /// Two-step resumable-streaming flow:
+    /// 1. POST /api/v1/chat/turns starts the turn (idempotent on `turnID`).
+    /// 2. GET /api/v1/chat/conversations/{id}/stream?from_seq=… delivers the
+    ///    SSE events; with follow=false it closes once the turn completes.
     func streamMessage(
+        turnID: String,
         prompt: String,
         conversationID: String,
         profileID: String?,
         attachments: [ChatAttachment]
-    ) async throws -> AsyncThrowingStream<ChatStreamEvent, Error> {
-        var request = try await authManager.authorizedRequest(
-            url: apiURL("/api/v1/chat/send_message_stream"),
+    ) async throws -> ChatTurnStream {
+        var startRequest = try await authManager.authorizedRequest(
+            url: apiURL("/api/v1/chat/turns"),
             method: "POST"
         )
-        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        request.httpBody = try JSONEncoder.chatEncoder.encode(
+        startRequest.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        startRequest.httpBody = try JSONEncoder.chatEncoder.encode(
             ChatStreamRequest(
+                turnID: turnID,
                 prompt: prompt,
                 conversationID: conversationID,
                 profileID: profileID,
@@ -101,39 +148,90 @@ struct ChatAPIClient {
                 attachments: attachments.map(ChatStreamAttachment.init(attachment:))
             )
         )
+        let (startData, startResponse) = try await urlSession.data(for: startRequest)
+        try validate(response: startResponse, data: startData)
+        let turn = try JSONDecoder.chatDecoder.decode(ChatTurnResponse.self, from: startData)
 
-        return AsyncThrowingStream { continuation in
-            let task = Task {
-                do {
-                    let (bytes, response) = try await urlSession.bytes(for: request)
-                    try validate(response: response, data: Data())
-                    let parser = SSEParser()
-                    try await streamServerSentEvents(bytes: bytes, parser: parser, continuation: continuation)
-                    continuation.finish()
-                } catch {
-                    continuation.finish(throwing: error)
-                }
-            }
-            continuation.onTermination = { _ in
-                task.cancel()
-            }
+        // Durable-idempotency fallback: a retried turn_id already completed and
+        // persisted, but is no longer replayable from the hub. Opening /stream
+        // here would 410 or block; the caller reloads history instead.
+        if turn.alreadyComplete {
+            return ChatTurnStream(conversationID: turn.conversationID, alreadyComplete: true, events: nil)
         }
+
+        let events = try await streamConversation(
+            conversationID: turn.conversationID,
+            fromSeq: turn.firstSeq,
+            follow: false
+        )
+        return ChatTurnStream(conversationID: turn.conversationID, alreadyComplete: false, events: events)
     }
 
+    /// Connect to a conversation's event stream for live updates. With
+    /// `follow=true` the connection stays open across turns so replies started
+    /// from other devices/tabs surface here too.
+    ///
+    /// Defaults to `fromSeq = -1` (tail from the current head): a follow-only
+    /// listener wants future events, not a replay, and subscribing from 0 would
+    /// 410 once the conversation's hub buffer has rotated.
     func connectEvents(
         conversationID: String,
-        after: Date? = nil
+        fromSeq: Int = -1,
+        ackSeq: Int? = nil,
+        eventTypes: [String]? = nil
     ) async throws -> AsyncThrowingStream<ChatStreamEvent, Error> {
-        var components = URLComponents(url: try apiURL("/api/v1/chat/events"), resolvingAgainstBaseURL: false)
-        components?.queryItems = [
-            URLQueryItem(name: "conversation_id", value: conversationID),
-            URLQueryItem(name: "interface_type", value: ChatConstants.interfaceType),
+        try await streamConversation(
+            conversationID: conversationID,
+            fromSeq: fromSeq,
+            follow: true,
+            ackSeq: ackSeq,
+            eventTypes: eventTypes
+        )
+    }
+
+    /// Acknowledge the highest received seq for a conversation so the server
+    /// suppresses the "new reply" disconnect push. The server never treats
+    /// writing the SSE chunk as delivery — only this explicit ack counts.
+    func acknowledge(conversationID: String, ackSeq: Int) async throws {
+        var request = try await authManager.authorizedRequest(
+            url: apiURL("/api/v1/chat/ack"),
+            method: "POST"
+        )
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.httpBody = try JSONEncoder.chatEncoder.encode(
+            ChatAckRequest(conversationID: conversationID, ackSeq: ackSeq)
+        )
+        let (data, response) = try await urlSession.data(for: request)
+        try validate(response: response, data: data)
+    }
+
+    private func streamConversation(
+        conversationID: String,
+        fromSeq: Int,
+        follow: Bool,
+        ackSeq: Int? = nil,
+        eventTypes: [String]? = nil
+    ) async throws -> AsyncThrowingStream<ChatStreamEvent, Error> {
+        let encodedConversation = Self.encodedPathComponent(conversationID)
+        var components = URLComponents(
+            url: try apiURL("/api/v1/chat/conversations/\(encodedConversation)/stream"),
+            resolvingAgainstBaseURL: false
+        )
+        var queryItems = [
+            URLQueryItem(name: "from_seq", value: String(fromSeq)),
+            URLQueryItem(name: "follow", value: follow ? "true" : "false"),
         ]
-        if let after {
-            components?.queryItems?.append(
-                URLQueryItem(name: "after", value: ISO8601DateFormatter().string(from: after))
-            )
+        if let ackSeq {
+            // Mark everything through `ackSeq` delivered on (re)subscribe so the
+            // server suppresses the disconnect push for events already applied.
+            queryItems.append(URLQueryItem(name: "ack_seq", value: String(ackSeq)))
         }
+        if let eventTypes, !eventTypes.isEmpty {
+            // Lifecycle/control frames (turn_ended, heartbeat, stream_dropped)
+            // are always delivered regardless of this filter.
+            queryItems.append(URLQueryItem(name: "event_types", value: eventTypes.joined(separator: ",")))
+        }
+        components?.queryItems = queryItems
         guard let url = components?.url else {
             throw ChatAPIError.invalidServerURL
         }
@@ -343,6 +441,18 @@ struct ChatSendResult: Equatable {
     let conversationID: String
 }
 
+/// Result of starting a chat turn.
+///
+/// `events` is the live SSE stream for the turn, or `nil` when `alreadyComplete`
+/// is true — a retried turn that finished durably but is no longer replayable
+/// from the hub. In that case the caller reloads persisted history instead of
+/// opening the stream.
+struct ChatTurnStream {
+    let conversationID: String
+    let alreadyComplete: Bool
+    let events: AsyncThrowingStream<ChatStreamEvent, Error>?
+}
+
 private struct ChatSendMessageRequest: Encodable {
     let prompt: String
     let conversationID: String
@@ -368,6 +478,7 @@ private struct ChatSendMessageResponse: Decodable {
 }
 
 private struct ChatStreamRequest: Encodable {
+    let turnID: String
     let prompt: String
     let conversationID: String
     let profileID: String?
@@ -375,11 +486,46 @@ private struct ChatStreamRequest: Encodable {
     let attachments: [ChatStreamAttachment]?
 
     enum CodingKeys: String, CodingKey {
+        case turnID = "turn_id"
         case prompt
         case conversationID = "conversation_id"
         case profileID = "profile_id"
         case interfaceType = "interface_type"
         case attachments
+    }
+}
+
+private struct ChatTurnResponse: Decodable {
+    let turnID: String
+    let conversationID: String
+    let firstSeq: Int
+    let alreadyComplete: Bool
+
+    enum CodingKeys: String, CodingKey {
+        case turnID = "turn_id"
+        case conversationID = "conversation_id"
+        case firstSeq = "first_seq"
+        case alreadyComplete = "already_complete"
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        turnID = try container.decode(String.self, forKey: .turnID)
+        conversationID = try container.decode(String.self, forKey: .conversationID)
+        firstSeq = try container.decode(Int.self, forKey: .firstSeq)
+        // Durable-idempotency fallback: a turn found in the DB but not the hub
+        // returns already_complete=true and is not replayable from the stream.
+        alreadyComplete = try container.decodeIfPresent(Bool.self, forKey: .alreadyComplete) ?? false
+    }
+}
+
+private struct ChatAckRequest: Encodable {
+    let conversationID: String
+    let ackSeq: Int
+
+    enum CodingKeys: String, CodingKey {
+        case conversationID = "conversation_id"
+        case ackSeq = "ack_seq"
     }
 }
 

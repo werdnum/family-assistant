@@ -870,18 +870,6 @@ class MessageHistoryRepository(BaseRepository):
                 f"interface={interface_type}, internal_id={internal_id}"
             )
 
-            # Notify listeners after transaction commits (if notifier available)
-            if hasattr(self._db, "message_notifier"):
-                notifier = getattr(self._db, "message_notifier", None)
-                if notifier:
-                    conv_id = conversation_id
-                    iface_type = interface_type
-
-                    def notify_listeners() -> None:
-                        notifier.notify(conv_id, iface_type)
-
-                    self._db.on_commit(notify_listeners)
-
         except SQLAlchemyError as e:
             self._logger.error(f"Failed to add message to history: {e}", exc_info=True)
             return None
@@ -1421,6 +1409,26 @@ class MessageHistoryRepository(BaseRepository):
 
         row = await self._db.fetch_one(stmt)
         return row["interface_type"] if row else None
+
+    async def get_conversation_owner_ids(self, conversation_id: str) -> set[str]:
+        """Return the distinct, non-null ``user_id``s of user messages in a
+        conversation, across all interface types.
+
+        Used for ownership/authorization checks: a conversation "belongs to"
+        whoever has authored a user message in it. An empty set means the
+        conversation has no persisted user messages yet (brand new).
+        """
+        stmt = (
+            select(message_history_table.c.user_id)
+            .where(
+                message_history_table.c.conversation_id == conversation_id,
+                message_history_table.c.role == "user",
+                message_history_table.c.user_id.is_not(None),
+            )
+            .distinct()
+        )
+        rows = await self._db.fetch_all(stmt)
+        return {row["user_id"] for row in rows if row["user_id"] is not None}
 
     async def get_by_turn_id(self, turn_id: str) -> list[LLMMessage]:
         """

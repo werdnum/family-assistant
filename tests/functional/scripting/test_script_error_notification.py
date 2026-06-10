@@ -106,6 +106,9 @@ async def _wait_for_notification_tasks(
     return notification_tasks
 
 
+# Flaky under xdist on SQLite: the llm_callback task can stall in `processing`
+# (task-worker / SQLite write contention) and time out. See issue #889.
+@pytest.mark.flaky(reruns=3, reruns_delay=2)
 @pytest.mark.asyncio
 async def test_script_failure_notification_is_processable(
     db_engine: AsyncEngine,

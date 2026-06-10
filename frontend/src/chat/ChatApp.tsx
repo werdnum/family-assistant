@@ -71,6 +71,23 @@ class ThreadErrorBoundary extends Component<{ children: ReactNode }, ThreadError
 
 const LIVE_CONFIRMATION_POLL_RACE_GRACE_MS = 30000;
 
+/** Extract plain text from a backend message's content for a notification
+ * preview. Content is either a string or an array of parts; only `text` parts
+ * contribute (image/tool parts have no preview text). */
+function extractMessagePreview(content: BackendConversationMessage['content']): string {
+  if (typeof content === 'string') {
+    return content.trim();
+  }
+  if (Array.isArray(content)) {
+    return content
+      .map((part) => (part.type === 'text' ? (part as { text?: unknown }).text : null))
+      .filter((text): text is string => typeof text === 'string')
+      .join('\n')
+      .trim();
+  }
+  return '';
+}
+
 function parseConfirmationTimestamp(value: unknown): number | null {
   if (typeof value !== 'string' && typeof value !== 'number') {
     return null;
@@ -161,6 +178,22 @@ const ChatApp: React.FC<ChatAppProps> = ({ profileId = 'default_assistant' }) =>
   const abortControllerRef = useRef<AbortController | null>(null);
   const messagesAbortControllerRef = useRef<AbortController | null>(null);
   const resolvedConfirmationIdsRef = useRef<Set<string>>(new Set());
+  // The hub `message`/`turn_ended` events are content-free, so the in-app
+  // notification must be derived from reloaded history. We keep the latest
+  // assistant message internal_id seen per conversation so a background reload
+  // can tell a genuinely new out-of-band reply from an unchanged one, and a
+  // ref to showNotification so the empty-dep loader can call it without
+  // recreating itself on every render.
+  const lastSeenAssistantIdRef = useRef<Map<string, string>>(new Map());
+  const showNotificationRef = useRef<
+    | ((data: {
+        conversationId: string;
+        messageId: string;
+        preview: string;
+        timestamp: string;
+      }) => void)
+    | null
+  >(null);
   const [searchParams, setSearchParams] = useSearchParams();
 
   // Fetch conversations list
@@ -578,10 +611,26 @@ const ChatApp: React.FC<ChatAppProps> = ({ profileId = 'default_assistant' }) =>
     }
   }, []);
 
+  // Reload persisted history when the live stream can't show the reply itself:
+  // a durably-complete turn (already_complete — never opened /stream) or a
+  // dropped/interrupted stream. Deferred so it runs after onComplete clears the
+  // active-stream ref; loadConversationMessages bails while that ref is set.
+  // loadConversationMessages is referenced via a ref because it is declared
+  // after this hook, and the streaming hook must be initialized before it.
+  const loadConversationMessagesRef =
+    useRef<(convId: string, background?: boolean) => Promise<void>>(null);
+  const handleReloadHistory = useCallback((reloadConversationId: string) => {
+    activeStreamConversationIdRef.current = null;
+    setTimeout(() => {
+      void loadConversationMessagesRef.current?.(reloadConversationId, true);
+    }, 0);
+  }, []);
+
   // Initialize streaming hook
   const { sendStreamingMessage, cancelStream, isStreaming } = useStreamingResponse({
     onMessage: handleStreamingMessage,
     onError: handleStreamingError,
+    onReloadHistory: handleReloadHistory,
     onComplete: handleStreamingComplete,
     onToolCall: handleStreamingToolCall,
     onToolConfirmationRequest: handleConfirmationRequest,
@@ -849,6 +898,41 @@ const ChatApp: React.FC<ChatAppProps> = ({ profileId = 'default_assistant' }) =>
           content: Array.isArray(msg.content) ? msg.content : msg.content ? [msg.content] : [],
         }));
 
+        // In-app notification for out-of-band assistant replies. The hub's
+        // live `message`/`turn_ended` events are content-free, so the only
+        // place the reply text is available is the reloaded history. A
+        // background reload (the follow stream's reload path) that surfaces a
+        // newly-arrived assistant message — one we hadn't seen the last time we
+        // loaded this conversation — fires the notification. useNotifications
+        // applies the real gates (enabled, leader tab, permission, page
+        // hidden), so we just pass the message through. Skip the first load of
+        // a conversation (no prior baseline) so opening it doesn't notify for
+        // its existing tail.
+        const latestAssistantMessage = [...data.messages]
+          .reverse()
+          .find((msg) => msg.role === 'assistant');
+        const hadBaseline = lastSeenAssistantIdRef.current.has(convId);
+        const previousAssistantId = lastSeenAssistantIdRef.current.get(convId);
+        if (latestAssistantMessage) {
+          lastSeenAssistantIdRef.current.set(convId, latestAssistantMessage.internal_id);
+        }
+        if (
+          background &&
+          hadBaseline &&
+          latestAssistantMessage &&
+          latestAssistantMessage.internal_id !== previousAssistantId
+        ) {
+          const preview = extractMessagePreview(latestAssistantMessage.content);
+          if (preview) {
+            showNotificationRef.current?.({
+              conversationId: convId,
+              messageId: latestAssistantMessage.internal_id,
+              preview: preview.length > 100 ? `${preview.substring(0, 97)}...` : preview,
+              timestamp: latestAssistantMessage.timestamp,
+            });
+          }
+        }
+
         setMessages(messagesWithArrayContent);
       }
     } catch (error) {
@@ -862,6 +946,7 @@ const ChatApp: React.FC<ChatAppProps> = ({ profileId = 'default_assistant' }) =>
       }
     }
   }, []);
+  loadConversationMessagesRef.current = loadConversationMessages;
 
   // Handle conversation selection (defined early for use in notification callback)
   const handleConversationSelect = useCallback(
@@ -899,6 +984,13 @@ const ChatApp: React.FC<ChatAppProps> = ({ profileId = 'default_assistant' }) =>
     conversationId,
     onNotificationClick: handleNotificationClick,
   });
+
+  // Keep the ref used by the empty-dep history loader pointed at the latest
+  // showNotification so out-of-band replies surfaced by a background reload can
+  // fire an in-app notification without rebuilding loadConversationMessages.
+  useEffect(() => {
+    showNotificationRef.current = showNotification;
+  }, [showNotification]);
 
   // Handle notification preference changes
   const handleNotificationEnabledChange = useCallback((enabled: boolean) => {
@@ -945,35 +1037,10 @@ const ChatApp: React.FC<ChatAppProps> = ({ profileId = 'default_assistant' }) =>
       content?: string;
       conversation_id?: string;
     }) => {
-      // Show notification if it's an assistant message
-      if (
-        update.role === 'assistant' &&
-        update.content &&
-        update.conversation_id &&
-        update.internal_id
-      ) {
-        // Dedupe: Don't show notification if we're currently streaming
-        // (this message is likely from the active streaming session)
-        const isCurrentlyStreaming =
-          update.conversation_id === conversationId &&
-          (isStreaming || activeStreamConversationIdRef.current === update.conversation_id);
-
-        if (!isCurrentlyStreaming) {
-          // Extract preview from content (first 100 chars)
-          let preview = update.content;
-          if (preview.length > 100) {
-            preview = preview.substring(0, 97) + '...';
-          }
-
-          // Show notification
-          showNotification({
-            conversationId: update.conversation_id,
-            messageId: update.internal_id,
-            preview,
-            timestamp: update.timestamp,
-          });
-        }
-      }
+      // The hub's live `message`/`turn_ended` events are content-free signals to
+      // reload (no role/content/internal_id), so the in-app notification can't
+      // be derived here. It's fired from the background reload in
+      // loadConversationMessages, where the persisted reply text is available.
 
       // Reload messages for the updated conversation
       // Skip reload if we're currently streaming to avoid race conditions
@@ -986,7 +1053,7 @@ const ChatApp: React.FC<ChatAppProps> = ({ profileId = 'default_assistant' }) =>
         loadConversationMessages(conversationId, true);
       }
     },
-    [conversationId, loadConversationMessages, showNotification, isStreaming]
+    [conversationId, loadConversationMessages, isStreaming]
   );
 
   // Set up live message updates via SSE

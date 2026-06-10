@@ -30,6 +30,7 @@ from family_assistant.web.auth import (
     AuthService,
     create_auth_router,
 )
+from family_assistant.web.conversation_stream_hub import ConversationStreamHub
 from family_assistant.web.routers.a2a_api import a2a_wellknown_router
 from family_assistant.web.routers.api import api_router
 from family_assistant.web.routers.api_documentation import (
@@ -156,6 +157,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         app.state.web_chat_interface = WebChatInterface(
             app.state.database_engine,
             notifier=notifier,
+            stream_hub=getattr(app.state, "conversation_stream_hub", None),
         )
         # Register web chat interface in the registry
         if not hasattr(app.state, "chat_interfaces"):
@@ -200,10 +202,12 @@ def create_app() -> FastAPI:
     new_app.state.server_url = SERVER_URL
     new_app.state.docs_user_dir = docs_user_dir
 
-    # Tracks chat-processing tasks detached from disconnected streaming requests
-    # so they keep running (and deliver a push notification) instead of being
-    # cancelled. See chat_api._get_background_chat_tasks.
-    new_app.state.background_chat_tasks = set()
+    # In-memory broker for resumable conversation streaming. Holds in-flight
+    # turn state, the per-conversation event ring buffer, subscriber queues,
+    # and strong references to the background producer tasks (which keep
+    # running after a client disconnects). Replaces the older anonymous
+    # background_chat_tasks set. See web/conversation_stream_hub.py.
+    new_app.state.conversation_stream_hub = ConversationStreamHub()
 
     # Initialize tool_definitions for development mode
     # This will be populated by Assistant.setup_dependencies() in production

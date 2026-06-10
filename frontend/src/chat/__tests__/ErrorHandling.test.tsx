@@ -26,7 +26,7 @@ describe.sequential('ErrorHandling', () => {
   it('handles network errors gracefully', async () => {
     // Mock network failure for streaming endpoint
     server.use(
-      http.post('/api/v1/chat/send_message_stream', () => {
+      http.get('/api/v1/chat/conversations/:conversationId/stream', () => {
         return HttpResponse.error();
       })
     );
@@ -56,7 +56,7 @@ describe.sequential('ErrorHandling', () => {
 
     // Mock 500 server error
     server.use(
-      http.post('/api/v1/chat/send_message_stream', () => {
+      http.get('/api/v1/chat/conversations/:conversationId/stream', () => {
         requestSeen = true;
         return HttpResponse.json({ error: 'Internal Server Error' }, { status: 500 });
       })
@@ -84,7 +84,7 @@ describe.sequential('ErrorHandling', () => {
   it('handles malformed streaming responses', async () => {
     // Mock malformed SSE stream
     server.use(
-      http.post('/api/v1/chat/send_message_stream', () => {
+      http.get('/api/v1/chat/conversations/:conversationId/stream', () => {
         const encoder = new TextEncoder();
         const stream = new ReadableStream({
           start(controller) {
@@ -119,6 +119,68 @@ describe.sequential('ErrorHandling', () => {
     // Runtime should handle stream errors gracefully
     expect(screen.getByText('Chat')).toBeInTheDocument();
   }, 30000); // Increased timeout for parallel test runs
+
+  it('surfaces a failed turn_ended error instead of silently completing', async () => {
+    // The producer reports a failed turn as turn_ended with status "failed" and
+    // an error field. The client must surface that before exiting, not clear
+    // loading as if it completed normally.
+    let ourTurnId = '';
+    server.use(
+      http.post('/api/v1/chat/turns', async ({ request }) => {
+        const body = (await request.json()) as {
+          turn_id: string;
+          conversation_id?: string;
+        };
+        ourTurnId = body.turn_id;
+        return HttpResponse.json({
+          turn_id: body.turn_id,
+          conversation_id: body.conversation_id || 'web_conv_failed',
+          first_seq: 0,
+        });
+      }),
+      http.get('/api/v1/chat/conversations/:conversationId/stream', () => {
+        const encoder = new TextEncoder();
+        const stream = new ReadableStream({
+          start(controller) {
+            controller.enqueue(
+              encoder.encode(
+                `event: turn_started\ndata: ${JSON.stringify({ turn_id: ourTurnId, seq: 0 })}\n\n`
+              )
+            );
+            controller.enqueue(
+              encoder.encode(
+                `event: turn_ended\ndata: ${JSON.stringify({
+                  turn_id: ourTurnId,
+                  status: 'failed',
+                  error: 'The model provider is unavailable.',
+                })}\n\n`
+              )
+            );
+            controller.close();
+          },
+        });
+        return new HttpResponse(stream, {
+          headers: { 'Content-Type': 'text/event-stream' },
+        });
+      })
+    );
+
+    const user = userEvent.setup();
+    await renderChatApp({ waitForReady: true });
+
+    const messageInput = await findMessageInput();
+    await user.type(messageInput, 'This turn will fail');
+    await user.keyboard('{Enter}');
+
+    await waitFor(
+      () => {
+        expect(
+          screen.getByText(/encountered an error processing your message/i)
+        ).toBeInTheDocument();
+      },
+      { timeout: 5000 }
+    );
+  }, 30000);
 
   it('handles conversation loading errors', async () => {
     // Mock error loading conversations
@@ -157,45 +219,41 @@ describe.sequential('ErrorHandling', () => {
   it('handles tool confirmation API errors', async () => {
     // Mock tool call that triggers confirmation
     server.use(
-      http.post('/api/v1/chat/send_message_stream', async ({ request }) => {
-        const body = (await request.json()) as {
-          prompt: string;
-          conversation_id: string;
-        };
+      http.get('/api/v1/chat/conversations/:conversationId/stream', () => {
+        const encoder = new TextEncoder();
+        const stream = new ReadableStream({
+          start(controller) {
+            controller.enqueue(
+              encoder.encode(`event: turn_started\ndata: ${JSON.stringify({ seq: 0 })}\n\n`)
+            );
+            controller.enqueue(
+              encoder.encode(
+                `data: ${JSON.stringify({
+                  tool_call: {
+                    id: 'call-error-test',
+                    type: 'function',
+                    function: {
+                      name: 'add_or_update_note',
+                      arguments: JSON.stringify({ title: 'Test', content: 'Test' }),
+                    },
+                  },
+                })}\n\n`
+              )
+            );
+            controller.enqueue(
+              encoder.encode(
+                `event: turn_ended\ndata: ${JSON.stringify({ status: 'complete' })}\n\n`
+              )
+            );
+            controller.close();
+          },
+        });
 
-        if (body.prompt.includes('tool call')) {
-          const encoder = new TextEncoder();
-          const stream = new ReadableStream({
-            start(controller) {
-              controller.enqueue(
-                encoder.encode(
-                  `data: ${JSON.stringify({
-                    tool_calls: [
-                      {
-                        id: 'call-error-test',
-                        type: 'function',
-                        function: {
-                          name: 'add_or_update_note',
-                          arguments: JSON.stringify({ title: 'Test', content: 'Test' }),
-                        },
-                      },
-                    ],
-                  })}\n\n`
-                )
-              );
-              controller.enqueue(encoder.encode('data: {"done": true}\n\n'));
-              controller.close();
-            },
-          });
-
-          return new HttpResponse(stream, {
-            headers: {
-              'Content-Type': 'text/event-stream',
-            },
-          });
-        }
-
-        return HttpResponse.json({ error: 'No handler' }, { status: 404 });
+        return new HttpResponse(stream, {
+          headers: {
+            'Content-Type': 'text/event-stream',
+          },
+        });
       }),
 
       // Mock confirmation API error
@@ -242,7 +300,7 @@ describe.sequential('ErrorHandling', () => {
 
     // Mock intermittent failures that succeed on retry
     server.use(
-      http.post('/api/v1/chat/send_message_stream', () => {
+      http.get('/api/v1/chat/conversations/:conversationId/stream', () => {
         callCount++;
 
         if (callCount === 1) {
@@ -288,7 +346,7 @@ describe.sequential('ErrorHandling', () => {
   it('handles extremely long responses', async () => {
     // Mock very long streaming response
     server.use(
-      http.post('/api/v1/chat/send_message_stream', () => {
+      http.get('/api/v1/chat/conversations/:conversationId/stream', () => {
         const encoder = new TextEncoder();
         const stream = new ReadableStream({
           start(controller) {
@@ -298,7 +356,11 @@ describe.sequential('ErrorHandling', () => {
                 encoder.encode(`data: {"content": "Chunk ${i} of a long response. "}\n\n`)
               );
             }
-            controller.enqueue(encoder.encode('data: {"done": true}\n\n'));
+            controller.enqueue(
+              encoder.encode(
+                `event: turn_ended\ndata: ${JSON.stringify({ status: 'complete' })}\n\n`
+              )
+            );
             controller.close();
           },
         });
