@@ -18,7 +18,7 @@ describe('Resumable streaming client', () => {
     window.history.replaceState({}, '', '/chat');
   });
 
-  const sse = (frames: string[]): HttpResponse => {
+  const sse = (frames: string[]) => {
     const encoder = new TextEncoder();
     const stream = new ReadableStream({
       start(controller) {
