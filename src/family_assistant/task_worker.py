@@ -57,6 +57,9 @@ if TYPE_CHECKING:
 # handle_index_email is now a method of EmailIndexer and registered in __main__.py
 from family_assistant.processing import ProcessingService
 from family_assistant.processing.utils import get_file_extension_from_mime_type
+from family_assistant.services.deferred_tool_confirmation import (
+    create_deferred_tool_confirmation,
+)
 from family_assistant.services.notification_targets import notify_conversation
 from family_assistant.services.notifier import MESSAGE_CATEGORY, NotificationMetadata
 from family_assistant.storage.context import DatabaseContext, get_db_context
@@ -64,7 +67,12 @@ from family_assistant.storage.message_history import message_history_table
 from family_assistant.storage.tasks import enqueue_task, get_task_event
 from family_assistant.tools import ToolExecutionContext
 from family_assistant.tools.stored_scripts import AUTOMATION_RUNTIME_GLOBALS
-from family_assistant.tools.types import ConfirmationOutcome, ToolResult
+from family_assistant.tools.types import (
+    ConfirmationOutcome,
+    RequestConfirmationCallback,
+    ToolArguments,
+    ToolResult,
+)
 from family_assistant.utils.clock import Clock, SystemClock
 
 logger = logging.getLogger(__name__)
@@ -1648,6 +1656,52 @@ def _resolve_script_execution_service(
     return cast("ProcessingService", candidate)
 
 
+def build_script_confirmation_callback(
+    created_by_user_id: str | None,
+) -> RequestConfirmationCallback:
+    """Build the confirmation callback used while executing an automation script.
+
+    Scripts run in the task worker with no interactive channel, so a confirm-gated
+    tool call is deferred to a durable confirmation addressed to the automation's
+    owner. The tool runs later via the confirmation_tool_execution task once the
+    user approves. Legacy automations with no recorded owner cannot be approved,
+    so the tool is reported as not run.
+    """
+
+    async def _script_confirmation_callback(
+        interface_type: str,
+        conversation_id: str,
+        turn_id: str | None,
+        tool_name: str,
+        call_id: str,
+        tool_args: ToolArguments,
+        timeout_seconds: float,
+        context: ToolExecutionContext,
+    ) -> ConfirmationOutcome:
+        _ = interface_type
+        _ = conversation_id
+        _ = turn_id
+        if created_by_user_id is None:
+            return ConfirmationOutcome(
+                kind="failed",
+                result=(
+                    "This automation has no recorded owner, so the confirm-gated "
+                    f"tool '{tool_name}' cannot be approved and was not run."
+                ),
+            )
+        return await create_deferred_tool_confirmation(
+            context=context,
+            tool_name=tool_name,
+            call_id=call_id,
+            tool_args=tool_args,
+            timeout_seconds=timeout_seconds,
+            target_user_id=created_by_user_id,
+            source_prefix="From an automation — approve to run:",
+        )
+
+    return _script_confirmation_callback
+
+
 async def handle_script_execution(
     exec_context: ToolExecutionContext,
     payload: ScriptExecutionPayload,
@@ -1754,6 +1808,9 @@ async def handle_script_execution(
             ),
             default_note_visibility_labels=(
                 processing_service.service_config.default_note_visibility_labels
+            ),
+            request_confirmation_callback=build_script_confirmation_callback(
+                payload.get("created_by_user_id")
             ),
         )
         logger.debug(
@@ -2375,4 +2432,5 @@ __all__ = [
     "handle_script_execution",
     "handle_confirmation_tool_execution",
     "handle_reindex_document",
+    "build_script_confirmation_callback",
 ]  # Export class and relevant handlers

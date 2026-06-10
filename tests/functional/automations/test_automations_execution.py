@@ -16,7 +16,11 @@ from family_assistant.interfaces import ChatInterface
 from family_assistant.processing import ProcessingService, ProcessingServiceConfig
 from family_assistant.scripting.errors import ScriptError
 from family_assistant.storage.context import DatabaseContext, get_db_context
-from family_assistant.task_worker import TaskWorker, handle_script_execution
+from family_assistant.task_worker import (
+    TaskWorker,
+    build_script_confirmation_callback,
+    handle_script_execution,
+)
 from family_assistant.tools import (
     AVAILABLE_FUNCTIONS as local_tool_implementations,
 )
@@ -197,6 +201,78 @@ add_or_update_note(title="Legacy {test_run_id}", content="should not be written"
         notes = await db_ctx.notes.get_all(visibility_grants=None)
         matching = [n for n in notes if f"Legacy {test_run_id}" in n.title]
         assert len(matching) == 0
+
+
+@pytest.mark.asyncio
+async def test_script_confirm_gated_tool_defers_to_durable_confirmation(
+    db_engine: AsyncEngine,
+) -> None:
+    """A confirm-gated tool called from a script creates a durable confirmation
+    addressed to the automation's owner rather than running immediately."""
+    default_service = _make_processing_service(
+        profile_id="event_handler",
+        tools_provider=await _provider_without_note_tool(),
+    )
+    callback = build_script_confirmation_callback("owner-user")
+
+    async with DatabaseContext(engine=db_engine) as db_ctx:
+        exec_context = _build_script_exec_context(
+            db_ctx=db_ctx,
+            conversation_id="confirm_conv",
+            processing_service=default_service,
+        )
+        outcome = await callback(
+            interface_type="web",
+            conversation_id="confirm_conv",
+            turn_id="test_turn",
+            tool_name="delete_calendar_event",
+            call_id="call-1",
+            tool_args={"event_id": "evt-123"},
+            timeout_seconds=3600.0,
+            context=exec_context,
+        )
+
+        assert outcome.kind == "completed"
+        assert isinstance(outcome.result, str)
+        assert "hasn't run yet" in outcome.result
+
+        pending = await db_ctx.confirmation_requests.list_pending_for_user("owner-user")
+        assert len(pending) == 1
+        assert pending[0]["tool_name"] == "delete_calendar_event"
+
+
+@pytest.mark.asyncio
+async def test_script_confirm_gated_tool_without_owner_is_not_run(
+    db_engine: AsyncEngine,
+) -> None:
+    """A confirm-gated tool in a legacy automation with no recorded owner cannot
+    be approved, so it is reported as not run and no confirmation is created."""
+    default_service = _make_processing_service(
+        profile_id="event_handler",
+        tools_provider=await _provider_without_note_tool(),
+    )
+    callback = build_script_confirmation_callback(None)
+
+    async with DatabaseContext(engine=db_engine) as db_ctx:
+        exec_context = _build_script_exec_context(
+            db_ctx=db_ctx,
+            conversation_id="confirm_legacy_conv",
+            processing_service=default_service,
+        )
+        outcome = await callback(
+            interface_type="web",
+            conversation_id="confirm_legacy_conv",
+            turn_id="test_turn",
+            tool_name="delete_calendar_event",
+            call_id="call-1",
+            tool_args={"event_id": "evt-123"},
+            timeout_seconds=3600.0,
+            context=exec_context,
+        )
+
+    assert outcome.kind == "failed"
+    assert isinstance(outcome.result, str)
+    assert "no recorded owner" in outcome.result
 
 
 @pytest.mark.asyncio

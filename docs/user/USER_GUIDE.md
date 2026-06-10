@@ -278,7 +278,12 @@ You can ask the assistant a wide variety of things:
   script automations: \*"Show me the script for my temperature alert" \*"Test this script with a
   sample temperature event: [provide script code]" \*"Convert my garage door automation to use a
   script instead" \*If you want to validate a script before it touches live state, ask the assistant
-  to test it with simulated tools first.
+  to test it with simulated tools first. \*Automation scripts run with the same tools the assistant
+  had when it created them, and that tool set is checked when the automation is saved — so a script
+  that passes validation will have the tools it needs when it later runs. If a script calls an
+  action that normally needs your approval (like deleting a calendar event), it won't run silently
+  in the background: a confirmation lands in Telegram or the Web UI, and the action only happens
+  once you approve it.
 
 ## 4. Working with Attachments
 
