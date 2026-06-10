@@ -97,6 +97,127 @@ async def test_create_schedule_automation_basic(db_engine: AsyncEngine) -> None:
     assert "Next run:" in result.get_text()
 
 
+def _exec_context_with_profile(
+    db_ctx: DatabaseContext,
+    *,
+    conversation_id: str,
+    processing_profile_id: str | None,
+    user_id: str | None,
+) -> ToolExecutionContext:
+    return ToolExecutionContext(
+        interface_type="web",
+        conversation_id=conversation_id,
+        user_name="test_user",
+        turn_id="test_turn",
+        db_context=db_ctx,
+        processing_service=None,
+        clock=None,
+        home_assistant_client=None,
+        event_sources=None,
+        attachment_registry=None,
+        camera_backend=None,
+        timezone=ZoneInfo("UTC"),
+        processing_profile_id=processing_profile_id,
+        user_id=user_id,
+    )
+
+
+@pytest.mark.asyncio
+async def test_create_event_automation_records_creator_provenance(
+    db_engine: AsyncEngine,
+) -> None:
+    """Creating an event automation records the creating profile and user."""
+    async with DatabaseContext(engine=db_engine) as db_ctx:
+        exec_context = _exec_context_with_profile(
+            db_ctx,
+            conversation_id="prov_event_conv",
+            processing_profile_id="automation_creation",
+            user_id="user-123",
+        )
+        result = await create_automation_tool(
+            exec_context=exec_context,
+            name="Provenance Event",
+            automation_type="event",
+            trigger_config={"event_source": "home_assistant", "event_filter": {}},
+            action_type="script",
+            action_config={"script_code": "x = 1\n"},
+        )
+        created_data = result.get_data()
+        assert isinstance(created_data, dict)
+        listener_id = int(created_data["id"])
+
+        listener = await db_ctx.events.get_event_listener_by_id(listener_id)
+        assert listener is not None
+        assert listener["processing_profile_id"] == "automation_creation"
+        assert listener["created_by_user_id"] == "user-123"
+
+
+@pytest.mark.asyncio
+async def test_create_schedule_automation_records_creator_provenance(
+    db_engine: AsyncEngine,
+) -> None:
+    """Creating a schedule automation records the creating profile and user."""
+    async with DatabaseContext(engine=db_engine) as db_ctx:
+        exec_context = _exec_context_with_profile(
+            db_ctx,
+            conversation_id="prov_sched_conv",
+            processing_profile_id="automation_creation",
+            user_id="user-456",
+        )
+        result = await create_automation_tool(
+            exec_context=exec_context,
+            name="Provenance Schedule",
+            automation_type="schedule",
+            trigger_config={"recurrence_rule": "FREQ=DAILY;BYHOUR=7;BYMINUTE=0"},
+            action_type="script",
+            action_config={"script_code": "x = 1\n"},
+        )
+        created_data = result.get_data()
+        assert isinstance(created_data, dict)
+        automation_id = int(created_data["id"])
+
+        automation = await db_ctx.schedule_automations.get_by_id(automation_id)
+        assert automation is not None
+        assert automation["processing_profile_id"] == "automation_creation"
+        assert automation["created_by_user_id"] == "user-456"
+
+
+@pytest.mark.asyncio
+async def test_update_automation_revalidates_script(db_engine: AsyncEngine) -> None:
+    """Updating an automation re-validates the new inline script."""
+    async with DatabaseContext(engine=db_engine) as db_ctx:
+        exec_context = _exec_context_with_profile(
+            db_ctx,
+            conversation_id="revalidate_conv",
+            processing_profile_id="automation_creation",
+            user_id="user-789",
+        )
+        created = await create_automation_tool(
+            exec_context=exec_context,
+            name="Revalidate Script",
+            automation_type="event",
+            trigger_config={"event_source": "home_assistant", "event_filter": {}},
+            action_type="script",
+            action_config={"script_code": "x = 1\n"},
+        )
+        created_data = created.get_data()
+        assert isinstance(created_data, dict)
+        automation_id = int(created_data["id"])
+
+        # Updating with a syntactically invalid script is rejected by validation.
+        result = await update_automation_tool(
+            exec_context=exec_context,
+            automation_id=automation_id,
+            automation_type="event",
+            action_config={"script_code": "def broken(:\n"},
+        )
+
+    data = result.get_data()
+    assert isinstance(data, dict)
+    assert "error" in data
+    assert "validation failed" in data["error"].lower()
+
+
 @pytest.mark.asyncio
 async def test_create_automation_cross_type_name_uniqueness(
     db_engine: AsyncEngine,

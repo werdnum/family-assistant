@@ -59,6 +59,11 @@ schedule_automations_table = Table(
     ),
     # Management fields
     Column("enabled", Boolean, nullable=False, server_default="true"),
+    # Creator provenance: the processing profile and user that created this
+    # automation. Scripts are validated and executed under this profile so that
+    # validation and execution agree (see docs/design/automation_provenance.md).
+    Column("processing_profile_id", String(255), nullable=True),
+    Column("created_by_user_id", String(255), nullable=True),
     Column(
         "created_at",
         DateTime(timezone=True),

@@ -364,6 +364,47 @@ def _validate_automation_type(automation_type: str) -> AutomationType:
     return automation_type  # type: ignore[return-value]
 
 
+async def _validate_inline_script_code(
+    exec_context: ToolExecutionContext,
+    script_code: str,
+) -> str | None:
+    """Validate inline automation script code against the creating profile's tools.
+
+    The automation will execute under the profile that created it, so the script
+    is validated against that same profile's tool set (the creator's
+    ``tools_provider``). Returns an error message if validation fails, or None if
+    the script is valid.
+    """
+    tools_provider = None
+    if exec_context.tools_provider:
+        tools_provider = exec_context.tools_provider
+    elif (
+        exec_context.processing_service
+        and exec_context.processing_service.tools_provider
+    ):
+        tools_provider = exec_context.processing_service.tools_provider
+
+    tool_definitions = None
+    if tools_provider:
+        tool_definitions = await tools_provider.get_tool_definitions()
+
+    input_names = [
+        "event",
+        "conversation_id",
+        "listener_id",
+        "listener_name",
+    ]
+    validator = ScriptValidator(tool_definitions=tool_definitions)
+    validation = validator.validate(
+        script_code,
+        input_names=input_names,
+        include_tools_api=tools_provider is not None,
+    )
+    if not validation.is_valid:
+        return f"Script validation failed: {validation.error_message}"
+    return None
+
+
 # Tool Implementations
 async def create_automation_tool(
     exec_context: ToolExecutionContext,
@@ -405,38 +446,13 @@ async def create_automation_tool(
                     text=f"Error: {script_error}", data={"error": script_error}
                 )
             if action_config.get("script_code"):
-                # Validate inline script code
-                tool_definitions = None
-                tools_provider = None
-                if (
-                    hasattr(exec_context, "tools_provider")
-                    and exec_context.tools_provider
-                ):
-                    tools_provider = exec_context.tools_provider
-                elif (
-                    exec_context.processing_service
-                    and hasattr(exec_context.processing_service, "tools_provider")
-                    and exec_context.processing_service.tools_provider
-                ):
-                    tools_provider = exec_context.processing_service.tools_provider
-                if tools_provider:
-                    tool_definitions = await tools_provider.get_tool_definitions()
-                input_names = [
-                    "event",
-                    "conversation_id",
-                    "listener_id",
-                    "listener_name",
-                ]
-                validator = ScriptValidator(tool_definitions=tool_definitions)
-                validation = validator.validate(
-                    action_config["script_code"],
-                    input_names=input_names,
-                    include_tools_api=tools_provider is not None,
+                validation_error = await _validate_inline_script_code(
+                    exec_context, action_config["script_code"]
                 )
-                if not validation.is_valid:
-                    error_msg = f"Script validation failed: {validation.error_message}"
+                if validation_error:
                     return ToolResult(
-                        text=f"Error: {error_msg}", data={"error": error_msg}
+                        text=f"Error: {validation_error}",
+                        data={"error": validation_error},
                     )
             # Note: the "neither script_code nor script_name" case is already
             # rejected by validate_script_action_config above.
@@ -475,6 +491,8 @@ async def create_automation_tool(
                 interface_type=exec_context.interface_type,
                 description=description,
                 condition_script=condition_script,
+                processing_profile_id=exec_context.processing_profile_id,
+                created_by_user_id=exec_context.user_id,
             )
 
             # Return structured data with human-readable text
@@ -504,6 +522,8 @@ async def create_automation_tool(
                 interface_type=exec_context.interface_type,
                 description=description,
                 timezone=exec_context.timezone,
+                processing_profile_id=exec_context.processing_profile_id,
+                created_by_user_id=exec_context.user_id,
             )
 
             # Get the automation to show next scheduled time
@@ -772,6 +792,26 @@ async def update_automation_tool(
             error_msg = f"Automation {automation_id} not found"
             return ToolResult(text=f"Error: {error_msg}", data={"error": error_msg})
 
+        # When the action_config (and therefore the script) is being changed,
+        # validate the new inline script against the updating profile's tools and
+        # re-stamp creator provenance, so the updated script is validated and
+        # executed under the same (updating) profile.
+        restamp_profile_id: str | None = None
+        restamp_user_id: str | None = None
+        if action_config is not None:
+            restamp_profile_id = exec_context.processing_profile_id
+            restamp_user_id = exec_context.user_id
+            script_code = action_config.get("script_code")
+            if script_code:
+                validation_error = await _validate_inline_script_code(
+                    exec_context, script_code
+                )
+                if validation_error:
+                    return ToolResult(
+                        text=f"Error: {validation_error}",
+                        data={"error": validation_error},
+                    )
+
         if automation_type == "event":
             # Update event automation - merge with existing values
             # Note: source_id cannot be changed for event listeners
@@ -810,6 +850,8 @@ async def update_automation_tool(
                 one_time=existing.one_time or False,
                 enabled=existing.enabled,
                 condition_script=condition_script,
+                processing_profile_id=restamp_profile_id,
+                created_by_user_id=restamp_user_id,
             )
 
         else:  # schedule
@@ -829,6 +871,10 @@ async def update_automation_tool(
                 update_kwargs["recurrence_rule"] = recurrence_rule
             if action_config is not None:
                 update_kwargs["action_config"] = action_config
+                if restamp_profile_id is not None:
+                    update_kwargs["processing_profile_id"] = restamp_profile_id
+                if restamp_user_id is not None:
+                    update_kwargs["created_by_user_id"] = restamp_user_id
             if description is not None:
                 update_kwargs["description"] = description
 

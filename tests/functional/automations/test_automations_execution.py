@@ -14,6 +14,7 @@ from family_assistant.delegation_security import DelegationSecurityLevel
 from family_assistant.events.processor import EventProcessor
 from family_assistant.interfaces import ChatInterface
 from family_assistant.processing import ProcessingService, ProcessingServiceConfig
+from family_assistant.scripting.errors import ScriptError
 from family_assistant.storage.context import DatabaseContext, get_db_context
 from family_assistant.task_worker import TaskWorker, handle_script_execution
 from family_assistant.tools import (
@@ -32,6 +33,170 @@ from family_assistant.tools.automations import (
 from family_assistant.tools.types import ToolExecutionContext
 from tests.helpers import wait_for_tasks_to_complete
 from tests.mocks.mock_llm import LLMOutput, RuleBasedMockLLMClient
+
+
+def _make_processing_service(
+    *,
+    profile_id: str,
+    tools_provider: CompositeToolsProvider,
+    registry: dict[str, ProcessingService] | None = None,
+) -> ProcessingService:
+    """Build a minimal local ProcessingService for profile-resolution tests."""
+    return ProcessingService(
+        llm_client=RuleBasedMockLLMClient(
+            rules=[], default_response=LLMOutput(content="N/A")
+        ),
+        tools_provider=tools_provider,
+        service_config=ProcessingServiceConfig(
+            id=profile_id,
+            prompts={"system_prompt": profile_id},
+            timezone=ZoneInfo("UTC"),
+            max_history_messages=1,
+            history_max_age_hours=1,
+            tools_config=ToolsConfig(),
+            delegation_security_level=DelegationSecurityLevel.BLOCKED,
+        ),
+        app_config=AppConfig(),
+        context_providers=[],
+        server_url=None,
+        processing_services_registry=registry,
+    )
+
+
+async def _provider_with_note_tool() -> CompositeToolsProvider:
+    provider = CompositeToolsProvider(
+        providers=[
+            LocalToolsProvider(
+                definitions=NOTE_TOOLS_DEFINITION,
+                implementations={
+                    "add_or_update_note": local_tool_implementations[
+                        "add_or_update_note"
+                    ],
+                },
+            )
+        ]
+    )
+    await provider.get_tool_definitions()
+    return provider
+
+
+async def _provider_without_note_tool() -> CompositeToolsProvider:
+    provider = CompositeToolsProvider(
+        providers=[LocalToolsProvider(definitions=[], implementations={})]
+    )
+    await provider.get_tool_definitions()
+    return provider
+
+
+def _build_script_exec_context(
+    *,
+    db_ctx: DatabaseContext,
+    conversation_id: str,
+    processing_service: ProcessingService,
+) -> ToolExecutionContext:
+    return ToolExecutionContext(
+        interface_type="web",
+        conversation_id=conversation_id,
+        user_name="test_user",
+        turn_id="test_turn",
+        db_context=db_ctx,
+        processing_service=processing_service,
+        clock=None,
+        home_assistant_client=None,
+        event_sources=None,
+        attachment_registry=None,
+        camera_backend=None,
+        timezone=ZoneInfo("UTC"),
+    )
+
+
+@pytest.mark.asyncio
+async def test_script_executes_under_creating_profile(db_engine: AsyncEngine) -> None:
+    """A script runs with the tools of the profile that created the automation,
+    not the task worker's default profile."""
+    test_run_id = uuid.uuid4()
+
+    # Creating profile has the note tool; the worker's default profile does not.
+    creator_service = _make_processing_service(
+        profile_id="creator_profile",
+        tools_provider=await _provider_with_note_tool(),
+    )
+    default_service = _make_processing_service(
+        profile_id="event_handler",
+        tools_provider=await _provider_without_note_tool(),
+        registry={"creator_profile": creator_service},
+    )
+
+    script_code = f"""
+add_or_update_note(title="Provenance {test_run_id}", content="written by script")
+"""
+
+    async with DatabaseContext(engine=db_engine) as db_ctx:
+        exec_context = _build_script_exec_context(
+            db_ctx=db_ctx,
+            conversation_id=f"prov_{test_run_id}",
+            processing_service=default_service,
+        )
+        await handle_script_execution(
+            exec_context,
+            {
+                "script_code": script_code,
+                "conversation_id": f"prov_{test_run_id}",
+                "processing_profile_id": "creator_profile",
+                "config": {},
+            },
+        )
+
+    async with DatabaseContext(engine=db_engine) as db_ctx:
+        notes = await db_ctx.notes.get_all(visibility_grants=None)
+        matching = [n for n in notes if f"Provenance {test_run_id}" in n.title]
+        assert len(matching) == 1
+
+
+@pytest.mark.asyncio
+async def test_script_falls_back_to_default_profile_for_legacy_automation(
+    db_engine: AsyncEngine,
+) -> None:
+    """A legacy automation with no recorded profile falls back to the default
+    profile, whose tools are then enforced (here, the note tool is unavailable)."""
+    test_run_id = uuid.uuid4()
+
+    creator_service = _make_processing_service(
+        profile_id="creator_profile",
+        tools_provider=await _provider_with_note_tool(),
+    )
+    default_service = _make_processing_service(
+        profile_id="event_handler",
+        tools_provider=await _provider_without_note_tool(),
+        registry={"creator_profile": creator_service},
+    )
+
+    script_code = f"""
+add_or_update_note(title="Legacy {test_run_id}", content="should not be written")
+"""
+
+    async with DatabaseContext(engine=db_engine) as db_ctx:
+        exec_context = _build_script_exec_context(
+            db_ctx=db_ctx,
+            conversation_id=f"legacy_{test_run_id}",
+            processing_service=default_service,
+        )
+        # No processing_profile_id -> falls back to the default profile, which
+        # does not expose add_or_update_note, so the script raises.
+        with pytest.raises(ScriptError):
+            await handle_script_execution(
+                exec_context,
+                {
+                    "script_code": script_code,
+                    "conversation_id": f"legacy_{test_run_id}",
+                    "config": {},
+                },
+            )
+
+    async with DatabaseContext(engine=db_engine) as db_ctx:
+        notes = await db_ctx.notes.get_all(visibility_grants=None)
+        matching = [n for n in notes if f"Legacy {test_run_id}" in n.title]
+        assert len(matching) == 0
 
 
 @pytest.mark.asyncio

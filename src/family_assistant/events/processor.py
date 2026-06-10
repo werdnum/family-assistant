@@ -326,6 +326,14 @@ class EventProcessor:
         ):
             context["event_data"] = event_data
 
+        # Scripts execute under the profile that created the listener so that
+        # validation and execution agree. wake_llm intentionally keeps running
+        # under the restricted event_handler profile (untrusted event content
+        # reaches the LLM), so provenance is only threaded for scripts.
+        if action_type == ActionType.SCRIPT:
+            context["processing_profile_id"] = listener.get("processing_profile_id")
+            context["created_by_user_id"] = listener.get("created_by_user_id")
+
         await execute_action(
             db_ctx=db_ctx,
             action_type=action_type,

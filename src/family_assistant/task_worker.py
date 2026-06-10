@@ -119,6 +119,10 @@ class ScriptExecutionPayload(TypedDict, total=False):
     automation_id: str | int
     automation_type: str
     task_name: str
+    # Creator provenance: scripts run under the profile (and on behalf of the
+    # user) that created the automation, so validation and execution agree.
+    processing_profile_id: str
+    created_by_user_id: str
 
 
 class SystemEventCleanupPayload(TypedDict, total=False):
@@ -1597,6 +1601,53 @@ async def _process_script_wake_llm(
     )
 
 
+def _resolve_script_execution_service(
+    exec_context: ToolExecutionContext,
+    processing_profile_id: str | None,
+) -> ProcessingService | None:
+    """Resolve the processing service a script should execute under.
+
+    Scripts run under the profile that created the automation so that the tool
+    set used at validation time matches the tool set available at execution
+    time. Falls back to the default processing service (with a warning) when the
+    creating profile is unknown (legacy automations created before provenance
+    was tracked) or is no longer registered.
+    """
+    default_service = exec_context.processing_service
+    if (
+        default_service is None
+        or processing_profile_id is None
+        or processing_profile_id == default_service.service_config.id
+    ):
+        return default_service
+
+    registry = default_service.processing_services_registry
+    fallback_reason: str | None = None
+    candidate: object | None = None
+    if registry is None:
+        fallback_reason = "no processing services registry is available"
+    else:
+        candidate = registry.get(processing_profile_id)
+        if candidate is None:
+            fallback_reason = "the profile is no longer registered"
+        elif getattr(candidate, "kind", None) != "local" or not hasattr(
+            candidate, "tools_provider"
+        ):
+            fallback_reason = "the profile is not a local profile"
+
+    if fallback_reason is not None:
+        logger.warning(
+            "Script created under profile '%s' cannot be resolved (%s); falling "
+            "back to default profile '%s'",
+            processing_profile_id,
+            fallback_reason,
+            default_service.service_config.id,
+        )
+        return default_service
+
+    return cast("ProcessingService", candidate)
+
+
 async def handle_script_execution(
     exec_context: ToolExecutionContext,
     payload: ScriptExecutionPayload,
@@ -1605,8 +1656,12 @@ async def handle_script_execution(
     Task handler for executing scripts triggered by events.
 
     Executes user-defined scripts in response to events from Home Assistant,
-    document indexing, and other sources. Scripts run with restricted tool access
-    based on the event_handler processing profile.
+    document indexing, and other sources. Scripts run under the processing
+    profile that created the automation (see
+    docs/design/automation_provenance.md), so the tools available at execution
+    time match those used to validate the script at creation time. Legacy
+    automations without a recorded profile fall back to the task worker's
+    default profile.
 
     Args:
         exec_context: Execution context providing access to tools and services
@@ -1675,13 +1730,32 @@ async def handle_script_execution(
             f"Starting scheduled script execution in conversation {conversation_id}"
         )
 
-    # Get the event_handler processing service if available
-    processing_service = exec_context.processing_service
+    # Resolve the processing profile the script was created under so that the
+    # tools available here match those used to validate the script at creation
+    # time. Legacy automations (no recorded profile) fall back to the default.
+    processing_service = _resolve_script_execution_service(
+        exec_context, payload.get("processing_profile_id")
+    )
     tools_provider = None
 
     if processing_service and hasattr(processing_service, "tools_provider"):
-        # Use the event_handler profile's tools if available
         tools_provider = processing_service.tools_provider
+        # Re-point the execution context at the resolved profile so tool policy,
+        # visibility grants and note labels all reflect the creating profile.
+        exec_context = replace(
+            exec_context,
+            processing_service=processing_service,
+            processing_profile_id=processing_service.service_config.id,
+            tools_provider=tools_provider,
+            visibility_grants=(
+                set(processing_service.service_config.visibility_grants)
+                if processing_service.service_config.visibility_grants
+                else None
+            ),
+            default_note_visibility_labels=(
+                processing_service.service_config.default_note_visibility_labels
+            ),
+        )
         logger.debug(
             f"Using tools from processing service for script execution: {processing_service.service_config.id}"
         )

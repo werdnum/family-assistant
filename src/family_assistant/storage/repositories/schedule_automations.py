@@ -35,6 +35,8 @@ def _build_script_payload(
     interface_type: str,
     automation_id: str,
     task_name: str,
+    processing_profile_id: str | None = None,
+    created_by_user_id: str | None = None,
 ) -> ScriptExecutionPayload:
     """Build a ScriptExecutionPayload from action_config, supporting both inline and stored scripts."""
     payload = ScriptExecutionPayload(
@@ -45,6 +47,10 @@ def _build_script_payload(
         task_name=action_config.get("task_name", task_name),
         config=dict(action_config),
     )
+    if processing_profile_id is not None:
+        payload["processing_profile_id"] = processing_profile_id
+    if created_by_user_id is not None:
+        payload["created_by_user_id"] = created_by_user_id
     script_name = action_config.get("script_name")
     if script_name:
         payload["script_name"] = script_name
@@ -86,6 +92,8 @@ class ScheduleAutomationsRepository(BaseRepository):
             action_type=row["action_type"],
             action_config=row["action_config"],
             enabled=row["enabled"],
+            processing_profile_id=row.get("processing_profile_id"),
+            created_by_user_id=row.get("created_by_user_id"),
             created_at=created_at,
             last_execution_at=normalize_datetime(row["last_execution_at"]),
             execution_count=row["execution_count"],
@@ -153,6 +161,8 @@ class ScheduleAutomationsRepository(BaseRepository):
         enabled: bool = True,
         *,
         timezone: ZoneInfo,
+        processing_profile_id: str | None = None,
+        created_by_user_id: str | None = None,
     ) -> int:
         """
         Create a schedule automation and schedule first task instance.
@@ -196,6 +206,8 @@ class ScheduleAutomationsRepository(BaseRepository):
                     conversation_id=conversation_id,
                     interface_type=interface_type,
                     enabled=enabled,
+                    processing_profile_id=processing_profile_id,
+                    created_by_user_id=created_by_user_id,
                     created_at=datetime.now(UTC),
                     execution_count=0,
                 )
@@ -234,6 +246,8 @@ class ScheduleAutomationsRepository(BaseRepository):
                     interface_type=interface_type,
                     automation_id=str(automation_id),
                     task_name=name,
+                    processing_profile_id=processing_profile_id,
+                    created_by_user_id=created_by_user_id,
                 )
 
             # Note: We do NOT pass recurrence_rule here because recurrence
@@ -472,6 +486,8 @@ class ScheduleAutomationsRepository(BaseRepository):
                     interface_type=automation["interface_type"],
                     automation_id=str(automation_id),
                     task_name=automation["name"],
+                    processing_profile_id=automation.get("processing_profile_id"),
+                    created_by_user_id=automation.get("created_by_user_id"),
                 )
 
             await enqueue_task(
@@ -533,6 +549,8 @@ class ScheduleAutomationsRepository(BaseRepository):
         enabled: bool | None | object = _UNSET,
         *,
         timezone: ZoneInfo,
+        processing_profile_id: str | None | object = _UNSET,
+        created_by_user_id: str | None | object = _UNSET,
     ) -> bool:
         """
         Update automation configuration, synchronizing task queue as needed.
@@ -574,6 +592,16 @@ class ScheduleAutomationsRepository(BaseRepository):
 
         if isinstance(enabled, bool):
             update_values["enabled"] = enabled
+
+        # Re-stamp creator provenance when supplied so the updated script
+        # executes under the updating profile's tools. Mutate ``existing`` too so
+        # the resynced task payload below carries the new profile.
+        if isinstance(processing_profile_id, str):
+            update_values["processing_profile_id"] = processing_profile_id
+            existing["processing_profile_id"] = processing_profile_id
+        if isinstance(created_by_user_id, str):
+            update_values["created_by_user_id"] = created_by_user_id
+            existing["created_by_user_id"] = created_by_user_id
 
         recurrence_changing = isinstance(recurrence_rule, str)
         if recurrence_changing:
@@ -824,6 +852,8 @@ class ScheduleAutomationsRepository(BaseRepository):
                 interface_type=automation["interface_type"],
                 automation_id=str(automation_id),
                 task_name=final_name,
+                processing_profile_id=automation.get("processing_profile_id"),
+                created_by_user_id=automation.get("created_by_user_id"),
             )
 
         await enqueue_task(
@@ -929,6 +959,8 @@ class ScheduleAutomationsRepository(BaseRepository):
                     interface_type=automation["interface_type"],
                     automation_id=str(automation_id),
                     task_name=automation["name"],
+                    processing_profile_id=automation.get("processing_profile_id"),
+                    created_by_user_id=automation.get("created_by_user_id"),
                 )
 
             # Note: We do NOT pass recurrence_rule here because recurrence
