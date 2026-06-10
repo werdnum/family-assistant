@@ -4,11 +4,15 @@ from __future__ import annotations
 
 import json
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING, Any, Literal, NotRequired, Required, TypedDict, cast
+from typing import TYPE_CHECKING, Any, NotRequired, Required, TypedDict, cast
 
 from sqlalchemy import insert, select, update
 
-from family_assistant.storage.delegation_runs import delegation_runs_table
+from family_assistant.storage.delegation_runs import (
+    TERMINAL_DELEGATION_STATUSES,
+    DelegationRunStatus,
+    delegation_runs_table,
+)
 from family_assistant.storage.repositories.base import BaseRepository
 
 if TYPE_CHECKING:
@@ -16,13 +20,13 @@ if TYPE_CHECKING:
 
     from family_assistant.llm.content_parts import ContentPartDict
 
-DelegationRunStatus = Literal[
-    "queued",
-    "running",
-    "waiting_for_confirmation",
-    "completed",
-    "failed",
-    "cancelled",
+__all__ = [
+    "TERMINAL_DELEGATION_STATUSES",
+    "DelegationRunCreate",
+    "DelegationRunDict",
+    "DelegationRunStatus",
+    "DelegationRunSummary",
+    "DelegationRunsRepository",
 ]
 
 
@@ -38,12 +42,9 @@ class DelegationRunCreate(TypedDict, total=False):
     subconversation_id: Required[str]
     request_text: Required[str]
     content_parts_json: Required[list[ContentPartDict]]
-    handoff_after_at: Required[datetime]
     user_id: str | None
     user_name: str | None
     source_turn_id: str | None
-    source_tool_call_id: str | None
-    attachment_ids_json: list[str] | None
 
 
 class DelegationRunDict(TypedDict):
@@ -60,12 +61,9 @@ class DelegationRunDict(TypedDict):
     user_id: str | None
     user_name: str | None
     source_turn_id: str | None
-    source_tool_call_id: str | None
     subconversation_id: str
     request_text: str
     content_parts_json: list[ContentPartDict]
-    attachment_ids_json: list[str] | None
-    handoff_after_at: datetime
     handed_off_at: datetime | None
     started_at: datetime | None
     completed_at: datetime | None
@@ -149,8 +147,10 @@ class DelegationRunsRepository(BaseRepository):
         rows = await self._db.fetch_all(stmt)
         return [self._row_to_dict(row) for row in rows]
 
-    async def mark_running(self, delegation_id: str, started_at: datetime) -> bool:
-        """Mark a delegation run as running."""
+    async def mark_running(
+        self, delegation_id: str, started_at: datetime
+    ) -> DelegationRunDict | None:
+        """Mark a delegation run as running and return the updated row."""
         return await self._update_run(
             delegation_id,
             status="running",
@@ -160,11 +160,22 @@ class DelegationRunsRepository(BaseRepository):
     async def mark_handed_off(
         self, delegation_id: str, handed_off_at: datetime
     ) -> bool:
-        """Record that the caller received an asynchronous reference."""
+        """Atomically claim the async handoff for a non-terminal run.
+
+        Returns ``True`` if this caller won the handoff (the worker will deliver
+        the terminal result via notification). Returns ``False`` if the run is
+        already terminal or already handed off, in which case the caller should
+        deliver the result inline.
+        """
         stmt = (
             update(delegation_runs_table)
             .where(delegation_runs_table.c.delegation_id == delegation_id)
             .where(delegation_runs_table.c.handed_off_at.is_(None))
+            .where(
+                delegation_runs_table.c.status.notin_(
+                    list(TERMINAL_DELEGATION_STATUSES)
+                )
+            )
             .values(handed_off_at=handed_off_at, updated_at=datetime.now(UTC))
         )
         result = await self._execute_with_logging("mark_delegation_handed_off", stmt)
@@ -177,7 +188,7 @@ class DelegationRunsRepository(BaseRepository):
         result_text: str | None,
         result_attachment_ids: list[str],
         completed_at: datetime,
-    ) -> bool:
+    ) -> DelegationRunDict | None:
         """Mark a delegation run completed and store its result."""
         return await self._update_run(
             delegation_id,
@@ -193,7 +204,7 @@ class DelegationRunsRepository(BaseRepository):
         delegation_id: str,
         error: str,
         completed_at: datetime,
-    ) -> bool:
+    ) -> DelegationRunDict | None:
         """Mark a delegation run failed and store the error."""
         return await self._update_run(
             delegation_id,
@@ -208,7 +219,7 @@ class DelegationRunsRepository(BaseRepository):
         delegation_id: str,
         result_message_internal_id: int | None,
         notified_at: datetime,
-    ) -> bool:
+    ) -> DelegationRunDict | None:
         """Record that a terminal delegation notification was delivered."""
         return await self._update_run(
             delegation_id,
@@ -216,16 +227,47 @@ class DelegationRunsRepository(BaseRepository):
             notified_at=notified_at,
         )
 
-    async def _update_run(self, delegation_id: str, **values: object) -> bool:
-        """Update a run row with common updated_at handling."""
+    async def reap_stale_running(
+        self,
+        *,
+        now: datetime,
+        running_before: datetime,
+        error: str,
+    ) -> list[DelegationRunDict]:
+        """Fail delegation runs stuck ``running`` past ``running_before``.
+
+        Returns the rows that were transitioned so the caller can deliver a
+        terminal notification for each.
+        """
+        stmt = (
+            update(delegation_runs_table)
+            .where(delegation_runs_table.c.status == "running")
+            .where(delegation_runs_table.c.started_at < running_before)
+            .values(
+                status="failed",
+                error=error,
+                completed_at=now,
+                updated_at=now,
+            )
+            .returning(delegation_runs_table)
+        )
+        result = await self._execute_with_logging("reap_stale_delegation_runs", stmt)
+        return [self._row_to_dict(dict(row)) for row in result.mappings().all()]
+
+    async def _update_run(
+        self, delegation_id: str, **values: object
+    ) -> DelegationRunDict | None:
+        """Update a run row and return the updated row (or ``None`` if absent)."""
         update_values = {**values, "updated_at": datetime.now(UTC)}
         stmt = (
             update(delegation_runs_table)
             .where(delegation_runs_table.c.delegation_id == delegation_id)
             .values(**update_values)
+            .returning(delegation_runs_table)
         )
         result = await self._execute_with_logging("update_delegation_run", stmt)
-        return result.rowcount > 0  # type: ignore[union-attr]
+        row = result.mappings().one_or_none()
+        return self._row_to_dict(dict(row)) if row is not None else None
 
     def summarize_run(self, run: DelegationRunDict) -> DelegationRunSummary:
         """Return a compact summary suitable for tool callers."""
@@ -268,12 +310,9 @@ class DelegationRunsRepository(BaseRepository):
             user_id=row.get("user_id"),
             user_name=row.get("user_name"),
             source_turn_id=row.get("source_turn_id"),
-            source_tool_call_id=row.get("source_tool_call_id"),
             subconversation_id=row["subconversation_id"],
             request_text=row["request_text"],
             content_parts_json=self._json_list(row["content_parts_json"]),
-            attachment_ids_json=self._json_str_list(row.get("attachment_ids_json")),
-            handoff_after_at=row["handoff_after_at"],
             handed_off_at=row.get("handed_off_at"),
             started_at=row.get("started_at"),
             completed_at=row.get("completed_at"),
@@ -290,8 +329,8 @@ class DelegationRunsRepository(BaseRepository):
 
     @staticmethod
     def _json_list(value: Any) -> list[ContentPartDict]:  # noqa: ANN401
-        if value is None:
-            return []
+        if isinstance(value, list):
+            return cast("list[ContentPartDict]", value)
         if isinstance(value, str):
             loaded = json.loads(value)
             return (
@@ -299,8 +338,6 @@ class DelegationRunsRepository(BaseRepository):
                 if isinstance(loaded, list)
                 else []
             )
-        if isinstance(value, list):
-            return cast("list[ContentPartDict]", value)
         return []
 
     @staticmethod
@@ -308,10 +345,7 @@ class DelegationRunsRepository(BaseRepository):
         if value is None:
             return None
         if isinstance(value, str):
-            loaded = json.loads(value)
-            if isinstance(loaded, list):
-                return [str(item) for item in loaded]
-            return None
+            value = json.loads(value)
         if isinstance(value, list):
             return [str(item) for item in value]
         return None

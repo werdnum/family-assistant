@@ -10,18 +10,22 @@ import asyncio
 import json
 import logging
 import uuid
-from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Any, Literal, cast
 
 from family_assistant.llm.content_parts import attachment_content, text_content
+from family_assistant.storage.delegation_runs import TERMINAL_DELEGATION_STATUSES
 from family_assistant.tools.types import (
     ConfirmationOutcome,
     ToolAttachment,
     ToolDefinition,
     ToolResult,
 )
+from family_assistant.utils.clock import SystemClock
 
 if TYPE_CHECKING:
+    from datetime import datetime
+
+    from family_assistant.config_models import ToolsConfig
     from family_assistant.llm.content_parts import ContentPartDict
     from family_assistant.storage.repositories.delegation_runs import (
         DelegationRunDict,
@@ -33,7 +37,6 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 DELEGATED_PROFILE_RUN_TASK_TYPE = "delegated_profile_run"
-_TERMINAL_DELEGATION_STATUSES = {"completed", "failed", "cancelled"}
 
 
 def _delegation_confirmation_outcome_result(
@@ -75,10 +78,16 @@ def _delegation_confirmation_outcome_result(
 
 
 def _now(exec_context: ToolExecutionContext) -> datetime:
-    clock = exec_context.clock
-    if clock is None:
-        return datetime.now(UTC)
-    return clock.now()
+    return (exec_context.clock or SystemClock()).now()
+
+
+def _tools_config(exec_context: ToolExecutionContext) -> ToolsConfig:
+    service = exec_context.processing_service
+    if service is not None:
+        return service.service_config.tools_config
+    from family_assistant.config_models import ToolsConfig  # noqa: PLC0415
+
+    return ToolsConfig()
 
 
 def _resolve_handoff_wait_seconds(
@@ -86,29 +95,23 @@ def _resolve_handoff_wait_seconds(
     handoff_after_seconds: float | None,
     delivery_hint: Literal["auto", "background"],
 ) -> float:
-    service = exec_context.processing_service
-    tools_config = service.service_config.tools_config if service else None
-    configured_wait = float(
-        getattr(tools_config, "delegate_handoff_after_seconds", 15.0)
-    )
-    max_wait = float(getattr(tools_config, "delegate_handoff_max_seconds", 120.0))
-    requested_wait = configured_wait
+    tools_config = _tools_config(exec_context)
+    requested_wait = tools_config.delegate_handoff_after_seconds
     if handoff_after_seconds is not None:
         requested_wait = handoff_after_seconds
     if delivery_hint == "background":
         requested_wait = 0.0
-    return max(0.0, min(float(requested_wait), max_wait))
+    return max(
+        0.0, min(float(requested_wait), tools_config.delegate_handoff_max_seconds)
+    )
 
 
 def _delegation_status_poll_seconds(exec_context: ToolExecutionContext) -> float:
-    service = exec_context.processing_service
-    tools_config = service.service_config.tools_config if service else None
-    configured_poll = float(getattr(tools_config, "delegate_status_poll_seconds", 0.25))
-    return max(0.05, configured_poll)
+    return max(0.05, _tools_config(exec_context).delegate_status_poll_seconds)
 
 
 def _terminal_delegation_run(run: DelegationRunDict | None) -> bool:
-    return run is not None and run["status"] in _TERMINAL_DELEGATION_STATUSES
+    return run is not None and run["status"] in TERMINAL_DELEGATION_STATUSES
 
 
 async def _load_delegation_run(
@@ -149,50 +152,37 @@ async def _delegated_attachment_refs(
     if not response_attachment_ids or not exec_context.attachment_registry:
         return None
 
+    try:
+        metadata_by_id = await exec_context.attachment_registry.get_attachments(
+            exec_context.db_context, response_attachment_ids
+        )
+    except Exception:
+        logger.error(
+            "Error fetching delegated attachment metadata for %s",
+            response_attachment_ids,
+            exc_info=True,
+        )
+        metadata_by_id = {}
+
     delegated_attachments: list[ToolAttachment] = []
     for attachment_id in response_attachment_ids:
-        try:
-            att_metadata = await exec_context.attachment_registry.get_attachment(
-                exec_context.db_context, attachment_id
-            )
-            if att_metadata:
-                delegated_attachments.append(
-                    ToolAttachment(
-                        mime_type=att_metadata.mime_type,
-                        content=None,
-                        attachment_id=attachment_id,
-                        description=att_metadata.description
-                        or f"Attachment from delegated service '{target_service_id}'",
-                    )
-                )
-            else:
-                logger.warning(
-                    "Could not fetch metadata for delegated attachment %s",
-                    attachment_id,
-                )
-                delegated_attachments.append(
-                    ToolAttachment(
-                        mime_type="application/octet-stream",
-                        content=None,
-                        attachment_id=attachment_id,
-                        description=f"Attachment from delegated service '{target_service_id}'",
-                    )
-                )
-        except Exception as exc:
-            logger.error(
-                "Error fetching delegated attachment metadata for %s: %s",
+        att_metadata = metadata_by_id.get(attachment_id)
+        if att_metadata is None:
+            logger.warning(
+                "Could not fetch metadata for delegated attachment %s",
                 attachment_id,
-                exc,
-                exc_info=True,
             )
-            delegated_attachments.append(
-                ToolAttachment(
-                    mime_type="application/octet-stream",
-                    content=None,
-                    attachment_id=attachment_id,
-                    description=f"Attachment from delegated service '{target_service_id}'",
-                )
+        delegated_attachments.append(
+            ToolAttachment(
+                mime_type=att_metadata.mime_type
+                if att_metadata
+                else "application/octet-stream",
+                content=None,
+                attachment_id=attachment_id,
+                description=(att_metadata.description if att_metadata else None)
+                or f"Attachment from delegated service '{target_service_id}'",
             )
+        )
 
     logger.info(
         "Propagating %d attachment(s) from delegated service",
@@ -226,6 +216,70 @@ async def _completed_delegation_result(
         response_attachment_ids=response_attachment_ids,
     )
     return ToolResult(text=final_text_reply, attachments=delegated_attachments)
+
+
+def short_error_summary(error: str | None) -> str | None:
+    """Return the last non-blank line of an error, or ``None`` if there is none.
+
+    Delegated-run errors may be full tracebacks or whitespace-only strings; this
+    guards against ``IndexError`` from ``splitlines()[-1]`` on blank input.
+    """
+    if not error:
+        return None
+    lines = [line for line in error.strip().splitlines() if line.strip()]
+    return lines[-1] if lines else None
+
+
+def _failed_delegation_result(
+    *, target_service_id: str, run: DelegationRunDict
+) -> ToolResult:
+    """Surface a concise failure detail and how to retrieve the full status."""
+    detail = short_error_summary(run["error"]) or "An error occurred during processing."
+    return ToolResult(
+        text=(
+            f"Error from '{target_service_id}' service: {detail}\n"
+            f"Reference: {run['delegation_id']} "
+            "(call get_delegation_status with this reference for full details)."
+        ),
+        attachments=None,
+        data={
+            "delegation_id": run["delegation_id"],
+            "target_service_id": target_service_id,
+            "status": "failed",
+            "error": detail,
+        },
+    )
+
+
+async def _inline_delegation_result(
+    exec_context: ToolExecutionContext,
+    *,
+    target_service_id: str,
+    run: DelegationRunDict | None,
+) -> ToolResult | None:
+    """Return an inline tool result if the run is terminal, else ``None``."""
+    if run is None:
+        return None
+    if run["status"] == "completed":
+        logger.info(
+            "Delegated service '%s' completed inline for %s.",
+            target_service_id,
+            run["delegation_id"],
+        )
+        return await _completed_delegation_result(
+            exec_context,
+            target_service_id=target_service_id,
+            run=run,
+        )
+    if run["status"] == "failed":
+        logger.error(
+            "Delegated service '%s' failed inline for %s: %s",
+            target_service_id,
+            run["delegation_id"],
+            run["error"],
+        )
+        return _failed_delegation_result(target_service_id=target_service_id, run=run)
+    return None
 
 
 def _delegation_reference_text(
@@ -267,7 +321,7 @@ SERVICE_TOOLS_DEFINITION: list[ToolDefinition] = [
                 "If user cancels confirmation, returns 'OK. Delegation to service [id] cancelled by user.'. "
                 "If confirmation times out, returns 'Error: Confirmation timed out for delegating to [id].'. "
                 "If the delegated profile is still running after the handoff deadline, returns an async reference ID and the conversation will be notified when it finishes. "
-                "On delegation error, returns 'Error: Failed to delegate task to service [id]. Details: [error]' or 'Error from [id] service: An error occurred during processing.'."
+                "On delegation error, returns 'Error: Failed to delegate task to service [id]. Details: [error]' or 'Error from [id] service: [detail]' along with a reference ID you can pass to get_delegation_status for the full error."
             ),
             "parameters": {
                 "type": "object",
@@ -338,7 +392,7 @@ SERVICE_TOOLS_DEFINITION: list[ToolDefinition] = [
                 "properties": {
                     "status": {
                         "type": "string",
-                        "description": "Optional status filter such as queued, running, completed, failed, or cancelled.",
+                        "description": "Optional status filter such as queued, running, completed, or failed.",
                     },
                     "limit": {
                         "type": "integer",
@@ -528,7 +582,6 @@ async def delegate_to_service_tool(
         handoff_after_seconds,
         delivery_hint,
     )
-    handoff_after_at = _now(exec_context) + timedelta(seconds=wait_seconds)
 
     logger.info(
         "Enqueuing delegated request to service profile '%s' with %d content parts "
@@ -551,12 +604,9 @@ async def delegate_to_service_tool(
                 "user_id": exec_context.user_id,
                 "user_name": exec_context.user_name,
                 "source_turn_id": exec_context.turn_id,
-                "source_tool_call_id": None,
                 "subconversation_id": subconversation_id,
                 "request_text": user_request,
                 "content_parts_json": content_parts,
-                "attachment_ids_json": list(attachment_ids or []),
-                "handoff_after_at": handoff_after_at,
             })
             await isolated_db.tasks.enqueue(
                 task_id=task_id,
@@ -575,34 +625,27 @@ async def delegate_to_service_tool(
             delegation_id=delegation_id,
             wait_seconds=wait_seconds,
         )
-        if run is not None and run["status"] == "completed":
-            logger.info(
-                "Delegated service '%s' completed inline for %s.",
-                target_service_id,
-                delegation_id,
-            )
-            return await _completed_delegation_result(
-                exec_context,
-                target_service_id=target_service_id,
-                run=run,
-            )
-        if run is not None and run["status"] == "failed":
-            logger.error(
-                "Delegated service '%s' failed inline for %s: %s",
-                target_service_id,
-                delegation_id,
-                run["error"],
-            )
-            return ToolResult(
-                text=f"Error from '{target_service_id}' service: An error occurred during processing.",
-                attachments=None,
-            )
+        inline_result = await _inline_delegation_result(
+            exec_context, target_service_id=target_service_id, run=run
+        )
+        if inline_result is not None:
+            return inline_result
 
+        # The run is not terminal within the handoff window. Atomically claim the
+        # handoff; if the run reached a terminal state in the race, the claim
+        # fails and we deliver the result inline instead of stranding it.
         async with exec_context.db_context.create_isolated_context() as isolated_db:
-            await isolated_db.delegation_runs.mark_handed_off(
+            handed_off = await isolated_db.delegation_runs.mark_handed_off(
                 delegation_id,
                 _now(exec_context),
             )
+        if not handed_off:
+            run = await _load_delegation_run(exec_context, delegation_id)
+            inline_result = await _inline_delegation_result(
+                exec_context, target_service_id=target_service_id, run=run
+            )
+            if inline_result is not None:
+                return inline_result
 
         run_status = run["status"] if run is not None else "queued"
         return ToolResult(

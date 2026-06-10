@@ -40,12 +40,9 @@ def upgrade() -> None:
         sa.Column("user_id", sa.String(length=255), nullable=True),
         sa.Column("user_name", sa.String(length=255), nullable=True),
         sa.Column("source_turn_id", sa.String(length=100), nullable=True),
-        sa.Column("source_tool_call_id", sa.String(length=255), nullable=True),
         sa.Column("subconversation_id", sa.String(length=36), nullable=False),
         sa.Column("request_text", sa.Text(), nullable=False),
         sa.Column("content_parts_json", _json_column_type(), nullable=False),
-        sa.Column("attachment_ids_json", _json_column_type(), nullable=True),
-        sa.Column("handoff_after_at", sa.DateTime(timezone=True), nullable=False),
         sa.Column("handed_off_at", sa.DateTime(timezone=True), nullable=True),
         sa.Column("started_at", sa.DateTime(timezone=True), nullable=True),
         sa.Column("completed_at", sa.DateTime(timezone=True), nullable=True),
@@ -61,13 +58,8 @@ def upgrade() -> None:
             server_default=sa.text("(CURRENT_TIMESTAMP)"),
             nullable=False,
         ),
+        sa.UniqueConstraint("task_id"),
         sa.PrimaryKeyConstraint("id"),
-    )
-    op.create_index(
-        op.f("ix_delegation_runs_conversation_id"),
-        "delegation_runs",
-        ["conversation_id"],
-        unique=False,
     )
     op.create_index(
         op.f("ix_delegation_runs_delegation_id"),
@@ -76,69 +68,31 @@ def upgrade() -> None:
         unique=True,
     )
     op.create_index(
-        op.f("ix_delegation_runs_interface_type"),
+        "ix_delegation_runs_conversation_created",
         "delegation_runs",
-        ["interface_type"],
+        ["conversation_id", "created_at"],
         unique=False,
     )
     op.create_index(
-        op.f("ix_delegation_runs_source_profile_id"),
+        "ix_delegation_runs_status_started",
         "delegation_runs",
-        ["source_profile_id"],
+        ["status", "started_at"],
         unique=False,
-    )
-    op.create_index(
-        op.f("ix_delegation_runs_status"),
-        "delegation_runs",
-        ["status"],
-        unique=False,
-    )
-    op.create_index(
-        op.f("ix_delegation_runs_subconversation_id"),
-        "delegation_runs",
-        ["subconversation_id"],
-        unique=False,
-    )
-    op.create_index(
-        op.f("ix_delegation_runs_target_service_id"),
-        "delegation_runs",
-        ["target_service_id"],
-        unique=False,
-    )
-    op.create_index(
-        op.f("ix_delegation_runs_task_id"),
-        "delegation_runs",
-        ["task_id"],
-        unique=True,
     )
 
 
 def downgrade() -> None:
     """Downgrade schema."""
-    op.drop_index(op.f("ix_delegation_runs_task_id"), table_name="delegation_runs")
     op.drop_index(
-        op.f("ix_delegation_runs_target_service_id"),
+        "ix_delegation_runs_status_started",
         table_name="delegation_runs",
     )
     op.drop_index(
-        op.f("ix_delegation_runs_subconversation_id"),
-        table_name="delegation_runs",
-    )
-    op.drop_index(op.f("ix_delegation_runs_status"), table_name="delegation_runs")
-    op.drop_index(
-        op.f("ix_delegation_runs_source_profile_id"),
-        table_name="delegation_runs",
-    )
-    op.drop_index(
-        op.f("ix_delegation_runs_interface_type"),
+        "ix_delegation_runs_conversation_created",
         table_name="delegation_runs",
     )
     op.drop_index(
         op.f("ix_delegation_runs_delegation_id"),
-        table_name="delegation_runs",
-    )
-    op.drop_index(
-        op.f("ix_delegation_runs_conversation_id"),
         table_name="delegation_runs",
     )
     op.drop_table("delegation_runs")
