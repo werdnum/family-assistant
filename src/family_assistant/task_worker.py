@@ -63,6 +63,7 @@ from family_assistant.storage.context import DatabaseContext, get_db_context
 from family_assistant.storage.message_history import message_history_table
 from family_assistant.storage.tasks import (
     enqueue_task,
+    notify_other_workers,
     register_worker_wake_event,
     unregister_worker_wake_event,
 )
@@ -1186,7 +1187,15 @@ class TaskWorker:
             )
 
     async def _wait_for_next_poll(self, wake_up_event: asyncio.Event) -> None:
-        """Waits for the polling interval or a wake-up event."""
+        """Waits for the polling interval or a wake-up event.
+
+        The event is cleared at the top of each loop iteration (before the
+        dequeue attempt), NOT here. That ordering avoids a lost-wakeup race: a
+        notification that arrives *during* a dequeue that returned nothing (e.g.
+        a sibling that just claimed a task and woke us to drain the rest of the
+        queue) leaves the event set, so this wait returns immediately instead of
+        blocking for the full poll interval.
+        """
         try:
             logger.debug(
                 f"Worker {self.worker_id}: No tasks found, waiting for event or timeout ({TASK_POLLING_INTERVAL}s)..."
@@ -1195,7 +1204,6 @@ class TaskWorker:
             await asyncio.wait_for(wake_up_event.wait(), timeout=TASK_POLLING_INTERVAL)
             # If wait_for completes without timeout, the event was set
             logger.debug(f"Worker {self.worker_id}: Woken up by event.")
-            wake_up_event.clear()  # Reset the event for the next notification
         except TimeoutError:
             # Event didn't fire, timeout reached, proceed to next polling cycle
             logger.debug(
@@ -1238,6 +1246,11 @@ class TaskWorker:
         while not self.shutdown_event.is_set():  # Use self.shutdown_event
             try:
                 task = None  # Initialize task variable for the outer scope
+                # Clear the wake event BEFORE attempting a dequeue. Any
+                # notification that arrives after this point (including while the
+                # dequeue runs) survives to the next _wait_for_next_poll, so a
+                # sibling waking us to drain remaining queued work is never lost.
+                wake_up_event.clear()
                 # Database context per iteration (starts a transaction)
                 if not self.engine:
                     raise RuntimeError("Database engine not initialized")
@@ -1265,6 +1278,11 @@ class TaskWorker:
                 # Process task in separate transaction if one was dequeued
                 if task:
                     logger.debug("Dequeued task: %s", task["task_id"])
+                    # Claiming a task does not drain the queue: this worker only
+                    # claims one task per dequeue, and a sibling that lost a claim
+                    # race may be parked. Wake siblings so they re-poll for any
+                    # remaining work instead of waiting out the poll interval.
+                    notify_other_workers(wake_up_event)
                     self._update_last_activity()  # Update activity when starting task processing
                     try:  # Inner try for task processing
                         # Transaction 2: Process task and update status (commits immediately)

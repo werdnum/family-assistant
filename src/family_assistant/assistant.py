@@ -267,6 +267,10 @@ class Assistant:
             llm_client_overrides if llm_client_overrides is not None else {}
         )
         self.database_engine: AsyncEngine | None = None
+        # Dedicated engines created for pool workers (one per worker) so each has
+        # its own DB connection and a worker parked inside a transaction does not
+        # block its siblings. Disposed on shutdown.
+        self.worker_engines: list[AsyncEngine] = []
 
         # Initialize all instance attributes
         self.fastapi_app: FastAPI | None = None
@@ -1369,7 +1373,10 @@ class Assistant:
         # in-memory futures and registries within this event loop.
         worker_count = self.config.task_worker_count
         self.task_workers = [
-            self._build_task_worker(default_timezone=worker_timezone)
+            self._build_task_worker(
+                default_timezone=worker_timezone,
+                engine=self._worker_engine(),
+            )
             for _ in range(worker_count)
         ]
         self.task_worker_tasks = [
@@ -1561,13 +1568,46 @@ class Assistant:
         except Exception as e:
             logger.error(f"Failed to setup system tasks: {e}")
 
-    def _build_task_worker(self, default_timezone: ZoneInfo) -> TaskWorker:
+    def _worker_engine(self) -> AsyncEngine:
+        """Provide a database engine for one pool worker.
+
+        Each worker gets its OWN engine (its own connection) so that a worker
+        parked inside a transaction — e.g. a confirmation-gated delegated run
+        waiting on an in-process future — does not hold the single shared
+        connection and block its siblings. On SQLite this matters most: the
+        shared StaticPool hands out one connection, so without a dedicated engine
+        a long-held worker transaction serializes the whole pool.
+
+        Exception: an in-memory SQLite database (``:memory:``) cannot be shared
+        across engines (each new engine gets a fresh, empty database), so in that
+        case the single shared engine is reused. In-memory SQLite is test-only.
+        """
+        if self.database_engine is None:
+            raise RuntimeError("database_engine must be set before workers")
+
+        url = self.database_engine.url
+        is_memory_sqlite = url.get_backend_name() == "sqlite" and (
+            url.database is None or ":memory:" in url.database
+        )
+        if is_memory_sqlite:
+            return self.database_engine
+
+        engine = create_engine_with_sqlite_optimizations(
+            url.render_as_string(hide_password=False)
+        )
+        self.worker_engines.append(engine)
+        return engine
+
+    def _build_task_worker(
+        self, default_timezone: ZoneInfo, engine: AsyncEngine
+    ) -> TaskWorker:
         """Construct and fully configure a single TaskWorker for the pool.
 
         Every worker in the pool is built here so they share an identical handler
-        set and the same shared dependencies (processing service, engine,
-        confirmation waiters/managers, etc.). They are interchangeable: any worker
-        can pick up any queued task.
+        set and the same shared dependencies (processing service, confirmation
+        waiters/managers, etc.). They are interchangeable: any worker can pick up
+        any queued task. Each worker is given its own ``engine`` (see
+        :meth:`_worker_engine`).
         """
         if self.default_processing_service is None:
             raise RuntimeError("default_processing_service must be set before workers")
@@ -1590,7 +1630,7 @@ class Assistant:
             event_sources=self.event_processor.sources
             if self.event_processor
             else None,
-            engine=self.database_engine,  # Pass the database engine
+            engine=engine,  # Dedicated per-worker engine
             chat_interfaces=self.fastapi_app.state.chat_interfaces,
             confirmation_result_waiters=self.confirmation_result_waiters,
             confirmation_ui_managers=self.fastapi_app.state.confirmation_ui_managers,
@@ -1638,10 +1678,66 @@ class Assistant:
         logger.info(f"Registered task handlers for worker {worker.worker_id}")
         return worker
 
+    WORKER_INACTIVITY_TIMEOUT = 600
+
+    async def _check_and_restart_workers(self) -> None:
+        """Run one health-check pass over the pool, restarting dead/stuck workers.
+
+        Each worker is checked individually so a single dead or stuck worker is
+        restarted in place without disturbing its healthy siblings. Restarting
+        reuses the same TaskWorker instance (same engine and handlers) on a fresh
+        ``run()`` task; the new task replaces the old one at the same pool index.
+        """
+        for index, worker in enumerate(self.task_workers):
+            worker_task = self.task_worker_tasks[index]
+
+            if worker_task.done():
+                if worker_task.cancelled():
+                    logger.warning(
+                        f"Task worker {worker.worker_id} was cancelled, restarting..."
+                    )
+                else:
+                    try:
+                        # This re-raises any exception that occurred in the task
+                        worker_task.result()
+                        logger.warning(
+                            f"Task worker {worker.worker_id} exited normally, "
+                            "restarting..."
+                        )
+                    except Exception as e:
+                        logger.error(
+                            f"Task worker {worker.worker_id} crashed with error: {e}",
+                            exc_info=True,
+                        )
+
+                logger.info(f"Restarting task worker {worker.worker_id}...")
+                self.task_worker_tasks[index] = asyncio.create_task(worker.run())
+                continue
+
+            # Check last activity time for this worker
+            if worker.last_activity:
+                time_since_activity = (
+                    datetime.now(UTC) - worker.last_activity
+                ).total_seconds()
+
+                if time_since_activity > self.WORKER_INACTIVITY_TIMEOUT:
+                    logger.error(
+                        f"Task worker {worker.worker_id} appears stuck (no activity "
+                        f"for {time_since_activity:.0f}s), cancelling and restarting..."
+                    )
+                    worker_task.cancel()
+                    with contextlib.suppress(asyncio.CancelledError):
+                        await worker_task
+
+                    self.task_worker_tasks[index] = asyncio.create_task(worker.run())
+                    logger.info(
+                        f"Task worker {worker.worker_id} restarted after inactivity "
+                        "timeout"
+                    )
+
     async def _monitor_task_worker_health(self) -> None:
         """Monitors the health of the task worker pool and restarts dead workers."""
         HEALTH_CHECK_INTERVAL = 30  # Check every 30 seconds
-        WORKER_INACTIVITY_TIMEOUT = 600
 
         while not self.shutdown_event.is_set():
             try:
@@ -1650,54 +1746,7 @@ class Assistant:
                 if not self.task_workers or not self.task_worker_tasks:
                     continue
 
-                # Check each worker in the pool individually so one dead/stuck
-                # worker is restarted without disturbing its healthy siblings.
-                for index, worker in enumerate(self.task_workers):
-                    worker_task = self.task_worker_tasks[index]
-
-                    if worker_task.done():
-                        try:
-                            # This re-raises any exception that occurred in the task
-                            worker_task.result()
-                            logger.warning(
-                                f"Task worker {worker.worker_id} exited normally, "
-                                "restarting..."
-                            )
-                        except Exception as e:
-                            logger.error(
-                                f"Task worker {worker.worker_id} crashed with error: {e}",
-                                exc_info=True,
-                            )
-
-                        logger.info(f"Restarting task worker {worker.worker_id}...")
-                        self.task_worker_tasks[index] = asyncio.create_task(
-                            worker.run()
-                        )
-                        continue
-
-                    # Check last activity time for this worker
-                    if worker.last_activity:
-                        time_since_activity = (
-                            datetime.now(UTC) - worker.last_activity
-                        ).total_seconds()
-
-                        if time_since_activity > WORKER_INACTIVITY_TIMEOUT:
-                            logger.error(
-                                f"Task worker {worker.worker_id} appears stuck (no "
-                                f"activity for {time_since_activity:.0f}s), cancelling "
-                                "and restarting..."
-                            )
-                            worker_task.cancel()
-                            with contextlib.suppress(asyncio.CancelledError):
-                                await worker_task
-
-                            self.task_worker_tasks[index] = asyncio.create_task(
-                                worker.run()
-                            )
-                            logger.info(
-                                f"Task worker {worker.worker_id} restarted after "
-                                "inactivity timeout"
-                            )
+                await self._check_and_restart_workers()
 
             except asyncio.CancelledError:
                 # Shutdown requested
@@ -1794,6 +1843,15 @@ class Assistant:
             self.error_logging_handler.close()
             logging.getLogger().removeHandler(self.error_logging_handler)
             logger.info("Error logging handler closed.")
+
+        # Dispose dedicated per-worker engines (always created by us, so always
+        # disposed). Skip any that alias the shared engine (in-memory SQLite).
+        for worker_engine in self.worker_engines:
+            if worker_engine is not self.database_engine:
+                await worker_engine.dispose()
+        if self.worker_engines:
+            logger.info(f"Disposed {len(self.worker_engines)} worker engine(s).")
+        self.worker_engines = []
 
         # Close database engine (only if we created it, not if it was injected)
         if self.database_engine and not self._injected_database_engine:

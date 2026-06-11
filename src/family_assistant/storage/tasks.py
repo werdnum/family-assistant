@@ -92,6 +92,20 @@ def notify_workers() -> None:
         event.set()
 
 
+def notify_other_workers(except_event: Event) -> None:
+    """Wake every registered worker except the one owning ``except_event``.
+
+    Used when a worker has just claimed a task: there may be more queued tasks
+    that this worker's single-task dequeue did not pick up, and a sibling that
+    lost a dequeue race is otherwise parked until the next poll. Waking siblings
+    lets them re-poll immediately so concurrent work is not delayed.
+    """
+    get_task_event().set()
+    for event in list(_worker_wake_events):
+        if event is not except_event:
+            event.set()
+
+
 # Define the tasks table for the message queue
 tasks_table = Table(
     "tasks",
