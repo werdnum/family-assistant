@@ -3,14 +3,8 @@
 > vite --host 0.0.0.0
 
 
-  VITE v7.1.4  ready in 274 ms
+  VITE v7.1.4  ready in 503 ms
 
   ➜  Local:   http://localhost:5173/
   ➜  Network: http://192.168.0.2:5173/
 [baseline-browser-mapping] The data in this module is over two months old.  To ensure accurate Baseline data, please update: `npm i baseline-browser-mapping@latest -D`
-Browserslist: browsers data (caniuse-lite) is 8 months old. Please run:
-  npx update-browserslist-db@latest
-  Why you should do it regularly: https://github.com/browserslist/update-db#readme
-6:40:22 AM [vite] (client) hmr update /src/pages/LandingPage.tsx, /src/styles/globals.css
-6:40:25 AM [vite] (client) hmr update /src/styles/globals.css
-6:40:25 AM [vite] (client) hmr update /src/styles/globals.css

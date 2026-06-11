@@ -32,7 +32,7 @@ export const MarkdownText = ({ text }) => {
               </pre>
             );
           },
-          code: ({ inline, className, children }) => {
+          code: ({ className, children }) => {
             const isInsidePre = useContext(PreContext);
 
             // In react-markdown v10, the `inline` prop is no longer provided.
