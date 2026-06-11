@@ -877,21 +877,22 @@ class TaskWorker:
             request_confirmation_callback = (
                 self._build_delegation_confirmation_callback(exec_context, run)
             )
-            result = await target_service.handle_chat_interaction(
-                db_context=exec_context.db_context,
-                interface_type=run["interface_type"],
-                conversation_id=run["conversation_id"],
-                trigger_content_parts=content_parts,
-                trigger_interface_message_id=None,
-                user_name=run["user_name"] or exec_context.user_name,
-                user_id=run["user_id"],
-                replied_to_interface_id=None,
-                chat_interface=chat_interface,
-                chat_interfaces=exec_context.chat_interfaces,
-                confirmation_ui_managers=exec_context.confirmation_ui_managers,
-                request_confirmation_callback=request_confirmation_callback,
-                subconversation_id=run["subconversation_id"],
-            )
+            async with exec_context.db_context.create_isolated_context() as run_db:
+                result = await target_service.handle_chat_interaction(
+                    db_context=run_db,
+                    interface_type=run["interface_type"],
+                    conversation_id=run["conversation_id"],
+                    trigger_content_parts=content_parts,
+                    trigger_interface_message_id=None,
+                    user_name=run["user_name"] or exec_context.user_name,
+                    user_id=run["user_id"],
+                    replied_to_interface_id=None,
+                    chat_interface=chat_interface,
+                    chat_interfaces=exec_context.chat_interfaces,
+                    confirmation_ui_managers=exec_context.confirmation_ui_managers,
+                    request_confirmation_callback=request_confirmation_callback,
+                    subconversation_id=run["subconversation_id"],
+                )
         except Exception:
             # A timeout cancellation (CancelledError) is intentionally NOT caught
             # here: it propagates so the task is retried, and the retry's
@@ -1018,12 +1019,13 @@ class TaskWorker:
             else:
                 prompt_text = f"Confirm execution of tool: {tool_name}"
 
-            source_turn_id = run["source_turn_id"] or turn_id
+            display_turn_id = run["source_turn_id"] or turn_id
+            execution_turn_id = turn_id
             source_message_internal_id = None
-            if source_turn_id is not None:
+            if execution_turn_id is not None:
                 source_row = (
                     await context.db_context.message_history.get_user_row_by_turn_id(
-                        source_turn_id
+                        execution_turn_id
                     )
                 )
                 if source_row is not None:
@@ -1032,7 +1034,7 @@ class TaskWorker:
             return await confirmation_manager.request_confirmation(
                 conversation_id=run["conversation_id"],
                 interface_type=run["interface_type"],
-                turn_id=source_turn_id,
+                turn_id=display_turn_id,
                 prompt_text=prompt_text,
                 tool_name=tool_name,
                 tool_args=tool_args,
@@ -1040,6 +1042,7 @@ class TaskWorker:
                 target_user_id=run["user_id"],
                 tool_call_id=call_id,
                 source_message_internal_id=source_message_internal_id,
+                wait_for_durable_execution=False,
             )
 
         return request_confirmation

@@ -115,7 +115,7 @@ class ConfirmationRequestsRepository(BaseRepository):
         request_id: str,
         resolving_user_id: str,
         resolving_interface: str,
-        execution_task_id: str,
+        execution_task_id: str | None,
         now: datetime,
     ) -> ConfirmationRequestRow | None:
         """Move a pending request to approved and store the execution task id."""

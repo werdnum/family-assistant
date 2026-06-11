@@ -68,6 +68,7 @@ class WebConfirmationUIManager:
         target_user_id: str | None = None,
         tool_call_id: str | None = None,
         source_message_internal_id: int | None = None,
+        wait_for_durable_execution: bool = True,
     ) -> ConfirmationOutcome:
         """Create, deliver and await a durable web confirmation."""
         if target_user_id is None:
@@ -90,7 +91,11 @@ class WebConfirmationUIManager:
             expires_at=expires_at,
         )
         request_id = durable_request["id"]
-        execution_future = self._confirmation_result_waiters.register(request_id)
+        if wait_for_durable_execution:
+            execution_future = self._confirmation_result_waiters.register(request_id)
+        else:
+            execution_future = None
+            self._confirmation_result_waiters.mark_decision_only(request_id)
 
         async def get_durable_status() -> str | None:
             try:
@@ -106,6 +111,8 @@ class WebConfirmationUIManager:
             return refreshed["status"]
 
         async def wait_for_execution_result() -> ConfirmationOutcome:
+            if execution_future is None:
+                return ConfirmationOutcome(kind="approved")
             try:
                 return await asyncio.wait_for(
                     asyncio.shield(execution_future),

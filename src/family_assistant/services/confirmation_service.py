@@ -132,6 +132,37 @@ class ConfirmationService:
         approving_interface: str,
     ) -> ConfirmationRequestRow:
         """Approve a pending request and enqueue its execution atomically."""
+        return await self._approve(
+            request_id=request_id,
+            approving_user_id=approving_user_id,
+            approving_interface=approving_interface,
+            enqueue_execution=True,
+        )
+
+    async def approve_without_enqueueing_execution(
+        self,
+        *,
+        request_id: str,
+        approving_user_id: str,
+        approving_interface: str,
+    ) -> ConfirmationRequestRow:
+        """Approve a pending request whose caller will execute the tool inline."""
+        return await self._approve(
+            request_id=request_id,
+            approving_user_id=approving_user_id,
+            approving_interface=approving_interface,
+            enqueue_execution=False,
+        )
+
+    async def _approve(
+        self,
+        *,
+        request_id: str,
+        approving_user_id: str,
+        approving_interface: str,
+        enqueue_execution: bool,
+    ) -> ConfirmationRequestRow:
+        """Approve a pending request and optionally enqueue background execution."""
         async with self._db_context_factory() as db:
             request = await self._get_authorized_request(
                 db=db,
@@ -149,7 +180,11 @@ class ConfirmationService:
                     f"Confirmation request {request_id} has expired"
                 )
 
-            execution_task_id = f"confirmation_tool_execution:{request_id}"
+            execution_task_id = (
+                f"confirmation_tool_execution:{request_id}"
+                if enqueue_execution
+                else None
+            )
             approved = await db.confirmation_requests.approve_pending(
                 request_id=request_id,
                 resolving_user_id=approving_user_id,
@@ -165,13 +200,14 @@ class ConfirmationService:
                     )
                 return self._handle_concurrent_resolution(refreshed, "approved", now)
 
-            await db.tasks.enqueue(
-                task_id=execution_task_id,
-                task_type=CONFIRMATION_TOOL_EXECUTION_TASK_TYPE,
-                payload={"confirmation_request_id": request_id},
-                original_task_id=execution_task_id,
-                max_retries_override=0,
-            )
+            if execution_task_id is not None:
+                await db.tasks.enqueue(
+                    task_id=execution_task_id,
+                    task_type=CONFIRMATION_TOOL_EXECUTION_TASK_TYPE,
+                    payload={"confirmation_request_id": request_id},
+                    original_task_id=execution_task_id,
+                    max_retries_override=0,
+                )
             return approved
 
     async def reject(

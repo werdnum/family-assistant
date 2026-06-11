@@ -15,6 +15,7 @@ class ConfirmationResultWaiterRegistry:
 
     def __init__(self) -> None:
         self._waiters: dict[str, asyncio.Future[ConfirmationOutcome]] = {}
+        self._decision_only_requests: set[str] = set()
 
     def register(self, request_id: str) -> asyncio.Future[ConfirmationOutcome]:
         """Register a live waiter for a durable confirmation request."""
@@ -37,6 +38,15 @@ class ConfirmationResultWaiterRegistry:
         if future is not None and self._waiters.get(request_id) is not future:
             return
         self._waiters.pop(request_id, None)
+        self._decision_only_requests.discard(request_id)
+
+    def mark_decision_only(self, request_id: str) -> None:
+        """Mark a request whose approved tool executes in the waiting coroutine."""
+        self._decision_only_requests.add(request_id)
+
+    def is_decision_only(self, request_id: str) -> bool:
+        """Return whether approval should resolve only the decision future."""
+        return request_id in self._decision_only_requests
 
     def resolve_completed(
         self,

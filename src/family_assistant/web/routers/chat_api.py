@@ -1792,11 +1792,18 @@ async def confirm_tool_execution(
     confirmation_result_waiters = _get_confirmation_result_waiters(request)
     try:
         if payload.approved:
-            await confirmation_service.approve_and_enqueue_execution(
-                request_id=payload.request_id,
-                approving_user_id=current_user["user_identifier"],
-                approving_interface=payload.approving_interface,
-            )
+            if confirmation_result_waiters.is_decision_only(payload.request_id):
+                await confirmation_service.approve_without_enqueueing_execution(
+                    request_id=payload.request_id,
+                    approving_user_id=current_user["user_identifier"],
+                    approving_interface=payload.approving_interface,
+                )
+            else:
+                await confirmation_service.approve_and_enqueue_execution(
+                    request_id=payload.request_id,
+                    approving_user_id=current_user["user_identifier"],
+                    approving_interface=payload.approving_interface,
+                )
             web_confirmation_manager.resolve_approved(payload.request_id)
             message = "Tool execution approved"
         else:

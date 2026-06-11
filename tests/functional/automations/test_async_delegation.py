@@ -15,6 +15,7 @@ from family_assistant.config_models import ToolsConfig
 from family_assistant.interfaces import ChatInterface
 from family_assistant.llm.messages import AssistantMessage, UserMessage
 from family_assistant.processing.types import ChatInteractionResult
+from family_assistant.services.attachment_registry import AttachmentRegistry
 from family_assistant.storage import message_history_table
 from family_assistant.storage.context import DatabaseContext
 from family_assistant.storage.delegation_runs import delegation_runs_table
@@ -32,6 +33,8 @@ from family_assistant.tools.types import ConfirmationOutcome, ToolExecutionConte
 from family_assistant.utils.clock import SystemClock
 
 if TYPE_CHECKING:
+    from pathlib import Path
+
     from sqlalchemy.ext.asyncio import AsyncEngine
 
     from family_assistant.processing import ProcessingService
@@ -63,6 +66,7 @@ class FakeConfirmationRequest(TypedDict):
     target_user_id: str | None
     tool_call_id: str | None
     source_message_internal_id: int | None
+    wait_for_durable_execution: bool
 
 
 class FakeConfirmationUIManager:
@@ -84,6 +88,7 @@ class FakeConfirmationUIManager:
         target_user_id: str | None = None,
         tool_call_id: str | None = None,
         source_message_internal_id: int | None = None,
+        wait_for_durable_execution: bool = True,
     ) -> ConfirmationOutcome:
         self.requests.append(
             FakeConfirmationRequest(
@@ -97,6 +102,7 @@ class FakeConfirmationUIManager:
                 target_user_id=target_user_id,
                 tool_call_id=tool_call_id,
                 source_message_internal_id=source_message_internal_id,
+                wait_for_durable_execution=wait_for_durable_execution,
             )
         )
         return ConfirmationOutcome(kind="approved")
@@ -118,17 +124,34 @@ class FakeDelegatableService:
 
     kind = "local"
 
-    def __init__(self, *, request_confirmation: bool = False) -> None:
+    def __init__(
+        self,
+        *,
+        request_confirmation: bool = False,
+        attachment_registry: AttachmentRegistry | None = None,
+    ) -> None:
         self.service_config = SimpleNamespace(
             id="target_profile",
             allowed_delegation_sources=["source_profile"],
         )
         self.request_confirmation = request_confirmation
+        self.attachment_registry = attachment_registry
         self.calls: list[FakeDelegationCall] = []
 
     async def handle_chat_interaction(self, **kwargs: Any) -> ChatInteractionResult:  # noqa: ANN401
         self.calls.append(cast("FakeDelegationCall", kwargs))
         if self.request_confirmation:
+            delegated_turn_id = "delegated_tool_turn"
+            await kwargs["db_context"].message_history.add_message(
+                UserMessage(content="delegated target request"),
+                interface_type=kwargs["interface_type"],
+                conversation_id=kwargs["conversation_id"],
+                timestamp=SystemClock().now(),
+                turn_id=delegated_turn_id,
+                processing_profile_id=self.service_config.id,
+                subconversation_id=kwargs["subconversation_id"],
+                user_id="async-delegation-user",
+            )
             callback = kwargs["request_confirmation_callback"]
             assert callback is not None
             callback_context = ToolExecutionContext(
@@ -136,7 +159,7 @@ class FakeDelegatableService:
                 conversation_id=kwargs["conversation_id"],
                 user_name=TEST_USER_NAME,
                 user_id="async-delegation-user",
-                turn_id="delegated_tool_turn",
+                turn_id=delegated_turn_id,
                 db_context=kwargs["db_context"],
                 processing_service=None,
                 clock=SystemClock(),
@@ -151,7 +174,7 @@ class FakeDelegatableService:
             outcome = await callback(
                 interface_type=kwargs["interface_type"],
                 conversation_id=kwargs["conversation_id"],
-                turn_id="delegated_tool_turn",
+                turn_id=delegated_turn_id,
                 tool_name="confirmable_delegated_tool",
                 call_id="confirmable_call_1",
                 tool_args={"action": "write"},
@@ -159,7 +182,57 @@ class FakeDelegatableService:
                 context=callback_context,
             )
             assert outcome.kind == "approved"
-        return ChatInteractionResult.success(text_reply="background delegation done")
+        attachment_ids: list[str] | None = None
+        if self.attachment_registry is not None:
+            attachment = (
+                await self.attachment_registry.store_and_register_tool_attachment(
+                    file_content=b"delegated attachment",
+                    filename="delegated-output.txt",
+                    content_type="text/plain",
+                    tool_name="target_profile_tool",
+                    description="Delegated output",
+                    conversation_id=kwargs["conversation_id"],
+                    db_context=kwargs["db_context"],
+                )
+            )
+            attachment_ids = [attachment.attachment_id]
+        return ChatInteractionResult.success(
+            text_reply="background delegation done",
+            attachment_ids=attachment_ids,
+        )
+
+
+class AttachmentVisibilityChatInterface:
+    """Chat interface that verifies attachment rows are visible while notifying."""
+
+    def __init__(
+        self,
+        db_engine: AsyncEngine,
+        attachment_registry: AttachmentRegistry,
+    ) -> None:
+        self.db_engine = db_engine
+        self.attachment_registry = attachment_registry
+        self.sent_attachment_ids: list[str] | None = None
+        self.visible_attachment_ids: list[str] = []
+
+    async def send_message(
+        self,
+        conversation_id: str,
+        text: str,
+        parse_mode: str | None = None,
+        reply_to_interface_id: str | None = None,
+        attachment_ids: list[str] | None = None,
+    ) -> str | None:
+        _ = (conversation_id, text, parse_mode, reply_to_interface_id)
+        self.sent_attachment_ids = attachment_ids
+        if attachment_ids:
+            async with DatabaseContext(engine=self.db_engine) as db_context:
+                visible = await self.attachment_registry.get_attachments(
+                    db_context,
+                    attachment_ids,
+                )
+            self.visible_attachment_ids = list(visible)
+        return "external_message_id"
 
 
 def _source_processing_service(
@@ -276,6 +349,8 @@ async def test_delegate_to_service_background_reference_and_completion_notificat
     assert len(target_service.calls) == 1
     assert target_service.calls[0]["request_confirmation_callback"] is not None
     assert target_service.calls[0]["subconversation_id"]
+    assert len(confirmation_manager.requests) == 1
+    confirmation_request = confirmation_manager.requests[0]
     assert confirmation_manager.requests == [
         FakeConfirmationRequest(
             conversation_id=TEST_CONVERSATION_ID,
@@ -287,15 +362,34 @@ async def test_delegate_to_service_background_reference_and_completion_notificat
             timeout=42.0,
             target_user_id="async-delegation-user",
             tool_call_id="confirmable_call_1",
-            source_message_internal_id=source_message_internal_id,
+            source_message_internal_id=confirmation_request[
+                "source_message_internal_id"
+            ],
+            wait_for_durable_execution=False,
         )
     ]
+    delegated_source_message_internal_id = confirmation_request[
+        "source_message_internal_id"
+    ]
+    assert delegated_source_message_internal_id is not None
+    assert delegated_source_message_internal_id != source_message_internal_id
     chat_interface.send_message.assert_awaited_once()
     sent_kwargs = chat_interface.send_message.await_args.kwargs
     assert delegation_id in sent_kwargs["text"]
     assert "background delegation done" in sent_kwargs["text"]
 
     async with DatabaseContext(engine=db_engine) as db_context:
+        delegated_source_row = await db_context.message_history.get_row_by_internal_id(
+            delegated_source_message_internal_id
+        )
+        assert delegated_source_row is not None
+        assert delegated_source_row["turn_id"] == "delegated_tool_turn"
+        assert delegated_source_row["processing_profile_id"] == "target_profile"
+        assert (
+            delegated_source_row["subconversation_id"]
+            == target_service.calls[0]["subconversation_id"]
+        )
+
         status_result = await get_delegation_status_tool(
             _tool_context(db_context, processing_service, chat_interface),
             delegation_id=delegation_id,
@@ -491,6 +585,60 @@ async def test_failed_delivery_is_not_recorded_as_notified(
             )
         )
         assert rows == []
+
+
+@pytest.mark.asyncio
+async def test_worker_commits_delegated_attachments_before_notification(
+    db_engine: AsyncEngine,
+    tmp_path: Path,
+) -> None:
+    """Generated attachment rows are committed before non-web notification delivery."""
+    attachment_storage = tmp_path / "attachments"
+    attachment_storage.mkdir()
+    attachment_registry = AttachmentRegistry(
+        storage_path=str(attachment_storage),
+        db_engine=db_engine,
+        config=None,
+    )
+    target_service = FakeDelegatableService(attachment_registry=attachment_registry)
+    processing_service = _source_processing_service(target_service)
+    chat_interface = AttachmentVisibilityChatInterface(
+        db_engine,
+        attachment_registry,
+    )
+
+    async with DatabaseContext(engine=db_engine) as db_context:
+        await _create_run(db_context, delegation_id="delegation_with_attachment")
+        await db_context.delegation_runs.mark_handed_off(
+            "delegation_with_attachment",
+            SystemClock().now(),
+        )
+
+    worker = _build_worker(
+        db_engine,
+        processing_service,
+        cast("ChatInterface", chat_interface),
+    )
+    async with DatabaseContext(engine=db_engine) as db_context:
+        await worker.handle_delegated_profile_run(
+            _tool_context(
+                db_context,
+                processing_service,
+                cast("ChatInterface", chat_interface),
+            ),
+            _payload("delegation_with_attachment"),
+        )
+
+    assert chat_interface.sent_attachment_ids is not None
+    assert chat_interface.visible_attachment_ids == chat_interface.sent_attachment_ids
+
+    async with DatabaseContext(engine=db_engine) as db_context:
+        run = await db_context.delegation_runs.get_by_delegation_id(
+            "delegation_with_attachment"
+        )
+        assert run is not None
+        assert run["notified_at"] is not None
+        assert run["result_attachment_ids_json"] == chat_interface.sent_attachment_ids
 
 
 @pytest.mark.asyncio

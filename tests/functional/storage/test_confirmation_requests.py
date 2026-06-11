@@ -96,7 +96,7 @@ class _RacingConfirmationRequestsRepository:
         request_id: str,
         resolving_user_id: str,
         resolving_interface: str,
-        execution_task_id: str,
+        execution_task_id: str | None,
         now: datetime,
     ) -> ConfirmationRequestRow | None:
         if self._race_mode == "reject_before_approve":
@@ -299,6 +299,32 @@ async def test_approval_enqueues_execution_task_atomically(
     assert tasks[0]["task_id"] == expected_task_id
     assert tasks[0]["payload"] == {"confirmation_request_id": request_id}
     assert tasks[0]["max_retries"] == 0
+
+
+@pytest.mark.asyncio
+async def test_decision_only_approval_does_not_enqueue_execution_task(
+    db_engine: AsyncEngine,
+) -> None:
+    service = _service(db_engine)
+    request_id = await _create_request(db_engine)
+
+    approved = await service.approve_without_enqueueing_execution(
+        request_id=request_id,
+        approving_user_id="user-1",
+        approving_interface="web",
+    )
+
+    assert approved["status"] == "approved"
+    assert approved["resolved_by_user_id"] == "user-1"
+    assert approved["resolved_via_interface"] == "web"
+    assert approved["execution_task_id"] is None
+
+    async with DatabaseContext(engine=db_engine) as db:
+        tasks = await db.tasks.get_all(
+            task_type=CONFIRMATION_TOOL_EXECUTION_TASK_TYPE,
+        )
+
+    assert tasks == []
 
 
 @pytest.mark.asyncio

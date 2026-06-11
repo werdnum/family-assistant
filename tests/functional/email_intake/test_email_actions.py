@@ -120,6 +120,7 @@ class FakeTelegramConfirmationUIManager:
         target_user_id: str | None = None,
         tool_call_id: str | None = None,
         source_message_internal_id: int | None = None,
+        wait_for_durable_execution: bool = True,
     ) -> ConfirmationOutcome:
         _ = (
             conversation_id,
@@ -132,6 +133,7 @@ class FakeTelegramConfirmationUIManager:
             target_user_id,
             tool_call_id,
             source_message_internal_id,
+            wait_for_durable_execution,
         )
         return ConfirmationOutcome(kind="failed", result="unexpected wait")
 

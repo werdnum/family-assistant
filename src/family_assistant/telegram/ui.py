@@ -115,10 +115,7 @@ class TelegramConfirmationUIManager(ConfirmationUIManager):
         request_id: str,
         execution_future: asyncio.Future[ConfirmationOutcome] | None,
     ) -> None:
-        if (
-            self.confirmation_result_waiters is not None
-            and execution_future is not None
-        ):
+        if self.confirmation_result_waiters is not None:
             self.confirmation_result_waiters.unregister(request_id, execution_future)
 
     def _resolve_callback_user_id(self, telegram_user_id: int | None) -> str:
@@ -277,6 +274,7 @@ class TelegramConfirmationUIManager(ConfirmationUIManager):
         target_user_id: str | None = None,
         tool_call_id: str | None = None,
         source_message_internal_id: int | None = None,
+        wait_for_durable_execution: bool = True,
     ) -> ConfirmationOutcome:
         """Sends confirmation message and waits for user response or timeout."""
         effective_timeout = min(timeout, self.confirmation_timeout)
@@ -318,7 +316,11 @@ class TelegramConfirmationUIManager(ConfirmationUIManager):
                 expires_at=datetime.now(UTC) + timedelta(seconds=effective_timeout),
             )
             confirm_uuid = request["id"]
-            execution_future = confirmation_result_waiters.register(confirm_uuid)
+            if wait_for_durable_execution:
+                execution_future = confirmation_result_waiters.register(confirm_uuid)
+            else:
+                execution_future = None
+                confirmation_result_waiters.mark_decision_only(confirm_uuid)
         else:
             confirm_uuid = str(uuid.uuid4())
             execution_future = None
@@ -361,9 +363,7 @@ class TelegramConfirmationUIManager(ConfirmationUIManager):
 
         async def wait_for_execution_result() -> ConfirmationOutcome:
             if execution_future is None:
-                raise RuntimeError(
-                    f"Durable confirmation {confirm_uuid} has no execution future"
-                )
+                return ConfirmationOutcome(kind="approved")
             try:
                 return await asyncio.wait_for(
                     asyncio.shield(execution_future),
@@ -539,7 +539,7 @@ class TelegramConfirmationUIManager(ConfirmationUIManager):
             )
         finally:
             self.pending_confirmations.pop(confirm_uuid, None)
-            if durable_confirmation and execution_future is not None:
+            if durable_confirmation:
                 self._unregister_execution_future(confirm_uuid, execution_future)
 
     async def confirmation_callback_handler(
@@ -701,11 +701,22 @@ class TelegramConfirmationUIManager(ConfirmationUIManager):
             if decision_future and not decision_future.done():
                 decision_future.set_result(ConfirmationOutcome(kind="approved"))
             return
-        await self.confirmation_service.approve_and_enqueue_execution(
-            request_id=request_id,
-            approving_user_id=self._resolve_callback_user_id(telegram_user_id),
-            approving_interface="telegram",
-        )
+        approving_user_id = self._resolve_callback_user_id(telegram_user_id)
+        if (
+            self.confirmation_result_waiters is not None
+            and self.confirmation_result_waiters.is_decision_only(request_id)
+        ):
+            await self.confirmation_service.approve_without_enqueueing_execution(
+                request_id=request_id,
+                approving_user_id=approving_user_id,
+                approving_interface="telegram",
+            )
+        else:
+            await self.confirmation_service.approve_and_enqueue_execution(
+                request_id=request_id,
+                approving_user_id=approving_user_id,
+                approving_interface="telegram",
+            )
         if decision_future and not decision_future.done():
             decision_future.set_result(ConfirmationOutcome(kind="approved"))
 
