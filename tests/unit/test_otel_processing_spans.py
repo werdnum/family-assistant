@@ -652,6 +652,7 @@ def _make_task_worker_mock(
     worker.indexing_source = None
     worker.confirmation_result_waiters = None
     worker.handler_timeout = 300.0
+    worker._timeout_for_task_type = MagicMock(return_value=300.0)
     worker._handle_recurrence = AsyncMock()
     worker._handle_task_failure = AsyncMock()
     worker._update_last_activity = MagicMock()
