@@ -93,6 +93,7 @@ final class AuthManager {
                         return
                     }
                     self.errorMessage = error.localizedDescription
+                    ErrorReporter.shared.report(error, component: "Auth.login")
                     self.isLoading = false
                     return
                 }
@@ -136,6 +137,7 @@ final class AuthManager {
             isAuthenticated = true
         } catch {
             errorMessage = "Authentication failed: \(error.localizedDescription)"
+            ErrorReporter.shared.report(error, component: "Auth.callback")
         }
 
         isLoading = false

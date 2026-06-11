@@ -10,8 +10,12 @@ struct FamilyAssistantApp: App {
         #if DEBUG
         UITestConfiguration.applyIfNeeded()
         #endif
-        _authManager = State(initialValue: AuthManager())
+        let authManager = AuthManager()
+        _authManager = State(initialValue: authManager)
         _notificationManager = State(initialValue: NotificationManager())
+
+        ErrorReporter.shared.configure { [weak authManager] in authManager?.validatedServerURL() }
+        ErrorReporter.shared.installGlobalHandlers()
     }
 
     var body: some Scene {
@@ -39,6 +43,9 @@ struct FamilyAssistantApp: App {
             .onAppear {
                 appDelegate.notificationManager = notificationManager
                 notificationManager.bind(authManager: authManager)
+            }
+            .task {
+                await ErrorReporter.shared.flushPersisted()
             }
             .onOpenURL { url in
                 Task { @MainActor in

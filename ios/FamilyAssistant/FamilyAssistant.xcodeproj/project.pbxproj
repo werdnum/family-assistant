@@ -39,6 +39,7 @@
 		A10045 /* AssistantReplySnippet.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10045 /* AssistantReplySnippet.swift */; };
 		A10046 /* FamilyAssistantAppShortcuts.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10046 /* FamilyAssistantAppShortcuts.swift */; };
 		A10025 /* ConfirmationModalView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10027 /* ConfirmationModalView.swift */; };
+		A10050 /* ErrorReporter.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10050 /* ErrorReporter.swift */; };
 		A10024 /* Markdown in Frameworks */ = {isa = PBXBuildFile; productRef = H10002 /* Markdown */; };
 		A20001 /* RouteTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B20002 /* RouteTests.swift */; };
 		A20002 /* NotesModelTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B20003 /* NotesModelTests.swift */; };
@@ -52,6 +53,7 @@
 		A20010 /* ToolRenderingTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B20011 /* ToolRenderingTests.swift */; };
 		A20012 /* AppIntentsTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B20013 /* AppIntentsTests.swift */; };
 		A20011 /* ConfirmationModalModelTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B20012 /* ConfirmationModalModelTests.swift */; };
+		A20020 /* ErrorReporterTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B20020 /* ErrorReporterTests.swift */; };
 		A30001 /* FamilyAssistantUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B30002 /* FamilyAssistantUITests.swift */; };
 /* End PBXBuildFile section */
 
@@ -108,6 +110,7 @@
 		B10045 /* AssistantReplySnippet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AssistantReplySnippet.swift; sourceTree = "<group>"; };
 		B10046 /* FamilyAssistantAppShortcuts.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FamilyAssistantAppShortcuts.swift; sourceTree = "<group>"; };
 		B10027 /* ConfirmationModalView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ConfirmationModalView.swift; sourceTree = "<group>"; };
+		B10050 /* ErrorReporter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ErrorReporter.swift; sourceTree = "<group>"; };
 		B20001 /* FamilyAssistantTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = FamilyAssistantTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		B20002 /* RouteTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RouteTests.swift; sourceTree = "<group>"; };
 		B20003 /* NotesModelTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NotesModelTests.swift; sourceTree = "<group>"; };
@@ -121,6 +124,7 @@
 		B20011 /* ToolRenderingTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ToolRenderingTests.swift; sourceTree = "<group>"; };
 		B20013 /* AppIntentsTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppIntentsTests.swift; sourceTree = "<group>"; };
 		B20012 /* ConfirmationModalModelTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ConfirmationModalModelTests.swift; sourceTree = "<group>"; };
+		B20020 /* ErrorReporterTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ErrorReporterTests.swift; sourceTree = "<group>"; };
 		B30001 /* FamilyAssistantUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = FamilyAssistantUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		B30002 /* FamilyAssistantUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FamilyAssistantUITests.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
@@ -175,6 +179,7 @@
 				D10007 /* Notes */,
 				D10009 /* Chat */,
 				D10010 /* Intents */,
+				D10011 /* ErrorReporting */,
 				D10008 /* UITesting */,
 				B10008 /* Assets.xcassets */,
 				B10009 /* Info.plist */,
@@ -232,6 +237,14 @@
 			path = UITesting;
 			sourceTree = "<group>";
 		};
+		D10011 /* ErrorReporting */ = {
+			isa = PBXGroup;
+			children = (
+				B10050 /* ErrorReporter.swift */,
+			);
+			path = ErrorReporting;
+			sourceTree = "<group>";
+		};
 		D10009 /* Chat */ = {
 			isa = PBXGroup;
 			children = (
@@ -283,6 +296,7 @@
 				B20011 /* ToolRenderingTests.swift */,
 				B20013 /* AppIntentsTests.swift */,
 				B20012 /* ConfirmationModalModelTests.swift */,
+				B20020 /* ErrorReporterTests.swift */,
 			);
 			path = FamilyAssistantTests;
 			sourceTree = "<group>";
@@ -461,6 +475,7 @@
 				A10045 /* AssistantReplySnippet.swift in Sources */,
 				A10046 /* FamilyAssistantAppShortcuts.swift in Sources */,
 				A10025 /* ConfirmationModalView.swift in Sources */,
+				A10050 /* ErrorReporter.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -480,6 +495,7 @@
 				A20010 /* ToolRenderingTests.swift in Sources */,
 				A20012 /* AppIntentsTests.swift in Sources */,
 				A20011 /* ConfirmationModalModelTests.swift in Sources */,
+				A20020 /* ErrorReporterTests.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

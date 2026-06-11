@@ -124,6 +124,7 @@ final class ChatViewModel {
             errorMessage = nil
         } catch {
             errorMessage = error.localizedDescription
+            ErrorReporter.shared.report(error, component: "Chat.conversations")
         }
         isLoadingConversations = false
     }
@@ -143,6 +144,7 @@ final class ChatViewModel {
             errorMessage = nil
         } catch {
             errorMessage = error.localizedDescription
+            ErrorReporter.shared.report(error, component: "Chat.recentConversations")
         }
     }
 
@@ -206,6 +208,7 @@ final class ChatViewModel {
             errorMessage = nil
         } catch {
             errorMessage = error.localizedDescription
+            ErrorReporter.shared.report(error, component: "Chat.messages")
         }
         isLoadingMessages = false
     }
@@ -236,6 +239,7 @@ final class ChatViewModel {
             errorMessage = nil
         } catch {
             errorMessage = error.localizedDescription
+            ErrorReporter.shared.report(error, component: "Chat.mergeMessages")
         }
     }
 
@@ -288,6 +292,7 @@ final class ChatViewModel {
             errorMessage = nil
         } catch {
             errorMessage = error.localizedDescription
+            ErrorReporter.shared.report(error, component: "Chat.profiles")
         }
         isLoadingProfiles = false
     }
@@ -453,6 +458,7 @@ final class ChatViewModel {
             await addAttachment(fileURL: url, mimeType: mimeType, displayName: filename)
         } catch {
             errorMessage = error.localizedDescription
+            ErrorReporter.shared.report(error, component: "Chat.importAttachment")
         }
     }
 
@@ -481,6 +487,7 @@ final class ChatViewModel {
                 try await apiClient.deleteAttachment(attachmentID: attachmentID)
             } catch {
                 errorMessage = "Could not remove attachment. \(error.localizedDescription)"
+                ErrorReporter.shared.report(error, component: "Chat.removeAttachment")
                 return
             }
         }
@@ -500,6 +507,7 @@ final class ChatViewModel {
             if let index = pendingConfirmations.firstIndex(where: { $0.requestID == confirmation.requestID }) {
                 pendingConfirmations[index].errorMessage = error.localizedDescription
             }
+            ErrorReporter.shared.report(error, component: "Chat.confirmTool")
         }
     }
 
@@ -518,6 +526,7 @@ final class ChatViewModel {
             return try await downloadAttachment(attachment)
         } catch {
             errorMessage = "Could not download attachment. \(error.localizedDescription)"
+            ErrorReporter.shared.report(error, component: "Chat.downloadAttachment")
             return nil
         }
     }
@@ -576,6 +585,7 @@ final class ChatViewModel {
             errorMessage = nil
         } catch {
             errorMessage = "Could not load pending approvals. \(error.localizedDescription)"
+            ErrorReporter.shared.report(error, component: "Chat.pendingApprovals")
         }
     }
 
@@ -779,6 +789,7 @@ final class ChatViewModel {
             messages[index].text += "\n\n\(message)"
         }
         errorMessage = message
+        ErrorReporter.shared.report(message: message, component: "Chat.stream")
     }
 
     private func updateToolCall(

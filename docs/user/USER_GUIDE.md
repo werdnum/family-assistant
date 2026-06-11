@@ -687,6 +687,13 @@ various tasks with dark mode support and mobile optimization.
   right information ("Actually, the appointment is at 3 PM") or by updating a relevant note via the
   Web UI or a command ("Update the note 'Plumber Number' with content '555-9876'").
 
+- **iOS App Errors (TestFlight & beyond):** When the native iOS app shows an error message, it now
+  also reports that error to the server automatically, so the family member who manages the
+  assistant can see what went wrong without you having to describe it. Uncaught app errors are
+  captured the same way (and outright crashes are reported through Apple/TestFlight). Administrators
+  can review these reports in the web **Error Logs** page (`/errors`); native iOS reports are tagged
+  with a `component_name` and an `is_testflight` flag.
+
 - **If you need more help:** Contact the family member who set up and manages the assistant for your
   family. They can help with configuration issues or more complex problems.
 

@@ -138,6 +138,7 @@ final class NotificationManager {
             notificationsEnabled = false
             registrationState = .failed
             errorMessage = error.localizedDescription
+            ErrorReporter.shared.report(error, component: "Notifications.enable")
         }
     }
 
@@ -156,6 +157,7 @@ final class NotificationManager {
                     "Failed to unregister APNs token: \(error.localizedDescription, privacy: .public)"
                 )
                 errorMessage = "Notifications were disabled locally, but the server could not be updated."
+                ErrorReporter.shared.report(error, component: "Notifications.disable")
             }
         }
 
@@ -180,6 +182,7 @@ final class NotificationManager {
     func handleAPNsRegistrationFailure(_ error: Error) {
         registrationState = .failed
         errorMessage = error.localizedDescription
+        ErrorReporter.shared.report(error, component: "Notifications.apnsRegistration")
         logger.error("APNs registration failed: \(error.localizedDescription, privacy: .public)")
     }
 
@@ -315,6 +318,7 @@ final class NotificationManager {
         } catch {
             registrationState = .failed
             errorMessage = error.localizedDescription
+            ErrorReporter.shared.report(error, component: "Notifications.tokenSync")
             logger.warning(
                 "Failed to sync APNs token: \(error.localizedDescription, privacy: .public)"
             )
@@ -382,6 +386,7 @@ final class NotificationManager {
                 }
             } catch {
                 errorMessage = error.localizedDescription
+                ErrorReporter.shared.report(error, component: "Notifications.confirm")
                 if let path = navigationPath(from: userInfo) {
                     pendingNavigationPath = path
                 }
