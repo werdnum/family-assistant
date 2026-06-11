@@ -1,0 +1,4 @@
+# App Store Connect API keys and identifiers are secrets — never commit them.
+*.p8
+AuthKey_*.p8
+.asc-release.env
