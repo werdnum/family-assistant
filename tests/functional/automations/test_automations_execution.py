@@ -206,6 +206,38 @@ add_or_update_note(title="Legacy {test_run_id}", content="should not be written"
 
 
 @pytest.mark.asyncio
+async def test_script_with_unresolvable_stamped_profile_fails(
+    db_engine: AsyncEngine,
+) -> None:
+    """An automation explicitly stamped with a non-default profile that is no
+    longer registered fails rather than silently downgrading to the default
+    profile (which would run with different tools/visibility)."""
+    test_run_id = uuid.uuid4()
+    default_service = _make_processing_service(
+        profile_id="event_handler",
+        tools_provider=await _provider_without_note_tool(),
+        registry={},
+    )
+
+    async with DatabaseContext(engine=db_engine) as db_ctx:
+        exec_context = _build_script_exec_context(
+            db_ctx=db_ctx,
+            conversation_id=f"missing_{test_run_id}",
+            processing_service=default_service,
+        )
+        with pytest.raises(RuntimeError, match="cannot be resolved"):
+            await handle_script_execution(
+                exec_context,
+                {
+                    "script_code": "x = 1\n",
+                    "conversation_id": f"missing_{test_run_id}",
+                    "processing_profile_id": "removed_profile",
+                    "config": {},
+                },
+            )
+
+
+@pytest.mark.asyncio
 async def test_script_confirm_gated_tool_defers_to_durable_confirmation(
     db_engine: AsyncEngine,
 ) -> None:

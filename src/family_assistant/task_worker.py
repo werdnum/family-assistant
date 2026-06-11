@@ -62,6 +62,7 @@ from family_assistant.services.deferred_tool_confirmation import (
 )
 from family_assistant.services.notification_targets import notify_conversation
 from family_assistant.services.notifier import MESSAGE_CATEGORY, NotificationMetadata
+from family_assistant.services.user_identity import UserIdentityResolver
 from family_assistant.storage.context import DatabaseContext, get_db_context
 from family_assistant.storage.message_history import message_history_table
 from family_assistant.storage.tasks import enqueue_task, get_task_event
@@ -1617,9 +1618,15 @@ def _resolve_script_execution_service(
 
     Scripts run under the profile that created the automation so that the tool
     set used at validation time matches the tool set available at execution
-    time. Falls back to the default processing service (with a warning) when the
-    creating profile is unknown (legacy automations created before provenance
-    was tracked) or is no longer registered.
+    time. Legacy automations created before provenance was tracked have no
+    recorded profile and fall back to the default processing service.
+
+    An automation explicitly stamped with a non-default profile that can no
+    longer be resolved (e.g. the profile was renamed/removed) is **not**
+    downgraded to the default: the script was validated and stamped for specific
+    tools/visibility, so running it under a different policy could change its
+    capabilities or data access. Such cases raise so the task fails loudly
+    rather than executing under the wrong profile.
     """
     default_service = exec_context.processing_service
     if (
@@ -1630,28 +1637,26 @@ def _resolve_script_execution_service(
         return default_service
 
     registry = default_service.processing_services_registry
-    fallback_reason: str | None = None
+    unresolvable_reason: str | None = None
     candidate: object | None = None
     if registry is None:
-        fallback_reason = "no processing services registry is available"
+        unresolvable_reason = "no processing services registry is available"
     else:
         candidate = registry.get(processing_profile_id)
         if candidate is None:
-            fallback_reason = "the profile is no longer registered"
+            unresolvable_reason = "the profile is no longer registered"
         elif getattr(candidate, "kind", None) != "local" or not hasattr(
             candidate, "tools_provider"
         ):
-            fallback_reason = "the profile is not a local profile"
+            unresolvable_reason = "the profile is not a local profile"
 
-    if fallback_reason is not None:
-        logger.warning(
-            "Script created under profile '%s' cannot be resolved (%s); falling "
-            "back to default profile '%s'",
-            processing_profile_id,
-            fallback_reason,
-            default_service.service_config.id,
+    if unresolvable_reason is not None:
+        raise RuntimeError(
+            f"Automation script is stamped with profile '{processing_profile_id}' "
+            f"but it cannot be resolved ({unresolvable_reason}); refusing to "
+            "downgrade to the default profile and run with different tools or "
+            "visibility than the script was validated against."
         )
-        return default_service
 
     return cast("ProcessingService", candidate)
 
@@ -2002,12 +2007,11 @@ async def _build_confirmation_execution_context(
         else exec_context.turn_id
     )
     user_name = exec_context.user_name or str(request["target_user_id"])
-    processing_profile_id = (
-        str(source_row["processing_profile_id"])
-        if source_row is not None
-        and source_row.get("processing_profile_id") is not None
-        else exec_context.processing_profile_id
-    )
+    # The profile id must match the service actually used (already resolved from
+    # the confirmation's recorded profile or the source message), so tools that
+    # read processing_profile_id directly (history filtering, automation
+    # stamping) see the same profile their provider belongs to.
+    processing_profile_id = processing_service.service_config.id
     subconversation_id = (
         str(source_row["subconversation_id"])
         if source_row is not None and source_row.get("subconversation_id") is not None
@@ -2192,6 +2196,44 @@ def _resolve_confirmation_processing_service(
     return cast("ProcessingService", candidate)
 
 
+def _resolve_confirmation_result_delivery(
+    context: ToolExecutionContext,
+    request: ConfirmationRequestRow,
+    source_row: MessageHistoryRow | None,
+) -> tuple[ChatInterface, str, str | None] | None:
+    """Pick where to deliver a confirmation result message.
+
+    Chat/email confirmations thread the result back to the originating
+    conversation (replying to the source message). Automation-originated
+    confirmations have no source message, so the result is delivered to the
+    target user's primary Telegram chat instead (mirroring how the pending
+    confirmation was delivered). Returns ``(chat_interface, conversation_id,
+    reply_to_interface_id)`` or None when no deliverable target exists.
+    """
+    if source_row is not None:
+        if context.chat_interface is None:
+            return None
+        reply_to_interface_id = (
+            str(source_row["interface_message_id"])
+            if source_row.get("interface_message_id") is not None
+            else None
+        )
+        return context.chat_interface, context.conversation_id, reply_to_interface_id
+
+    processing_service = context.processing_service
+    if processing_service is None or context.chat_interfaces is None:
+        return None
+    telegram_interface = context.chat_interfaces.get("telegram")
+    if telegram_interface is None:
+        return None
+    telegram_user_id = UserIdentityResolver(
+        processing_service.app_config
+    ).get_primary_telegram_user_id(request["target_user_id"])
+    if telegram_user_id is None:
+        return None
+    return telegram_interface, str(telegram_user_id), None
+
+
 async def _notify_confirmation_execution_result(
     context: ToolExecutionContext,
     request: ConfirmationRequestRow,
@@ -2201,25 +2243,16 @@ async def _notify_confirmation_execution_result(
     succeeded: bool = True,
 ) -> None:
     """Send a deterministic result notification when no live waiter consumes it."""
-    if context.chat_interface is None:
+    delivery = _resolve_confirmation_result_delivery(context, request, source_row)
+    if delivery is None:
         logger.info(
-            "Confirmation %s completed without a chat interface for notification",
+            "Confirmation %s completed without a deliverable notification target; "
+            "skipping result notification",
             request["id"],
         )
         return
 
-    if source_row is None:
-        logger.info(
-            "Confirmation %s completed without a source message; skipping result notification",
-            request["id"],
-        )
-        return
-
-    reply_to_interface_id = (
-        str(source_row["interface_message_id"])
-        if source_row.get("interface_message_id") is not None
-        else None
-    )
+    chat_interface, delivery_conversation_id, reply_to_interface_id = delivery
 
     try:
         result_text = _tool_result_text(result)
@@ -2241,8 +2274,8 @@ async def _notify_confirmation_execution_result(
                 f"Tool: {request['tool_name']}\n\n"
                 f"Error:\n{result_text}"
             )
-        sent_message_id = await context.chat_interface.send_message(
-            conversation_id=context.conversation_id,
+        sent_message_id = await chat_interface.send_message(
+            conversation_id=delivery_conversation_id,
             text=message,
             reply_to_interface_id=reply_to_interface_id,
             attachment_ids=attachment_ids,

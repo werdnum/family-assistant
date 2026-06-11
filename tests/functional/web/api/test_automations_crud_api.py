@@ -292,6 +292,32 @@ class TestEventAutomationsAPI:
         # Verify condition_script was cleared
         assert not cleared_data["condition_script"]
 
+    async def test_update_event_automation_rejects_invalid_inline_script(
+        self, api_test_client: AsyncClient
+    ) -> None:
+        """A PATCH that swaps in an invalid inline script is rejected before it is
+        persisted/re-stamped, just like the create path."""
+        create_response = await api_test_client.post(
+            "/api/automations/event",
+            json={
+                "name": "Update Invalid Script",
+                "source_id": "indexing",
+                "action_type": "script",
+                "match_conditions": {"document_type": "pdf"},
+                "action_config": {"script_code": "x = 1\n"},
+                "conversation_id": "test_api",
+            },
+        )
+        assert create_response.status_code == 200
+        automation_id = create_response.json()["id"]
+
+        update_response = await api_test_client.patch(
+            f"/api/automations/event/{automation_id}?conversation_id=test_api",
+            json={"action_config": {"script_code": "def broken(:\n"}},
+        )
+        assert update_response.status_code == 400
+        assert "validation failed" in update_response.json()["detail"].lower()
+
     async def test_delete_event_automation(self, api_test_client: AsyncClient) -> None:
         """Test deleting an event automation."""
         # Create an event automation
