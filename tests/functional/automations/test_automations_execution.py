@@ -274,9 +274,12 @@ async def test_script_confirm_gated_tool_defers_to_durable_confirmation(
         pending = await db_ctx.confirmation_requests.list_pending_for_user("owner-user")
         assert len(pending) == 1
         assert pending[0]["tool_name"] == "delete_calendar_event"
-        # The confirmation records the creating profile so the deferred
-        # execution runs under it rather than the worker's default profile.
+        # The confirmation records the creating profile and origin conversation
+        # so the deferred execution runs under the same profile and acts in the
+        # requesting conversation rather than the worker's placeholder context.
         assert pending[0]["processing_profile_id"] == "creator_profile"
+        assert pending[0]["origin_interface_type"] == "web"
+        assert pending[0]["origin_conversation_id"] == "confirm_conv"
 
 
 @pytest.mark.asyncio

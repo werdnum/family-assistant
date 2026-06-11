@@ -1990,16 +1990,26 @@ async def _build_confirmation_execution_context(
     source_row: MessageHistoryRow | None,
     processing_service: ProcessingService,
 ) -> ToolExecutionContext:
-    """Reconstruct the best available context for deferred tool execution."""
+    """Reconstruct the best available context for deferred tool execution.
+
+    Prefers the source message's interface/conversation; confirmations created
+    without one (automation scripts) instead carry the origin recorded on the
+    request itself, so approved tools act in the requesting conversation rather
+    than the worker's placeholder context.
+    """
     interface_type = (
         str(source_row["interface_type"])
         if source_row is not None
-        else request["resolved_via_interface"] or exec_context.interface_type
+        else (
+            request["origin_interface_type"]
+            or request["resolved_via_interface"]
+            or exec_context.interface_type
+        )
     )
     conversation_id = (
         str(source_row["conversation_id"])
         if source_row is not None
-        else exec_context.conversation_id
+        else request["origin_conversation_id"] or exec_context.conversation_id
     )
     turn_id = (
         str(source_row["turn_id"])

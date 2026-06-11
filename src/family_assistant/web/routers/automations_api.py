@@ -450,11 +450,17 @@ async def update_automation(
     if not existing:
         raise HTTPException(status_code=404, detail="Automation not found")
 
-    # When the action_config (and therefore the script) changes, validate it
-    # against the acting profile's tools before it is persisted and re-stamped,
-    # so an invalid script is rejected at the boundary rather than failing later
-    # at execution time (matches the create path).
-    if request.action_config is not _UNSET and request.action_config is not None:
+    # When a script automation's action_config (and therefore its script)
+    # changes, validate it against the acting profile's tools before it is
+    # persisted and re-stamped, so an invalid script is rejected at the boundary
+    # rather than failing later at execution time (matches the create path).
+    # wake_llm action_config edits (e.g. {"context": ...}) are not scripts and
+    # must not go through the script validator.
+    if (
+        existing.action_type == "script"
+        and request.action_config is not _UNSET
+        and request.action_config is not None
+    ):
         new_action_config = cast("dict[str, Any]", request.action_config)
         script_error = await validate_script_action_config(db, new_action_config)
         if script_error:

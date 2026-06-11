@@ -40,6 +40,11 @@ confirmation_requests_table = Table(
     # execution runs under the same profile (script-originated confirmations
     # have no source message row to derive it from).
     Column("processing_profile_id", String(255), nullable=True),
+    # Origin interface/conversation of the turn that requested confirmation, so
+    # deferred execution can rebuild its context when there is no source message
+    # row (automation scripts) instead of falling back to worker defaults.
+    Column("origin_interface_type", String(50), nullable=True),
+    Column("origin_conversation_id", String(255), nullable=True),
     Column("expires_at", DateTime(timezone=True), nullable=False, index=True),
     Column("created_at", DateTime(timezone=True), nullable=False),
     Column("updated_at", DateTime(timezone=True), nullable=False),

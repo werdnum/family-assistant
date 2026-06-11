@@ -318,6 +318,33 @@ class TestEventAutomationsAPI:
         assert update_response.status_code == 400
         assert "validation failed" in update_response.json()["detail"].lower()
 
+    async def test_update_wake_llm_action_config_is_not_script_validated(
+        self, api_test_client: AsyncClient
+    ) -> None:
+        """A PATCH that edits a wake_llm automation's context must not be routed
+        through the script validator (which would reject it for having no
+        script_code/script_name)."""
+        create_response = await api_test_client.post(
+            "/api/automations/event",
+            json={
+                "name": "Wake LLM Context Edit",
+                "source_id": "indexing",
+                "action_type": "wake_llm",
+                "match_conditions": {"document_type": "pdf"},
+                "action_config": {"context": "Original context"},
+                "conversation_id": "test_api",
+            },
+        )
+        assert create_response.status_code == 200
+        automation_id = create_response.json()["id"]
+
+        update_response = await api_test_client.patch(
+            f"/api/automations/event/{automation_id}?conversation_id=test_api",
+            json={"action_config": {"context": "Updated context"}},
+        )
+        assert update_response.status_code == 200
+        assert update_response.json()["action_config"] == {"context": "Updated context"}
+
     async def test_delete_event_automation(self, api_test_client: AsyncClient) -> None:
         """Test deleting an event automation."""
         # Create an event automation

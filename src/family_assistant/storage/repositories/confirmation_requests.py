@@ -29,6 +29,8 @@ class ConfirmationRequestRow(TypedDict):
     source_message_internal_id: int | None
     confirmation_prompt: str
     processing_profile_id: str | None
+    origin_interface_type: str | None
+    origin_conversation_id: str | None
     expires_at: datetime
     created_at: datetime
     updated_at: datetime
@@ -53,6 +55,8 @@ class ConfirmationRequestsRepository(BaseRepository):
         confirmation_prompt: str,
         expires_at: datetime,
         processing_profile_id: str | None = None,
+        origin_interface_type: str | None = None,
+        origin_conversation_id: str | None = None,
     ) -> ConfirmationRequestRow:
         """Create a pending confirmation request."""
         if expires_at.tzinfo is None:
@@ -71,6 +75,8 @@ class ConfirmationRequestsRepository(BaseRepository):
                 source_message_internal_id=source_message_internal_id,
                 confirmation_prompt=confirmation_prompt,
                 processing_profile_id=processing_profile_id,
+                origin_interface_type=origin_interface_type,
+                origin_conversation_id=origin_conversation_id,
                 expires_at=expires_at,
                 created_at=now,
                 updated_at=now,
