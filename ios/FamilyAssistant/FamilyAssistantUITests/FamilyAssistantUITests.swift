@@ -198,14 +198,27 @@ final class FamilyAssistantUITests: XCTestCase {
     /// Opens the More tab and drills into the Settings screen, scrolling the
     /// long destination list if the Settings row is below the fold.
     private func openMoreSettings() {
-        app.tabBars.firstMatch.buttons["More"].tap()
+        let moreTab = app.tabBars.firstMatch.buttons["More"]
+        XCTAssertTrue(moreTab.waitForExistence(timeout: 8))
+        moreTab.tap()
+
+        // Wait for the overflow list itself before hunting for a row: on CI
+        // simulators the tab transition and list render lag several seconds,
+        // and looking for "Settings" too early is what made this flaky.
+        XCTAssertTrue(app.navigationBars["More"].waitForExistence(timeout: 8))
+
+        // Settings sits below the fold in the overflow list. Scroll it into
+        // view, retrying because the list can still be settling after it loads.
         let settings = app.staticTexts["Settings"]
-        if !settings.waitForExistence(timeout: 3) {
+        var attempts = 0
+        while !settings.waitForExistence(timeout: 2), attempts < 5 {
             app.swipeUp()
+            attempts += 1
         }
+
         XCTAssertTrue(settings.waitForExistence(timeout: 4))
         settings.tap()
-        XCTAssertTrue(app.navigationBars["Settings"].waitForExistence(timeout: 4))
+        XCTAssertTrue(app.navigationBars["Settings"].waitForExistence(timeout: 8))
     }
 
     func testDeepLinkSelectsDocumentsTab() {
