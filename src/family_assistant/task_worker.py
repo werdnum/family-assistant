@@ -213,6 +213,14 @@ class ConfirmationNotificationError(RuntimeError):
     """Raised when a confirmation result notification cannot be delivered."""
 
 
+class DelegationNotificationError(RuntimeError):
+    """Raised when a terminal delegation notification cannot be delivered.
+
+    Rolls back the isolated notification transaction so ``notified_at`` stays
+    NULL and the run is retried instead of being recorded as delivered.
+    """
+
+
 async def _handle_schedule_automation_recurrence(
     exec_context: ToolExecutionContext,
     payload: LlmCallbackPayload | ScriptExecutionPayload,
@@ -955,9 +963,20 @@ class TaskWorker:
                 running_timeout_seconds,
             )
         # A reaped run has no live caller waiting to deliver inline, so notify
-        # unconditionally even if it was never handed off.
+        # unconditionally even if it was never handed off. A delivery failure for
+        # one run must not abort the rest of the batch; a reaped run is already
+        # terminal and will not be reaped again, so log and continue rather than
+        # raise (which would strand its siblings).
         for run in reaped:
-            await self._notify_delegation_if_needed(exec_context, run, force=True)
+            try:
+                await self._notify_delegation_if_needed(exec_context, run, force=True)
+            except DelegationNotificationError:
+                logger.warning(
+                    "Could not deliver reaped delegation notification for %s; "
+                    "leaving it unnotified.",
+                    run["delegation_id"],
+                    exc_info=True,
+                )
 
     def _build_delegation_confirmation_callback(
         self,
@@ -1117,7 +1136,17 @@ class TaskWorker:
                     parse_mode=None,
                     attachment_ids=run["result_attachment_ids_json"] or None,
                 )
-                if sent_message_id and message_internal_id is not None:
+                if sent_message_id is None:
+                    # Delivery failed (invalid chat, Bot API error, ...). Roll back
+                    # this isolated transaction so the message-history row is undone
+                    # and notified_at stays NULL; the run is retried via the
+                    # terminal-on-entry re-notification path rather than being
+                    # recorded as delivered.
+                    raise DelegationNotificationError(
+                        f"Failed to deliver delegation notification for "
+                        f"{run['delegation_id']} via {run['interface_type']}."
+                    )
+                if message_internal_id is not None:
                     await isolated_db.message_history.update_interface_id(
                         internal_id=message_internal_id,
                         interface_message_id=sent_message_id,

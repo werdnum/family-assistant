@@ -18,7 +18,11 @@ from family_assistant.processing.types import ChatInteractionResult
 from family_assistant.storage import message_history_table
 from family_assistant.storage.context import DatabaseContext
 from family_assistant.storage.delegation_runs import delegation_runs_table
-from family_assistant.task_worker import DelegatedProfileRunPayload, TaskWorker
+from family_assistant.task_worker import (
+    DelegatedProfileRunPayload,
+    DelegationNotificationError,
+    TaskWorker,
+)
 from family_assistant.tools.services import (
     delegate_to_service_tool,
     get_delegation_status_tool,
@@ -434,6 +438,59 @@ async def test_terminal_run_renotifies_when_not_yet_notified(
         )
         assert run is not None
         assert run["notified_at"] is not None
+
+
+@pytest.mark.asyncio
+async def test_failed_delivery_is_not_recorded_as_notified(
+    db_engine: AsyncEngine,
+) -> None:
+    """A chat delivery that fails (send_message -> None) leaves the run unnotified.
+
+    ChatInterface.send_message returns None when delivery fails (invalid chat,
+    Bot API error, ...). The terminal run must stay notified_at NULL so it is
+    retried, and the speculative message-history row must be rolled back rather
+    than left dangling.
+    """
+    target_service = FakeDelegatableService()
+    processing_service = _source_processing_service(target_service)
+    chat_interface = AsyncMock(spec=ChatInterface)
+    chat_interface.send_message.return_value = None
+
+    clock = SystemClock()
+    async with DatabaseContext(engine=db_engine) as db_context:
+        await _create_run(db_context, delegation_id="delegation_send_fails")
+        await db_context.delegation_runs.mark_handed_off(
+            "delegation_send_fails", clock.now()
+        )
+        await db_context.delegation_runs.mark_completed(
+            delegation_id="delegation_send_fails",
+            result_text="done but undeliverable",
+            result_attachment_ids=[],
+            completed_at=clock.now(),
+        )
+
+    worker = _build_worker(db_engine, processing_service, chat_interface)
+    async with DatabaseContext(engine=db_engine) as db_context:
+        with pytest.raises(DelegationNotificationError):
+            await worker.handle_delegated_profile_run(
+                _tool_context(db_context, processing_service, chat_interface),
+                _payload("delegation_send_fails"),
+            )
+
+    chat_interface.send_message.assert_awaited_once()
+    async with DatabaseContext(engine=db_engine) as db_context:
+        run = await db_context.delegation_runs.get_by_delegation_id(
+            "delegation_send_fails"
+        )
+        assert run is not None
+        assert run["notified_at"] is None
+        # The notification message row was rolled back, not left dangling.
+        rows = await db_context.fetch_all(
+            select(message_history_table).where(
+                message_history_table.c.conversation_id == TEST_CONVERSATION_ID
+            )
+        )
+        assert rows == []
 
 
 @pytest.mark.asyncio

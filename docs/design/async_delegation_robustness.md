@@ -144,6 +144,13 @@ worker resolves result attachments it uses its own committed context.
   delegation) is left out of scope here as it touches unrelated modules.
 - **C23** `_now` uses the `exec_context.clock or SystemClock()` idiom.
 - **C24** collapse the triplicated subconversation filter in `message_history` into one helper.
+- **C26** _(follow-up review)_ a failed terminal-notification chat delivery is no longer recorded as
+  delivered. `ChatInterface.send_message` returns `None` when delivery fails (invalid chat, Bot API
+  error); `_notify_delegation_if_needed` now raises `DelegationNotificationError` in that case so
+  the isolated transaction rolls back (no dangling message-history row) and `notified_at` stays NULL
+  — the run is retried via the terminal-on-entry re-notification path. The stale-run reaper catches
+  this per run and continues (a reaped run is already terminal and would otherwise strand its
+  siblings), logging the undelivered notification instead of silently marking it sent.
 
 ## Testing
 
@@ -158,17 +165,23 @@ These are pre-existing limitations of the delegation feature that this change su
 fix, because the proper fixes are architectural and would risk regressions disproportionate to this
 robustness pass:
 
-- **Generic 300s handler timeout vs. confirmation-gated delegated runs.** A delegated run executes
-  under the worker's generic `TASK_HANDLER_TIMEOUT` (300s). A run that pauses for a user
-  confirmation can wait far longer, so it is cancelled at 300s and then failed by the `running`
-  entry guard. Raising the timeout is not safe under the current **single sequential worker**: one
-  confirmation-waiting delegation would block all other background tasks (reminders, automations,
-  cleanups) for the whole wait. The real fix is to stop occupying a worker slot while blocked on a
-  human decision (e.g. suspend/resume the run on the confirmation result) or to run delegated turns
-  off the single task-handler slot. Until then, web confirmations (C7) work for decisions made
-  within ~5 minutes; slower ones fail with a clear "interrupted" notification. The reaper threshold
-  (`DELEGATION_RUN_STALE_SECONDS`) is deliberately well above `300s + retry backoff` so it never
-  reaps a legitimately-running run.
+- **Confirmation-gated delegated runs deadlock under a single worker (being fixed separately).** A
+  delegated run executes inside the worker's single sequential task slot under the generic
+  `TASK_HANDLER_TIMEOUT` (300s). When its turn requests a confirmation-gated tool, the durable
+  web/Telegram flow waits on an execution future that is only resolved by a *separately enqueued*
+  `confirmation_tool_execution` task — which cannot run because the one worker is busy waiting. So
+  even a promptly approved confirmation dead-ends at the 300s timeout (then failed by the `running`
+  entry guard). Raising the timeout alone does not help under a single worker, and would block all
+  other background tasks for the whole wait. The chosen fix is a **configurable in-process pool of
+  task workers** (default 2): while one worker is parked on a delegated-run confirmation, a sibling
+  worker services the `confirmation_tool_execution` task and resolves the shared in-process future,
+  so the delegated turn continues. With a pool it is also safe to give `delegated_profile_run` a
+  longer per-task-type handler timeout (~10 min) for the human decision window. This is implemented
+  in a separate PR (the multi-task-worker pool); the existing durable confirmation flow is
+  unchanged. The reaper threshold (`DELEGATION_RUN_STALE_SECONDS`) remains well above the handler
+  timeout plus retry backoff so it never reaps a legitimately-running run. A fully non-blocking
+  fire-and-forget confirmation (the email-intake pattern, returning "pending" immediately) remains a
+  future option that removes worker parking entirely.
 - **Only `telegram` and `web` have confirmation managers.**
   `_build_delegation_confirmation_callback` returns `None` for any interface without a registered
   `ConfirmationUIManager`, so a delegated run on `a2a`/`asterisk` cannot run confirmation-gated
