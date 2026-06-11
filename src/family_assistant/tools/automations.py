@@ -799,25 +799,35 @@ async def update_automation_tool(
             error_msg = f"Automation {automation_id} not found"
             return ToolResult(text=f"Error: {error_msg}", data={"error": error_msg})
 
-        # When the action_config (and therefore the script) is being changed,
-        # validate the new inline script against the updating profile's tools and
-        # re-stamp creator provenance, so the updated script is validated and
-        # executed under the same (updating) profile.
+        # When a script automation's action_config (and therefore its script) is
+        # being changed, validate the new config and inline script against the
+        # updating profile's tools and re-stamp creator provenance, so the
+        # updated script is validated and executed under the same (updating)
+        # profile. wake_llm action_config edits are not scripts and skip the
+        # script validators.
         restamp_profile_id: str | None = None
         restamp_user_id: str | None = None
         if action_config is not None:
             restamp_profile_id = exec_context.processing_profile_id
             restamp_user_id = exec_context.user_id
-            script_code = action_config.get("script_code")
-            if script_code:
-                validation_error = await validate_inline_script_code(
-                    exec_context, script_code
+            if existing.action_type == "script":
+                script_error = await validate_script_action_config(
+                    exec_context.db_context, action_config
                 )
-                if validation_error:
+                if script_error:
                     return ToolResult(
-                        text=f"Error: {validation_error}",
-                        data={"error": validation_error},
+                        text=f"Error: {script_error}", data={"error": script_error}
                     )
+                script_code = action_config.get("script_code")
+                if script_code:
+                    validation_error = await validate_inline_script_code(
+                        exec_context, script_code
+                    )
+                    if validation_error:
+                        return ToolResult(
+                            text=f"Error: {validation_error}",
+                            data={"error": validation_error},
+                        )
 
         if automation_type == "event":
             # Update event automation - merge with existing values

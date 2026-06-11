@@ -225,6 +225,81 @@ async def test_update_automation_revalidates_script(db_engine: AsyncEngine) -> N
 
 
 @pytest.mark.asyncio
+async def test_update_automation_rejects_missing_stored_script(
+    db_engine: AsyncEngine,
+) -> None:
+    """Updating a script automation to reference a nonexistent stored script is
+    rejected at the boundary instead of failing later at execution time."""
+    async with DatabaseContext(engine=db_engine) as db_ctx:
+        exec_context = _exec_context_with_profile(
+            db_ctx,
+            conversation_id="stored_script_conv",
+            processing_profile_id="automation_creation",
+            user_id="user-789",
+        )
+        created = await create_automation_tool(
+            exec_context=exec_context,
+            name="Stored Script Update",
+            automation_type="event",
+            trigger_config={"event_source": "home_assistant", "event_filter": {}},
+            action_type="script",
+            action_config={"script_code": "x = 1\n"},
+        )
+        created_data = created.get_data()
+        assert isinstance(created_data, dict)
+        automation_id = int(created_data["id"])
+
+        result = await update_automation_tool(
+            exec_context=exec_context,
+            automation_id=automation_id,
+            automation_type="event",
+            action_config={"script_name": "does-not-exist"},
+        )
+
+    data = result.get_data()
+    assert isinstance(data, dict)
+    assert "error" in data
+    assert "does-not-exist" in data["error"]
+
+
+@pytest.mark.asyncio
+async def test_update_wake_llm_automation_skips_script_validation(
+    db_engine: AsyncEngine,
+) -> None:
+    """Updating a wake_llm automation's action_config is not routed through the
+    script validator (which would reject it for having no script fields)."""
+    async with DatabaseContext(engine=db_engine) as db_ctx:
+        exec_context = _exec_context_with_profile(
+            db_ctx,
+            conversation_id="wake_llm_update_conv",
+            processing_profile_id="automation_creation",
+            user_id="user-789",
+        )
+        created = await create_automation_tool(
+            exec_context=exec_context,
+            name="Wake LLM Update",
+            automation_type="event",
+            trigger_config={"event_source": "home_assistant", "event_filter": {}},
+            action_type="wake_llm",
+            action_config={"context": "Original context"},
+        )
+        created_data = created.get_data()
+        assert isinstance(created_data, dict)
+        automation_id = int(created_data["id"])
+
+        result = await update_automation_tool(
+            exec_context=exec_context,
+            automation_id=automation_id,
+            automation_type="event",
+            action_config={"context": "Updated context"},
+        )
+
+    data = result.get_data()
+    assert isinstance(data, dict)
+    assert data.get("success") is True
+
+
+@pytest.mark.asyncio
 async def test_create_automation_cross_type_name_uniqueness(
     db_engine: AsyncEngine,
 ) -> None:
