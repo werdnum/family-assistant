@@ -287,8 +287,10 @@ class Assistant:
         self.notification_dispatcher: NotificationDispatcher | None = None
         self.confirmation_service: ConfirmationService | None = None
         self.confirmation_result_waiters: ConfirmationResultWaiterRegistry | None = None
-        self.task_worker_instance: TaskWorker | None = None
-        self.task_worker_task: asyncio.Task | None = None  # Track the worker task
+        # Pool of in-process TaskWorker instances and their run() tasks, kept
+        # index-aligned so the health monitor can restart an individual worker.
+        self.task_workers: list[TaskWorker] = []
+        self.task_worker_tasks: list[asyncio.Task] = []
         self.uvicorn_server_task: asyncio.Task | None = None
         self.health_monitor_task: asyncio.Task | None = None  # Track health monitor
         self.event_processor_task: asyncio.Task | None = None  # Track event processor
@@ -1358,82 +1360,27 @@ class Assistant:
             if p.id == self.default_processing_service.service_config.id
         )
 
-        self.task_worker_instance = TaskWorker(
-            processing_service=self.default_processing_service,
-            chat_interface=self.telegram_service.chat_interface
-            if self.telegram_service
-            else NullChatInterface(),
-            calendar_config=_calendar_config_to_dict(self.config.calendar_config),
-            timezone=ZoneInfo(default_profile_conf.processing_config.timezone),
-            embedding_generator=self.embedding_generator,
-            # shutdown_event is likely handled internally by TaskWorker or passed differently
-            indexing_source=getattr(
-                self, "indexing_source", None
-            ),  # Pass indexing source if available
-            event_sources=self.event_processor.sources
-            if self.event_processor
-            else None,
-            engine=self.database_engine,  # Pass the database engine
-            chat_interfaces=self.fastapi_app.state.chat_interfaces,
-            confirmation_result_waiters=self.confirmation_result_waiters,
-            confirmation_ui_managers=self.fastapi_app.state.confirmation_ui_managers,
-            notification_dispatcher=self.notification_dispatcher,
-        )
-        self.task_worker_instance.register_task_handler(
-            "log_message", task_wrapper_handle_log_message
-        )
-        if self.document_indexer:
-            self.task_worker_instance.register_task_handler(
-                "process_uploaded_document", self.document_indexer.process_document
-            )
-        if self.email_indexer:
-            self.task_worker_instance.register_task_handler(
-                "index_email", self.email_indexer.handle_index_email
-            )
-        self.task_worker_instance.register_task_handler(
-            EMAIL_INTAKE_ACTION_TASK_TYPE, handle_email_intake_action
-        )
-        if self.notes_indexer:
-            self.task_worker_instance.register_task_handler(
-                "index_note", self.notes_indexer.handle_index_note
-            )
-        self.task_worker_instance.register_task_handler(
-            "llm_callback", handle_llm_callback
-        )
-        self.task_worker_instance.register_task_handler(
-            "embed_and_store_batch", handle_embed_and_store_batch
-        )
-        self.task_worker_instance.register_task_handler(
-            "index_message_history_batch", handle_index_message_history_batch
-        )
-        self.task_worker_instance.register_task_handler(
-            "system_event_cleanup", handle_system_event_cleanup
-        )
-        self.task_worker_instance.register_task_handler(
-            "system_error_log_cleanup", handle_system_error_log_cleanup
-        )
-        self.task_worker_instance.register_task_handler(
-            "script_execution", handle_script_execution
-        )
-        self.task_worker_instance.register_task_handler(
-            CONFIRMATION_TOOL_EXECUTION_TASK_TYPE,
-            handle_confirmation_tool_execution,
-        )
-        self.task_worker_instance.register_task_handler(
-            "worker_task_cleanup", handle_worker_task_cleanup
-        )
-        self.task_worker_instance.register_task_handler(
-            "completed_automation_cleanup", handle_completed_automation_cleanup
-        )
-        self.task_worker_instance.register_task_handler(
-            "reindex_document", self.handle_reindex_document
-        )
-        logger.info(
-            f"Registered task handlers for worker {self.task_worker_instance.worker_id}"
-        )
-        self.task_worker_task = asyncio.create_task(self.task_worker_instance.run())
+        worker_timezone = ZoneInfo(default_profile_conf.processing_config.timezone)
 
-        # Start health monitoring for the task worker
+        # Build a pool of identically-configured in-process workers. Multiple
+        # workers are required so a handler that parks on an in-process future
+        # (e.g. a confirmation-gated delegated run) is unblocked by a sibling that
+        # services the task resolving it; in-process only, since workers share
+        # in-memory futures and registries within this event loop.
+        worker_count = self.config.task_worker_count
+        self.task_workers = [
+            self._build_task_worker(default_timezone=worker_timezone)
+            for _ in range(worker_count)
+        ]
+        self.task_worker_tasks = [
+            asyncio.create_task(worker.run()) for worker in self.task_workers
+        ]
+        logger.info(
+            f"Started task worker pool with {worker_count} worker(s): "
+            f"{[w.worker_id for w in self.task_workers]}"
+        )
+
+        # Start health monitoring for the task worker pool
         self.health_monitor_task = asyncio.create_task(
             self._monitor_task_worker_health()
         )
@@ -1614,8 +1561,85 @@ class Assistant:
         except Exception as e:
             logger.error(f"Failed to setup system tasks: {e}")
 
+    def _build_task_worker(self, default_timezone: ZoneInfo) -> TaskWorker:
+        """Construct and fully configure a single TaskWorker for the pool.
+
+        Every worker in the pool is built here so they share an identical handler
+        set and the same shared dependencies (processing service, engine,
+        confirmation waiters/managers, etc.). They are interchangeable: any worker
+        can pick up any queued task.
+        """
+        if self.default_processing_service is None:
+            raise RuntimeError("default_processing_service must be set before workers")
+        if self.embedding_generator is None:
+            raise RuntimeError("embedding_generator must be set before workers")
+        if self.fastapi_app is None:
+            raise RuntimeError("fastapi_app must be set before workers")
+        worker = TaskWorker(
+            processing_service=self.default_processing_service,
+            chat_interface=self.telegram_service.chat_interface
+            if self.telegram_service
+            else NullChatInterface(),
+            calendar_config=_calendar_config_to_dict(self.config.calendar_config),
+            timezone=default_timezone,
+            embedding_generator=self.embedding_generator,
+            # shutdown_event is likely handled internally by TaskWorker or passed differently
+            indexing_source=getattr(
+                self, "indexing_source", None
+            ),  # Pass indexing source if available
+            event_sources=self.event_processor.sources
+            if self.event_processor
+            else None,
+            engine=self.database_engine,  # Pass the database engine
+            chat_interfaces=self.fastapi_app.state.chat_interfaces,
+            confirmation_result_waiters=self.confirmation_result_waiters,
+            confirmation_ui_managers=self.fastapi_app.state.confirmation_ui_managers,
+            notification_dispatcher=self.notification_dispatcher,
+        )
+        worker.register_task_handler("log_message", task_wrapper_handle_log_message)
+        if self.document_indexer:
+            worker.register_task_handler(
+                "process_uploaded_document", self.document_indexer.process_document
+            )
+        if self.email_indexer:
+            worker.register_task_handler(
+                "index_email", self.email_indexer.handle_index_email
+            )
+        worker.register_task_handler(
+            EMAIL_INTAKE_ACTION_TASK_TYPE, handle_email_intake_action
+        )
+        if self.notes_indexer:
+            worker.register_task_handler(
+                "index_note", self.notes_indexer.handle_index_note
+            )
+        worker.register_task_handler("llm_callback", handle_llm_callback)
+        worker.register_task_handler(
+            "embed_and_store_batch", handle_embed_and_store_batch
+        )
+        worker.register_task_handler(
+            "index_message_history_batch", handle_index_message_history_batch
+        )
+        worker.register_task_handler(
+            "system_event_cleanup", handle_system_event_cleanup
+        )
+        worker.register_task_handler(
+            "system_error_log_cleanup", handle_system_error_log_cleanup
+        )
+        worker.register_task_handler("script_execution", handle_script_execution)
+        worker.register_task_handler(
+            CONFIRMATION_TOOL_EXECUTION_TASK_TYPE,
+            handle_confirmation_tool_execution,
+        )
+        worker.register_task_handler("worker_task_cleanup", handle_worker_task_cleanup)
+        worker.register_task_handler(
+            "completed_automation_cleanup", handle_completed_automation_cleanup
+        )
+        worker.register_task_handler("reindex_document", self.handle_reindex_document)
+        logger.info(f"Registered task handlers for worker {worker.worker_id}")
+        return worker
+
     async def _monitor_task_worker_health(self) -> None:
-        """Monitors the health of the task worker and restarts it if necessary."""
+        """Monitors the health of the task worker pool and restarts dead workers."""
         HEALTH_CHECK_INTERVAL = 30  # Check every 30 seconds
         WORKER_INACTIVITY_TIMEOUT = 600
 
@@ -1623,48 +1647,57 @@ class Assistant:
             try:
                 await asyncio.sleep(HEALTH_CHECK_INTERVAL)
 
-                if not self.task_worker_instance or not self.task_worker_task:
+                if not self.task_workers or not self.task_worker_tasks:
                     continue
 
-                # Check if the task is still running
-                if self.task_worker_task.done():
-                    # Task has completed or failed
-                    try:
-                        # This will raise any exception that occurred in the task
-                        self.task_worker_task.result()
-                        logger.warning("Task worker exited normally, restarting...")
-                    except Exception as e:
-                        logger.error(
-                            f"Task worker crashed with error: {e}", exc_info=True
+                # Check each worker in the pool individually so one dead/stuck
+                # worker is restarted without disturbing its healthy siblings.
+                for index, worker in enumerate(self.task_workers):
+                    worker_task = self.task_worker_tasks[index]
+
+                    if worker_task.done():
+                        try:
+                            # This re-raises any exception that occurred in the task
+                            worker_task.result()
+                            logger.warning(
+                                f"Task worker {worker.worker_id} exited normally, "
+                                "restarting..."
+                            )
+                        except Exception as e:
+                            logger.error(
+                                f"Task worker {worker.worker_id} crashed with error: {e}",
+                                exc_info=True,
+                            )
+
+                        logger.info(f"Restarting task worker {worker.worker_id}...")
+                        self.task_worker_tasks[index] = asyncio.create_task(
+                            worker.run()
                         )
+                        continue
 
-                    # Restart the worker
-                    logger.info("Restarting task worker...")
-                    self.task_worker_task = asyncio.create_task(
-                        self.task_worker_instance.run()
-                    )
-                    continue
+                    # Check last activity time for this worker
+                    if worker.last_activity:
+                        time_since_activity = (
+                            datetime.now(UTC) - worker.last_activity
+                        ).total_seconds()
 
-                # Check last activity time
-                if self.task_worker_instance.last_activity:
-                    time_since_activity = (
-                        datetime.now(UTC) - self.task_worker_instance.last_activity
-                    ).total_seconds()
+                        if time_since_activity > WORKER_INACTIVITY_TIMEOUT:
+                            logger.error(
+                                f"Task worker {worker.worker_id} appears stuck (no "
+                                f"activity for {time_since_activity:.0f}s), cancelling "
+                                "and restarting..."
+                            )
+                            worker_task.cancel()
+                            with contextlib.suppress(asyncio.CancelledError):
+                                await worker_task
 
-                    if time_since_activity > WORKER_INACTIVITY_TIMEOUT:
-                        logger.error(
-                            f"Task worker appears stuck (no activity for {time_since_activity:.0f}s), "
-                            "cancelling and restarting..."
-                        )
-                        self.task_worker_task.cancel()
-                        with contextlib.suppress(asyncio.CancelledError):
-                            await self.task_worker_task
-
-                        # Restart the worker
-                        self.task_worker_task = asyncio.create_task(
-                            self.task_worker_instance.run()
-                        )
-                        logger.info("Task worker restarted after inactivity timeout")
+                            self.task_worker_tasks[index] = asyncio.create_task(
+                                worker.run()
+                            )
+                            logger.info(
+                                f"Task worker {worker.worker_id} restarted after "
+                                "inactivity timeout"
+                            )
 
             except asyncio.CancelledError:
                 # Shutdown requested
@@ -1693,8 +1726,7 @@ class Assistant:
             owned_tasks.append(self.health_monitor_task)
         if self.event_processor_task and not self.event_processor_task.done():
             owned_tasks.append(self.event_processor_task)
-        if self.task_worker_task and not self.task_worker_task.done():
-            owned_tasks.append(self.task_worker_task)
+        owned_tasks.extend(task for task in self.task_worker_tasks if not task.done())
 
         if owned_tasks:
             logger.info(f"Cancelling {len(owned_tasks)} owned background tasks...")

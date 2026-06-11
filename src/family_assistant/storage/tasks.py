@@ -38,6 +38,15 @@ logger = logging.getLogger(__name__)
 # Module state for task notifications
 _task_event: Event | None = None
 
+# Registry of per-worker wake-up events. When a pool of TaskWorker instances runs
+# concurrently, each worker waits on its OWN event so that one worker clearing its
+# event after a wake does not swallow the notification for its siblings. The
+# enqueue-notification path fans out to every registered event (see notify_workers)
+# so an enqueued task wakes all idle workers promptly. The legacy module-global
+# event from get_task_event() is always notified too, so single-worker callers and
+# tests that pass an explicit event keep working unchanged.
+_worker_wake_events: set[Event] = set()
+
 
 def get_task_event() -> Event:
     """Get the event that's set when new tasks are available.
@@ -52,6 +61,35 @@ def get_task_event() -> Event:
     if _task_event is None:
         _task_event = asyncio.Event()
     return _task_event
+
+
+def register_worker_wake_event(event: Event) -> None:
+    """Register a per-worker wake-up event for enqueue notifications.
+
+    Every registered event is ``set()`` when an immediate task is enqueued, so a
+    pool of workers each waiting on its own event are all woken. Idempotent.
+    """
+    _worker_wake_events.add(event)
+
+
+def unregister_worker_wake_event(event: Event) -> None:
+    """Remove a previously registered per-worker wake-up event.
+
+    Safe to call for an event that is not registered (no-op).
+    """
+    _worker_wake_events.discard(event)
+
+
+def notify_workers() -> None:
+    """Wake all task workers about newly available work.
+
+    Sets the legacy module-global event plus every per-worker event registered via
+    :func:`register_worker_wake_event`. Using a snapshot of the registry guards
+    against concurrent mutation during iteration.
+    """
+    get_task_event().set()
+    for event in list(_worker_wake_events):
+        event.set()
 
 
 # Define the tasks table for the message queue
@@ -198,12 +236,11 @@ async def enqueue_task(
         )
         is_immediate = scheduled_at is None or scheduled_at <= datetime.now(UTC)
         if is_immediate:
-            # Automatically notify workers about immediate tasks
-            event = get_task_event()
-
+            # Automatically notify workers about immediate tasks. Fan out to every
+            # registered per-worker wake event so all idle workers in the pool wake.
             def notify() -> None:
-                event.set()
-                logger.info(f"Notified worker about immediate task {task_id}.")
+                notify_workers()
+                logger.info(f"Notified workers about immediate task {task_id}.")
 
             # Trigger eager task execution after the transaction commits.
             logger.info("Scheduling worker task notification for transaction commit.")
@@ -443,13 +480,12 @@ async def manually_retry_task(
             logger.info(
                 f"Successfully set task with internal ID {internal_task_id} for manual retry. New max_retries: {task_row['max_retries'] + 1}."
             )
-            # Notify workers about the retry
-            event = get_task_event()
 
+            # Notify workers about the retry; fan out to every registered worker.
             def notify() -> None:
-                event.set()
+                notify_workers()
                 logger.info(
-                    f"Notified worker about manual retry for task internal ID {internal_task_id}."
+                    f"Notified workers about manual retry for task internal ID {internal_task_id}."
                 )
 
             db_context.on_commit(notify)

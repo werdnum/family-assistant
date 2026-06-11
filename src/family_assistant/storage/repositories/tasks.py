@@ -1,8 +1,6 @@
 """Repository for tasks storage operations."""
 
-import asyncio
 import logging
-from asyncio import Event
 from collections.abc import Mapping
 from datetime import UTC, datetime, timedelta
 from typing import Any, cast
@@ -13,28 +11,10 @@ from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlalchemy.sql import functions as func
 
 from family_assistant.storage.repositories.base import BaseRepository
-from family_assistant.storage.tasks import tasks_table
+from family_assistant.storage.tasks import notify_workers, tasks_table
 from family_assistant.storage.types import TaskDict
 
 logger = logging.getLogger(__name__)
-
-# Module state for task notifications
-_task_event: Event | None = None
-
-
-def get_task_event() -> Event:
-    """Get the event that's set when new tasks are available.
-
-    This event is automatically set when immediate tasks are enqueued.
-    Task workers can wait on this event to be notified of new work.
-
-    Returns:
-        The global task notification event
-    """
-    global _task_event
-    if _task_event is None:
-        _task_event = asyncio.Event()
-    return _task_event
 
 
 class TasksRepository(BaseRepository):
@@ -141,12 +121,13 @@ class TasksRepository(BaseRepository):
             if stmt is not None:
                 await self._db.execute_with_retry(stmt)
 
-            # If task is immediate and we're in the main context, set the event
+            # If task is immediate, wake all workers in the pool. Fanning out to
+            # every registered per-worker wake event (plus the legacy global event)
+            # avoids one worker's event.clear() swallowing the wakeup for siblings.
             if not processed_scheduled_at or processed_scheduled_at <= datetime.now(
                 UTC
             ):
-                event = get_task_event()
-                event.set()
+                notify_workers()
 
             logger.info(
                 f"Successfully enqueued task: {task_id} (type: {task_type}, scheduled: {processed_scheduled_at})"
