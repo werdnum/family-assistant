@@ -36,6 +36,10 @@ confirmation_requests_table = Table(
         index=True,
     ),
     Column("confirmation_prompt", Text, nullable=False),
+    # Processing profile that requested the confirmation, so the deferred
+    # execution runs under the same profile (script-originated confirmations
+    # have no source message row to derive it from).
+    Column("processing_profile_id", String(255), nullable=True),
     Column("expires_at", DateTime(timezone=True), nullable=False, index=True),
     Column("created_at", DateTime(timezone=True), nullable=False),
     Column("updated_at", DateTime(timezone=True), nullable=False),

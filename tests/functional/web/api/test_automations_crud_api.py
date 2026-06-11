@@ -74,6 +74,27 @@ class TestEventAutomationsAPI:
         assert data["condition_script"] is None
         assert data["match_conditions"] == automation_data["match_conditions"]
 
+    async def test_create_event_automation_rejects_invalid_inline_script(
+        self, api_test_client: AsyncClient
+    ) -> None:
+        """An inline script with a syntax error is rejected at creation, so the
+        validation/execution-profile guarantee holds for the API route too."""
+        automation_data = {
+            "name": "Invalid Inline Script",
+            "source_id": "indexing",
+            "action_type": "script",
+            "match_conditions": {"document_type": "pdf"},
+            "action_config": {"script_code": "def broken(:\n"},
+            "conversation_id": "test_api",
+        }
+
+        response = await api_test_client.post(
+            "/api/automations/event", json=automation_data
+        )
+
+        assert response.status_code == 400
+        assert "validation failed" in response.json()["detail"].lower()
+
     async def test_create_event_automation_records_creator_provenance(
         self, api_test_client: AsyncClient, api_db_context: DatabaseContext
     ) -> None:

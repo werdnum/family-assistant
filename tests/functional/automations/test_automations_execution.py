@@ -97,6 +97,7 @@ def _build_script_exec_context(
     db_ctx: DatabaseContext,
     conversation_id: str,
     processing_service: ProcessingService,
+    processing_profile_id: str | None = None,
 ) -> ToolExecutionContext:
     return ToolExecutionContext(
         interface_type="web",
@@ -111,6 +112,7 @@ def _build_script_exec_context(
         attachment_registry=None,
         camera_backend=None,
         timezone=ZoneInfo("UTC"),
+        processing_profile_id=processing_profile_id,
     )
 
 
@@ -220,6 +222,7 @@ async def test_script_confirm_gated_tool_defers_to_durable_confirmation(
             db_ctx=db_ctx,
             conversation_id="confirm_conv",
             processing_service=default_service,
+            processing_profile_id="creator_profile",
         )
         outcome = await callback(
             interface_type="web",
@@ -239,6 +242,9 @@ async def test_script_confirm_gated_tool_defers_to_durable_confirmation(
         pending = await db_ctx.confirmation_requests.list_pending_for_user("owner-user")
         assert len(pending) == 1
         assert pending[0]["tool_name"] == "delete_calendar_event"
+        # The confirmation records the creating profile so the deferred
+        # execution runs under it rather than the worker's default profile.
+        assert pending[0]["processing_profile_id"] == "creator_profile"
 
 
 @pytest.mark.asyncio

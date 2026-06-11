@@ -596,6 +596,13 @@ class ScheduleAutomationsRepository(BaseRepository):
         # Re-stamp creator provenance when supplied so the updated script
         # executes under the updating profile's tools. Mutate ``existing`` too so
         # the resynced task payload below carries the new profile.
+        provenance_changing = (
+            isinstance(processing_profile_id, str)
+            and processing_profile_id != existing["processing_profile_id"]
+        ) or (
+            isinstance(created_by_user_id, str)
+            and created_by_user_id != existing["created_by_user_id"]
+        )
         if isinstance(processing_profile_id, str):
             update_values["processing_profile_id"] = processing_profile_id
             existing["processing_profile_id"] = processing_profile_id
@@ -630,6 +637,10 @@ class ScheduleAutomationsRepository(BaseRepository):
             or action_config_changing
             or enabled_changing
             or name_affects_task
+            # Re-stamping provenance must rebuild the pending task too, otherwise
+            # the already-enqueued payload keeps the old profile/user until it
+            # fires once under the wrong profile.
+            or provenance_changing
         )
 
         if needs_task_sync:

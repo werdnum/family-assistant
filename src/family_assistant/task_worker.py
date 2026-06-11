@@ -1804,6 +1804,12 @@ async def handle_script_execution(
             processing_profile_id=processing_service.service_config.id,
             user_id=payload.get("created_by_user_id") or exec_context.user_id,
             tools_provider=tools_provider,
+            # Carry the resolved profile's infrastructure backends so tools that
+            # read them use the creating profile's clients, not the worker
+            # default's (mirrors _build_confirmation_execution_context).
+            home_assistant_client=processing_service.home_assistant_client,
+            attachment_registry=processing_service.attachment_registry,
+            camera_backend=processing_service.camera_backend,
             visibility_grants=(
                 set(processing_service.service_config.visibility_grants)
                 if processing_service.service_config.visibility_grants
@@ -2138,18 +2144,24 @@ def _get_processing_tools_provider(exec_context: ToolExecutionContext) -> ToolsP
 def _resolve_confirmation_processing_service(
     exec_context: ToolExecutionContext,
     source_row: MessageHistoryRow | None,
+    recorded_profile_id: str | None = None,
 ) -> ProcessingService:
-    """Resolve the local processing service that originally created the confirmation."""
+    """Resolve the local processing service that originally created the confirmation.
+
+    Prefers the profile recorded on the confirmation request itself, falling back
+    to the source message's profile. Script-originated confirmations have no
+    source message row, so the recorded profile is what keeps the deferred
+    execution on the automation's creating profile.
+    """
     default_processing_service = exec_context.processing_service
     if default_processing_service is None:
         raise RuntimeError("Confirmation execution requires a processing service")
 
-    profile_id = (
-        str(source_row["processing_profile_id"])
-        if source_row is not None
-        and source_row.get("processing_profile_id") is not None
-        else None
-    )
+    profile_id = recorded_profile_id
+    if profile_id is None and source_row is not None:
+        source_profile = source_row.get("processing_profile_id")
+        if source_profile is not None:
+            profile_id = str(source_profile)
     if profile_id is None or profile_id == default_processing_service.service_config.id:
         return default_processing_service
 
@@ -2313,6 +2325,7 @@ async def handle_confirmation_tool_execution(
         processing_service = _resolve_confirmation_processing_service(
             exec_context,
             source_row,
+            request.get("processing_profile_id"),
         )
         execution_context = await _build_confirmation_execution_context(
             exec_context,

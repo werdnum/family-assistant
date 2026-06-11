@@ -73,6 +73,7 @@ class ConfirmationService:
         source_message_internal_id: int | None,
         confirmation_prompt: str,
         expires_at: datetime,
+        processing_profile_id: str | None = None,
     ) -> ConfirmationRequestRow:
         """Create a durable pending confirmation request."""
         request_id = f"confirm_{uuid.uuid4().hex[:12]}"
@@ -86,6 +87,7 @@ class ConfirmationService:
                 source_message_internal_id=source_message_internal_id,
                 confirmation_prompt=confirmation_prompt,
                 expires_at=expires_at,
+                processing_profile_id=processing_profile_id,
             )
         # Notify only after the request transaction has committed, so a recipient that immediately
         # approves/rejects (on a separate connection) can resolve the request_id.
@@ -300,6 +302,7 @@ async def create_durable_confirmation(
     timeout_seconds: float,
     turn_id: str | None,
     now: datetime,
+    processing_profile_id: str | None = None,
 ) -> ConfirmationRequestRow:
     """Record a durable pending confirmation for a tool that needs approval.
 
@@ -307,7 +310,9 @@ async def create_durable_confirmation(
     waiting on a live channel (email intake, the non-streaming chat API, and the
     durable half of the streaming chat path). Resolves the originating user
     message from ``turn_id`` so the approval threads back to the right
-    conversation.
+    conversation. ``processing_profile_id`` records the requesting profile so the
+    deferred execution runs under it, which matters for callers (automation
+    scripts) whose background turn has no source message row.
     """
     source_message_internal_id: int | None = None
     if turn_id is not None:
@@ -323,4 +328,5 @@ async def create_durable_confirmation(
         source_message_internal_id=source_message_internal_id,
         confirmation_prompt=confirmation_prompt,
         expires_at=now + timedelta(seconds=timeout_seconds),
+        processing_profile_id=processing_profile_id,
     )

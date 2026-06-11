@@ -165,6 +165,7 @@ async def create_deferred_tool_confirmation(
         timeout_seconds=timeout_seconds,
         turn_id=context.turn_id,
         now=now,
+        processing_profile_id=context.processing_profile_id,
     )
     request_id = str(request["id"])
     logger.info(

@@ -1,11 +1,14 @@
 """CRUD operations for automations (create, list, get, update, delete)."""
 
+from typing import TYPE_CHECKING, cast
 from zoneinfo import ZoneInfo
 
 import pytest
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncEngine
 
 from family_assistant.storage.context import DatabaseContext
+from family_assistant.storage.tasks import tasks_table
 from family_assistant.tools.automations import (
     create_automation_tool,
     delete_automation_tool,
@@ -16,6 +19,9 @@ from family_assistant.tools.automations import (
     update_automation_tool,
 )
 from family_assistant.tools.types import ToolExecutionContext
+
+if TYPE_CHECKING:
+    from family_assistant.storage.types import ActionConfig
 
 
 @pytest.mark.asyncio
@@ -1358,3 +1364,47 @@ async def test_update_event_automation_preserves_condition_script(
         == "event.get('old_state') != event.get('new_state')"
     )
     assert result_data["description"] == "Updated description"
+
+
+@pytest.mark.asyncio
+async def test_schedule_provenance_change_rebuilds_pending_task(
+    db_engine: AsyncEngine,
+) -> None:
+    """Re-stamping a schedule automation's provenance (even with an unchanged
+    action_config) rebuilds the pending task so the next run uses the new
+    profile, not the stale one."""
+    action_config = cast("ActionConfig", {"script_code": "x = 1\n"})
+    async with DatabaseContext(engine=db_engine) as db_ctx:
+        automation_id = await db_ctx.schedule_automations.create(
+            name="Provenance Resync",
+            recurrence_rule="FREQ=DAILY;BYHOUR=7;BYMINUTE=0",
+            action_type="script",
+            action_config=action_config,
+            conversation_id="resync_conv",
+            timezone=ZoneInfo("UTC"),
+            processing_profile_id="profile_a",
+            created_by_user_id="user-a",
+        )
+
+        # Update with the identical action_config but a new owning profile/user.
+        updated = await db_ctx.schedule_automations.update(
+            automation_id=automation_id,
+            conversation_id="resync_conv",
+            action_config=cast("ActionConfig", dict(action_config)),
+            timezone=ZoneInfo("UTC"),
+            processing_profile_id="profile_b",
+            created_by_user_id="user-b",
+        )
+        assert updated is True
+
+        rows = await db_ctx.fetch_all(
+            select(tasks_table).where(
+                (tasks_table.c.task_type == "script_execution")
+                & (tasks_table.c.status == "pending")
+                & (tasks_table.c.task_id.like(f"sched_auto_{automation_id}_%"))
+            )
+        )
+        assert len(rows) == 1
+        payload = rows[0]["payload"]
+        assert payload["processing_profile_id"] == "profile_b"
+        assert payload["created_by_user_id"] == "user-b"

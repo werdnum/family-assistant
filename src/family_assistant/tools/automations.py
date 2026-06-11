@@ -18,6 +18,7 @@ if TYPE_CHECKING:
     from family_assistant.storage.models import Automation
     from family_assistant.storage.repositories.automations import AutomationType
     from family_assistant.storage.types import ActionConfig
+    from family_assistant.tools.infrastructure import ToolsProvider
     from family_assistant.tools.types import ToolExecutionContext
 
 logger = logging.getLogger(__name__)
@@ -364,26 +365,16 @@ def _validate_automation_type(automation_type: str) -> AutomationType:
     return automation_type  # type: ignore[return-value]
 
 
-async def validate_inline_script_code(
-    exec_context: ToolExecutionContext,
+async def validate_inline_script_code_with_provider(
+    tools_provider: ToolsProvider | None,
     script_code: str,
 ) -> str | None:
-    """Validate inline automation script code against the creating profile's tools.
+    """Validate inline automation script code against a profile's tool set.
 
     The automation will execute under the profile that created it, so the script
-    is validated against that same profile's tool set (the creator's
-    ``tools_provider``). Returns an error message if validation fails, or None if
-    the script is valid.
+    is validated against that same profile's ``tools_provider``. Returns an error
+    message if validation fails, or None if the script is valid.
     """
-    tools_provider = None
-    if exec_context.tools_provider:
-        tools_provider = exec_context.tools_provider
-    elif (
-        exec_context.processing_service
-        and exec_context.processing_service.tools_provider
-    ):
-        tools_provider = exec_context.processing_service.tools_provider
-
     tool_definitions = None
     if tools_provider:
         tool_definitions = await tools_provider.get_tool_definitions()
@@ -403,6 +394,22 @@ async def validate_inline_script_code(
     if not validation.is_valid:
         return f"Script validation failed: {validation.error_message}"
     return None
+
+
+async def validate_inline_script_code(
+    exec_context: ToolExecutionContext,
+    script_code: str,
+) -> str | None:
+    """Validate inline automation script code against the creating profile's tools."""
+    tools_provider = None
+    if exec_context.tools_provider:
+        tools_provider = exec_context.tools_provider
+    elif (
+        exec_context.processing_service
+        and exec_context.processing_service.tools_provider
+    ):
+        tools_provider = exec_context.processing_service.tools_provider
+    return await validate_inline_script_code_with_provider(tools_provider, script_code)
 
 
 # Tool Implementations
