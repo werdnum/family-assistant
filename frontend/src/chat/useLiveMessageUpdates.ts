@@ -9,6 +9,7 @@ export interface LiveMessageUpdate {
   role?: string;
   content?: string;
   conversation_id?: string;
+  turn_id?: string;
 }
 
 export interface UseLiveMessageUpdatesOptions {
@@ -36,6 +37,13 @@ export function useLiveMessageUpdates({
   // delivered (suppressing the redundant disconnect push), and updated after
   // each turn_ended ack. Reset when the conversation changes.
   const ackedSeqRef = useRef<number>(-1);
+  // Whether this conversation's follow stream has opened at least once. The
+  // first `open` is the initial connect, where ChatApp's mount effect has
+  // already loaded history — reloading again is redundant and can race with a
+  // just-finished local turn, clobbering freshly-streamed state. Only treat
+  // later opens (genuine reconnects, which may have missed events) as
+  // catch-up reloads. Reset when the conversation changes.
+  const hasConnectedRef = useRef<boolean>(false);
 
   // Update callback ref when it changes
   useEffect(() => {
@@ -47,6 +55,7 @@ export function useLiveMessageUpdates({
   // position rather than re-acking from scratch.
   useEffect(() => {
     ackedSeqRef.current = -1;
+    hasConnectedRef.current = false;
   }, [conversationId]);
 
   const cleanup = useCallback(() => {
@@ -124,12 +133,13 @@ export function useLiveMessageUpdates({
       // A completed turn means new persisted messages are available. The hub
       // stream doesn't carry full message rows, so signal a reload rather
       // than the message body; ChatApp re-fetches conversation history.
-      const notifyTurnEnded = () => {
+      const notifyTurnEnded = (turnId?: string) => {
         callbackRef.current?.({
           internal_id: '',
           timestamp: new Date().toISOString(),
           new_messages: true,
           conversation_id: conversationId,
+          turn_id: turnId,
         });
       };
 
@@ -139,20 +149,37 @@ export function useLiveMessageUpdates({
       // any events published while offline; reloading on open closes that gap
       // since message content is always read from persisted history, not the
       // (content-free) live event.
-      eventSource.addEventListener('open', notifyTurnEnded);
+      // Skip the redundant reload on the initial connect (history was just
+      // loaded by ChatApp's mount effect); only reconnects need a catch-up
+      // reload for events missed while offline. Reconnects carry no turn id, so
+      // reload unconditionally. Wrap so the DOM Event isn't passed as turnId.
+      eventSource.addEventListener('open', () => {
+        if (!hasConnectedRef.current) {
+          hasConnectedRef.current = true;
+          return;
+        }
+        notifyTurnEnded();
+      });
 
       eventSource.addEventListener('turn_ended', (event) => {
-        notifyTurnEnded();
         // Ack the completed turn so the disconnect push is suppressed. Every
         // SSE event carries its seq in the data payload.
+        let turnId: string | undefined;
         try {
-          const data = JSON.parse((event as MessageEvent).data) as { seq?: unknown };
+          const data = JSON.parse((event as MessageEvent).data) as {
+            seq?: unknown;
+            turn_id?: unknown;
+          };
           if (typeof data.seq === 'number') {
             ackConversation(data.seq);
+          }
+          if (typeof data.turn_id === 'string') {
+            turnId = data.turn_id;
           }
         } catch {
           // A malformed payload only costs us the ack; the reload still fired.
         }
+        notifyTurnEnded(turnId);
       });
       // Out-of-band assistant messages (scheduled callbacks, task-worker flows)
       // arrive as a `message` event. This EventSource is scoped to a single

@@ -325,4 +325,47 @@ describe('Resumable streaming client', () => {
     },
     { timeout: 30000 }
   );
+
+  it(
+    'retries the subscribe after a transient 500 and renders the reply',
+    async () => {
+      // The turn keeps running server-side even if the subscribe GET fails,
+      // so a transient 5xx must lead to a resubscribe (mirroring the follow
+      // stream's reconnect behavior), not a spurious error banner.
+      let ourTurnId = '';
+      let streamCalls = 0;
+      server.use(
+        captureTurnId((id) => {
+          ourTurnId = id;
+        }),
+        http.get('/api/v1/chat/conversations/:conversationId/stream', () => {
+          streamCalls += 1;
+          if (streamCalls === 1) {
+            return HttpResponse.json({ detail: 'Internal Server Error' }, { status: 500 });
+          }
+          return sse([
+            `event: text\ndata: ${JSON.stringify({ turn_id: ourTurnId, content: 'Recovered reply', seq: 1 })}\n\n`,
+            `event: turn_ended\ndata: ${JSON.stringify({ turn_id: ourTurnId, status: 'complete', seq: 2 })}\n\n`,
+          ]);
+        })
+      );
+
+      const user = userEvent.setup();
+      await renderChatApp({ waitForReady: true });
+
+      const input = screen.getByPlaceholderText('Message Family Assistant...');
+      await user.type(input, 'Trigger a flaky subscribe');
+      await user.keyboard('{Enter}');
+
+      await waitFor(
+        () => {
+          expect(screen.getByText('Recovered reply')).toBeInTheDocument();
+        },
+        { timeout: 10000 }
+      );
+      expect(streamCalls).toBeGreaterThanOrEqual(2);
+      expect(screen.queryByText(/Sorry, I encountered an error/)).not.toBeInTheDocument();
+    },
+    { timeout: 30000 }
+  );
 });

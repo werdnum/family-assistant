@@ -43,6 +43,9 @@ export const useStreamingResponse = ({
       // Highest seq applied from this conversation's stream. Used to resubscribe
       // (?from_seq=) after a dropped stream and as the ack_seq once the turn ends.
       let lastSeq = -1;
+      // Detail of the most recent failed (5xx) subscribe attempt, surfaced if
+      // every retry is exhausted.
+      let lastSubscribeErrorDetail = null;
       // Set once we observe the terminal turn_ended for our turn. If the stream
       // closes without it, the message is interrupted (not cleanly complete).
       let turnEnded = false;
@@ -160,7 +163,16 @@ export const useStreamingResponse = ({
               return 'completed';
             }
             const errorData = await response.json().catch(() => ({}));
-            throw new Error(errorData.detail || `HTTP error! status: ${response.status}`);
+            const detail = errorData.detail || `HTTP error! status: ${response.status}`;
+            if (response.status >= 500) {
+              // A transient server error on the subscribe GET doesn't stop the
+              // turn — the producer keeps running and the hub retains the
+              // events for replay. Report it as retryable so the caller can
+              // resubscribe instead of declaring the whole turn failed.
+              lastSubscribeErrorDetail = detail;
+              return 'subscribe_failed';
+            }
+            throw new Error(detail);
           }
 
           const reader = response.body.getReader();
@@ -383,11 +395,25 @@ export const useStreamingResponse = ({
           return turnEnded ? 'completed' : 'interrupted';
         };
 
+        // Subscribe to the turn's event stream, retrying briefly on transient
+        // server errors (5xx). The producer keeps running whether or not this
+        // subscriber is connected, so failing the whole turn over one failed
+        // subscribe would show a spurious error for a reply that completes
+        // normally. This mirrors the follow stream's reconnect-on-error
+        // behavior. `firstSeq` seeds the very first subscription; retries
+        // resume from the last applied seq.
+        let outcome = await consumeStream(firstSeq ?? 0);
+        for (let retry = 0; outcome === 'subscribe_failed' && retry < 2; retry++) {
+          await new Promise((resolve) => setTimeout(resolve, 250 * (retry + 1)));
+          outcome = await consumeStream(lastSeq >= 0 ? lastSeq : (firstSeq ?? 0));
+        }
+        if (outcome === 'subscribe_failed') {
+          throw new Error(lastSubscribeErrorDetail || 'Failed to subscribe to the reply stream.');
+        }
         // Resubscribe at most once on a dropped stream (queue overflow / server
         // shutdown). A single bounded retry resumes from the last applied seq;
         // if it drops again, fall through to the interrupted handling rather
-        // than spinning. `firstSeq` seeds the very first subscription.
-        let outcome = await consumeStream(firstSeq ?? 0);
+        // than spinning.
         if (outcome === 'dropped') {
           outcome = await consumeStream(lastSeq >= 0 ? lastSeq : (firstSeq ?? 0));
         }

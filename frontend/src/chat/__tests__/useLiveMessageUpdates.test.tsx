@@ -91,4 +91,79 @@ describe('useLiveMessageUpdates', () => {
     });
     expect(ackBodies[0]).toEqual({ conversation_id: 'web_conv_live', ack_seq: 42 });
   });
+
+  it('includes turn_id in callback when turn_ended event carries it', async () => {
+    const updates: Array<{ conversation_id?: string; turn_id?: string }> = [];
+    renderHook(() =>
+      useLiveMessageUpdates({
+        conversationId: 'web_conv_live',
+        enabled: true,
+        onMessageReceived: (update) => {
+          updates.push({ conversation_id: update.conversation_id, turn_id: update.turn_id });
+        },
+      })
+    );
+    await flushConnect();
+
+    MockEventSource.instances[0].emit('turn_ended', {
+      seq: 42,
+      turn_id: 'turn_xyz_123',
+      status: 'complete',
+    });
+
+    await vi.runOnlyPendingTimersAsync();
+
+    expect(updates.length).toBeGreaterThan(0);
+    const lastUpdate = updates[updates.length - 1];
+    expect(lastUpdate.turn_id).toBe('turn_xyz_123');
+  });
+
+  it('does not include turn_id when turn_ended event omits it', async () => {
+    const updates: Array<{ conversation_id?: string; turn_id?: string }> = [];
+    renderHook(() =>
+      useLiveMessageUpdates({
+        conversationId: 'web_conv_live',
+        enabled: true,
+        onMessageReceived: (update) => {
+          updates.push({ conversation_id: update.conversation_id, turn_id: update.turn_id });
+        },
+      })
+    );
+    await flushConnect();
+
+    MockEventSource.instances[0].emit('turn_ended', { seq: 42, status: 'complete' });
+
+    await vi.runOnlyPendingTimersAsync();
+
+    expect(updates.length).toBeGreaterThan(0);
+    const lastUpdate = updates[updates.length - 1];
+    expect(lastUpdate.turn_id).toBeUndefined();
+  });
+
+  it('skips the reload on the initial open but reloads on a reconnect open', async () => {
+    const updates: Array<{ new_messages?: boolean }> = [];
+    renderHook(() =>
+      useLiveMessageUpdates({
+        conversationId: 'web_conv_live',
+        enabled: true,
+        onMessageReceived: (update) => {
+          updates.push({ new_messages: update.new_messages });
+        },
+      })
+    );
+    await flushConnect();
+
+    // Initial connect: history was already loaded on mount, so an open here
+    // must NOT trigger a redundant (clobber-prone) reload.
+    MockEventSource.instances[0].emit('open', {});
+    await vi.runOnlyPendingTimersAsync();
+    expect(updates.length).toBe(0);
+
+    // A second open represents a reconnect, which may have missed events while
+    // offline and therefore must trigger a catch-up reload.
+    MockEventSource.instances[0].emit('open', {});
+    await vi.runOnlyPendingTimersAsync();
+    expect(updates.length).toBe(1);
+    expect(updates[0].new_messages).toBe(true);
+  });
 });

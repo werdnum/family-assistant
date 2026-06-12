@@ -178,6 +178,10 @@ const ChatApp: React.FC<ChatAppProps> = ({ profileId = 'default_assistant' }) =>
   const abortControllerRef = useRef<AbortController | null>(null);
   const messagesAbortControllerRef = useRef<AbortController | null>(null);
   const resolvedConfirmationIdsRef = useRef<Set<string>>(new Set());
+  // Track turn IDs originated by this tab so we can skip the live-update reload
+  // when a turn_ended event for our own turn arrives (we already hold the freshest
+  // state locally from streaming; reloading risks clobbering it).
+  const selfTurnIdsRef = useRef<Set<string>>(new Set());
   // The hub `message`/`turn_ended` events are content-free, so the in-app
   // notification must be derived from reloaded history. We keep the latest
   // assistant message internal_id seen per conversation so a background reload
@@ -563,13 +567,19 @@ const ChatApp: React.FC<ChatAppProps> = ({ profileId = 'default_assistant' }) =>
     // Check for attach_to_response specifically (removed debug logging)
 
     if (toolCalls && toolCalls.length > 0 && targetMessageId) {
+      // Record the tool-call message id synchronously, NOT inside the
+      // setMessages updater below: updater functions only run when React
+      // flushes a render. When a turn's SSE events arrive in a single network
+      // chunk (e.g. the hub replays an already-finished turn in one burst),
+      // onComplete fires in the same task as onToolCall — before any render —
+      // and a ref assigned inside the updater would still be null, sending
+      // handleStreamingComplete down the wrong (no-tool-calls) branch.
+      toolCallMessageIdRef.current = targetMessageId;
       setMessages((prev) => {
         const updatedMessages = prev.map((msg) => {
           if (msg.id === targetMessageId) {
             // This is the message to update.
             // It might be a 'loading' message, or it might already have text.
-            toolCallMessageIdRef.current = msg.id;
-
             const existingTextContent =
               msg.content?.filter((part) => part.type === 'text' && part.text !== LOADING_MARKER) ||
               [];
@@ -642,6 +652,7 @@ const ChatApp: React.FC<ChatAppProps> = ({ profileId = 'default_assistant' }) =>
       profileId: string;
       interfaceType: string;
       attachments?: Array<{ id: string; type: string; name: string; content: string }>;
+      turnId?: string;
     }) => Promise<void>;
     cancelStream: () => void;
     isStreaming: boolean;
@@ -1036,11 +1047,20 @@ const ChatApp: React.FC<ChatAppProps> = ({ profileId = 'default_assistant' }) =>
       role?: string;
       content?: string;
       conversation_id?: string;
+      turn_id?: string;
     }) => {
       // The hub's live `message`/`turn_ended` events are content-free signals to
       // reload (no role/content/internal_id), so the in-app notification can't
       // be derived here. It's fired from the background reload in
       // loadConversationMessages, where the persisted reply text is available.
+
+      // Skip reload if this turn was originated by this tab — we already hold
+      // the freshest state from streaming; reloading risks clobbering freshly-
+      // rendered content (error banners, message bubbles, attachment previews).
+      if (update.turn_id && selfTurnIdsRef.current.has(update.turn_id)) {
+        selfTurnIdsRef.current.delete(update.turn_id);
+        return;
+      }
 
       // Reload messages for the updated conversation
       // Skip reload if we're currently streaming to avoid race conditions
@@ -1166,9 +1186,11 @@ const ChatApp: React.FC<ChatAppProps> = ({ profileId = 'default_assistant' }) =>
       setMessages((prev) => [...prev, userMessage, loadingAssistantMessage]);
 
       const targetConversationId = conversationId || `web_conv_${generateUUID()}`;
+      const turnId = generateUUID();
       streamingMessageIdRef.current = assistantMessageId;
       activeStreamConversationIdRef.current = targetConversationId;
       lastStreamingErrorRef.current = null;
+      selfTurnIdsRef.current.add(turnId);
 
       await sendStreamingMessage({
         prompt: message.content[0].text,
@@ -1176,6 +1198,7 @@ const ChatApp: React.FC<ChatAppProps> = ({ profileId = 'default_assistant' }) =>
         profileId: currentProfileId,
         interfaceType: 'web',
         attachments: processedAttachments,
+        turnId,
       });
     },
     [conversationId, sendStreamingMessage, currentProfileId]
