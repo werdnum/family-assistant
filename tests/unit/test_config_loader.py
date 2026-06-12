@@ -558,9 +558,12 @@ class TestApplyEnvVarOverrides:
         """Import-time rewrite keeps OTel env vars away from SDK auto-config."""
         code = (
             "import os; import family_assistant; "
+            "print(os.environ.get('OTEL_TRACES_EXPORTER')); "
             "print(os.environ.get('OTEL_METRICS_EXPORTER')); "
+            "print(os.environ.get('_FA_OTEL_TRACES_EXPORTER')); "
             "print(os.environ.get('_FA_OTEL_METRICS_EXPORTER')); "
             "print(os.environ.get('OTEL_PYTHON_METER_PROVIDER')); "
+            "print(os.environ.get('OTEL_PYTHON_FASTAPI_EXCLUDED_URLS')); "
             "print(os.environ.get('OTEL_EXPORTER_OTLP_HEADERS'))"
         )
         result = subprocess.run(
@@ -568,17 +571,22 @@ class TestApplyEnvVarOverrides:
             check=True,
             env={
                 **os.environ,
+                "OTEL_TRACES_EXPORTER": "otlp-http",
                 "OTEL_METRICS_EXPORTER": "none",
                 "OTEL_PYTHON_METER_PROVIDER": "opentelemetry.sdk.metrics.MeterProvider",
+                "OTEL_PYTHON_FASTAPI_EXCLUDED_URLS": "/health",
                 "OTEL_EXPORTER_OTLP_HEADERS": "authorization=Bearer token",
             },
             capture_output=True,
             text=True,
         )
         assert result.stdout.splitlines() == [
-            "None",
+            "none",
+            "none",
+            "otlp-http",
             "none",
             "None",
+            "/health",
             "authorization=Bearer token",
         ]
 
@@ -588,7 +596,7 @@ class TestApplyEnvVarOverrides:
         with mock.patch.dict(os.environ, {"OTEL_METRICS_EXPORTER": "none"}):
             neutralize_otel_env()
             apply_env_var_overrides(config)
-        assert "OTEL_METRICS_EXPORTER" not in os.environ
+        assert os.environ["OTEL_METRICS_EXPORTER"] == "none"
         assert config["otel"]["metrics_exporter"] == "none"
 
     def test_existing_internal_otel_env_var_wins_over_later_public_value(
@@ -1446,6 +1454,45 @@ class TestLoadConfig:
             )
 
         assert config.model == "env-model"
+
+    def test_dotenv_otel_values_survive_import_time_guards(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """.env OTel values are not masked by public auto-config guards."""
+        (tmp_path / ".env").write_text(
+            "\n".join([
+                "OTEL_ENABLED=true",
+                "OTEL_TRACES_EXPORTER=otlp-http",
+                "OTEL_METRICS_EXPORTER=none",
+                "OTEL_EXPORTER_OTLP_ENDPOINT=http://jaeger.example:4318",
+            ])
+        )
+        prompts_file = tmp_path / "prompts.yaml"
+        prompts_file.write_text(yaml.dump({"system_prompt": "test"}))
+        monkeypatch.chdir(tmp_path)
+
+        otel_env_vars = [
+            key
+            for key in os.environ
+            if key.startswith("OTEL_") or key.startswith("_FA_OTEL_")
+        ]
+        clean_env = {
+            key: value for key, value in os.environ.items() if key not in otel_env_vars
+        }
+
+        with mock.patch.dict(os.environ, clean_env, clear=True):
+            neutralize_otel_env()
+            config = load_config(
+                defaults_file_path=str(tmp_path / "missing_defaults.yaml"),
+                config_file_path=str(tmp_path / "missing_config.yaml"),
+                prompts_file_path=str(prompts_file),
+                load_dotenv_file=True,
+            )
+
+        assert config.otel.enabled is True
+        assert config.otel.traces_exporter == "otlp-http"
+        assert config.otel.metrics_exporter == "none"
+        assert config.otel.otlp_endpoint == "http://jaeger.example:4318"
 
     def test_operator_default_profile_tools_policy_extends_defaults(
         self, tmp_path: Path
