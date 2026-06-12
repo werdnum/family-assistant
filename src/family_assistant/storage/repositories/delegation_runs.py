@@ -150,12 +150,27 @@ class DelegationRunsRepository(BaseRepository):
     async def mark_running(
         self, delegation_id: str, started_at: datetime
     ) -> DelegationRunDict | None:
-        """Mark a delegation run as running and return the updated row."""
-        return await self._update_run(
-            delegation_id,
-            status="running",
-            started_at=started_at,
+        """Mark a ``queued`` delegation run as running and return the updated row.
+
+        Conditioned on the row still being ``queued`` so a run the stale-run
+        reaper already failed — or one a sibling worker already claimed — is not
+        resurrected to ``running`` and re-executed. Returns ``None`` when the row
+        is no longer ``queued`` (already running/terminal) or is absent.
+        """
+        stmt = (
+            update(delegation_runs_table)
+            .where(delegation_runs_table.c.delegation_id == delegation_id)
+            .where(delegation_runs_table.c.status == "queued")
+            .values(
+                status="running",
+                started_at=started_at,
+                updated_at=datetime.now(UTC),
+            )
+            .returning(delegation_runs_table)
         )
+        result = await self._execute_with_logging("mark_delegation_run_running", stmt)
+        row = result.mappings().one_or_none()
+        return self._row_to_dict(dict(row)) if row is not None else None
 
     async def mark_handed_off(
         self, delegation_id: str, handed_off_at: datetime
@@ -255,6 +270,29 @@ class DelegationRunsRepository(BaseRepository):
         )
         result = await self._execute_with_logging("reap_stale_delegation_runs", stmt)
         return [self._row_to_dict(dict(row)) for row in result.mappings().all()]
+
+    async def find_terminal_unnotified(
+        self, *, completed_before: datetime
+    ) -> list[DelegationRunDict]:
+        """Return terminal runs whose completion notification was never delivered.
+
+        A terminal run can be left unnotified when the caller crashed after the
+        run finished but before delivering inline or claiming the handoff (so the
+        worker's ``handed_off_at``-gated notification was skipped), or when a
+        prior force-notify delivery failed. Gated on ``completed_at`` so a run a
+        live inline caller is about to deliver within its short handoff window is
+        not double-delivered.
+        """
+        stmt = (
+            select(delegation_runs_table)
+            .where(
+                delegation_runs_table.c.status.in_(list(TERMINAL_DELEGATION_STATUSES))
+            )
+            .where(delegation_runs_table.c.notified_at.is_(None))
+            .where(delegation_runs_table.c.completed_at < completed_before)
+        )
+        rows = await self._db.fetch_all(stmt)
+        return [self._row_to_dict(row) for row in rows]
 
     async def _update_run(
         self, delegation_id: str, **values: object

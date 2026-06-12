@@ -208,6 +208,13 @@ class DelegationRunCleanupPayload(TypedDict, total=False):
 # run that is still legitimately executing.
 DELEGATION_RUN_STALE_SECONDS = 3600.0
 
+# Interfaces whose clients read the conversation from durable message history
+# (web SSE / polling, native iOS, the non-streaming API) rather than receiving
+# a pushed chat message. Terminal delegation notifications for these are stored
+# in history + push-notified + stream-tickled, never sent via a ChatInterface
+# (which for these would be NullChatInterface and silently drop the result).
+_HISTORY_NOTIFICATION_INTERFACES = frozenset({"web", "api", "ios"})
+
 
 class ConfirmationNotificationError(RuntimeError):
     """Raised when a confirmation result notification cannot be delivered."""
@@ -863,7 +870,15 @@ class TaskWorker:
                 clock.now(),
             )
         if started is None:
-            raise ValueError(f"Delegation run '{delegation_id}' disappeared")
+            # The conditional mark_running matched no row: the run is no longer
+            # queued — the stale-run reaper failed it, or a sibling worker
+            # claimed it first — so do not (re-)execute the delegated turn here.
+            logger.warning(
+                "Delegation run %s was no longer queued when claiming it for "
+                "execution (reaper or sibling worker raced); skipping.",
+                delegation_id,
+            )
+            return
 
         try:
             content_parts = cast(
@@ -964,20 +979,51 @@ class TaskWorker:
                 running_timeout_seconds,
             )
         # A reaped run has no live caller waiting to deliver inline, so notify
-        # unconditionally even if it was never handed off. A delivery failure for
-        # one run must not abort the rest of the batch; a reaped run is already
-        # terminal and will not be reaped again, so log and continue rather than
-        # raise (which would strand its siblings).
+        # unconditionally even if it was never handed off.
         for run in reaped:
-            try:
-                await self._notify_delegation_if_needed(exec_context, run, force=True)
-            except DelegationNotificationError:
-                logger.warning(
-                    "Could not deliver reaped delegation notification for %s; "
-                    "leaving it unnotified.",
-                    run["delegation_id"],
-                    exc_info=True,
-                )
+            await self._force_notify_delegation(exec_context, run)
+
+        # Recover terminal runs whose completion notification was never
+        # delivered. Two cases reap_stale (queued/running only) cannot reach:
+        # a caller that crashed after the run finished but before delivering
+        # inline or claiming the handoff leaves a terminal run with
+        # handed_off_at NULL that the worker's gated notify skipped; and a
+        # force-notify whose delivery failed leaves a terminal run notified_at
+        # NULL with no owning task left to retry it. The completed_at gate keeps
+        # this from racing a live inline caller within its short handoff window.
+        async with exec_context.db_context.create_isolated_context() as isolated_db:
+            unnotified = await isolated_db.delegation_runs.find_terminal_unnotified(
+                completed_before=created_before
+            )
+        if unnotified:
+            logger.warning(
+                "Recovering %d terminal delegation run(s) left unnotified.",
+                len(unnotified),
+            )
+        for run in unnotified:
+            await self._force_notify_delegation(exec_context, run)
+
+    async def _force_notify_delegation(
+        self,
+        exec_context: ToolExecutionContext,
+        run: DelegationRunDict,
+    ) -> None:
+        """Force-notify a terminal run, isolating per-run delivery failures.
+
+        A delivery failure for one run must not abort the rest of a cleanup
+        batch. The run stays terminal with ``notified_at`` NULL, so the next
+        cleanup pass re-attempts it via ``find_terminal_unnotified`` rather than
+        stranding it (or its siblings).
+        """
+        try:
+            await self._notify_delegation_if_needed(exec_context, run, force=True)
+        except DelegationNotificationError:
+            logger.warning(
+                "Could not deliver delegation notification for %s; leaving it "
+                "unnotified for a later retry.",
+                run["delegation_id"],
+                exc_info=True,
+            )
 
     def _build_delegation_confirmation_callback(
         self,
@@ -1114,7 +1160,7 @@ class TaskWorker:
                 attachments=attachments,
             )
 
-            if run["interface_type"] == "web":
+            if run["interface_type"] in _HISTORY_NOTIFICATION_INTERFACES:
                 await self._push_notify_delegation_completion(
                     isolated_db,
                     run,

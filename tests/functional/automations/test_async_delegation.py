@@ -748,6 +748,145 @@ async def test_reaper_leaves_recent_runs_untouched(db_engine: AsyncEngine) -> No
 
 
 @pytest.mark.asyncio
+async def test_mark_running_only_transitions_queued_runs(
+    db_engine: AsyncEngine,
+) -> None:
+    """mark_running is conditional on ``queued`` so the reaper can't be raced.
+
+    A run the stale-run reaper already failed (or a sibling worker already
+    started) must not be resurrected to ``running`` and re-executed.
+    """
+    clock = SystemClock()
+    async with DatabaseContext(engine=db_engine) as db_context:
+        await _create_run(db_context, delegation_id="delegation_guard")
+        # First claim succeeds while still queued.
+        started = await db_context.delegation_runs.mark_running(
+            "delegation_guard", clock.now()
+        )
+        assert started is not None
+        assert started["status"] == "running"
+        # A second claim (now running) matches no row.
+        assert (
+            await db_context.delegation_runs.mark_running(
+                "delegation_guard", clock.now()
+            )
+            is None
+        )
+
+        # A run the reaper already failed cannot be resurrected to running.
+        await _create_run(db_context, delegation_id="delegation_reaped")
+        await db_context.delegation_runs.mark_failed(
+            delegation_id="delegation_reaped",
+            error="reaped",
+            completed_at=clock.now(),
+        )
+        assert (
+            await db_context.delegation_runs.mark_running(
+                "delegation_reaped", clock.now()
+            )
+            is None
+        )
+        reaped = await db_context.delegation_runs.get_by_delegation_id(
+            "delegation_reaped"
+        )
+        assert reaped is not None
+        assert reaped["status"] == "failed"
+
+
+@pytest.mark.asyncio
+async def test_cleanup_recovers_terminal_unnotified_run(
+    db_engine: AsyncEngine,
+) -> None:
+    """A terminal run stranded unnotified (caller crashed before handoff) is recovered.
+
+    The caller died after the run finished but before delivering inline or
+    claiming the handoff, so handed_off_at is NULL and the worker's gated notify
+    skipped it; reap_stale (queued/running only) never sees a terminal run. The
+    cleanup's recovery sweep delivers it.
+    """
+    target_service = FakeDelegatableService()
+    processing_service = _source_processing_service(target_service)
+    chat_interface = AsyncMock(spec=ChatInterface)
+    chat_interface.send_message.return_value = "external_message_id"
+
+    clock = SystemClock()
+    stale_completed_at = clock.now() - timedelta(hours=2)
+    async with DatabaseContext(engine=db_engine) as db_context:
+        await _create_run(db_context, delegation_id="delegation_stranded")
+        # Terminal, never handed off, never notified, finished long ago.
+        await db_context.delegation_runs.mark_completed(
+            delegation_id="delegation_stranded",
+            result_text="orphaned result",
+            result_attachment_ids=[],
+            completed_at=stale_completed_at,
+        )
+
+    worker = _build_worker(db_engine, processing_service, chat_interface)
+    async with DatabaseContext(engine=db_engine) as db_context:
+        await worker.handle_delegation_run_cleanup(
+            _tool_context(db_context, processing_service, chat_interface),
+            {"running_timeout_seconds": 60.0},
+        )
+
+    chat_interface.send_message.assert_awaited_once()
+    async with DatabaseContext(engine=db_engine) as db_context:
+        run = await db_context.delegation_runs.get_by_delegation_id(
+            "delegation_stranded"
+        )
+        assert run is not None
+        assert run["notified_at"] is not None
+
+
+@pytest.mark.asyncio
+async def test_api_delegation_completion_stored_in_history(
+    db_engine: AsyncEngine,
+) -> None:
+    """API/iOS delegations persist the completion to history, not a chat send.
+
+    For history-based interfaces (web/api/ios) there is no real ChatInterface
+    (it would be NullChatInterface and drop the result). The terminal result
+    must be stored in message history and marked notified without send_message.
+    """
+    target_service = FakeDelegatableService()
+    processing_service = _source_processing_service(target_service)
+    chat_interface = AsyncMock(spec=ChatInterface)
+
+    clock = SystemClock()
+    async with DatabaseContext(engine=db_engine) as db_context:
+        await _create_run(
+            db_context, delegation_id="delegation_api", interface_type="api"
+        )
+        await db_context.delegation_runs.mark_handed_off("delegation_api", clock.now())
+        await db_context.delegation_runs.mark_completed(
+            delegation_id="delegation_api",
+            result_text="api result",
+            result_attachment_ids=[],
+            completed_at=clock.now(),
+        )
+
+    worker = _build_worker(db_engine, processing_service, chat_interface)
+    async with DatabaseContext(engine=db_engine) as db_context:
+        await worker.handle_delegated_profile_run(
+            _tool_context(db_context, processing_service, chat_interface),
+            _payload("delegation_api"),
+        )
+
+    chat_interface.send_message.assert_not_awaited()
+    async with DatabaseContext(engine=db_engine) as db_context:
+        run = await db_context.delegation_runs.get_by_delegation_id("delegation_api")
+        assert run is not None
+        assert run["notified_at"] is not None
+        rows = await db_context.fetch_all(
+            select(message_history_table).where(
+                message_history_table.c.conversation_id == TEST_CONVERSATION_ID,
+                message_history_table.c.interface_type == "api",
+            )
+        )
+        assert len(rows) == 1
+        assert "api result" in rows[0]["content"]
+
+
+@pytest.mark.asyncio
 async def test_mark_handed_off_is_refused_once_terminal(
     db_engine: AsyncEngine,
 ) -> None:
