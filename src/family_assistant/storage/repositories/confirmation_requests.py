@@ -38,6 +38,7 @@ class ConfirmationRequestRow(TypedDict):
     resolved_by_user_id: str | None
     resolved_via_interface: str | None
     execution_task_id: str | None
+    decision_only: bool
 
 
 class ConfirmationRequestsRepository(BaseRepository):
@@ -57,6 +58,7 @@ class ConfirmationRequestsRepository(BaseRepository):
         processing_profile_id: str | None = None,
         origin_interface_type: str | None = None,
         origin_conversation_id: str | None = None,
+        decision_only: bool = False,
     ) -> ConfirmationRequestRow:
         """Create a pending confirmation request."""
         if expires_at.tzinfo is None:
@@ -80,6 +82,7 @@ class ConfirmationRequestsRepository(BaseRepository):
                 expires_at=expires_at,
                 created_at=now,
                 updated_at=now,
+                decision_only=decision_only,
             )
             .returning(confirmation_requests_table)
         )

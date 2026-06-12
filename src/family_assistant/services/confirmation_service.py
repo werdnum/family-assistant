@@ -76,8 +76,14 @@ class ConfirmationService:
         processing_profile_id: str | None = None,
         origin_interface_type: str | None = None,
         origin_conversation_id: str | None = None,
+        decision_only: bool = False,
     ) -> ConfirmationRequestRow:
-        """Create a durable pending confirmation request."""
+        """Create a durable pending confirmation request.
+
+        ``decision_only`` records (durably) that approval should resume a caller
+        executing the tool inline rather than enqueueing a background execution
+        task — see :meth:`_approve`.
+        """
         request_id = f"confirm_{uuid.uuid4().hex[:12]}"
         async with self._db_context_factory() as db:
             request = await db.confirmation_requests.create(
@@ -92,6 +98,7 @@ class ConfirmationService:
                 processing_profile_id=processing_profile_id,
                 origin_interface_type=origin_interface_type,
                 origin_conversation_id=origin_conversation_id,
+                decision_only=decision_only,
             )
         # Notify only after the request transaction has committed, so a recipient that immediately
         # approves/rejects (on a separate connection) can resolve the request_id.
@@ -180,10 +187,14 @@ class ConfirmationService:
                     f"Confirmation request {request_id} has expired"
                 )
 
+            # The durable decision_only flag is authoritative: a decision-only
+            # request (a delegated run resumed inline on approval) must never
+            # enqueue a background execution task, even if this approval is
+            # handled by a process/restart that lost the in-memory waiter and
+            # therefore reached the enqueueing path.
+            should_enqueue = enqueue_execution and not request["decision_only"]
             execution_task_id = (
-                f"confirmation_tool_execution:{request_id}"
-                if enqueue_execution
-                else None
+                f"confirmation_tool_execution:{request_id}" if should_enqueue else None
             )
             approved = await db.confirmation_requests.approve_pending(
                 request_id=request_id,

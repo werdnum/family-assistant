@@ -89,6 +89,7 @@ class WebConfirmationUIManager:
             source_message_internal_id=source_message_internal_id,
             confirmation_prompt=prompt_text,
             expires_at=expires_at,
+            decision_only=not wait_for_durable_execution,
         )
         request_id = durable_request["id"]
         if wait_for_durable_execution:

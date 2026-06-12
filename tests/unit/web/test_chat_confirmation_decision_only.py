@@ -24,7 +24,11 @@ if TYPE_CHECKING:
     from starlette.requests import Request
 
 
-async def _create_confirmation(db_engine: AsyncEngine) -> str:
+async def _create_confirmation(
+    db_engine: AsyncEngine,
+    *,
+    decision_only: bool = False,
+) -> str:
     service = ConfirmationService(
         db_context_factory=lambda: get_db_context(db_engine),
     )
@@ -36,6 +40,7 @@ async def _create_confirmation(db_engine: AsyncEngine) -> str:
         source_message_internal_id=None,
         confirmation_prompt="Create a note for this itinerary?",
         expires_at=datetime.now(UTC) + timedelta(minutes=30),
+        decision_only=decision_only,
     )
     return request["id"]
 
@@ -90,4 +95,48 @@ async def test_confirm_tool_decision_only_approval_does_not_enqueue_task(
 
     assert row is not None
     assert row["status"] == "approved"
+    assert row["execution_task_id"] is None
+
+
+@pytest.mark.asyncio
+async def test_confirm_tool_durable_decision_only_approval_does_not_enqueue_task(
+    db_engine: AsyncEngine,
+) -> None:
+    request_id = await _create_confirmation(db_engine, decision_only=True)
+    app_state = SimpleNamespace(
+        database_engine=db_engine,
+        confirmation_result_waiters=ConfirmationResultWaiterRegistry(),
+    )
+    request = cast(
+        "Request",
+        SimpleNamespace(app=SimpleNamespace(state=app_state)),
+    )
+
+    response = await confirm_tool_execution(
+        ToolConfirmationRequest(
+            request_id=request_id,
+            approved=True,
+            conversation_id=None,
+            approving_interface="web",
+        ),
+        request,
+        {"user_identifier": "test_user"},
+    )
+
+    assert response.success is True
+    assert not await _task_exists(
+        db_engine,
+        f"confirmation_tool_execution:{request_id}",
+    )
+
+    async with DatabaseContext(engine=db_engine) as db:
+        row = await db.fetch_one(
+            select(confirmation_requests_table).where(
+                confirmation_requests_table.c.id == request_id
+            )
+        )
+
+    assert row is not None
+    assert row["status"] == "approved"
+    assert row["decision_only"] is True
     assert row["execution_task_id"] is None

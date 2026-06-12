@@ -314,6 +314,7 @@ class TelegramConfirmationUIManager(ConfirmationUIManager):
                 source_message_internal_id=source_message_internal_id,
                 confirmation_prompt=prompt_text,
                 expires_at=datetime.now(UTC) + timedelta(seconds=effective_timeout),
+                decision_only=not wait_for_durable_execution,
             )
             confirm_uuid = request["id"]
             if wait_for_durable_execution:
