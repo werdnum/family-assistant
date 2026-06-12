@@ -88,7 +88,7 @@ graph TB
 
     %% Task System
     subgraph "Task Worker System"
-        WORKER["TaskWorker<br/>• Queue polling<br/>• Handler execution<br/>• Retry logic"]
+        WORKER["TaskWorker pool<br/>(task_worker_count, default 2)<br/>• Queue polling<br/>• Handler execution<br/>• Retry logic"]
         
         subgraph "Task Handlers"
             H_LLM["LLM Callback"]
@@ -754,14 +754,14 @@ sequenceDiagram
 
 ### Core Components
 
-| Component             | Primary Responsibilities                                        | Key Interactions                                  |
-| --------------------- | --------------------------------------------------------------- | ------------------------------------------------- |
-| **Assistant**         | Service lifecycle, dependency injection, resource management    | All services, Database, Configuration             |
-| **ProcessingService** | LLM orchestration, context aggregation, tool execution          | LLM providers, Tools, Context providers, Database |
-| **DatabaseContext**   | Transaction management, repository access, connection pooling   | All repositories, Database engines                |
-| **TaskWorker**        | Background job processing, scheduling, retry logic              | Task handlers, Database, Services                 |
-| **EventProcessor**    | Event routing, listener matching, action execution              | Event sources, Database, Task system              |
-| **IndexingPipeline**  | Document processing, content transformation, embedding dispatch | Processors, Task queue, Vector storage            |
+| Component             | Primary Responsibilities                                                                                  | Key Interactions                                  |
+| --------------------- | --------------------------------------------------------------------------------------------------------- | ------------------------------------------------- |
+| **Assistant**         | Service lifecycle, dependency injection, resource management                                              | All services, Database, Configuration             |
+| **ProcessingService** | LLM orchestration, context aggregation, tool execution                                                    | LLM providers, Tools, Context providers, Database |
+| **DatabaseContext**   | Transaction management, repository access, connection pooling                                             | All repositories, Database engines                |
+| **TaskWorker pool**   | Background job processing, scheduling, retry logic (N in-process workers, `task_worker_count`, default 2) | Task handlers, Database, Services                 |
+| **EventProcessor**    | Event routing, listener matching, action execution                                                        | Event sources, Database, Task system              |
+| **IndexingPipeline**  | Document processing, content transformation, embedding dispatch                                           | Processors, Task queue, Vector storage            |
 
 ### Repository Responsibilities
 

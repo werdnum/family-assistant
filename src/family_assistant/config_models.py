@@ -1140,6 +1140,14 @@ class AppConfig(BaseSettings):
     # Server port (optional, defaults to 8000)
     server_port: int = 8000
 
+    # Number of in-process TaskWorker instances to run concurrently.
+    # Multiple workers are required so a handler that parks waiting on an
+    # in-process future (e.g. a confirmation-gated delegated profile run) can be
+    # unblocked by a sibling worker servicing the task that resolves it. Workers
+    # are in-process only: they share in-memory futures and registries within a
+    # single event loop and cannot span processes.
+    task_worker_count: int = Field(default=2, ge=1)
+
     # Attachment selection thresholds (global)
     attachment_selection_threshold: int = 3  # Trigger selection when > this many
     max_response_attachments: int = 6  # Max attachments per response

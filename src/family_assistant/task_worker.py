@@ -61,7 +61,12 @@ from family_assistant.services.notification_targets import notify_conversation
 from family_assistant.services.notifier import MESSAGE_CATEGORY, NotificationMetadata
 from family_assistant.storage.context import DatabaseContext, get_db_context
 from family_assistant.storage.message_history import message_history_table
-from family_assistant.storage.tasks import enqueue_task, get_task_event
+from family_assistant.storage.tasks import (
+    enqueue_task,
+    notify_other_workers,
+    register_worker_wake_event,
+    unregister_worker_wake_event,
+)
 from family_assistant.tools import ToolExecutionContext
 from family_assistant.tools.stored_scripts import AUTOMATION_RUNTIME_GLOBALS
 from family_assistant.tools.types import ConfirmationOutcome, ToolResult
@@ -274,6 +279,20 @@ async def _schedule_reminder_follow_up(
 TASK_POLLING_INTERVAL = 5  # Seconds to wait between polling for tasks
 TASK_HANDLER_TIMEOUT = 300  # Seconds to wait for task handler execution (5 minutes)
 CONFIRMATION_CANCELLATION_CLEANUP_TIMEOUT = 5.0
+
+# Per-task-type handler timeout overrides (seconds). Task types not listed here
+# fall back to ``handler_timeout`` (TASK_HANDLER_TIMEOUT). A delegated profile run
+# can park waiting on a human confirmation far longer than 300s; raising its timeout
+# is safe now that a pool of workers keeps servicing the queue (the confirmation
+# approval enqueues a separate task that a sibling worker runs), so the parked run
+# is unblocked rather than starving other background work.
+#
+# Note: ``delegated_profile_run`` is registered on a feature branch and may not exist
+# on every deployment yet. Listing it here is forward-compatible and harmless: the
+# override only applies when a task of that type is actually processed.
+DEFAULT_TASK_HANDLER_TIMEOUT_OVERRIDES: dict[str, float] = {
+    "delegated_profile_run": 600,  # 10 minutes for confirmation-gated delegated runs
+}
 
 # --- Events for coordination (can remain module-level) ---
 # Note: shutdown_event removed - each TaskWorker instance now has its own
@@ -616,6 +635,7 @@ class TaskWorker:
         | None = None,  # Add engine parameter for dependency injection
         event_sources: EventSourcesById | None = None,
         handler_timeout: float = TASK_HANDLER_TIMEOUT,  # Configurable timeout per instance
+        handler_timeout_overrides: dict[str, float] | None = None,
         chat_interfaces: dict[str, ChatInterface] | None = None,
         confirmation_result_waiters: ConfirmationResultWaiterRegistry | None = None,
         confirmation_ui_managers: dict[str, ConfirmationUIManager] | None = None,
@@ -647,6 +667,14 @@ class TaskWorker:
         self.event_sources = event_sources  # Store event sources
         self.engine = engine  # Store the engine for database operations
         self.handler_timeout = handler_timeout  # Store timeout per instance
+        # Per-task-type timeout overrides; falls back to handler_timeout when a
+        # task type is not present. Defaults give confirmation-gated delegated runs
+        # a longer budget (see DEFAULT_TASK_HANDLER_TIMEOUT_OVERRIDES).
+        self.handler_timeout_overrides: dict[str, float] = (
+            dict(DEFAULT_TASK_HANDLER_TIMEOUT_OVERRIDES)
+            if handler_timeout_overrides is None
+            else dict(handler_timeout_overrides)
+        )
         # Initialize handlers - specific handlers are registered externally
         # Update handler signature type hint
         self.task_handlers: dict[
@@ -660,6 +688,14 @@ class TaskWorker:
     def _update_last_activity(self) -> None:
         """Updates the last activity timestamp."""
         self.last_activity = self.clock.now()
+
+    def _timeout_for_task_type(self, task_type: str) -> float:
+        """Resolve the handler timeout for a task type.
+
+        Returns the per-task-type override if one is configured, otherwise the
+        instance default ``handler_timeout``.
+        """
+        return self.handler_timeout_overrides.get(task_type, self.handler_timeout)
 
     def register_task_handler(
         self,
@@ -916,18 +952,21 @@ class TaskWorker:
                 logger.debug(
                     f"HANDLER START: Worker {self.worker_id} executing handler for task {task['task_id']} with context."
                 )
-                # Pass the context and the original payload with timeout
+                # Pass the context and the original payload with timeout. The
+                # timeout may be overridden per task type (e.g. delegated runs that
+                # park on a human confirmation get a longer budget).
+                effective_timeout = self._timeout_for_task_type(task["task_type"])
                 try:
                     await asyncio.wait_for(
                         handler(exec_context, task["payload"]),
-                        timeout=self.handler_timeout,
+                        timeout=effective_timeout,
                     )
                     logger.debug(
                         f"HANDLER SUCCESS: Worker {self.worker_id} completed handler for task {task['task_id']}"
                     )
                 except TimeoutError:
                     logger.error(
-                        f"HANDLER TIMEOUT: Task {task['task_id']} (type: {task['task_type']}) timed out after {self.handler_timeout} seconds"
+                        f"HANDLER TIMEOUT: Task {task['task_id']} (type: {task['task_type']}) timed out after {effective_timeout} seconds"
                     )
                     # Re-raise to trigger retry logic in _handle_task_failure
                     raise
@@ -1148,7 +1187,15 @@ class TaskWorker:
             )
 
     async def _wait_for_next_poll(self, wake_up_event: asyncio.Event) -> None:
-        """Waits for the polling interval or a wake-up event."""
+        """Waits for the polling interval or a wake-up event.
+
+        The event is cleared at the top of each loop iteration (before the
+        dequeue attempt), NOT here. That ordering avoids a lost-wakeup race: a
+        notification that arrives *during* a dequeue that returned nothing (e.g.
+        a sibling that just claimed a task and woke us to drain the rest of the
+        queue) leaves the event set, so this wait returns immediately instead of
+        blocking for the full poll interval.
+        """
         try:
             logger.debug(
                 f"Worker {self.worker_id}: No tasks found, waiting for event or timeout ({TASK_POLLING_INTERVAL}s)..."
@@ -1157,7 +1204,6 @@ class TaskWorker:
             await asyncio.wait_for(wake_up_event.wait(), timeout=TASK_POLLING_INTERVAL)
             # If wait_for completes without timeout, the event was set
             logger.debug(f"Worker {self.worker_id}: Woken up by event.")
-            wake_up_event.clear()  # Reset the event for the next notification
         except TimeoutError:
             # Event didn't fire, timeout reached, proceed to next polling cycle
             logger.debug(
@@ -1169,13 +1215,25 @@ class TaskWorker:
         """Continuously polls for and processes tasks.
 
         Args:
-            wake_up_event: Optional override event for testing. If not provided,
-                          uses the global task event from storage.
+            wake_up_event: Optional override event (used by tests). If not
+                provided, each worker creates its OWN per-instance wake event so
+                that one worker clearing its event after a wake does not swallow
+                the notification for sibling workers in the pool. The event is
+                registered with the storage layer so an enqueued task fans out to
+                every worker's event; it is unregistered when the loop exits.
         """
-        # Use provided event or get the global task event
+        # Each worker waits on its OWN event. Tests may pass an explicit event;
+        # registering it too means enqueue notifications still reach it.
         if wake_up_event is None:
-            wake_up_event = get_task_event()
+            wake_up_event = asyncio.Event()
+        register_worker_wake_event(wake_up_event)
+        try:
+            await self._run_loop(wake_up_event)
+        finally:
+            unregister_worker_wake_event(wake_up_event)
 
+    async def _run_loop(self, wake_up_event: asyncio.Event) -> None:
+        """The task-processing loop body, run with a registered wake event."""
         logger.info(f"Task worker {self.worker_id} run loop started.")
         # Get task types handled by *this specific instance*
         task_types_handled = list(self.task_handlers.keys())
@@ -1188,6 +1246,11 @@ class TaskWorker:
         while not self.shutdown_event.is_set():  # Use self.shutdown_event
             try:
                 task = None  # Initialize task variable for the outer scope
+                # Clear the wake event BEFORE attempting a dequeue. Any
+                # notification that arrives after this point (including while the
+                # dequeue runs) survives to the next _wait_for_next_poll, so a
+                # sibling waking us to drain remaining queued work is never lost.
+                wake_up_event.clear()
                 # Database context per iteration (starts a transaction)
                 if not self.engine:
                     raise RuntimeError("Database engine not initialized")
@@ -1215,6 +1278,11 @@ class TaskWorker:
                 # Process task in separate transaction if one was dequeued
                 if task:
                     logger.debug("Dequeued task: %s", task["task_id"])
+                    # Claiming a task does not drain the queue: this worker only
+                    # claims one task per dequeue, and a sibling that lost a claim
+                    # race may be parked. Wake siblings so they re-poll for any
+                    # remaining work instead of waiting out the poll interval.
+                    notify_other_workers(wake_up_event)
                     self._update_last_activity()  # Update activity when starting task processing
                     try:  # Inner try for task processing
                         # Transaction 2: Process task and update status (commits immediately)
