@@ -17,7 +17,7 @@ from sqlalchemy import select, update
 
 from family_assistant import storage
 from family_assistant.actions import ActionType, execute_action
-from family_assistant.tools.automations import validate_inline_script_code
+from family_assistant.tools.automations import validate_action_scripts
 from family_assistant.tools.stored_scripts import validate_script_action_config
 from family_assistant.utils.clock import SystemClock
 
@@ -714,12 +714,9 @@ async def schedule_action_tool(
         )
         if script_error:
             return f"Error: {script_error}"
-        if action_config.get("script_code"):
-            validation_error = await validate_inline_script_code(
-                exec_context, action_config["script_code"]
-            )
-            if validation_error:
-                return f"Error: {validation_error}"
+        validation_error = await validate_action_scripts(exec_context, action_config)
+        if validation_error:
+            return f"Error: {validation_error}"
 
     # Parse and validate time
     clock = exec_context.clock or SystemClock()

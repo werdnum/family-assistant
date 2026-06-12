@@ -55,19 +55,23 @@ task, and resolve it at execution time:
    provider, visibility grants, note labels) at it. Validation, which already uses the creating
    profile's tools provider, is therefore consistent with execution by construction.
 
-### Known limitation: stored scripts
+### Stored scripts
 
 Automations can reference a stored script by `script_name` instead of inline code. Stored scripts
-are validated against the tools of the profile that *saved* them, while an automation referencing
-one executes it under the *automation creator's* profile. Creation-time validation for the
-`script_name` case only checks that the script exists, so a saved-vs-referenced profile mismatch is
-still possible there; the tool policy is enforced at runtime either way.
+are global and validated against the tools of the profile that *saved* them, while an automation
+referencing one executes it under the *automation creator's* profile — so creating or updating such
+an automation re-validates the stored script's code against the creating profile's tools
+(`validate_action_scripts_with_provider`), using the automation runtime globals plus the script's
+declared and supplied parameters as inputs. A profile that lacks a tool the stored script uses is
+rejected at the boundary rather than failing at runtime.
 
 ### Fallback
 
 Legacy automations created before provenance was tracked have a `NULL` profile and fall back to the
-task worker's default profile (the previous behaviour), with a warning logged. The same fallback
-applies if the recorded profile is no longer registered or is not a local profile.
+task worker's default profile (the previous behaviour). An automation explicitly stamped with a
+non-default profile that can no longer be resolved (renamed/removed profile, or a non-local one)
+fails loudly instead of downgrading: the script was validated for that profile's tools and
+visibility, so running it under a different policy could change its capabilities.
 
 ## Confirm-gated tools
 

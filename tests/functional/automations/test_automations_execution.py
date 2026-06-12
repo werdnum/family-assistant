@@ -7,8 +7,10 @@ from unittest.mock import AsyncMock
 from zoneinfo import ZoneInfo
 
 import pytest
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncEngine
 
+from family_assistant.actions import ActionType, execute_action
 from family_assistant.config_models import AppConfig, ToolsConfig
 from family_assistant.delegation_security import DelegationSecurityLevel
 from family_assistant.events.processor import EventProcessor
@@ -16,6 +18,7 @@ from family_assistant.interfaces import ChatInterface
 from family_assistant.processing import ProcessingService, ProcessingServiceConfig
 from family_assistant.scripting.errors import ScriptError
 from family_assistant.storage.context import DatabaseContext, get_db_context
+from family_assistant.storage.tasks import tasks_table
 from family_assistant.task_worker import (
     TaskWorker,
     build_script_confirmation_callback,
@@ -235,6 +238,105 @@ async def test_script_with_unresolvable_stamped_profile_fails(
                     "config": {},
                 },
             )
+
+
+@pytest.mark.asyncio
+async def test_create_automation_validates_stored_script_against_profile(
+    db_engine: AsyncEngine,
+) -> None:
+    """An automation referencing a stored script that uses tools unavailable to
+    the creating profile is rejected at creation, since the automation will
+    execute under that profile."""
+    limited_service = _make_processing_service(
+        profile_id="limited_profile",
+        tools_provider=await _provider_without_note_tool(),
+    )
+
+    async with DatabaseContext(engine=db_engine) as db_ctx:
+        await db_ctx.scripts.save(
+            name="note-writer",
+            description="Writes a note",
+            script_code='add_or_update_note(title="t", content="c")\n',
+        )
+        exec_context = _build_script_exec_context(
+            db_ctx=db_ctx,
+            conversation_id="stored_profile_conv",
+            processing_service=limited_service,
+        )
+        result = await create_automation_tool(
+            exec_context=exec_context,
+            name="Stored Script Profile Check",
+            automation_type="event",
+            trigger_config={"event_source": "home_assistant", "event_filter": {}},
+            action_type="script",
+            action_config={"script_name": "note-writer"},
+        )
+
+    data = result.get_data()
+    assert isinstance(data, dict)
+    assert "error" in data
+    assert "note-writer" in data["error"]
+
+
+@pytest.mark.asyncio
+async def test_create_automation_accepts_stored_script_matching_profile(
+    db_engine: AsyncEngine,
+) -> None:
+    """The same stored script is accepted when the creating profile has the
+    tools it uses."""
+    capable_service = _make_processing_service(
+        profile_id="capable_profile",
+        tools_provider=await _provider_with_note_tool(),
+    )
+
+    async with DatabaseContext(engine=db_engine) as db_ctx:
+        await db_ctx.scripts.save(
+            name="note-writer",
+            description="Writes a note",
+            script_code='add_or_update_note(title="t", content="c")\n',
+        )
+        exec_context = _build_script_exec_context(
+            db_ctx=db_ctx,
+            conversation_id="stored_profile_ok_conv",
+            processing_service=capable_service,
+        )
+        result = await create_automation_tool(
+            exec_context=exec_context,
+            name="Stored Script Profile OK",
+            automation_type="event",
+            trigger_config={"event_source": "home_assistant", "event_filter": {}},
+            action_type="script",
+            action_config={"script_name": "note-writer"},
+        )
+
+    data = result.get_data()
+    assert isinstance(data, dict)
+    assert "id" in data
+
+
+@pytest.mark.asyncio
+async def test_execute_action_script_payload_includes_interface(
+    db_engine: AsyncEngine,
+) -> None:
+    """Queued script actions carry the interface type, so contexts built from
+    the payload (and any deferred confirmations they create) record the real
+    origin interface instead of the worker's 'unknown_interface' default."""
+    async with DatabaseContext(engine=db_engine) as db_ctx:
+        await execute_action(
+            db_ctx=db_ctx,
+            action_type=ActionType.SCRIPT,
+            action_config={"script_code": "x = 1\n"},
+            conversation_id="iface_conv",
+            interface_type="telegram",
+        )
+
+        rows = await db_ctx.fetch_all(
+            select(tasks_table).where(tasks_table.c.task_type == "script_execution")
+        )
+        assert len(rows) == 1
+        payload = rows[0]["payload"]
+        assert payload["interface_type"] == "telegram"
+        assert payload["conversation_id"] == "iface_conv"
 
 
 @pytest.mark.asyncio

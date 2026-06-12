@@ -99,6 +99,7 @@ async def execute_action(
         script_payload: dict[str, object] = {
             "config": action_config,
             "conversation_id": conversation_id,
+            "interface_type": interface_type,
             **context,
         }
         if action_config.get("script_code"):

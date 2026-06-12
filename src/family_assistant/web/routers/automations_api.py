@@ -15,7 +15,7 @@ from family_assistant.storage.types import (
     ScheduleExecutionStatsDict,
 )
 from family_assistant.tools.automations import (
-    validate_inline_script_code_with_provider,
+    validate_action_scripts_with_provider,
 )
 from family_assistant.tools.stored_scripts import validate_script_action_config
 from family_assistant.web.dependencies import (
@@ -272,15 +272,14 @@ async def create_event_automation(
         script_error = await validate_script_action_config(db, request.action_config)
         if script_error:
             raise HTTPException(status_code=400, detail=script_error)
-        # Validate the inline script against the (acting) profile's tools, the
-        # same profile this automation is stamped with and will execute under.
-        inline_script = (request.action_config or {}).get("script_code")
-        if inline_script:
-            validation_error = await validate_inline_script_code_with_provider(
-                processing_service.tools_provider, inline_script
-            )
-            if validation_error:
-                raise HTTPException(status_code=400, detail=validation_error)
+        # Validate the inline or stored script against the (acting) profile's
+        # tools, the same profile this automation is stamped with and will
+        # execute under.
+        validation_error = await validate_action_scripts_with_provider(
+            db, processing_service.tools_provider, request.action_config or {}
+        )
+        if validation_error:
+            raise HTTPException(status_code=400, detail=validation_error)
 
     # Check name uniqueness
     is_available, error_msg = await db.automations.check_name_available(
@@ -353,15 +352,14 @@ async def create_schedule_automation(
         script_error = await validate_script_action_config(db, request.action_config)
         if script_error:
             raise HTTPException(status_code=400, detail=script_error)
-        # Validate the inline script against the (acting) profile's tools, the
-        # same profile this automation is stamped with and will execute under.
-        inline_script = (request.action_config or {}).get("script_code")
-        if inline_script:
-            validation_error = await validate_inline_script_code_with_provider(
-                processing_service.tools_provider, inline_script
-            )
-            if validation_error:
-                raise HTTPException(status_code=400, detail=validation_error)
+        # Validate the inline or stored script against the (acting) profile's
+        # tools, the same profile this automation is stamped with and will
+        # execute under.
+        validation_error = await validate_action_scripts_with_provider(
+            db, processing_service.tools_provider, request.action_config or {}
+        )
+        if validation_error:
+            raise HTTPException(status_code=400, detail=validation_error)
 
     # Check name uniqueness
     is_available, error_msg = await db.automations.check_name_available(
@@ -465,13 +463,11 @@ async def update_automation(
         script_error = await validate_script_action_config(db, new_action_config)
         if script_error:
             raise HTTPException(status_code=400, detail=script_error)
-        inline_script = new_action_config.get("script_code")
-        if inline_script:
-            validation_error = await validate_inline_script_code_with_provider(
-                processing_service.tools_provider, inline_script
-            )
-            if validation_error:
-                raise HTTPException(status_code=400, detail=validation_error)
+        validation_error = await validate_action_scripts_with_provider(
+            db, processing_service.tools_provider, new_action_config
+        )
+        if validation_error:
+            raise HTTPException(status_code=400, detail=validation_error)
 
     # Check name uniqueness if name is being changed
     if (
