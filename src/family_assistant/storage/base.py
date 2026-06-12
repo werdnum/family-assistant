@@ -40,14 +40,19 @@ DATABASE_URL = os.getenv("DATABASE_URL", "sqlite+aiosqlite:///family_assistant.d
 
 def create_engine_with_sqlite_optimizations(database_url: str) -> AsyncEngine:
     """Create engine with SQLite optimizations if applicable."""
-    # Determine pool class based on database type
-    # Use StaticPool for SQLite to reuse connections
-    # Use NullPool for PostgreSQL to avoid event loop affinity issues
-    # NullPool creates a new connection for each request, which is less efficient
-    # but avoids the "Future attached to a different loop" errors with asyncpg
-    pool_class = StaticPool if database_url.startswith("sqlite") else NullPool
+    # Determine pool class based on database type.
+    #
+    # SQLite uses StaticPool to funnel all access through a SINGLE DBAPI
+    # connection. This is deliberate and load-bearing: file-based SQLite
+    # handles concurrent writers poorly -- giving each DatabaseContext its own
+    # connection produces "database is locked" errors under contention even
+    # with WAL mode and a 30s busy_timeout, and in-memory databases live
+    # entirely inside one connection. Serializing through a shared connection
+    # avoids both. NullPool is used for PostgreSQL to avoid the "Future
+    # attached to a different loop" errors with asyncpg.
+    is_sqlite = database_url.startswith("sqlite")
+    pool_class = StaticPool if is_sqlite else NullPool
 
-    # Create the engine first
     engine = create_async_engine(
         database_url,
         echo=False,
@@ -55,10 +60,20 @@ def create_engine_with_sqlite_optimizations(database_url: str) -> AsyncEngine:
             "timeout": 30,  # 30 second busy timeout for SQLite
             "check_same_thread": False,
         }
-        if database_url.startswith("sqlite")
+        if is_sqlite
         else {},
         pool_pre_ping=pool_class != NullPool,
         poolclass=pool_class,
+        # The shared StaticPool connection means all SQLite contexts share one
+        # transaction. The default reset-on-return issues a ROLLBACK on that
+        # connection at every checkin, which aborts the shared transaction and
+        # silently destroys every OTHER context's uncommitted writes (e.g. a
+        # streaming turn's freshly persisted messages vanish when an unrelated
+        # read-only request returns the connection). Each DatabaseContext
+        # commits or rolls back its own work via engine.begin() on exit, so
+        # disable the per-checkin reset for SQLite to stop the cross-context
+        # clobbering.
+        pool_reset_on_return=None if is_sqlite else "rollback",
     )
 
     # Add SQLite-specific optimizations using dialect detection

@@ -27,6 +27,7 @@ from sqlalchemy import (
     select,
 )
 from sqlalchemy.dialects.postgresql import JSONB, insert
+from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import (
@@ -263,77 +264,35 @@ async def add_document(
     }
 
     try:
-        if db_context.engine.dialect.name != "postgresql":
-            logger.info(
-                "Non-PostgreSQL dialect detected for add_document. Using manual upsert logic."
-            )
-            # Manual upsert for SQLite and other non-PostgreSQL DBs
-            # 1. Try to select existing document
-            select_stmt = select(DocumentRecord.id).where(
-                DocumentRecord.source_id == doc.source_id
-            )
-            existing_doc_row = await db_context.fetch_one(select_stmt)
-
-            if existing_doc_row:
-                doc_id = existing_doc_row["id"]
-                # 2. If exists, update it
-                update_stmt = (
-                    sa
-                    .update(DocumentRecord)
-                    .where(DocumentRecord.id == doc_id)
-                    .values(**values_to_insert)
-                )
-                await db_context.execute_with_retry(update_stmt)
-                logger.info(
-                    f"Successfully updated document with source_id {doc.source_id}, ID: {doc_id}"
-                )
-            else:
-                # 3. If not exists, insert it
-                insert_stmt = (
-                    insert(DocumentRecord).values(**values_to_insert)
-                    # No .returning(DocumentRecord.id) for SQLite here
-                )
-                result = await db_context.execute_with_retry(insert_stmt)
-                # For SQLite, get the last inserted ID via inserted_primary_key
-                # Mypy might complain about inserted_primary_key, so add type: ignore if needed
-                pk_tuple = result.inserted_primary_key  # type: ignore[attr-defined]
-                if pk_tuple:
-                    doc_id = pk_tuple[0]
-                else:
-                    # This would be unexpected if the insert succeeded and id is PK
-                    logger.error(
-                        f"Failed to retrieve inserted_primary_key for document with source_id {doc.source_id}"
-                    )
-                    raise RuntimeError(
-                        "Failed to retrieve ID for newly inserted document."
-                    )
-                logger.info(
-                    f"Successfully inserted new document with source_id {doc.source_id}, got ID: {doc_id}"
-                )
-            return doc_id
-        else:
-            # PostgreSQL: Use ON CONFLICT DO UPDATE
+        # Atomic ON CONFLICT DO UPDATE upsert on both engines. A
+        # select-then-insert "manual upsert" races when two transactions index
+        # the same source_id concurrently (e.g. several index_message_history
+        # tasks for one turn running on parallel workers): both SELECT nothing,
+        # both INSERT, and the loser fails with a UNIQUE violation.
+        if db_context.engine.dialect.name == "postgresql":
             stmt = insert(DocumentRecord).values(**values_to_insert)
-            update_dict = {
-                col: getattr(stmt.excluded, col)
-                for col in values_to_insert
-                if col != "source_id"  # Don't update the conflict target
-            }
-            stmt = stmt.on_conflict_do_update(
-                index_elements=["source_id"],  # The unique constraint column
-                set_=update_dict,
-            ).returning(DocumentRecord.id)
-            result = await db_context.execute_with_retry(stmt)
-            doc_id_scalar = result.scalar_one()  # Get the inserted or existing ID
-            if (
-                doc_id_scalar is None
-            ):  # Should not happen with scalar_one() but good for typing
-                raise RuntimeError(f"Failed to get ID for document {doc.source_id}")
-            doc_id = doc_id_scalar
-            logger.info(
-                f"Successfully added/updated document (PostgreSQL) with source_id {doc.source_id}, got ID: {doc_id}"
-            )
-            return doc_id
+        else:
+            stmt = sqlite_insert(DocumentRecord).values(**values_to_insert)
+        update_dict = {
+            col: getattr(stmt.excluded, col)
+            for col in values_to_insert
+            if col != "source_id"  # Don't update the conflict target
+        }
+        stmt = stmt.on_conflict_do_update(
+            index_elements=["source_id"],  # The unique constraint column
+            set_=update_dict,
+        ).returning(DocumentRecord.id)
+        result = await db_context.execute_with_retry(stmt)
+        doc_id_scalar = result.scalar_one()  # Get the inserted or existing ID
+        if (
+            doc_id_scalar is None
+        ):  # Should not happen with scalar_one() but good for typing
+            raise RuntimeError(f"Failed to get ID for document {doc.source_id}")
+        doc_id = doc_id_scalar
+        logger.info(
+            f"Successfully added/updated document with source_id {doc.source_id}, got ID: {doc_id}"
+        )
+        return doc_id
     except SQLAlchemyError as e:
         logger.error(
             f"Database error adding/updating document with source_id {doc.source_id}: {e}",
@@ -503,63 +462,26 @@ async def add_embedding(
     }
 
     try:
-        if db_context.engine.dialect.name != "postgresql":
-            logger.info(
-                "Non-PostgreSQL dialect detected for add_embedding. Using manual upsert logic."
-            )
-            # Manual upsert for SQLite and other non-PostgreSQL DBs
-            # 1. Try to select existing embedding
-            select_stmt = select(DocumentEmbeddingRecord.id).where(
-                and_(
-                    DocumentEmbeddingRecord.document_id == document_id,
-                    DocumentEmbeddingRecord.chunk_index == chunk_index,
-                    DocumentEmbeddingRecord.embedding_type == embedding_type,
-                )
-            )
-            existing_embedding_row = await db_context.fetch_one(select_stmt)
-
-            if existing_embedding_row:
-                # 2. If exists, update it
-                embedding_id = existing_embedding_row["id"]
-                # Prepare update values, excluding primary key parts
-                update_values_for_embedding = {
-                    k: v
-                    for k, v in values_to_insert.items()
-                    if k not in {"document_id", "chunk_index", "embedding_type"}
-                }
-                update_stmt = (
-                    sa
-                    .update(DocumentEmbeddingRecord)
-                    .where(DocumentEmbeddingRecord.id == embedding_id)
-                    .values(**update_values_for_embedding)
-                )
-                await db_context.execute_with_retry(update_stmt)
-                logger.info(
-                    f"Successfully updated embedding for doc {document_id}, chunk {chunk_index}, type {embedding_type}"
-                )
-            else:
-                # 3. If not exists, insert it
-                insert_stmt = insert(DocumentEmbeddingRecord).values(**values_to_insert)
-                await db_context.execute_with_retry(insert_stmt)
-                logger.info(
-                    f"Successfully inserted new embedding for doc {document_id}, chunk {chunk_index}, type {embedding_type}"
-                )
-        else:
-            # PostgreSQL: Use ON CONFLICT DO UPDATE
+        # Atomic ON CONFLICT DO UPDATE upsert on both engines; see add_document
+        # for why a select-then-insert manual upsert is unsafe under
+        # concurrent indexing.
+        if db_context.engine.dialect.name == "postgresql":
             stmt = insert(DocumentEmbeddingRecord).values(**values_to_insert)
-            update_dict = {
-                col: getattr(stmt.excluded, col)
-                for col in values_to_insert
-                if col not in {"document_id", "chunk_index", "embedding_type"}
-            }
-            stmt = stmt.on_conflict_do_update(
-                index_elements=["document_id", "chunk_index", "embedding_type"],
-                set_=update_dict,
-            )
-            await db_context.execute_with_retry(stmt)
-            logger.info(
-                f"Successfully added/updated embedding (PostgreSQL) for doc {document_id}, chunk {chunk_index}, type {embedding_type}"
-            )
+        else:
+            stmt = sqlite_insert(DocumentEmbeddingRecord).values(**values_to_insert)
+        update_dict = {
+            col: getattr(stmt.excluded, col)
+            for col in values_to_insert
+            if col not in {"document_id", "chunk_index", "embedding_type"}
+        }
+        stmt = stmt.on_conflict_do_update(
+            index_elements=["document_id", "chunk_index", "embedding_type"],
+            set_=update_dict,
+        )
+        await db_context.execute_with_retry(stmt)
+        logger.info(
+            f"Successfully added/updated embedding for doc {document_id}, chunk {chunk_index}, type {embedding_type}"
+        )
     except SQLAlchemyError as e:
         logger.error(
             f"Database error adding/updating embedding for doc {document_id}, chunk {chunk_index}, type {embedding_type}: {e}",
