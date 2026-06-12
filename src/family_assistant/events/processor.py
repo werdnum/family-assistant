@@ -333,6 +333,8 @@ class EventProcessor:
             conversation_id=listener["conversation_id"],
             interface_type=listener.get("interface_type", "telegram"),
             context=context,
+            processing_profile_id=listener.get("processing_profile_id"),
+            created_by_user_id=listener.get("created_by_user_id"),
         )
 
         logger.info(

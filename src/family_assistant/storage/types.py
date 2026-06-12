@@ -56,6 +56,8 @@ class EventListenerDict(TypedDict):
     interface_type: str  # InterfaceType value
     one_time: bool
     enabled: bool
+    processing_profile_id: str | None
+    created_by_user_id: str | None
     created_at: datetime
     daily_executions: int
     daily_reset_at: datetime | None
@@ -75,6 +77,8 @@ class ScheduleAutomationDict(TypedDict):
     action_type: str  # EventActionType value
     action_config: ActionConfig
     enabled: bool
+    processing_profile_id: str | None
+    created_by_user_id: str | None
     created_at: datetime
     last_execution_at: datetime | None
     execution_count: int

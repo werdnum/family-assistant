@@ -158,6 +158,8 @@ class EventsRepository(BaseRepository):
         condition_script: str | None = None,
         one_time: bool = False,
         enabled: bool = True,
+        processing_profile_id: str | None = None,
+        created_by_user_id: str | None = None,
     ) -> int:
         """
         Create a new event listener.
@@ -193,6 +195,8 @@ class EventsRepository(BaseRepository):
                     interface_type=interface_type,
                     one_time=one_time,
                     enabled=enabled,
+                    processing_profile_id=processing_profile_id,
+                    created_by_user_id=created_by_user_id,
                     created_at=datetime.now(UTC),
                     daily_executions=0,
                 )
@@ -387,6 +391,8 @@ class EventsRepository(BaseRepository):
         one_time: bool,
         enabled: bool,
         condition_script: str | None = None,
+        processing_profile_id: str | None = None,
+        created_by_user_id: str | None = None,
     ) -> bool:
         """
         Update an event listener.
@@ -401,6 +407,9 @@ class EventsRepository(BaseRepository):
             one_time: Whether listener should auto-disable after first trigger
             enabled: Whether the listener is enabled
             condition_script: Optional Python script for complex matching
+            processing_profile_id: When set, re-stamp the creating profile so the
+                updated script executes under the updating profile's tools.
+            created_by_user_id: When set, re-stamp the creating user.
 
         Returns:
             True if updated successfully, False if not found or unauthorized
@@ -426,6 +435,13 @@ class EventsRepository(BaseRepository):
         # Only update action_config if provided
         if action_config is not None:
             update_values["action_config"] = action_config
+
+        # Re-stamp creator provenance when the updating profile/user is supplied,
+        # so the updated script executes under the updating profile's tools.
+        if processing_profile_id is not None:
+            update_values["processing_profile_id"] = processing_profile_id
+        if created_by_user_id is not None:
+            update_values["created_by_user_id"] = created_by_user_id
 
         # Always update condition_script (can be None to clear it)
         update_values["condition_script"] = condition_script

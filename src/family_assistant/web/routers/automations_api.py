@@ -14,8 +14,15 @@ from family_assistant.storage.types import (
     ListenerExecutionStatsDict,
     ScheduleExecutionStatsDict,
 )
+from family_assistant.tools.automations import (
+    validate_action_scripts_with_provider,
+)
 from family_assistant.tools.stored_scripts import validate_script_action_config
-from family_assistant.web.dependencies import get_db, get_processing_service
+from family_assistant.web.dependencies import (
+    get_current_user,
+    get_db,
+    get_processing_service,
+)
 
 if TYPE_CHECKING:
     from family_assistant.storage.types import ActionConfig
@@ -240,6 +247,8 @@ async def get_automation(
 async def create_event_automation(
     request: CreateEventAutomationRequest,
     db: Annotated[DatabaseContext, Depends(get_db)],
+    processing_service: Annotated[ProcessingService, Depends(get_processing_service)],
+    current_user: Annotated[dict, Depends(get_current_user)],
 ) -> AutomationResponse:
     """Create a new event automation."""
     # Validate source_id
@@ -263,6 +272,14 @@ async def create_event_automation(
         script_error = await validate_script_action_config(db, request.action_config)
         if script_error:
             raise HTTPException(status_code=400, detail=script_error)
+        # Validate the inline or stored script against the (acting) profile's
+        # tools, the same profile this automation is stamped with and will
+        # execute under.
+        validation_error = await validate_action_scripts_with_provider(
+            db, processing_service.tools_provider, request.action_config or {}
+        )
+        if validation_error:
+            raise HTTPException(status_code=400, detail=validation_error)
 
     # Check name uniqueness
     is_available, error_msg = await db.automations.check_name_available(
@@ -285,6 +302,8 @@ async def create_event_automation(
             condition_script=request.condition_script,
             one_time=request.one_time,
             enabled=request.enabled,
+            processing_profile_id=processing_service.service_config.id,
+            created_by_user_id=str(current_user["user_identifier"]),
         )
 
         # Fetch the created automation
@@ -317,6 +336,7 @@ async def create_schedule_automation(
     request: CreateScheduleAutomationRequest,
     db: Annotated[DatabaseContext, Depends(get_db)],
     processing_service: Annotated[ProcessingService, Depends(get_processing_service)],
+    current_user: Annotated[dict, Depends(get_current_user)],
 ) -> AutomationResponse:
     """Create a new schedule automation."""
     # Validate action_type
@@ -332,6 +352,14 @@ async def create_schedule_automation(
         script_error = await validate_script_action_config(db, request.action_config)
         if script_error:
             raise HTTPException(status_code=400, detail=script_error)
+        # Validate the inline or stored script against the (acting) profile's
+        # tools, the same profile this automation is stamped with and will
+        # execute under.
+        validation_error = await validate_action_scripts_with_provider(
+            db, processing_service.tools_provider, request.action_config or {}
+        )
+        if validation_error:
+            raise HTTPException(status_code=400, detail=validation_error)
 
     # Check name uniqueness
     is_available, error_msg = await db.automations.check_name_available(
@@ -352,6 +380,8 @@ async def create_schedule_automation(
             description=request.description,
             enabled=request.enabled,
             timezone=processing_service.service_config.timezone,
+            processing_profile_id=processing_service.service_config.id,
+            created_by_user_id=str(current_user["user_identifier"]),
         )
 
         # Fetch the created automation
@@ -387,6 +417,7 @@ async def update_automation(
     request_body: Annotated[dict[str, Any], Body(...)],
     db: Annotated[DatabaseContext, Depends(get_db)],
     processing_service: Annotated[ProcessingService, Depends(get_processing_service)],
+    current_user: Annotated[dict, Depends(get_current_user)],
 ) -> AutomationResponse:
     """Update an existing automation."""
     # Validate automation_type
@@ -416,6 +447,27 @@ async def update_automation(
     )
     if not existing:
         raise HTTPException(status_code=404, detail="Automation not found")
+
+    # When a script automation's action_config (and therefore its script)
+    # changes, validate it against the acting profile's tools before it is
+    # persisted and re-stamped, so an invalid script is rejected at the boundary
+    # rather than failing later at execution time (matches the create path).
+    # wake_llm action_config edits (e.g. {"context": ...}) are not scripts and
+    # must not go through the script validator.
+    if (
+        existing.action_type == "script"
+        and request.action_config is not _UNSET
+        and request.action_config is not None
+    ):
+        new_action_config = cast("dict[str, Any]", request.action_config)
+        script_error = await validate_script_action_config(db, new_action_config)
+        if script_error:
+            raise HTTPException(status_code=400, detail=script_error)
+        validation_error = await validate_action_scripts_with_provider(
+            db, processing_service.tools_provider, new_action_config
+        )
+        if validation_error:
+            raise HTTPException(status_code=400, detail=validation_error)
 
     # Check name uniqueness if name is being changed
     if (
@@ -484,6 +536,18 @@ async def update_automation(
                     if request.condition_script is not _UNSET
                     else existing.condition_script,
                 ),
+                # Re-stamp creator provenance when the script/action changes so
+                # the updated script executes under the updater's profile.
+                processing_profile_id=(
+                    processing_service.service_config.id
+                    if request.action_config is not _UNSET
+                    else None
+                ),
+                created_by_user_id=(
+                    str(current_user["user_identifier"])
+                    if request.action_config is not _UNSET
+                    else None
+                ),
             )
         else:  # schedule
             # Update schedule automation
@@ -502,6 +566,18 @@ async def update_automation(
                 action_config=request.action_config,
                 enabled=request.enabled,
                 timezone=processing_service.service_config.timezone,
+                # Re-stamp creator provenance when the script/action changes so
+                # the updated script executes under the updater's profile.
+                processing_profile_id=(
+                    processing_service.service_config.id
+                    if request.action_config is not _UNSET
+                    else _UNSET
+                ),
+                created_by_user_id=(
+                    str(current_user["user_identifier"])
+                    if request.action_config is not _UNSET
+                    else _UNSET
+                ),
             )
 
         if not success:

@@ -36,6 +36,8 @@ async def execute_action(
     context: dict[str, Any] | None = None,
     scheduled_at: datetime | None = None,
     recurrence_rule: str | None = None,
+    processing_profile_id: str | None = None,
+    created_by_user_id: str | None = None,
 ) -> None:
     """
     Execute an action. Used by both event listeners and scheduled tasks.
@@ -50,6 +52,12 @@ async def execute_action(
         context: Additional context (e.g., event data, trigger info)
         scheduled_at: When to execute the action (None for immediate)
         recurrence_rule: RRULE for recurring tasks (None for one-time)
+        processing_profile_id: Creating profile for script actions; scripts
+            execute under this profile so validation and execution agree.
+            Ignored for wake_llm actions, which run under the event handler
+            profile.
+        created_by_user_id: Creating user for script actions; confirm-gated
+            tool calls from the script are addressed to this user.
     """
     if context is None:
         context = {}
@@ -91,6 +99,7 @@ async def execute_action(
         script_payload: dict[str, object] = {
             "config": action_config,
             "conversation_id": conversation_id,
+            "interface_type": interface_type,
             **context,
         }
         if action_config.get("script_code"):
@@ -101,6 +110,10 @@ async def execute_action(
                 script_payload["script_parameters"] = action_config["parameters"]
         if user_name:
             script_payload["user_name"] = user_name
+        if processing_profile_id is not None:
+            script_payload["processing_profile_id"] = processing_profile_id
+        if created_by_user_id is not None:
+            script_payload["created_by_user_id"] = created_by_user_id
 
         await enqueue_task(
             db_context=db_ctx,

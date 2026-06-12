@@ -17,6 +17,7 @@ from sqlalchemy import select, update
 
 from family_assistant import storage
 from family_assistant.actions import ActionType, execute_action
+from family_assistant.tools.automations import validate_action_scripts
 from family_assistant.tools.stored_scripts import validate_script_action_config
 from family_assistant.utils.clock import SystemClock
 
@@ -713,6 +714,9 @@ async def schedule_action_tool(
         )
         if script_error:
             return f"Error: {script_error}"
+        validation_error = await validate_action_scripts(exec_context, action_config)
+        if validation_error:
+            return f"Error: {validation_error}"
 
     # Parse and validate time
     clock = exec_context.clock or SystemClock()
@@ -740,6 +744,8 @@ async def schedule_action_tool(
             user_name=exec_context.user_name,  # Pass user_name
             context={"scheduled_via": "schedule_action tool"},
             scheduled_at=scheduled_dt,
+            processing_profile_id=exec_context.processing_profile_id,
+            created_by_user_id=exec_context.user_id,
         )
 
         return f"OK. {action_type} action scheduled for {schedule_time}"

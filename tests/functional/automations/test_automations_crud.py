@@ -1,11 +1,14 @@
 """CRUD operations for automations (create, list, get, update, delete)."""
 
+from typing import TYPE_CHECKING, cast
 from zoneinfo import ZoneInfo
 
 import pytest
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncEngine
 
 from family_assistant.storage.context import DatabaseContext
+from family_assistant.storage.tasks import tasks_table
 from family_assistant.tools.automations import (
     create_automation_tool,
     delete_automation_tool,
@@ -16,6 +19,9 @@ from family_assistant.tools.automations import (
     update_automation_tool,
 )
 from family_assistant.tools.types import ToolExecutionContext
+
+if TYPE_CHECKING:
+    from family_assistant.storage.types import ActionConfig
 
 
 @pytest.mark.asyncio
@@ -95,6 +101,202 @@ async def test_create_schedule_automation_basic(db_engine: AsyncEngine) -> None:
     assert "Created schedule automation 'Morning Reminder'" in result.get_text()
     assert "ID:" in result.get_text()
     assert "Next run:" in result.get_text()
+
+
+def _exec_context_with_profile(
+    db_ctx: DatabaseContext,
+    *,
+    conversation_id: str,
+    processing_profile_id: str | None,
+    user_id: str | None,
+) -> ToolExecutionContext:
+    return ToolExecutionContext(
+        interface_type="web",
+        conversation_id=conversation_id,
+        user_name="test_user",
+        turn_id="test_turn",
+        db_context=db_ctx,
+        processing_service=None,
+        clock=None,
+        home_assistant_client=None,
+        event_sources=None,
+        attachment_registry=None,
+        camera_backend=None,
+        timezone=ZoneInfo("UTC"),
+        processing_profile_id=processing_profile_id,
+        user_id=user_id,
+    )
+
+
+@pytest.mark.asyncio
+async def test_create_event_automation_records_creator_provenance(
+    db_engine: AsyncEngine,
+) -> None:
+    """Creating an event automation records the creating profile and user."""
+    async with DatabaseContext(engine=db_engine) as db_ctx:
+        exec_context = _exec_context_with_profile(
+            db_ctx,
+            conversation_id="prov_event_conv",
+            processing_profile_id="automation_creation",
+            user_id="user-123",
+        )
+        result = await create_automation_tool(
+            exec_context=exec_context,
+            name="Provenance Event",
+            automation_type="event",
+            trigger_config={"event_source": "home_assistant", "event_filter": {}},
+            action_type="script",
+            action_config={"script_code": "x = 1\n"},
+        )
+        created_data = result.get_data()
+        assert isinstance(created_data, dict)
+        listener_id = int(created_data["id"])
+
+        listener = await db_ctx.events.get_event_listener_by_id(listener_id)
+        assert listener is not None
+        assert listener["processing_profile_id"] == "automation_creation"
+        assert listener["created_by_user_id"] == "user-123"
+
+
+@pytest.mark.asyncio
+async def test_create_schedule_automation_records_creator_provenance(
+    db_engine: AsyncEngine,
+) -> None:
+    """Creating a schedule automation records the creating profile and user."""
+    async with DatabaseContext(engine=db_engine) as db_ctx:
+        exec_context = _exec_context_with_profile(
+            db_ctx,
+            conversation_id="prov_sched_conv",
+            processing_profile_id="automation_creation",
+            user_id="user-456",
+        )
+        result = await create_automation_tool(
+            exec_context=exec_context,
+            name="Provenance Schedule",
+            automation_type="schedule",
+            trigger_config={"recurrence_rule": "FREQ=DAILY;BYHOUR=7;BYMINUTE=0"},
+            action_type="script",
+            action_config={"script_code": "x = 1\n"},
+        )
+        created_data = result.get_data()
+        assert isinstance(created_data, dict)
+        automation_id = int(created_data["id"])
+
+        automation = await db_ctx.schedule_automations.get_by_id(automation_id)
+        assert automation is not None
+        assert automation["processing_profile_id"] == "automation_creation"
+        assert automation["created_by_user_id"] == "user-456"
+
+
+@pytest.mark.asyncio
+async def test_update_automation_revalidates_script(db_engine: AsyncEngine) -> None:
+    """Updating an automation re-validates the new inline script."""
+    async with DatabaseContext(engine=db_engine) as db_ctx:
+        exec_context = _exec_context_with_profile(
+            db_ctx,
+            conversation_id="revalidate_conv",
+            processing_profile_id="automation_creation",
+            user_id="user-789",
+        )
+        created = await create_automation_tool(
+            exec_context=exec_context,
+            name="Revalidate Script",
+            automation_type="event",
+            trigger_config={"event_source": "home_assistant", "event_filter": {}},
+            action_type="script",
+            action_config={"script_code": "x = 1\n"},
+        )
+        created_data = created.get_data()
+        assert isinstance(created_data, dict)
+        automation_id = int(created_data["id"])
+
+        # Updating with a syntactically invalid script is rejected by validation.
+        result = await update_automation_tool(
+            exec_context=exec_context,
+            automation_id=automation_id,
+            automation_type="event",
+            action_config={"script_code": "def broken(:\n"},
+        )
+
+    data = result.get_data()
+    assert isinstance(data, dict)
+    assert "error" in data
+    assert "validation failed" in data["error"].lower()
+
+
+@pytest.mark.asyncio
+async def test_update_automation_rejects_missing_stored_script(
+    db_engine: AsyncEngine,
+) -> None:
+    """Updating a script automation to reference a nonexistent stored script is
+    rejected at the boundary instead of failing later at execution time."""
+    async with DatabaseContext(engine=db_engine) as db_ctx:
+        exec_context = _exec_context_with_profile(
+            db_ctx,
+            conversation_id="stored_script_conv",
+            processing_profile_id="automation_creation",
+            user_id="user-789",
+        )
+        created = await create_automation_tool(
+            exec_context=exec_context,
+            name="Stored Script Update",
+            automation_type="event",
+            trigger_config={"event_source": "home_assistant", "event_filter": {}},
+            action_type="script",
+            action_config={"script_code": "x = 1\n"},
+        )
+        created_data = created.get_data()
+        assert isinstance(created_data, dict)
+        automation_id = int(created_data["id"])
+
+        result = await update_automation_tool(
+            exec_context=exec_context,
+            automation_id=automation_id,
+            automation_type="event",
+            action_config={"script_name": "does-not-exist"},
+        )
+
+    data = result.get_data()
+    assert isinstance(data, dict)
+    assert "error" in data
+    assert "does-not-exist" in data["error"]
+
+
+@pytest.mark.asyncio
+async def test_update_wake_llm_automation_skips_script_validation(
+    db_engine: AsyncEngine,
+) -> None:
+    """Updating a wake_llm automation's action_config is not routed through the
+    script validator (which would reject it for having no script fields)."""
+    async with DatabaseContext(engine=db_engine) as db_ctx:
+        exec_context = _exec_context_with_profile(
+            db_ctx,
+            conversation_id="wake_llm_update_conv",
+            processing_profile_id="automation_creation",
+            user_id="user-789",
+        )
+        created = await create_automation_tool(
+            exec_context=exec_context,
+            name="Wake LLM Update",
+            automation_type="event",
+            trigger_config={"event_source": "home_assistant", "event_filter": {}},
+            action_type="wake_llm",
+            action_config={"context": "Original context"},
+        )
+        created_data = created.get_data()
+        assert isinstance(created_data, dict)
+        automation_id = int(created_data["id"])
+
+        result = await update_automation_tool(
+            exec_context=exec_context,
+            automation_id=automation_id,
+            automation_type="event",
+            action_config={"context": "Updated context"},
+        )
+
+    data = result.get_data()
+    assert isinstance(data, dict)
+    assert data.get("success") is True
 
 
 @pytest.mark.asyncio
@@ -1237,3 +1439,47 @@ async def test_update_event_automation_preserves_condition_script(
         == "event.get('old_state') != event.get('new_state')"
     )
     assert result_data["description"] == "Updated description"
+
+
+@pytest.mark.asyncio
+async def test_schedule_provenance_change_rebuilds_pending_task(
+    db_engine: AsyncEngine,
+) -> None:
+    """Re-stamping a schedule automation's provenance (even with an unchanged
+    action_config) rebuilds the pending task so the next run uses the new
+    profile, not the stale one."""
+    action_config = cast("ActionConfig", {"script_code": "x = 1\n"})
+    async with DatabaseContext(engine=db_engine) as db_ctx:
+        automation_id = await db_ctx.schedule_automations.create(
+            name="Provenance Resync",
+            recurrence_rule="FREQ=DAILY;BYHOUR=7;BYMINUTE=0",
+            action_type="script",
+            action_config=action_config,
+            conversation_id="resync_conv",
+            timezone=ZoneInfo("UTC"),
+            processing_profile_id="profile_a",
+            created_by_user_id="user-a",
+        )
+
+        # Update with the identical action_config but a new owning profile/user.
+        updated = await db_ctx.schedule_automations.update(
+            automation_id=automation_id,
+            conversation_id="resync_conv",
+            action_config=cast("ActionConfig", dict(action_config)),
+            timezone=ZoneInfo("UTC"),
+            processing_profile_id="profile_b",
+            created_by_user_id="user-b",
+        )
+        assert updated is True
+
+        rows = await db_ctx.fetch_all(
+            select(tasks_table).where(
+                (tasks_table.c.task_type == "script_execution")
+                & (tasks_table.c.status == "pending")
+                & (tasks_table.c.task_id.like(f"sched_auto_{automation_id}_%"))
+            )
+        )
+        assert len(rows) == 1
+        payload = rows[0]["payload"]
+        assert payload["processing_profile_id"] == "profile_b"
+        assert payload["created_by_user_id"] == "user-b"

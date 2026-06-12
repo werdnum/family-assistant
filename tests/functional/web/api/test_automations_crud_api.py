@@ -74,6 +74,52 @@ class TestEventAutomationsAPI:
         assert data["condition_script"] is None
         assert data["match_conditions"] == automation_data["match_conditions"]
 
+    async def test_create_event_automation_rejects_invalid_inline_script(
+        self, api_test_client: AsyncClient
+    ) -> None:
+        """An inline script with a syntax error is rejected at creation, so the
+        validation/execution-profile guarantee holds for the API route too."""
+        automation_data = {
+            "name": "Invalid Inline Script",
+            "source_id": "indexing",
+            "action_type": "script",
+            "match_conditions": {"document_type": "pdf"},
+            "action_config": {"script_code": "def broken(:\n"},
+            "conversation_id": "test_api",
+        }
+
+        response = await api_test_client.post(
+            "/api/automations/event", json=automation_data
+        )
+
+        assert response.status_code == 400
+        assert "validation failed" in response.json()["detail"].lower()
+
+    async def test_create_event_automation_records_creator_provenance(
+        self, api_test_client: AsyncClient, api_db_context: DatabaseContext
+    ) -> None:
+        """Web-created automations record the acting profile and user, so their
+        scripts execute under the same authority."""
+        automation_data = {
+            "name": "Provenance Web Event",
+            "source_id": "indexing",
+            "action_type": "script",
+            "match_conditions": {"document_type": "pdf"},
+            "action_config": {"script_code": "print('processed')"},
+            "conversation_id": "test_api",
+        }
+
+        response = await api_test_client.post(
+            "/api/automations/event", json=automation_data
+        )
+
+        assert response.status_code == 200
+        listener_id = int(response.json()["id"])
+        listener = await api_db_context.events.get_event_listener_by_id(listener_id)
+        assert listener is not None
+        assert listener["processing_profile_id"] is not None
+        assert listener["created_by_user_id"] == "test_user"
+
     async def test_create_event_automation_validates_source_id(
         self, api_test_client: AsyncClient
     ) -> None:
@@ -245,6 +291,59 @@ class TestEventAutomationsAPI:
 
         # Verify condition_script was cleared
         assert not cleared_data["condition_script"]
+
+    async def test_update_event_automation_rejects_invalid_inline_script(
+        self, api_test_client: AsyncClient
+    ) -> None:
+        """A PATCH that swaps in an invalid inline script is rejected before it is
+        persisted/re-stamped, just like the create path."""
+        create_response = await api_test_client.post(
+            "/api/automations/event",
+            json={
+                "name": "Update Invalid Script",
+                "source_id": "indexing",
+                "action_type": "script",
+                "match_conditions": {"document_type": "pdf"},
+                "action_config": {"script_code": "x = 1\n"},
+                "conversation_id": "test_api",
+            },
+        )
+        assert create_response.status_code == 200
+        automation_id = create_response.json()["id"]
+
+        update_response = await api_test_client.patch(
+            f"/api/automations/event/{automation_id}?conversation_id=test_api",
+            json={"action_config": {"script_code": "def broken(:\n"}},
+        )
+        assert update_response.status_code == 400
+        assert "validation failed" in update_response.json()["detail"].lower()
+
+    async def test_update_wake_llm_action_config_is_not_script_validated(
+        self, api_test_client: AsyncClient
+    ) -> None:
+        """A PATCH that edits a wake_llm automation's context must not be routed
+        through the script validator (which would reject it for having no
+        script_code/script_name)."""
+        create_response = await api_test_client.post(
+            "/api/automations/event",
+            json={
+                "name": "Wake LLM Context Edit",
+                "source_id": "indexing",
+                "action_type": "wake_llm",
+                "match_conditions": {"document_type": "pdf"},
+                "action_config": {"context": "Original context"},
+                "conversation_id": "test_api",
+            },
+        )
+        assert create_response.status_code == 200
+        automation_id = create_response.json()["id"]
+
+        update_response = await api_test_client.patch(
+            f"/api/automations/event/{automation_id}?conversation_id=test_api",
+            json={"action_config": {"context": "Updated context"}},
+        )
+        assert update_response.status_code == 200
+        assert update_response.json()["action_config"] == {"context": "Updated context"}
 
     async def test_delete_event_automation(self, api_test_client: AsyncClient) -> None:
         """Test deleting an event automation."""

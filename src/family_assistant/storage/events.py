@@ -100,6 +100,11 @@ event_listeners_table = Table(
     ),
     Column("one_time", Boolean, nullable=False, server_default="false"),
     Column("enabled", Boolean, nullable=False, server_default="true"),
+    # Creator provenance: the processing profile and user that created this
+    # listener. Scripts are validated and executed under this profile so that
+    # validation and execution agree (see docs/design/automation_provenance.md).
+    Column("processing_profile_id", String(255), nullable=True),
+    Column("created_by_user_id", String(255), nullable=True),
     Column(
         "created_at",
         DateTime(timezone=True),

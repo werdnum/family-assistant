@@ -57,8 +57,12 @@ if TYPE_CHECKING:
 # handle_index_email is now a method of EmailIndexer and registered in __main__.py
 from family_assistant.processing import ProcessingService
 from family_assistant.processing.utils import get_file_extension_from_mime_type
+from family_assistant.services.deferred_tool_confirmation import (
+    create_deferred_tool_confirmation,
+)
 from family_assistant.services.notification_targets import notify_conversation
 from family_assistant.services.notifier import MESSAGE_CATEGORY, NotificationMetadata
+from family_assistant.services.user_identity import UserIdentityResolver
 from family_assistant.storage.context import DatabaseContext, get_db_context
 from family_assistant.storage.message_history import message_history_table
 from family_assistant.storage.tasks import (
@@ -69,7 +73,12 @@ from family_assistant.storage.tasks import (
 )
 from family_assistant.tools import ToolExecutionContext
 from family_assistant.tools.stored_scripts import AUTOMATION_RUNTIME_GLOBALS
-from family_assistant.tools.types import ConfirmationOutcome, ToolResult
+from family_assistant.tools.types import (
+    ConfirmationOutcome,
+    RequestConfirmationCallback,
+    ToolArguments,
+    ToolResult,
+)
 from family_assistant.utils.clock import Clock, SystemClock
 
 logger = logging.getLogger(__name__)
@@ -124,6 +133,10 @@ class ScriptExecutionPayload(TypedDict, total=False):
     automation_id: str | int
     automation_type: str
     task_name: str
+    # Creator provenance: scripts run under the profile (and on behalf of the
+    # user) that created the automation, so validation and execution agree.
+    processing_profile_id: str
+    created_by_user_id: str
 
 
 class SystemEventCleanupPayload(TypedDict, total=False):
@@ -1665,6 +1678,103 @@ async def _process_script_wake_llm(
     )
 
 
+def _resolve_script_execution_service(
+    exec_context: ToolExecutionContext,
+    processing_profile_id: str | None,
+) -> ProcessingService | None:
+    """Resolve the processing service a script should execute under.
+
+    Scripts run under the profile that created the automation so that the tool
+    set used at validation time matches the tool set available at execution
+    time. Legacy automations created before provenance was tracked have no
+    recorded profile and fall back to the default processing service.
+
+    An automation explicitly stamped with a non-default profile that can no
+    longer be resolved (e.g. the profile was renamed/removed) is **not**
+    downgraded to the default: the script was validated and stamped for specific
+    tools/visibility, so running it under a different policy could change its
+    capabilities or data access. Such cases raise so the task fails loudly
+    rather than executing under the wrong profile.
+    """
+    default_service = exec_context.processing_service
+    if (
+        default_service is None
+        or processing_profile_id is None
+        or processing_profile_id == default_service.service_config.id
+    ):
+        return default_service
+
+    registry = default_service.processing_services_registry
+    unresolvable_reason: str | None = None
+    candidate: object | None = None
+    if registry is None:
+        unresolvable_reason = "no processing services registry is available"
+    else:
+        candidate = registry.get(processing_profile_id)
+        if candidate is None:
+            unresolvable_reason = "the profile is no longer registered"
+        elif getattr(candidate, "kind", None) != "local" or not hasattr(
+            candidate, "tools_provider"
+        ):
+            unresolvable_reason = "the profile is not a local profile"
+
+    if unresolvable_reason is not None:
+        raise RuntimeError(
+            f"Automation script is stamped with profile '{processing_profile_id}' "
+            f"but it cannot be resolved ({unresolvable_reason}); refusing to "
+            "downgrade to the default profile and run with different tools or "
+            "visibility than the script was validated against."
+        )
+
+    return cast("ProcessingService", candidate)
+
+
+def build_script_confirmation_callback(
+    created_by_user_id: str | None,
+) -> RequestConfirmationCallback:
+    """Build the confirmation callback used while executing an automation script.
+
+    Scripts run in the task worker with no interactive channel, so a confirm-gated
+    tool call is deferred to a durable confirmation addressed to the automation's
+    owner. The tool runs later via the confirmation_tool_execution task once the
+    user approves. Legacy automations with no recorded owner cannot be approved,
+    so the tool is reported as not run.
+    """
+
+    async def _script_confirmation_callback(
+        interface_type: str,
+        conversation_id: str,
+        turn_id: str | None,
+        tool_name: str,
+        call_id: str,
+        tool_args: ToolArguments,
+        timeout_seconds: float,
+        context: ToolExecutionContext,
+    ) -> ConfirmationOutcome:
+        _ = interface_type
+        _ = conversation_id
+        _ = turn_id
+        if created_by_user_id is None:
+            return ConfirmationOutcome(
+                kind="failed",
+                result=(
+                    "This automation has no recorded owner, so the confirm-gated "
+                    f"tool '{tool_name}' cannot be approved and was not run."
+                ),
+            )
+        return await create_deferred_tool_confirmation(
+            context=context,
+            tool_name=tool_name,
+            call_id=call_id,
+            tool_args=tool_args,
+            timeout_seconds=timeout_seconds,
+            target_user_id=created_by_user_id,
+            source_prefix="From an automation — approve to run:",
+        )
+
+    return _script_confirmation_callback
+
+
 async def handle_script_execution(
     exec_context: ToolExecutionContext,
     payload: ScriptExecutionPayload,
@@ -1673,8 +1783,12 @@ async def handle_script_execution(
     Task handler for executing scripts triggered by events.
 
     Executes user-defined scripts in response to events from Home Assistant,
-    document indexing, and other sources. Scripts run with restricted tool access
-    based on the event_handler processing profile.
+    document indexing, and other sources. Scripts run under the processing
+    profile that created the automation (see
+    docs/design/automation_provenance.md), so the tools available at execution
+    time match those used to validate the script at creation time. Legacy
+    automations without a recorded profile fall back to the task worker's
+    default profile.
 
     Args:
         exec_context: Execution context providing access to tools and services
@@ -1743,13 +1857,44 @@ async def handle_script_execution(
             f"Starting scheduled script execution in conversation {conversation_id}"
         )
 
-    # Get the event_handler processing service if available
-    processing_service = exec_context.processing_service
+    # Resolve the processing profile the script was created under so that the
+    # tools available here match those used to validate the script at creation
+    # time. Legacy automations (no recorded profile) fall back to the default.
+    processing_service = _resolve_script_execution_service(
+        exec_context, payload.get("processing_profile_id")
+    )
     tools_provider = None
 
     if processing_service and hasattr(processing_service, "tools_provider"):
-        # Use the event_handler profile's tools if available
         tools_provider = processing_service.tools_provider
+        # Re-point the execution context at the resolved profile so tool policy,
+        # visibility grants and note labels all reflect the creating profile.
+        # The owner also becomes the acting user, so anything the script itself
+        # creates (e.g. via create_automation) inherits the same owner.
+        exec_context = replace(
+            exec_context,
+            processing_service=processing_service,
+            processing_profile_id=processing_service.service_config.id,
+            user_id=payload.get("created_by_user_id") or exec_context.user_id,
+            tools_provider=tools_provider,
+            # Carry the resolved profile's infrastructure backends so tools that
+            # read them use the creating profile's clients, not the worker
+            # default's (mirrors _build_confirmation_execution_context).
+            home_assistant_client=processing_service.home_assistant_client,
+            attachment_registry=processing_service.attachment_registry,
+            camera_backend=processing_service.camera_backend,
+            visibility_grants=(
+                set(processing_service.service_config.visibility_grants)
+                if processing_service.service_config.visibility_grants
+                else None
+            ),
+            default_note_visibility_labels=(
+                processing_service.service_config.default_note_visibility_labels
+            ),
+            request_confirmation_callback=build_script_confirmation_callback(
+                payload.get("created_by_user_id")
+            ),
+        )
         logger.debug(
             f"Using tools from processing service for script execution: {processing_service.service_config.id}"
         )
@@ -1913,16 +2058,26 @@ async def _build_confirmation_execution_context(
     source_row: MessageHistoryRow | None,
     processing_service: ProcessingService,
 ) -> ToolExecutionContext:
-    """Reconstruct the best available context for deferred tool execution."""
+    """Reconstruct the best available context for deferred tool execution.
+
+    Prefers the source message's interface/conversation; confirmations created
+    without one (automation scripts) instead carry the origin recorded on the
+    request itself, so approved tools act in the requesting conversation rather
+    than the worker's placeholder context.
+    """
     interface_type = (
         str(source_row["interface_type"])
         if source_row is not None
-        else request["resolved_via_interface"] or exec_context.interface_type
+        else (
+            request["origin_interface_type"]
+            or request["resolved_via_interface"]
+            or exec_context.interface_type
+        )
     )
     conversation_id = (
         str(source_row["conversation_id"])
         if source_row is not None
-        else exec_context.conversation_id
+        else request["origin_conversation_id"] or exec_context.conversation_id
     )
     turn_id = (
         str(source_row["turn_id"])
@@ -1930,12 +2085,11 @@ async def _build_confirmation_execution_context(
         else exec_context.turn_id
     )
     user_name = exec_context.user_name or str(request["target_user_id"])
-    processing_profile_id = (
-        str(source_row["processing_profile_id"])
-        if source_row is not None
-        and source_row.get("processing_profile_id") is not None
-        else exec_context.processing_profile_id
-    )
+    # The profile id must match the service actually used (already resolved from
+    # the confirmation's recorded profile or the source message), so tools that
+    # read processing_profile_id directly (history filtering, automation
+    # stamping) see the same profile their provider belongs to.
+    processing_profile_id = processing_service.service_config.id
     subconversation_id = (
         str(source_row["subconversation_id"])
         if source_row is not None and source_row.get("subconversation_id") is not None
@@ -2072,18 +2226,24 @@ def _get_processing_tools_provider(exec_context: ToolExecutionContext) -> ToolsP
 def _resolve_confirmation_processing_service(
     exec_context: ToolExecutionContext,
     source_row: MessageHistoryRow | None,
+    recorded_profile_id: str | None = None,
 ) -> ProcessingService:
-    """Resolve the local processing service that originally created the confirmation."""
+    """Resolve the local processing service that originally created the confirmation.
+
+    Prefers the profile recorded on the confirmation request itself, falling back
+    to the source message's profile. Script-originated confirmations have no
+    source message row, so the recorded profile is what keeps the deferred
+    execution on the automation's creating profile.
+    """
     default_processing_service = exec_context.processing_service
     if default_processing_service is None:
         raise RuntimeError("Confirmation execution requires a processing service")
 
-    profile_id = (
-        str(source_row["processing_profile_id"])
-        if source_row is not None
-        and source_row.get("processing_profile_id") is not None
-        else None
-    )
+    profile_id = recorded_profile_id
+    if profile_id is None and source_row is not None:
+        source_profile = source_row.get("processing_profile_id")
+        if source_profile is not None:
+            profile_id = str(source_profile)
     if profile_id is None or profile_id == default_processing_service.service_config.id:
         return default_processing_service
 
@@ -2114,6 +2274,44 @@ def _resolve_confirmation_processing_service(
     return cast("ProcessingService", candidate)
 
 
+def _resolve_confirmation_result_delivery(
+    context: ToolExecutionContext,
+    request: ConfirmationRequestRow,
+    source_row: MessageHistoryRow | None,
+) -> tuple[ChatInterface, str, str | None] | None:
+    """Pick where to deliver a confirmation result message.
+
+    Chat/email confirmations thread the result back to the originating
+    conversation (replying to the source message). Automation-originated
+    confirmations have no source message, so the result is delivered to the
+    target user's primary Telegram chat instead (mirroring how the pending
+    confirmation was delivered). Returns ``(chat_interface, conversation_id,
+    reply_to_interface_id)`` or None when no deliverable target exists.
+    """
+    if source_row is not None:
+        if context.chat_interface is None:
+            return None
+        reply_to_interface_id = (
+            str(source_row["interface_message_id"])
+            if source_row.get("interface_message_id") is not None
+            else None
+        )
+        return context.chat_interface, context.conversation_id, reply_to_interface_id
+
+    processing_service = context.processing_service
+    if processing_service is None or context.chat_interfaces is None:
+        return None
+    telegram_interface = context.chat_interfaces.get("telegram")
+    if telegram_interface is None:
+        return None
+    telegram_user_id = UserIdentityResolver(
+        processing_service.app_config
+    ).get_primary_telegram_user_id(request["target_user_id"])
+    if telegram_user_id is None:
+        return None
+    return telegram_interface, str(telegram_user_id), None
+
+
 async def _notify_confirmation_execution_result(
     context: ToolExecutionContext,
     request: ConfirmationRequestRow,
@@ -2123,25 +2321,16 @@ async def _notify_confirmation_execution_result(
     succeeded: bool = True,
 ) -> None:
     """Send a deterministic result notification when no live waiter consumes it."""
-    if context.chat_interface is None:
+    delivery = _resolve_confirmation_result_delivery(context, request, source_row)
+    if delivery is None:
         logger.info(
-            "Confirmation %s completed without a chat interface for notification",
+            "Confirmation %s completed without a deliverable notification target; "
+            "skipping result notification",
             request["id"],
         )
         return
 
-    if source_row is None:
-        logger.info(
-            "Confirmation %s completed without a source message; skipping result notification",
-            request["id"],
-        )
-        return
-
-    reply_to_interface_id = (
-        str(source_row["interface_message_id"])
-        if source_row.get("interface_message_id") is not None
-        else None
-    )
+    chat_interface, delivery_conversation_id, reply_to_interface_id = delivery
 
     try:
         result_text = _tool_result_text(result)
@@ -2163,8 +2352,8 @@ async def _notify_confirmation_execution_result(
                 f"Tool: {request['tool_name']}\n\n"
                 f"Error:\n{result_text}"
             )
-        sent_message_id = await context.chat_interface.send_message(
-            conversation_id=context.conversation_id,
+        sent_message_id = await chat_interface.send_message(
+            conversation_id=delivery_conversation_id,
             text=message,
             reply_to_interface_id=reply_to_interface_id,
             attachment_ids=attachment_ids,
@@ -2247,6 +2436,7 @@ async def handle_confirmation_tool_execution(
         processing_service = _resolve_confirmation_processing_service(
             exec_context,
             source_row,
+            request.get("processing_profile_id"),
         )
         execution_context = await _build_confirmation_execution_context(
             exec_context,
@@ -2369,4 +2559,5 @@ __all__ = [
     "handle_script_execution",
     "handle_confirmation_tool_execution",
     "handle_reindex_document",
+    "build_script_confirmation_callback",
 ]  # Export class and relevant handlers

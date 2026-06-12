@@ -7,7 +7,10 @@ from datetime import UTC
 from typing import TYPE_CHECKING, Any, cast
 
 from family_assistant.scripting.validator import ScriptValidator
-from family_assistant.tools.stored_scripts import validate_script_action_config
+from family_assistant.tools.stored_scripts import (
+    AUTOMATION_RUNTIME_GLOBALS,
+    validate_script_action_config,
+)
 from family_assistant.tools.types import ToolDefinition, ToolResult
 
 if TYPE_CHECKING:
@@ -18,6 +21,7 @@ if TYPE_CHECKING:
     from family_assistant.storage.models import Automation
     from family_assistant.storage.repositories.automations import AutomationType
     from family_assistant.storage.types import ActionConfig
+    from family_assistant.tools.infrastructure import ToolsProvider
     from family_assistant.tools.types import ToolExecutionContext
 
 logger = logging.getLogger(__name__)
@@ -364,6 +368,99 @@ def _validate_automation_type(automation_type: str) -> AutomationType:
     return automation_type  # type: ignore[return-value]
 
 
+async def _validate_script_code_with_provider(
+    tools_provider: ToolsProvider | None,
+    script_code: str,
+    input_names: list[str],
+) -> str | None:
+    tool_definitions = None
+    if tools_provider:
+        tool_definitions = await tools_provider.get_tool_definitions()
+
+    validator = ScriptValidator(tool_definitions=tool_definitions)
+    validation = validator.validate(
+        script_code,
+        input_names=input_names,
+        include_tools_api=tools_provider is not None,
+    )
+    if not validation.is_valid:
+        return f"Script validation failed: {validation.error_message}"
+    return None
+
+
+async def validate_action_scripts_with_provider(
+    db_context: DatabaseContext,
+    tools_provider: ToolsProvider | None,
+    # ast-grep-ignore: no-dict-any - action config has varying keys per action type
+    action_config: dict[str, Any],
+) -> str | None:
+    """Validate a script action_config's code against a profile's tool set.
+
+    The automation will execute under the profile that created it, so the script
+    is validated against that same profile's ``tools_provider``. Inline
+    ``script_code`` is validated directly with the automation runtime globals.
+    ``script_name`` configs load the referenced stored script and validate its
+    code too: stored scripts are global and were only validated against whatever
+    profile saved them, so the creating profile may lack tools the script uses.
+    Assumes structural validation (``validate_script_action_config``) already
+    passed. Returns an error message, or None if valid.
+    """
+    script_code = action_config.get("script_code")
+    if script_code:
+        return await _validate_script_code_with_provider(
+            tools_provider,
+            script_code,
+            input_names=sorted(AUTOMATION_RUNTIME_GLOBALS),
+        )
+
+    script_name = action_config.get("script_name")
+    if not script_name:
+        return None
+    stored = await db_context.scripts.get_by_name(script_name)
+    if stored is None:
+        return f"Stored script '{script_name}' not found"
+
+    # The script sees the automation runtime globals plus its declared schema
+    # parameters and whatever parameters the automation supplies.
+    input_names: set[str] = set(AUTOMATION_RUNTIME_GLOBALS)
+    schema = stored.parameters_schema or {}
+    if isinstance(schema.get("properties"), dict):
+        input_names.update(k for k in schema["properties"] if isinstance(k, str))
+    if isinstance(schema.get("required"), list):
+        input_names.update(k for k in schema["required"] if isinstance(k, str))
+    parameters = action_config.get("parameters")
+    if isinstance(parameters, dict):
+        input_names.update(k for k in parameters if isinstance(k, str))
+
+    error = await _validate_script_code_with_provider(
+        tools_provider,
+        stored.script_code,
+        input_names=sorted(input_names),
+    )
+    if error:
+        return f"Stored script '{script_name}': {error}"
+    return None
+
+
+async def validate_action_scripts(
+    exec_context: ToolExecutionContext,
+    # ast-grep-ignore: no-dict-any - action config has varying keys per action type
+    action_config: dict[str, Any],
+) -> str | None:
+    """Validate a script action_config against the creating profile's tools."""
+    tools_provider = None
+    if exec_context.tools_provider:
+        tools_provider = exec_context.tools_provider
+    elif (
+        exec_context.processing_service
+        and exec_context.processing_service.tools_provider
+    ):
+        tools_provider = exec_context.processing_service.tools_provider
+    return await validate_action_scripts_with_provider(
+        exec_context.db_context, tools_provider, action_config
+    )
+
+
 # Tool Implementations
 async def create_automation_tool(
     exec_context: ToolExecutionContext,
@@ -404,40 +501,14 @@ async def create_automation_tool(
                 return ToolResult(
                     text=f"Error: {script_error}", data={"error": script_error}
                 )
-            if action_config.get("script_code"):
-                # Validate inline script code
-                tool_definitions = None
-                tools_provider = None
-                if (
-                    hasattr(exec_context, "tools_provider")
-                    and exec_context.tools_provider
-                ):
-                    tools_provider = exec_context.tools_provider
-                elif (
-                    exec_context.processing_service
-                    and hasattr(exec_context.processing_service, "tools_provider")
-                    and exec_context.processing_service.tools_provider
-                ):
-                    tools_provider = exec_context.processing_service.tools_provider
-                if tools_provider:
-                    tool_definitions = await tools_provider.get_tool_definitions()
-                input_names = [
-                    "event",
-                    "conversation_id",
-                    "listener_id",
-                    "listener_name",
-                ]
-                validator = ScriptValidator(tool_definitions=tool_definitions)
-                validation = validator.validate(
-                    action_config["script_code"],
-                    input_names=input_names,
-                    include_tools_api=tools_provider is not None,
+            validation_error = await validate_action_scripts(
+                exec_context, action_config
+            )
+            if validation_error:
+                return ToolResult(
+                    text=f"Error: {validation_error}",
+                    data={"error": validation_error},
                 )
-                if not validation.is_valid:
-                    error_msg = f"Script validation failed: {validation.error_message}"
-                    return ToolResult(
-                        text=f"Error: {error_msg}", data={"error": error_msg}
-                    )
             # Note: the "neither script_code nor script_name" case is already
             # rejected by validate_script_action_config above.
 
@@ -475,6 +546,8 @@ async def create_automation_tool(
                 interface_type=exec_context.interface_type,
                 description=description,
                 condition_script=condition_script,
+                processing_profile_id=exec_context.processing_profile_id,
+                created_by_user_id=exec_context.user_id,
             )
 
             # Return structured data with human-readable text
@@ -504,6 +577,8 @@ async def create_automation_tool(
                 interface_type=exec_context.interface_type,
                 description=description,
                 timezone=exec_context.timezone,
+                processing_profile_id=exec_context.processing_profile_id,
+                created_by_user_id=exec_context.user_id,
             )
 
             # Get the automation to show next scheduled time
@@ -772,6 +847,34 @@ async def update_automation_tool(
             error_msg = f"Automation {automation_id} not found"
             return ToolResult(text=f"Error: {error_msg}", data={"error": error_msg})
 
+        # When a script automation's action_config (and therefore its script) is
+        # being changed, validate the new config and its script against the
+        # updating profile's tools and re-stamp creator provenance, so the
+        # updated script is validated and executed under the same (updating)
+        # profile. wake_llm action_config edits are not scripts and skip the
+        # script validators.
+        restamp_profile_id: str | None = None
+        restamp_user_id: str | None = None
+        if action_config is not None:
+            restamp_profile_id = exec_context.processing_profile_id
+            restamp_user_id = exec_context.user_id
+            if existing.action_type == "script":
+                script_error = await validate_script_action_config(
+                    exec_context.db_context, action_config
+                )
+                if script_error:
+                    return ToolResult(
+                        text=f"Error: {script_error}", data={"error": script_error}
+                    )
+                validation_error = await validate_action_scripts(
+                    exec_context, action_config
+                )
+                if validation_error:
+                    return ToolResult(
+                        text=f"Error: {validation_error}",
+                        data={"error": validation_error},
+                    )
+
         if automation_type == "event":
             # Update event automation - merge with existing values
             # Note: source_id cannot be changed for event listeners
@@ -810,6 +913,8 @@ async def update_automation_tool(
                 one_time=existing.one_time or False,
                 enabled=existing.enabled,
                 condition_script=condition_script,
+                processing_profile_id=restamp_profile_id,
+                created_by_user_id=restamp_user_id,
             )
 
         else:  # schedule
@@ -829,6 +934,10 @@ async def update_automation_tool(
                 update_kwargs["recurrence_rule"] = recurrence_rule
             if action_config is not None:
                 update_kwargs["action_config"] = action_config
+                if restamp_profile_id is not None:
+                    update_kwargs["processing_profile_id"] = restamp_profile_id
+                if restamp_user_id is not None:
+                    update_kwargs["created_by_user_id"] = restamp_user_id
             if description is not None:
                 update_kwargs["description"] = description
 
