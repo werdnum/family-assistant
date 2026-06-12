@@ -32,7 +32,11 @@ from family_assistant.assistant import Assistant
 from family_assistant.config_models import AppConfig
 from family_assistant.storage.base import create_engine_with_sqlite_optimizations
 from family_assistant.storage.context import DatabaseContext
-from family_assistant.storage.tasks import tasks_table
+from family_assistant.storage.tasks import (
+    register_worker_wake_event,
+    tasks_table,
+    unregister_worker_wake_event,
+)
 from family_assistant.task_worker import TaskWorker
 from family_assistant.tools import ToolExecutionContext
 from tests.conftest import cleanup_task_worker
@@ -394,6 +398,35 @@ async def test_enqueue_wakes_idle_sibling_promptly(
         await asyncio.wait_for(processed.wait(), timeout=3.0)
     finally:
         await pool.stop()
+
+
+@pytest.mark.asyncio
+async def test_enqueue_defers_worker_wake_until_commit(
+    db_engine: AsyncEngine,
+) -> None:
+    """The worker wake fires on commit, not before the inserted row is visible.
+
+    Waking before the enqueue transaction commits lets an idle sibling poll an
+    empty queue, clear its event, and miss the not-yet-visible task row until
+    the next 5s poll. The wake must be deferred to the commit hook.
+    """
+    wake_event = asyncio.Event()
+    register_worker_wake_event(wake_event)
+    try:
+        async with DatabaseContext(engine=db_engine) as db_context:
+            await db_context.tasks.enqueue(
+                task_id="commit-visibility-task",
+                task_type="quick",
+                payload={},
+                max_retries_override=0,
+            )
+            # Still inside the transaction: the row is not committed/visible yet,
+            # so no worker may have been woken.
+            assert not wake_event.is_set()
+        # The transaction committed on context exit; the wake fires now.
+        assert wake_event.is_set()
+    finally:
+        unregister_worker_wake_event(wake_event)
 
 
 def test_task_worker_count_defaults_to_two() -> None:

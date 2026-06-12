@@ -124,10 +124,15 @@ class TasksRepository(BaseRepository):
             # If task is immediate, wake all workers in the pool. Fanning out to
             # every registered per-worker wake event (plus the legacy global event)
             # avoids one worker's event.clear() swallowing the wakeup for siblings.
+            # Defer the wake to transaction commit (mirroring
+            # storage.tasks.enqueue_task): when enqueue runs inside an open
+            # transaction, waking before commit can let an idle sibling poll an
+            # empty queue, clear its event, and then miss the not-yet-visible row
+            # until the next 5s poll.
             if not processed_scheduled_at or processed_scheduled_at <= datetime.now(
                 UTC
             ):
-                notify_workers()
+                self._db.on_commit(notify_workers)
 
             logger.info(
                 f"Successfully enqueued task: {task_id} (type: {task_type}, scheduled: {processed_scheduled_at})"
