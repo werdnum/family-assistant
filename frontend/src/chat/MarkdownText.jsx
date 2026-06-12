@@ -26,9 +26,7 @@ export const MarkdownText = ({ text }) => {
           pre: ({ children }) => {
             return (
               <pre className="code-block">
-                <PreContext.Provider value={true}>
-                  {children}
-                </PreContext.Provider>
+                <PreContext.Provider value={true}>{children}</PreContext.Provider>
               </pre>
             );
           },
@@ -41,9 +39,7 @@ export const MarkdownText = ({ text }) => {
               return <code className="inline-code">{children}</code>;
             }
 
-            return (
-              <code className={className}>{children}</code>
-            );
+            return <code className={className}>{children}</code>;
           },
         }}
       >

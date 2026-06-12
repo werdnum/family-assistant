@@ -11,13 +11,13 @@ We deliver to TestFlight via **Xcode Cloud** and keep the existing GitHub Action
 [`ios-tests.yml`](../../.github/workflows/ios-tests.yml) workflow for fast, PR-integrated unit-test
 gating.
 
-| Concern | Xcode Cloud | GitHub Actions |
-| --- | --- | --- |
-| Cost at our volume | Free — 25 compute-hrs/mo; we use ~2.5 hrs | macOS minutes billed 10×; ~$12–25/mo on a private repo |
-| Code signing | Automatic via App Store Connect (no secrets) | Must store ASC API key + certs/profiles as repo secrets (fastlane `match`) |
-| TestFlight upload | Built in | Add fastlane `pilot` / `altool` step |
-| Setup | Mostly clicks in Xcode + App Store Connect | YAML + fastlane + `ExportOptions.plist` + secrets |
-| Version control | Workflow config lives in Apple's console | Fully version-controlled |
+| Concern            | Xcode Cloud                                  | GitHub Actions                                                             |
+| ------------------ | -------------------------------------------- | -------------------------------------------------------------------------- |
+| Cost at our volume | Free — 25 compute-hrs/mo; we use ~2.5 hrs    | macOS minutes billed 10×; ~$12–25/mo on a private repo                     |
+| Code signing       | Automatic via App Store Connect (no secrets) | Must store ASC API key + certs/profiles as repo secrets (fastlane `match`) |
+| TestFlight upload  | Built in                                     | Add fastlane `pilot` / `altool` step                                       |
+| Setup              | Mostly clicks in Xcode + App Store Connect   | YAML + fastlane + `ExportOptions.plist` + secrets                          |
+| Version control    | Workflow config lives in Apple's console     | Fully version-controlled                                                   |
 
 ### Why this split
 
