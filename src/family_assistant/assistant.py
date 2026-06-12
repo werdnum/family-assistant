@@ -1701,6 +1701,7 @@ class Assistant:
             confirmation_result_waiters=self.confirmation_result_waiters,
             confirmation_ui_managers=self.fastapi_app.state.confirmation_ui_managers,
             notification_dispatcher=self.notification_dispatcher,
+            stream_hub=self.fastapi_app.state.conversation_stream_hub,
         )
         worker.register_task_handler("log_message", task_wrapper_handle_log_message)
         if self.document_indexer:
@@ -1719,6 +1720,14 @@ class Assistant:
                 "index_note", self.notes_indexer.handle_index_note
             )
         worker.register_task_handler("llm_callback", handle_llm_callback)
+        worker.register_task_handler(
+            "delegated_profile_run",
+            worker.handle_delegated_profile_run,
+        )
+        worker.register_task_handler(
+            "delegation_run_cleanup",
+            worker.handle_delegation_run_cleanup,
+        )
         worker.register_task_handler(
             "embed_and_store_batch", handle_embed_and_store_batch
         )
