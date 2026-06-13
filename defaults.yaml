@@ -1537,14 +1537,5 @@ browser_handoff_config:
   handoff_capable_profiles:
     - "browser_profile"
     - "browser_visual_profile"
-otel:
-  enabled: false
-  service_name: "family-assistant"
-  traces_exporter: "otlp-grpc"
-  metrics_exporter: "otlp-grpc"
-  otlp_endpoint: "http://localhost:4317"
-  log_correlation: true
-  traces_sample_rate: 1.0
-  debug_console_exporter: false
 # Secrets (telegram_token, api_keys, database_url) are primarily from env.
 # Model, embedding_model, server_url, storage_paths are also top-level or env.

@@ -954,23 +954,6 @@ class OIDCConfig(BaseModel):
     allowed_emails: list[str] = Field(default_factory=list)
 
 
-class OTelConfig(BaseModel):
-    """OpenTelemetry observability configuration."""
-
-    model_config = ConfigDict(extra="forbid")
-
-    enabled: bool = False
-    service_name: str = "family-assistant"
-    traces_exporter: str = "otlp-grpc"
-    metrics_exporter: str = "otlp-grpc"
-    otlp_endpoint: str = "http://localhost:4317"
-    otlp_traces_endpoint: str | None = None
-    otlp_metrics_endpoint: str | None = None
-    log_correlation: bool = True
-    traces_sample_rate: float = Field(default=1.0, ge=0.0, le=1.0)
-    debug_console_exporter: bool = False
-
-
 class OpenAIImageRequestConfig(BaseModel):
     """Configuration shared by OpenAI image generate/edit requests."""
 
@@ -1133,9 +1116,6 @@ class AppConfig(BaseSettings):
 
     # Logging configuration
     logging: LoggingConfig = Field(default_factory=LoggingConfig)
-
-    # OpenTelemetry observability
-    otel: OTelConfig = Field(default_factory=OTelConfig)
 
     # Server port (optional, defaults to 8000)
     server_port: int = 8000
