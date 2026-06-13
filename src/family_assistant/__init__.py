@@ -20,9 +20,10 @@ if os.path.exists(LOGGING_CONFIG):
 # subsequent set_*_provider() call a silent no-op.
 #
 # App-owned OTEL env vars (OTEL_TRACES_EXPORTER, OTEL_METRICS_EXPORTER, ...)
-# are also cleared because opentelemetry-instrument / distros read them
-# to auto-configure exporters. Values are moved to _FA_OTEL_* so our
-# config_loader (which runs later via load_config()) can still read them.
+# are moved to _FA_OTEL_* so our config_loader (which runs later via
+# load_config()) can still read them. The public trace/metrics exporter vars
+# are then left as "none" guards so any later SDK auto-config path does not
+# fall back to OTLP localhost exporters.
 neutralize_otel_env()
 
 __version__ = "0.1.0"

@@ -24,7 +24,7 @@ from dataclasses import dataclass
 from typing import Any
 
 import yaml
-from dotenv import load_dotenv
+from dotenv import dotenv_values, find_dotenv, load_dotenv
 from pydantic import ValidationError
 
 from .config_models import AppConfig
@@ -1036,8 +1036,14 @@ def load_config(
     )
 
     if load_dotenv_file:
-        load_dotenv()
-        neutralize_otel_env()
+        dotenv_path = find_dotenv(usecwd=True)
+        dotenv_otel_values = {
+            key: value
+            for key, value in dotenv_values(dotenv_path).items()
+            if key.startswith("OTEL_")
+        }
+        load_dotenv(dotenv_path)
+        neutralize_otel_env(dotenv_otel_values)
 
     apply_env_var_overrides(config_data)
     apply_user_identity_file(config_data)
