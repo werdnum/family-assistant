@@ -5,8 +5,11 @@ from datetime import UTC, datetime
 
 import httpx
 import pytest
+from sqlalchemy.ext.asyncio import AsyncEngine
 
 from family_assistant.assistant import Assistant
+from family_assistant.llm.messages import AssistantMessage, UserMessage
+from family_assistant.storage.context import get_db_context
 from tests.helpers import wait_for_condition
 from tests.mocks.mock_llm import LLMOutput, RuleBasedMockLLMClient
 
@@ -101,6 +104,75 @@ async def test_get_conversation_messages_with_data(
         assert len(assistant_msgs) >= 1
         assert any("Hi there" in m["content"] for m in user_msgs)
         assert any("Hello! How can I help?" in m["content"] for m in assistant_msgs)
+
+
+@pytest.mark.asyncio
+async def test_get_conversation_messages_excludes_delegated_subconversations(
+    web_only_assistant: Assistant,
+    db_engine: AsyncEngine,
+) -> None:
+    """Delegated profile rows should not render as main web chat messages."""
+    conv_id = f"test_conv_delegated_rows_{uuid.uuid4().hex[:8]}"
+    timestamp = datetime(2026, 1, 1, 12, 0, 0, tzinfo=UTC)
+
+    async with get_db_context(db_engine) as db_context:
+        await db_context.message_history.add_message(
+            UserMessage(content="Main user request"),
+            interface_type="web",
+            conversation_id=conv_id,
+            timestamp=timestamp,
+            turn_id="main-turn",
+            processing_profile_id="default_assistant",
+            user_id="test_user",
+        )
+        await db_context.message_history.add_message(
+            UserMessage(content="Delegated prompt from model"),
+            interface_type="web",
+            conversation_id=conv_id,
+            timestamp=timestamp,
+            turn_id="delegated-turn",
+            processing_profile_id="browser",
+            subconversation_id="delegated-subconversation",
+        )
+        await db_context.message_history.add_message(
+            AssistantMessage(content="Delegated profile answer"),
+            interface_type="web",
+            conversation_id=conv_id,
+            timestamp=timestamp,
+            turn_id="delegated-turn",
+            processing_profile_id="browser",
+            subconversation_id="delegated-subconversation",
+        )
+        await db_context.message_history.add_message(
+            AssistantMessage(content="Main assistant answer"),
+            interface_type="web",
+            conversation_id=conv_id,
+            timestamp=timestamp,
+            turn_id="main-turn",
+            processing_profile_id="default_assistant",
+            user_id="test_user",
+        )
+
+    assert web_only_assistant.fastapi_app is not None
+    transport = httpx.ASGITransport(app=web_only_assistant.fastapi_app)
+    async with httpx.AsyncClient(
+        transport=transport, base_url="http://testserver"
+    ) as client:
+        for query_string in ("", "?limit=0"):
+            response = await client.get(
+                f"/api/v1/chat/conversations/{conv_id}/messages{query_string}"
+            )
+            assert response.status_code == 200
+            data = response.json()
+
+            assert data["count"] == 2
+            assert data["total_messages"] == 2
+            assert [
+                (message["role"], message["content"]) for message in data["messages"]
+            ] == [
+                ("user", "Main user request"),
+                ("assistant", "Main assistant answer"),
+            ]
 
 
 @pytest.mark.asyncio
