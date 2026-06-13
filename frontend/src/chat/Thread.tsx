@@ -453,7 +453,7 @@ const AssistantActionBar: React.FC = () => {
       hideWhenRunning
       autohide="not-last"
       autohideFloat="single-branch"
-      className="flex items-center gap-1 mt-1 opacity-0 group-hover:opacity-100 transition-opacity duration-200"
+      className="flex items-center gap-1 mt-1 opacity-0 group-hover:opacity-100 transition-opacity duration-200 data-[floating]:absolute data-[floating]:mt-0 data-[floating]:rounded-lg data-[floating]:border data-[floating]:bg-background data-[floating]:p-1 data-[floating]:shadow-sm"
     >
       <ActionBarPrimitive.Copy asChild>
         {/* @ts-expect-error - TooltipIconButton JSX component */}
