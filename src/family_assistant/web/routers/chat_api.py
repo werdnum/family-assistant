@@ -1557,6 +1557,7 @@ async def get_conversations(
         conversation_id=conversation_id,
         date_from=date_from_dt,
         date_to=date_to_dt,
+        include_subconversations=False,
     )
 
     # Filter the returned page to conversations the caller solely (canonically)
@@ -1640,7 +1641,9 @@ async def get_conversation_messages(
     if actual_limit is None:
         # Legacy behavior: get all messages
         history_by_chat = await db_context.message_history.get_all_grouped(
-            interface_type=None, conversation_id=conversation_id
+            interface_type=None,
+            conversation_id=conversation_id,
+            include_subconversations=False,
         )
 
         # Collect messages from all interfaces for this conversation ID
@@ -1667,6 +1670,7 @@ async def get_conversation_messages(
             before=before_dt,
             after=after_dt,
             limit=actual_limit,
+            include_subconversations=False,
         )
 
     # Convert to response format
@@ -1720,7 +1724,10 @@ async def get_conversation_messages(
 
     # Get total message count for the conversation
     total_message_count = (
-        await db_context.message_history.get_conversation_message_count(conversation_id)
+        await db_context.message_history.get_conversation_message_count(
+            conversation_id,
+            include_subconversations=False,
+        )
     )
 
     hub = _get_hub(request)

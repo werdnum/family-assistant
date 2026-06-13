@@ -1549,6 +1549,7 @@ class MessageHistoryRepository(BaseRepository):
         before: datetime | None = None,
         after: datetime | None = None,
         limit: int = 50,
+        include_subconversations: bool = True,
     ) -> tuple[list[MessageHistoryRow], bool, bool]:
         """
         Get messages for a conversation with timestamp-based pagination.
@@ -1558,30 +1559,34 @@ class MessageHistoryRepository(BaseRepository):
             before: Get messages before this timestamp (for loading earlier)
             after: Get messages after this timestamp (for loading newer)
             limit: Maximum number of messages to return
+            include_subconversations: Include delegated subconversation rows
 
         Returns:
             Tuple of (messages, has_more_before, has_more_after)
         """
         conditions = [message_history_table.c.conversation_id == conversation_id]
+        if not include_subconversations:
+            conditions.append(message_history_table.c.subconversation_id.is_(None))
 
         # Add timestamp conditions
         if before:
             conditions.append(message_history_table.c.timestamp < before)
-            order = message_history_table.c.timestamp.desc()
+            timestamp_order = message_history_table.c.timestamp.desc()
+            internal_id_order = message_history_table.c.internal_id.desc()
         elif after:
             conditions.append(message_history_table.c.timestamp > after)
-            order = message_history_table.c.timestamp.asc()
+            timestamp_order = message_history_table.c.timestamp.asc()
+            internal_id_order = message_history_table.c.internal_id.asc()
         else:
             # Default: most recent messages
-            order = message_history_table.c.timestamp.desc()
+            timestamp_order = message_history_table.c.timestamp.desc()
+            internal_id_order = message_history_table.c.internal_id.desc()
 
         # Fetch one extra message to determine if there are more
         stmt = (
             select(message_history_table)
             .where(*conditions)
-            .order_by(
-                order, message_history_table.c.internal_id
-            )  # Add internal_id for stable sort
+            .order_by(timestamp_order, internal_id_order)
             .limit(limit + 1)
         )
 
@@ -1605,12 +1610,17 @@ class MessageHistoryRepository(BaseRepository):
             has_more_after = len(messages) > 0
         elif after:
             # Check if there are actually messages before the 'after' timestamp
+            before_conditions = [
+                message_history_table.c.conversation_id == conversation_id,
+                message_history_table.c.timestamp < after,
+            ]
+            if not include_subconversations:
+                before_conditions.append(
+                    message_history_table.c.subconversation_id.is_(None)
+                )
             check_before_stmt = (
                 select(message_history_table.c.internal_id)
-                .where(
-                    message_history_table.c.conversation_id == conversation_id,
-                    message_history_table.c.timestamp < after,
-                )
+                .where(*before_conditions)
                 .limit(1)
             )
             before_rows = await self._db.fetch_all(check_before_stmt)
@@ -1623,19 +1633,26 @@ class MessageHistoryRepository(BaseRepository):
 
         return messages, has_more_before, has_more_after
 
-    async def get_conversation_message_count(self, conversation_id: str) -> int:
+    async def get_conversation_message_count(
+        self, conversation_id: str, include_subconversations: bool = True
+    ) -> int:
         """
         Get the total number of messages in a conversation.
 
         Args:
             conversation_id: The conversation identifier
+            include_subconversations: Include delegated subconversation rows
 
         Returns:
             Total number of messages in the conversation
         """
+        conditions = [message_history_table.c.conversation_id == conversation_id]
+        if not include_subconversations:
+            conditions.append(message_history_table.c.subconversation_id.is_(None))
+
         stmt = select(
             func.count(message_history_table.c.internal_id).label("count")
-        ).where(message_history_table.c.conversation_id == conversation_id)
+        ).where(*conditions)
 
         row = await self._db.fetch_one(stmt)
         return row["count"] if row else 0
@@ -2024,6 +2041,7 @@ class MessageHistoryRepository(BaseRepository):
         conversation_id: str | None = None,
         date_from: datetime | None = None,
         date_to: datetime | None = None,
+        include_subconversations: bool = True,
     ) -> dict[tuple[str, str], list[MessageHistoryRow]]:
         """
         Retrieves all message history, grouped by (interface_type, conversation_id) and ordered by timestamp.
@@ -2033,6 +2051,7 @@ class MessageHistoryRepository(BaseRepository):
             conversation_id: Filter by conversation ID
             date_from: Filter messages after this date (inclusive)
             date_to: Filter messages before this date (inclusive)
+            include_subconversations: Include delegated subconversation rows
 
         Returns:
             Dictionary mapping (interface_type, conversation_id) tuples to lists of messages
@@ -2049,6 +2068,8 @@ class MessageHistoryRepository(BaseRepository):
             conditions.append(message_history_table.c.timestamp >= date_from)
         if date_to:
             conditions.append(message_history_table.c.timestamp <= date_to)
+        if not include_subconversations:
+            conditions.append(message_history_table.c.subconversation_id.is_(None))
 
         stmt = select(message_history_table)
         if conditions:
@@ -2083,6 +2104,7 @@ class MessageHistoryRepository(BaseRepository):
         conversation_id: str | None = None,
         date_from: datetime | None = None,
         date_to: datetime | None = None,
+        include_subconversations: bool = True,
     ) -> tuple[list[ConversationSummaryRow], int]:
         """
         Get conversation summaries with pagination, optimized for performance.
@@ -2094,6 +2116,7 @@ class MessageHistoryRepository(BaseRepository):
             conversation_id: Filter by specific conversation ID
             date_from: Filter conversations with messages after this date
             date_to: Filter conversations with messages before this date
+            include_subconversations: Include delegated subconversation rows
 
         Returns:
             Tuple of (summaries list, total count)
@@ -2118,6 +2141,9 @@ class MessageHistoryRepository(BaseRepository):
 
         if date_to:
             base_conditions.append(message_history_table.c.timestamp <= date_to)
+
+        if not include_subconversations:
+            base_conditions.append(message_history_table.c.subconversation_id.is_(None))
 
         # Subquery to get the latest message id and count per conversation
         # We get the max internal_id within the max timestamp to handle timestamp collisions
@@ -2171,6 +2197,11 @@ class MessageHistoryRepository(BaseRepository):
 
         if date_to:
             count_conditions.append(message_history_table.c.timestamp <= date_to)
+
+        if not include_subconversations:
+            count_conditions.append(
+                message_history_table.c.subconversation_id.is_(None)
+            )
 
         msg_count_subq = (
             select(
