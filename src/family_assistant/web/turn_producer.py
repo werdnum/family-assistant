@@ -354,19 +354,32 @@ async def run_turn_producer(
                     payload={"content": trailing},
                 )
 
-            await hub.end_turn(
-                conversation_id,
-                turn_id=turn_id,
-                status="complete",
-                reasoning_info=last_reasoning_info,
-            )
+        # The streaming transaction has committed here (the `async with` block
+        # exited): every message handle_chat_interaction_stream persisted is now
+        # visible on other database connections. Publish turn_ended only now, so
+        # a subscriber that reloads conversation history on the signal (the live
+        # follow stream, another tab/device) can never read the conversation
+        # before this turn's reply was committed. end_turn is idempotent, so if
+        # the post-completion steps below raise into the except handler, the
+        # resulting end_turn(failed) is safely ignored.
+        await hub.end_turn(
+            conversation_id,
+            turn_id=turn_id,
+            status="complete",
+            reasoning_info=last_reasoning_info,
+        )
 
-            delivered = await hub.wait_for_delivery(
-                conversation_id, turn_id, timeout=ack_grace_seconds
-            )
-            if not delivered:
+        delivered = await hub.wait_for_delivery(
+            conversation_id, turn_id, timeout=ack_grace_seconds
+        )
+        if not delivered:
+            # The streaming transaction is already closed; the disconnect-push
+            # notification is independent follow-up work, so give it its own
+            # short-lived context rather than holding the turn's transaction
+            # open across the ack grace window.
+            async with get_db_context(app_state.database_engine) as notify_db_context:
                 await _notify_disconnected_reply(
-                    stream_db_context,
+                    notify_db_context,
                     web_chat_interface,
                     interface_type=interface_type,
                     conversation_id=conversation_id,

@@ -689,4 +689,43 @@ export const testHandlers = {
 
       return new HttpResponse(stream, { headers: STREAM_HEADERS });
     }),
+
+  // A turn whose tool call, tool result, error and turn_ended all arrive in a
+  // SINGLE network chunk. This mirrors the hub replaying an already-finished
+  // turn in one burst (the subscriber connected after the turn completed), so
+  // the client processes every event in one synchronous pass with no render
+  // flush in between — the timing that exposed the toolCallMessageIdRef race.
+  toolCallThenErrorCoalesced: (toolName: string, errorMessage: string) =>
+    http.get('/api/v1/chat/conversations/:conversationId/stream', ({ params }) => {
+      const turnId = pendingTurnIds.get(String(params.conversationId)) ?? 'mock-turn';
+      const encoder = new TextEncoder();
+      const events = [
+        `event: turn_started\ndata: ${JSON.stringify({ turn_id: turnId, seq: 0 })}\n\n`,
+        `event: tool_call\ndata: ${JSON.stringify({
+          turn_id: turnId,
+          seq: 1,
+          tool_call: {
+            id: 'tool-call-1',
+            type: 'function',
+            function: { name: toolName, arguments: '{}' },
+          },
+        })}\n\n`,
+        `event: tool_result\ndata: ${JSON.stringify({
+          turn_id: turnId,
+          seq: 2,
+          tool_call_id: 'tool-call-1',
+          result: '{"status": "ok"}',
+        })}\n\n`,
+        `event: error\ndata: ${JSON.stringify({ turn_id: turnId, seq: 3, error: errorMessage })}\n\n`,
+        `event: turn_ended\ndata: ${JSON.stringify({ turn_id: turnId, seq: 4, status: 'complete' })}\n\n`,
+      ];
+      const stream = new ReadableStream({
+        start(controller) {
+          // One enqueue → one reader.read() chunk on the client.
+          controller.enqueue(encoder.encode(events.join('')));
+          controller.close();
+        },
+      });
+      return new HttpResponse(stream, { headers: STREAM_HEADERS });
+    }),
 };

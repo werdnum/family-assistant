@@ -273,6 +273,16 @@ async def test_notes_indexing_e2e(
         )
         logger.info(f"Indexing task {indexing_task_id} completed.")
 
+        # The index_note task creates the document and enqueues a SEPARATE
+        # embed_and_store_batch task that actually writes the embeddings. Wait
+        # for all remaining (spawned) tasks too, otherwise the semantic query
+        # below races the embedding write and intermittently returns 0 results
+        # under parallel CI load.
+        await wait_for_tasks_to_complete(
+            pg_vector_db_engine,
+            timeout_seconds=20.0,
+        )
+
         # --- Assert: Find Document Record ---
         async with DatabaseContext(engine=pg_vector_db_engine) as db:
             # Find the document that was created for our note

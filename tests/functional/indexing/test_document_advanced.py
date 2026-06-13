@@ -493,6 +493,16 @@ async def test_document_indexing_with_llm_summary_e2e(
             pg_vector_db_engine, task_ids={indexing_task_id}, timeout_seconds=20.0
         )
 
+        # The index task creates the document and enqueues a SEPARATE
+        # embed_and_store_batch task that writes the summary embedding. Wait for
+        # all remaining (spawned) tasks too, otherwise the summary query below
+        # races the embedding write and intermittently returns 0 results under
+        # parallel CI load.
+        await wait_for_tasks_to_complete(
+            pg_vector_db_engine,
+            timeout_seconds=20.0,
+        )
+
         # --- Assert: Query for the LLM-generated summary ---
         summary_query_results = None
         async with DatabaseContext(engine=pg_vector_db_engine) as db:

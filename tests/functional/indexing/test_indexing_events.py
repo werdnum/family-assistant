@@ -475,50 +475,50 @@ async def test_indexing_event_listener_integration(db_engine: AsyncEngine) -> No
         model_name="test-model", dimensions=128
     )
 
-    async with get_db_context(engine=db_engine) as db_ctx:
-        task = await db_ctx.tasks.dequeue(
-            task_types=["embed_and_store_batch"],
-            worker_id="test-worker",
-            current_time=datetime.now(UTC),
-        )
+    # Create processor to handle events
+    event_processor = EventProcessor(
+        sources={"indexing": indexing_source},
+        sample_interval_hours=0.1,
+        get_db_context_func=lambda: get_db_context(engine=db_engine),
+        timezone=ZoneInfo("Australia/Sydney"),
+    )
 
-        assert task is not None
+    # Mock processing service for wake_llm action
+    mock_processing_service = MagicMock()
+    mock_processing_service.generate_llm_response_for_chat = AsyncMock()
 
-        exec_context = ToolExecutionContext(
-            interface_type="web",
-            conversation_id="test-conv",
-            user_name="test-user",
-            turn_id=str(uuid.uuid4()),
-            db_context=db_ctx,
-            processing_service=None,
-            clock=None,
-            home_assistant_client=None,
-            event_sources=None,
-            attachment_registry=None,
-            camera_backend=None,
-            embedding_generator=embedding_generator,
-            indexing_source=indexing_source,
-            timezone=ZoneInfo("UTC"),
-        )
+    # Skip the wake_llm handler test for now as it's complex to mock
+    # The important part is that the event is emitted and stored
 
-        # Create processor to handle events
-        event_processor = EventProcessor(
-            sources={"indexing": indexing_source},
-            sample_interval_hours=0.1,
-            get_db_context_func=lambda: get_db_context(engine=db_engine),
-            timezone=ZoneInfo("Australia/Sydney"),
-        )
+    try:
+        # Start processor and wait for it to be fully initialized
+        await event_processor.start()
 
-        # Mock processing service for wake_llm action
-        mock_processing_service = MagicMock()
-        mock_processing_service.generate_llm_response_for_chat = AsyncMock()
+        async with get_db_context(engine=db_engine) as db_ctx:
+            task = await db_ctx.tasks.dequeue(
+                task_types=["embed_and_store_batch"],
+                worker_id="test-worker",
+                current_time=datetime.now(UTC),
+            )
 
-        # Skip the wake_llm handler test for now as it's complex to mock
-        # The important part is that the event is emitted and stored
+            assert task is not None
 
-        try:
-            # Start processor and wait for it to be fully initialized
-            await event_processor.start()
+            exec_context = ToolExecutionContext(
+                interface_type="web",
+                conversation_id="test-conv",
+                user_name="test-user",
+                turn_id=str(uuid.uuid4()),
+                db_context=db_ctx,
+                processing_service=None,
+                clock=None,
+                home_assistant_client=None,
+                event_sources=None,
+                attachment_registry=None,
+                camera_backend=None,
+                embedding_generator=embedding_generator,
+                indexing_source=indexing_source,
+                timezone=ZoneInfo("UTC"),
+            )
 
             # Process embedding task - should emit event
             assert task["payload"] is not None
@@ -526,20 +526,22 @@ async def test_indexing_event_listener_integration(db_engine: AsyncEngine) -> No
                 exec_context, cast("EmbedAndStoreBatchPayload", task["payload"])
             )
 
-            # Wait for all events to be processed before polling
-            await indexing_source.wait_for_pending_events()
+        # The handler's transaction has committed here. Only wait for event
+        # persistence AFTER the commit: the event processor stores events on
+        # its own connection, and on SQLite that write must wait for this
+        # transaction's writer lock — awaiting it inside the `async with`
+        # block deadlocks until the busy timeout.
+        await indexing_source.wait_for_pending_events()
 
-            # Poll for the event and verify
-            event_data = await poll_for_document_ready_event(doc_id, engine=db_engine)
+        # Poll for the event and verify
+        event_data = await poll_for_document_ready_event(doc_id, engine=db_engine)
 
-            assert event_data["document_title"] == "School Newsletter - December 2024"
-            assert event_data["document_metadata"] == {
-                "sender": "newsletter@school.edu"
-            }
+        assert event_data["document_title"] == "School Newsletter - December 2024"
+        assert event_data["document_metadata"] == {"sender": "newsletter@school.edu"}
 
-        finally:
-            # Stop processor
-            await event_processor.stop()
+    finally:
+        # Stop processor
+        await event_processor.stop()
 
 
 @pytest.mark.asyncio

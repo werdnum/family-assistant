@@ -2,6 +2,7 @@
 Functional tests for the vector storage module using PostgreSQL.
 """
 
+import asyncio
 import logging
 import uuid
 from datetime import UTC, datetime
@@ -583,3 +584,37 @@ async def test_get_full_document_content_with_raw_content(
                 logger.info(f"Cleaned up test document {doc_id}")
 
     logger.info("--- Get Full Document Content Test Passed ---")
+
+
+@pytest.mark.asyncio
+async def test_concurrent_add_document_same_source_id(db_engine: AsyncEngine) -> None:
+    """Concurrent upserts of one source_id must not collide.
+
+    Multiple index_message_history_batch tasks are enqueued for the same turn
+    (one per persisted message) and can run on parallel workers. A
+    select-then-insert manual upsert raced here: both transactions selected
+    nothing, both inserted, and the loser failed with a UNIQUE violation on
+    documents.source_id. The atomic ON CONFLICT upsert must let both succeed
+    and leave exactly one row.
+    """
+    source_id = f"message_turn:{uuid.uuid4()}"
+
+    async def upsert(title: str) -> int:
+        async with DatabaseContext(engine=db_engine) as db:
+            return await add_document(
+                db,
+                MockDocumentImpl(
+                    source_type="message_history",
+                    source_id=source_id,
+                    title=title,
+                    created_at=datetime.now(UTC),
+                ),
+            )
+
+    doc_ids = await asyncio.gather(upsert("first writer"), upsert("second writer"))
+
+    assert doc_ids[0] == doc_ids[1], "Both upserts must resolve to the same document"
+    async with DatabaseContext(engine=db_engine) as db:
+        record = await get_document_by_source_id(db, source_id)
+        assert record is not None
+        assert record.id == doc_ids[0]

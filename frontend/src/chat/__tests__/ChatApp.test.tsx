@@ -342,8 +342,47 @@ describe('ChatApp', () => {
     expect(screen.queryByText('Telegram message that should not appear')).not.toBeInTheDocument();
   });
 
+  it('shows the after-running-tools error banner when tool call + error + turn_ended arrive in one chunk', async () => {
+    const { server } = await import('../../test/setup.js');
+    const { testHandlers } = await import('../../test/mocks/handlers');
+
+    // All of the turn's SSE events are delivered in a single network chunk
+    // (hub replay of an already-finished turn). The client then processes
+    // tool_call, error and turn_ended in one synchronous pass with no React
+    // render in between, so onComplete must not depend on state-updater side
+    // effects to know a tool call happened. Regression test for the flake
+    // where the generic "error processing your message" banner appeared
+    // instead of the "error after running tools" one.
+    server.use(
+      testHandlers.toolCallThenErrorCoalesced(
+        'activate_tools',
+        'I encountered an error while processing your message.'
+      )
+    );
+
+    const user = userEvent.setup();
+    await renderChatApp({ waitForReady: true });
+
+    const messageInput = screen.getByPlaceholderText('Message Family Assistant...');
+    await user.type(messageInput, 'Activate tools then fail');
+    await user.keyboard('{Enter}');
+
+    expect(
+      await screen.findByText(/Sorry, I encountered an error after running tools\./, undefined, {
+        timeout: 10000,
+      })
+    ).toBeInTheDocument();
+  }, 30000);
+
   // Note: Attachment display from assistant message metadata is covered by E2E Playwright tests:
   // - test_tool_attachment_persistence_after_page_reload (tests/functional/web/test_chat_ui_attachment_response.py)
   // - test_attachment_response_flow (tests/functional/web/test_chat_ui_attachment_response.py)
   // These tests verify the full user-visible behavior including page reloads and attachment display.
+
+  // Note: The self-turn reload guard is covered in layers:
+  // - useLiveMessageUpdates.test.tsx verifies turn_id is threaded through the callback
+  // - ChatApp records its own turn ids in selfTurnIdsRef and skips the reload when a
+  //   turn_ended for one of them arrives (preventing the clobber of freshly-streamed state)
+  // - The full end-to-end behavior is exercised by the Playwright chat tests in
+  //   tests/functional/web/ui/ (e.g. test_chat_basic.py, test_chat_stream_error_recovery.py)
 });
