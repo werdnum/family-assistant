@@ -15,7 +15,7 @@ from alembic import op
 
 # revision identifiers, used by Alembic.
 revision: str = "add_delegation_runs"
-down_revision: str | None = "add_ios_push_tokens"
+down_revision: str | None = "add_confirmation_origin"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
