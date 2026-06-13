@@ -42,7 +42,6 @@ from family_assistant.config_sources import (
     load_yaml_file,
 )
 from family_assistant.delegation_security import DelegationSecurityLevel
-from family_assistant.otel_env import neutralize_otel_env
 from family_assistant.tools.metadata import ToolDescriptor
 from family_assistant.tools.policy import PolicyEngine, ToolPolicyDecision
 
@@ -547,21 +546,13 @@ class TestApplyEnvVarOverrides:
             apply_env_var_overrides(config)
         assert config["model"] == "original-model"
 
-    def test_applies_otel_enabled_env_var(self) -> None:
-        """Test applying the internally renamed OTEL_ENABLED boolean env var."""
-        config: dict[str, Any] = {"otel": {}}
-        with mock.patch.dict(os.environ, {"_FA_OTEL_ENABLED": "true"}, clear=False):
-            apply_env_var_overrides(config)
-        assert config["otel"]["enabled"] is True
-
-    def test_package_import_renames_public_otel_env_vars(self) -> None:
-        """Import-time rewrite keeps OTel env vars away from SDK auto-config."""
+    def test_package_import_preserves_public_otel_env_vars(self) -> None:
+        """Importing the package leaves standard OTel env vars intact."""
         code = (
             "import os; import family_assistant; "
             "print(os.environ.get('OTEL_TRACES_EXPORTER')); "
             "print(os.environ.get('OTEL_METRICS_EXPORTER')); "
-            "print(os.environ.get('_FA_OTEL_TRACES_EXPORTER')); "
-            "print(os.environ.get('_FA_OTEL_METRICS_EXPORTER')); "
+            "print(os.environ.get('OTEL_EXPORTER_OTLP_TRACES_PROTOCOL')); "
             "print(os.environ.get('OTEL_PYTHON_METER_PROVIDER')); "
             "print(os.environ.get('OTEL_PYTHON_FASTAPI_EXCLUDED_URLS')); "
             "print(os.environ.get('OTEL_EXPORTER_OTLP_HEADERS'))"
@@ -571,8 +562,9 @@ class TestApplyEnvVarOverrides:
             check=True,
             env={
                 **os.environ,
-                "OTEL_TRACES_EXPORTER": "otlp-http",
+                "OTEL_TRACES_EXPORTER": "otlp",
                 "OTEL_METRICS_EXPORTER": "none",
+                "OTEL_EXPORTER_OTLP_TRACES_PROTOCOL": "http/protobuf",
                 "OTEL_PYTHON_METER_PROVIDER": "opentelemetry.sdk.metrics.MeterProvider",
                 "OTEL_PYTHON_FASTAPI_EXCLUDED_URLS": "/health",
                 "OTEL_EXPORTER_OTLP_HEADERS": "authorization=Bearer token",
@@ -581,48 +573,13 @@ class TestApplyEnvVarOverrides:
             text=True,
         )
         assert result.stdout.splitlines() == [
+            "otlp",
             "none",
-            "none",
-            "otlp-http",
-            "none",
-            "None",
+            "http/protobuf",
+            "opentelemetry.sdk.metrics.MeterProvider",
             "/health",
             "authorization=Bearer token",
         ]
-
-    def test_dotenv_loaded_public_otel_env_vars_are_renamed(self) -> None:
-        """OTEL values loaded after package import are still applied to config."""
-        config: dict[str, Any] = {"otel": {}}
-        with mock.patch.dict(os.environ, {"OTEL_METRICS_EXPORTER": "none"}):
-            neutralize_otel_env()
-            apply_env_var_overrides(config)
-        assert os.environ["OTEL_METRICS_EXPORTER"] == "none"
-        assert config["otel"]["metrics_exporter"] == "none"
-
-    def test_existing_internal_otel_env_var_wins_over_later_public_value(
-        self,
-    ) -> None:
-        """Real env overrides keep priority over later .env values."""
-        config: dict[str, Any] = {"otel": {}}
-        with mock.patch.dict(
-            os.environ,
-            {
-                "_FA_OTEL_METRICS_EXPORTER": "none",
-                "OTEL_METRICS_EXPORTER": "otlp-http",
-            },
-        ):
-            neutralize_otel_env()
-            apply_env_var_overrides(config)
-        assert config["otel"]["metrics_exporter"] == "none"
-
-    def test_applies_otel_sample_rate_env_var(self) -> None:
-        """Test applying _FA_OTEL_TRACES_SAMPLE_RATE float env var."""
-        config: dict[str, Any] = {"otel": {}}
-        with mock.patch.dict(
-            os.environ, {"_FA_OTEL_TRACES_SAMPLE_RATE": "0.25"}, clear=False
-        ):
-            apply_env_var_overrides(config)
-        assert config["otel"]["traces_sample_rate"] == 0.25
 
     def test_applies_mailgun_webhook_signing_key_env_var(self) -> None:
         """Test applying MAILGUN_WEBHOOK_SIGNING_KEY env var."""
@@ -1454,45 +1411,6 @@ class TestLoadConfig:
             )
 
         assert config.model == "env-model"
-
-    def test_dotenv_otel_values_survive_import_time_guards(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        """.env OTel values are not masked by public auto-config guards."""
-        (tmp_path / ".env").write_text(
-            "\n".join([
-                "OTEL_ENABLED=true",
-                "OTEL_TRACES_EXPORTER=otlp-http",
-                "OTEL_METRICS_EXPORTER=none",
-                "OTEL_EXPORTER_OTLP_ENDPOINT=http://jaeger.example:4318",
-            ])
-        )
-        prompts_file = tmp_path / "prompts.yaml"
-        prompts_file.write_text(yaml.dump({"system_prompt": "test"}))
-        monkeypatch.chdir(tmp_path)
-
-        otel_env_vars = [
-            key
-            for key in os.environ
-            if key.startswith("OTEL_") or key.startswith("_FA_OTEL_")
-        ]
-        clean_env = {
-            key: value for key, value in os.environ.items() if key not in otel_env_vars
-        }
-
-        with mock.patch.dict(os.environ, clean_env, clear=True):
-            neutralize_otel_env()
-            config = load_config(
-                defaults_file_path=str(tmp_path / "missing_defaults.yaml"),
-                config_file_path=str(tmp_path / "missing_config.yaml"),
-                prompts_file_path=str(prompts_file),
-                load_dotenv_file=True,
-            )
-
-        assert config.otel.enabled is True
-        assert config.otel.traces_exporter == "otlp-http"
-        assert config.otel.metrics_exporter == "none"
-        assert config.otel.otlp_endpoint == "http://jaeger.example:4318"
 
     def test_operator_default_profile_tools_policy_extends_defaults(
         self, tmp_path: Path

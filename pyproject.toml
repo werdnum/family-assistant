@@ -122,7 +122,7 @@ dependencies = [
     "kubernetes-asyncio>=35.0.0",
     "cloudcoil-models-kubernetes>=1.32",
     "sqlparse>=0.5.5",
-    # OpenTelemetry observability
+    # OpenTelemetry API and zero-code instrumentation runtime
     "opentelemetry-api>=1.25.0",
     "opentelemetry-sdk>=1.25.0",
     "opentelemetry-exporter-otlp-proto-grpc>=1.25.0",
@@ -138,6 +138,8 @@ dependencies = [
     "dnspython>=2.8.0",
     "h2>=4.3.0",
     "pyjwt[crypto]>=2.10.1",
+    "opentelemetry-distro>=0.46b0",
+    "opentelemetry-exporter-otlp>=1.25.0",
 ]
 
 [project.optional-dependencies]
@@ -286,11 +288,11 @@ shell = "npm run --prefix frontend build"
 
 [tool.poe.tasks.serve]
 help = "Run the full application (Telegram enabled if token is present)"
-shell = "DEV_MODE=false GEMINI_API_KEY=${GEMINI_API_KEY:-dev-key} python -m family_assistant"
+shell = "DEV_MODE=false GEMINI_API_KEY=${GEMINI_API_KEY:-dev-key} OTEL_SERVICE_NAME=${OTEL_SERVICE_NAME:-family-assistant} OTEL_TRACES_EXPORTER=${OTEL_TRACES_EXPORTER:-none} OTEL_METRICS_EXPORTER=${OTEL_METRICS_EXPORTER:-none} OTEL_LOGS_EXPORTER=${OTEL_LOGS_EXPORTER:-none} opentelemetry-instrument python -m family_assistant"
 
 [tool.poe.tasks.serve-reload]
 help = "Run the full application with auto-reload using hupper"
-shell = "DEV_MODE=false GEMINI_API_KEY=${GEMINI_API_KEY:-dev-key} hupper -m family_assistant -w config.yaml -w prompts.yaml"
+shell = "DEV_MODE=false GEMINI_API_KEY=${GEMINI_API_KEY:-dev-key} OTEL_SERVICE_NAME=${OTEL_SERVICE_NAME:-family-assistant} OTEL_TRACES_EXPORTER=${OTEL_TRACES_EXPORTER:-none} OTEL_METRICS_EXPORTER=${OTEL_METRICS_EXPORTER:-none} OTEL_LOGS_EXPORTER=${OTEL_LOGS_EXPORTER:-none} opentelemetry-instrument hupper -m family_assistant -w config.yaml -w prompts.yaml"
 
 [tool.poe.tasks.dev]
 help = "Run backend and frontend servers concurrently (access app at http://localhost:5173 or http://<your-ip>:5173)"
@@ -456,4 +458,3 @@ explicit = true
 torch = { index = "torch-cpu" }
 telegram-bot-api-mock = { git = "https://github.com/werdnum/telegram-bot-api-mock" }
 browser-handoff-service = { git = "https://github.com/werdnum/browser-server.git" }
-

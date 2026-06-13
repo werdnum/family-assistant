@@ -209,9 +209,13 @@ ENV BUILD_DATE=$BUILD_DATE
 # The application will run with reduced privileges
 USER appuser
 
-# Define the default command to run the application using the installed entry point
-# This uses the [project.scripts] defined in pyproject.toml
-CMD ["family-assistant"]
+# Define the default command to run the application using zero-code OTel setup.
+# Exporters default to none so a plain container launch does not try localhost.
+ENV OTEL_SERVICE_NAME=family-assistant \
+    OTEL_TRACES_EXPORTER=none \
+    OTEL_METRICS_EXPORTER=none \
+    OTEL_LOGS_EXPORTER=none
+CMD ["opentelemetry-instrument", "family-assistant"]
 
 # Alternatively, run using python -m:
 # CMD ["python", "-m", "family_assistant"]

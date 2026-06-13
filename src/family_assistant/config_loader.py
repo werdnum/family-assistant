@@ -24,12 +24,11 @@ from dataclasses import dataclass
 from typing import Any
 
 import yaml
-from dotenv import dotenv_values, find_dotenv, load_dotenv
+from dotenv import find_dotenv, load_dotenv
 from pydantic import ValidationError
 
 from .config_models import AppConfig
 from .config_sources import deep_merge_dicts, load_yaml_file
-from .otel_env import neutralize_otel_env
 
 logger = logging.getLogger(__name__)
 
@@ -150,24 +149,6 @@ ENV_VAR_MAPPINGS: list[EnvVarMapping] = [
     EnvVarMapping("BROWSER_HANDOFF_URL", "browser_handoff_config.service_url"),
     EnvVarMapping(
         "BROWSER_HANDOFF_TIMEOUT", "browser_handoff_config.timeout_seconds", float
-    ),
-    # OpenTelemetry env vars are renamed to _FA_OTEL_* at startup
-    # (in __init__.py) to prevent the OTEL SDK from auto-configuring.
-    EnvVarMapping("_FA_OTEL_ENABLED", "otel.enabled", bool),
-    EnvVarMapping("_FA_OTEL_SERVICE_NAME", "otel.service_name"),
-    EnvVarMapping("_FA_OTEL_TRACES_EXPORTER", "otel.traces_exporter"),
-    EnvVarMapping("_FA_OTEL_METRICS_EXPORTER", "otel.metrics_exporter"),
-    EnvVarMapping("_FA_OTEL_EXPORTER_OTLP_ENDPOINT", "otel.otlp_endpoint"),
-    EnvVarMapping(
-        "_FA_OTEL_EXPORTER_OTLP_TRACES_ENDPOINT", "otel.otlp_traces_endpoint"
-    ),
-    EnvVarMapping(
-        "_FA_OTEL_EXPORTER_OTLP_METRICS_ENDPOINT", "otel.otlp_metrics_endpoint"
-    ),
-    EnvVarMapping("_FA_OTEL_LOG_CORRELATION", "otel.log_correlation", bool),
-    EnvVarMapping("_FA_OTEL_TRACES_SAMPLE_RATE", "otel.traces_sample_rate", float),
-    EnvVarMapping(
-        "_FA_OTEL_DEBUG_CONSOLE_EXPORTER", "otel.debug_console_exporter", bool
     ),
 ]
 
@@ -1037,13 +1018,7 @@ def load_config(
 
     if load_dotenv_file:
         dotenv_path = find_dotenv(usecwd=True)
-        dotenv_otel_values = {
-            key: value
-            for key, value in dotenv_values(dotenv_path).items()
-            if key.startswith("OTEL_")
-        }
         load_dotenv(dotenv_path)
-        neutralize_otel_env(dotenv_otel_values)
 
     apply_env_var_overrides(config_data)
     apply_user_identity_file(config_data)

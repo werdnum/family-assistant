@@ -12,60 +12,59 @@ docker compose up -d
 
 ## OpenTelemetry (Observability)
 
-OpenTelemetry provides distributed tracing, metrics, and log correlation. It is **disabled by
-default** and has zero overhead when disabled (all API calls fall back to no-ops).
+OpenTelemetry provider and exporter setup is handled by the standard `opentelemetry-instrument`
+wrapper. The Docker image default command already uses that wrapper and defaults all exporters to
+`none`, so plain local launches do not try to export telemetry.
 
 ### Quick Start
 
-To enable tracing with an OTLP-compatible collector (e.g. Jaeger, Grafana Tempo):
+To enable tracing with an OTLP-compatible collector, export standard SDK variables before starting
+the process:
 
 ```bash
-export OTEL_ENABLED=true
-export OTEL_EXPORTER_OTLP_ENDPOINT="http://your-collector:4317"
-python -m family_assistant
+export OTEL_SERVICE_NAME=family-assistant
+export OTEL_TRACES_EXPORTER=otlp
+export OTEL_METRICS_EXPORTER=none
+export OTEL_LOGS_EXPORTER=none
+export OTEL_EXPORTER_OTLP_TRACES_PROTOCOL=grpc
+export OTEL_EXPORTER_OTLP_TRACES_ENDPOINT="http://your-collector:4317"
+opentelemetry-instrument family-assistant
 ```
 
 ### Environment Variables
 
-| Variable                              | Default                 | Description                                                                                     |
-| ------------------------------------- | ----------------------- | ----------------------------------------------------------------------------------------------- |
-| `OTEL_ENABLED`                        | `false`                 | Master switch — must be `true` to enable OTel                                                   |
-| `OTEL_SERVICE_NAME`                   | `family-assistant`      | Service name in traces                                                                          |
-| `OTEL_TRACES_EXPORTER`                | `otlp-grpc`             | `otlp-grpc`, `otlp-http`, `console`, or `none`                                                  |
-| `OTEL_METRICS_EXPORTER`               | `otlp-grpc`             | `otlp-grpc`, `otlp-http`, `console`, or `none`                                                  |
-| `OTEL_EXPORTER_OTLP_ENDPOINT`         | `http://localhost:4317` | Shared OTLP endpoint (gRPC port; for `otlp-http` the app appends `/v1/traces` or `/v1/metrics`) |
-| `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT`  | _(uses shared)_         | Override endpoint for traces only                                                               |
-| `OTEL_EXPORTER_OTLP_METRICS_ENDPOINT` | _(uses shared)_         | Override endpoint for metrics only                                                              |
-| `OTEL_LOG_CORRELATION`                | `true`                  | Inject trace/span IDs into Python log records                                                   |
-| `OTEL_TRACES_SAMPLE_RATE`             | `1.0`                   | Sampling rate (0.0–1.0)                                                                         |
-| `OTEL_DEBUG_CONSOLE_EXPORTER`         | `false`                 | Also print spans to console (for debugging)                                                     |
+- `OTEL_SERVICE_NAME`: service name in traces. Defaults to `family-assistant`.
+- `OTEL_TRACES_EXPORTER`: trace exporter. Defaults to `none`; use `otlp` or `console` to enable.
+- `OTEL_METRICS_EXPORTER`: metrics exporter. Defaults to `none`.
+- `OTEL_LOGS_EXPORTER`: logs exporter. Defaults to `none`.
+- `OTEL_EXPORTER_OTLP_TRACES_PROTOCOL`: traces protocol, such as `grpc` or `http/protobuf`.
+- `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT`: signal-specific OTLP traces endpoint.
+- `OTEL_EXPORTER_OTLP_METRICS_ENDPOINT`: signal-specific OTLP metrics endpoint.
+- `OTEL_SDK_DISABLED`: set to `true` before wrapper startup to disable SDK setup entirely.
 
 ### When disabled
 
-When `OTEL_ENABLED=false` (the default), no-op tracer and meter providers are explicitly set. No SDK
-components are loaded, no connections are attempted, and no errors are produced. You do not need a
-collector running.
+When the exporters are `none` (the Docker default), the SDK installs providers but no network
+exporters are configured. You do not need a collector running. Set `OTEL_SDK_DISABLED=true` before
+wrapper startup to disable SDK setup entirely.
 
 ### When enabled
 
 Ensure an OTLP-compatible collector is reachable at the configured endpoint. Without a collector,
-you will see gRPC/HTTP connection errors in the logs. To enable OTel without a collector (e.g. for
-local development), set the exporter to `console` or `none`:
+you will see gRPC/HTTP connection errors in the logs. To emit local spans without a collector, set
+the traces exporter to `console` and keep metrics/logs disabled:
 
 ```bash
-export OTEL_ENABLED=true
-export OTEL_TRACES_EXPORTER=console   # Print spans to stdout
-export OTEL_METRICS_EXPORTER=none     # Disable metrics export
+export OTEL_TRACES_EXPORTER=console
+export OTEL_METRICS_EXPORTER=none
+export OTEL_LOGS_EXPORTER=none
 ```
 
-When `OTEL_TRACES_EXPORTER=otlp-http`, a shared base endpoint like `http://jaeger:4318` is valid.
-Family Assistant normalizes the shared OTLP endpoint to the correct signal path automatically.
-Signal-specific endpoints are used exactly as configured. When `OTEL_METRICS_EXPORTER=none`, the app
-installs a no-op meter provider so instrumentations do not fall back to a separate metrics pipeline.
+Use signal-specific endpoints. For OTLP/HTTP, include the signal path such as `/v1/traces`.
 
 ### Docker Compose with Jaeger
 
-Add a Jaeger service to your `docker-compose.yaml`:
+Add a Jaeger service and enable trace export for the app:
 
 ```yaml
 services:
@@ -76,11 +75,14 @@ services:
       - "16686:16686" # Jaeger UI
   app:
     environment:
-      - OTEL_ENABLED=true
-      - OTEL_EXPORTER_OTLP_ENDPOINT=http://jaeger:4317
+      - OTEL_TRACES_EXPORTER=otlp
+      - OTEL_METRICS_EXPORTER=none
+      - OTEL_LOGS_EXPORTER=none
+      - OTEL_EXPORTER_OTLP_TRACES_PROTOCOL=grpc
+      - OTEL_EXPORTER_OTLP_TRACES_ENDPOINT=http://jaeger:4317
 ```
 
 The Jaeger UI will be available at `http://localhost:16686`.
 
 See [docs/design/opentelemetry-observability.md](../docs/design/opentelemetry-observability.md) for
-the full design document including span hierarchy, semantic conventions, and implementation details.
+the application/runtime contract.

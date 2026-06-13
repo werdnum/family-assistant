@@ -13,7 +13,6 @@ from .assistant import Assistant
 
 # Import configuration loading from the new module
 from .config_loader import load_config
-from .observability import setup_observability
 
 # --- Logging Configuration ---
 logging.basicConfig(
@@ -97,20 +96,6 @@ def main() -> int:
     fastapi_app.state.config = config
     logger.info("Stored final AppConfig in FastAPI app state.")
 
-    # Initialize OpenTelemetry (no-op when disabled)
-    otel_handle = setup_observability(config.otel, fastapi_app)
-
-    if otel_handle and config.otel.log_correlation:
-        root_logger = logging.getLogger()
-        for handler in root_logger.handlers:
-            handler.setFormatter(
-                logging.Formatter(
-                    "%(asctime)s - %(name)s - %(levelname)s"
-                    " [trace_id=%(otelTraceID)s span_id=%(otelSpanID)s]"
-                    " - %(message)s"
-                )
-            )
-
     # LLM client overrides would be passed here if needed for main execution,
     # but typically this is for testing. For main run, it's None.
     assistant_app = Assistant(config, llm_client_overrides=None)
@@ -161,10 +146,6 @@ def main() -> int:
             loop.run_until_complete(assistant_app.stop_services())
         return 1
     finally:
-        # Shut down OpenTelemetry before closing the event loop
-        if otel_handle:
-            otel_handle.shutdown()
-
         # Ensure event loop cleanup
         remaining_tasks = [t for t in asyncio.all_tasks(loop=loop) if not t.done()]
         if remaining_tasks:
