@@ -13,7 +13,7 @@ import sys
 from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from typing import TypeVar
+from typing import TypeVar, overload
 
 import httpx
 import sqlalchemy as sa
@@ -274,6 +274,24 @@ async def wait_for_tasks_to_complete(
     raise TimeoutError(
         f"Timeout ({timeout_seconds}s) waiting for tasks to complete. Elapsed: {elapsed:.2f}s\n{pending_tasks_details}"
     )
+
+
+@overload
+async def wait_for_condition(  # noqa: UP047 - Use TypeVar for pylint compatibility
+    condition: Callable[[], Awaitable[T]],
+    timeout: float = ...,
+    interval: float = ...,
+    description: str = ...,
+) -> T: ...
+
+
+@overload
+async def wait_for_condition(  # noqa: UP047 - Use TypeVar for pylint compatibility
+    condition: Callable[[], T],
+    timeout: float = ...,
+    interval: float = ...,
+    description: str = ...,
+) -> T: ...
 
 
 async def wait_for_condition(  # noqa: UP047 - Use TypeVar for pylint compatibility
