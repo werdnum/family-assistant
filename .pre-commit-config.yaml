@@ -37,10 +37,8 @@ repos:
     hooks:
       - id: yamlfmt
         name: yamlfmt
-        language: golang
-        entry: yamlfmt
-        additional_dependencies:
-          - github.com/google/yamlfmt/cmd/yamlfmt@v0.17.0
+        language: system
+        entry: uvx --from google-yamlfmt==0.17.0 yamlfmt
         types: [yaml]
   - repo: local
     hooks:
@@ -57,4 +55,3 @@ repos:
         language: system
         files: ^frontend/.*\.(js|jsx|ts|tsx)$
         pass_filenames: true
-
