@@ -384,6 +384,16 @@ async def test_document_indexing_and_query_e2e(
         )
         logger.info(f"Task {indexing_task_id} reported as complete.")
 
+        # The index task creates the document and enqueues a SEPARATE
+        # embed_and_store_batch task that actually writes the embeddings. Wait
+        # for all remaining (spawned) tasks too, otherwise the vector queries
+        # below race the embedding writes and intermittently return 0 results
+        # under parallel CI load.
+        await wait_for_tasks_to_complete(
+            pg_vector_db_engine,
+            timeout_seconds=20.0,
+        )
+
         # --- Assertions (Remain the same as before) ---
 
         # --- Act & Assert: Semantic Query ---

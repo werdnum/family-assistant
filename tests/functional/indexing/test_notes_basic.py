@@ -27,7 +27,7 @@ from family_assistant.storage.tasks import tasks_table
 from family_assistant.storage.vector import query_vectors
 from family_assistant.task_worker import TaskWorker
 from family_assistant.tools.types import ToolExecutionContext
-from tests.helpers import wait_for_condition, wait_for_tasks_to_complete
+from tests.helpers import wait_for_tasks_to_complete
 
 
 def _create_mock_processing_service() -> MagicMock:
@@ -273,6 +273,16 @@ async def test_notes_indexing_e2e(
         )
         logger.info(f"Indexing task {indexing_task_id} completed.")
 
+        # The index_note task creates the document and enqueues a SEPARATE
+        # embed_and_store_batch task that actually writes the embeddings. Wait
+        # for all remaining (spawned) tasks too, otherwise the semantic query
+        # below races the embedding write and intermittently returns 0 results
+        # under parallel CI load.
+        await wait_for_tasks_to_complete(
+            pg_vector_db_engine,
+            timeout_seconds=20.0,
+        )
+
         # --- Assert: Find Document Record ---
         async with DatabaseContext(engine=pg_vector_db_engine) as db:
             # Find the document that was created for our note
@@ -292,30 +302,22 @@ async def test_notes_indexing_e2e(
             "__semantic_query_embedding__"
         ]
 
-        # The index_note task creates the document and enqueues a SEPARATE
-        # embed_and_store_batch task that actually writes the embeddings. We
-        # only awaited the index_note task above, so the embeddings can land
-        # slightly later (more likely under parallel CI load). Poll the
-        # semantic query until the embeddings are queryable instead of
-        # asserting immediately, which raced and intermittently saw 0 results.
-        # ast-grep-ignore: no-dict-any - mirrors query_vectors' dynamic result rows
-        async def _semantic_query() -> list[dict[str, Any]]:
-            async with DatabaseContext(engine=pg_vector_db_engine) as db:
-                return await query_vectors(
-                    db,
-                    query_embedding=semantic_query_embedding,
-                    embedding_model=TEST_EMBEDDING_MODEL,
-                    limit=5,
-                    filters={"source_type": "note"},
-                    embedding_type_filter=["raw_note_text"],
-                )
+        semantic_query_results = None
+        async with DatabaseContext(engine=pg_vector_db_engine) as db:
+            logger.info(
+                f"Querying vectors using semantic text: '{TEST_QUERY_SEMANTIC}'"
+            )
+            semantic_query_results = await query_vectors(
+                db,
+                query_embedding=semantic_query_embedding,
+                embedding_model=TEST_EMBEDDING_MODEL,
+                limit=5,
+                filters={"source_type": "note"},
+                embedding_type_filter=["raw_note_text"],
+            )
 
-        logger.info(f"Querying vectors using semantic text: '{TEST_QUERY_SEMANTIC}'")
-        semantic_query_results = await wait_for_condition(
-            _semantic_query,
-            timeout=20.0,
-            description="semantic query to return note embeddings",
-        )
+        assert semantic_query_results is not None, "Semantic query returned None"
+        assert len(semantic_query_results) > 0, "No results from semantic query"
         logger.info(f"Semantic query returned {len(semantic_query_results)} result(s).")
 
         # Find our note in the results
