@@ -1058,6 +1058,19 @@ class AppConfig(BaseSettings):
     model: str = "gemini/gemini-3.1-pro-preview"
     embedding_model: str = "gemini/gemini-embedding-001"
     embedding_dimensions: int = 1536
+    # Optional explicit embedding provider selection. When None, the provider is
+    # inferred from the embedding_model name (e.g. "gemini/" prefix, local path).
+    # Set to "openai" to use any OpenAI-compatible embeddings endpoint, in which
+    # case embedding_model is sent to the API verbatim.
+    embedding_provider: Literal["gemini", "openai", "sentence_transformer"] | None = (
+        None
+    )
+    # Base URL for an OpenAI-compatible embeddings endpoint (e.g. OpenRouter:
+    # "https://openrouter.ai/api/v1"). Only used when embedding_provider == "openai".
+    embedding_base_url: str | None = None
+    # API key for the OpenAI-compatible embeddings endpoint. Falls back to
+    # openai_api_key / OPENAI_API_KEY when unset.
+    embedding_api_key: str | None = None
 
     # Storage paths
     database_url: str = "sqlite+aiosqlite:///family_assistant.db"

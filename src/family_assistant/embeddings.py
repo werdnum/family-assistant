@@ -13,6 +13,7 @@ from typing import Any, Protocol, cast, runtime_checkable
 from google import genai
 from google.genai import types as genai_types
 from google.genai.client import DebugConfig
+from openai import AsyncOpenAI
 
 # Declare module/class variables that will be conditionally populated
 
@@ -142,6 +143,82 @@ class GoogleEmbeddingGenerator:
 
         logger.debug(
             f"Google embedding response received. Generated {len(embeddings_list)} embeddings."
+        )
+        return EmbeddingResult(embeddings=embeddings_list, model_name=self.model_name)
+
+
+class OpenAIEmbeddingGenerator:
+    """Embedding generator for any OpenAI-compatible embeddings endpoint.
+
+    Works with the OpenAI API directly as well as OpenAI-compatible gateways such
+    as OpenRouter (``base_url="https://openrouter.ai/api/v1"``) or self-hosted
+    inference servers. The model identifier is sent to the API verbatim, so it
+    must match the provider's expectations (e.g. ``text-embedding-3-small`` for
+    OpenAI, ``openai/text-embedding-3-small`` for OpenRouter).
+    """
+
+    def __init__(
+        self,
+        model: str,
+        api_key: str | None = None,
+        base_url: str | None = None,
+        dimensions: int | None = None,
+    ) -> None:
+        if not model:
+            raise ValueError("Embedding model identifier cannot be empty.")
+        self._model_name = model
+        self._dimensions = dimensions
+        # AsyncOpenAI requires an api_key; OpenAI-compatible gateways often accept
+        # any non-empty value, so fall back to a placeholder for keyless endpoints.
+        self._client = AsyncOpenAI(api_key=api_key or "not-needed", base_url=base_url)
+        logger.info(
+            f"OpenAIEmbeddingGenerator initialized for model: {self._model_name}, "
+            f"dimensions: {self._dimensions}, base_url: {base_url}"
+        )
+
+    @property
+    def model_name(self) -> str:
+        return self._model_name
+
+    async def generate_embeddings(self, texts: list[str]) -> EmbeddingResult:
+        """Generates embeddings using an OpenAI-compatible embeddings endpoint."""
+        if not texts:
+            logger.warning("generate_embeddings called with empty list of texts.")
+            return EmbeddingResult(embeddings=[], model_name=self.model_name)
+
+        logger.debug(
+            f"Calling OpenAI-compatible embedding model {self.model_name} "
+            f"for {len(texts)} texts."
+        )
+        if self._dimensions is not None:
+            response = await self._client.embeddings.create(
+                model=self._model_name, input=texts, dimensions=self._dimensions
+            )
+        else:
+            response = await self._client.embeddings.create(
+                model=self._model_name, input=texts
+            )
+
+        if not response.data:
+            raise ValueError(
+                f"OpenAI embeddings API returned no embeddings for "
+                f"{len(texts)} input texts."
+            )
+
+        # The API may return data out of order; sort by the index field so each
+        # embedding lines up with its corresponding input text.
+        ordered = sorted(response.data, key=lambda item: item.index)
+        embeddings_list = [list(item.embedding) for item in ordered]
+
+        if len(embeddings_list) != len(texts):
+            raise ValueError(
+                f"OpenAI embeddings API returned {len(embeddings_list)} embeddings "
+                f"for {len(texts)} input texts."
+            )
+
+        logger.debug(
+            f"OpenAI embedding response received. "
+            f"Generated {len(embeddings_list)} embeddings."
         )
         return EmbeddingResult(embeddings=embeddings_list, model_name=self.model_name)
 
@@ -510,6 +587,7 @@ __all__ = [
     "EmbeddingResult",
     "EmbeddingGenerator",
     "GoogleEmbeddingGenerator",
+    "OpenAIEmbeddingGenerator",
     "HashingWordEmbeddingGenerator",  # Added new class
     "SentenceTransformerEmbeddingGenerator",
     "MockEmbeddingGenerator",

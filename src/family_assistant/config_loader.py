@@ -89,6 +89,9 @@ ENV_VAR_MAPPINGS: list[EnvVarMapping] = [
     EnvVarMapping("LLM_MODEL", "model"),
     EnvVarMapping("EMBEDDING_MODEL", "embedding_model"),
     EnvVarMapping("EMBEDDING_DIMENSIONS", "embedding_dimensions", int),
+    EnvVarMapping("EMBEDDING_PROVIDER", "embedding_provider"),
+    EnvVarMapping("EMBEDDING_BASE_URL", "embedding_base_url"),
+    EnvVarMapping("EMBEDDING_API_KEY", "embedding_api_key"),
     # Debug flags
     EnvVarMapping("DEBUG_LLM_MESSAGES", "debug_llm_messages", bool),
     # PWA configuration
@@ -996,6 +999,26 @@ def load_config(
 
     # 2. Post-processing operates on dict, re-validates at end
     config_data = base_config.model_dump()
+
+    # `embedding_dimensions` has a field default (1536) that the Gemini path
+    # relies on, but the OpenAI provider must only forward the optional
+    # `dimensions` request parameter when the operator actually configured it
+    # (e.g. text-embedding-ada-002 rejects the field). model_dump() above marks
+    # the default as "set", so drop it from config_data unless a raw input
+    # provides it; the env override below re-adds it when EMBEDDING_DIMENSIONS is
+    # set, and CLI overrides re-add it via model_copy in the entrypoint. This
+    # keeps AppConfig.model_fields_set an accurate signal of operator intent.
+    defaults_raw = (
+        load_yaml_file(defaults_file_path) if os.path.exists(defaults_file_path) else {}
+    )
+    embedding_dimensions_configured = (
+        "embedding_dimensions" in operator_config_data
+        or "embedding_dimensions" in defaults_raw
+        or "EMBEDDING_DIMENSIONS" in os.environ
+    )
+    if not embedding_dimensions_configured:
+        config_data.pop("embedding_dimensions", None)
+
     default_policy_data = defaults_only_config.model_dump()["default_profile_settings"][
         "tools_policy"
     ]
@@ -1073,6 +1096,7 @@ def _log_config(
         "openrouter_api_key",
         "gemini_api_key",
         "openai_api_key",
+        "embedding_api_key",
         "willyweather_api_key",
         "database_url",
     }

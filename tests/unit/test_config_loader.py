@@ -1258,6 +1258,105 @@ class TestLoadConfig:
         assert config.model == "defaults-model"
         assert config.server_url == "http://defaults.example.com"
 
+    def test_embedding_dimensions_unset_not_in_fields_set(self, tmp_path: Path) -> None:
+        """Unconfigured embedding_dimensions must not appear in model_fields_set.
+
+        The OpenAI embedding provider only forwards the optional `dimensions`
+        request parameter when the operator configured embedding_dimensions, and
+        relies on model_fields_set as that signal. The load path round-trips
+        through model_dump()/model_validate(), which would otherwise mark the
+        1536 field default as explicitly set.
+        """
+        defaults_file = tmp_path / "defaults.yaml"
+        defaults_file.write_text(yaml.dump({}))
+        config_file = tmp_path / "nonexistent_config.yaml"
+        prompts_file = tmp_path / "prompts.yaml"
+        prompts_file.write_text(yaml.dump({"system_prompt": "Test prompt"}))
+
+        env_to_clear = [m.env_var for m in ENV_VAR_MAPPINGS]
+        env_to_clear.extend([
+            "CALDAV_USERNAME",
+            "CALDAV_PASSWORD",
+            "CALDAV_CALENDAR_URLS",
+            "ICAL_URLS",
+            "MCP_CONFIG_PATH",
+            "INDEXING_PIPELINE_CONFIG_JSON",
+        ])
+        clean_env = {k: v for k, v in os.environ.items() if k not in env_to_clear}
+
+        with mock.patch.dict(os.environ, clean_env, clear=True):
+            config = load_config(
+                defaults_file_path=str(defaults_file),
+                config_file_path=str(config_file),
+                prompts_file_path=str(prompts_file),
+                load_dotenv_file=False,
+            )
+
+        assert "embedding_dimensions" not in config.model_fields_set
+        assert config.embedding_dimensions == 1536
+
+    def test_embedding_dimensions_env_in_fields_set(self, tmp_path: Path) -> None:
+        """An explicit EMBEDDING_DIMENSIONS env var marks the field as set."""
+        defaults_file = tmp_path / "defaults.yaml"
+        defaults_file.write_text(yaml.dump({}))
+        config_file = tmp_path / "nonexistent_config.yaml"
+        prompts_file = tmp_path / "prompts.yaml"
+        prompts_file.write_text(yaml.dump({"system_prompt": "Test prompt"}))
+
+        env_to_clear = [m.env_var for m in ENV_VAR_MAPPINGS]
+        env_to_clear.extend([
+            "CALDAV_USERNAME",
+            "CALDAV_PASSWORD",
+            "CALDAV_CALENDAR_URLS",
+            "ICAL_URLS",
+            "MCP_CONFIG_PATH",
+            "INDEXING_PIPELINE_CONFIG_JSON",
+        ])
+        clean_env = {k: v for k, v in os.environ.items() if k not in env_to_clear}
+        clean_env["EMBEDDING_DIMENSIONS"] = "256"
+
+        with mock.patch.dict(os.environ, clean_env, clear=True):
+            config = load_config(
+                defaults_file_path=str(defaults_file),
+                config_file_path=str(config_file),
+                prompts_file_path=str(prompts_file),
+                load_dotenv_file=False,
+            )
+
+        assert "embedding_dimensions" in config.model_fields_set
+        assert config.embedding_dimensions == 256
+
+    def test_embedding_dimensions_yaml_in_fields_set(self, tmp_path: Path) -> None:
+        """An explicit embedding_dimensions in config.yaml marks the field set."""
+        defaults_file = tmp_path / "defaults.yaml"
+        defaults_file.write_text(yaml.dump({}))
+        config_file = tmp_path / "config.yaml"
+        config_file.write_text(yaml.dump({"embedding_dimensions": 768}))
+        prompts_file = tmp_path / "prompts.yaml"
+        prompts_file.write_text(yaml.dump({"system_prompt": "Test prompt"}))
+
+        env_to_clear = [m.env_var for m in ENV_VAR_MAPPINGS]
+        env_to_clear.extend([
+            "CALDAV_USERNAME",
+            "CALDAV_PASSWORD",
+            "CALDAV_CALENDAR_URLS",
+            "ICAL_URLS",
+            "MCP_CONFIG_PATH",
+            "INDEXING_PIPELINE_CONFIG_JSON",
+        ])
+        clean_env = {k: v for k, v in os.environ.items() if k not in env_to_clear}
+
+        with mock.patch.dict(os.environ, clean_env, clear=True):
+            config = load_config(
+                defaults_file_path=str(defaults_file),
+                config_file_path=str(config_file),
+                prompts_file_path=str(prompts_file),
+                load_dotenv_file=False,
+            )
+
+        assert "embedding_dimensions" in config.model_fields_set
+        assert config.embedding_dimensions == 768
+
     def test_shipped_defaults_allow_markdown_attachments(self, tmp_path: Path) -> None:
         """Shipped defaults must match native chat's Markdown attachment support."""
         config_file = tmp_path / "nonexistent_config.yaml"
