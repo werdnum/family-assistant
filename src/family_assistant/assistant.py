@@ -43,6 +43,7 @@ from family_assistant.email_intake.outbound import (
 from family_assistant.embeddings import (
     EmbeddingGenerator,
     GoogleEmbeddingGenerator,
+    OpenAIEmbeddingGenerator,
 )
 from family_assistant.events.home_assistant_source import HomeAssistantSource
 from family_assistant.events.indexing_source import IndexingSource
@@ -488,7 +489,26 @@ class Assistant:
 
         embedding_model_name = self.config.embedding_model
         embedding_dimensions = self.config.embedding_dimensions
-        if embedding_model_name == "mock-deterministic-embedder":
+        embedding_provider = self.config.embedding_provider
+        if embedding_provider == "openai":
+            api_key = (
+                self.config.embedding_api_key
+                or self.config.openai_api_key
+                or os.getenv("OPENAI_API_KEY")
+            )
+            if not api_key and not self.config.embedding_base_url:
+                raise ValueError(
+                    "embedding_provider='openai' requires an API key "
+                    "(embedding_api_key / openai_api_key / OPENAI_API_KEY) "
+                    "or a custom embedding_base_url."
+                )
+            self.embedding_generator = OpenAIEmbeddingGenerator(
+                model=embedding_model_name,
+                api_key=api_key,
+                base_url=self.config.embedding_base_url,
+                dimensions=embedding_dimensions,
+            )
+        elif embedding_model_name == "mock-deterministic-embedder":
             self.embedding_generator = embeddings.MockEmbeddingGenerator(
                 model_name=embedding_model_name,
                 dimensions=embedding_dimensions,
