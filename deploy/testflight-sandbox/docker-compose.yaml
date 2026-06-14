@@ -72,6 +72,9 @@ services:
       EMBEDDING_BASE_URL: https://openrouter.ai/api/v1
       EMBEDDING_MODEL: openai/text-embedding-3-small
       EMBEDDING_DIMENSIONS: "1536"
+      # Disable the bundled MCP servers (need API keys, slow startup). A non-empty
+      # MCP_CONFIG_PATH replaces the default mcp_config with zero servers.
+      MCP_CONFIG_PATH: /app/deploy/testflight-sandbox/mcp-empty.json
       DOCUMENT_STORAGE_PATH: /data/documents
       ATTACHMENT_STORAGE_PATH: /data/attachments
       CHAT_ATTACHMENT_STORAGE_PATH: /data/chat_attachments

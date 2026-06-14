@@ -83,6 +83,12 @@ services:
       # at ./config.yaml. (docker-compose mounts it at /app/config.yaml instead.)
       - key: CONFIG_FILE
         value: /app/deploy/testflight-sandbox/config.yaml
+      # Disable the bundled MCP servers (brave/google-maps/etc.): they need API
+      # keys, runtime-install npm packages, and add ~100s to startup waiting on a
+      # timeout. A non-empty MCP_CONFIG_PATH replaces the default mcp_config, so
+      # this empty file leaves the sandbox with zero MCP servers.
+      - key: MCP_CONFIG_PATH
+        value: /app/deploy/testflight-sandbox/mcp-empty.json
 
       # --- OIDC (points at the Dex service above) ---
       - key: OIDC_CLIENT_ID
