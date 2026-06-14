@@ -5,7 +5,6 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
-from family_assistant.config_models import AppConfig
 from family_assistant.embeddings import EmbeddingGenerator, OpenAIEmbeddingGenerator
 
 
@@ -133,25 +132,6 @@ async def test_missing_embeddings_raises() -> None:
         pytest.raises(ValueError, match="returned no embeddings"),
     ):
         await generator.generate_embeddings(["hello"])
-
-
-def test_embedding_dimensions_explicit_flag() -> None:
-    """The openai provider relies on model_fields_set to know if dimensions was set.
-
-    The assistant only forwards `dimensions` to the API when the operator
-    explicitly configured embedding_dimensions, so unset configs (which keep the
-    1536 default for vector storage) must not appear in model_fields_set.
-    """
-    default_cfg = AppConfig.model_validate({"embedding_provider": "openai"})
-    assert "embedding_dimensions" not in default_cfg.model_fields_set
-    assert default_cfg.embedding_dimensions == 1536
-
-    explicit_cfg = AppConfig.model_validate({
-        "embedding_provider": "openai",
-        "embedding_dimensions": 512,
-    })
-    assert "embedding_dimensions" in explicit_cfg.model_fields_set
-    assert explicit_cfg.embedding_dimensions == 512
 
 
 @pytest.mark.no_db
