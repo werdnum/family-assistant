@@ -237,11 +237,21 @@ struct ChatAPIClient {
         }
         let request = try await authManager.authorizedRequest(url: url, method: "GET")
 
+        // Establish the connection and validate the response status BEFORE
+        // returning the stream. `URLSession.bytes(for:)` resolves once the
+        // response headers arrive (the body still streams lazily via
+        // AsyncBytes), so a connection failure or a non-2xx status throws here at
+        // the call site rather than surfacing later during iteration. Callers
+        // (notably the live-updates reconnect loop) rely on this to tell a real
+        // connection apart from a stream object that will immediately error —
+        // otherwise they would reset their backoff before the stream ever
+        // succeeded and tight-loop against a down or erroring endpoint.
+        let (bytes, response) = try await urlSession.bytes(for: request)
+        try validate(response: response, data: Data())
+
         return AsyncThrowingStream { continuation in
             let task = Task {
                 do {
-                    let (bytes, response) = try await urlSession.bytes(for: request)
-                    try validate(response: response, data: Data())
                     let parser = SSEParser()
                     try await streamServerSentEvents(bytes: bytes, parser: parser, continuation: continuation)
                     continuation.finish()

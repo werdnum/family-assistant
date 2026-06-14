@@ -363,6 +363,57 @@ final class ChatViewModelTests: XCTestCase {
         XCTAssertNotEqual(conversationIDs.first, conversationIDs.last)
     }
 
+    func testLiveUpdatesAutoReconnectAfterStreamDrops() async throws {
+        // A mobile follow stream drops routinely; the view model must reopen it
+        // on its own instead of stranding the disconnected indicator until a
+        // manual tap. Each /stream response here finishes immediately (an empty
+        // event stream), simulating a dropped connection, so a second /stream
+        // request can only happen if the view model auto-reconnects.
+        let streamRequests = AtomicCounter()
+        let reconnected = expectation(description: "live updates auto-reconnect after a drop")
+        ChatMockBackendURLProtocol.respond { request in
+            let path = request.url?.path ?? ""
+            if request.httpMethod == "GET", path.hasSuffix("/stream") {
+                if streamRequests.increment() >= 2 {
+                    reconnected.fulfill()
+                }
+                return .text("")
+            }
+            if request.httpMethod == "GET", path.hasSuffix("/messages") {
+                return .json(
+                    """
+                    {
+                      "conversation_id":"web_conv_reconnect",
+                      "messages":[],
+                      "count":0,
+                      "total_messages":0,
+                      "has_more_before":false,
+                      "has_more_after":false
+                    }
+                    """
+                )
+            }
+            if request.httpMethod == "GET", path == "/api/v1/chat/conversations" {
+                return .json(#"{"conversations":[],"count":0}"#)
+            }
+            return .json(#"{"detail":"unexpected"}"#, statusCode: 404)
+        }
+
+        var model: ChatViewModel? = makeViewModel(
+            conversationID: "web_conv_reconnect",
+            liveReconnectInitialDelaySeconds: 0.01,
+            liveReconnectMaxDelaySeconds: 0.01
+        )
+        await model?.selectConversation("web_conv_reconnect")
+
+        await fulfillment(of: [reconnected], timeout: 5)
+        XCTAssertGreaterThanOrEqual(streamRequests.value, 2)
+
+        // Release the view model so `deinit` cancels the fast reconnect loop;
+        // otherwise it would keep hitting the mock and bleed into the next test.
+        model = nil
+    }
+
     func testPendingConfirmationsPollAndApprove() async throws {
         var approvalPayload: [String: Any]?
         ChatMockBackendURLProtocol.respond { request in
@@ -637,10 +688,20 @@ final class ChatViewModelTests: XCTestCase {
         XCTAssertEqual(model.messages.first?.toolCalls.first?.status, .approved)
     }
 
-    private func makeViewModel(conversationID: String?) -> ChatViewModel {
+    private func makeViewModel(
+        conversationID: String?,
+        liveReconnectInitialDelaySeconds: Double = 2,
+        liveReconnectMaxDelaySeconds: Double = 30
+    ) -> ChatViewModel {
         let authManager = AuthManager()
         authManager.serverURL = serverURL
-        return ChatViewModel(authManager: authManager, conversationID: conversationID, initialPrompt: nil)
+        return ChatViewModel(
+            authManager: authManager,
+            conversationID: conversationID,
+            initialPrompt: nil,
+            liveReconnectInitialDelaySeconds: liveReconnectInitialDelaySeconds,
+            liveReconnectMaxDelaySeconds: liveReconnectMaxDelaySeconds
+        )
     }
 
     private func makeAttachment(uploadState: ChatAttachmentUploadState) -> ChatAttachment {
@@ -683,5 +744,24 @@ final class ChatViewModelTests: XCTestCase {
             try await Task.sleep(for: .milliseconds(50))
         }
         XCTFail("Timed out waiting for predicate")
+    }
+}
+
+/// Lock-guarded counter for tallying mock requests off the URLProtocol loading
+/// thread.
+private final class AtomicCounter: @unchecked Sendable {
+    private let lock = NSLock()
+    private var count = 0
+
+    @discardableResult
+    func increment() -> Int {
+        lock.withLock {
+            count += 1
+            return count
+        }
+    }
+
+    var value: Int {
+        lock.withLock { count }
     }
 }
