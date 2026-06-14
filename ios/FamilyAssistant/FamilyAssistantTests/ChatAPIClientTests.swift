@@ -243,6 +243,26 @@ final class ChatAPIClientTests: XCTestCase {
         XCTAssertEqual(queryItems["event_types"], "message,turn_ended")
     }
 
+    func testConnectEventsThrowsWhileConnectingOnHTTPError() async throws {
+        var streamRequests = 0
+        ChatMockBackendURLProtocol.respond { _ in
+            streamRequests += 1
+            return .json(#"{"detail":"boom"}"#, statusCode: 500)
+        }
+
+        // The error must surface from the connect call itself, not lazily once
+        // the caller starts iterating. The live-updates reconnect loop relies on
+        // this so a down/erroring endpoint keeps growing the backoff instead of
+        // resetting it after merely constructing a stream object.
+        do {
+            _ = try await makeClient().connectEvents(conversationID: "web_conv_down")
+            XCTFail("connectEvents should throw when the stream endpoint errors")
+        } catch ChatAPIError.server(let statusCode, _) {
+            XCTAssertEqual(statusCode, 500)
+        }
+        XCTAssertEqual(streamRequests, 1)
+    }
+
     func testAcknowledgePostsConversationAndSeq() async throws {
         var payload: [String: Any]?
         var path: String?
