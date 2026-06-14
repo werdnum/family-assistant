@@ -61,21 +61,29 @@ Rich Messages are **not hard-blocked** on a typed PTB release. The blocker is na
 earlier draft of this doc claimed: only the *typed bindings* (`send_rich_message`,
 `InputRichMessage`) are missing, not the ability to call the methods.
 
-- We pin `python-telegram-bot[ext]>=21.0,<22.0` in `pyproject.toml`.
+- We currently pin `python-telegram-bot[ext]>=21.0,<22.0` in `pyproject.toml`. **The wrapper works
+  on this pin** — PTB 21.11.1 already exposes `Bot.do_api_request`/`api_kwargs` for raw Bot API
+  calls
+  ([21.11.1 docs](https://docs.python-telegram-bot.org/en/v21.11.1/telegram.bot.html#telegram.Bot.do_api_request)),
+  so the rich-message spike does **not** need the 22.x upgrade.
 - The latest released PTB (22.8) advertises support for **Bot API 10.0**, not 10.1; there is no
   typed `send_rich_message` yet.
-- However, PTB documents a
+- PTB documents a
   [Bot API forward-compatibility path](https://github.com/python-telegram-bot/python-telegram-bot/wiki/Bot-API-Forward-Compatibility#new-methods):
   new methods can be invoked via `Bot.do_api_request("sendRichMessage", ...)` with a
   JSON-serializable `rich_message` payload. So the rich send/draft calls can be prototyped now
-  behind a thin wrapper and swapped for native bindings when they land.
+  behind a thin wrapper and swapped for native bindings when they land. **`do_api_request` returns a
+  raw `dict` unless `return_type` is supplied**, so the wrapper must pass `return_type=Message` (or
+  deserialize the response itself) before returning — the handler reads `message_id` off every sent
+  assistant reply, so a payload-only wrapper would post the message and then crash when recording
+  history.
 
 Recommended sequencing:
 
-1. **PTB 21.x → 22.x** — clears the `<22.0` cap and reaches API 10.0 parity. Tracked as a separate
-   PR; standalone value, and the floor for the forward-compatible wrapper.
-2. **Implement behind a `do_api_request` wrapper** (capability/config-gated, default off) once the
-   send contract is confirmed in the spike — no need to wait for a typed release.
+1. **Implement behind a `do_api_request` wrapper** on the **current 21.x pin** (config-gated,
+   default off) once the send contract is confirmed in the spike — no upstream dependency.
+2. **PTB 21.x → 22.x** — independent cleanup (clears the `<22.0` cap, reaches API 10.0 parity).
+   Tracked as a separate PR; **not** a prerequisite for the wrapper.
 3. **Swap to native bindings** when PTB ships typed 10.1 support; the wrapper boundary localizes the
    change.
 
@@ -202,6 +210,12 @@ LLM markdown
    do not attempt to "finalize" the draft via `editMessageText`, as there is no opened draft message
    to edit and the preview disappears when it expires. Group/forum chats skip streaming and use the
    non-draft path.
+
+   **Allocate one stable non-zero `draft_id` per streamed reply.** The Bot API requires `draft_id`
+   to be non-zero, and updates that reuse the same id are animated into the existing preview. The
+   streamer must therefore allocate a single non-zero id when a reply begins and reuse it for every
+   draft update until the final `sendRichMessage`; using `0`, or changing the id between chunks, is
+   rejected or produces disconnected previews.
 
    **Stream parseable snapshots, not raw token prefixes.** Each draft update is parsed as a rich
    message, but a raw token prefix is frequently invalid markdown while a code fence, table row,
