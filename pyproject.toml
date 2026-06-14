@@ -18,7 +18,7 @@ classifiers = [
 ]
 dependencies = [
     "a2a-sdk>=0.3.0",
-    "python-telegram-bot[ext]>=21.0,<22.0",
+    "python-telegram-bot[ext]>=22.0,<23.0",
     # Use [ext] instead of [job-queue] for v21+
     # Direct provider SDKs
     "openai>=1.99.0,<2.0.0",
@@ -458,3 +458,4 @@ explicit = true
 torch = { index = "torch-cpu" }
 telegram-bot-api-mock = { git = "https://github.com/werdnum/telegram-bot-api-mock" }
 browser-handoff-service = { git = "https://github.com/werdnum/browser-server.git" }
+
