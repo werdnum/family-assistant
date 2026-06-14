@@ -502,11 +502,20 @@ class Assistant:
                     "(embedding_api_key / openai_api_key / OPENAI_API_KEY) "
                     "or a custom embedding_base_url."
                 )
+            # Only forward the optional `dimensions` request parameter when the
+            # operator explicitly configured it. Models such as
+            # text-embedding-ada-002 (and some OpenAI-compatible servers) reject
+            # the field, and the default value would otherwise always be sent.
+            explicit_dimensions = (
+                embedding_dimensions
+                if "embedding_dimensions" in self.config.model_fields_set
+                else None
+            )
             self.embedding_generator = OpenAIEmbeddingGenerator(
                 model=embedding_model_name,
                 api_key=api_key,
                 base_url=self.config.embedding_base_url,
-                dimensions=embedding_dimensions,
+                dimensions=explicit_dimensions,
             )
         elif embedding_model_name == "mock-deterministic-embedder":
             self.embedding_generator = embeddings.MockEmbeddingGenerator(
