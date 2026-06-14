@@ -1,0 +1,140 @@
+# Render Blueprint for the Family Assistant TestFlight / App Review SANDBOX.
+# https://render.com/docs/blueprint-spec
+#
+# This is a SEPARATE, self-contained deployment from the production blueprint at
+# the repo root (render.yaml). It stands up three things:
+#   - a fresh PostgreSQL database (no production data ever touches it)
+#   - the Family Assistant app, locked to a single demo account
+#   - a tiny Dex OIDC provider that owns that demo account's credentials
+#
+# Because Render does not assign predictable public hostnames until services
+# exist, the three URL values below are marked `sync: false` and must be filled
+# in once, after the first deploy. See deploy/testflight-sandbox/README.md
+# ("First deploy" section) for the exact steps.
+#
+# Render reads `render.yaml` from the repo root by default. To deploy THIS
+# blueprint, create the Blueprint instance pointing at this file's path, or copy
+# it to the repo root on a dedicated sandbox branch.
+
+databases:
+  - name: fa-sandbox-db
+    plan: starter
+    databaseName: family_assistant
+    user: assistant
+    postgresMajorVersion: "16" # pgvector-capable
+
+services:
+  # --- Dex: self-contained OIDC provider -----------------------------------
+  - type: web
+    name: fa-sandbox-dex
+    runtime: docker
+    plan: starter
+    region: oregon
+    dockerfilePath: ./deploy/testflight-sandbox/dex/Dockerfile
+    dockerContext: ./deploy/testflight-sandbox/dex
+    # The discovery doc is always served once the issuer is set, so it makes a
+    # reliable readiness probe.
+    healthCheckPath: /.well-known/openid-configuration
+    envVars:
+      # Public URL of THIS service. Set after first deploy, e.g.
+      #   https://fa-sandbox-dex.onrender.com
+      - key: DEX_ISSUER
+        sync: false
+      # Public URL of the APP service (for OIDC redirect URIs). Set after first
+      # deploy, e.g. https://fa-sandbox.onrender.com
+      - key: APP_BASE_URL
+        sync: false
+      # OIDC client id/secret shared with the app. The id is a fixed string;
+      # the secret is generated on the app service and copied here so both
+      # sides always agree.
+      - key: OIDC_CLIENT_ID
+        value: family-assistant-sandbox
+      - key: OIDC_CLIENT_SECRET
+        fromService:
+          type: web
+          name: fa-sandbox
+          envVarKey: OIDC_CLIENT_SECRET
+      # The single demo account handed to Apple.
+      - key: DEMO_EMAIL
+        sync: false
+      # bcrypt hash of the demo password. Generate with:
+      #   htpasswd -bnBC 10 "" 'your-password' | tr -d ':\n'
+      - key: DEMO_PASSWORD_HASH
+        sync: false
+
+  # --- Family Assistant app ------------------------------------------------
+  - type: web
+    name: fa-sandbox
+    runtime: docker
+    plan: starter
+    region: oregon
+    healthCheckPath: /health
+    # The sandbox config.yaml ships inside the image (the root Dockerfile does
+    # `COPY . .`), but the app reads ./config.yaml from its workdir, which isn't
+    # populated on Render. Copy the overlay into place before starting so the
+    # per-profile model overrides apply. (docker-compose mounts it directly.)
+    dockerCommand: >-
+      sh -c "cp deploy/testflight-sandbox/config.yaml /app/config.yaml &&
+      exec opentelemetry-instrument family-assistant"
+    envVars:
+      - key: DATABASE_URL
+        fromDatabase:
+          name: fa-sandbox-db
+          property: connectionString
+      - key: SESSION_SECRET_KEY
+        generateValue: true
+      - key: TIMEZONE
+        value: UTC
+
+      # --- OIDC (points at the Dex service above) ---
+      - key: OIDC_CLIENT_ID
+        value: family-assistant-sandbox
+      # Generated here, copied to Dex via fromService above.
+      - key: OIDC_CLIENT_SECRET
+        generateValue: true
+      # Dex discovery URL. Set after first deploy, e.g.
+      #   https://fa-sandbox-dex.onrender.com/.well-known/openid-configuration
+      - key: OIDC_DISCOVERY_URL
+        sync: false
+      # Only this email may log in (must match DEMO_EMAIL on the Dex service).
+      - key: ALLOWED_OIDC_EMAILS
+        sync: false
+
+      # --- LLM: OpenRouter via the OpenAI-compatible API ("OpenAI provider with
+      # a custom base URL"). One cheap model runs the whole sandbox; config.yaml
+      # (copied into place by dockerCommand above) pins every profile to it with
+      # provider "openai". Use a dedicated, quota-capped OpenRouter key. ---
+      - key: OPENAI_API_KEY
+        sync: false
+      - key: OPENAI_BASE_URL
+        value: https://openrouter.ai/api/v1
+      - key: LLM_MODEL
+        value: deepseek/deepseek-v4-flash
+      # --- Embeddings: same OpenRouter endpoint via the OpenAI-compatible
+      # embedding provider (PR #909). EMBEDDING_API_KEY is omitted; it falls back
+      # to OPENAI_API_KEY (the OpenRouter key above). ---
+      - key: EMBEDDING_PROVIDER
+        value: openai
+      - key: EMBEDDING_BASE_URL
+        value: https://openrouter.ai/api/v1
+      - key: EMBEDDING_MODEL
+        value: openai/text-embedding-3-small
+      - key: EMBEDDING_DIMENSIONS
+        value: "1536"
+
+      # --- Storage (small disk is plenty for a demo) ---
+      - key: DOCUMENT_STORAGE_PATH
+        value: /data/documents
+      - key: ATTACHMENT_STORAGE_PATH
+        value: /data/attachments
+      - key: CHAT_ATTACHMENT_STORAGE_PATH
+        value: /data/chat_attachments
+    disk:
+      name: fa-sandbox-data
+      mountPath: /data
+      sizeGB: 1
+
+# Integrations intentionally omitted (Telegram, email intake, Home Assistant,
+# calendars, push, etc.): leaving their secrets unset disables them, which
+# keeps the sandbox to a single web/iOS surface for review.
+
