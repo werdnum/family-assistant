@@ -50,7 +50,9 @@ services:
       postgres:
         condition: service_healthy
     environment:
-      DATABASE_URL: postgresql://assistant:${POSTGRES_PASSWORD}@postgres:5432/family_assistant
+      # SQLAlchemy's async engine needs the asyncpg driver scheme (plain
+      # postgresql:// resolves to a sync driver and fails at startup).
+      DATABASE_URL: postgresql+asyncpg://assistant:${POSTGRES_PASSWORD}@postgres:5432/family_assistant
       SESSION_SECRET_KEY: ${SESSION_SECRET_KEY:?random session secret}
       TIMEZONE: UTC
       OIDC_CLIENT_ID: ${OIDC_CLIENT_ID:-family-assistant-sandbox}
