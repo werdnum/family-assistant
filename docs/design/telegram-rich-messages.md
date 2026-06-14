@@ -141,11 +141,19 @@ LLM markdown
 ### Components
 
 1. **Rich payload from markdown** (new, in `telegram/rich_messages.py`). Build an `InputRichMessage`
-   from the assistant's markdown. In the simplest case this is a thin wrapper that passes the
-   markdown straight through; a small normalization step may be needed to reconcile our GFM dialect
-   with whatever subset Telegram accepts (e.g. table or task-list syntax) — to be confirmed during
-   the spike. Note there is **no** `markdown_to_rich_blocks` block builder: `RichBlock*` is the
-   received representation, not the send input.
+   from the assistant's markdown. This is mostly pass-through, but it is **not** a blind wrapper —
+   the builder must normalize constructs whose rich-markdown meaning differs from plain text:
+
+   - **Image syntax → text.** In Telegram rich markdown, `![alt](url)` is a *media block*, so
+     passing it through would turn a text reply into a media send — which v1 explicitly excludes and
+     which may require media permissions or be rejected. The builder escapes or rewrites image
+     syntax (e.g. to a plain link `[alt](url)`) so image references stay textual until media blocks
+     are intentionally supported.
+   - **GFM dialect reconciliation.** A small normalization step may be needed to match the markdown
+     subset Telegram accepts (e.g. table or task-list syntax) — to be confirmed during the spike.
+
+   Note there is **no** `markdown_to_rich_blocks` block builder: `RichBlock*` is the received
+   representation, not the send input.
 
 2. **Route the real Telegram reply path through a rich-aware sender.** The main assistant reply path
    is **not** `TelegramChatInterface.send_message`; the handler sends replies directly via
@@ -166,9 +174,20 @@ LLM markdown
    rather than a `Message`), then **persist the finished reply with a normal `sendRichMessage`** —
    do not attempt to "finalize" the draft via `editMessageText`, as there is no opened draft message
    to edit and the preview disappears when it expires. Group/forum chats skip streaming and use the
-   non-draft path. This also requires the processing layer to expose incremental output (today
-   replies are returned whole), so streaming is split into its own phase and depends on incremental
-   generation from `ProcessingService`.
+   non-draft path.
+
+   **Stream parseable snapshots, not raw token prefixes.** Each draft update is parsed as a rich
+   message, but a raw token prefix is frequently invalid markdown while a code fence, table row,
+   link, or `<details>` block is half-written — sending those would fail the draft parse and defeat
+   streaming for exactly the structured replies this feature targets. The streamer therefore needs a
+   buffering/repair step that emits only syntactically valid snapshots: buffer until the in-progress
+   block closes, or temporarily close it (e.g. append a closing fence) so each emitted snapshot
+   parses, then send the next snapshot once more content arrives. Until such a snapshot is
+   available, show a placeholder/typing draft rather than a broken one.
+
+   This also requires the processing layer to expose incremental output (today replies are returned
+   whole), so streaming is split into its own phase and depends on incremental generation from
+   `ProcessingService`.
 
 ### Fallback and error handling
 
