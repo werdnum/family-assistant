@@ -338,9 +338,11 @@ the API verbatim, so use the model id the endpoint expects.
 - **`EMBEDDING_API_KEY`** - Maps to `embedding_api_key`. API key for the endpoint. Falls back to
   `openai_api_key` / `OPENAI_API_KEY` when unset. Treated as a secret and redacted from logged
   config.
-- **`EMBEDDING_DIMENSIONS`** - Maps to `embedding_dimensions`. When set, it is forwarded as the
-  `dimensions` request parameter, so the chosen model must support that output size (e.g. OpenAI's
-  `text-embedding-3-*` models). It must also match the vector storage column dimensionality.
+- **`EMBEDDING_DIMENSIONS`** - Maps to `embedding_dimensions`. Only forwarded as the `dimensions`
+  request parameter when explicitly set, so the chosen model must support that output size (e.g.
+  OpenAI's `text-embedding-3-*` models). Leave it unset for models that do not accept the field
+  (e.g. `text-embedding-ada-002`) to use the model's native size. When set, it must also match the
+  vector storage column dimensionality.
 
 **Example: OpenRouter (`openai/text-embedding-3-small`)**
 
