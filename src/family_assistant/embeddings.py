@@ -4,6 +4,7 @@ Module defining the interface and implementations for generating text embeddings
 
 import asyncio
 import hashlib
+import importlib.util
 import logging
 import math
 import re
@@ -15,26 +16,14 @@ from google.genai import types as genai_types
 from google.genai.client import DebugConfig
 from openai import AsyncOpenAI
 
-# Declare module/class variables that will be conditionally populated
-
-_SentenceTransformer_cls: Any | None = None
-_np_module: Any | None = None
-SENTENCE_TRANSFORMERS_AVAILABLE: bool  # Will be set in the try/except block
-
-# Import sentence-transformers if available, otherwise skip the class definition
-try:
-    # sentence-transformers returns numpy arrays or torch tensors, need numpy for conversion
-    import numpy  # pyright: ignore[reportMissingTypeStubs]
-    from sentence_transformers import (  # pyright: ignore[reportMissingTypeStubs, reportMissingImports]
-        SentenceTransformer as ActualSentenceTransformer,
-    )
-
-    _np_module = numpy
-    _SentenceTransformer_cls = ActualSentenceTransformer
-    SENTENCE_TRANSFORMERS_AVAILABLE = True
-except ImportError:
-    SENTENCE_TRANSFORMERS_AVAILABLE = False
-    # _SentenceTransformer_cls and _np_module remain None as initialized
+# Whether the optional sentence-transformers stack is installed. This is detected
+# WITHOUT importing it: importing sentence_transformers pulls in torch (hundreds of
+# MB resident), and most deployments use a cloud embedding provider and never need
+# it. The actual import is deferred to SentenceTransformerEmbeddingGenerator, so
+# torch is only loaded when a local embedding model is genuinely used.
+SENTENCE_TRANSFORMERS_AVAILABLE = (
+    importlib.util.find_spec("sentence_transformers") is not None
+)
 
 logger = logging.getLogger(__name__)
 
@@ -369,13 +358,12 @@ class SentenceTransformerEmbeddingGenerator:
             logger.info(
                 f"Loading SentenceTransformer model: {model_name_or_path} on device: {device or 'auto'}"
             )
-            if (
-                _SentenceTransformer_cls is None
-            ):  # Should not happen if SENTENCE_TRANSFORMERS_AVAILABLE is True
-                raise RuntimeError(
-                    "SentenceTransformer class is None, though library was reported as available."
-                )
-            self.model = _SentenceTransformer_cls(
+            # Lazy import so torch is only loaded when a local model is used.
+            from sentence_transformers import (  # noqa: PLC0415 # pyright: ignore[reportMissingImports] # lazy import: avoid loading torch at module import
+                SentenceTransformer,
+            )
+
+            self.model = SentenceTransformer(
                 model_name_or_path, device=device, **self.model_kwargs
             )
             logger.info(
@@ -423,13 +411,10 @@ class SentenceTransformerEmbeddingGenerator:
             loop = asyncio.get_running_loop()
             embeddings_np = await loop.run_in_executor(None, self.model.encode, texts)
 
-            if (
-                _np_module is None
-            ):  # Should not happen if SENTENCE_TRANSFORMERS_AVAILABLE
-                raise RuntimeError(
-                    "Numpy module is None, though library was reported as available."
-                )
-            embeddings_list = [_np_module.array(arr).tolist() for arr in embeddings_np]
+            # numpy ships with sentence-transformers; import lazily alongside it.
+            import numpy  # noqa: PLC0415 # deferred to avoid importing torch stack at module load
+
+            embeddings_list = [numpy.array(arr).tolist() for arr in embeddings_np]
 
             logger.debug(
                 f"SentenceTransformer generated {len(embeddings_list)} embeddings."
