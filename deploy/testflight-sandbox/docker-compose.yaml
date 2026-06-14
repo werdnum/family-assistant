@@ -8,7 +8,9 @@
 #   it must match Dex's configured issuer exactly. The reliable way to satisfy
 #   this is to put both services behind your own reverse proxy with real
 #   HTTPS hostnames and set APP_BASE_URL / DEX_ISSUER to those public URLs.
-#   The proxy should forward to app:8000 and dex:5556 respectively.
+#   A host-level reverse proxy should forward to the published host ports
+#   127.0.0.1:8000 (app) and 127.0.0.1:5556 (dex). Only if the proxy itself runs
+#   inside this compose network would it use the service names app:8000 / dex:5556.
 #
 # Copy .env.example to .env and fill it in before running:
 #   docker compose --env-file .env up --build
@@ -40,7 +42,9 @@ services:
       DEMO_EMAIL: ${DEMO_EMAIL:?demo account email}
       DEMO_PASSWORD_HASH: ${DEMO_PASSWORD_HASH:?bcrypt hash of demo password}
     ports:
-      - "5556:5556"
+      # Bind to localhost only: the reverse proxy (which terminates TLS) forwards
+      # here. Publishing on all interfaces would expose the plain-HTTP backend.
+      - "127.0.0.1:5556:5556"
 
   app:
     build:
@@ -83,7 +87,8 @@ services:
       - ./config.yaml:/app/config.yaml:ro
       - appdata:/data
     ports:
-      - "8000:8000"
+      # Localhost only; the TLS-terminating reverse proxy forwards here.
+      - "127.0.0.1:8000:8000"
 
 volumes:
   pgdata:

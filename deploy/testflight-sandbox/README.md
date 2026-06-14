@@ -113,7 +113,9 @@ For a VPS you already run behind a reverse proxy with TLS.
 1. `cp .env.example .env` and fill every value. `APP_BASE_URL` and `DEX_ISSUER` must be the **public
    HTTPS URLs** your reverse proxy serves (see the reachability note at the top of
    `docker-compose.yaml`).
-2. Point your reverse proxy at `app:8000` and `dex:5556`.
+2. Point your reverse proxy at the published host ports `127.0.0.1:8000` (app) and
+   `127.0.0.1:5556` (dex). (Only a proxy running *inside* the compose network would
+   use the service names `app:8000` / `dex:5556`.)
 3. Bring it up:
    ```bash
    docker compose --env-file .env up --build -d
