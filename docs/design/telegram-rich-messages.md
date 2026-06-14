@@ -17,29 +17,44 @@ prerequisite library upgrade (tracked separately) is justified.
 
 ## Background
 
-Telegram Bot API 10.1 added "Rich Messages", a structured block model for bot messages. Unlike the
-existing `parse_mode` formatting (`MarkdownV2`/`HTML`), which produces a single styled text string
-constrained to inline entities, Rich Messages model a message as a tree of typed blocks.
+Telegram Bot API 10.1 added "Rich Messages", a document-grade formatting model for bot messages.
+Unlike the existing `parse_mode` formatting (`MarkdownV2`/`HTML`), which produces a single styled
+text string constrained to inline entities, a rich message renders as a structured document with
+block-level structure (headings, tables, lists, dividers, collapsible sections).
 
 Key facts (verified against the Bot API changelog and reference, 2026-06-14):
 
-- **Not a Markdown parser.** Telegram's pipeline is a structured entity/block model. There is no
-  `parse_mode=GHFMD`. Content is built from `RichBlock*` objects, not a markdown string. The block
-  set maps cleanly onto GitHub-Flavored Markdown constructs (headings, tables, fenced code, lists,
-  quotes, dividers), which is why it is described as "document-grade" / GFM-like.
-- **New methods.** `sendRichMessage` and `sendRichMessageDraft` (streaming), plus a `rich_message`
-  parameter on `editMessageText`. These are separate from `sendMessage`.
-- **Block types** include: `RichBlockParagraph`, `RichBlockSectionHeading`, `RichBlockList` /
-  `RichBlockListItem`, `RichBlockTable` / `RichBlockTableCell`, `RichBlockPreformatted` (code),
-  `RichBlockBlockQuotation`, `RichBlockPullQuotation`, `RichBlockDivider`, `RichBlockDetails`
-  (collapsible), `RichBlockMathematicalExpression`, media blocks (`RichBlockPhoto`,
-  `RichBlockVideo`, `RichBlockAnimation`, `RichBlockAudio`, `RichBlockVoiceNote`), and
-  `RichBlockThinking`.
-- **Streaming.** `sendRichMessageDraft` lets a bot push partial content and update it live,
-  replacing the static "type indicator then one big block" experience.
+- **Send markdown/HTML, receive blocks.** This is the critical distinction. The bot **sends** a rich
+  message by passing an `InputRichMessage`, which carries the content as **markdown or HTML** (one
+  of the two) — there is no need to construct a block tree by hand. Telegram parses that input and
+  the **received** message exposes the structured `RichMessage` (a tree of `RichBlock*` objects) on
+  `Message.rich_message`. So `RichBlock*` is the *parsed/received* representation, not the send
+  input. (This corrects an earlier draft of this doc that proposed building `RichBlock*` objects to
+  send.) The accepted markdown is GitHub-Flavored-Markdown-like, which is what makes "send GFM and
+  get a document" accurate.
+- **New methods.** `sendRichMessage` (input: `InputRichMessage`) and `sendRichMessageDraft`
+  (streaming), plus a `rich_message` parameter on `editMessageText`. These are separate from
+  `sendMessage`.
+- **Received block types** (in `Message.rich_message`) include: `RichBlockParagraph`,
+  `RichBlockSectionHeading`, `RichBlockList` / `RichBlockListItem`, `RichBlockTable` /
+  `RichBlockTableCell`, `RichBlockPreformatted` (code), `RichBlockBlockQuotation`,
+  `RichBlockPullQuotation`, `RichBlockDivider`, `RichBlockDetails` (collapsible),
+  `RichBlockMathematicalExpression`, media blocks (`RichBlockPhoto`, `RichBlockVideo`,
+  `RichBlockAnimation`, `RichBlockAudio`, `RichBlockVoiceNote`), and `RichBlockThinking`.
+- **Streaming is draft-based and private-chat-only.** `sendRichMessageDraft` streams an ephemeral
+  preview (reported as a short-lived draft, on the order of ~30s, keyed by a `draft_id`) and is only
+  valid for a private chat. It returns a success flag, **not** a persisted `Message`; the finished
+  output must be committed with a normal `sendRichMessage`. There is no opened draft message object
+  to edit via `editMessageText`. Group and forum-topic chats must use the non-draft path.
 - **Message length.** The reference does not (as of this writing) state a numeric maximum for rich
   messages, and we have not been able to confirm whether the classic 4096-character text limit is
   raised. This must be re-verified before relying on "longer messages" as a benefit.
+
+> Note: the precise `InputRichMessage` field names (`markdown`/`html`) and the exact
+> `sendRichMessageDraft` contract (return type, draft lifetime, private-chat constraint) are taken
+> from the Bot API 10.1 reference and a code review of an earlier draft; they must be re-confirmed
+> against PTB's typed bindings during the spike, since the docs page is large and the
+> machine-readable spec mirrors had not caught up at time of writing.
 
 ## Dependency Blocker
 
@@ -87,7 +102,9 @@ Limitations this design addresses:
 
 - Render assistant replies as native Telegram Rich Messages when the content is structured
   (headings, tables, lists, code blocks, quotes, collapsible detail).
-- Stream long / slow replies progressively via `sendRichMessageDraft` + `editMessageText`.
+- In **private chats**, stream long / slow replies progressively via `sendRichMessageDraft`, then
+  commit the finished reply with `sendRichMessage`. Group and forum-topic chats use the non-draft
+  send path (no streaming).
 - Reuse the assistant's existing markdown output as the source of truth — no second authoring format
   for the LLM to learn.
 - Preserve the existing `MarkdownV2` path and plain-text fallback as a graceful degradation when
@@ -106,13 +123,16 @@ Limitations this design addresses:
 
 ### Overview
 
-Introduce a markdown → RichBlock conversion layer and an optional rich send path on the Telegram
-interface, selected by capability detection with fallback to the current `MarkdownV2` path.
+Because `sendRichMessage` accepts markdown/HTML directly (via `InputRichMessage`), the assistant's
+existing markdown output can be passed through almost unchanged — no block-construction layer is
+needed. The work is therefore mostly about routing: choosing the rich send path when available, and
+preserving the current `MarkdownV2` ladder as fallback.
 
 ```
 LLM markdown
    │
-   ├── (rich available) ──► markdown_to_rich_blocks() ──► sendRichMessage / draft+edit
+   ├── (rich available) ──► InputRichMessage(markdown=…) ──► sendRichMessage
+   │                                                          (private chat: draft-stream first)
    │
    └── (fallback)       ──► convert_to_telegram_markdown() ──► send_message (MarkdownV2)
                                                                   └─► plain-text on parse error
@@ -120,44 +140,51 @@ LLM markdown
 
 ### Components
 
-1. **`markdown_to_rich_blocks(text) -> list[RichBlock]`** (new, in `telegram/rich_messages.py`).
-   Parses the assistant's markdown into PTB `RichBlock*` objects. We already depend on
-   `telegramify_markdown`, which parses GFM (including tables, task lists, code blocks); the
-   converter walks that parse tree and emits blocks rather than a `MarkdownV2` string. Where
-   `telegramify_markdown` does not expose a usable tree, fall back to a small CommonMark/GFM parser
-   (e.g. `markdown-it-py`, already transitively available) — to be confirmed during spike.
+1. **Rich payload from markdown** (new, in `telegram/rich_messages.py`). Build an `InputRichMessage`
+   from the assistant's markdown. In the simplest case this is a thin wrapper that passes the
+   markdown straight through; a small normalization step may be needed to reconcile our GFM dialect
+   with whatever subset Telegram accepts (e.g. table or task-list syntax) — to be confirmed during
+   the spike. Note there is **no** `markdown_to_rich_blocks` block builder: `RichBlock*` is the
+   received representation, not the send input.
 
-2. **`ChatInterface` extension.** Add an optional capability so callers can request rich rendering
-   without coupling to Telegram. Two options (decide at implementation):
+2. **Route the real Telegram reply path through a rich-aware sender.** The main assistant reply path
+   is **not** `TelegramChatInterface.send_message`; the handler sends replies directly via
+   `_send_message_chunks()` → `context.bot.send_message` (`handler.py:299`, call sites around
+   `handler.py:807`+ and `handler.py:1328`+). A change confined to `TelegramChatInterface` would
+   therefore leave ordinary Telegram conversations on the old `MarkdownV2`/chunking path. Introduce
+   a single rich-aware send helper (e.g. `send_rich_or_fallback(bot, chat_id, markdown, …)`) and
+   call it from **both** the handler's reply path and `TelegramChatInterface.send_message`, so the
+   two send paths stay consistent. Callers keep passing markdown; the helper decides rich vs.
+   fallback. The web path (`WebChatInterface`) is untouched.
 
-   - (a) A new optional method `send_rich_message(conversation_id, blocks, ...)` with a default
-     implementation that flattens to text and calls `send_message`.
-   - (b) Keep `send_message(text, ...)` as the single entry point and let the Telegram
-     implementation decide internally whether to render `text` as rich blocks.
-
-   **Recommendation: (b).** Callers keep passing markdown; only `TelegramChatInterface` changes.
-   This avoids touching every call site and keeps the web path identical. Rich rendering becomes an
-   internal detail of the Telegram transport, gated by config + capability detection.
-
-3. **Capability detection.** Probe whether the installed PTB / bot supports `send_rich_message`
+3. **Capability detection.** Probe whether the installed PTB / bot exposes `send_rich_message`
    (attribute check on `bot`) once at startup, store the result, and branch on it. If unavailable,
    behaviour is byte-for-byte the current `MarkdownV2` path.
 
-4. **Streaming (phase 2).** For long replies, open a draft with `sendRichMessageDraft` and update it
-   via `editMessageText(rich_message=...)` as the assistant produces output. This requires the
-   processing layer to expose incremental output; today replies are returned whole. Streaming is
-   therefore split into its own phase and depends on incremental generation being available from
-   `ProcessingService`.
+4. **Streaming (phase 2, private chats only).** In a private chat, stream incremental output via
+   `sendRichMessageDraft` (an ephemeral ~30s preview keyed by `draft_id`, returning a success flag
+   rather than a `Message`), then **persist the finished reply with a normal `sendRichMessage`** —
+   do not attempt to "finalize" the draft via `editMessageText`, as there is no opened draft message
+   to edit and the preview disappears when it expires. Group/forum chats skip streaming and use the
+   non-draft path. This also requires the processing layer to expose incremental output (today
+   replies are returned whole), so streaming is split into its own phase and depends on incremental
+   generation from `ProcessingService`.
 
 ### Fallback and error handling
 
-Mirror the existing robustness:
+Mirror the existing robustness, but **fall back only for expected, specific errors** — do not wrap
+the whole rich path in a blanket `except`. While the feature is under development a broad catch
+would hide converter bugs or unexpected PTB/API shapes behind a silent MarkdownV2 reply, defeating
+tests and masking real defects (contrary to the Fail-Fast principle in AGENTS.md).
 
-- If `markdown_to_rich_blocks` raises, log and fall back to `convert_to_telegram_markdown` + the
-  current send path. Rich rendering must never lose a message (consistent with the No Silent
-  Failures / Fail-Fast-but-don't-lose-user-output principles in AGENTS.md).
-- If `sendRichMessage` returns a `BadRequest`, fall back to `MarkdownV2`, then to plain text — the
-  same ladder as `interface.py:115` today.
+- If `sendRichMessage` raises a `BadRequest` that indicates the input was rejected (e.g. an
+  unparseable-markup error), fall back to `MarkdownV2`, then to plain text — the same ladder as
+  `interface.py:115` today. This is a known, expected failure mode worth absorbing so a message is
+  never lost.
+- Any other exception (programming errors in the payload builder, unexpected API responses,
+  capability-probe inconsistencies) is allowed to propagate so it surfaces in tests and logs. Once
+  the path is validated and enabled by default, we can broaden the absorbed set if real-world
+  failure modes justify it.
 
 ### Message length
 
@@ -168,23 +195,27 @@ chunking as a safety net.
 
 ## Milestones
 
-1. **Spike & verify** (no production code): confirm a PTB release with Rich Messages exists; read
-   the `RichBlock*` field docs and confirm the message-size limit; prototype
-   `markdown_to_rich_blocks` against representative assistant output (daily brief, a table, a code
-   block). Independently testable via unit tests on the converter.
-2. **Converter + Telegram rich send path** behind capability detection and config flag, with full
+1. **Spike & verify** (no production code): confirm a PTB release with Rich Messages exists; confirm
+   the `InputRichMessage` field names (`markdown`/`html`), the `sendRichMessageDraft` contract
+   (return type, draft lifetime, private-chat constraint), and the message-size limit against PTB's
+   typed bindings; check that representative assistant output (daily brief, a table, a code block)
+   renders correctly when sent as markdown.
+2. **Rich send path** routed through the shared rich-aware sender (handler reply path +
+   `TelegramChatInterface`), behind capability detection and a config flag, with the narrowed
    fallback ladder. Independently shippable; default off until validated.
 3. **Enable by default** once validated against real chats; update length handling to skip chunking
    on the rich path if the limit allows.
-4. **Streaming** via `sendRichMessageDraft` once incremental generation is available from the
-   processing layer.
+4. **Streaming** (private chats) via `sendRichMessageDraft` + final `sendRichMessage`, once
+   incremental generation is available from the processing layer.
 
 ## Testing
 
-- Unit tests for `markdown_to_rich_blocks`: headings, nested lists, tables, fenced code (with
-  language), block quotes, collapsible details, and special-character escaping.
+- Unit tests for the markdown → `InputRichMessage` payload builder: headings, nested lists, tables,
+  fenced code (with language), block quotes, collapsible details, and special-character handling.
 - Functional Telegram tests (`tests/functional/telegram/`) asserting: rich path used when capability
-  present; fallback to `MarkdownV2` when converter raises; fallback to plain text on `BadRequest`.
+  present (via the shared sender on the handler reply path, not just the interface); fallback to
+  `MarkdownV2` then plain text on an input-rejected `BadRequest`; and that an unexpected error
+  propagates rather than being silently swallowed.
 - A capability-absent test pinning current behaviour to guard against regressions.
 
 ## Documentation
@@ -195,7 +226,11 @@ sections in Telegram.
 
 ## Open Questions
 
-- Does `telegramify_markdown` expose a parse tree we can reuse, or do we need a separate GFM parser?
+- What markdown dialect does `InputRichMessage` accept (GFM tables, task lists, headings), and how
+  much normalization of our output is required?
 - What is the actual maximum size of a rich message, and is the 4096-char text limit changed?
-- Which PTB release adds `send_rich_message`, and what is its minimum Python / API version?
+- What exactly does `sendRichMessageDraft` return, how long does the draft live, and is it strictly
+  private-chat-only?
+- Which PTB release adds `send_rich_message` / `InputRichMessage`, and what is its minimum Python /
+  API version?
 - Streaming: what is the minimal incremental-output hook needed from `ProcessingService`?
