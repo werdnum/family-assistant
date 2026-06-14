@@ -54,11 +54,24 @@ final class ChatViewModel {
     // `mergeNewMessages` pages through on `hasMoreAfter`.
     private static let messageDeltaPageSize = 100
 
+    // Backoff bounds for auto-reconnecting the live-updates follow stream after
+    // an unexpected drop. A mobile SSE connection is dropped routinely
+    // (backgrounding, network changes, idle proxy timeouts, backend redeploys);
+    // without an automatic retry the disconnected indicator stays stuck until
+    // the user taps it. Injectable so tests can drive reconnects without waiting
+    // out the production delay.
+    @ObservationIgnored private let liveReconnectInitialDelaySeconds: Double
+    @ObservationIgnored private let liveReconnectMaxDelaySeconds: Double
+
     init(
         authManager: AuthManager,
         conversationID: String? = nil,
-        initialPrompt: String? = nil
+        initialPrompt: String? = nil,
+        liveReconnectInitialDelaySeconds: Double = 2,
+        liveReconnectMaxDelaySeconds: Double = 30
     ) {
+        self.liveReconnectInitialDelaySeconds = liveReconnectInitialDelaySeconds
+        self.liveReconnectMaxDelaySeconds = liveReconnectMaxDelaySeconds
         apiClient = ChatAPIClient(authManager: authManager)
         selectedProfileID = UserDefaults.standard.string(forKey: Keys.selectedProfileID) ?? "default_assistant"
         self.conversationID = conversationID
@@ -600,47 +613,70 @@ final class ChatViewModel {
             return
         }
         // Capture the API client (a value type whose only reference is the
-        // AuthManager, never the view model) and the subscribe parameters up
-        // front. The follow loop below never binds a strong `self` across its
-        // awaits — every mutation goes through a weak `self?` hop — so releasing
-        // the view model (e.g. on logout) lets `deinit` run, which cancels this
-        // task and tears down the open SSE connection instead of stranding it.
+        // AuthManager, never the view model) and the backoff bounds up front.
+        // The follow loop below never binds a strong `self` across its awaits —
+        // every mutation goes through a weak `self?` hop — so releasing the view
+        // model (e.g. on logout) lets `deinit` run, which cancels this task and
+        // tears down the open SSE connection instead of stranding it.
         let client = apiClient
-        let ackSeq = highestAppliedSeq ?? -1
+        let initialDelay = liveReconnectInitialDelaySeconds
+        let maxDelay = liveReconnectMaxDelaySeconds
         liveEventsTask = Task { [weak self] in
-            do {
-                let stream = try await client.connectEvents(
-                    conversationID: conversationID,
-                    ackSeq: ackSeq,
-                    // Follow streams only reload persisted history on these; the
-                    // token firehose is ignored, so don't ask for it. Lifecycle
-                    // frames (turn_ended, heartbeat, stream_dropped) are always
-                    // delivered regardless of this filter.
-                    eventTypes: ["message", "turn_ended"]
-                )
-                // Call through the weak `self?` at each suspension point instead
-                // of binding a strong `self`: a binding would keep the view model
-                // (and its open SSE connection) alive across the indefinite follow
-                // loop, so logout/deinit could never tear it down.
-                await self?.handleLiveReconnect(conversationID: conversationID)
-                for try await event in stream {
-                    if Task.isCancelled {
-                        break
-                    }
-                    let shouldContinue = await self?.handleLiveEvent(
-                        event,
+            // Reconnect loop: a dropped follow stream self-heals with capped
+            // exponential backoff instead of stranding the disconnected
+            // indicator until a manual tap. The loop exits only on cancellation
+            // (conversation change, logout/deinit) or a deliberate stop.
+            var delay = initialDelay
+            while !Task.isCancelled {
+                // Re-read the ack cursor each attempt so a reconnect resumes from
+                // the highest seq this client has actually applied.
+                let ackSeq = self?.highestAppliedSeq ?? -1
+                var deliberateStop = false
+                do {
+                    let stream = try await client.connectEvents(
                         conversationID: conversationID,
-                        client: client
+                        ackSeq: ackSeq,
+                        // Follow streams only reload persisted history on these;
+                        // the token firehose is ignored, so don't ask for it.
+                        // Lifecycle frames (turn_ended, heartbeat, stream_dropped)
+                        // are always delivered regardless of this filter.
+                        eventTypes: ["message", "turn_ended"]
                     )
-                    // `self` deallocated mid-loop -> nil -> stop following.
-                    guard let shouldContinue else { break }
-                    if !shouldContinue {
-                        break
+                    // Call through the weak `self?` at each suspension point
+                    // instead of binding a strong `self`: a binding would keep
+                    // the view model (and its open SSE connection) alive across
+                    // the indefinite follow loop, so logout/deinit could never
+                    // tear it down.
+                    await self?.handleLiveReconnect(conversationID: conversationID)
+                    // A successful (re)connect resets the backoff.
+                    delay = initialDelay
+                    for try await event in stream {
+                        if Task.isCancelled {
+                            break
+                        }
+                        let shouldContinue = await self?.handleLiveEvent(
+                            event,
+                            conversationID: conversationID,
+                            client: client
+                        )
+                        // `self` deallocated mid-loop -> nil -> stop following.
+                        guard let shouldContinue else { return }
+                        if !shouldContinue {
+                            deliberateStop = true
+                            break
+                        }
                     }
+                } catch {
+                    // Connection failed or dropped mid-stream; fall through to
+                    // surface the disconnected state and retry after a backoff.
+                }
+
+                if Task.isCancelled || deliberateStop {
+                    break
                 }
                 self?.markLiveUpdatesDisconnectedIfActive()
-            } catch {
-                self?.markLiveUpdatesDisconnectedIfActive()
+                try? await Task.sleep(for: .seconds(delay))
+                delay = min(delay * 2, maxDelay)
             }
         }
     }
