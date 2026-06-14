@@ -3,13 +3,12 @@
 # Build the FamilyAssistant iOS app locally and export a signed .ipa for testing.
 #
 # TestFlight releases are produced by Xcode Cloud, NOT by this script. Xcode
-# Cloud is the single source of truth for TestFlight build numbers: its
-# ci_scripts/ci_pre_xcodebuild.sh stamps a monotonically increasing build
-# number derived from CI_BUILD_NUMBER. A second uploader (this script) using a
-# different counter would clash with that sequence and push "older" builds that
-# TestFlight refuses to install -- exactly the regression this retirement
-# prevents. Uploading from here is therefore disabled; this script now only
-# archives and exports an .ipa locally for on-device testing.
+# Cloud assigns the TestFlight build number itself (CI_BUILD_NUMBER, re-stamped
+# at the app-store export step) and the repo cannot override it. A second
+# uploader (this script) using a different counter would clash with that
+# sequence and push "older" builds that TestFlight refuses to install.
+# Uploading from here is therefore disabled; this script now only archives and
+# exports an .ipa locally for on-device testing.
 #
 # Usage:
 #   ./ios/testflight-release.sh --build-only    # archive + export a local .ipa
@@ -82,10 +81,9 @@ if [[ "$UPLOAD_REQUESTED" -eq 1 ]]; then
     cat >&2 <<'EOF'
 ERROR: this script no longer uploads to TestFlight.
 
-TestFlight builds are produced by Xcode Cloud, which owns the build-number
-sequence (ios/FamilyAssistant/ci_scripts/ci_pre_xcodebuild.sh stamps it from
-CI_BUILD_NUMBER). A second uploader using a different counter would regress
-that sequence and push builds TestFlight refuses to install.
+TestFlight builds are produced by Xcode Cloud, which assigns the build number
+itself (CI_BUILD_NUMBER). A second uploader using a different counter would
+regress that sequence and push builds TestFlight refuses to install.
 
 To ship a TestFlight build:  push to the branch Xcode Cloud watches.
 To build a local .ipa to test on a device:  re-run with --build-only.

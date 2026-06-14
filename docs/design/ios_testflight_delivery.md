@@ -38,32 +38,38 @@ Revisit if the iOS build slows materially or volume grows past the Xcode Cloud f
 later want the TestFlight build gated on the Python test suite (which would argue for consolidating
 on GitHub Actions).
 
-## What lives in the repo
+## Build numbers: Xcode Cloud owns them
 
-[`ios/FamilyAssistant/ci_scripts/ci_pre_xcodebuild.sh`](../../ios/FamilyAssistant/ci_scripts/ci_pre_xcodebuild.sh)
-— Xcode Cloud runs this automatically before each `xcodebuild` invocation. It stamps
-`CURRENT_PROJECT_VERSION` (the source of `CFBundleVersion`, since the target uses
-`GENERATE_INFOPLIST_FILE = YES`) with `BUILD_NUMBER_BASE + CI_BUILD_NUMBER`, so every upload has a
-unique, monotonically increasing build number with no manual bumping. The edit happens in the
-ephemeral CI checkout only and is never committed.
+**Xcode Cloud assigns the TestFlight build number itself — the repo cannot override it.** At the
+app-store export step Xcode Cloud passes `buildNumber = CI_BUILD_NUMBER` in its (internally
+generated) export options, which re-stamps the `.ipa`'s `CFBundleVersion` *after* the archive is
+built. `CI_BUILD_NUMBER` is Xcode Cloud's own per-workflow counter: it starts at 1, increases by 1
+per build, and **cannot be offset or reset** from the project, a `ci_scripts` hook, or the App Store
+Connect API.
 
-The `ci_scripts` directory must sit next to the `.xcodeproj` and the script must be executable and
-not part of any build target.
+This was learned the hard way. An early attempt stamped `CURRENT_PROJECT_VERSION` from a
+`ci_pre_xcodebuild.sh` hook (with and without a large base offset) to force the build number. The
+hook ran and the resulting `.xcarchive` genuinely carried the intended number — but the app-store
+export overwrote it with `CI_BUILD_NUMBER` on the way to TestFlight, so the uploaded build always
+came out as the bare cloud counter. The hook was therefore removed; trying to control the build
+number from the repo is futile.
 
-### Build-number base offset
+### Implication: bump the marketing version to supersede old builds
 
-`CI_BUILD_NUMBER` is Xcode Cloud's own counter and starts at 1. Earlier builds, however, were
-uploaded by the now-retired manual script using the **git commit count** as the build number, and
-those reached ~4972 on TestFlight. A raw `CI_BUILD_NUMBER` stamp (9, 10, …) is numerically *below*
-those legacy uploads, so TestFlight treats every Xcode Cloud build as "older" and refuses to install
-it — and the cloud counter would take thousands of builds to climb back past 4972.
+TestFlight orders and de-duplicates builds **within a marketing-version train**
+(`CFBundleShortVersionString` = `MARKETING_VERSION`), and a higher marketing version always
+supersedes a lower one regardless of build number. Xcode Cloud does **not** touch the marketing
+version (it is absent from the export options), so it is read straight from the project and is the
+one version field the repo fully controls.
 
-`BUILD_NUMBER_BASE` (currently `10000`) offsets `CI_BUILD_NUMBER` past the legacy range, so the very
-next cloud build (e.g. `10000 + 9 = 10009`) is strictly greater than anything already uploaded while
-remaining monotonic forever. Only ever raise this base — never lower it — and only if some future
-legacy upload exceeds it (none should, now that manual uploads are retired). `MARKETING_VERSION`
-stays `1.0`; build numbers are compared within a marketing version, so bumping the marketing version
-later lets the counter reset freely.
+Earlier builds uploaded by the now-retired manual script used the **git commit count** as the build
+number and reached `1.0 (4972)`. Xcode Cloud's `CI_BUILD_NUMBER` starts at 1, so its builds
+(`1.0 (6)`, `1.0 (10)`, …) landed numerically *below* `4972` within the same `1.0` train and
+TestFlight treated them as older and refused to install them. Because `CI_BUILD_NUMBER` can't be
+raised past `4972`, the fix was to bump `MARKETING_VERSION` to **`1.1`**: `1.1 (N)` is a fresh train
+that supersedes `1.0 (4972)` and installs cleanly, and subsequent cloud builds increment normally
+within `1.1`. If a future situation ever strands the counter again, bump `MARKETING_VERSION` again —
+that, not the build number, is the lever.
 
 ### Manual releases are retired
 
@@ -100,6 +106,7 @@ duplicate test runs.
 
 ## Marketing version
 
-`MARKETING_VERSION` (the user-facing `CFBundleShortVersionString`, currently `1.0`) is intentionally
-left to manual control — bump it in the Xcode project when shipping a new user-facing version. Only
-the build number is automated.
+`MARKETING_VERSION` (the user-facing `CFBundleShortVersionString`, currently `1.1`) is manually
+controlled — bump it in the Xcode project (`project.pbxproj`, all build configs) when shipping a new
+user-facing version. The build number is assigned automatically by Xcode Cloud (`CI_BUILD_NUMBER`)
+and is not repo-controlled; see [Build numbers: Xcode Cloud owns them](#build-numbers-xcode-cloud-owns-them).
