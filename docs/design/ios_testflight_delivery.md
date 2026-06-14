@@ -43,12 +43,36 @@ on GitHub Actions).
 [`ios/FamilyAssistant/ci_scripts/ci_pre_xcodebuild.sh`](../../ios/FamilyAssistant/ci_scripts/ci_pre_xcodebuild.sh)
 — Xcode Cloud runs this automatically before each `xcodebuild` invocation. It stamps
 `CURRENT_PROJECT_VERSION` (the source of `CFBundleVersion`, since the target uses
-`GENERATE_INFOPLIST_FILE = YES`) with the monotonically increasing `CI_BUILD_NUMBER`, so every
-upload has a unique build number with no manual bumping. The edit happens in the ephemeral CI
-checkout only and is never committed.
+`GENERATE_INFOPLIST_FILE = YES`) with `BUILD_NUMBER_BASE + CI_BUILD_NUMBER`, so every upload has a
+unique, monotonically increasing build number with no manual bumping. The edit happens in the
+ephemeral CI checkout only and is never committed.
 
 The `ci_scripts` directory must sit next to the `.xcodeproj` and the script must be executable and
 not part of any build target.
+
+### Build-number base offset
+
+`CI_BUILD_NUMBER` is Xcode Cloud's own counter and starts at 1. Earlier builds, however, were
+uploaded by the now-retired manual script using the **git commit count** as the build number, and
+those reached ~4972 on TestFlight. A raw `CI_BUILD_NUMBER` stamp (9, 10, …) is numerically *below*
+those legacy uploads, so TestFlight treats every Xcode Cloud build as "older" and refuses to install
+it — and the cloud counter would take thousands of builds to climb back past 4972.
+
+`BUILD_NUMBER_BASE` (currently `10000`) offsets `CI_BUILD_NUMBER` past the legacy range, so the very
+next cloud build (e.g. `10000 + 9 = 10009`) is strictly greater than anything already uploaded while
+remaining monotonic forever. Only ever raise this base — never lower it — and only if some future
+legacy upload exceeds it (none should, now that manual uploads are retired). `MARKETING_VERSION`
+stays `1.0`; build numbers are compared within a marketing version, so bumping the marketing version
+later lets the counter reset freely.
+
+### Manual releases are retired
+
+[`ios/testflight-release.sh`](../../ios/testflight-release.sh) previously archived and uploaded to
+TestFlight using the git commit count as the build number. Running it alongside Xcode Cloud would
+mean two independent counters fighting for the same build-number sequence — whichever ran last would
+need to be highest, which no fixed offset can guarantee. The script therefore no longer uploads:
+invoking it without `--build-only` errors out and points at Xcode Cloud, and `--build-only` still
+archives and exports a local `.ipa` for on-device testing. **Xcode Cloud is the single uploader.**
 
 ## One-time console setup (manual)
 
