@@ -89,6 +89,9 @@ ENV_VAR_MAPPINGS: list[EnvVarMapping] = [
     EnvVarMapping("LLM_MODEL", "model"),
     EnvVarMapping("EMBEDDING_MODEL", "embedding_model"),
     EnvVarMapping("EMBEDDING_DIMENSIONS", "embedding_dimensions", int),
+    EnvVarMapping("EMBEDDING_PROVIDER", "embedding_provider"),
+    EnvVarMapping("EMBEDDING_BASE_URL", "embedding_base_url"),
+    EnvVarMapping("EMBEDDING_API_KEY", "embedding_api_key"),
     # Debug flags
     EnvVarMapping("DEBUG_LLM_MESSAGES", "debug_llm_messages", bool),
     # PWA configuration
@@ -1073,6 +1076,7 @@ def _log_config(
         "openrouter_api_key",
         "gemini_api_key",
         "openai_api_key",
+        "embedding_api_key",
         "willyweather_api_key",
         "database_url",
     }

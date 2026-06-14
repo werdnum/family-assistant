@@ -320,6 +320,47 @@ The following environment variable can be used instead of hardcoding the value i
   - Found in the Mailgun dashboard under Sending → Webhooks
   - Example: `export MAILGUN_WEBHOOK_SIGNING_KEY=your-signing-key-here`
 
+### Embedding Providers
+
+The embedding generator is selected from `embedding_model`/`embedding_provider`. By default the
+provider is inferred from the model name (`gemini/<model>` for Google Gemini, a path starting with
+`/` for local sentence-transformer models, `mock-deterministic-embedder` for tests).
+
+To use **any OpenAI-compatible embeddings endpoint** (OpenAI itself, OpenRouter, or a self-hosted
+inference server), set `embedding_provider` to `openai`. The `embedding_model` value is then sent to
+the API verbatim, so use the model id the endpoint expects.
+
+- **`EMBEDDING_PROVIDER`** - Maps to `embedding_provider`. Set to `openai` to use an
+  OpenAI-compatible endpoint. Leave unset to infer the provider from `embedding_model`.
+- **`EMBEDDING_BASE_URL`** - Maps to `embedding_base_url`. Base URL of the OpenAI-compatible
+  endpoint (only used when `embedding_provider=openai`). For OpenRouter use
+  `https://openrouter.ai/api/v1`. Leave unset for the official OpenAI API.
+- **`EMBEDDING_API_KEY`** - Maps to `embedding_api_key`. API key for the endpoint. Falls back to
+  `openai_api_key` / `OPENAI_API_KEY` when unset. Treated as a secret and redacted from logged
+  config.
+- **`EMBEDDING_DIMENSIONS`** - Maps to `embedding_dimensions`. When set, it is forwarded as the
+  `dimensions` request parameter, so the chosen model must support that output size (e.g. OpenAI's
+  `text-embedding-3-*` models). It must also match the vector storage column dimensionality.
+
+**Example: OpenRouter (`openai/text-embedding-3-small`)**
+
+```bash
+export EMBEDDING_PROVIDER=openai
+export EMBEDDING_BASE_URL=https://openrouter.ai/api/v1
+export EMBEDDING_API_KEY=sk-or-...           # your OpenRouter key
+export EMBEDDING_MODEL=openai/text-embedding-3-small
+export EMBEDDING_DIMENSIONS=1536
+```
+
+**Example: OpenAI directly**
+
+```bash
+export EMBEDDING_PROVIDER=openai
+export OPENAI_API_KEY=sk-...
+export EMBEDDING_MODEL=text-embedding-3-small
+export EMBEDDING_DIMENSIONS=1536
+```
+
 ### Code Generation
 
 ```bash

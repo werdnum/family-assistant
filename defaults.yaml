@@ -1539,3 +1539,8 @@ browser_handoff_config:
     - "browser_visual_profile"
 # Secrets (telegram_token, api_keys, database_url) are primarily from env.
 # Model, embedding_model, server_url, storage_paths are also top-level or env.
+# Embedding provider: by default it is inferred from embedding_model (e.g. "gemini/"
+# prefix). Set embedding_provider=openai (EMBEDDING_PROVIDER) to use any
+# OpenAI-compatible endpoint, with embedding_base_url (EMBEDDING_BASE_URL) and
+# embedding_api_key (EMBEDDING_API_KEY). For OpenRouter use
+# embedding_base_url=https://openrouter.ai/api/v1. See AGENTS.md "Embedding Providers".
