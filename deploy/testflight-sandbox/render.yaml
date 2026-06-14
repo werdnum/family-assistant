@@ -69,13 +69,6 @@ services:
     plan: starter
     region: oregon
     healthCheckPath: /health
-    # The sandbox config.yaml ships inside the image (the root Dockerfile does
-    # `COPY . .`), but the app reads ./config.yaml from its workdir, which isn't
-    # populated on Render. Copy the overlay into place before starting so the
-    # per-profile model overrides apply. (docker-compose mounts it directly.)
-    dockerCommand: >-
-      sh -c "cp deploy/testflight-sandbox/config.yaml /app/config.yaml &&
-      exec opentelemetry-instrument family-assistant"
     envVars:
       - key: DATABASE_URL
         fromDatabase:
@@ -85,6 +78,11 @@ services:
         generateValue: true
       - key: TIMEZONE
         value: UTC
+      # The sandbox config.yaml ships inside the image (the root Dockerfile does
+      # `COPY . .`). CONFIG_FILE points the app at it without needing it mounted
+      # at ./config.yaml. (docker-compose mounts it at /app/config.yaml instead.)
+      - key: CONFIG_FILE
+        value: /app/deploy/testflight-sandbox/config.yaml
 
       # --- OIDC (points at the Dex service above) ---
       - key: OIDC_CLIENT_ID
@@ -102,8 +100,8 @@ services:
 
       # --- LLM: OpenRouter via the OpenAI-compatible API ("OpenAI provider with
       # a custom base URL"). One cheap model runs the whole sandbox; config.yaml
-      # (copied into place by dockerCommand above) pins every profile to it with
-      # provider "openai". Use a dedicated, quota-capped OpenRouter key. ---
+      # (located via CONFIG_FILE above) pins every profile to it with provider
+      # "openai". Use a dedicated, quota-capped OpenRouter key. ---
       - key: OPENAI_API_KEY
         sync: false
       - key: OPENAI_BASE_URL

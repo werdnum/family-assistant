@@ -6,13 +6,13 @@
 # ever obtain a token, which is what keeps the deployment's LLM API key out of
 # the hands of anyone on the internet.
 #
-# All deployment-specific values are injected via environment variables and
-# expanded by Dex at startup (Dex performs ${VAR} substitution on this file).
-# See deploy/testflight-sandbox/README.md for the full setup.
+# Templating: the official Dex image's docker-entrypoint renders this file with
+# gomplate (NOT shell ${VAR} substitution), so values are injected with
+# `{{ getenv "VAR" }}`. See deploy/testflight-sandbox/README.md for setup.
 
 # Public, browser-reachable URL of THIS Dex service (no trailing slash).
 # e.g. https://family-assistant-sandbox-dex.onrender.com
-issuer: ${DEX_ISSUER}
+issuer: '{{ getenv "DEX_ISSUER" }}'
 
 # In-memory storage keeps things brain-dead: no database, no disk.
 # Signing keys regenerate on restart, which only forces a fresh login. The
@@ -24,7 +24,7 @@ storage:
 web:
   # Render injects $PORT; docker-compose sets it explicitly. Dex must listen
   # on this address for the platform to route traffic to it.
-  http: 0.0.0.0:${PORT}
+  http: '0.0.0.0:{{ getenv "PORT" }}'
 
 oauth2:
   # Skip the "Grant Access" consent screen — there is one client and one user,
@@ -34,24 +34,22 @@ oauth2:
 # Local username/password database (no upstream connectors needed).
 enablePasswordDB: true
 staticPasswords:
-  - email: "${DEMO_EMAIL}"
-    # bcrypt hash of the demo password. Use hashFromEnv (NOT hash: ${...}): the
-    # hash contains literal '$' characters which Dex's ${VAR} expansion would
-    # otherwise mangle ("malformed bcrypt hash"). hashFromEnv reads the env var
-    # value verbatim, so the '$' survive.
+  - email: '{{ getenv "DEMO_EMAIL" }}'
+    # bcrypt hash of the demo password. Use hashFromEnv (NOT a templated hash):
+    # Dex reads the env var value verbatim, so the literal '$' characters in the
+    # bcrypt hash are safe. (gomplate would otherwise need careful escaping.)
     # Generate with:  htpasswd -bnBC 10 "" 'your-password' | tr -d ':\n'
     hashFromEnv: "DEMO_PASSWORD_HASH"
     username: "App Review Demo"
     userID: "appreview-demo-0001"
 
 staticClients:
-  - id: "${OIDC_CLIENT_ID}"
-    secret: "${OIDC_CLIENT_SECRET}"
+  - id: '{{ getenv "OIDC_CLIENT_ID" }}'
+    secret: '{{ getenv "OIDC_CLIENT_SECRET" }}'
     name: "Family Assistant Sandbox"
     # Family Assistant uses two OIDC callbacks on its OWN host:
     #   /auth               -> web UI session login (auth.py)
     #   /app-auth-callback  -> native iOS PKCE login (app_auth.py)
     redirectURIs:
-      - "${APP_BASE_URL}/auth"
-      - "${APP_BASE_URL}/app-auth-callback"
-
+      - '{{ getenv "APP_BASE_URL" }}/auth'
+      - '{{ getenv "APP_BASE_URL" }}/app-auth-callback'
