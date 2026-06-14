@@ -2,18 +2,17 @@
 
 ## Status
 
-Proposed design for review. **Blocked on upstream library support** (see
-[Dependency Blocker](#dependency-blocker)).
+Proposed design for review. Implementable now behind a forward-compatibility wrapper; native PTB
+bindings are a later swap (see [Dependency Status](#dependency-status)).
 
 This design describes how Family Assistant could adopt Telegram's **Rich Messages** feature (Bot API
 10.1, released 2026-06-11) to render assistant replies as structured documents — section headings,
 tables, lists, collapsible detail sections, block/pull quotes, and code blocks — and to stream
 AI-generated replies into the chat as they are produced.
 
-It is intentionally scoped as a forward-looking design: the feature cannot be implemented today
-because `python-telegram-bot` does not yet expose the new API surface. The doc captures the target
-architecture so that implementation can start the moment the dependency is available, and so the
-prerequisite library upgrade (tracked separately) is justified.
+It is a forward-looking design: typed `python-telegram-bot` bindings for the new methods do not
+exist yet, but the methods can be invoked via PTB's `do_api_request` forward-compatibility path, so
+the doc captures the target architecture and a wrapper-based interim implementation.
 
 ## Background
 
@@ -56,21 +55,29 @@ Key facts (verified against the Bot API changelog and reference, 2026-06-14):
 > against PTB's typed bindings during the spike, since the docs page is large and the
 > machine-readable spec mirrors had not caught up at time of writing.
 
-## Dependency Blocker
+## Dependency Status
 
-Rich Messages cannot be implemented until `python-telegram-bot` exposes the 10.1 surface.
+Rich Messages are **not hard-blocked** on a typed PTB release. The blocker is narrower than an
+earlier draft of this doc claimed: only the *typed bindings* (`send_rich_message`,
+`InputRichMessage`) are missing, not the ability to call the methods.
 
 - We pin `python-telegram-bot[ext]>=21.0,<22.0` in `pyproject.toml`.
-- The latest released PTB (22.8) advertises support for **Bot API 10.0**, not 10.1. There is no PTB
-  release with `send_rich_message` yet.
+- The latest released PTB (22.8) advertises support for **Bot API 10.0**, not 10.1; there is no
+  typed `send_rich_message` yet.
+- However, PTB documents a
+  [Bot API forward-compatibility path](https://github.com/python-telegram-bot/python-telegram-bot/wiki/Bot-API-Forward-Compatibility#new-methods):
+  new methods can be invoked via `Bot.do_api_request("sendRichMessage", ...)` with a
+  JSON-serializable `rich_message` payload. So the rich send/draft calls can be prototyped now
+  behind a thin wrapper and swapped for native bindings when they land.
 
-Adoption therefore requires two sequential upgrades:
+Recommended sequencing:
 
 1. **PTB 21.x → 22.x** — clears the `<22.0` cap and reaches API 10.0 parity. Tracked as a separate
-   PR; it has standalone value and no dependency on Rich Messages.
-2. **PTB 22.x → the point release that adds 10.1 / Rich Messages** — a smaller bump once available.
-
-This doc assumes step 2 has landed before implementation begins.
+   PR; standalone value, and the floor for the forward-compatible wrapper.
+2. **Implement behind a `do_api_request` wrapper** (capability/config-gated, default off) once the
+   send contract is confirmed in the spike — no need to wait for a typed release.
+3. **Swap to native bindings** when PTB ships typed 10.1 support; the wrapper boundary localizes the
+   change.
 
 ## Current State
 
@@ -144,11 +151,15 @@ LLM markdown
    from the assistant's markdown. This is mostly pass-through, but it is **not** a blind wrapper —
    the builder must normalize constructs whose rich-markdown meaning differs from plain text:
 
-   - **Image syntax → text.** In Telegram rich markdown, `![alt](url)` is a *media block*, so
+   - **Media syntax → text.** In Telegram rich markdown, `![alt](url)` is a *media block*, so
      passing it through would turn a text reply into a media send — which v1 explicitly excludes and
      which may require media permissions or be rejected. The builder escapes or rewrites image
      syntax (e.g. to a plain link `[alt](url)`) so image references stay textual until media blocks
-     are intentionally supported.
+     are intentionally supported. **This applies to rich HTML too:** Telegram rich markdown accepts
+     HTML, including media/structural tags such as `<img>`, `<video>`, `<audio>`, `<tg-map>`,
+     `<tg-collage>`, and `<tg-slideshow>`. Since assistant output (or quoted external content) can
+     contain these, the normalization step must escape/rewrite those tags as text as well, not just
+     the markdown image form.
    - **GFM dialect reconciliation.** A small normalization step may be needed to match the markdown
      subset Telegram accepts (e.g. table or task-list syntax) — to be confirmed during the spike.
 
@@ -160,14 +171,30 @@ LLM markdown
    `_send_message_chunks()` → `context.bot.send_message` (`handler.py:299`, call sites around
    `handler.py:807`+ and `handler.py:1328`+). A change confined to `TelegramChatInterface` would
    therefore leave ordinary Telegram conversations on the old `MarkdownV2`/chunking path. Introduce
-   a single rich-aware send helper (e.g. `send_rich_or_fallback(bot, chat_id, markdown, …)`) and
-   call it from **both** the handler's reply path and `TelegramChatInterface.send_message`, so the
-   two send paths stay consistent. Callers keep passing markdown; the helper decides rich vs.
-   fallback. The web path (`WebChatInterface`) is untouched.
+   a single rich-aware send helper and call it from **both** the handler's reply path and
+   `TelegramChatInterface.send_message`, so the two send paths stay consistent. The web path
+   (`WebChatInterface`) is untouched. The helper's contract has two subtleties that must not be
+   lost:
 
-3. **Capability detection.** Probe whether the installed PTB / bot exposes `send_rich_message`
-   (attribute check on `bot`) once at startup, store the result, and branch on it. If unavailable,
-   behaviour is byte-for-byte the current `MarkdownV2` path.
+   - **Carry reply context.** The handler passes `reply_to_message_id` and a `ForceReply` markup on
+     every assistant reply. `sendRichMessage` does **not** accept the legacy `reply_to_message_id`
+     parameter — the Bot API exposes `reply_parameters` plus `reply_markup`. The helper signature
+     must therefore accept reply/markup intent (e.g. `reply_to_message_id`, `reply_markup`) and
+     translate `reply_to_message_id` → `reply_parameters` for the rich path, while the fallback path
+     keeps using it as today. Threading and `ForceReply` must survive on the rich path.
+   - **Respect the caller's parse-mode/rich intent — do not rich-render everything.**
+     `TelegramChatInterface.send_message` is also used outside the assistant-reply path with
+     `parse_mode=None` for *literal* text (e.g. the communication tool, confirmation-result
+     notifications). If the helper treated every call as rich markdown, literal text containing `#`,
+     `*`, tables, or other rich syntax would be reformatted instead of sent verbatim. Rich rendering
+     applies **only** to Markdown-intent assistant replies; `parse_mode=None` is preserved as plain
+     text, and `parse_mode="MarkdownV2"/"HTML"` keeps current behaviour.
+
+3. **Capability/enablement gate.** Because the methods are reachable via `do_api_request` (see
+   [Dependency Status](#dependency-status)), "capability" is primarily a config flag plus an
+   optional one-time probe, not an attribute check on `bot`. When disabled (or if a probe fails),
+   behaviour is byte-for-byte the current `MarkdownV2` path. Once native `send_rich_message`
+   bindings land, the gate can additionally prefer them over the wrapper.
 
 4. **Streaming (phase 2, private chats only).** In a private chat, stream incremental output via
    `sendRichMessageDraft` (an ephemeral ~30s preview keyed by `draft_id`, returning a success flag
@@ -197,9 +224,12 @@ would hide converter bugs or unexpected PTB/API shapes behind a silent MarkdownV
 tests and masking real defects (contrary to the Fail-Fast principle in AGENTS.md).
 
 - If `sendRichMessage` raises a `BadRequest` that indicates the input was rejected (e.g. an
-  unparseable-markup error), fall back to `MarkdownV2`, then to plain text — the same ladder as
-  `interface.py:115` today. This is a known, expected failure mode worth absorbing so a message is
-  never lost.
+  unparseable-markup error), fall back to `MarkdownV2`, then to plain text. **Route the fallback
+  through the chunking path (`_send_message_chunks`), not the single-message `interface.py:115`
+  ladder.** A reply that fit the larger rich-message envelope (e.g. a ~10k-char daily brief) can
+  still exceed the legacy 4096-char text limit once it degrades to MarkdownV2/plain text; sending it
+  as one message would fail again instead of being delivered. Chunking on fallback keeps the message
+  deliverable.
 - Any other exception (programming errors in the payload builder, unexpected API responses,
   capability-probe inconsistencies) is allowed to propagate so it surfaces in tests and logs. Once
   the path is validated and enabled by default, we can broaden the absorbed set if real-world
@@ -214,14 +244,16 @@ chunking as a safety net.
 
 ## Milestones
 
-1. **Spike & verify** (no production code): confirm a PTB release with Rich Messages exists; confirm
-   the `InputRichMessage` field names (`markdown`/`html`), the `sendRichMessageDraft` contract
-   (return type, draft lifetime, private-chat constraint), and the message-size limit against PTB's
-   typed bindings; check that representative assistant output (daily brief, a table, a code block)
-   renders correctly when sent as markdown.
+1. **Spike & verify** (no production code): confirm the `sendRichMessage` request shape (the
+   `rich_message`/`InputRichMessage` `markdown`/`html` fields), the `sendRichMessageDraft` contract
+   (return type, draft lifetime, private-chat constraint), and the message-size limit — exercising
+   the methods via `do_api_request` against a test bot rather than waiting for typed bindings; check
+   that representative assistant output (daily brief, a table, a code block) renders correctly when
+   sent as markdown.
 2. **Rich send path** routed through the shared rich-aware sender (handler reply path +
-   `TelegramChatInterface`), behind capability detection and a config flag, with the narrowed
-   fallback ladder. Independently shippable; default off until validated.
+   `TelegramChatInterface`), implemented behind a `do_api_request` wrapper, gated by config, with
+   reply-context translation, plain-text passthrough, and the chunked fallback ladder. Independently
+   shippable; default off until validated.
 3. **Enable by default** once validated against real chats; update length handling to skip chunking
    on the rich path if the limit allows.
 4. **Streaming** (private chats) via `sendRichMessageDraft` + final `sendRichMessage`, once
@@ -231,11 +263,14 @@ chunking as a safety net.
 
 - Unit tests for the markdown → `InputRichMessage` payload builder: headings, nested lists, tables,
   fenced code (with language), block quotes, collapsible details, and special-character handling.
-- Functional Telegram tests (`tests/functional/telegram/`) asserting: rich path used when capability
-  present (via the shared sender on the handler reply path, not just the interface); fallback to
-  `MarkdownV2` then plain text on an input-rejected `BadRequest`; and that an unexpected error
-  propagates rather than being silently swallowed.
-- A capability-absent test pinning current behaviour to guard against regressions.
+- Functional Telegram tests (`tests/functional/telegram/`) asserting: rich path used when enabled
+  (via the shared sender on the handler reply path, not just the interface); reply threading and
+  `ForceReply` survive on the rich path (`reply_to_message_id` → `reply_parameters`);
+  `parse_mode=None` literal sends are **not** rich-rendered; a long reply that fails rich parse is
+  delivered via the **chunked** fallback rather than rejected; fallback to `MarkdownV2` then plain
+  text on an input-rejected `BadRequest`; and that an unexpected error propagates rather than being
+  silently swallowed.
+- A feature-disabled test pinning current behaviour to guard against regressions.
 
 ## Documentation
 
