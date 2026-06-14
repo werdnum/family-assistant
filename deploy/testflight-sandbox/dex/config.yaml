@@ -35,10 +35,12 @@ oauth2:
 enablePasswordDB: true
 staticPasswords:
   - email: "${DEMO_EMAIL}"
-    # bcrypt hash of the demo password. Passed via env so the literal '$'
-    # characters in the hash are not themselves treated as variables.
+    # bcrypt hash of the demo password. Use hashFromEnv (NOT hash: ${...}): the
+    # hash contains literal '$' characters which Dex's ${VAR} expansion would
+    # otherwise mangle ("malformed bcrypt hash"). hashFromEnv reads the env var
+    # value verbatim, so the '$' survive.
     # Generate with:  htpasswd -bnBC 10 "" 'your-password' | tr -d ':\n'
-    hash: "${DEMO_PASSWORD_HASH}"
+    hashFromEnv: "DEMO_PASSWORD_HASH"
     username: "App Review Demo"
     userID: "appreview-demo-0001"
 
