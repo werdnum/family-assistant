@@ -40,6 +40,12 @@ DATABASE_URL = os.getenv("DATABASE_URL", "sqlite+aiosqlite:///family_assistant.d
 
 def create_engine_with_sqlite_optimizations(database_url: str) -> AsyncEngine:
     """Create engine with SQLite optimizations if applicable."""
+    # SQLAlchemy's async engine needs an async driver. A bare "postgresql://"
+    # URL (e.g. Render's connectionString, or a standard libpq URL) resolves to
+    # the sync psycopg2 dialect and fails. Normalize it to asyncpg, the driver
+    # this project ships.
+    if database_url.startswith("postgresql://"):
+        database_url = database_url.replace("postgresql://", "postgresql+asyncpg://", 1)
     # Determine pool class based on database type.
     #
     # SQLite uses StaticPool to funnel all access through a SINGLE DBAPI

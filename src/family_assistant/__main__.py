@@ -1,6 +1,7 @@
 import argparse
 import asyncio
 import logging
+import os
 import signal
 import sys
 from typing import Any
@@ -68,7 +69,10 @@ parser.add_argument(
 
 def main() -> int:
     """Loads config, parses args, sets up event loop, and runs the application."""
-    config = load_config()
+    # CONFIG_FILE lets a deployment point at a config overlay without mounting it
+    # at ./config.yaml (e.g. Render, where the file ships in the image under a
+    # subdirectory). Defaults to the conventional ./config.yaml.
+    config = load_config(config_file_path=os.getenv("CONFIG_FILE", "config.yaml"))
     args = parser.parse_args()
 
     # Apply CLI Overrides to config using model_copy for immutable updates
