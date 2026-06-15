@@ -574,14 +574,17 @@ final class ChatViewModel {
             if let eventTurnID = event.turnID, eventTurnID != turnID {
                 continue
             }
-            // Track the highest applied seq AFTER the turn filter so the ack
-            // cursor only advances for events we actually surfaced. Acking a
-            // skipped turn's seq would let a later ack_seq cover that other
-            // device's turn_ended (the hub treats ended_seq <= ack_seq as
-            // delivered) and suppress its disconnect push. Resuming from this
-            // (our) seq still can't miss our events — the server replays all
-            // seqs >= from_seq, so interleaved skipped turns are simply re-filtered.
-            if let seq = event.seq {
+            // Advance the ack/resume cursor ONLY for our own turn's events
+            // (`turn_id == turnID`). A seq-bearing event that isn't ours — a
+            // no-turn_id `message` nudge published by non-streaming saves, or a
+            // concurrent turn's frame — must not inflate `ack_seq`: the hub treats
+            // any turn with `ended_seq <= ack_seq` as delivered, so acking past a
+            // skipped turn's `turn_ended` would suppress its disconnect push.
+            // Resuming from our own seq still can't miss our events — the server
+            // replays all seqs >= from_seq, so interleaved frames are re-filtered.
+            // Connection-control frames (heartbeat, no-turn_id message) carry no
+            // renderable content; `apply` is a no-op for them.
+            if event.turnID == turnID, let seq = event.seq {
                 if let current = lastSeq {
                     lastSeq = max(current, seq)
                 } else {

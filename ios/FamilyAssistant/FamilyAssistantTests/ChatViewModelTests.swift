@@ -681,18 +681,24 @@ final class ChatViewModelTests: XCTestCase {
         // let the hub treat that other turn as delivered and suppress its
         // disconnect push. The resume cursor and ack_seq must reflect only our
         // own turn's highest applied seq.
-        // The watched turn's events carry no turn id (always applied); the
-        // concurrent other-device turn carries a distinct id so the send flow
-        // filters it out. Its seq must not advance our ack/resume cursor.
+        // Our turn's events carry the client-generated turn id (echoed by the
+        // mock). Two non-ours, higher-seq events interleave: a no-turn_id
+        // `message` nudge (seq 5) and a concurrent other-device turn_ended
+        // (seq 6). Neither may advance our ack/resume cursor.
         let streamRequests = AtomicCounter()
+        var streamedTurnID = "turn-mine"
         var resumeFromSeq: String?
         var resumeAckSeq: String?
         ChatMockBackendURLProtocol.respond { request in
             let path = request.url?.path ?? ""
             switch (request.httpMethod ?? "GET", path) {
             case ("POST", "/api/v1/chat/turns"):
+                if let body = (try? Self.jsonObject(from: request)) as? [String: Any],
+                   let postedTurnID = body["turn_id"] as? String {
+                    streamedTurnID = postedTurnID
+                }
                 return .json(
-                    #"{"turn_id":"turn-mine","conversation_id":"web_conv_concurrent","first_seq":0}"#
+                    #"{"turn_id":"\#(streamedTurnID)","conversation_id":"web_conv_concurrent","first_seq":0}"#
                 )
             case ("GET", "/api/v1/chat/conversations"):
                 return .json(#"{"conversations":[],"count":0}"#)
@@ -718,16 +724,20 @@ final class ChatViewModelTests: XCTestCase {
                 // the counter.
                 if request.httpMethod == "GET", path == "/api/v1/chat/conversations/web_conv_concurrent/stream" {
                     if streamRequests.increment() == 1 {
-                        // Our text (seq 1, no turn id → applied), then a concurrent
-                        // OTHER device's turn_ended (seq 2, distinct turn id →
-                        // skipped), then a drop.
+                        // Our text (seq 1, our turn id → applied + acked), then a
+                        // no-turn_id message nudge (seq 5) and a concurrent OTHER
+                        // device's turn_ended (seq 6) — both must be ignored for
+                        // ack purposes — then a drop.
                         return .text(
                             """
                             event: text
-                            data: {"content":"Partial","seq":1}
+                            data: {"turn_id":"\(streamedTurnID)","content":"Partial","seq":1}
+
+                            event: message
+                            data: {"seq":5}
 
                             event: turn_ended
-                            data: {"turn_id":"turn-other-device","status":"complete","seq":2}
+                            data: {"turn_id":"turn-other-device","status":"complete","seq":6}
 
                             event: stream_dropped
                             data: {}
@@ -741,7 +751,7 @@ final class ChatViewModelTests: XCTestCase {
                     return .text(
                         """
                         event: turn_ended
-                        data: {"status":"complete","seq":3}
+                        data: {"turn_id":"\(streamedTurnID)","status":"complete","seq":7}
 
                         """
                     )
@@ -757,8 +767,9 @@ final class ChatViewModelTests: XCTestCase {
         try await waitUntil { !model.isStreaming }
 
         XCTAssertEqual(streamRequests.value, 2)
-        // Resume/ack reflect only our turn (seq 1), not the skipped other-device
-        // turn (seq 2): resume from 2 (our seq 1 + 1), ack 1.
+        // Resume/ack reflect only our turn (seq 1) — not the no-turn_id nudge
+        // (seq 5) nor the other-device turn (seq 6): resume from 2 (our seq 1 + 1),
+        // ack 1.
         XCTAssertEqual(resumeAckSeq, "1")
         XCTAssertEqual(resumeFromSeq, "2")
     }
