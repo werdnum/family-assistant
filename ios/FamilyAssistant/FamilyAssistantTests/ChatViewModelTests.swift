@@ -968,6 +968,151 @@ final class ChatViewModelTests: XCTestCase {
         model = nil
     }
 
+    func testResendDuringStreamSupersedesWithoutClobbering() async throws {
+        // Sending again while the first turn is still streaming must supersede it
+        // cleanly: the first (cancelled) task must not flip the new turn's
+        // streaming state off, reload history over it, or leave a stale bubble.
+        let streamRequests = AtomicCounter()
+        let firstStream = HangingStream()
+        let secondStream = HangingStream()
+        ChatMockBackendURLProtocol.respond { request in
+            let path = request.url?.path ?? ""
+            switch (request.httpMethod ?? "GET", path) {
+            case ("POST", "/api/v1/chat/turns"):
+                return .json(
+                    #"{"turn_id":"turn-supersede","conversation_id":"web_conv_supersede","first_seq":0}"#
+                )
+            case ("POST", "/api/v1/chat/ack"):
+                return .json("{}")
+            case ("GET", "/api/v1/chat/conversations"):
+                return .json(#"{"conversations":[],"count":0}"#)
+            case ("GET", "/api/v1/chat/conversations/web_conv_supersede/messages"):
+                return .json(
+                    """
+                    {
+                      "conversation_id":"web_conv_supersede",
+                      "messages":[
+                        {"internal_id":1,"role":"user","content":"First","timestamp":"2026-06-08T12:00:00Z"},
+                        {"internal_id":2,"role":"assistant","content":"First reply","timestamp":"2026-06-08T12:00:01Z"},
+                        {"internal_id":3,"role":"user","content":"Second","timestamp":"2026-06-08T12:00:02Z"},
+                        {"internal_id":4,"role":"assistant","content":"Second reply","timestamp":"2026-06-08T12:00:03Z"}
+                      ],
+                      "count":4,
+                      "total_messages":4,
+                      "has_more_before":false,
+                      "has_more_after":false
+                    }
+                    """
+                )
+            default:
+                if request.httpMethod == "GET", path.hasSuffix("/stream") {
+                    let isFirst = streamRequests.increment() == 1
+                    let controller = isFirst ? firstStream : secondStream
+                    let token = isFirst ? "First partial" : "Second partial"
+                    return .hangingStream(
+                        "event: text\ndata: {\"content\":\"\(token)\"}\n\n",
+                        controller: controller
+                    )
+                }
+                return .json(#"{"detail":"unexpected"}"#, statusCode: 404)
+            }
+        }
+
+        let model = makeViewModel(conversationID: "web_conv_supersede")
+
+        // Phase 1: send "First"; its stream hangs after the first token.
+        model.draftText = "First"
+        await model.sendDraft()
+        try await waitUntil { model.isStreaming && model.messages.last?.text == "First partial" }
+
+        // Phase 2: send "Second" while the first turn is still streaming.
+        model.draftText = "Second"
+        await model.sendDraft()
+        try await waitUntil { model.messages.contains { $0.text == "Second partial" } }
+
+        // The superseded first turn must not flip streaming off or reload over the
+        // in-flight second turn. Hold the assertion across a window long enough
+        // for the cancelled task's tail to (wrongly) run.
+        for _ in 0 ..< 10 {
+            XCTAssertTrue(model.isStreaming)
+            XCTAssertNil(model.errorMessage)
+            try await Task.sleep(for: .milliseconds(20))
+        }
+
+        // Phase 3: finish the second turn; the thread reloads to a coherent final
+        // history with no leftover optimistic placeholders.
+        secondStream.finish(appending: "event: turn_ended\ndata: {\"status\":\"complete\",\"seq\":1}\n\n")
+        try await waitUntil { !model.isStreaming }
+
+        XCTAssertEqual(model.messages.map(\.text), ["First", "First reply", "Second", "Second reply"])
+        XCTAssertFalse(model.messages.contains { $0.text == "First partial" || $0.text == "Second partial" })
+
+        // Release the still-held first stream so its background waiter exits.
+        firstStream.finish()
+    }
+
+    func testConversationSwitchDuringStreamCancelsSendAndLoadsTarget() async throws {
+        // Switching conversations mid-stream cancels the in-flight send and loads
+        // the target thread; the cancelled send must not bleed its optimistic
+        // bubbles or an error into the newly opened conversation.
+        let hanging = HangingStream()
+        ChatMockBackendURLProtocol.respond { request in
+            let path = request.url?.path ?? ""
+            switch (request.httpMethod ?? "GET", path) {
+            case ("POST", "/api/v1/chat/turns"):
+                return .json(
+                    #"{"turn_id":"turn-switch","conversation_id":"web_conv_switch_a","first_seq":0}"#
+                )
+            case ("GET", "/api/v1/chat/conversations"):
+                return .json(#"{"conversations":[],"count":0}"#)
+            case ("GET", "/api/v1/chat/conversations/web_conv_switch_b/messages"):
+                return .json(
+                    """
+                    {
+                      "conversation_id":"web_conv_switch_b",
+                      "messages":[
+                        {"internal_id":9,"role":"user","content":"Other thread","timestamp":"2026-06-08T12:00:00Z"}
+                      ],
+                      "count":1,
+                      "total_messages":1,
+                      "has_more_before":false,
+                      "has_more_after":false
+                    }
+                    """
+                )
+            default:
+                if request.httpMethod == "GET", path.hasSuffix("web_conv_switch_a/stream") {
+                    return .hangingStream(
+                        "event: text\ndata: {\"content\":\"Working\"}\n\n",
+                        controller: hanging
+                    )
+                }
+                if request.httpMethod == "GET", path.hasSuffix("web_conv_switch_b/stream") {
+                    return .text("")
+                }
+                return .json(#"{"detail":"unexpected"}"#, statusCode: 404)
+            }
+        }
+
+        var model: ChatViewModel? = makeViewModel(conversationID: "web_conv_switch_a")
+        model?.draftText = "Hi"
+        await model?.sendDraft()
+        try await waitUntil { model?.isStreaming == true && model?.messages.last?.text == "Working" }
+
+        // Switch to another conversation while the first is still streaming.
+        await model?.selectConversation("web_conv_switch_b")
+
+        XCTAssertEqual(model?.conversationID, "web_conv_switch_b")
+        try await waitUntil { model?.messages.map(\.text) == ["Other thread"] }
+        XCTAssertEqual(model?.isStreaming, false)
+        XCTAssertNil(model?.errorMessage)
+        XCTAssertFalse(model?.messages.contains { $0.text == "Working" } ?? true)
+
+        // Release the held stream and the model so the live loop tears down.
+        hanging.finish()
+        model = nil
+    }
+
     func testApplyRouteProcessesEachNewInitialPrompt() async throws {
         var sentPrompts: [String] = []
         var conversationIDs: [String] = []

@@ -446,6 +446,10 @@ final class ChatMockBackendURLProtocol: URLProtocol {
         request
     }
 
+    private let stopLock = NSLock()
+    private var stopped = false
+    private var activeHangingStream: HangingStream?
+
     override func startLoading() {
         guard let handler = Self.lock.withLock({ Self.handler }) else {
             client?.urlProtocol(self, didFailWithError: URLError(.badServerResponse))
@@ -455,6 +459,31 @@ final class ChatMockBackendURLProtocol: URLProtocol {
         do {
             let response = try handler(request)
             client?.urlProtocol(self, didReceive: response.urlResponse(for: request), cacheStoragePolicy: .notAllowed)
+            if let controller = response.hangingStream {
+                // Hold the request open after the initial chunk so a turn can be
+                // observed mid-flight. Resolve on a background thread (not the
+                // loader thread) so other concurrent mock requests aren't starved.
+                stopLock.withLock { activeHangingStream = controller }
+                if !response.data.isEmpty {
+                    client?.urlProtocol(self, didLoad: response.data)
+                }
+                DispatchQueue.global().async { [weak self] in
+                    guard let self else { return }
+                    let result = controller.awaitCompletion()
+                    if self.stopLock.withLock({ self.stopped }) {
+                        return
+                    }
+                    if result.finished {
+                        if !result.data.isEmpty {
+                            self.client?.urlProtocol(self, didLoad: result.data)
+                        }
+                        self.client?.urlProtocolDidFinishLoading(self)
+                    } else {
+                        self.client?.urlProtocol(self, didFailWithError: URLError(.networkConnectionLost))
+                    }
+                }
+                return
+            }
             client?.urlProtocol(self, didLoad: response.data)
             if response.dropsConnectionAfterData {
                 // Simulate a connection that streamed some bytes and then dropped
@@ -469,7 +498,40 @@ final class ChatMockBackendURLProtocol: URLProtocol {
         }
     }
 
-    override func stopLoading() {}
+    override func stopLoading() {
+        stopLock.withLock { stopped = true }
+        // Release a held stream so its background waiter exits when the request
+        // is cancelled (e.g. a superseded send tearing down its subscription).
+        activeHangingStream?.cancel()
+    }
+}
+
+/// Test handle for a stream the mock holds open until the test finishes it (or
+/// the request is cancelled), so a turn can be driven and observed mid-flight.
+final class HangingStream: @unchecked Sendable {
+    private let semaphore = DispatchSemaphore(value: 0)
+    private let lock = NSLock()
+    private var finishData = Data()
+    private var didFinish = false
+
+    /// Finish the held stream, optionally appending a final SSE chunk.
+    func finish(appending text: String = "") {
+        lock.withLock {
+            finishData = Data(text.utf8)
+            didFinish = true
+        }
+        semaphore.signal()
+    }
+
+    fileprivate func cancel() {
+        semaphore.signal()
+    }
+
+    /// Blocks (off the loader thread) until `finish` or `cancel` is called.
+    fileprivate func awaitCompletion() -> (finished: Bool, data: Data) {
+        semaphore.wait()
+        return lock.withLock { (didFinish, finishData) }
+    }
 }
 
 struct ChatMockResponse {
@@ -480,6 +542,10 @@ struct ChatMockResponse {
     /// network error instead of finishing cleanly — modelling a stream that
     /// dropped mid-turn rather than one that closed normally.
     var dropsConnectionAfterData = false
+    /// When set, the loader delivers `data` and then holds the request open until
+    /// the controller is finished (or the request is cancelled) — letting a test
+    /// observe and drive a turn while it is still in flight.
+    var hangingStream: HangingStream?
 
     static func json(_ json: String, statusCode: Int = 200) -> ChatMockResponse {
         ChatMockResponse(statusCode: statusCode, data: Data(json.utf8), headers: ["Content-Type": "application/json"])
@@ -497,6 +563,18 @@ struct ChatMockResponse {
             data: Data(text.utf8),
             headers: ["Content-Type": "text/event-stream"],
             dropsConnectionAfterData: true
+        )
+    }
+
+    /// An SSE response that delivers `initial` and then stays open until
+    /// `controller` is finished or the request is cancelled, so a turn can be
+    /// held in flight while the test drives other interactions.
+    static func hangingStream(_ initial: String, controller: HangingStream) -> ChatMockResponse {
+        ChatMockResponse(
+            statusCode: 200,
+            data: Data(initial.utf8),
+            headers: ["Content-Type": "text/event-stream"],
+            hangingStream: controller
         )
     }
 
