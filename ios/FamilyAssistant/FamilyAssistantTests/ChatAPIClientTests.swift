@@ -528,8 +528,17 @@ final class HangingStream: @unchecked Sendable {
     }
 
     /// Blocks (off the loader thread) until `finish` or `cancel` is called.
+    ///
+    /// Bounded by a generous timeout so a test that throws before its trailing
+    /// `finish()` (or a future test that forgets it) can't leak this worker thread
+    /// for the process lifetime — a real hazard in the app-hosted unit bundle,
+    /// where accumulated leaked workers can exhaust the pool and surface as
+    /// intermittent CI hangs. The bound never trips on the happy path because
+    /// `finish`/`cancel` signal immediately.
     fileprivate func awaitCompletion() -> (finished: Bool, data: Data) {
-        semaphore.wait()
+        guard semaphore.wait(timeout: .now() + 30) == .success else {
+            return (false, Data())
+        }
         return lock.withLock { (didFinish, finishData) }
     }
 }

@@ -1218,6 +1218,67 @@ final class ChatViewModelTests: XCTestCase {
         model = nil
     }
 
+    func testFollowLoopSkipsAckForConcurrentTurnWhileStreaming() async throws {
+        // While a send is in flight (isStreaming), the live-follow loop must not
+        // acknowledge a concurrent turn it doesn't surface (the merge is skipped
+        // while streaming) — acking it would let the hub mark that turn delivered
+        // and suppress its disconnect push. Counterpart to the send-path guard.
+        let acks = AtomicCounter()
+        let followConnects = AtomicCounter()
+        let followStream = HangingStream()
+        ChatMockBackendURLProtocol.respond { request in
+            let path = request.url?.path ?? ""
+            switch (request.httpMethod ?? "GET", path) {
+            case ("POST", "/api/v1/chat/ack"):
+                if let body = (try? Self.jsonObject(from: request)) as? [String: Any],
+                   body["conversation_id"] as? String == "web_conv_followack" {
+                    acks.increment()
+                }
+                return .json("{}")
+            case ("GET", "/api/v1/chat/conversations"):
+                return .json(#"{"conversations":[],"count":0}"#)
+            case ("GET", "/api/v1/chat/conversations/web_conv_followack/messages"):
+                return .json(
+                    """
+                    {
+                      "conversation_id":"web_conv_followack",
+                      "messages":[],
+                      "count":0,
+                      "total_messages":0,
+                      "has_more_before":false,
+                      "has_more_after":false
+                    }
+                    """
+                )
+            default:
+                if request.httpMethod == "GET", path == "/api/v1/chat/conversations/web_conv_followack/stream" {
+                    followConnects.increment()
+                    return .hangingStream("", controller: followStream)
+                }
+                return .json(#"{"detail":"unexpected"}"#, statusCode: 404)
+            }
+        }
+
+        var model: ChatViewModel? = makeViewModel(conversationID: "web_conv_followack")
+        await model?.selectConversation("web_conv_followack")
+        try await waitUntil { followConnects.value >= 1 }
+
+        // Simulate an in-flight send, then let a concurrent turn end on the follow
+        // stream while we're "streaming".
+        model?.isStreaming = true
+        followStream.finish(
+            appending: "event: turn_ended\ndata: {\"turn_id\":\"turn-other\",\"status\":\"complete\",\"seq\":9}\n\n"
+        )
+
+        // The ack (if it wrongly fired) is scheduled synchronously when the event
+        // is processed, so a short settle window reliably surfaces it.
+        try await Task.sleep(for: .milliseconds(300))
+        XCTAssertEqual(acks.value, 0)
+
+        // Release so deinit cancels the follow loop before teardown.
+        model = nil
+    }
+
     func testApplyRouteProcessesEachNewInitialPrompt() async throws {
         var sentPrompts: [String] = []
         var conversationIDs: [String] = []

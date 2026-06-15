@@ -557,7 +557,6 @@ final class ChatViewModel {
         assistantMessageID: String,
         lastSeq: inout Int?
     ) async throws -> TurnSubscriptionOutcome {
-        var sawTurnEnded = false
         for try await event in events {
             if Task.isCancelled {
                 break
@@ -594,7 +593,6 @@ final class ChatViewModel {
             }
             apply(streamEvent: event, assistantMessageID: assistantMessageID)
             if event.type == .turnEnded {
-                sawTurnEnded = true
                 // A failed turn carries its error on the terminal event; surface
                 // it so the bubble shows the failure rather than an empty reply.
                 if let message = event.errorMessage, !message.isEmpty {
@@ -603,8 +601,9 @@ final class ChatViewModel {
                 return .completed
             }
         }
-        // The stream closed without a stream_dropped or turn_ended frame.
-        return sawTurnEnded ? .completed : .interrupted
+        // The loop only exits here when the stream closed (or was cancelled)
+        // without a turn_ended or stream_dropped frame — i.e. interrupted.
+        return .interrupted
     }
 
     /// Recover from an interrupted/already-complete/rotated-out turn by dropping
@@ -887,21 +886,25 @@ final class ChatViewModel {
         conversationID: String,
         client: ChatAPIClient
     ) async -> Bool {
-        if let seq = event.seq {
-            recordAppliedSeq(seq)
-        }
         switch event.type {
         case .turnEnded, .message:
-            // A turn finished (possibly started on another device); refresh
-            // persisted history unless this device is actively streaming it.
+            // A turn finished (possibly started on another device). Only surface
+            // and acknowledge it while this device is NOT actively streaming its
+            // own turn: during a send the send path owns the ack cursor, and
+            // advancing it / acking here for a turn we don't surface (the merge
+            // is skipped while streaming) would let the hub treat that turn as
+            // delivered (ended_seq <= ack_seq) and suppress its disconnect push.
             if !isStreaming {
+                if let seq = event.seq {
+                    recordAppliedSeq(seq)
+                }
                 await mergeNewMessages(conversationID: conversationID)
                 await refreshRecentConversations()
-            }
-            // Acknowledge the turn_ended seq so the server marks the reply
-            // delivered and suppresses the disconnect push. Fire-and-forget.
-            if event.type == .turnEnded, let seq = event.seq {
-                Task { try? await client.acknowledge(conversationID: conversationID, ackSeq: seq) }
+                // Acknowledge the turn_ended seq so the server marks the reply
+                // delivered and suppresses the disconnect push. Fire-and-forget.
+                if event.type == .turnEnded, let seq = event.seq {
+                    Task { try? await client.acknowledge(conversationID: conversationID, ackSeq: seq) }
+                }
             }
         case .connected:
             liveUpdatesConnected = true
