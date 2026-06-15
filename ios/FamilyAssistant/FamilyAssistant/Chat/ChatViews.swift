@@ -179,8 +179,8 @@ private struct ChatThreadView: View {
                         ProgressView("Loading messages...")
                     }
                 }
-                .onChange(of: viewModel.messages.map(\.id)) { _, _ in
-                    if let lastID = viewModel.messages.last?.id {
+                .onChange(of: viewModel.messages.last?.id) { _, newValue in
+                    if let lastID = newValue {
                         withAnimation(.easeOut(duration: 0.2)) {
                             proxy.scrollTo(lastID, anchor: .bottom)
                         }
@@ -192,6 +192,14 @@ private struct ChatThreadView: View {
             ChatComposerView(viewModel: viewModel)
         }
     }
+}
+
+/// Whether a message's text should be rendered as formatted markdown.
+///
+/// A still-streaming reply is rendered as plain text and only parsed/formatted
+/// once the turn settles, so the markdown parser doesn't run on every delta.
+func shouldRenderFormattedMarkdown(status: ChatMessageStatus, isLoading: Bool) -> Bool {
+    status != .running && !isLoading
 }
 
 private struct MessageBubble: View {
@@ -226,8 +234,20 @@ private struct MessageBubble: View {
                     LoadingDotsView()
                 }
                 if !message.text.isEmpty {
-                    NativeMarkdownView(markdown: message.text)
-                        .textSelection(.enabled)
+                    if shouldRenderFormattedMarkdown(status: message.status, isLoading: message.isLoading) {
+                        NativeMarkdownView(markdown: message.text)
+                            .textSelection(.enabled)
+                    } else {
+                        // While a reply is still streaming, render the growing text
+                        // as plain Text. Re-parsing the whole markdown document on
+                        // every delta is O(n^2) on the main thread and, combined
+                        // with scrolling, stalls long enough to trip the SwiftUI
+                        // layout watchdog. The text is reformatted once the turn
+                        // completes.
+                        Text(message.text)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .textSelection(.enabled)
+                    }
                 }
                 if !message.toolCalls.isEmpty {
                     ToolGroupView(toolCalls: message.toolCalls, viewModel: viewModel)
@@ -580,17 +600,56 @@ struct NativeMarkdownListItem: Equatable {
 }
 
 enum NativeMarkdownRenderer {
+    // Parsing markdown is expensive, and SwiftUI re-evaluates a bubble's body
+    // far more often than its text changes (scrolling a long thread, sibling
+    // updates, layout passes). Caching by exact source string keeps a given
+    // message from being re-parsed on every render. Parsing is pure, so caching
+    // by the source string is always correct.
+    private final class BlocksBox {
+        let blocks: [NativeMarkdownBlock]
+        init(_ blocks: [NativeMarkdownBlock]) { self.blocks = blocks }
+    }
+
+    private final class AttributedBox {
+        let value: AttributedString?
+        init(_ value: AttributedString?) { self.value = value }
+    }
+
+    private static let blockCache: NSCache<NSString, BlocksBox> = {
+        let cache = NSCache<NSString, BlocksBox>()
+        cache.countLimit = 256
+        return cache
+    }()
+
+    private static let inlineCache: NSCache<NSString, AttributedBox> = {
+        let cache = NSCache<NSString, AttributedBox>()
+        cache.countLimit = 512
+        return cache
+    }()
+
     static func blocks(from markdown: String) -> [NativeMarkdownBlock] {
+        let key = markdown as NSString
+        if let cached = blockCache.object(forKey: key) {
+            return cached.blocks
+        }
         let document = Document(parsing: markdown)
-        let blocks = document.children.flatMap(blocks(from:))
-        return blocks.isEmpty ? [.paragraph(markdown)] : blocks
+        let parsed = document.children.flatMap(blocks(from:))
+        let result = parsed.isEmpty ? [.paragraph(markdown)] : parsed
+        blockCache.setObject(BlocksBox(result), forKey: key)
+        return result
     }
 
     static func inlineAttributedString(from markdown: String) -> AttributedString? {
-        try? AttributedString(
+        let key = markdown as NSString
+        if let cached = inlineCache.object(forKey: key) {
+            return cached.value
+        }
+        let value = try? AttributedString(
             markdown: markdown,
             options: AttributedString.MarkdownParsingOptions(interpretedSyntax: .inlineOnlyPreservingWhitespace)
         )
+        inlineCache.setObject(AttributedBox(value), forKey: key)
+        return value
     }
 
     private static func blocks(from markup: Markup) -> [NativeMarkdownBlock] {
@@ -736,11 +795,16 @@ private struct MarkdownBlockView: View {
     private func markdownTableRow(_ cells: [String], isHeader: Bool) -> some View {
         GridRow {
             ForEach(Array(cells.enumerated()), id: \.offset) { _, cell in
+                // Cells size to their content. `.frame(maxWidth: .infinity)` here
+                // is a non-converging width proposal inside the enclosing
+                // horizontal ScrollView (which proposes unbounded width), which can
+                // hang the layout engine; the Grid's `.leading` alignment handles
+                // column alignment instead.
                 inlineText(cell)
                     .font(isHeader ? .caption.bold() : .caption)
+                    .multilineTextAlignment(.leading)
                     .padding(.horizontal, 8)
                     .padding(.vertical, 6)
-                    .frame(maxWidth: .infinity, alignment: .leading)
                     .background(isHeader ? Color(.tertiarySystemFill) : Color(.secondarySystemFill).opacity(0.45))
                     .border(Color(.separator), width: 0.5)
             }

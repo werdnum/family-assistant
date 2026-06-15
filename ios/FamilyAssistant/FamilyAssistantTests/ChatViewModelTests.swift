@@ -1156,6 +1156,86 @@ final class ChatViewModelTests: XCTestCase {
         firstStream.finish()
     }
 
+    func testStreamingTextDeltasCoalesceInOrder() async throws {
+        // Streamed deltas are buffered and flushed together rather than applied
+        // per token, but the assembled bubble text must preserve arrival order.
+        let stream = HangingStream()
+        ChatMockBackendURLProtocol.respond { request in
+            let path = request.url?.path ?? ""
+            switch (request.httpMethod ?? "GET", path) {
+            case ("POST", "/api/v1/chat/turns"):
+                return .json(
+                    #"{"turn_id":"turn-coalesce","conversation_id":"web_conv_coalesce","first_seq":0}"#
+                )
+            case ("GET", "/api/v1/chat/conversations"):
+                return .json(#"{"conversations":[],"count":0}"#)
+            default:
+                if request.httpMethod == "GET", path == "/api/v1/chat/conversations/web_conv_coalesce/stream" {
+                    return .hangingStream(
+                        "event: text\ndata: {\"content\":\"Hello\"}\n\n"
+                            + "event: text\ndata: {\"content\":\", \"}\n\n"
+                            + "event: text\ndata: {\"content\":\"world\"}\n\n",
+                        controller: stream
+                    )
+                }
+                return .json(#"{"detail":"unexpected"}"#, statusCode: 404)
+            }
+        }
+
+        let model = makeViewModel(conversationID: "web_conv_coalesce")
+        model.draftText = "Hi"
+        await model.sendDraft()
+
+        try await waitUntil { model.messages.last?.text == "Hello, world" }
+        XCTAssertTrue(model.isStreaming)
+
+        stream.finish()
+    }
+
+    func testBufferedStreamTextIsFlushedSynchronouslyOnCancel() async throws {
+        // With a flush interval long enough that the timer never fires during the
+        // test, a delta stays buffered (the bubble is still empty) until a turn
+        // finalizes. Cancelling must flush it synchronously so the partial reply
+        // isn't lost and isn't overwritten by the "Response stopped." placeholder.
+        let stream = HangingStream()
+        ChatMockBackendURLProtocol.respond { request in
+            let path = request.url?.path ?? ""
+            switch (request.httpMethod ?? "GET", path) {
+            case ("POST", "/api/v1/chat/turns"):
+                return .json(
+                    #"{"turn_id":"turn-flush","conversation_id":"web_conv_flush","first_seq":0}"#
+                )
+            case ("GET", "/api/v1/chat/conversations"):
+                return .json(#"{"conversations":[],"count":0}"#)
+            default:
+                if request.httpMethod == "GET", path == "/api/v1/chat/conversations/web_conv_flush/stream" {
+                    return .hangingStream(
+                        "event: text\ndata: {\"content\":\"Partial answer\"}\n\n",
+                        controller: stream
+                    )
+                }
+                return .json(#"{"detail":"unexpected"}"#, statusCode: 404)
+            }
+        }
+
+        let model = makeViewModel(conversationID: "web_conv_flush", streamTextFlushInterval: .seconds(60))
+        model.draftText = "Hi"
+        await model.sendDraft()
+
+        try await waitUntil { model.isStreaming }
+        // Give the SSE delta time to arrive and be buffered.
+        try await Task.sleep(for: .milliseconds(200))
+        // The 60s flush timer has not fired, so the delta is buffered, not applied.
+        XCTAssertEqual(model.messages.last?.text, "")
+
+        model.cancelStream()
+
+        XCTAssertFalse(model.isStreaming)
+        XCTAssertEqual(model.messages.last?.text, "Partial answer")
+
+        stream.finish()
+    }
+
     func testConversationSwitchDuringStreamCancelsSendAndLoadsTarget() async throws {
         // Switching conversations mid-stream cancels the in-flight send and loads
         // the target thread; the cancelled send must not bleed its optimistic
@@ -1665,7 +1745,8 @@ final class ChatViewModelTests: XCTestCase {
     private func makeViewModel(
         conversationID: String?,
         liveReconnectInitialDelaySeconds: Double = 2,
-        liveReconnectMaxDelaySeconds: Double = 30
+        liveReconnectMaxDelaySeconds: Double = 30,
+        streamTextFlushInterval: Duration = .milliseconds(50)
     ) -> ChatViewModel {
         let authManager = AuthManager()
         authManager.serverURL = serverURL
@@ -1674,7 +1755,8 @@ final class ChatViewModelTests: XCTestCase {
             conversationID: conversationID,
             initialPrompt: nil,
             liveReconnectInitialDelaySeconds: liveReconnectInitialDelaySeconds,
-            liveReconnectMaxDelaySeconds: liveReconnectMaxDelaySeconds
+            liveReconnectMaxDelaySeconds: liveReconnectMaxDelaySeconds,
+            streamTextFlushInterval: streamTextFlushInterval
         )
     }
 

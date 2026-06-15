@@ -81,4 +81,35 @@ final class MarkdownRendererTests: XCTestCase {
 
         XCTAssertEqual(String(attributed.characters), "See docs and code.")
     }
+
+    func testBlockParsingIsStableAcrossRepeatedCalls() throws {
+        // Parsing is memoized; repeated calls for the same source must return the
+        // same blocks, and a different source must parse independently.
+        let source = """
+        ## Title
+
+        Some **bold** text with a `code` span.
+
+        - a
+        - b
+        """
+
+        let first = NativeMarkdownRenderer.blocks(from: source)
+        let second = NativeMarkdownRenderer.blocks(from: source)
+        XCTAssertEqual(first, second)
+        XCTAssertEqual(NativeMarkdownRenderer.blocks(from: source + "\n\nmore"), NativeMarkdownRenderer.blocks(from: source + "\n\nmore"))
+        XCTAssertNotEqual(first, NativeMarkdownRenderer.blocks(from: source + "\n\nmore"))
+    }
+
+    func testShouldRenderFormattedMarkdownGatesOnStreamingStatus() {
+        // A still-streaming reply renders as plain text (no per-delta markdown
+        // parse); a settled reply renders formatted.
+        XCTAssertFalse(shouldRenderFormattedMarkdown(status: .running, isLoading: true))
+        XCTAssertFalse(shouldRenderFormattedMarkdown(status: .running, isLoading: false))
+        XCTAssertTrue(shouldRenderFormattedMarkdown(status: .complete, isLoading: false))
+        XCTAssertTrue(shouldRenderFormattedMarkdown(status: .failed, isLoading: false))
+        // A message marked complete but still flagged loading is treated as
+        // in-flight until it settles.
+        XCTAssertFalse(shouldRenderFormattedMarkdown(status: .complete, isLoading: true))
+    }
 }
