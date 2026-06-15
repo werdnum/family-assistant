@@ -91,8 +91,9 @@ struct ChatAPIClient {
 
     /// Sends a prompt and waits for the assistant's full reply.
     ///
-    /// Unlike ``streamMessage(turnID:prompt:conversationID:profileID:attachments:)``
-    /// this uses the non-streaming `/send_message` endpoint, which suits headless
+    /// Unlike the two-step ``startTurn(turnID:prompt:conversationID:profileID:attachments:)``
+    /// plus ``subscribeToTurn(conversationID:fromSeq:ackSeq:)`` flow, this uses the
+    /// non-streaming `/send_message` endpoint, which suits headless
     /// callers (App Intents / Siri) that present a single completed reply rather
     /// than a live token stream.
     func sendMessage(
@@ -120,19 +121,21 @@ struct ChatAPIClient {
         return ChatSendResult(reply: decoded.reply, conversationID: decoded.conversationID)
     }
 
-    /// Kick off a chat turn and return a live stream of its events.
+    /// Start a chat turn. First step of the two-step resumable-streaming flow.
     ///
-    /// Two-step resumable-streaming flow:
-    /// 1. POST /api/v1/chat/turns starts the turn (idempotent on `turnID`).
-    /// 2. GET /api/v1/chat/conversations/{id}/stream?from_seq=… delivers the
-    ///    SSE events; with follow=false it closes once the turn completes.
-    func streamMessage(
+    /// POSTs `/api/v1/chat/turns` (idempotent on `turnID`: a retried POST returns
+    /// the existing turn instead of starting a second producer, so a
+    /// network-timed-out send is safe to retry). The returned ``ChatTurnStart``
+    /// carries the seq to subscribe from and whether the turn was already durably
+    /// complete — a retried turn found in the DB but no longer replayable from the
+    /// hub, for which the caller reloads persisted history instead of subscribing.
+    func startTurn(
         turnID: String,
         prompt: String,
         conversationID: String,
         profileID: String?,
         attachments: [ChatAttachment]
-    ) async throws -> ChatTurnStream {
+    ) async throws -> ChatTurnStart {
         var startRequest = try await authManager.authorizedRequest(
             url: apiURL("/api/v1/chat/turns"),
             method: "POST"
@@ -151,20 +154,35 @@ struct ChatAPIClient {
         let (startData, startResponse) = try await urlSession.data(for: startRequest)
         try validate(response: startResponse, data: startData)
         let turn = try JSONDecoder.chatDecoder.decode(ChatTurnResponse.self, from: startData)
-
-        // Durable-idempotency fallback: a retried turn_id already completed and
-        // persisted, but is no longer replayable from the hub. Opening /stream
-        // here would 410 or block; the caller reloads history instead.
-        if turn.alreadyComplete {
-            return ChatTurnStream(conversationID: turn.conversationID, alreadyComplete: true, events: nil)
-        }
-
-        let events = try await streamConversation(
+        return ChatTurnStart(
             conversationID: turn.conversationID,
-            fromSeq: turn.firstSeq,
-            follow: false
+            firstSeq: turn.firstSeq,
+            alreadyComplete: turn.alreadyComplete
         )
-        return ChatTurnStream(conversationID: turn.conversationID, alreadyComplete: false, events: events)
+    }
+
+    /// Subscribe to (or resume) a turn's event stream. Second step of the
+    /// resumable-streaming flow.
+    ///
+    /// Uses `follow=false`: the server drains the buffer from `fromSeq` and the
+    /// in-flight turn through `turn_ended`, then closes. The send-and-watch flow
+    /// calls this once with the turn's `first_seq`; after a `stream_dropped` or a
+    /// transient connect failure it resumes by calling again with the highest seq
+    /// already applied, so no events are replayed or missed.
+    ///
+    /// `ackSeq` marks everything through that seq delivered on (re)subscribe so
+    /// the server suppresses the disconnect push for events already applied.
+    func subscribeToTurn(
+        conversationID: String,
+        fromSeq: Int,
+        ackSeq: Int? = nil
+    ) async throws -> AsyncThrowingStream<ChatStreamEvent, Error> {
+        try await streamConversation(
+            conversationID: conversationID,
+            fromSeq: fromSeq,
+            follow: false,
+            ackSeq: ackSeq
+        )
     }
 
     /// Connect to a conversation's event stream for live updates. With
@@ -451,16 +469,15 @@ struct ChatSendResult: Equatable {
     let conversationID: String
 }
 
-/// Result of starting a chat turn.
+/// Result of starting a chat turn (POST `/api/v1/chat/turns`).
 ///
-/// `events` is the live SSE stream for the turn, or `nil` when `alreadyComplete`
-/// is true — a retried turn that finished durably but is no longer replayable
-/// from the hub. In that case the caller reloads persisted history instead of
-/// opening the stream.
-struct ChatTurnStream {
+/// `firstSeq` is the seq to subscribe from. `alreadyComplete` is true for a
+/// retried turn that finished durably but is no longer replayable from the hub;
+/// in that case the caller reloads persisted history instead of subscribing.
+struct ChatTurnStart {
     let conversationID: String
+    let firstSeq: Int
     let alreadyComplete: Bool
-    let events: AsyncThrowingStream<ChatStreamEvent, Error>?
 }
 
 private struct ChatSendMessageRequest: Encodable {

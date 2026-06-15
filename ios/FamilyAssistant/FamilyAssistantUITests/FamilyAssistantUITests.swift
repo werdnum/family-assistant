@@ -3,6 +3,14 @@ import XCTest
 final class FamilyAssistantUITests: XCTestCase {
     private var app: XCUIApplication!
 
+    // Post-launch / navigation readiness window. A cold CI simulator can take
+    // well over the previous 8s to install, boot, authenticate (mock backend),
+    // and render the first screen — a passing run was observed at ~35s total and
+    // a sibling run timed out the 8s nav-bar wait. `waitForExistence` returns as
+    // soon as the element appears, so a generous bound only adds slack on slow CI
+    // without slowing the happy path (mirrors the existing 30s sign-out wait).
+    private static let readyTimeout: TimeInterval = 30
+
     override func setUp() {
         super.setUp()
         continueAfterFailure = false
@@ -15,7 +23,7 @@ final class FamilyAssistantUITests: XCTestCase {
     }
 
     func testNotesListSearchAndDetailFlow() {
-        XCTAssertTrue(app.navigationBars["Notes"].waitForExistence(timeout: 8))
+        XCTAssertTrue(app.navigationBars["Notes"].waitForExistence(timeout: Self.readyTimeout))
         XCTAssertTrue(app.staticTexts["Shopping"].waitForExistence(timeout: 4))
         XCTAssertTrue(app.staticTexts["School Pickup"].waitForExistence(timeout: 4))
 
@@ -34,7 +42,7 @@ final class FamilyAssistantUITests: XCTestCase {
     }
 
     func testAddNoteSavesThroughBackendAndShowsDetail() {
-        XCTAssertTrue(app.navigationBars["Notes"].waitForExistence(timeout: 8))
+        XCTAssertTrue(app.navigationBars["Notes"].waitForExistence(timeout: Self.readyTimeout))
 
         app.buttons["Add Note"].tap()
         XCTAssertTrue(app.navigationBars["Add Note"].waitForExistence(timeout: 3))
@@ -53,7 +61,7 @@ final class FamilyAssistantUITests: XCTestCase {
     }
 
     func testDeleteNoteRemovesItFromList() {
-        XCTAssertTrue(app.navigationBars["Notes"].waitForExistence(timeout: 8))
+        XCTAssertTrue(app.navigationBars["Notes"].waitForExistence(timeout: Self.readyTimeout))
         XCTAssertTrue(app.staticTexts["Shopping"].waitForExistence(timeout: 4))
         app.staticTexts["Shopping"].tap()
 
@@ -96,13 +104,13 @@ final class FamilyAssistantUITests: XCTestCase {
 
         // Navigate back to the conversation list (compact width).
         let backButton = app.navigationBars.buttons["Chats"]
-        XCTAssertTrue(backButton.waitForExistence(timeout: 8))
+        XCTAssertTrue(backButton.waitForExistence(timeout: Self.readyTimeout))
         backButton.tap()
 
         // Re-open the same conversation. Before the fix the row stayed selected
         // after returning, so the selection value never changed and this tap was
         // a no-op: the thread would never load.
-        XCTAssertTrue(row.waitForExistence(timeout: 8))
+        XCTAssertTrue(row.waitForExistence(timeout: Self.readyTimeout))
         row.tap()
         XCTAssertTrue(app.staticTexts["Milk and apples."].waitForExistence(timeout: 20))
         attachScreenshot(named: "native-chat-reopen-after-back")
@@ -118,7 +126,7 @@ final class FamilyAssistantUITests: XCTestCase {
         if backButton.waitForExistence(timeout: 4) {
             backButton.tap()
         }
-        XCTAssertTrue(row.waitForExistence(timeout: 8))
+        XCTAssertTrue(row.waitForExistence(timeout: Self.readyTimeout))
     }
 
     func testNativeChatSendsAndStreamsResponse() {
@@ -126,7 +134,7 @@ final class FamilyAssistantUITests: XCTestCase {
 
         openSeededConversationIfNeeded()
         let composer = app.textFields["chat-composer"]
-        XCTAssertTrue(composer.waitForExistence(timeout: 8))
+        XCTAssertTrue(composer.waitForExistence(timeout: Self.readyTimeout))
         composer.tap()
         composer.typeText("Hello")
         app.buttons["chat-send-button"].tap()
@@ -144,7 +152,7 @@ final class FamilyAssistantUITests: XCTestCase {
     }
 
     func testTabBarSwitchesBetweenFeatureTabs() {
-        XCTAssertTrue(app.navigationBars["Notes"].waitForExistence(timeout: 8))
+        XCTAssertTrue(app.navigationBars["Notes"].waitForExistence(timeout: Self.readyTimeout))
 
         let tabBar = app.tabBars.firstMatch
         XCTAssertTrue(tabBar.buttons["Chat"].waitForExistence(timeout: 4))
@@ -166,7 +174,7 @@ final class FamilyAssistantUITests: XCTestCase {
     }
 
     func testMoreTabOpensSettingsAndSignsOut() {
-        XCTAssertTrue(app.navigationBars["Notes"].waitForExistence(timeout: 8))
+        XCTAssertTrue(app.navigationBars["Notes"].waitForExistence(timeout: Self.readyTimeout))
 
         openMoreSettings()
 
@@ -183,7 +191,7 @@ final class FamilyAssistantUITests: XCTestCase {
     }
 
     func testPerTabNavigationStateIsPreservedAcrossTabSwitches() {
-        XCTAssertTrue(app.navigationBars["Notes"].waitForExistence(timeout: 8))
+        XCTAssertTrue(app.navigationBars["Notes"].waitForExistence(timeout: Self.readyTimeout))
 
         openMoreSettings()
 
@@ -199,13 +207,13 @@ final class FamilyAssistantUITests: XCTestCase {
     /// long destination list if the Settings row is below the fold.
     private func openMoreSettings() {
         let moreTab = app.tabBars.firstMatch.buttons["More"]
-        XCTAssertTrue(moreTab.waitForExistence(timeout: 8))
+        XCTAssertTrue(moreTab.waitForExistence(timeout: Self.readyTimeout))
         moreTab.tap()
 
         // Wait for the overflow list itself before hunting for a row: on CI
         // simulators the tab transition and list render lag several seconds,
         // and looking for "Settings" too early is what made this flaky.
-        XCTAssertTrue(app.navigationBars["More"].waitForExistence(timeout: 8))
+        XCTAssertTrue(app.navigationBars["More"].waitForExistence(timeout: Self.readyTimeout))
 
         // Settings sits below the fold in the overflow list. Scroll it into
         // view, retrying because the list can still be settling after it loads.
@@ -218,7 +226,7 @@ final class FamilyAssistantUITests: XCTestCase {
 
         XCTAssertTrue(settings.waitForExistence(timeout: 4))
         settings.tap()
-        XCTAssertTrue(app.navigationBars["Settings"].waitForExistence(timeout: 8))
+        XCTAssertTrue(app.navigationBars["Settings"].waitForExistence(timeout: Self.readyTimeout))
     }
 
     func testDeepLinkSelectsDocumentsTab() {

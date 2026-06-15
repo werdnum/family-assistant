@@ -140,31 +140,31 @@ final class ChatAPIClientTests: XCTestCase {
         XCTAssertEqual(response.profiles.first?.availableTools, ["notes"])
     }
 
-    func testStreamMessageSendsWebPayloadAndDecodesSSE() async throws {
+    func testStartTurnSendsWebPayloadAndSubscribeDecodesSSE() async throws {
         var sawStartRequest = false
-        var sawStreamRequest = false
+        var streamQueryItems: [String: String] = [:]
         ChatMockBackendURLProtocol.respond { request in
             let path = request.url?.path ?? ""
             if request.httpMethod == "POST", path == "/api/v1/chat/turns" {
                 XCTAssertEqual(request.value(forHTTPHeaderField: "Content-Type"), "application/json")
                 let payload = try XCTUnwrap(Self.jsonObject(from: request) as? [String: Any])
-                XCTAssertNotNil(payload["turn_id"] as? String)
+                XCTAssertEqual(payload["turn_id"] as? String, "turn-1")
                 XCTAssertEqual(payload["prompt"] as? String, "Hi")
                 XCTAssertEqual(payload["conversation_id"] as? String, "web_conv_stream")
                 XCTAssertEqual(payload["profile_id"] as? String, "default_assistant")
                 XCTAssertEqual(payload["interface_type"] as? String, "web")
                 sawStartRequest = true
                 return .json(
-                    #"{"turn_id":"turn-1","conversation_id":"web_conv_stream","first_seq":0}"#
+                    #"{"turn_id":"turn-1","conversation_id":"web_conv_stream","first_seq":3}"#
                 )
             }
             XCTAssertEqual(request.httpMethod, "GET")
             XCTAssertEqual(path, "/api/v1/chat/conversations/web_conv_stream/stream")
-            sawStreamRequest = true
+            streamQueryItems = Self.queryItems(from: request)
             return .text(
                 """
                 event: turn_started
-                data: {"turn_id":"turn-1","seq":0}
+                data: {"turn_id":"turn-1","seq":3}
 
                 event: text
                 data: {"content":"Hello"}
@@ -176,7 +176,8 @@ final class ChatAPIClientTests: XCTestCase {
             )
         }
 
-        let turnStream = try await makeClient().streamMessage(
+        let client = makeClient()
+        let start = try await client.startTurn(
             turnID: "turn-1",
             prompt: "Hi",
             conversationID: "web_conv_stream",
@@ -184,8 +185,16 @@ final class ChatAPIClientTests: XCTestCase {
             attachments: []
         )
 
-        XCTAssertFalse(turnStream.alreadyComplete)
-        let stream = try XCTUnwrap(turnStream.events)
+        XCTAssertFalse(start.alreadyComplete)
+        XCTAssertEqual(start.firstSeq, 3)
+        XCTAssertEqual(start.conversationID, "web_conv_stream")
+        XCTAssertTrue(sawStartRequest)
+
+        let stream = try await client.subscribeToTurn(
+            conversationID: start.conversationID,
+            fromSeq: start.firstSeq,
+            ackSeq: nil
+        )
         var events: [ChatStreamEvent] = []
         for try await event in stream {
             events.append(event)
@@ -193,11 +202,33 @@ final class ChatAPIClientTests: XCTestCase {
 
         XCTAssertEqual(events.map(\.type), [.turnStarted, .text, .turnEnded])
         XCTAssertEqual(events.first { $0.type == .text }?.text, "Hello")
-        XCTAssertTrue(sawStartRequest)
-        XCTAssertTrue(sawStreamRequest)
+        // The send-and-watch subscribe uses follow=false and starts at first_seq.
+        XCTAssertEqual(streamQueryItems["follow"], "false")
+        XCTAssertEqual(streamQueryItems["from_seq"], "3")
     }
 
-    func testStreamMessageAlreadyCompleteSkipsStream() async throws {
+    func testSubscribeToTurnResumesFromSeqWithAck() async throws {
+        var streamQueryItems: [String: String] = [:]
+        ChatMockBackendURLProtocol.respond { request in
+            streamQueryItems = Self.queryItems(from: request)
+            return .text("event: turn_ended\ndata: {\"turn_id\":\"turn-resume\",\"seq\":9}\n\n")
+        }
+
+        let stream = try await makeClient().subscribeToTurn(
+            conversationID: "web_conv_resume",
+            fromSeq: 7,
+            ackSeq: 6
+        )
+        for try await _ in stream {}
+
+        // A resume after a drop re-subscribes from the last applied seq and acks
+        // everything already seen so the server suppresses the disconnect push.
+        XCTAssertEqual(streamQueryItems["follow"], "false")
+        XCTAssertEqual(streamQueryItems["from_seq"], "7")
+        XCTAssertEqual(streamQueryItems["ack_seq"], "6")
+    }
+
+    func testStartTurnAlreadyCompleteReportsFlag() async throws {
         var sawStreamRequest = false
         ChatMockBackendURLProtocol.respond { request in
             let path = request.url?.path ?? ""
@@ -210,7 +241,7 @@ final class ChatAPIClientTests: XCTestCase {
             return .text("event: turn_ended\ndata: {\"turn_id\":\"turn-dup\"}\n\n")
         }
 
-        let turnStream = try await makeClient().streamMessage(
+        let start = try await makeClient().startTurn(
             turnID: "turn-dup",
             prompt: "Hi again",
             conversationID: "web_conv_dup",
@@ -218,8 +249,8 @@ final class ChatAPIClientTests: XCTestCase {
             attachments: []
         )
 
-        XCTAssertTrue(turnStream.alreadyComplete)
-        XCTAssertNil(turnStream.events)
+        XCTAssertTrue(start.alreadyComplete)
+        // The caller reloads history instead of subscribing, so no stream opens.
         XCTAssertFalse(sawStreamRequest)
     }
 
@@ -415,6 +446,10 @@ final class ChatMockBackendURLProtocol: URLProtocol {
         request
     }
 
+    private let stopLock = NSLock()
+    private var stopped = false
+    private var activeHangingStream: HangingStream?
+
     override func startLoading() {
         guard let handler = Self.lock.withLock({ Self.handler }) else {
             client?.urlProtocol(self, didFailWithError: URLError(.badServerResponse))
@@ -424,20 +459,102 @@ final class ChatMockBackendURLProtocol: URLProtocol {
         do {
             let response = try handler(request)
             client?.urlProtocol(self, didReceive: response.urlResponse(for: request), cacheStoragePolicy: .notAllowed)
+            if let controller = response.hangingStream {
+                // Hold the request open after the initial chunk so a turn can be
+                // observed mid-flight. Resolve on a background thread (not the
+                // loader thread) so other concurrent mock requests aren't starved.
+                stopLock.withLock { activeHangingStream = controller }
+                if !response.data.isEmpty {
+                    client?.urlProtocol(self, didLoad: response.data)
+                }
+                DispatchQueue.global().async { [weak self] in
+                    guard let self else { return }
+                    let result = controller.awaitCompletion()
+                    if self.stopLock.withLock({ self.stopped }) {
+                        return
+                    }
+                    if result.finished {
+                        if !result.data.isEmpty {
+                            self.client?.urlProtocol(self, didLoad: result.data)
+                        }
+                        self.client?.urlProtocolDidFinishLoading(self)
+                    } else {
+                        self.client?.urlProtocol(self, didFailWithError: URLError(.networkConnectionLost))
+                    }
+                }
+                return
+            }
             client?.urlProtocol(self, didLoad: response.data)
-            client?.urlProtocolDidFinishLoading(self)
+            if response.dropsConnectionAfterData {
+                // Simulate a connection that streamed some bytes and then dropped
+                // mid-turn (backgrounding, network change, proxy idle timeout).
+                // URLSession.bytes yields the delivered bytes, then throws.
+                client?.urlProtocol(self, didFailWithError: URLError(.networkConnectionLost))
+            } else {
+                client?.urlProtocolDidFinishLoading(self)
+            }
         } catch {
             client?.urlProtocol(self, didFailWithError: error)
         }
     }
 
-    override func stopLoading() {}
+    override func stopLoading() {
+        stopLock.withLock { stopped = true }
+        // Release a held stream so its background waiter exits when the request
+        // is cancelled (e.g. a superseded send tearing down its subscription).
+        activeHangingStream?.cancel()
+    }
+}
+
+/// Test handle for a stream the mock holds open until the test finishes it (or
+/// the request is cancelled), so a turn can be driven and observed mid-flight.
+final class HangingStream: @unchecked Sendable {
+    private let semaphore = DispatchSemaphore(value: 0)
+    private let lock = NSLock()
+    private var finishData = Data()
+    private var didFinish = false
+
+    /// Finish the held stream, optionally appending a final SSE chunk.
+    func finish(appending text: String = "") {
+        lock.withLock {
+            finishData = Data(text.utf8)
+            didFinish = true
+        }
+        semaphore.signal()
+    }
+
+    fileprivate func cancel() {
+        semaphore.signal()
+    }
+
+    /// Blocks (off the loader thread) until `finish` or `cancel` is called.
+    ///
+    /// Bounded by a generous timeout so a test that throws before its trailing
+    /// `finish()` (or a future test that forgets it) can't leak this worker thread
+    /// for the process lifetime — a real hazard in the app-hosted unit bundle,
+    /// where accumulated leaked workers can exhaust the pool and surface as
+    /// intermittent CI hangs. The bound never trips on the happy path because
+    /// `finish`/`cancel` signal immediately.
+    fileprivate func awaitCompletion() -> (finished: Bool, data: Data) {
+        guard semaphore.wait(timeout: .now() + 30) == .success else {
+            return (false, Data())
+        }
+        return lock.withLock { (didFinish, finishData) }
+    }
 }
 
 struct ChatMockResponse {
     let statusCode: Int
     let data: Data
     let headers: [String: String]
+    /// When true, the loader delivers `data` and then fails the request with a
+    /// network error instead of finishing cleanly — modelling a stream that
+    /// dropped mid-turn rather than one that closed normally.
+    var dropsConnectionAfterData = false
+    /// When set, the loader delivers `data` and then holds the request open until
+    /// the controller is finished (or the request is cancelled) — letting a test
+    /// observe and drive a turn while it is still in flight.
+    var hangingStream: HangingStream?
 
     static func json(_ json: String, statusCode: Int = 200) -> ChatMockResponse {
         ChatMockResponse(statusCode: statusCode, data: Data(json.utf8), headers: ["Content-Type": "application/json"])
@@ -445,6 +562,29 @@ struct ChatMockResponse {
 
     static func text(_ text: String, statusCode: Int = 200) -> ChatMockResponse {
         ChatMockResponse(statusCode: statusCode, data: Data(text.utf8), headers: ["Content-Type": "text/event-stream"])
+    }
+
+    /// An SSE response that delivers `text` and then drops the connection
+    /// without a `turn_ended` frame, modelling a mid-turn disconnect.
+    static func droppedStream(_ text: String) -> ChatMockResponse {
+        ChatMockResponse(
+            statusCode: 200,
+            data: Data(text.utf8),
+            headers: ["Content-Type": "text/event-stream"],
+            dropsConnectionAfterData: true
+        )
+    }
+
+    /// An SSE response that delivers `initial` and then stays open until
+    /// `controller` is finished or the request is cancelled, so a turn can be
+    /// held in flight while the test drives other interactions.
+    static func hangingStream(_ initial: String, controller: HangingStream) -> ChatMockResponse {
+        ChatMockResponse(
+            statusCode: 200,
+            data: Data(initial.utf8),
+            headers: ["Content-Type": "text/event-stream"],
+            hangingStream: controller
+        )
     }
 
     func urlResponse(for request: URLRequest) -> HTTPURLResponse {

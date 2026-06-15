@@ -602,6 +602,11 @@ various tasks with dark mode support and mobile optimization.
     completes, the reply is delivered as a push notification — tap it to jump back to the
     conversation. (You'll only get this push if the connection actually dropped; while you're
     watching the response stream live, no extra notification is sent.)
+  - **Reopening after a dropped connection:** If the connection drops while a reply is streaming
+    (a flaky network, switching apps, or backgrounding), the app reconnects and continues the same
+    reply where it can, or quietly reloads the finished reply from history when it returns — you
+    won't be left with a stuck "thinking" bubble or a spurious error for a reply that actually
+    succeeded.
 
 ## 8. Tips for Best Results
 

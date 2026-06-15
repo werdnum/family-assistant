@@ -305,6 +305,980 @@ final class ChatViewModelTests: XCTestCase {
         XCTAssertFalse(sawStream)
     }
 
+    func testSendMidTurnDropReloadsHistoryInsteadOfError() async throws {
+        // A mobile connection dropping mid-turn (the stream delivers some text
+        // then the socket dies before turn_ended) must NOT leave a permanent
+        // error bubble: the turn keeps running durably on the server, so the
+        // client reloads persisted history to surface the saved reply.
+        var streamedTurnID = "turn-drop"
+        ChatMockBackendURLProtocol.respond { request in
+            let path = request.url?.path ?? ""
+            switch (request.httpMethod ?? "GET", path) {
+            case ("POST", "/api/v1/chat/turns"):
+                if let body = (try? Self.jsonObject(from: request)) as? [String: Any],
+                   let postedTurnID = body["turn_id"] as? String {
+                    streamedTurnID = postedTurnID
+                }
+                return .json(
+                    #"{"turn_id":"\#(streamedTurnID)","conversation_id":"web_conv_drop","first_seq":0}"#
+                )
+            case ("GET", "/api/v1/chat/conversations"):
+                return .json(#"{"conversations":[],"count":0}"#)
+            case ("GET", "/api/v1/chat/conversations/web_conv_drop/messages"):
+                return .json(
+                    """
+                    {
+                      "conversation_id":"web_conv_drop",
+                      "messages":[
+                        {"internal_id":1,"role":"user","content":"Hi","timestamp":"2026-06-08T12:00:00Z"},
+                        {"internal_id":2,"role":"assistant","content":"Durable reply","timestamp":"2026-06-08T12:00:01Z"}
+                      ],
+                      "count":2,
+                      "total_messages":2,
+                      "has_more_before":false,
+                      "has_more_after":false
+                    }
+                    """
+                )
+            default:
+                if request.httpMethod == "GET", path.hasSuffix("/stream") {
+                    return .droppedStream(
+                        """
+                        event: text
+                        data: {"turn_id":"\(streamedTurnID)","content":"Partial","seq":1}
+
+                        """
+                    )
+                }
+                return .json(#"{"detail":"unexpected"}"#, statusCode: 404)
+            }
+        }
+
+        let model = makeViewModel(conversationID: "web_conv_drop")
+        model.draftText = "Hi"
+        await model.sendDraft()
+        try await waitUntil { !model.isStreaming }
+
+        // The durable reply is surfaced from persisted history, not a fabricated
+        // "Done." and not a hard error bubble.
+        XCTAssertEqual(model.messages.map(\.text), ["Hi", "Durable reply"])
+        XCTAssertFalse(model.messages.contains { $0.text.contains("Sorry, I encountered an error") })
+        XCTAssertFalse(model.messages.contains { $0.text == "Done." })
+        // Recovery is silent: a recovered disconnect must not pop a modal
+        // "Chat Error" alert for a reply that actually succeeded.
+        XCTAssertNil(model.errorMessage)
+    }
+
+    func testSendStreamDroppedEventResubscribesFromLastSeqAndCompletes() async throws {
+        // The hub drops an overflowed subscriber with a stream_dropped frame. The
+        // client must resubscribe from the last applied seq and finish the turn,
+        // rather than ignoring the frame and fabricating a completion.
+        let streamRequests = AtomicCounter()
+        var streamedTurnID = "turn-redrop"
+        var resumeFromSeq: String?
+        ChatMockBackendURLProtocol.respond { request in
+            let path = request.url?.path ?? ""
+            switch (request.httpMethod ?? "GET", path) {
+            case ("POST", "/api/v1/chat/turns"):
+                if let body = (try? Self.jsonObject(from: request)) as? [String: Any],
+                   let postedTurnID = body["turn_id"] as? String {
+                    streamedTurnID = postedTurnID
+                }
+                return .json(
+                    #"{"turn_id":"\#(streamedTurnID)","conversation_id":"web_conv_redrop","first_seq":0}"#
+                )
+            case ("GET", "/api/v1/chat/conversations"):
+                return .json(#"{"conversations":[],"count":0}"#)
+            case ("GET", "/api/v1/chat/conversations/web_conv_redrop/messages"):
+                return .json(
+                    """
+                    {
+                      "conversation_id":"web_conv_redrop",
+                      "messages":[
+                        {"internal_id":1,"role":"user","content":"Hi","timestamp":"2026-06-08T12:00:00Z"},
+                        {"internal_id":2,"role":"assistant","content":"Resumed reply","timestamp":"2026-06-08T12:00:01Z"}
+                      ],
+                      "count":2,
+                      "total_messages":2,
+                      "has_more_before":false,
+                      "has_more_after":false
+                    }
+                    """
+                )
+            default:
+                if request.httpMethod == "GET", path == "/api/v1/chat/conversations/web_conv_redrop/stream" {
+                    if streamRequests.increment() == 1 {
+                        return .text(
+                            """
+                            event: text
+                            data: {"turn_id":"\(streamedTurnID)","content":"Partial","seq":1}
+
+                            event: stream_dropped
+                            data: {}
+
+                            """
+                        )
+                    }
+                    resumeFromSeq = Self.queryItems(from: request)["from_seq"]
+                    return .text(
+                        """
+                        event: text
+                        data: {"turn_id":"\(streamedTurnID)","content":" rest","seq":2}
+
+                        event: turn_ended
+                        data: {"turn_id":"\(streamedTurnID)","status":"complete","seq":3}
+
+                        """
+                    )
+                }
+                return .json(#"{"detail":"unexpected"}"#, statusCode: 404)
+            }
+        }
+
+        let model = makeViewModel(conversationID: "web_conv_redrop")
+        model.draftText = "Hi"
+        await model.sendDraft()
+        try await waitUntil { !model.isStreaming }
+
+        XCTAssertEqual(streamRequests.value, 2)
+        // The resubscribe resumes from just after the last applied seq (the
+        // partial text was seq 1). The server replays seq >= from_seq, so
+        // resuming from seq 1 would re-apply the partial text.
+        XCTAssertEqual(resumeFromSeq, "2")
+        XCTAssertEqual(model.messages.map(\.text), ["Hi", "Resumed reply"])
+        XCTAssertNil(model.errorMessage)
+    }
+
+    func testSend410ReloadsHistoryWithoutError() async throws {
+        // The turn's events rotated out of the hub buffer (410). There is nothing
+        // to replay, but the reply is durably persisted — reload history rather
+        // than show an error for a turn that likely succeeded.
+        ChatMockBackendURLProtocol.respond { request in
+            let path = request.url?.path ?? ""
+            switch (request.httpMethod ?? "GET", path) {
+            case ("POST", "/api/v1/chat/turns"):
+                return .json(
+                    #"{"turn_id":"turn-410","conversation_id":"web_conv_410","first_seq":0}"#
+                )
+            case ("GET", "/api/v1/chat/conversations"):
+                return .json(#"{"conversations":[],"count":0}"#)
+            case ("GET", "/api/v1/chat/conversations/web_conv_410/messages"):
+                return .json(
+                    """
+                    {
+                      "conversation_id":"web_conv_410",
+                      "messages":[
+                        {"internal_id":1,"role":"user","content":"Hi","timestamp":"2026-06-08T12:00:00Z"},
+                        {"internal_id":2,"role":"assistant","content":"Persisted reply","timestamp":"2026-06-08T12:00:01Z"}
+                      ],
+                      "count":2,
+                      "total_messages":2,
+                      "has_more_before":false,
+                      "has_more_after":false
+                    }
+                    """
+                )
+            default:
+                if request.httpMethod == "GET", path.hasSuffix("/stream") {
+                    return .json(#"{"detail":"events rotated out of buffer"}"#, statusCode: 410)
+                }
+                return .json(#"{"detail":"unexpected"}"#, statusCode: 404)
+            }
+        }
+
+        let model = makeViewModel(conversationID: "web_conv_410")
+        model.draftText = "Hi"
+        await model.sendDraft()
+        try await waitUntil { !model.isStreaming }
+
+        XCTAssertEqual(model.messages.map(\.text), ["Hi", "Persisted reply"])
+        XCTAssertNil(model.errorMessage)
+    }
+
+    func testSendTransientServerErrorResubscribesAndCompletes() async throws {
+        // A transient 5xx on the subscribe GET doesn't stop the durable turn; the
+        // client resubscribes rather than failing the whole turn.
+        let streamRequests = AtomicCounter()
+        var streamedTurnID = "turn-5xx"
+        ChatMockBackendURLProtocol.respond { request in
+            let path = request.url?.path ?? ""
+            switch (request.httpMethod ?? "GET", path) {
+            case ("POST", "/api/v1/chat/turns"):
+                if let body = (try? Self.jsonObject(from: request)) as? [String: Any],
+                   let postedTurnID = body["turn_id"] as? String {
+                    streamedTurnID = postedTurnID
+                }
+                return .json(
+                    #"{"turn_id":"\#(streamedTurnID)","conversation_id":"web_conv_5xx","first_seq":0}"#
+                )
+            case ("GET", "/api/v1/chat/conversations"):
+                return .json(#"{"conversations":[],"count":0}"#)
+            case ("GET", "/api/v1/chat/conversations/web_conv_5xx/messages"):
+                return .json(
+                    """
+                    {
+                      "conversation_id":"web_conv_5xx",
+                      "messages":[
+                        {"internal_id":1,"role":"user","content":"Hi","timestamp":"2026-06-08T12:00:00Z"},
+                        {"internal_id":2,"role":"assistant","content":"Recovered reply","timestamp":"2026-06-08T12:00:01Z"}
+                      ],
+                      "count":2,
+                      "total_messages":2,
+                      "has_more_before":false,
+                      "has_more_after":false
+                    }
+                    """
+                )
+            default:
+                if request.httpMethod == "GET", path == "/api/v1/chat/conversations/web_conv_5xx/stream" {
+                    if streamRequests.increment() == 1 {
+                        return .json(#"{"detail":"temporary"}"#, statusCode: 503)
+                    }
+                    return .text(
+                        """
+                        event: turn_ended
+                        data: {"turn_id":"\(streamedTurnID)","status":"complete","seq":1}
+
+                        """
+                    )
+                }
+                return .json(#"{"detail":"unexpected"}"#, statusCode: 404)
+            }
+        }
+
+        let model = makeViewModel(conversationID: "web_conv_5xx")
+        model.draftText = "Hi"
+        await model.sendDraft()
+        try await waitUntil { !model.isStreaming }
+
+        XCTAssertEqual(streamRequests.value, 2)
+        XCTAssertEqual(model.messages.map(\.text), ["Hi", "Recovered reply"])
+        XCTAssertNil(model.errorMessage)
+    }
+
+    func testSendFatalSubscribeErrorSurfacesError() async throws {
+        // Recovery must not paper over a genuinely fatal failure (e.g. auth):
+        // a 401 on the subscribe GET surfaces as an error rather than silently
+        // reloading history.
+        ChatMockBackendURLProtocol.respond { request in
+            let path = request.url?.path ?? ""
+            switch (request.httpMethod ?? "GET", path) {
+            case ("POST", "/api/v1/chat/turns"):
+                return .json(
+                    #"{"turn_id":"turn-401","conversation_id":"web_conv_401","first_seq":0}"#
+                )
+            case ("GET", "/api/v1/chat/conversations"):
+                return .json(#"{"conversations":[],"count":0}"#)
+            default:
+                if request.httpMethod == "GET", path.hasSuffix("/stream") {
+                    return .json(#"{"detail":"expired token"}"#, statusCode: 401)
+                }
+                return .json(#"{"detail":"unexpected"}"#, statusCode: 404)
+            }
+        }
+
+        let model = makeViewModel(conversationID: "web_conv_401")
+        model.draftText = "Hi"
+        await model.sendDraft()
+        try await waitUntil { !model.isStreaming }
+
+        // The failure surfaces rather than being silently recovered. (Byte-stream
+        // errors validate against an empty body, so the message is the generic
+        // status text rather than the server's detail string.)
+        XCTAssertEqual(model.errorMessage, "Chat request failed with status 401.")
+        let assistant = try XCTUnwrap(model.messages.last { $0.role == .assistant })
+        XCTAssertEqual(assistant.status, .failed)
+    }
+
+    func testSendThenClosedMidTurnRecoversReplyOnReopen() async throws {
+        // End-to-end "send a message, then close the app mid-turn, then reopen":
+        // the first client drops before the reply is persisted; a fresh client
+        // reopening the conversation surfaces the durably saved reply.
+        var replyPersisted = false
+        var streamedTurnID = "turn-reopen"
+        ChatMockBackendURLProtocol.respond { request in
+            let path = request.url?.path ?? ""
+            switch (request.httpMethod ?? "GET", path) {
+            case ("POST", "/api/v1/chat/turns"):
+                if let body = (try? Self.jsonObject(from: request)) as? [String: Any],
+                   let postedTurnID = body["turn_id"] as? String {
+                    streamedTurnID = postedTurnID
+                }
+                return .json(
+                    #"{"turn_id":"\#(streamedTurnID)","conversation_id":"web_conv_reopen","first_seq":0}"#
+                )
+            case ("GET", "/api/v1/profiles"):
+                return .json(#"{"profiles":[],"default_profile_id":"default_assistant"}"#)
+            case ("GET", "/api/v1/chat/confirmations/pending"):
+                return .json(#"{"confirmations":[]}"#)
+            case ("GET", "/api/v1/chat/conversations"):
+                return .json(#"{"conversations":[],"count":0}"#)
+            case ("GET", "/api/v1/chat/conversations/web_conv_reopen/messages"):
+                let assistantRow = replyPersisted
+                    ? #",{"internal_id":2,"role":"assistant","content":"Reply after reopen","timestamp":"2026-06-08T12:00:01Z"}"#
+                    : ""
+                return .json(
+                    """
+                    {
+                      "conversation_id":"web_conv_reopen",
+                      "messages":[
+                        {"internal_id":1,"role":"user","content":"Hi","timestamp":"2026-06-08T12:00:00Z"}\(assistantRow)
+                      ],
+                      "count":1,
+                      "total_messages":1,
+                      "has_more_before":false,
+                      "has_more_after":false
+                    }
+                    """
+                )
+            default:
+                if request.httpMethod == "GET", path.hasSuffix("/stream") {
+                    // The send-and-watch subscribe (follow=false) drops mid-turn;
+                    // the reopen's live follow stream (follow=true) is benign so it
+                    // doesn't spin and leak requests into later tests.
+                    if Self.queryItems(from: request)["follow"] == "false" {
+                        return .droppedStream(
+                            """
+                            event: text
+                            data: {"turn_id":"\(streamedTurnID)","content":"Thinking","seq":1}
+
+                            """
+                        )
+                    }
+                    return .text("")
+                }
+                return .json(#"{"detail":"unexpected"}"#, statusCode: 404)
+            }
+        }
+
+        // Phase 1: send, the stream drops mid-turn before the reply is persisted.
+        var sender: ChatViewModel? = makeViewModel(conversationID: "web_conv_reopen")
+        sender?.draftText = "Hi"
+        await sender?.sendDraft()
+        try await waitUntil { sender?.isStreaming == false }
+        XCTAssertEqual(sender?.messages.map(\.text), ["Hi"])
+        // Closing the app tears down the in-flight view model.
+        sender = nil
+
+        // The durable turn finishes server-side while the app is closed.
+        replyPersisted = true
+
+        // Phase 2: reopen the conversation in a fresh client; the saved reply is
+        // recovered from persisted history.
+        var reopened: ChatViewModel? = makeViewModel(conversationID: "web_conv_reopen")
+        await reopened?.selectConversation("web_conv_reopen")
+        try await waitUntil { reopened?.messages.map(\.text) == ["Hi", "Reply after reopen"] }
+
+        XCTAssertEqual(reopened?.messages.map(\.text), ["Hi", "Reply after reopen"])
+        // Release so deinit cancels the idle live-updates loop before teardown.
+        reopened = nil
+    }
+
+    func testConcurrentOtherTurnSeqIsNotAckedOnResubscribe() async throws {
+        // Another device can start a concurrent turn whose events interleave on
+        // this stream. The send-and-watch flow ignores those events, so it must
+        // not advance its ack cursor past them: acking a skipped turn's seq would
+        // let the hub treat that other turn as delivered and suppress its
+        // disconnect push. The resume cursor and ack_seq must reflect only our
+        // own turn's highest applied seq.
+        // Our turn's events carry the client-generated turn id (echoed by the
+        // mock). Two non-ours, higher-seq events interleave: a no-turn_id
+        // `message` nudge (seq 5) and a concurrent other-device turn_ended
+        // (seq 6). Neither may advance our ack/resume cursor.
+        let streamRequests = AtomicCounter()
+        var streamedTurnID = "turn-mine"
+        var resumeFromSeq: String?
+        var resumeAckSeq: String?
+        ChatMockBackendURLProtocol.respond { request in
+            let path = request.url?.path ?? ""
+            switch (request.httpMethod ?? "GET", path) {
+            case ("POST", "/api/v1/chat/turns"):
+                if let body = (try? Self.jsonObject(from: request)) as? [String: Any],
+                   let postedTurnID = body["turn_id"] as? String {
+                    streamedTurnID = postedTurnID
+                }
+                return .json(
+                    #"{"turn_id":"\#(streamedTurnID)","conversation_id":"web_conv_concurrent","first_seq":0}"#
+                )
+            case ("GET", "/api/v1/chat/conversations"):
+                return .json(#"{"conversations":[],"count":0}"#)
+            case ("GET", "/api/v1/chat/conversations/web_conv_concurrent/messages"):
+                return .json(
+                    """
+                    {
+                      "conversation_id":"web_conv_concurrent",
+                      "messages":[
+                        {"internal_id":1,"role":"user","content":"Hi","timestamp":"2026-06-08T12:00:00Z"},
+                        {"internal_id":2,"role":"assistant","content":"My reply","timestamp":"2026-06-08T12:00:01Z"}
+                      ],
+                      "count":2,
+                      "total_messages":2,
+                      "has_more_before":false,
+                      "has_more_after":false
+                    }
+                    """
+                )
+            default:
+                // Scope to this conversation's stream so a leaked follow-stream
+                // request from a prior test (app-hosted unit bundle) can't bump
+                // the counter.
+                if request.httpMethod == "GET", path == "/api/v1/chat/conversations/web_conv_concurrent/stream" {
+                    if streamRequests.increment() == 1 {
+                        // Our text (seq 1, our turn id → applied + acked), then a
+                        // no-turn_id message nudge (seq 5) and a concurrent OTHER
+                        // device's turn_ended (seq 6) — both must be ignored for
+                        // ack purposes — then a drop.
+                        return .text(
+                            """
+                            event: text
+                            data: {"turn_id":"\(streamedTurnID)","content":"Partial","seq":1}
+
+                            event: message
+                            data: {"seq":5}
+
+                            event: turn_ended
+                            data: {"turn_id":"turn-other-device","status":"complete","seq":6}
+
+                            event: stream_dropped
+                            data: {}
+
+                            """
+                        )
+                    }
+                    let items = Self.queryItems(from: request)
+                    resumeFromSeq = items["from_seq"]
+                    resumeAckSeq = items["ack_seq"]
+                    return .text(
+                        """
+                        event: turn_ended
+                        data: {"turn_id":"\(streamedTurnID)","status":"complete","seq":7}
+
+                        """
+                    )
+                }
+                return .json(#"{"detail":"unexpected"}"#, statusCode: 404)
+            }
+        }
+
+        let model = makeViewModel(conversationID: "web_conv_concurrent")
+        model.draftText = "Hi"
+        await model.sendDraft()
+        try await waitUntil { streamRequests.value >= 2 }
+        try await waitUntil { !model.isStreaming }
+
+        XCTAssertEqual(streamRequests.value, 2)
+        // Resume/ack reflect only our turn (seq 1) — not the no-turn_id nudge
+        // (seq 5) nor the other-device turn (seq 6): resume from 2 (our seq 1 + 1),
+        // ack 1.
+        XCTAssertEqual(resumeAckSeq, "1")
+        XCTAssertEqual(resumeFromSeq, "2")
+    }
+
+    func testSendStartTurnFailureSurfacesError() async throws {
+        // If the turn never starts (POST /turns fails), there is no durable turn
+        // to recover, so the error must surface rather than silently reload an
+        // empty history. The user's prompt is preserved in the thread.
+        var sawStream = false
+        ChatMockBackendURLProtocol.respond { request in
+            let path = request.url?.path ?? ""
+            switch (request.httpMethod ?? "GET", path) {
+            case ("POST", "/api/v1/chat/turns"):
+                return .json(#"{"detail":"server is down"}"#, statusCode: 500)
+            case ("GET", "/api/v1/chat/conversations"):
+                return .json(#"{"conversations":[],"count":0}"#)
+            default:
+                if request.httpMethod == "GET", path == "/api/v1/chat/conversations/web_conv_nostart/stream" {
+                    sawStream = true
+                }
+                return .json(#"{"detail":"unexpected"}"#, statusCode: 404)
+            }
+        }
+
+        let model = makeViewModel(conversationID: "web_conv_nostart")
+        model.draftText = "Hi"
+        await model.sendDraft()
+        try await waitUntil { !model.isStreaming }
+
+        XCTAssertFalse(sawStream)
+        XCTAssertEqual(model.errorMessage, "server is down")
+        XCTAssertEqual(model.messages.first?.text, "Hi")
+        let assistant = try XCTUnwrap(model.messages.last { $0.role == .assistant })
+        XCTAssertEqual(assistant.status, .failed)
+    }
+
+    func testSendStreamDroppedTwiceStopsAndReloadsHistory() async throws {
+        // Resubscribe at most once: a second stream_dropped must fall through to a
+        // history reload rather than spinning forever reopening the stream.
+        let streamRequests = AtomicCounter()
+        var streamedTurnID = "turn-twice"
+        ChatMockBackendURLProtocol.respond { request in
+            let path = request.url?.path ?? ""
+            switch (request.httpMethod ?? "GET", path) {
+            case ("POST", "/api/v1/chat/turns"):
+                if let body = (try? Self.jsonObject(from: request)) as? [String: Any],
+                   let postedTurnID = body["turn_id"] as? String {
+                    streamedTurnID = postedTurnID
+                }
+                return .json(
+                    #"{"turn_id":"\#(streamedTurnID)","conversation_id":"web_conv_twice","first_seq":0}"#
+                )
+            case ("GET", "/api/v1/chat/conversations"):
+                return .json(#"{"conversations":[],"count":0}"#)
+            case ("GET", "/api/v1/chat/conversations/web_conv_twice/messages"):
+                return .json(
+                    """
+                    {
+                      "conversation_id":"web_conv_twice",
+                      "messages":[
+                        {"internal_id":1,"role":"user","content":"Hi","timestamp":"2026-06-08T12:00:00Z"},
+                        {"internal_id":2,"role":"assistant","content":"Reloaded reply","timestamp":"2026-06-08T12:00:01Z"}
+                      ],
+                      "count":2,
+                      "total_messages":2,
+                      "has_more_before":false,
+                      "has_more_after":false
+                    }
+                    """
+                )
+            default:
+                if request.httpMethod == "GET", path == "/api/v1/chat/conversations/web_conv_twice/stream" {
+                    streamRequests.increment()
+                    return .text(
+                        """
+                        event: text
+                        data: {"turn_id":"\(streamedTurnID)","content":"Partial","seq":1}
+
+                        event: stream_dropped
+                        data: {}
+
+                        """
+                    )
+                }
+                return .json(#"{"detail":"unexpected"}"#, statusCode: 404)
+            }
+        }
+
+        let model = makeViewModel(conversationID: "web_conv_twice")
+        model.draftText = "Hi"
+        await model.sendDraft()
+        try await waitUntil { !model.isStreaming }
+
+        // The first subscribe plus exactly one resubscribe — no third attempt.
+        XCTAssertEqual(streamRequests.value, 2)
+        XCTAssertEqual(model.messages.map(\.text), ["Hi", "Reloaded reply"])
+        // Recovery is silent — no spurious modal error for a recovered turn.
+        XCTAssertNil(model.errorMessage)
+    }
+
+    func testSendFailedTurnEndedShowsErrorNotDone() async throws {
+        // A turn that ends in failure must show the error, not a fabricated
+        // "Done." reply. The persisted error row surfaces on the reload.
+        var streamedTurnID = "turn-failed"
+        ChatMockBackendURLProtocol.respond { request in
+            let path = request.url?.path ?? ""
+            switch (request.httpMethod ?? "GET", path) {
+            case ("POST", "/api/v1/chat/turns"):
+                if let body = (try? Self.jsonObject(from: request)) as? [String: Any],
+                   let postedTurnID = body["turn_id"] as? String {
+                    streamedTurnID = postedTurnID
+                }
+                return .json(
+                    #"{"turn_id":"\#(streamedTurnID)","conversation_id":"web_conv_failed","first_seq":0}"#
+                )
+            case ("POST", "/api/v1/chat/ack"):
+                return .json("{}")
+            case ("GET", "/api/v1/chat/conversations"):
+                return .json(#"{"conversations":[],"count":0}"#)
+            case ("GET", "/api/v1/chat/conversations/web_conv_failed/messages"):
+                return .json(
+                    """
+                    {
+                      "conversation_id":"web_conv_failed",
+                      "messages":[
+                        {"internal_id":1,"role":"user","content":"Hi","timestamp":"2026-06-08T12:00:00Z"},
+                        {"internal_id":2,"role":"error","content":"Boom","timestamp":"2026-06-08T12:00:01Z","error_traceback":"trace"}
+                      ],
+                      "count":2,
+                      "total_messages":2,
+                      "has_more_before":false,
+                      "has_more_after":false
+                    }
+                    """
+                )
+            default:
+                if request.httpMethod == "GET", path.hasSuffix("/stream") {
+                    return .text(
+                        """
+                        event: turn_ended
+                        data: {"turn_id":"\(streamedTurnID)","status":"failed","error":"Boom","seq":1}
+
+                        """
+                    )
+                }
+                return .json(#"{"detail":"unexpected"}"#, statusCode: 404)
+            }
+        }
+
+        let model = makeViewModel(conversationID: "web_conv_failed")
+        model.draftText = "Hi"
+        await model.sendDraft()
+        try await waitUntil { !model.isStreaming }
+
+        XCTAssertFalse(model.messages.contains { $0.text == "Done." })
+        let assistant = try XCTUnwrap(model.messages.last { $0.role == .assistant })
+        XCTAssertEqual(assistant.status, .failed)
+        XCTAssertTrue(assistant.text.contains("Boom"))
+    }
+
+    func testInterruptedSendDoesNotAcknowledge() async throws {
+        // The disconnect push is suppressed only by an explicit ack of the
+        // turn_ended seq. An interrupted send never saw turn_ended, so it must
+        // NOT ack — otherwise the offline user would silently lose the push.
+        let ackRequests = AtomicCounter()
+        var streamedTurnID = "turn-noack"
+        ChatMockBackendURLProtocol.respond { request in
+            let path = request.url?.path ?? ""
+            switch (request.httpMethod ?? "GET", path) {
+            case ("POST", "/api/v1/chat/turns"):
+                if let body = (try? Self.jsonObject(from: request)) as? [String: Any],
+                   let postedTurnID = body["turn_id"] as? String {
+                    streamedTurnID = postedTurnID
+                }
+                return .json(
+                    #"{"turn_id":"\#(streamedTurnID)","conversation_id":"web_conv_noack","first_seq":0}"#
+                )
+            case ("POST", "/api/v1/chat/ack"):
+                // Scope the count to this conversation so a fire-and-forget ack
+                // from a previous test can't bleed in.
+                if let body = (try? Self.jsonObject(from: request)) as? [String: Any],
+                   body["conversation_id"] as? String == "web_conv_noack" {
+                    ackRequests.increment()
+                }
+                return .json("{}")
+            case ("GET", "/api/v1/chat/conversations"):
+                return .json(#"{"conversations":[],"count":0}"#)
+            case ("GET", "/api/v1/chat/conversations/web_conv_noack/messages"):
+                return .json(
+                    """
+                    {
+                      "conversation_id":"web_conv_noack",
+                      "messages":[
+                        {"internal_id":1,"role":"user","content":"Hi","timestamp":"2026-06-08T12:00:00Z"}
+                      ],
+                      "count":1,
+                      "total_messages":1,
+                      "has_more_before":false,
+                      "has_more_after":false
+                    }
+                    """
+                )
+            default:
+                if request.httpMethod == "GET", path.hasSuffix("/stream") {
+                    return .droppedStream(
+                        """
+                        event: text
+                        data: {"turn_id":"\(streamedTurnID)","content":"Partial","seq":1}
+
+                        """
+                    )
+                }
+                return .json(#"{"detail":"unexpected"}"#, statusCode: 404)
+            }
+        }
+
+        let model = makeViewModel(conversationID: "web_conv_noack")
+        model.draftText = "Hi"
+        await model.sendDraft()
+        try await waitUntil { !model.isStreaming }
+
+        XCTAssertEqual(ackRequests.value, 0)
+    }
+
+    func testLiveFollowSurfacesTurnCompletedElsewhere() async throws {
+        // The follow stream's whole purpose: a turn that completes elsewhere (or
+        // while we were briefly disconnected) surfaces in the open conversation
+        // with no active send, by reloading persisted history.
+        let ackRequests = AtomicCounter()
+        ChatMockBackendURLProtocol.respond { request in
+            let path = request.url?.path ?? ""
+            if request.httpMethod == "GET", path.hasSuffix("/messages") {
+                // The initial full load (no `after`) shows only the earlier
+                // message; the incremental reload (with `after`) returns the
+                // newly persisted reply.
+                if Self.queryItems(from: request)["after"] == nil {
+                    return .json(
+                        """
+                        {
+                          "conversation_id":"web_conv_elsewhere",
+                          "messages":[
+                            {"internal_id":1,"role":"user","content":"Earlier","timestamp":"2026-06-08T12:00:00Z"}
+                          ],
+                          "count":1,
+                          "total_messages":1,
+                          "has_more_before":false,
+                          "has_more_after":false
+                        }
+                        """
+                    )
+                }
+                return .json(
+                    """
+                    {
+                      "conversation_id":"web_conv_elsewhere",
+                      "messages":[
+                        {"internal_id":2,"role":"assistant","content":"Reply elsewhere","timestamp":"2026-06-08T12:05:00Z"}
+                      ],
+                      "count":1,
+                      "total_messages":1,
+                      "has_more_before":false,
+                      "has_more_after":false
+                    }
+                    """
+                )
+            }
+            if request.httpMethod == "GET", path == "/api/v1/chat/conversations" {
+                return .json(#"{"conversations":[],"count":0}"#)
+            }
+            if request.httpMethod == "POST", path == "/api/v1/chat/ack" {
+                if let body = (try? Self.jsonObject(from: request)) as? [String: Any],
+                   body["conversation_id"] as? String == "web_conv_elsewhere" {
+                    ackRequests.increment()
+                }
+                return .json("{}")
+            }
+            if request.httpMethod == "GET", path.hasSuffix("/stream") {
+                return .text(
+                    """
+                    event: turn_ended
+                    data: {"turn_id":"turn-elsewhere","status":"complete","seq":7}
+
+                    """
+                )
+            }
+            return .json(#"{"detail":"unexpected"}"#, statusCode: 404)
+        }
+
+        // Default reconnect delays: the merge happens on the first connect, so
+        // there's no need for a fast loop that could leak into later tests.
+        var model: ChatViewModel? = makeViewModel(conversationID: "web_conv_elsewhere")
+        await model?.selectConversation("web_conv_elsewhere")
+
+        try await waitUntil { model?.messages.map(\.text) == ["Earlier", "Reply elsewhere"] }
+        XCTAssertEqual(model?.messages.map(\.text), ["Earlier", "Reply elsewhere"])
+        // The turn_ended seen on the follow stream is acked so the server
+        // suppresses the disconnect push for a reply we've now surfaced.
+        try await waitUntil { ackRequests.value >= 1 }
+
+        // Release so deinit cancels the fast reconnect loop before teardown.
+        model = nil
+    }
+
+    func testResendDuringStreamSupersedesWithoutClobbering() async throws {
+        // Sending again while the first turn is still streaming must supersede it
+        // cleanly: the first (cancelled) task must not flip the new turn's
+        // streaming state off, reload history over it, or leave a stale bubble.
+        let streamRequests = AtomicCounter()
+        let firstStream = HangingStream()
+        let secondStream = HangingStream()
+        ChatMockBackendURLProtocol.respond { request in
+            let path = request.url?.path ?? ""
+            switch (request.httpMethod ?? "GET", path) {
+            case ("POST", "/api/v1/chat/turns"):
+                return .json(
+                    #"{"turn_id":"turn-supersede","conversation_id":"web_conv_supersede","first_seq":0}"#
+                )
+            case ("POST", "/api/v1/chat/ack"):
+                return .json("{}")
+            case ("GET", "/api/v1/chat/conversations"):
+                return .json(#"{"conversations":[],"count":0}"#)
+            case ("GET", "/api/v1/chat/conversations/web_conv_supersede/messages"):
+                return .json(
+                    """
+                    {
+                      "conversation_id":"web_conv_supersede",
+                      "messages":[
+                        {"internal_id":1,"role":"user","content":"First","timestamp":"2026-06-08T12:00:00Z"},
+                        {"internal_id":2,"role":"assistant","content":"First reply","timestamp":"2026-06-08T12:00:01Z"},
+                        {"internal_id":3,"role":"user","content":"Second","timestamp":"2026-06-08T12:00:02Z"},
+                        {"internal_id":4,"role":"assistant","content":"Second reply","timestamp":"2026-06-08T12:00:03Z"}
+                      ],
+                      "count":4,
+                      "total_messages":4,
+                      "has_more_before":false,
+                      "has_more_after":false
+                    }
+                    """
+                )
+            default:
+                if request.httpMethod == "GET", path == "/api/v1/chat/conversations/web_conv_supersede/stream" {
+                    let isFirst = streamRequests.increment() == 1
+                    let controller = isFirst ? firstStream : secondStream
+                    let token = isFirst ? "First partial" : "Second partial"
+                    return .hangingStream(
+                        "event: text\ndata: {\"content\":\"\(token)\"}\n\n",
+                        controller: controller
+                    )
+                }
+                return .json(#"{"detail":"unexpected"}"#, statusCode: 404)
+            }
+        }
+
+        let model = makeViewModel(conversationID: "web_conv_supersede")
+
+        // Phase 1: send "First"; its stream hangs after the first token.
+        model.draftText = "First"
+        await model.sendDraft()
+        try await waitUntil { model.isStreaming && model.messages.last?.text == "First partial" }
+
+        // Phase 2: send "Second" while the first turn is still streaming.
+        model.draftText = "Second"
+        await model.sendDraft()
+        try await waitUntil { model.messages.contains { $0.text == "Second partial" } }
+
+        // The superseded first turn must not flip streaming off or reload over the
+        // in-flight second turn. Hold the assertion across a window long enough
+        // for the cancelled task's tail to (wrongly) run.
+        for _ in 0 ..< 10 {
+            XCTAssertTrue(model.isStreaming)
+            XCTAssertNil(model.errorMessage)
+            try await Task.sleep(for: .milliseconds(20))
+        }
+
+        // Phase 3: finish the second turn; the thread reloads to a coherent final
+        // history with no leftover optimistic placeholders.
+        secondStream.finish(appending: "event: turn_ended\ndata: {\"status\":\"complete\",\"seq\":1}\n\n")
+        try await waitUntil { !model.isStreaming }
+
+        XCTAssertEqual(model.messages.map(\.text), ["First", "First reply", "Second", "Second reply"])
+        XCTAssertFalse(model.messages.contains { $0.text == "First partial" || $0.text == "Second partial" })
+
+        // Release the still-held first stream so its background waiter exits.
+        firstStream.finish()
+    }
+
+    func testConversationSwitchDuringStreamCancelsSendAndLoadsTarget() async throws {
+        // Switching conversations mid-stream cancels the in-flight send and loads
+        // the target thread; the cancelled send must not bleed its optimistic
+        // bubbles or an error into the newly opened conversation.
+        let hanging = HangingStream()
+        ChatMockBackendURLProtocol.respond { request in
+            let path = request.url?.path ?? ""
+            switch (request.httpMethod ?? "GET", path) {
+            case ("POST", "/api/v1/chat/turns"):
+                return .json(
+                    #"{"turn_id":"turn-switch","conversation_id":"web_conv_switch_a","first_seq":0}"#
+                )
+            case ("GET", "/api/v1/chat/conversations"):
+                return .json(#"{"conversations":[],"count":0}"#)
+            case ("GET", "/api/v1/chat/conversations/web_conv_switch_b/messages"):
+                return .json(
+                    """
+                    {
+                      "conversation_id":"web_conv_switch_b",
+                      "messages":[
+                        {"internal_id":9,"role":"user","content":"Other thread","timestamp":"2026-06-08T12:00:00Z"}
+                      ],
+                      "count":1,
+                      "total_messages":1,
+                      "has_more_before":false,
+                      "has_more_after":false
+                    }
+                    """
+                )
+            default:
+                if request.httpMethod == "GET", path.hasSuffix("web_conv_switch_a/stream") {
+                    return .hangingStream(
+                        "event: text\ndata: {\"content\":\"Working\"}\n\n",
+                        controller: hanging
+                    )
+                }
+                if request.httpMethod == "GET", path.hasSuffix("web_conv_switch_b/stream") {
+                    return .text("")
+                }
+                return .json(#"{"detail":"unexpected"}"#, statusCode: 404)
+            }
+        }
+
+        var model: ChatViewModel? = makeViewModel(conversationID: "web_conv_switch_a")
+        model?.draftText = "Hi"
+        await model?.sendDraft()
+        try await waitUntil { model?.isStreaming == true && model?.messages.last?.text == "Working" }
+
+        // Switch to another conversation while the first is still streaming.
+        await model?.selectConversation("web_conv_switch_b")
+
+        XCTAssertEqual(model?.conversationID, "web_conv_switch_b")
+        try await waitUntil { model?.messages.map(\.text) == ["Other thread"] }
+        XCTAssertEqual(model?.isStreaming, false)
+        XCTAssertNil(model?.errorMessage)
+        XCTAssertFalse(model?.messages.contains { $0.text == "Working" } ?? true)
+
+        // Release the held stream and the model so the live loop tears down.
+        hanging.finish()
+        model = nil
+    }
+
+    func testFollowLoopSkipsAckForConcurrentTurnWhileStreaming() async throws {
+        // While a send is in flight (isStreaming), the live-follow loop must not
+        // acknowledge a concurrent turn it doesn't surface (the merge is skipped
+        // while streaming) — acking it would let the hub mark that turn delivered
+        // and suppress its disconnect push. Counterpart to the send-path guard.
+        let acks = AtomicCounter()
+        let followConnects = AtomicCounter()
+        let followStream = HangingStream()
+        ChatMockBackendURLProtocol.respond { request in
+            let path = request.url?.path ?? ""
+            switch (request.httpMethod ?? "GET", path) {
+            case ("POST", "/api/v1/chat/ack"):
+                if let body = (try? Self.jsonObject(from: request)) as? [String: Any],
+                   body["conversation_id"] as? String == "web_conv_followack" {
+                    acks.increment()
+                }
+                return .json("{}")
+            case ("GET", "/api/v1/chat/conversations"):
+                return .json(#"{"conversations":[],"count":0}"#)
+            case ("GET", "/api/v1/chat/conversations/web_conv_followack/messages"):
+                return .json(
+                    """
+                    {
+                      "conversation_id":"web_conv_followack",
+                      "messages":[],
+                      "count":0,
+                      "total_messages":0,
+                      "has_more_before":false,
+                      "has_more_after":false
+                    }
+                    """
+                )
+            default:
+                if request.httpMethod == "GET", path == "/api/v1/chat/conversations/web_conv_followack/stream" {
+                    followConnects.increment()
+                    return .hangingStream("", controller: followStream)
+                }
+                return .json(#"{"detail":"unexpected"}"#, statusCode: 404)
+            }
+        }
+
+        var model: ChatViewModel? = makeViewModel(conversationID: "web_conv_followack")
+        await model?.selectConversation("web_conv_followack")
+        try await waitUntil { followConnects.value >= 1 }
+
+        // Simulate an in-flight send, then let a concurrent turn end on the follow
+        // stream while we're "streaming".
+        model?.isStreaming = true
+        followStream.finish(
+            appending: "event: turn_ended\ndata: {\"turn_id\":\"turn-other\",\"status\":\"complete\",\"seq\":9}\n\n"
+        )
+
+        // The ack (if it wrongly fired) is scheduled synchronously when the event
+        // is processed, so a short settle window reliably surfaces it.
+        try await Task.sleep(for: .milliseconds(300))
+        XCTAssertEqual(acks.value, 0)
+
+        // Release so deinit cancels the follow loop before teardown.
+        model = nil
+    }
+
     func testApplyRouteProcessesEachNewInitialPrompt() async throws {
         var sentPrompts: [String] = []
         var conversationIDs: [String] = []
@@ -730,6 +1704,13 @@ final class ChatViewModelTests: XCTestCase {
 
     private static func jsonObject(from request: URLRequest) throws -> Any {
         try JSONSerialization.jsonObject(with: request.bodyData)
+    }
+
+    private static func queryItems(from request: URLRequest) -> [String: String] {
+        let items = URLComponents(url: request.url!, resolvingAgainstBaseURL: false)?.queryItems ?? []
+        return Dictionary(uniqueKeysWithValues: items.compactMap { item in
+            item.value.map { (item.name, $0) }
+        })
     }
 
     private func waitUntil(
