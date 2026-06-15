@@ -124,10 +124,14 @@ per-conversation `seq`) is already shaped to allow that without a client-visible
   web/iOS UIs do not yet render a dedicated placeholder/affordance from it. (Milestone 1.)
 - No live token-by-token resume wired through the clients on background→foreground (the plumbing
   exists; the iOS/web UX that re-attaches with a stored cursor is Milestone 2.)
-- No multi-subscriber backpressure hardening. The server now emits `stream_dropped` when it drops a
+- No multi-subscriber backpressure hardening. The server emits `stream_dropped` when it drops a
   subscriber whose queue overflowed (the SSE generator notices the dropped subscription on its next
-  heartbeat tick and closes), but the clients don't yet react to it with a reconnect-then-history
-  fallback. (Milestone 2.)
+  heartbeat tick and closes). The send-and-watch clients (web `useStreamingResponse.js` and the iOS
+  `ChatViewModel`) now react to a mid-turn disconnect: `stream_dropped` or a transient 5xx on the
+  subscribe GET resubscribes once from the last applied seq; a stream that closes without
+  `turn_ended`, or a `410` (events rotated out of the buffer), reloads persisted history instead of
+  surfacing an error, because the durable turn keeps running regardless of the client. The remaining
+  Milestone 2 work is live token-by-token resume on background→foreground.
 
 ## Key files
 

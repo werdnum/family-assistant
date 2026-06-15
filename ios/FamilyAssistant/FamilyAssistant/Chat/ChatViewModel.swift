@@ -368,61 +368,106 @@ final class ChatViewModel {
         currentStreamToken = streamToken
         streamTask = Task { [weak self] in
             guard let self else { return }
-            do {
-                let turnStream = try await apiClient.streamMessage(
-                    turnID: turnID,
-                    prompt: prompt,
+            await runSendTurn(
+                turnID: turnID,
+                prompt: prompt,
+                conversationID: id,
+                attachments: uploadedAttachments,
+                assistantMessageID: assistantMessageID,
+                streamToken: streamToken
+            )
+        }
+    }
+
+    /// Outcome of consuming (or attempting to consume) a turn subscription.
+    ///
+    /// The send-and-watch flow maps a dropped/interrupted stream to a history
+    /// reload rather than a hard error, because the turn keeps running durably on
+    /// the server whether or not this client stays connected — closing the app or
+    /// losing the connection mid-turn must recover, not surface a spurious error.
+    private enum TurnSubscriptionOutcome: Equatable {
+        /// `turn_ended` seen — the turn finished while we were watching.
+        case completed
+        /// Server sent `stream_dropped` (subscriber overflow / shutdown), or the
+        /// connect failed transiently (5xx). Resumable: resubscribe from the last
+        /// applied seq.
+        case dropped
+        /// The stream closed (or the connection dropped mid-bytes) without
+        /// `turn_ended`. The reply may still be in flight or already persisted;
+        /// reload history rather than fabricate a completion.
+        case interrupted
+        /// The turn's events have rotated out of the hub buffer (410). Nothing to
+        /// replay, but the reply is durably persisted; reload history.
+        case reloadHistory
+        /// A genuinely fatal failure (e.g. auth) that recovery can't paper over.
+        case failed(String)
+    }
+
+    private func runSendTurn(
+        turnID: String,
+        prompt: String,
+        conversationID id: String,
+        attachments: [ChatAttachment],
+        assistantMessageID: String,
+        streamToken: UUID
+    ) async {
+        var lastSeq: Int?
+        do {
+            let start = try await apiClient.startTurn(
+                turnID: turnID,
+                prompt: prompt,
+                conversationID: id,
+                profileID: selectedProfileID,
+                attachments: attachments
+            )
+            guard !Task.isCancelled, currentStreamToken == streamToken else {
+                return
+            }
+            if start.alreadyComplete {
+                // The retried turn finished durably but is not replayable from the
+                // hub. Don't subscribe; reload persisted history to surface it.
+                await recoverByReloadingHistory(
                     conversationID: id,
-                    profileID: selectedProfileID,
-                    attachments: uploadedAttachments
+                    assistantMessageID: assistantMessageID,
+                    interruptedNotice: nil
                 )
-                guard let events = turnStream.events else {
-                    // already_complete: the retried turn finished durably but is
-                    // not replayable from the hub. Don't open a stream; reload
-                    // persisted history to surface the saved reply.
-                    guard !Task.isCancelled, currentStreamToken == streamToken else {
-                        return
-                    }
-                    removeLocalAssistantPlaceholder(assistantMessageID)
-                    await refreshRecentConversations()
-                    await loadMessages(conversationID: id)
-                    if currentStreamToken == streamToken {
-                        isStreaming = false
-                        streamTask = nil
-                    }
-                    return
-                }
-                var lastSeq: Int?
-                for try await event in events {
-                    if Task.isCancelled {
-                        break
-                    }
-                    // The conversation stream carries every turn's events. In
-                    // this send-and-watch flow only apply events for the turn we
-                    // started; ignore a turn started concurrently elsewhere in
-                    // the same conversation. Connection-level events carry no
-                    // turn id and fall through.
-                    if let eventTurnID = event.turnID, eventTurnID != turnID {
-                        continue
-                    }
-                    if let seq = event.seq {
-                        lastSeq = seq
-                        recordAppliedSeq(seq)
-                    }
-                    apply(streamEvent: event, assistantMessageID: assistantMessageID)
-                    if event.type == .turnEnded {
-                        break
-                    }
-                }
-                // If a newer send (or conversation switch) superseded this task,
-                // stop here: the post-completion reloads and shared-state resets
-                // below belong to the turn that replaced us.
-                guard !Task.isCancelled, currentStreamToken == streamToken else {
-                    return
-                }
-                // Explicitly acknowledge the highest received seq so the server
-                // suppresses the disconnect push for a reply we actually saw.
-                // Fire-and-forget so UI completion isn't blocked on the ack.
+                finishStreaming(streamToken)
+                return
+            }
+
+            var outcome = await runTurnSubscription(
+                conversationID: id,
+                fromSeq: start.firstSeq,
+                ackSeq: lastSeq,
+                turnID: turnID,
+                assistantMessageID: assistantMessageID,
+                lastSeq: &lastSeq
+            )
+            // Resubscribe at most once on a resumable drop, resuming from the last
+            // applied seq so no events are replayed or missed. A second drop falls
+            // through to the interrupted handling rather than spinning.
+            if outcome == .dropped, !Task.isCancelled, currentStreamToken == streamToken {
+                outcome = await runTurnSubscription(
+                    conversationID: id,
+                    fromSeq: lastSeq ?? start.firstSeq,
+                    ackSeq: lastSeq,
+                    turnID: turnID,
+                    assistantMessageID: assistantMessageID,
+                    lastSeq: &lastSeq
+                )
+            }
+
+            // A superseded send (newer send or conversation switch) must not apply
+            // the tail work below — that belongs to the turn that replaced us.
+            guard !Task.isCancelled, currentStreamToken == streamToken else {
+                return
+            }
+
+            switch outcome {
+            case .completed:
+                // Acknowledge the highest received seq so the server suppresses the
+                // disconnect push for a reply we actually saw. Fire-and-forget so
+                // UI completion isn't blocked on the ack.
                 if let lastSeq {
                     let ackClient = apiClient
                     Task { try? await ackClient.acknowledge(conversationID: id, ackSeq: lastSeq) }
@@ -430,17 +475,152 @@ final class ChatViewModel {
                 completeStream(assistantMessageID: assistantMessageID)
                 await refreshRecentConversations()
                 await mergeNewMessages(conversationID: id)
-            } catch is CancellationError {
-                markStreamStopped(assistantMessageID: assistantMessageID)
-            } catch {
-                appendStreamError(error.localizedDescription, assistantMessageID: assistantMessageID)
+            case .reloadHistory:
+                await recoverByReloadingHistory(
+                    conversationID: id,
+                    assistantMessageID: assistantMessageID,
+                    interruptedNotice: nil
+                )
+            case .dropped, .interrupted:
+                await recoverByReloadingHistory(
+                    conversationID: id,
+                    assistantMessageID: assistantMessageID,
+                    interruptedNotice: "The connection was interrupted before the reply finished."
+                )
+            case .failed(let message):
+                appendStreamError(message, assistantMessageID: assistantMessageID)
             }
-            // Only the still-current send resets shared streaming state; a
-            // superseded task must not nil out the new turn's streamTask.
-            if currentStreamToken == streamToken {
-                isStreaming = false
-                streamTask = nil
+        } catch is CancellationError {
+            markStreamStopped(assistantMessageID: assistantMessageID)
+        } catch {
+            // Reaching here means starting the turn itself failed — the prompt was
+            // never accepted, so there is no durable turn to recover; surface it.
+            appendStreamError(error.localizedDescription, assistantMessageID: assistantMessageID)
+        }
+        finishStreaming(streamToken)
+    }
+
+    /// Subscribe to a turn and consume its events, mapping connection failures to
+    /// a ``TurnSubscriptionOutcome`` instead of throwing. Only a fatal,
+    /// non-recoverable failure (e.g. auth) becomes `.failed`; a dropped or
+    /// interrupted connection becomes a recoverable outcome because the durable
+    /// turn keeps running server-side.
+    private func runTurnSubscription(
+        conversationID id: String,
+        fromSeq: Int,
+        ackSeq: Int?,
+        turnID: String,
+        assistantMessageID: String,
+        lastSeq: inout Int?
+    ) async -> TurnSubscriptionOutcome {
+        do {
+            let events = try await apiClient.subscribeToTurn(
+                conversationID: id,
+                fromSeq: fromSeq,
+                ackSeq: ackSeq
+            )
+            return try await consumeTurnStream(
+                events,
+                turnID: turnID,
+                assistantMessageID: assistantMessageID,
+                lastSeq: &lastSeq
+            )
+        } catch is CancellationError {
+            return .interrupted
+        } catch let error as ChatAPIError {
+            if case .server(let statusCode, _) = error {
+                if statusCode == 410 {
+                    return .reloadHistory
+                }
+                if statusCode >= 500 {
+                    // The producer keeps running through a transient server error
+                    // on the subscribe GET; treat it as resumable rather than
+                    // failing the whole turn.
+                    return .dropped
+                }
             }
+            return .failed(error.localizedDescription)
+        } catch {
+            // A network drop establishing or reading the stream. The turn is
+            // durable, so recover by reloading history.
+            return .interrupted
+        }
+    }
+
+    /// Consume a turn's SSE events, applying them to the assistant bubble and
+    /// tracking the highest seq seen. Throws only on a mid-stream connection drop.
+    private func consumeTurnStream(
+        _ events: AsyncThrowingStream<ChatStreamEvent, Error>,
+        turnID: String,
+        assistantMessageID: String,
+        lastSeq: inout Int?
+    ) async throws -> TurnSubscriptionOutcome {
+        var sawTurnEnded = false
+        for try await event in events {
+            if Task.isCancelled {
+                break
+            }
+            // The hub dropped this subscriber (queue overflow / shutdown). Bail so
+            // the caller can resubscribe from the last applied seq. Carries no
+            // seq/turn id, so handle it before seq tracking and the turn filter.
+            if event.type == .streamDropped {
+                return .dropped
+            }
+            // Track the highest seq across all turns so a resume covers everything
+            // already applied; the conversation stream interleaves turns.
+            if let seq = event.seq {
+                if let current = lastSeq {
+                    lastSeq = max(current, seq)
+                } else {
+                    lastSeq = seq
+                }
+                recordAppliedSeq(seq)
+            }
+            // The conversation stream carries every turn's events. In this
+            // send-and-watch flow only apply events for the turn we started;
+            // ignore a turn started concurrently elsewhere in the conversation.
+            if let eventTurnID = event.turnID, eventTurnID != turnID {
+                continue
+            }
+            apply(streamEvent: event, assistantMessageID: assistantMessageID)
+            if event.type == .turnEnded {
+                sawTurnEnded = true
+                // A failed turn carries its error on the terminal event; surface
+                // it so the bubble shows the failure rather than an empty reply.
+                if let message = event.errorMessage, !message.isEmpty {
+                    appendStreamError(message, assistantMessageID: assistantMessageID)
+                }
+                return .completed
+            }
+        }
+        // The stream closed without a stream_dropped or turn_ended frame.
+        return sawTurnEnded ? .completed : .interrupted
+    }
+
+    /// Recover from an interrupted/already-complete/rotated-out turn by dropping
+    /// the optimistic assistant placeholder and reloading persisted history, so
+    /// the durably saved reply surfaces instead of a fabricated completion. An
+    /// `interruptedNotice` is shown only when the live render was cut short.
+    private func recoverByReloadingHistory(
+        conversationID id: String,
+        assistantMessageID: String,
+        interruptedNotice: String?
+    ) async {
+        removeLocalAssistantPlaceholder(assistantMessageID)
+        await refreshRecentConversations()
+        await mergeNewMessages(conversationID: id)
+        if let interruptedNotice {
+            errorMessage = interruptedNotice
+            ErrorReporter.shared.report(message: interruptedNotice, component: "Chat.stream")
+        }
+    }
+
+    /// Reset shared streaming state, but only for the still-current send: a
+    /// superseded task must not nil out the new turn's streamTask.
+    private func finishStreaming(_ streamToken: UUID) {
+        if currentStreamToken == streamToken {
+            isStreaming = false
+            streamTask = nil
         }
     }
 
