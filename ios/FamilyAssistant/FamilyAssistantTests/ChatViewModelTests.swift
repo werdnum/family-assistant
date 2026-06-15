@@ -364,7 +364,9 @@ final class ChatViewModelTests: XCTestCase {
         XCTAssertEqual(model.messages.map(\.text), ["Hi", "Durable reply"])
         XCTAssertFalse(model.messages.contains { $0.text.contains("Sorry, I encountered an error") })
         XCTAssertFalse(model.messages.contains { $0.text == "Done." })
-        XCTAssertEqual(model.errorMessage, "The connection was interrupted before the reply finished.")
+        // Recovery is silent: a recovered disconnect must not pop a modal
+        // "Chat Error" alert for a reply that actually succeeded.
+        XCTAssertNil(model.errorMessage)
     }
 
     func testSendStreamDroppedEventResubscribesFromLastSeqAndCompletes() async throws {
@@ -439,8 +441,10 @@ final class ChatViewModelTests: XCTestCase {
         try await waitUntil { !model.isStreaming }
 
         XCTAssertEqual(streamRequests.value, 2)
-        // The resubscribe resumes from the last applied seq (the partial text).
-        XCTAssertEqual(resumeFromSeq, "1")
+        // The resubscribe resumes from just after the last applied seq (the
+        // partial text was seq 1). The server replays seq >= from_seq, so
+        // resuming from seq 1 would re-apply the partial text.
+        XCTAssertEqual(resumeFromSeq, "2")
         XCTAssertEqual(model.messages.map(\.text), ["Hi", "Resumed reply"])
         XCTAssertNil(model.errorMessage)
     }
@@ -762,7 +766,8 @@ final class ChatViewModelTests: XCTestCase {
         // The first subscribe plus exactly one resubscribe — no third attempt.
         XCTAssertEqual(streamRequests.value, 2)
         XCTAssertEqual(model.messages.map(\.text), ["Hi", "Reloaded reply"])
-        XCTAssertEqual(model.errorMessage, "The connection was interrupted before the reply finished.")
+        // Recovery is silent — no spurious modal error for a recovered turn.
+        XCTAssertNil(model.errorMessage)
     }
 
     func testSendFailedTurnEndedShowsErrorNotDone() async throws {

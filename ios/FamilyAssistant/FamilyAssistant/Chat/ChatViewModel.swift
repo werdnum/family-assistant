@@ -428,8 +428,7 @@ final class ChatViewModel {
                 // hub. Don't subscribe; reload persisted history to surface it.
                 await recoverByReloadingHistory(
                     conversationID: id,
-                    assistantMessageID: assistantMessageID,
-                    interruptedNotice: nil
+                    assistantMessageID: assistantMessageID
                 )
                 finishStreaming(streamToken)
                 return
@@ -443,13 +442,16 @@ final class ChatViewModel {
                 assistantMessageID: assistantMessageID,
                 lastSeq: &lastSeq
             )
-            // Resubscribe at most once on a resumable drop, resuming from the last
-            // applied seq so no events are replayed or missed. A second drop falls
-            // through to the interrupted handling rather than spinning.
+            // Resubscribe at most once on a resumable drop, resuming just after
+            // the last applied seq so no events are replayed or missed. The server
+            // replays events with `seq >= from_seq`, so resume from `lastSeq + 1`
+            // (still acking `lastSeq`) — resuming from `lastSeq` would re-apply the
+            // last event's content. A second drop falls through to the interrupted
+            // handling rather than spinning.
             if outcome == .dropped, !Task.isCancelled, currentStreamToken == streamToken {
                 outcome = await runTurnSubscription(
                     conversationID: id,
-                    fromSeq: lastSeq ?? start.firstSeq,
+                    fromSeq: lastSeq.map { $0 + 1 } ?? start.firstSeq,
                     ackSeq: lastSeq,
                     turnID: turnID,
                     assistantMessageID: assistantMessageID,
@@ -475,17 +477,17 @@ final class ChatViewModel {
                 completeStream(assistantMessageID: assistantMessageID)
                 await refreshRecentConversations()
                 await mergeNewMessages(conversationID: id)
-            case .reloadHistory:
+            case .reloadHistory, .dropped, .interrupted:
+                // The connection dropped before turn_ended, but the turn keeps
+                // running durably. Reload persisted history silently — the reply
+                // surfaces here (or via the live follow loop / push once it
+                // finishes). Don't write to `errorMessage`: that drives a modal
+                // "Chat Error" alert, which would be spurious for a reply that
+                // actually succeeded. The disconnected indicator is the
+                // appropriate non-modal signal.
                 await recoverByReloadingHistory(
                     conversationID: id,
-                    assistantMessageID: assistantMessageID,
-                    interruptedNotice: nil
-                )
-            case .dropped, .interrupted:
-                await recoverByReloadingHistory(
-                    conversationID: id,
-                    assistantMessageID: assistantMessageID,
-                    interruptedNotice: "The connection was interrupted before the reply finished."
+                    assistantMessageID: assistantMessageID
                 )
             case .failed(let message):
                 appendStreamError(message, assistantMessageID: assistantMessageID)
@@ -599,20 +601,18 @@ final class ChatViewModel {
 
     /// Recover from an interrupted/already-complete/rotated-out turn by dropping
     /// the optimistic assistant placeholder and reloading persisted history, so
-    /// the durably saved reply surfaces instead of a fabricated completion. An
-    /// `interruptedNotice` is shown only when the live render was cut short.
+    /// the durably saved reply surfaces instead of a fabricated completion.
+    ///
+    /// Deliberately silent: it does not write to `errorMessage`, because a
+    /// recovered disconnect is not a chat error and surfacing one would pop a
+    /// spurious modal alert for a reply that actually succeeded.
     private func recoverByReloadingHistory(
         conversationID id: String,
-        assistantMessageID: String,
-        interruptedNotice: String?
+        assistantMessageID: String
     ) async {
         removeLocalAssistantPlaceholder(assistantMessageID)
         await refreshRecentConversations()
         await mergeNewMessages(conversationID: id)
-        if let interruptedNotice {
-            errorMessage = interruptedNotice
-            ErrorReporter.shared.report(message: interruptedNotice, component: "Chat.stream")
-        }
     }
 
     /// Reset shared streaming state, but only for the still-current send: a
