@@ -45,9 +45,10 @@ Key facts (verified against the Bot API changelog and reference, 2026-06-14):
   valid for a private chat. It returns a success flag, **not** a persisted `Message`; the finished
   output must be committed with a normal `sendRichMessage`. There is no opened draft message object
   to edit via `editMessageText`. Group and forum-topic chats must use the non-draft path.
-- **Message length.** The reference does not (as of this writing) state a numeric maximum for rich
-  messages, and we have not been able to confirm whether the classic 4096-character text limit is
-  raised. This must be re-verified before relying on "longer messages" as a benefit.
+- **Message length.** Rich Messages have a hard cap of **32768 UTF-8 characters**
+  ([rich-message limits](https://core.telegram.org/bots/api#rich-message-limits)) — much larger than
+  the 4096-char plain-text limit, but still finite, so chunking is raised rather than removed (see
+  [Message length](#message-length)).
 
 > Note: the precise `InputRichMessage` field names (`markdown`/`html`) and the exact
 > `sendRichMessageDraft` contract (return type, draft lifetime, private-chat constraint) are taken
@@ -61,11 +62,12 @@ Rich Messages are **not hard-blocked** on a typed PTB release. The blocker is na
 earlier draft of this doc claimed: only the *typed bindings* (`send_rich_message`,
 `InputRichMessage`) are missing, not the ability to call the methods.
 
-- We currently pin `python-telegram-bot[ext]>=21.0,<22.0` in `pyproject.toml`. **The wrapper works
-  on this pin** — PTB 21.11.1 already exposes `Bot.do_api_request`/`api_kwargs` for raw Bot API
-  calls
+- We now pin `python-telegram-bot[ext]>=22.0,<23.0` (PR #912, merged). **The wrapper does not depend
+  on this** — `Bot.do_api_request`/`api_kwargs` for raw Bot API calls has existed since at least PTB
+  21.11.1
   ([21.11.1 docs](https://docs.python-telegram-bot.org/en/v21.11.1/telegram.bot.html#telegram.Bot.do_api_request)),
-  so the rich-message spike does **not** need the 22.x upgrade.
+  so the rich-message spike would have worked even on the old 21.x pin. The 22.x bump was
+  independent cleanup, not a prerequisite.
 - The latest released PTB (22.8) advertises support for **Bot API 10.0**, not 10.1; there is no
   typed `send_rich_message` yet.
 - PTB documents a
@@ -80,10 +82,10 @@ earlier draft of this doc claimed: only the *typed bindings* (`send_rich_message
 
 Recommended sequencing:
 
-1. **Implement behind a `do_api_request` wrapper** on the **current 21.x pin** (config-gated,
-   default off) once the send contract is confirmed in the spike — no upstream dependency.
-2. **PTB 21.x → 22.x** — independent cleanup (clears the `<22.0` cap, reaches API 10.0 parity).
-   Tracked as a separate PR; **not** a prerequisite for the wrapper.
+1. **PTB 21.x → 22.x** — ✅ done (PR #912, merged). Independent cleanup; was never a prerequisite for
+   the wrapper.
+2. **Implement behind a `do_api_request` wrapper** (config-gated, default off) once the send
+   contract is confirmed in the spike — no further upstream dependency.
 3. **Swap to native bindings** when PTB ships typed 10.1 support; the wrapper boundary localizes the
    change.
 
@@ -181,15 +183,28 @@ LLM markdown
    therefore leave ordinary Telegram conversations on the old `MarkdownV2`/chunking path. Introduce
    a single rich-aware send helper and call it from **both** the handler's reply path and
    `TelegramChatInterface.send_message`, so the two send paths stay consistent. The web path
-   (`WebChatInterface`) is untouched. The helper's contract has two subtleties that must not be
+   (`WebChatInterface`) is untouched. The helper's contract has several subtleties that must not be
    lost:
 
+   - **Route raw markdown *before* MarkdownV2 conversion.** On the handler path the reply is run
+     through `convert_to_telegram_markdown(final_llm_content_to_send)` *before*
+     `_send_message_chunks` (`handler.py:806`-`819`). Wiring the helper at the
+     `_send_message_chunks` boundary would hand it already-escaped MarkdownV2, not the raw GFM that
+     `sendRichMessage` expects — so enabling rich messages would silently still take the legacy
+     path. The helper must therefore receive the **raw** assistant markdown (plus rich intent) and
+     decide *before* conversion: rich path uses the raw markdown; only the fallback path runs
+     `convert_to_telegram_markdown`.
    - **Carry reply context.** The handler passes `reply_to_message_id` and a `ForceReply` markup on
      every assistant reply. `sendRichMessage` does **not** accept the legacy `reply_to_message_id`
      parameter — the Bot API exposes `reply_parameters` plus `reply_markup`. The helper signature
      must therefore accept reply/markup intent (e.g. `reply_to_message_id`, `reply_markup`) and
      translate `reply_to_message_id` → `reply_parameters` for the rich path, while the fallback path
      keeps using it as today. Threading and `ForceReply` must survive on the rich path.
+   - **Preserve attachment delivery.** `TelegramChatInterface.send_message` also owns
+     `attachment_ids` dispatch via `_send_attachments` (used by the communication tool and
+     task-worker callbacks). The shared contract must carry `attachment_ids` (or keep the existing
+     `_send_attachments` call around the helper) so replies that include generated/approved
+     attachments don't silently send text only.
    - **Respect the caller's parse-mode/rich intent — do not rich-render everything.**
      `TelegramChatInterface.send_message` is also used outside the assistant-reply path with
      `parse_mode=None` for *literal* text (e.g. the communication tool, confirmation-result
@@ -251,10 +266,13 @@ tests and masking real defects (contrary to the Fail-Fast principle in AGENTS.md
 
 ### Message length
 
-If Rich Messages raise or remove the 4096-char limit, the `_send_message_chunks` splitting
-(`handler.py:299`) can be skipped for the rich path, sending structured content as a single coherent
-document. This is a benefit **contingent on verifying the new limit** — until verified, keep
-chunking as a safety net.
+Rich Messages have a **higher but still finite cap: 32768 UTF-8 characters**
+([rich-message limits](https://core.telegram.org/bots/api#rich-message-limits)), versus 4096 for
+plain text. So the rich path can *raise* the chunking threshold from the current 4000 to (just
+under) 32768 and deliver a typical daily brief or document summary as a single coherent message —
+but it **cannot skip chunking entirely**. A reply above 32768 chars must still be split (rich-aware
+chunking) or it will be rejected, regressing content the existing 4000-char chunker delivers today.
+Keep chunking as the safety net at the rich limit.
 
 ## Milestones
 
@@ -296,7 +314,8 @@ sections in Telegram.
 
 - What markdown dialect does `InputRichMessage` accept (GFM tables, task lists, headings), and how
   much normalization of our output is required?
-- What is the actual maximum size of a rich message, and is the 4096-char text limit changed?
+- The rich-message cap is documented as 32768 UTF-8 chars; confirm whether it counts UTF-8 bytes,
+  UTF-16 units, or codepoints, since that affects where rich-aware chunking must split.
 - What exactly does `sendRichMessageDraft` return, how long does the draft live, and is it strictly
   private-chat-only?
 - Which PTB release adds `send_rich_message` / `InputRichMessage`, and what is its minimum Python /
