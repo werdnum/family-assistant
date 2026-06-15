@@ -1222,9 +1222,9 @@ final class ChatViewModelTests: XCTestCase {
         model.draftText = "Hi"
         await model.sendDraft()
 
-        try await waitUntil { model.isStreaming }
-        // Give the SSE delta time to arrive and be buffered.
-        try await Task.sleep(for: .milliseconds(200))
+        // Wait deterministically for the delta to be received and buffered rather
+        // than racing on a fixed delay.
+        try await waitUntil { model.bufferedStreamTextForTesting == "Partial answer" }
         // The 60s flush timer has not fired, so the delta is buffered, not applied.
         XCTAssertEqual(model.messages.last?.text, "")
 

@@ -73,6 +73,15 @@ final class ChatViewModel {
     @ObservationIgnored private var textFlushTask: Task<Void, Never>?
     @ObservationIgnored private let streamTextFlushInterval: Duration
 
+    #if DEBUG
+    /// Test-only: the currently buffered (not-yet-flushed) streamed text. Lets
+    /// tests wait deterministically for a delta to be received and buffered
+    /// instead of racing on a fixed delay.
+    var bufferedStreamTextForTesting: String {
+        pendingTextByMessageID.values.joined()
+    }
+    #endif
+
     init(
         authManager: AuthManager,
         conversationID: String? = nil,
