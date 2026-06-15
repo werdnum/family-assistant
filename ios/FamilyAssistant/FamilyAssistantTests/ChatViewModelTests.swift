@@ -406,7 +406,7 @@ final class ChatViewModelTests: XCTestCase {
                     """
                 )
             default:
-                if request.httpMethod == "GET", path.hasSuffix("/stream") {
+                if request.httpMethod == "GET", path == "/api/v1/chat/conversations/web_conv_redrop/stream" {
                     if streamRequests.increment() == 1 {
                         return .text(
                             """
@@ -530,7 +530,7 @@ final class ChatViewModelTests: XCTestCase {
                     """
                 )
             default:
-                if request.httpMethod == "GET", path.hasSuffix("/stream") {
+                if request.httpMethod == "GET", path == "/api/v1/chat/conversations/web_conv_5xx/stream" {
                     if streamRequests.increment() == 1 {
                         return .json(#"{"detail":"temporary"}"#, statusCode: 503)
                     }
@@ -674,6 +674,95 @@ final class ChatViewModelTests: XCTestCase {
         reopened = nil
     }
 
+    func testConcurrentOtherTurnSeqIsNotAckedOnResubscribe() async throws {
+        // Another device can start a concurrent turn whose events interleave on
+        // this stream. The send-and-watch flow ignores those events, so it must
+        // not advance its ack cursor past them: acking a skipped turn's seq would
+        // let the hub treat that other turn as delivered and suppress its
+        // disconnect push. The resume cursor and ack_seq must reflect only our
+        // own turn's highest applied seq.
+        // The watched turn's events carry no turn id (always applied); the
+        // concurrent other-device turn carries a distinct id so the send flow
+        // filters it out. Its seq must not advance our ack/resume cursor.
+        let streamRequests = AtomicCounter()
+        var resumeFromSeq: String?
+        var resumeAckSeq: String?
+        ChatMockBackendURLProtocol.respond { request in
+            let path = request.url?.path ?? ""
+            switch (request.httpMethod ?? "GET", path) {
+            case ("POST", "/api/v1/chat/turns"):
+                return .json(
+                    #"{"turn_id":"turn-mine","conversation_id":"web_conv_concurrent","first_seq":0}"#
+                )
+            case ("GET", "/api/v1/chat/conversations"):
+                return .json(#"{"conversations":[],"count":0}"#)
+            case ("GET", "/api/v1/chat/conversations/web_conv_concurrent/messages"):
+                return .json(
+                    """
+                    {
+                      "conversation_id":"web_conv_concurrent",
+                      "messages":[
+                        {"internal_id":1,"role":"user","content":"Hi","timestamp":"2026-06-08T12:00:00Z"},
+                        {"internal_id":2,"role":"assistant","content":"My reply","timestamp":"2026-06-08T12:00:01Z"}
+                      ],
+                      "count":2,
+                      "total_messages":2,
+                      "has_more_before":false,
+                      "has_more_after":false
+                    }
+                    """
+                )
+            default:
+                // Scope to this conversation's stream so a leaked follow-stream
+                // request from a prior test (app-hosted unit bundle) can't bump
+                // the counter.
+                if request.httpMethod == "GET", path == "/api/v1/chat/conversations/web_conv_concurrent/stream" {
+                    if streamRequests.increment() == 1 {
+                        // Our text (seq 1, no turn id → applied), then a concurrent
+                        // OTHER device's turn_ended (seq 2, distinct turn id →
+                        // skipped), then a drop.
+                        return .text(
+                            """
+                            event: text
+                            data: {"content":"Partial","seq":1}
+
+                            event: turn_ended
+                            data: {"turn_id":"turn-other-device","status":"complete","seq":2}
+
+                            event: stream_dropped
+                            data: {}
+
+                            """
+                        )
+                    }
+                    let items = Self.queryItems(from: request)
+                    resumeFromSeq = items["from_seq"]
+                    resumeAckSeq = items["ack_seq"]
+                    return .text(
+                        """
+                        event: turn_ended
+                        data: {"status":"complete","seq":3}
+
+                        """
+                    )
+                }
+                return .json(#"{"detail":"unexpected"}"#, statusCode: 404)
+            }
+        }
+
+        let model = makeViewModel(conversationID: "web_conv_concurrent")
+        model.draftText = "Hi"
+        await model.sendDraft()
+        try await waitUntil { streamRequests.value >= 2 }
+        try await waitUntil { !model.isStreaming }
+
+        XCTAssertEqual(streamRequests.value, 2)
+        // Resume/ack reflect only our turn (seq 1), not the skipped other-device
+        // turn (seq 2): resume from 2 (our seq 1 + 1), ack 1.
+        XCTAssertEqual(resumeAckSeq, "1")
+        XCTAssertEqual(resumeFromSeq, "2")
+    }
+
     func testSendStartTurnFailureSurfacesError() async throws {
         // If the turn never starts (POST /turns fails), there is no durable turn
         // to recover, so the error must surface rather than silently reload an
@@ -687,7 +776,7 @@ final class ChatViewModelTests: XCTestCase {
             case ("GET", "/api/v1/chat/conversations"):
                 return .json(#"{"conversations":[],"count":0}"#)
             default:
-                if request.httpMethod == "GET", path.hasSuffix("/stream") {
+                if request.httpMethod == "GET", path == "/api/v1/chat/conversations/web_conv_nostart/stream" {
                     sawStream = true
                 }
                 return .json(#"{"detail":"unexpected"}"#, statusCode: 404)
@@ -741,7 +830,7 @@ final class ChatViewModelTests: XCTestCase {
                     """
                 )
             default:
-                if request.httpMethod == "GET", path.hasSuffix("/stream") {
+                if request.httpMethod == "GET", path == "/api/v1/chat/conversations/web_conv_twice/stream" {
                     streamRequests.increment()
                     return .text(
                         """
@@ -1010,7 +1099,7 @@ final class ChatViewModelTests: XCTestCase {
                     """
                 )
             default:
-                if request.httpMethod == "GET", path.hasSuffix("/stream") {
+                if request.httpMethod == "GET", path == "/api/v1/chat/conversations/web_conv_supersede/stream" {
                     let isFirst = streamRequests.increment() == 1
                     let controller = isFirst ? firstStream : secondStream
                     let token = isFirst ? "First partial" : "Second partial"

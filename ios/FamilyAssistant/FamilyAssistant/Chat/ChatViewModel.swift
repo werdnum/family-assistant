@@ -564,12 +564,23 @@ final class ChatViewModel {
             }
             // The hub dropped this subscriber (queue overflow / shutdown). Bail so
             // the caller can resubscribe from the last applied seq. Carries no
-            // seq/turn id, so handle it before seq tracking and the turn filter.
+            // seq/turn id, so handle it before the turn filter and seq tracking.
             if event.type == .streamDropped {
                 return .dropped
             }
-            // Track the highest seq across all turns so a resume covers everything
-            // already applied; the conversation stream interleaves turns.
+            // The conversation stream carries every turn's events. In this
+            // send-and-watch flow only apply events for the turn we started;
+            // ignore a turn started concurrently elsewhere in the conversation.
+            if let eventTurnID = event.turnID, eventTurnID != turnID {
+                continue
+            }
+            // Track the highest applied seq AFTER the turn filter so the ack
+            // cursor only advances for events we actually surfaced. Acking a
+            // skipped turn's seq would let a later ack_seq cover that other
+            // device's turn_ended (the hub treats ended_seq <= ack_seq as
+            // delivered) and suppress its disconnect push. Resuming from this
+            // (our) seq still can't miss our events — the server replays all
+            // seqs >= from_seq, so interleaved skipped turns are simply re-filtered.
             if let seq = event.seq {
                 if let current = lastSeq {
                     lastSeq = max(current, seq)
@@ -577,12 +588,6 @@ final class ChatViewModel {
                     lastSeq = seq
                 }
                 recordAppliedSeq(seq)
-            }
-            // The conversation stream carries every turn's events. In this
-            // send-and-watch flow only apply events for the turn we started;
-            // ignore a turn started concurrently elsewhere in the conversation.
-            if let eventTurnID = event.turnID, eventTurnID != turnID {
-                continue
             }
             apply(streamEvent: event, assistantMessageID: assistantMessageID)
             if event.type == .turnEnded {
