@@ -101,15 +101,23 @@ final class MarkdownRendererTests: XCTestCase {
         XCTAssertNotEqual(first, NativeMarkdownRenderer.blocks(from: source + "\n\nmore"))
     }
 
-    func testShouldRenderFormattedMarkdownGatesOnStreamingStatus() {
-        // A still-streaming reply renders as plain text (no per-delta markdown
-        // parse); a settled reply renders formatted.
-        XCTAssertFalse(shouldRenderFormattedMarkdown(status: .running, isLoading: true))
-        XCTAssertFalse(shouldRenderFormattedMarkdown(status: .running, isLoading: false))
-        XCTAssertTrue(shouldRenderFormattedMarkdown(status: .complete, isLoading: false))
-        XCTAssertTrue(shouldRenderFormattedMarkdown(status: .failed, isLoading: false))
-        // A message marked complete but still flagged loading is treated as
-        // in-flight until it settles.
-        XCTAssertFalse(shouldRenderFormattedMarkdown(status: .complete, isLoading: true))
+    func testContainsMarkdownSyntaxTakesFastPathOnlyForPlainProse() {
+        // Plain prose — even with numbers, hyphens mid-sentence, and punctuation —
+        // takes the no-parse fast path.
+        XCTAssertFalse(containsMarkdownSyntax("Just a plain sentence."))
+        XCTAssertFalse(containsMarkdownSyntax("I have 3 cats and 2 dogs; that's 5 pets."))
+        XCTAssertFalse(containsMarkdownSyntax("Line one\nLine two\nno markup here"))
+
+        // Anything that could format must render through the parser.
+        XCTAssertTrue(containsMarkdownSyntax("Some **bold** text"))
+        XCTAssertTrue(containsMarkdownSyntax("An _italic_ word"))
+        XCTAssertTrue(containsMarkdownSyntax("Inline `code` span"))
+        XCTAssertTrue(containsMarkdownSyntax("A [link](https://example.test)"))
+        XCTAssertTrue(containsMarkdownSyntax("| a | b |\n| - | - |"))
+        XCTAssertTrue(containsMarkdownSyntax("# Heading"))
+        XCTAssertTrue(containsMarkdownSyntax("> quote"))
+        XCTAssertTrue(containsMarkdownSyntax("- bullet\n- list"))
+        XCTAssertTrue(containsMarkdownSyntax("1. first\n2. second"))
+        XCTAssertTrue(containsMarkdownSyntax("  - indented bullet"))
     }
 }

@@ -194,12 +194,38 @@ private struct ChatThreadView: View {
     }
 }
 
-/// Whether a message's text should be rendered as formatted markdown.
+/// Whether `text` contains anything that could render as formatted markdown.
 ///
-/// A still-streaming reply is rendered as plain text and only parsed/formatted
-/// once the turn settles, so the markdown parser doesn't run on every delta.
-func shouldRenderFormattedMarkdown(status: ChatMessageStatus, isLoading: Bool) -> Bool {
-    status != .running && !isLoading
+/// Used as a cheap fast path: plain prose (the common reply, and most of every
+/// streamed reply before any syntax appears) skips the markdown parser entirely
+/// and renders as plain `Text`. It is deliberately conservative — it returns
+/// `true` whenever any markdown construct *could* be present, so formatting is
+/// never silently dropped; only genuinely plain text takes the fast path.
+func containsMarkdownSyntax(_ text: String) -> Bool {
+    // Inline markers can appear anywhere on a line.
+    let inlineMarkers: Set<Character> = ["*", "_", "`", "[", "]", "|", "~", "<"]
+    if text.contains(where: inlineMarkers.contains) {
+        return true
+    }
+    // Block markers only count at the start of a (whitespace-stripped) line:
+    // headings (#), blockquotes (>), unordered lists (-, +) and ordered lists
+    // (digits followed by . or )).
+    for rawLine in text.split(separator: "\n", omittingEmptySubsequences: false) {
+        let line = rawLine.drop { $0 == " " || $0 == "\t" }
+        guard let first = line.first else {
+            continue
+        }
+        if first == "#" || first == ">" || first == "-" || first == "+" {
+            return true
+        }
+        if first.isNumber {
+            let afterDigits = line.drop(while: \.isNumber)
+            if let marker = afterDigits.first, marker == "." || marker == ")" {
+                return true
+            }
+        }
+    }
+    return false
 }
 
 private struct MessageBubble: View {
@@ -234,16 +260,14 @@ private struct MessageBubble: View {
                     LoadingDotsView()
                 }
                 if !message.text.isEmpty {
-                    if shouldRenderFormattedMarkdown(status: message.status, isLoading: message.isLoading) {
+                    if containsMarkdownSyntax(message.text) {
                         NativeMarkdownView(markdown: message.text)
                             .textSelection(.enabled)
                     } else {
-                        // While a reply is still streaming, render the growing text
-                        // as plain Text. Re-parsing the whole markdown document on
-                        // every delta is O(n^2) on the main thread and, combined
-                        // with scrolling, stalls long enough to trip the SwiftUI
-                        // layout watchdog. The text is reformatted once the turn
-                        // completes.
+                        // Plain prose skips the markdown parser entirely. Streamed
+                        // deltas are coalesced (see ChatViewModel) and completed
+                        // text is memoized, so live-formatted rendering stays off
+                        // the main thread long enough to avoid the layout watchdog.
                         Text(message.text)
                             .frame(maxWidth: .infinity, alignment: .leading)
                             .textSelection(.enabled)
