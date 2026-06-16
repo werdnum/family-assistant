@@ -233,7 +233,12 @@ async def get_diagnostics_reader(request: Request) -> dict:
     readonly_token = os.environ.get(DIAGNOSTICS_READONLY_TOKEN_ENV_VAR)
     if readonly_token:
         provided = _extract_bearer_token(request)
-        if provided and secrets.compare_digest(provided, readonly_token):
+        # Compare as bytes: secrets.compare_digest raises TypeError on non-ASCII
+        # str inputs, which would surface as a 500 instead of falling through to
+        # normal auth for a malformed token.
+        if provided and secrets.compare_digest(
+            provided.encode("utf-8"), readonly_token.encode("utf-8")
+        ):
             logger.info("Authenticated via read-only diagnostics token.")
             return {
                 "user_identifier": "diagnostics_readonly_token",

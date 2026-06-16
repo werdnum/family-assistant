@@ -127,6 +127,32 @@ async def test_endpoint_rejects_wrong_readonly_token(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("endpoint", READONLY_ENDPOINTS)
+async def test_endpoint_rejects_non_ascii_token_without_500(
+    api_client: httpx.AsyncClient,
+    monkeypatch: _pytest.MonkeyPatch,
+    endpoint: str,
+) -> None:
+    """A non-ASCII token falls through to normal auth (401), not a 500.
+
+    secrets.compare_digest raises TypeError on non-ASCII str inputs, so the
+    comparison must be done on bytes to avoid leaking a 500.
+    """
+    monkeypatch.setenv(DIAGNOSTICS_READONLY_TOKEN_ENV_VAR, READONLY_TOKEN)
+    original = _enable_auth()
+    try:
+        # Send the value as latin-1 bytes (valid on the wire); Starlette decodes
+        # headers as latin-1, so the server sees a non-ASCII str token.
+        response = await api_client.get(
+            endpoint,
+            headers={b"Authorization": "Bearer tökén-with-ünïcode".encode("latin-1")},
+        )
+        assert response.status_code == 401
+    finally:
+        _restore_auth(original)
+
+
+@pytest.mark.asyncio
 async def test_readonly_token_does_not_unlock_other_endpoints(
     api_client: httpx.AsyncClient,
     monkeypatch: _pytest.MonkeyPatch,
