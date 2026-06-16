@@ -89,4 +89,94 @@ final class ToolRenderingTests: XCTestCase {
         XCTAssertEqual(messages.first?.toolCalls.first?.argumentsText, #"{"value":1}"#)
         XCTAssertEqual(messages.first?.attachments.first?.type, .image)
     }
+
+    /// An agentic turn that loops over many tool calls is persisted as one
+    /// backend assistant message per step. Those steps must collapse into a
+    /// single tool group so the thread shows one collapsible box for the turn
+    /// rather than one box per tool call (matching the web client).
+    func testRenderMessagesGroupsConsecutiveToolCallTurnsIntoOneBubble() throws {
+        let toolSteps = (0..<30).map { index in
+            """
+            {
+              "internal_id": \(100 + index),
+              "role": "assistant",
+              "content": "",
+              "timestamp": "2026-06-08T12:\(String(format: "%02d", index)):00Z",
+              "tool_calls": [
+                {"id": "call-\(index)", "type": "function",
+                 "function": {"name": "search_notes", "arguments": "{}"}}
+              ]
+            },
+            {
+              "internal_id": \(200 + index),
+              "role": "tool",
+              "content": "{\\"ok\\":true}",
+              "timestamp": "2026-06-08T12:\(String(format: "%02d", index)):00Z",
+              "tool_call_id": "call-\(index)"
+            }
+            """
+        }
+        let json = """
+        [
+          {"internal_id": 1, "role": "user", "content": "Find everything",
+           "timestamp": "2026-06-08T11:59:00Z"},
+          \(toolSteps.joined(separator: ",\n")),
+          {"internal_id": 999, "role": "assistant", "content": "Here is the summary.",
+           "timestamp": "2026-06-08T12:31:00Z"}
+        ]
+        """
+        let backendMessages = try JSONDecoder.chatDecoder.decode([ChatBackendMessage].self, from: Data(json.utf8))
+
+        let messages = ChatViewModel.renderMessages(from: backendMessages)
+
+        // user bubble, one grouped tool bubble, and the final text answer.
+        XCTAssertEqual(messages.map(\.role), [.user, .assistant, .assistant])
+        let toolBubble = try XCTUnwrap(messages.first { $0.role == .assistant && !$0.toolCalls.isEmpty })
+        XCTAssertEqual(toolBubble.toolCalls.count, 30)
+        XCTAssertEqual(toolBubble.toolCalls.map(\.id), (0..<30).map { "call-\($0)" })
+        let answer = try XCTUnwrap(messages.last)
+        XCTAssertEqual(answer.text, "Here is the summary.")
+        XCTAssertTrue(answer.toolCalls.isEmpty)
+    }
+
+    /// Tool calls from different turns (separated by a user message) must stay in
+    /// separate bubbles rather than collapsing across the turn boundary.
+    func testRenderMessagesDoesNotGroupToolCallsAcrossTurns() throws {
+        let json = """
+        [
+          {"internal_id": 1, "role": "user", "content": "First", "timestamp": "2026-06-08T12:00:00Z"},
+          {"internal_id": 2, "role": "assistant", "content": "", "timestamp": "2026-06-08T12:00:01Z",
+           "tool_calls": [{"id": "a", "type": "function", "function": {"name": "t", "arguments": "{}"}}]},
+          {"internal_id": 3, "role": "user", "content": "Second", "timestamp": "2026-06-08T12:00:02Z"},
+          {"internal_id": 4, "role": "assistant", "content": "", "timestamp": "2026-06-08T12:00:03Z",
+           "tool_calls": [{"id": "b", "type": "function", "function": {"name": "t", "arguments": "{}"}}]}
+        ]
+        """
+        let backendMessages = try JSONDecoder.chatDecoder.decode([ChatBackendMessage].self, from: Data(json.utf8))
+
+        let messages = ChatViewModel.renderMessages(from: backendMessages)
+
+        XCTAssertEqual(messages.map(\.role), [.user, .assistant, .user, .assistant])
+        XCTAssertEqual(messages.filter { !$0.toolCalls.isEmpty }.map { $0.toolCalls.map(\.id) }, [["a"], ["b"]])
+    }
+
+    /// The grouped bubble's timestamp must advance to the newest folded-in
+    /// message so the incremental delta-merge cursor steps past the whole turn.
+    func testGroupedToolCallBubbleTimestampReflectsLatestStep() throws {
+        let json = """
+        [
+          {"internal_id": 1, "role": "assistant", "content": "", "timestamp": "2026-06-08T12:00:00Z",
+           "tool_calls": [{"id": "a", "type": "function", "function": {"name": "t", "arguments": "{}"}}]},
+          {"internal_id": 2, "role": "assistant", "content": "", "timestamp": "2026-06-08T12:05:00Z",
+           "tool_calls": [{"id": "b", "type": "function", "function": {"name": "t", "arguments": "{}"}}]}
+        ]
+        """
+        let backendMessages = try JSONDecoder.chatDecoder.decode([ChatBackendMessage].self, from: Data(json.utf8))
+
+        let messages = ChatViewModel.renderMessages(from: backendMessages)
+
+        XCTAssertEqual(messages.count, 1)
+        let expected = ISO8601DateFormatter().date(from: "2026-06-08T12:05:00Z")
+        XCTAssertEqual(messages.first?.createdAt, expected)
+    }
 }
