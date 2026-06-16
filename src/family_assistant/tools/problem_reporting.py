@@ -1,7 +1,7 @@
 """Tool for the assistant to report technical problems.
 
 Provides ``report_technical_problem``, a tool available to the LLM in every
-processing profile (via ``universal_tools_policy``). It records a log entry in
+processing profile (via ``global_tools_policy``). It records a log entry in
 the ``error_logs`` table so that reported issues surface in the error-logs and
 diagnostics-export endpoints used for debugging.
 """

@@ -171,18 +171,11 @@ async def get_current_user(request: Request) -> dict:
         # Session middleware not available
         pass
 
-    # Fall back to API token auth (for API clients)
-    token_value: str | None = None
-    auth_header = request.headers.get("Authorization")
-
-    if auth_header and auth_header.lower().startswith("bearer "):
-        token_value = auth_header.split(" ", 1)[1]
-        logger.debug("Attempting API token auth using Authorization Bearer header.")
-    else:
-        # Fallback to X-API-Token if Authorization header is not a Bearer token or not present
-        token_value = request.headers.get("X-API-Token")
-        if token_value:
-            logger.debug("Attempting API token auth using X-API-Token header.")
+    # Fall back to API token auth (for API clients), accepting either an
+    # Authorization: Bearer header or X-API-Token.
+    token_value = _extract_bearer_token(request)
+    if token_value:
+        logger.debug("Attempting API token auth using bearer/X-API-Token header.")
 
     if not token_value:
         logger.warning("No authentication provided (session or API token).")
