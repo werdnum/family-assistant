@@ -203,6 +203,10 @@ from family_assistant.tools.policy import (
     ToolPolicyConfig,
     ToolPolicyDecision,
 )
+from family_assistant.tools.problem_reporting import (
+    REPORT_TECHNICAL_PROBLEM_TOOLS_DEFINITION,
+    report_technical_problem_tool,
+)
 from family_assistant.tools.script_testing import (
     SCRIPT_TESTING_TOOLS_DEFINITION,
     test_script_with_simulated_tools_tool,
@@ -432,6 +436,9 @@ __all__ = [
     "delete_script_tool",
     "reindex_email_tool",
     "MCPToolsProvider",
+    # Problem reporting
+    "REPORT_TECHNICAL_PROBLEM_TOOLS_DEFINITION",
+    "report_technical_problem_tool",
 ]
 
 
@@ -484,6 +491,7 @@ _LOCAL_TOOL_DEFINITIONS: list[ToolDefinition] = (
     + WORKER_TOOLS_DEFINITION
     + ENGINEERING_TOOLS_DEFINITION
     + MQTT_TOOLS_DEFINITION
+    + REPORT_TECHNICAL_PROBLEM_TOOLS_DEFINITION
 )
 
 _LOCAL_TOOL_IMPLEMENTATIONS: dict[str, ToolImplementation] = {
@@ -614,6 +622,8 @@ _LOCAL_TOOL_IMPLEMENTATIONS: dict[str, ToolImplementation] = {
     "get_system_info": get_system_info,
     # MQTT tools
     "mqtt_publish": mqtt_publish_tool,
+    # Problem reporting
+    "report_technical_problem": report_technical_problem_tool,
 }
 
 LOCAL_TOOL_METADATA_BY_NAME: dict[str, LocalToolMetadata] = {
@@ -1271,6 +1281,12 @@ LOCAL_TOOL_METADATA_BY_NAME: dict[str, LocalToolMetadata] = {
     "mqtt_publish": _metadata(
         ToolTag.EXTERNAL_COMM,
         ToolTag.HOME_AUTOMATION,
+        ToolTag.OUTPUT_TRUSTED,
+    ),
+    # Problem reporting
+    "report_technical_problem": _metadata(
+        ToolTag.STATE_CHANGING,
+        ToolTag.STATE_PERSISTING,
         ToolTag.OUTPUT_TRUSTED,
     ),
 }

@@ -169,12 +169,18 @@ def _build_profile_policy_engine(
     profile_id: str,
     profile_tools_policy: ToolPolicyConfig | None,
     operator_tools_policy: ToolPolicyConfig | None,
+    global_tools_policy: ToolPolicyConfig | None = None,
 ) -> PolicyEngine:
     """Build a policy engine for a profile from explicit policy config.
 
     Automatically injects a synthetic self-delegation allow rule at the
     ``profile`` layer so that every profile can delegate to itself without
     confirmation.  Self-delegation is never a privilege escalation.
+
+    Rules from ``global_tools_policy`` are injected at the same ``profile``
+    layer so they apply to every profile regardless of the profile's own
+    ``tools_policy`` (which otherwise replaces the shipped defaults wholesale).
+    Operator policy still takes precedence over global rules.
     """
     if profile_tools_policy is None:
         msg = (
@@ -183,23 +189,25 @@ def _build_profile_policy_engine(
         )
         raise ValueError(msg)
 
-    self_delegation_policy = ToolPolicyConfig(
-        rules=[
-            PolicyRule(
-                match=ToolMatcher(
-                    names=["delegate_to_service"],
-                    argument_equals={"target_service_id": profile_id},
-                ),
-                decision=ToolPolicyDecision.ALLOW,
-                priority=50,
-                description=f"Allow self-delegation for profile '{profile_id}'",
+    synthetic_rules: list[PolicyRule] = [
+        PolicyRule(
+            match=ToolMatcher(
+                names=["delegate_to_service"],
+                argument_equals={"target_service_id": profile_id},
             ),
-        ],
-    )
+            decision=ToolPolicyDecision.ALLOW,
+            priority=50,
+            description=f"Allow self-delegation for profile '{profile_id}'",
+        ),
+    ]
+    if global_tools_policy is not None:
+        synthetic_rules.extend(global_tools_policy.rules)
+
+    synthetic_policy = ToolPolicyConfig(rules=synthetic_rules)
 
     return PolicyEngine.from_layers(
         defaults=profile_tools_policy,
-        profile=self_delegation_policy,
+        profile=synthetic_policy,
         operator=operator_tools_policy,
     )
 
@@ -917,6 +925,7 @@ class Assistant:
                 profile_id,
                 profile_tools_policy,
                 profile_operator_tools_policy,
+                self.config.global_tools_policy,
             )
             # Get confirmation timeout from config, default to 3600 seconds (1 hour)
             confirmation_timeout = profile_tools_conf.confirmation_timeout_seconds

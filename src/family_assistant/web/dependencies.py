@@ -1,5 +1,6 @@
 import logging
 import os
+import secrets
 from collections.abc import AsyncGenerator
 from typing import TYPE_CHECKING
 
@@ -211,6 +212,45 @@ async def get_current_user(request: Request) -> dict:
 
     logger.info(f"API user authenticated: {api_user.get('sub')}")
     return resolve_current_user_payload(request, api_user)
+
+
+# Environment variable holding an optional read-only token that grants access to
+# the diagnostics/error-log read endpoints (and nothing else). Intended for
+# scraping diagnostics from an external monitor without minting a full API token.
+DIAGNOSTICS_READONLY_TOKEN_ENV_VAR = "DIAGNOSTICS_READONLY_TOKEN"
+
+
+def _extract_bearer_token(request: Request) -> str | None:
+    """Return the bearer/API token from the request headers, if present."""
+    auth_header = request.headers.get("Authorization")
+    if auth_header and auth_header.lower().startswith("bearer "):
+        return auth_header.split(" ", 1)[1]
+    return request.headers.get("X-API-Token")
+
+
+async def get_diagnostics_reader(request: Request) -> dict:
+    """Authorize read access to diagnostics/error-log endpoints.
+
+    Grants access either to a normal authenticated user (session or API token,
+    via :func:`get_current_user`) or to a holder of the read-only diagnostics
+    token configured in ``DIAGNOSTICS_READONLY_TOKEN``. The read-only token is
+    checked first so that supplying it as a bearer token does not fall through
+    to (and fail) normal API-token validation.
+    """
+    readonly_token = os.environ.get(DIAGNOSTICS_READONLY_TOKEN_ENV_VAR)
+    if readonly_token:
+        provided = _extract_bearer_token(request)
+        if provided and secrets.compare_digest(provided, readonly_token):
+            logger.info("Authenticated via read-only diagnostics token.")
+            return {
+                "user_identifier": "diagnostics_readonly_token",
+                "token_id": 0,
+                "token_name": "diagnostics_readonly_token",
+                "expires_at": None,
+                "readonly": True,
+            }
+
+    return await get_current_user(request)
 
 
 async def get_current_api_user(request: Request) -> dict:
