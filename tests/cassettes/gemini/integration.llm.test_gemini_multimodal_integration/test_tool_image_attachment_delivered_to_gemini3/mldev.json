@@ -1,0 +1,180 @@
+{
+  "replay_id": "integration.llm.test_gemini_multimodal_integration/test_tool_image_attachment_delivered_to_gemini3/mldev",
+  "interactions": [
+    {
+      "request": {
+        "method": "post",
+        "url": "{MLDEV_URL_PREFIX}/models/gemini-3.5-flash:generateContent",
+        "headers": {
+          "Content-Type": "application/json",
+          "x-goog-api-key": "{REDACTED}",
+          "user-agent": "google-genai-sdk/{VERSION_NUMBER} {LANGUAGE_LABEL}/{VERSION_NUMBER}",
+          "x-goog-api-client": "google-genai-sdk/{VERSION_NUMBER} {LANGUAGE_LABEL}/{VERSION_NUMBER}"
+        },
+        "body_segments": [
+          {
+            "contents": [
+              {
+                "parts": [
+                  {
+                    "text": "Use the get_image tool to fetch an image, then describe what color the image shows. Be very brief - just state the color."
+                  }
+                ],
+                "role": "user"
+              },
+              {
+                "parts": [
+                  {
+                    "functionCall": {
+                      "id": "call_1",
+                      "args": {},
+                      "name": "get_image"
+                    },
+                    "thoughtSignature": "c2tpcF90aG91Z2h0X3NpZ25hdHVyZV92YWxpZGF0b3I="
+                  }
+                ],
+                "role": "model"
+              },
+              {
+                "parts": [
+                  {
+                    "functionResponse": {
+                      "parts": [
+                        {
+                          "inline_data": {
+                            "mime_type": "image/png",
+                            "data": "iVBORw0KGgoAAAANSUhEUgAAAEAAAABACAIAAAAlC-aJAAAAX0lEQVR4nO3PQQ0AIBDAMMC_50MEj4ZkVbDtWX87OuBVA1oDWgNaA1oDWgNaA1oDWgNaA1oDWgNaA1oDWgNaA1oDWgNaA1oDWgNaA1oDWgNaA1oDWgNaA1oDWgNaA9oFUoUBf3Xr7AgAAAAASUVORK5CYII=",
+                            "display_name": "An image"
+                          }
+                        }
+                      ],
+                      "id": "call_1",
+                      "name": "get_image",
+                      "response": {
+                        "result": "Here is the image."
+                      }
+                    }
+                  }
+                ],
+                "role": "user"
+              }
+            ],
+            "toolConfig": {
+              "functionCallingConfig": {
+                "mode": "NONE"
+              }
+            },
+            "generationConfig": {
+              "mediaResolution": "MEDIA_RESOLUTION_HIGH"
+            }
+          }
+        ]
+      },
+      "response": {
+        "status_code": 200,
+        "headers": {
+          "X-Gemini-Service-Tier": "standard",
+          "Content-Type": "application/json; charset=UTF-8",
+          "Vary": "Origin, X-Origin, Referer",
+          "Content-Encoding": "gzip",
+          "Server": "scaffolding on HTTPServer2",
+          "X-XSS-Protection": "0",
+          "X-Frame-Options": "SAMEORIGIN",
+          "X-Content-Type-Options": "nosniff",
+          "Alt-Svc": "h3=\":443\"; ma=2592000,h3-29=\":443\"; ma=2592000",
+          "Transfer-Encoding": "chunked"
+        },
+        "body_segments": [
+          {
+            "candidates": [
+              {
+                "content": {
+                  "parts": [
+                    {
+                      "text": "Red",
+                      "thoughtSignature": "Es0BCsoBAQw51scGE+xNEdFlkg0I9kH6Mk8vC/vFE/2FCzbNafmoUQbyl6Gha5oWxsokFdukI8KTE9HH5xy5xhbKpZf1B0N7D3VqCt62zaJQEEEDZdi590v9mnpLgJlSy2d7p9y2ae49Sx7aLY6WBsY7K9lO9pps0JsiYR1vEXyDLP/oQR1uhC0ae5WHfvSSHS/aScvQ3eGku2YL0xwf38jrd8bD8pu+uml1RViWIIfEPq/oVzPW+MxMVsDJGTFwSqR+OwI0wIWYdLKnLR4f8g=="
+                    }
+                  ],
+                  "role": "model"
+                },
+                "finishReason": "STOP",
+                "index": 0
+              }
+            ],
+            "usageMetadata": {
+              "promptTokenCount": 1146,
+              "candidatesTokenCount": 1,
+              "totalTokenCount": 1183,
+              "promptTokensDetails": [
+                {
+                  "modality": "TEXT",
+                  "tokenCount": 57
+                },
+                {
+                  "modality": "IMAGE",
+                  "tokenCount": 1089
+                }
+              ],
+              "thoughtsTokenCount": 36,
+              "serviceTier": "standard"
+            },
+            "modelVersion": "gemini-3.5-flash",
+            "responseId": "0wsxateQNYuo_uMP256CWA"
+          }
+        ],
+        "byte_segments": [],
+        "sdk_response_segments": [
+          {
+            "sdk_http_response": {
+              "headers": {
+                "X-Gemini-Service-Tier": "standard",
+                "Content-Type": "application/json; charset=UTF-8",
+                "Vary": "Origin, X-Origin, Referer",
+                "Content-Encoding": "gzip",
+                "Server": "scaffolding on HTTPServer2",
+                "X-XSS-Protection": "0",
+                "X-Frame-Options": "SAMEORIGIN",
+                "X-Content-Type-Options": "nosniff",
+                "Alt-Svc": "h3=\":443\"; ma=2592000,h3-29=\":443\"; ma=2592000",
+                "Transfer-Encoding": "chunked"
+              }
+            },
+            "candidates": [
+              {
+                "content": {
+                  "parts": [
+                    {
+                      "text": "Red",
+                      "thought_signature": "Es0BCsoBAQw51scGE-xNEdFlkg0I9kH6Mk8vC_vFE_2FCzbNafmoUQbyl6Gha5oWxsokFdukI8KTE9HH5xy5xhbKpZf1B0N7D3VqCt62zaJQEEEDZdi590v9mnpLgJlSy2d7p9y2ae49Sx7aLY6WBsY7K9lO9pps0JsiYR1vEXyDLP_oQR1uhC0ae5WHfvSSHS_aScvQ3eGku2YL0xwf38jrd8bD8pu-uml1RViWIIfEPq_oVzPW-MxMVsDJGTFwSqR-OwI0wIWYdLKnLR4f8g=="
+                    }
+                  ],
+                  "role": "model"
+                },
+                "finish_reason": "STOP",
+                "index": 0
+              }
+            ],
+            "model_version": "gemini-3.5-flash",
+            "response_id": "0wsxateQNYuo_uMP256CWA",
+            "usage_metadata": {
+              "candidates_token_count": 1,
+              "prompt_token_count": 1146,
+              "prompt_tokens_details": [
+                {
+                  "modality": "TEXT",
+                  "token_count": 57
+                },
+                {
+                  "modality": "IMAGE",
+                  "token_count": 1089
+                }
+              ],
+              "thoughts_token_count": 36,
+              "total_token_count": 1183
+            }
+          }
+        ]
+      }
+    }
+  ]
+}

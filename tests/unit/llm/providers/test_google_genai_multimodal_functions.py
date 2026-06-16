@@ -7,7 +7,8 @@ import pytest
 if TYPE_CHECKING:
     from google.genai import types
 
-from family_assistant.llm.messages import ToolMessage
+from family_assistant.llm import ToolCallFunction, ToolCallItem
+from family_assistant.llm.messages import AssistantMessage, ToolMessage
 from family_assistant.llm.providers.google_genai_client import GoogleGenAIClient
 from family_assistant.tools.types import ToolAttachment
 
@@ -83,7 +84,10 @@ class TestMultimodalFunctionResponses:
 
         assert len(contents) == 1
         content = cast("types.Content", contents[0])
-        assert content.role == "function"
+        # A function response carrying inline media must be delivered in a "user"
+        # turn; Gemini rejects a "function"-role Content with multimodal parts
+        # (400 INVALID_ARGUMENT).
+        assert content.role == "user"
         assert content.parts is not None
         assert len(content.parts) == 1
         part = cast("types.Part", content.parts[0])
@@ -124,6 +128,8 @@ class TestMultimodalFunctionResponses:
         assert len(contents) == 1
         # Need to safely access parts for type checking
         content = cast("types.Content", contents[0])
+        # Multimodal function responses are delivered in a "user" turn.
+        assert content.role == "user"
         assert content.parts is not None
         part = cast("types.Part", content.parts[0])
         fr = part.function_response
@@ -139,3 +145,50 @@ class TestMultimodalFunctionResponses:
         assert fr.parts[1].inline_data is not None
         assert fr.parts[1].inline_data.data == b"pdf1"
         assert fr.parts[1].inline_data.mime_type == "application/pdf"
+
+    def test_mixed_parallel_tool_responses_interleave_roles_v3(
+        self, client_v3: GoogleGenAIClient
+    ) -> None:
+        """Parallel tool calls with mixed results keep each response's own role.
+
+        When the model emits parallel calls and one result is text-only while
+        another carries an image, the text response uses the "function" role and
+        the image response uses the "user" role. Gemini accepts the resulting
+        ``model -> function -> user`` sequence (verified against the live API).
+        """
+        text_tool = ToolMessage(
+            tool_call_id="c1", content="The note says HELLO.", name="get_note"
+        )
+        image_tool = ToolMessage(
+            tool_call_id="c2",
+            content="Here is the image.",
+            name="get_image",
+            _attachments=[
+                ToolAttachment(
+                    mime_type="image/png", content=b"img", description="An image"
+                )
+            ],
+        )
+        messages = [
+            AssistantMessage(
+                tool_calls=[
+                    ToolCallItem(
+                        id="c1",
+                        type="function",
+                        function=ToolCallFunction(name="get_note", arguments="{}"),
+                    ),
+                    ToolCallItem(
+                        id="c2",
+                        type="function",
+                        function=ToolCallFunction(name="get_image", arguments="{}"),
+                    ),
+                ]
+            ),
+            text_tool,
+            image_tool,
+        ]
+
+        contents = client_v3._convert_messages_to_genai_format(messages)
+
+        roles = [cast("types.Content", c).role for c in contents]
+        assert roles == ["model", "function", "user"]
