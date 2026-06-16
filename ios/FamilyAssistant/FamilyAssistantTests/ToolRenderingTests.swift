@@ -127,7 +127,7 @@ final class ToolRenderingTests: XCTestCase {
         """
         let backendMessages = try JSONDecoder.chatDecoder.decode([ChatBackendMessage].self, from: Data(json.utf8))
 
-        let messages = ChatViewModel.renderMessages(from: backendMessages)
+        let messages = ChatViewModel.groupToolCallTurns(ChatViewModel.renderMessages(from: backendMessages))
 
         // user bubble, one grouped tool bubble, and the final text answer.
         XCTAssertEqual(messages.map(\.role), [.user, .assistant, .assistant])
@@ -154,15 +154,35 @@ final class ToolRenderingTests: XCTestCase {
         """
         let backendMessages = try JSONDecoder.chatDecoder.decode([ChatBackendMessage].self, from: Data(json.utf8))
 
-        let messages = ChatViewModel.renderMessages(from: backendMessages)
+        let messages = ChatViewModel.groupToolCallTurns(ChatViewModel.renderMessages(from: backendMessages))
 
         XCTAssertEqual(messages.map(\.role), [.user, .assistant, .user, .assistant])
         XCTAssertEqual(messages.filter { !$0.toolCalls.isEmpty }.map { $0.toolCalls.map(\.id) }, [["a"], ["b"]])
     }
 
-    /// The grouped bubble's timestamp must advance to the newest folded-in
-    /// message so the incremental delta-merge cursor steps past the whole turn.
+    /// The grouped bubble is dated by its newest folded-in step.
     func testGroupedToolCallBubbleTimestampReflectsLatestStep() throws {
+        let json = """
+        [
+          {"internal_id": 1, "role": "assistant", "content": "", "timestamp": "2026-06-08T12:00:00Z",
+           "tool_calls": [{"id": "a", "type": "function", "function": {"name": "t", "arguments": "{}"}}]},
+          {"internal_id": 2, "role": "assistant", "content": "", "timestamp": "2026-06-08T12:05:00Z",
+           "tool_calls": [{"id": "b", "type": "function", "function": {"name": "t", "arguments": "{}"}}]}
+        ]
+        """
+        let backendMessages = try JSONDecoder.chatDecoder.decode([ChatBackendMessage].self, from: Data(json.utf8))
+
+        let messages = ChatViewModel.groupToolCallTurns(ChatViewModel.renderMessages(from: backendMessages))
+
+        XCTAssertEqual(messages.count, 1)
+        let expected = ISO8601DateFormatter().date(from: "2026-06-08T12:05:00Z")
+        XCTAssertEqual(messages.first?.createdAt, expected)
+    }
+
+    /// `renderMessages` itself stays one-to-one with persisted backend messages
+    /// (grouping is applied separately, for display), so the delta-merge cursor
+    /// and per-message identity are preserved.
+    func testRenderMessagesKeepsBackendMessagesOneToOne() throws {
         let json = """
         [
           {"internal_id": 1, "role": "assistant", "content": "", "timestamp": "2026-06-08T12:00:00Z",
@@ -175,8 +195,7 @@ final class ToolRenderingTests: XCTestCase {
 
         let messages = ChatViewModel.renderMessages(from: backendMessages)
 
-        XCTAssertEqual(messages.count, 1)
-        let expected = ISO8601DateFormatter().date(from: "2026-06-08T12:05:00Z")
-        XCTAssertEqual(messages.first?.createdAt, expected)
+        XCTAssertEqual(messages.map(\.id), ["msg_1", "msg_2"])
+        XCTAssertEqual(messages.map { $0.toolCalls.map(\.id) }, [["a"], ["b"]])
     }
 }

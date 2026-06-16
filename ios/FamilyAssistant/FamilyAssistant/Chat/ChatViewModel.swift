@@ -1237,7 +1237,17 @@ final class ChatViewModel {
                 errorTraceback: backend.errorTraceback
             )
         }
-        return groupToolCallTurns(rendered)
+        return rendered
+    }
+
+    /// The held thread with each agentic turn's tool calls collapsed into a
+    /// single bubble, for display. `messages` stays one-to-one with persisted
+    /// backend messages so the incremental delta-merge cursor and message
+    /// identity are unaffected; grouping is derived here over the *whole* thread,
+    /// so a turn whose steps arrived across separate merges still collapses into
+    /// one group.
+    var groupedMessages: [ChatMessage] {
+        Self.groupToolCallTurns(messages)
     }
 
     /// Collapse the tool calls an agentic turn made across several backend
@@ -1272,8 +1282,8 @@ final class ChatViewModel {
         result.toolCalls.append(contentsOf: next.toolCalls)
         result.attachments.append(contentsOf: next.attachments)
         result.text = [base.text, next.text].filter { !$0.isEmpty }.joined(separator: "\n\n")
-        // Advance the timestamp so the delta-merge cursor (which keys off the
-        // newest held message) steps past every message folded into the group.
+        // The grouped bubble represents the whole turn, so date it by its newest
+        // folded-in step.
         result.createdAt = max(base.createdAt, next.createdAt)
         result.isLoading = base.isLoading || next.isLoading
         if next.status == .failed {

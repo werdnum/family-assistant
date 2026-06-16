@@ -176,7 +176,7 @@ private struct ChatThreadView: View {
                             }
                             .padding(.top, 80)
                         }
-                        ForEach(viewModel.messages) { message in
+                        ForEach(viewModel.groupedMessages) { message in
                             MessageBubble(message: message, viewModel: viewModel)
                                 .id(message.id)
                                 .accessibilityIdentifier("chat-message-\(message.id)")
@@ -189,7 +189,7 @@ private struct ChatThreadView: View {
                         ProgressView("Loading messages...")
                     }
                 }
-                .onChange(of: viewModel.messages.last?.id) { _, newValue in
+                .onChange(of: viewModel.groupedMessages.last?.id) { _, newValue in
                     if let lastID = newValue {
                         withAnimation(.easeOut(duration: 0.2)) {
                             proxy.scrollTo(lastID, anchor: .bottom)
