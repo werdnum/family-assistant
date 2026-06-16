@@ -836,12 +836,15 @@ class GoogleGenAIClient(BaseLLMClient):
                 part = types.Part(
                     function_response=types.FunctionResponse(**function_response_args),
                 )
+                # A function response that carries inline media must be delivered
+                # in a "user" turn: Gemini rejects a "function"-role Content that
+                # contains multimodal parts with a generic 400 INVALID_ARGUMENT.
+                # Text-only function responses use the standard "function" role.
+                has_multimodal_parts = "parts" in function_response_args
                 contents.append(
                     types.Content(
-                        role="function",
-                        parts=[
-                            part,
-                        ],
+                        role="user" if has_multimodal_parts else "function",
+                        parts=[part],
                     )
                 )
 
