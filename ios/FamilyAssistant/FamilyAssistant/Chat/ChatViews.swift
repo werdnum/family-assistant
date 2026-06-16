@@ -6,6 +6,11 @@ import UniformTypeIdentifiers
 
 struct ChatRootView: View {
     @State private var viewModel: ChatViewModel
+    // Drives which column the compact (iPhone) split view shows. Bound so the
+    // launch decision (restore a thread vs. land on the list) is honored
+    // deterministically and stays in sync as the user opens threads / taps Back,
+    // rather than letting the selection-before-data-loads race decide.
+    @State private var preferredColumn: NavigationSplitViewColumn
     let routeConversationID: String?
     let initialPrompt: String?
 
@@ -14,19 +19,19 @@ struct ChatRootView: View {
         conversationID: String?,
         initialPrompt: String?
     ) {
-        _viewModel = State(
-            initialValue: ChatViewModel(
-                authManager: authManager,
-                conversationID: conversationID,
-                initialPrompt: initialPrompt
-            )
+        let model = ChatViewModel(
+            authManager: authManager,
+            conversationID: conversationID,
+            initialPrompt: initialPrompt
         )
+        _viewModel = State(initialValue: model)
+        _preferredColumn = State(initialValue: model.conversationSelection == nil ? .sidebar : .detail)
         routeConversationID = conversationID
         self.initialPrompt = initialPrompt
     }
 
     var body: some View {
-        NavigationSplitView {
+        NavigationSplitView(preferredCompactColumn: $preferredColumn) {
             ConversationListView(viewModel: viewModel)
                 .navigationTitle("Chats")
                 .toolbar {
@@ -65,6 +70,11 @@ struct ChatRootView: View {
             Task {
                 await viewModel.applyRoute(conversationID: routeConversationID, initialPrompt: newValue)
             }
+        }
+        .onChange(of: viewModel.conversationSelection) { _, selection in
+            // Opening a thread reveals the detail column; tapping Back to the
+            // list clears the selection and returns to the sidebar.
+            preferredColumn = selection == nil ? .sidebar : .detail
         }
         .alert(
             "Chat Error",

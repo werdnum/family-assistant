@@ -46,8 +46,14 @@ final class ChatViewModel {
 
     private enum Keys {
         static let lastConversationID = "lastConversationId"
+        static let lastConversationActiveAt = "lastConversationActiveAt"
         static let selectedProfileID = "selectedProfileId"
     }
+
+    // How recently the last conversation must have been active for it to reopen
+    // on launch. Past this, launch lands on the conversation list instead of
+    // restoring (then bouncing away from) a thread the user has moved on from.
+    static let conversationRestoreWindow: TimeInterval = 15 * 60
 
     // Page size for incremental `after`-timestamp message loads. The server's
     // paginated path ignores `after` when limit=0, so a bounded page is needed;
@@ -95,15 +101,29 @@ final class ChatViewModel {
         self.streamTextFlushInterval = streamTextFlushInterval
         apiClient = ChatAPIClient(authManager: authManager)
         selectedProfileID = UserDefaults.standard.string(forKey: Keys.selectedProfileID) ?? "default_assistant"
-        self.conversationID = conversationID
-            ?? UserDefaults.standard.string(forKey: Keys.lastConversationID)
-            ?? Self.generateConversationID()
         if let initialPrompt, !initialPrompt.isEmpty {
+            // Launched to start a brand-new chat (share extension / App Intent).
             self.conversationID = Self.generateConversationID()
+            conversationSelection = self.conversationID
             draftText = initialPrompt
+            persistConversationID()
+        } else if let conversationID {
+            // Explicit route / deep link: open that thread regardless of age.
+            self.conversationID = conversationID
+            conversationSelection = conversationID
+            persistConversationID()
+        } else if let restored = Self.recentlyActiveConversationID() {
+            // Reopened within the restore window: resume the prior conversation.
+            self.conversationID = restored
+            conversationSelection = restored
+            persistConversationID()
+        } else {
+            // No recent conversation: open a fresh thread but land on the list
+            // (selection nil). Leave the stored last conversation untouched so a
+            // genuinely-recent reopen after this one still resolves correctly.
+            self.conversationID = Self.generateConversationID()
+            conversationSelection = nil
         }
-        conversationSelection = self.conversationID
-        persistConversationID()
     }
 
     deinit {
@@ -116,7 +136,10 @@ final class ChatViewModel {
     func bootstrap(initialPrompt: String? = nil) async {
         await loadProfiles()
         await refreshConversations()
-        if let conversationID {
+        // Only open the thread when launch decided to restore a selection.
+        // A nil selection means we deliberately landed on the conversation list
+        // (no recent conversation), so opening one here would defeat that.
+        if let conversationID, conversationSelection != nil {
             await selectConversation(conversationID, shouldLoadMessages: true)
         }
         startPendingConfirmationsPolling()
@@ -1130,9 +1153,30 @@ final class ChatViewModel {
     }
 
     private func persistConversationID() {
-        if let conversationID {
-            UserDefaults.standard.set(conversationID, forKey: Keys.lastConversationID)
+        guard let conversationID else {
+            return
         }
+        let defaults = UserDefaults.standard
+        defaults.set(conversationID, forKey: Keys.lastConversationID)
+        defaults.set(Date().timeIntervalSinceReferenceDate, forKey: Keys.lastConversationActiveAt)
+    }
+
+    /// The stored last conversation, but only if it was active within
+    /// `conversationRestoreWindow`. Returns nil when nothing is stored, no
+    /// activity time was recorded (e.g. an upgrade from before this was
+    /// tracked), or the window has elapsed.
+    private static func recentlyActiveConversationID() -> String? {
+        let defaults = UserDefaults.standard
+        guard let id = defaults.string(forKey: Keys.lastConversationID),
+              let activeAt = defaults.object(forKey: Keys.lastConversationActiveAt) as? Double
+        else {
+            return nil
+        }
+        let elapsed = Date().timeIntervalSinceReferenceDate - activeAt
+        guard (0...conversationRestoreWindow).contains(elapsed) else {
+            return nil
+        }
+        return id
     }
 
     static func generateConversationID() -> String {
