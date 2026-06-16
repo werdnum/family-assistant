@@ -179,8 +179,8 @@ private struct ChatThreadView: View {
                         ProgressView("Loading messages...")
                     }
                 }
-                .onChange(of: viewModel.messages.map(\.id)) { _, _ in
-                    if let lastID = viewModel.messages.last?.id {
+                .onChange(of: viewModel.messages.last?.id) { _, newValue in
+                    if let lastID = newValue {
                         withAnimation(.easeOut(duration: 0.2)) {
                             proxy.scrollTo(lastID, anchor: .bottom)
                         }
@@ -192,6 +192,40 @@ private struct ChatThreadView: View {
             ChatComposerView(viewModel: viewModel)
         }
     }
+}
+
+/// Whether `text` contains anything that could render as formatted markdown.
+///
+/// Used as a cheap fast path: plain prose (the common reply, and most of every
+/// streamed reply before any syntax appears) skips the markdown parser entirely
+/// and renders as plain `Text`. It is deliberately conservative — it returns
+/// `true` whenever any markdown construct *could* be present, so formatting is
+/// never silently dropped; only genuinely plain text takes the fast path.
+func containsMarkdownSyntax(_ text: String) -> Bool {
+    // Inline markers can appear anywhere on a line.
+    let inlineMarkers: Set<Character> = ["*", "_", "`", "[", "]", "|", "~", "<"]
+    if text.contains(where: inlineMarkers.contains) {
+        return true
+    }
+    // Block markers only count at the start of a (whitespace-stripped) line:
+    // headings (#), blockquotes (>), unordered lists (-, +) and ordered lists
+    // (digits followed by . or )).
+    for rawLine in text.split(separator: "\n", omittingEmptySubsequences: false) {
+        let line = rawLine.drop { $0 == " " || $0 == "\t" }
+        guard let first = line.first else {
+            continue
+        }
+        if first == "#" || first == ">" || first == "-" || first == "+" {
+            return true
+        }
+        if first.isNumber {
+            let afterDigits = line.drop(while: \.isNumber)
+            if let marker = afterDigits.first, marker == "." || marker == ")" {
+                return true
+            }
+        }
+    }
+    return false
 }
 
 private struct MessageBubble: View {
@@ -226,8 +260,18 @@ private struct MessageBubble: View {
                     LoadingDotsView()
                 }
                 if !message.text.isEmpty {
-                    NativeMarkdownView(markdown: message.text)
-                        .textSelection(.enabled)
+                    if containsMarkdownSyntax(message.text) {
+                        NativeMarkdownView(markdown: message.text)
+                            .textSelection(.enabled)
+                    } else {
+                        // Plain prose skips the markdown parser entirely. Streamed
+                        // deltas are coalesced (see ChatViewModel) and completed
+                        // text is memoized, so live-formatted rendering stays off
+                        // the main thread long enough to avoid the layout watchdog.
+                        Text(message.text)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .textSelection(.enabled)
+                    }
                 }
                 if !message.toolCalls.isEmpty {
                     ToolGroupView(toolCalls: message.toolCalls, viewModel: viewModel)
@@ -580,17 +624,56 @@ struct NativeMarkdownListItem: Equatable {
 }
 
 enum NativeMarkdownRenderer {
+    // Parsing markdown is expensive, and SwiftUI re-evaluates a bubble's body
+    // far more often than its text changes (scrolling a long thread, sibling
+    // updates, layout passes). Caching by exact source string keeps a given
+    // message from being re-parsed on every render. Parsing is pure, so caching
+    // by the source string is always correct.
+    private final class BlocksBox {
+        let blocks: [NativeMarkdownBlock]
+        init(_ blocks: [NativeMarkdownBlock]) { self.blocks = blocks }
+    }
+
+    private final class AttributedBox {
+        let value: AttributedString?
+        init(_ value: AttributedString?) { self.value = value }
+    }
+
+    private static let blockCache: NSCache<NSString, BlocksBox> = {
+        let cache = NSCache<NSString, BlocksBox>()
+        cache.countLimit = 256
+        return cache
+    }()
+
+    private static let inlineCache: NSCache<NSString, AttributedBox> = {
+        let cache = NSCache<NSString, AttributedBox>()
+        cache.countLimit = 512
+        return cache
+    }()
+
     static func blocks(from markdown: String) -> [NativeMarkdownBlock] {
+        let key = markdown as NSString
+        if let cached = blockCache.object(forKey: key) {
+            return cached.blocks
+        }
         let document = Document(parsing: markdown)
-        let blocks = document.children.flatMap(blocks(from:))
-        return blocks.isEmpty ? [.paragraph(markdown)] : blocks
+        let parsed = document.children.flatMap(blocks(from:))
+        let result = parsed.isEmpty ? [.paragraph(markdown)] : parsed
+        blockCache.setObject(BlocksBox(result), forKey: key)
+        return result
     }
 
     static func inlineAttributedString(from markdown: String) -> AttributedString? {
-        try? AttributedString(
+        let key = markdown as NSString
+        if let cached = inlineCache.object(forKey: key) {
+            return cached.value
+        }
+        let value = try? AttributedString(
             markdown: markdown,
             options: AttributedString.MarkdownParsingOptions(interpretedSyntax: .inlineOnlyPreservingWhitespace)
         )
+        inlineCache.setObject(AttributedBox(value), forKey: key)
+        return value
     }
 
     private static func blocks(from markup: Markup) -> [NativeMarkdownBlock] {
@@ -736,11 +819,16 @@ private struct MarkdownBlockView: View {
     private func markdownTableRow(_ cells: [String], isHeader: Bool) -> some View {
         GridRow {
             ForEach(Array(cells.enumerated()), id: \.offset) { _, cell in
+                // Cells size to their content. `.frame(maxWidth: .infinity)` here
+                // is a non-converging width proposal inside the enclosing
+                // horizontal ScrollView (which proposes unbounded width), which can
+                // hang the layout engine; the Grid's `.leading` alignment handles
+                // column alignment instead.
                 inlineText(cell)
                     .font(isHeader ? .caption.bold() : .caption)
+                    .multilineTextAlignment(.leading)
                     .padding(.horizontal, 8)
                     .padding(.vertical, 6)
-                    .frame(maxWidth: .infinity, alignment: .leading)
                     .background(isHeader ? Color(.tertiarySystemFill) : Color(.secondarySystemFill).opacity(0.45))
                     .border(Color(.separator), width: 0.5)
             }

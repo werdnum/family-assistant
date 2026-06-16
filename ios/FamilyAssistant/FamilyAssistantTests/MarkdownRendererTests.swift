@@ -81,4 +81,43 @@ final class MarkdownRendererTests: XCTestCase {
 
         XCTAssertEqual(String(attributed.characters), "See docs and code.")
     }
+
+    func testBlockParsingIsStableAcrossRepeatedCalls() throws {
+        // Parsing is memoized; repeated calls for the same source must return the
+        // same blocks, and a different source must parse independently.
+        let source = """
+        ## Title
+
+        Some **bold** text with a `code` span.
+
+        - a
+        - b
+        """
+
+        let first = NativeMarkdownRenderer.blocks(from: source)
+        let second = NativeMarkdownRenderer.blocks(from: source)
+        XCTAssertEqual(first, second)
+        XCTAssertEqual(NativeMarkdownRenderer.blocks(from: source + "\n\nmore"), NativeMarkdownRenderer.blocks(from: source + "\n\nmore"))
+        XCTAssertNotEqual(first, NativeMarkdownRenderer.blocks(from: source + "\n\nmore"))
+    }
+
+    func testContainsMarkdownSyntaxTakesFastPathOnlyForPlainProse() {
+        // Plain prose — even with numbers, hyphens mid-sentence, and punctuation —
+        // takes the no-parse fast path.
+        XCTAssertFalse(containsMarkdownSyntax("Just a plain sentence."))
+        XCTAssertFalse(containsMarkdownSyntax("I have 3 cats and 2 dogs; that's 5 pets."))
+        XCTAssertFalse(containsMarkdownSyntax("Line one\nLine two\nno markup here"))
+
+        // Anything that could format must render through the parser.
+        XCTAssertTrue(containsMarkdownSyntax("Some **bold** text"))
+        XCTAssertTrue(containsMarkdownSyntax("An _italic_ word"))
+        XCTAssertTrue(containsMarkdownSyntax("Inline `code` span"))
+        XCTAssertTrue(containsMarkdownSyntax("A [link](https://example.test)"))
+        XCTAssertTrue(containsMarkdownSyntax("| a | b |\n| - | - |"))
+        XCTAssertTrue(containsMarkdownSyntax("# Heading"))
+        XCTAssertTrue(containsMarkdownSyntax("> quote"))
+        XCTAssertTrue(containsMarkdownSyntax("- bullet\n- list"))
+        XCTAssertTrue(containsMarkdownSyntax("1. first\n2. second"))
+        XCTAssertTrue(containsMarkdownSyntax("  - indented bullet"))
+    }
 }

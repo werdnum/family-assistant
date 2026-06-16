@@ -63,15 +63,36 @@ final class ChatViewModel {
     @ObservationIgnored private let liveReconnectInitialDelaySeconds: Double
     @ObservationIgnored private let liveReconnectMaxDelaySeconds: Double
 
+    // Streamed assistant text arrives as many small deltas. Appending each one to
+    // `messages` directly would re-render and re-lay-out the whole thread per
+    // token; instead deltas are buffered per assistant message and flushed on a
+    // timer (and synchronously before any turn finalizes), capping main-thread
+    // work regardless of token rate. Keyed by assistant message id so a
+    // superseded turn's buffer can't leak into a different bubble.
+    @ObservationIgnored private var pendingTextByMessageID: [String: String] = [:]
+    @ObservationIgnored private var textFlushTask: Task<Void, Never>?
+    @ObservationIgnored private let streamTextFlushInterval: Duration
+
+    #if DEBUG
+    /// Test-only: the currently buffered (not-yet-flushed) streamed text. Lets
+    /// tests wait deterministically for a delta to be received and buffered
+    /// instead of racing on a fixed delay.
+    var bufferedStreamTextForTesting: String {
+        pendingTextByMessageID.values.joined()
+    }
+    #endif
+
     init(
         authManager: AuthManager,
         conversationID: String? = nil,
         initialPrompt: String? = nil,
         liveReconnectInitialDelaySeconds: Double = 2,
-        liveReconnectMaxDelaySeconds: Double = 30
+        liveReconnectMaxDelaySeconds: Double = 30,
+        streamTextFlushInterval: Duration = .milliseconds(50)
     ) {
         self.liveReconnectInitialDelaySeconds = liveReconnectInitialDelaySeconds
         self.liveReconnectMaxDelaySeconds = liveReconnectMaxDelaySeconds
+        self.streamTextFlushInterval = streamTextFlushInterval
         apiClient = ChatAPIClient(authManager: authManager)
         selectedProfileID = UserDefaults.standard.string(forKey: Keys.selectedProfileID) ?? "default_assistant"
         self.conversationID = conversationID
@@ -89,6 +110,7 @@ final class ChatViewModel {
         streamTask?.cancel()
         liveEventsTask?.cancel()
         pendingConfirmationsTask?.cancel()
+        textFlushTask?.cancel()
     }
 
     func bootstrap(initialPrompt: String? = nil) async {
@@ -289,6 +311,7 @@ final class ChatViewModel {
     }
 
     private func removeLocalAssistantPlaceholder(_ assistantMessageID: String) {
+        pendingTextByMessageID[assistantMessageID] = nil
         messages.removeAll { $0.id == assistantMessageID }
     }
 
@@ -638,6 +661,7 @@ final class ChatViewModel {
         streamTask?.cancel()
         streamTask = nil
         isStreaming = false
+        flushPendingTextNow()
         if let index = messages.lastIndex(where: { $0.role == .assistant && $0.status == .running }) {
             messages[index].isLoading = false
             messages[index].status = .complete
@@ -929,8 +953,15 @@ final class ChatViewModel {
 
         switch event.type {
         case .text:
-            messages[index].text += event.text ?? ""
-            messages[index].isLoading = false
+            guard let delta = event.text, !delta.isEmpty else {
+                messages[index].isLoading = false
+                break
+            }
+            // Buffer the delta and flush on a timer rather than mutating `messages`
+            // per token (see `pendingTextByMessageID`). `isLoading` flips off when
+            // the buffered text is flushed.
+            pendingTextByMessageID[assistantMessageID, default: ""] += delta
+            scheduleTextFlush()
         case .toolCall:
             if let toolCall = event.toolCall {
                 messages[index].toolCalls.append(
@@ -986,7 +1017,49 @@ final class ChatViewModel {
         }
     }
 
+    /// Schedule a deferred flush of buffered stream text. A single pending timer
+    /// coalesces all deltas that arrive within `streamTextFlushInterval`.
+    private func scheduleTextFlush() {
+        guard textFlushTask == nil else {
+            return
+        }
+        let interval = streamTextFlushInterval
+        textFlushTask = Task { [weak self] in
+            try? await Task.sleep(for: interval)
+            guard let self, !Task.isCancelled else {
+                return
+            }
+            self.textFlushTask = nil
+            self.flushPendingText()
+        }
+    }
+
+    /// Apply all buffered stream text to its target messages. A buffer whose
+    /// message no longer exists (placeholder dropped on recovery/supersession) is
+    /// discarded.
+    private func flushPendingText() {
+        guard !pendingTextByMessageID.isEmpty else {
+            return
+        }
+        for (id, suffix) in pendingTextByMessageID {
+            if let index = messages.firstIndex(where: { $0.id == id }) {
+                messages[index].text += suffix
+                messages[index].isLoading = false
+            }
+        }
+        pendingTextByMessageID.removeAll()
+    }
+
+    /// Flush buffered text immediately, cancelling any pending timer. Called
+    /// before a turn finalizes so finalizers see the fully assembled text.
+    private func flushPendingTextNow() {
+        textFlushTask?.cancel()
+        textFlushTask = nil
+        flushPendingText()
+    }
+
     private func completeStream(assistantMessageID: String) {
+        flushPendingTextNow()
         if let index = messages.firstIndex(where: { $0.id == assistantMessageID }) {
             messages[index].isLoading = false
             messages[index].status = messages[index].status == .failed ? .failed : .complete
@@ -997,6 +1070,7 @@ final class ChatViewModel {
     }
 
     private func markStreamStopped(assistantMessageID: String) {
+        flushPendingTextNow()
         if let index = messages.firstIndex(where: { $0.id == assistantMessageID }) {
             messages[index].isLoading = false
             messages[index].status = .complete
@@ -1007,6 +1081,7 @@ final class ChatViewModel {
     }
 
     private func appendStreamError(_ message: String, assistantMessageID: String) {
+        flushPendingTextNow()
         if let index = messages.firstIndex(where: { $0.id == assistantMessageID }) {
             messages[index].isLoading = false
             messages[index].status = .failed
