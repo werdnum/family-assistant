@@ -1099,6 +1099,11 @@ class AppConfig(BaseSettings):
     default_profile_settings: DefaultProfileSettings = Field(
         default_factory=DefaultProfileSettings
     )
+    # Tool policy rules injected into *every* profile's policy engine, regardless
+    # of the profile's own tools_policy (which otherwise replaces the defaults
+    # wholesale). Use this for tools that must be available in all contexts, such
+    # as report_technical_problem. Operator policy can still override these.
+    global_tools_policy: ToolPolicyConfig | None = None
 
     # Feature configurations
     calendar_config: CalendarConfig = Field(default_factory=CalendarConfig)

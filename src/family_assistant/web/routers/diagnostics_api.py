@@ -16,7 +16,7 @@ from pydantic import BaseModel
 from family_assistant.llm.request_buffer import get_request_buffer
 from family_assistant.storage.context import DatabaseContext
 from family_assistant.tools.types import ToolDefinition
-from family_assistant.web.dependencies import get_current_user, get_db
+from family_assistant.web.dependencies import get_db, get_diagnostics_reader
 
 diagnostics_api_router = APIRouter()
 
@@ -192,7 +192,7 @@ def _format_markdown_export(data: DiagnosticsExportResponse) -> str:
 @diagnostics_api_router.get("/export", response_model=None)
 async def export_diagnostics(
     db_context: Annotated[DatabaseContext, Depends(get_db)],
-    _: Annotated[dict, Depends(get_current_user)],
+    _: Annotated[dict, Depends(get_diagnostics_reader)],
     minutes: Annotated[int, Query(ge=1, le=120)] = 30,
     max_errors: Annotated[int, Query(ge=1, le=100)] = 50,
     max_llm_requests: Annotated[int, Query(ge=1, le=100)] = 20,

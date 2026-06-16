@@ -320,6 +320,29 @@ The following environment variable can be used instead of hardcoding the value i
   - Found in the Mailgun dashboard under Sending → Webhooks
   - Example: `export MAILGUN_WEBHOOK_SIGNING_KEY=your-signing-key-here`
 
+### Environment Variable for Read-Only Diagnostics Access
+
+- **`DIAGNOSTICS_READONLY_TOKEN`** - Optional shared secret that grants read-only access to the
+  error-log and diagnostics-export endpoints (`GET /api/errors/`, `GET /api/errors/{id}`, and
+  `GET /api/diagnostics/export`) without a full user session or API token. Intended for an external
+  monitor or scraper that only needs to pull diagnostics.
+
+  - When set, supply it as either `Authorization: Bearer <token>` or `X-API-Token: <token>`.
+  - It only unlocks the diagnostics/error read endpoints — every other endpoint still requires
+    normal authentication.
+  - The token is compared with a constant-time check. Leave the variable unset to disable the
+    read-only path entirely (the endpoints then require normal authentication).
+  - Example: `export DIAGNOSTICS_READONLY_TOKEN=$(openssl rand -hex 32)`
+
+### Global Tool Policy (`global_tools_policy`)
+
+`global_tools_policy` is a top-level config section whose rules are injected into **every**
+profile's tool-policy engine, regardless of the profile's own `tools_policy` (which otherwise
+replaces the shipped defaults wholesale). Use it for tools that must be available in all contexts.
+Operator policy still overrides global rules. The shipped default uses it to make
+`report_technical_problem` available in every profile so the assistant can always report bugs (they
+surface in the error-log and diagnostics endpoints above).
+
 ### Embedding Providers
 
 The embedding generator is selected from `embedding_model`/`embedding_provider`. By default the

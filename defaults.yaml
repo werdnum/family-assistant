@@ -281,6 +281,18 @@ email_intake:
 
 # --- Default Service Profile Configuration ---
 # Settings for the primary, default assistant behavior.
+# Tool policy rules applied to *every* profile, regardless of the profile's own
+# tools_policy (which otherwise replaces the shipped defaults wholesale). Use for
+# tools that must be available in all contexts. Operator policy still overrides.
+global_tools_policy:
+  rules:
+    - match:
+        names:
+          - "report_technical_problem"
+      decision: "allow"
+      priority: 50
+      description: "report_technical_problem is available in every profile so the assistant can always report bugs."
+
 default_profile_settings:
   processing_config:
     retry_config:
@@ -1559,3 +1571,4 @@ browser_handoff_config:
 # OpenAI-compatible endpoint, with embedding_base_url (EMBEDDING_BASE_URL) and
 # embedding_api_key (EMBEDDING_API_KEY). For OpenRouter use
 # embedding_base_url=https://openrouter.ai/api/v1. See AGENTS.md "Embedding Providers".
+

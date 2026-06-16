@@ -8,7 +8,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
 
 from family_assistant.storage.context import DatabaseContext
-from family_assistant.web.dependencies import get_db
+from family_assistant.web.dependencies import get_db, get_diagnostics_reader
 
 errors_api_router = APIRouter()
 
@@ -97,6 +97,7 @@ async def report_frontend_error(
 @errors_api_router.get("/")
 async def get_errors(
     db_context: Annotated[DatabaseContext, Depends(get_db)],
+    _: Annotated[dict, Depends(get_diagnostics_reader)],
     page: Annotated[int, Query(ge=1)] = 1,
     limit: Annotated[int, Query(ge=1, le=100)] = 50,
     level: str | None = None,
@@ -136,6 +137,7 @@ async def get_errors(
 async def get_error_by_id(
     error_id: int,
     db_context: Annotated[DatabaseContext, Depends(get_db)],
+    _: Annotated[dict, Depends(get_diagnostics_reader)],
 ) -> ErrorLogResponse:
     """Get a specific error log by ID."""
     error = await db_context.error_logs.get_by_id(error_id)

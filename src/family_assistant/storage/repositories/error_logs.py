@@ -132,21 +132,26 @@ class ErrorLogsRepository(BaseRepository):
         Returns:
             ID of the created error log
         """
-        stmt = error_logs_table.insert().values(
-            logger_name=logger_name,
-            level=level.upper(),
-            message=message,
-            exception_type=exception_type,
-            exception_message=exception_message,
-            traceback=traceback,
-            module=module,
-            function_name=function_name,
-            extra_data=extra_data,
-            timestamp=func.now(),
+        stmt = (
+            error_logs_table
+            .insert()
+            .values(
+                logger_name=logger_name,
+                level=level.upper(),
+                message=message,
+                exception_type=exception_type,
+                exception_message=exception_message,
+                traceback=traceback,
+                module=module,
+                function_name=function_name,
+                extra_data=extra_data,
+                timestamp=func.now(),
+            )
+            .returning(error_logs_table.c.id)
         )
 
         result = await self._db.execute_with_retry(stmt)
-        return result.lastrowid  # type: ignore[attr-defined]
+        return result.scalar_one()
 
     async def delete_old(self, older_than: datetime) -> int:
         """
