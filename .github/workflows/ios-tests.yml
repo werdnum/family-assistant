@@ -21,7 +21,9 @@ jobs:
     # simulator lineup changes with each Xcode release, so the simulator is
     # resolved dynamically below rather than hardcoded to a device name.
     runs-on: macos-26
-    timeout-minutes: 30
+    # Headroom over the ~9-minute happy path: the UI step can retry failing
+    # tests up to 3 iterations, which adds wall-clock time on a slow runner.
+    timeout-minutes: 40
     defaults:
       run:
         working-directory: ios/FamilyAssistant
@@ -58,9 +60,8 @@ jobs:
         # Pre-boot and wait for the simulator to be ready before testing. A cold,
         # lazily-booted simulator makes the first app launch the slowest and most
         # failure-prone, which is the dominant source of UI-test flakiness here.
-        run: |
-          xcrun simctl boot "${{ steps.sim.outputs.udid }}" || true
-          xcrun simctl bootstatus "${{ steps.sim.outputs.udid }}" -b
+        # `bootstatus -b` boots the device if needed and blocks until it is ready.
+        run: xcrun simctl bootstatus "${{ steps.sim.outputs.udid }}" -b
       - name: Build for testing
         run: |
           set -o pipefail
