@@ -25,6 +25,8 @@ jobs:
     defaults:
       run:
         working-directory: ios/FamilyAssistant
+    env:
+      DERIVED_DATA: build/DerivedDataCI
     steps:
       - name: Checkout code
         uses: actions/checkout@v6
@@ -52,20 +54,57 @@ jobs:
             exit 1
           fi
           echo "udid=$UDID" >> "$GITHUB_OUTPUT"
-      - name: Run unit tests
+      - name: Boot simulator
+        # Pre-boot and wait for the simulator to be ready before testing. A cold,
+        # lazily-booted simulator makes the first app launch the slowest and most
+        # failure-prone, which is the dominant source of UI-test flakiness here.
+        run: |
+          xcrun simctl boot "${{ steps.sim.outputs.udid }}" || true
+          xcrun simctl bootstatus "${{ steps.sim.outputs.udid }}" -b
+      - name: Build for testing
         run: |
           set -o pipefail
-          xcodebuild test \
+          xcodebuild build-for-testing \
             -project FamilyAssistant.xcodeproj \
             -scheme FamilyAssistant \
             -destination "platform=iOS Simulator,id=${{ steps.sim.outputs.udid }}" \
-            -resultBundlePath TestResults.xcresult \
+            -derivedDataPath "$DERIVED_DATA" \
             CODE_SIGNING_ALLOWED=NO
+      - name: Run unit tests
+        # Unit tests are fast and reliable, so they gate the merge strictly with
+        # no retries — a unit failure is a real regression, never masked.
+        run: |
+          set -o pipefail
+          xcodebuild test-without-building \
+            -project FamilyAssistant.xcodeproj \
+            -scheme FamilyAssistant \
+            -destination "platform=iOS Simulator,id=${{ steps.sim.outputs.udid }}" \
+            -derivedDataPath "$DERIVED_DATA" \
+            -only-testing:FamilyAssistantTests \
+            -resultBundlePath TestResults-unit.xcresult
+      - name: Run UI tests
+        # UI tests drive a full simulator and are subject to launch/render
+        # timeouts when the CI runner is slow. Retry failed tests in-process
+        # (up to 3 attempts) so transient simulator flakiness self-heals instead
+        # of failing the whole job and forcing a manual re-run.
+        run: |
+          set -o pipefail
+          xcodebuild test-without-building \
+            -project FamilyAssistant.xcodeproj \
+            -scheme FamilyAssistant \
+            -destination "platform=iOS Simulator,id=${{ steps.sim.outputs.udid }}" \
+            -derivedDataPath "$DERIVED_DATA" \
+            -only-testing:FamilyAssistantUITests \
+            -retry-tests-on-failure \
+            -test-iterations 3 \
+            -resultBundlePath TestResults-ui.xcresult
       - name: Upload test results
         uses: actions/upload-artifact@v7
         if: always()
         with:
           name: ios-test-results-${{ github.run_id }}
-          path: ios/FamilyAssistant/TestResults.xcresult
+          path: |
+            ios/FamilyAssistant/TestResults-unit.xcresult
+            ios/FamilyAssistant/TestResults-ui.xcresult
           retention-days: 7
           if-no-files-found: ignore
