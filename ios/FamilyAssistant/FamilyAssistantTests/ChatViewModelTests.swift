@@ -35,6 +35,69 @@ final class ChatViewModelTests: XCTestCase {
         XCTAssertTrue(model.messages.isEmpty)
     }
 
+    func testLaunchRestoresRecentlyActiveConversation() {
+        storeLastConversation("web_conv_recent", activeSecondsAgo: 60)
+
+        let model = makeViewModel(conversationID: nil)
+
+        XCTAssertEqual(model.conversationID, "web_conv_recent")
+        XCTAssertEqual(
+            model.conversationSelection,
+            "web_conv_recent",
+            "A conversation used within the restore window should reopen on launch."
+        )
+    }
+
+    func testLaunchWithStaleConversationLandsOnList() {
+        storeLastConversation("web_conv_stale", activeSecondsAgo: 16 * 60)
+
+        let model = makeViewModel(conversationID: nil)
+
+        XCTAssertNil(
+            model.conversationSelection,
+            "A conversation last used beyond the restore window should not reopen; land on the list."
+        )
+        XCTAssertNotEqual(model.conversationID, "web_conv_stale")
+        XCTAssertTrue(model.conversationID?.hasPrefix("web_conv_") == true)
+        XCTAssertEqual(
+            UserDefaults.standard.string(forKey: "lastConversationId"),
+            "web_conv_stale",
+            "Landing on the list must not overwrite the stored last conversation."
+        )
+    }
+
+    func testLaunchWithoutActivityTimestampLandsOnList() {
+        UserDefaults.standard.set("web_conv_legacy", forKey: "lastConversationId")
+        UserDefaults.standard.removeObject(forKey: "lastConversationActiveAt")
+
+        let model = makeViewModel(conversationID: nil)
+
+        XCTAssertNil(
+            model.conversationSelection,
+            "Without a recorded activity time (e.g. upgrade), launch should land on the list."
+        )
+    }
+
+    func testLaunchWithNoStoredConversationLandsOnList() {
+        let model = makeViewModel(conversationID: nil)
+
+        XCTAssertNil(model.conversationSelection)
+        XCTAssertTrue(model.conversationID?.hasPrefix("web_conv_") == true)
+    }
+
+    func testExplicitConversationIDIgnoresRestoreWindow() {
+        storeLastConversation("web_conv_stale", activeSecondsAgo: 16 * 60)
+
+        let model = makeViewModel(conversationID: "web_conv_deeplink")
+
+        XCTAssertEqual(model.conversationID, "web_conv_deeplink")
+        XCTAssertEqual(
+            model.conversationSelection,
+            "web_conv_deeplink",
+            "An explicit route/deep-link selection always opens regardless of the restore window."
+        )
+    }
+
     func testBackNavigationClearsSelectionButKeepsActiveConversation() async throws {
         ChatMockBackendURLProtocol.respond { request in
             let path = request.url?.path ?? ""
@@ -1781,7 +1844,16 @@ final class ChatViewModelTests: XCTestCase {
         UserDefaults.standard.removeObject(forKey: "fa_token_expiry")
         UserDefaults.standard.removeObject(forKey: "fa_server_url")
         UserDefaults.standard.removeObject(forKey: "lastConversationId")
+        UserDefaults.standard.removeObject(forKey: "lastConversationActiveAt")
         UserDefaults.standard.removeObject(forKey: "selectedProfileId")
+    }
+
+    private func storeLastConversation(_ id: String, activeSecondsAgo: TimeInterval) {
+        UserDefaults.standard.set(id, forKey: "lastConversationId")
+        UserDefaults.standard.set(
+            Date().addingTimeInterval(-activeSecondsAgo).timeIntervalSinceReferenceDate,
+            forKey: "lastConversationActiveAt"
+        )
     }
 
     private static func jsonObject(from request: URLRequest) throws -> Any {
