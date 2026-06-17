@@ -166,17 +166,19 @@ private struct ChatThreadView: View {
     var body: some View {
         VStack(spacing: 0) {
             PendingConfirmationsBanner(viewModel: viewModel)
-            if scenePhase == .background {
-                // Skip the chat-thread layout while the scene is backgrounded. A
-                // background launch (push / state restoration / snapshot) connects
-                // this scene offscreen; laying out a long thread there overruns the
-                // ~10s scene-update watchdog and the app is killed with 0x8BADF00D.
-                // The real list renders when the scene becomes active. See
+            if scenePhase == .active {
+                messageScrollArea
+            } else {
+                // Only lay out the chat thread when the scene is active. SwiftUI
+                // reports .background on an offscreen background launch (push /
+                // state restoration / snapshot) and .inactive during restoration,
+                // snapshots, and foreground/background transitions; laying out a
+                // long restored thread in either state overruns the ~10s
+                // scene-update watchdog and the app is killed with 0x8BADF00D. The
+                // real list renders when the scene becomes active. See
                 // docs/design/ios-chat-layout-watchdog-crash.md.
                 Color.clear
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
-            } else {
-                messageScrollArea
             }
 
             Divider()
