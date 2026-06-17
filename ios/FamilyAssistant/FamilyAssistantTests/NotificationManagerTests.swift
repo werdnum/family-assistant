@@ -141,7 +141,13 @@ final class NotificationManagerTests: XCTestCase {
         manager.notificationsEnabled = true
         let requestCompleted = expectation(description: "push token registration failed")
         NotificationBackendURLProtocol.respond { request in
-            XCTAssertEqual(request.url?.path, "/api/ios/push-tokens")
+            // The 503 makes NotificationManager report the failure via
+            // ErrorReporter, which POSTs /api/errors through this same mock. Only
+            // fulfill on the push-token request, otherwise that error report races
+            // in and over-fulfills the expectation (crashing the test host).
+            guard request.url?.path == "/api/ios/push-tokens" else {
+                return .json("{}")
+            }
             requestCompleted.fulfill()
             return .json(#"{"detail":"push service unavailable"}"#, statusCode: 503)
         }

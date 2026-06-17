@@ -161,45 +161,80 @@ private struct ConversationRow: View {
 
 private struct ChatThreadView: View {
     var viewModel: ChatViewModel
+    @Environment(\.scenePhase) private var scenePhase
 
     var body: some View {
         VStack(spacing: 0) {
             PendingConfirmationsBanner(viewModel: viewModel)
-            ScrollViewReader { proxy in
-                ScrollView {
-                    LazyVStack(spacing: 14) {
-                        if viewModel.messages.isEmpty && !viewModel.isLoadingMessages {
-                            ContentUnavailableView {
-                                Label("Ask Family Assistant", systemImage: "sparkles")
-                            } description: {
-                                Text("Start with a message or attach a file.")
-                            }
-                            .padding(.top, 80)
-                        }
-                        ForEach(viewModel.groupedMessages) { message in
-                            MessageBubble(message: message, viewModel: viewModel)
-                                .id(message.id)
-                                .accessibilityIdentifier("chat-message-\(message.id)")
-                        }
-                    }
-                    .padding()
-                }
-                .overlay {
-                    if viewModel.isLoadingMessages && viewModel.messages.isEmpty {
-                        ProgressView("Loading messages...")
-                    }
-                }
-                .onChange(of: viewModel.groupedMessages.last?.id) { _, newValue in
-                    if let lastID = newValue {
-                        withAnimation(.easeOut(duration: 0.2)) {
-                            proxy.scrollTo(lastID, anchor: .bottom)
-                        }
-                    }
-                }
+            if scenePhase == .active {
+                messageScrollArea
+            } else {
+                // Only lay out the chat thread when the scene is active. SwiftUI
+                // reports .background on an offscreen background launch (push /
+                // state restoration / snapshot) and .inactive during restoration,
+                // snapshots, and foreground/background transitions; laying out a
+                // long restored thread in either state overruns the ~10s
+                // scene-update watchdog and the app is killed with 0x8BADF00D. The
+                // real list renders when the scene becomes active. See
+                // docs/design/ios-chat-layout-watchdog-crash.md.
+                Color.clear
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
 
             Divider()
             ChatComposerView(viewModel: viewModel)
+        }
+    }
+
+    private var messageScrollArea: some View {
+        ScrollViewReader { proxy in
+            ScrollView {
+                LazyVStack(spacing: 14) {
+                    if viewModel.messages.isEmpty && !viewModel.isLoadingMessages {
+                        ContentUnavailableView {
+                            Label("Ask Family Assistant", systemImage: "sparkles")
+                        } description: {
+                            Text("Start with a message or attach a file.")
+                        }
+                        .padding(.top, 80)
+                    }
+                    if viewModel.hasEarlierMessages {
+                        Button("Load earlier messages") {
+                            viewModel.showEarlierMessages()
+                        }
+                        .font(.subheadline)
+                        .padding(.vertical, 4)
+                        .accessibilityIdentifier("chat-load-earlier")
+                    }
+                    ForEach(viewModel.visibleGroupedMessages) { message in
+                        MessageBubble(message: message, viewModel: viewModel)
+                            .id(message.id)
+                            .accessibilityIdentifier("chat-message-\(message.id)")
+                    }
+                }
+                .padding()
+            }
+            .overlay {
+                if viewModel.isLoadingMessages && viewModel.messages.isEmpty {
+                    ProgressView("Loading messages...")
+                }
+            }
+            .onAppear {
+                // The thread can mount already populated (restored thread, or
+                // returning from a backgrounded scene where the list was skipped),
+                // in which case the last-message onChange below never fires. Land
+                // at the bottom so the latest message is visible.
+                if let lastID = viewModel.visibleGroupedMessages.last?.id {
+                    proxy.scrollTo(lastID, anchor: .bottom)
+                }
+            }
+            .onChange(of: viewModel.visibleGroupedMessages.last?.id) { _, newValue in
+                if let lastID = newValue {
+                    withAnimation(.easeOut(duration: 0.2)) {
+                        proxy.scrollTo(lastID, anchor: .bottom)
+                    }
+                }
+            }
         }
     }
 }
@@ -247,58 +282,55 @@ private struct MessageBubble: View {
     }
 
     var body: some View {
-        HStack(alignment: .top) {
-            if isUser {
-                Spacer(minLength: 32)
-            }
-
-            VStack(alignment: .leading, spacing: 10) {
-                HStack(spacing: 6) {
-                    Label(roleTitle, systemImage: isUser ? "person.crop.circle" : "sparkles")
-                        .font(.caption.bold())
-                    if let profile = message.processingProfileID {
-                        Text(profile)
-                            .font(.caption2)
-                            .padding(.horizontal, 6)
-                            .padding(.vertical, 2)
-                            .background(.thinMaterial, in: Capsule())
-                    }
-                }
-                .foregroundStyle(.secondary)
-
-                if message.isLoading && message.text.isEmpty {
-                    LoadingDotsView()
-                }
-                if !message.text.isEmpty {
-                    if containsMarkdownSyntax(message.text) {
-                        NativeMarkdownView(markdown: message.text)
-                            .textSelection(.enabled)
-                    } else {
-                        // Plain prose skips the markdown parser entirely. Streamed
-                        // deltas are coalesced (see ChatViewModel) and completed
-                        // text is memoized, so live-formatted rendering stays off
-                        // the main thread long enough to avoid the layout watchdog.
-                        Text(message.text)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                            .textSelection(.enabled)
-                    }
-                }
-                if !message.toolCalls.isEmpty {
-                    ToolGroupView(toolCalls: message.toolCalls, viewModel: viewModel)
-                }
-                if !message.attachments.isEmpty {
-                    AttachmentStrip(attachments: message.attachments, viewModel: viewModel)
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(spacing: 6) {
+                Label(roleTitle, systemImage: isUser ? "person.crop.circle" : "sparkles")
+                    .font(.caption.bold())
+                if let profile = message.processingProfileID {
+                    Text(profile)
+                        .font(.caption2)
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 2)
+                        .background(.thinMaterial, in: Capsule())
                 }
             }
-            .padding(12)
-            .background(isUser ? Color.accentColor.opacity(0.16) : Color(.secondarySystemBackground))
-            .clipShape(RoundedRectangle(cornerRadius: 8))
-            .frame(maxWidth: 680, alignment: isUser ? .trailing : .leading)
+            .foregroundStyle(.secondary)
 
-            if !isUser {
-                Spacer(minLength: 32)
+            if message.isLoading && message.text.isEmpty {
+                LoadingDotsView()
+            }
+            if !message.text.isEmpty {
+                if containsMarkdownSyntax(message.text) {
+                    NativeMarkdownView(markdown: message.text)
+                } else {
+                    // Plain prose skips the markdown parser entirely. Streamed
+                    // deltas are coalesced (see ChatViewModel) and completed
+                    // text is memoized, so live-formatted rendering stays off
+                    // the main thread long enough to avoid the layout watchdog.
+                    Text(message.text)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
+            }
+            if !message.toolCalls.isEmpty {
+                ToolGroupView(toolCalls: message.toolCalls, viewModel: viewModel)
+            }
+            if !message.attachments.isEmpty {
+                AttachmentStrip(attachments: message.attachments, viewModel: viewModel)
             }
         }
+        // One textSelection for the whole bubble. It applies to every Text in the
+        // subtree, so per-element copies are redundant and only add layout work.
+        .textSelection(.enabled)
+        .padding(12)
+        .background(isUser ? Color.accentColor.opacity(0.16) : Color(.secondarySystemBackground))
+        .clipShape(RoundedRectangle(cornerRadius: 8))
+        // Cap the bubble to a single concrete width, then push it to its side with
+        // alignment rather than a flexible Spacer. The old HStack + Spacer(minLength:)
+        // + maxWidth:680 combination made the bubble width depend on a flexible
+        // sibling, so SwiftUI re-proposed candidate widths and re-measured the
+        // (selectable, possibly markdown) text repeatedly — a layout-watchdog hazard.
+        .frame(maxWidth: 680, alignment: .leading)
+        .frame(maxWidth: .infinity, alignment: isUser ? .trailing : .leading)
     }
 
     private var roleTitle: String {
@@ -784,7 +816,6 @@ private struct MarkdownBlockView: View {
                 ScrollView(.horizontal, showsIndicators: false) {
                     Text(code)
                         .font(.caption.monospaced())
-                        .textSelection(.enabled)
                         .padding(8)
                 }
             }

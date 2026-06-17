@@ -100,6 +100,13 @@ private final class UITestBackendURLProtocol: URLProtocol {
                         attachments: nil
                     ),
                 ],
+                // Repro/verify harness for the chat-thread layout watchdog crash:
+                // a long thread whose assistant turns are markdown-heavy (nested
+                // lists, a wide table, a code block). Launch with --ui-testing,
+                // open this conversation, and confirm it scrolls smoothly and shows
+                // a "Load earlier messages" control rather than hanging. See
+                // docs/design/ios-chat-layout-watchdog-crash.md.
+                "web_conv_large": largeMarkdownThread(),
             ]
             pendingChatReplies = [:]
             pendingChatTurnIDs = [:]
@@ -355,6 +362,64 @@ private final class UITestBackendURLProtocol: URLProtocol {
         let withoutPrefix = String(path.dropFirst("/api/v1/chat/conversations/".count))
         let encodedID = String(withoutPrefix.dropLast("/messages".count))
         return encodedID.removingPercentEncoding
+    }
+
+    /// A long, markdown-heavy thread used to reproduce / verify the chat-thread
+    /// layout watchdog fix. Assistant turns carry nested lists, a wide table, and
+    /// a code block so the layout cost per bubble is non-trivial; the thread is
+    /// long enough to exercise the rendered-message window.
+    private static func largeMarkdownThread() -> [UITestChatMessage] {
+        let assistantBody = """
+        ## Summary for step \u{2116}
+
+        Here is a paragraph with **bold**, _italic_, and `inline code` that wraps
+        across several lines so the text engine has real work to measure.
+
+        - First point about the topic
+          - A nested detail
+          - Another nested detail
+            - A deeply nested detail
+        - Second point about the topic
+
+        > A block quote that also contains a list:
+        > - quoted item one
+        > - quoted item two
+
+        | Column A | Column B | Column C | Column D | Column E |
+        | --- | --- | --- | --- | --- |
+        | alpha | beta | gamma | delta | epsilon |
+        | one | two | three | four | five |
+
+        ```swift
+        let result = compute(aLongIdentifier, anotherLongArgument, thirdArgument)
+        ```
+        """
+
+        var messages: [UITestChatMessage] = []
+        let turns = 30
+        for turn in 0..<turns {
+            let base = turn * 2
+            let minute = String(format: "%02d", turn % 60)
+            messages.append(UITestChatMessage(
+                internalID: base + 1,
+                role: "user",
+                content: "Question number \(turn + 1): can you explain topic \(turn + 1)?",
+                timestamp: "2026-06-08T10:\(minute):00Z",
+                toolCalls: nil,
+                toolCallID: nil,
+                attachments: nil
+            ))
+            messages.append(UITestChatMessage(
+                internalID: base + 2,
+                role: "assistant",
+                content: assistantBody.replacingOccurrences(of: "\u{2116}", with: "\(turn + 1)"),
+                timestamp: "2026-06-08T10:\(minute):30Z",
+                toolCalls: nil,
+                toolCallID: nil,
+                attachments: nil
+            ))
+        }
+        return messages
     }
 
     private static func chatConversationSummaries() -> [UITestConversationSummary] {
