@@ -6,6 +6,11 @@ import Observation
 final class ChatViewModel {
     var conversations: [ChatConversationSummary] = []
     var messages: [ChatMessage] = []
+    // Upper bound on how many grouped bubbles are realized into the chat view at
+    // once. The full thread is still loaded into `messages`; only a recent window
+    // is shown, and older bubbles page in via `showEarlierMessages()`. See
+    // `visibleGroupedMessages`.
+    var displayedMessageLimit = ChatViewModel.initialDisplayedMessageCount
     var profiles: [ChatProfile] = []
     var defaultProfileID = "default_assistant"
     var selectedProfileID: String
@@ -54,6 +59,15 @@ final class ChatViewModel {
     // on launch. Past this, launch lands on the conversation list instead of
     // restoring (then bouncing away from) a thread the user has moved on from.
     static let conversationRestoreWindow: TimeInterval = 15 * 60
+
+    // Windowing for the chat thread. A long thread is loaded in full, but only a
+    // recent window of grouped bubbles is realized into the view at once: a
+    // LazyVStack still measures every row it is given to size its scroll content
+    // (LazyStack.measureEstimates is on the watchdog crash stacks), so an
+    // unbounded thread means an unbounded first layout pass — the foreground
+    // layout hang. `showEarlierMessages()` grows the window a page at a time.
+    static let initialDisplayedMessageCount = 30
+    private static let displayedMessagePageSize = 30
 
     // Page size for incremental `after`-timestamp message loads. The server's
     // paginated path ignores `after` when limit=0, so a bounded page is needed;
@@ -224,6 +238,7 @@ final class ChatViewModel {
     func selectConversation(_ id: String, shouldLoadMessages: Bool = true) async {
         cancelStream()
         highestAppliedSeq = nil
+        displayedMessageLimit = Self.initialDisplayedMessageCount
         conversationID = id
         conversationSelection = id
         persistConversationID()
@@ -237,6 +252,7 @@ final class ChatViewModel {
     func startNewConversation() {
         cancelStream()
         highestAppliedSeq = nil
+        displayedMessageLimit = Self.initialDisplayedMessageCount
         conversationID = Self.generateConversationID()
         conversationSelection = conversationID
         messages = []
@@ -1248,6 +1264,27 @@ final class ChatViewModel {
     /// one group.
     var groupedMessages: [ChatMessage] {
         Self.groupToolCallTurns(messages)
+    }
+
+    /// The recent window of `groupedMessages` actually rendered by the chat view.
+    /// Always a suffix, so newly streamed messages stay visible; only older
+    /// history is withheld until `showEarlierMessages()` widens the window.
+    var visibleGroupedMessages: [ChatMessage] {
+        let grouped = groupedMessages
+        guard grouped.count > displayedMessageLimit else {
+            return grouped
+        }
+        return Array(grouped.suffix(displayedMessageLimit))
+    }
+
+    /// Whether older bubbles are currently hidden behind the display window.
+    var hasEarlierMessages: Bool {
+        groupedMessages.count > displayedMessageLimit
+    }
+
+    /// Reveal another page of older bubbles.
+    func showEarlierMessages() {
+        displayedMessageLimit += Self.displayedMessagePageSize
     }
 
     /// Collapse the tool calls an agentic turn made across several backend

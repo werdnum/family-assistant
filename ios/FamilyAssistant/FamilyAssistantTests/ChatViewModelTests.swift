@@ -154,6 +154,70 @@ final class ChatViewModelTests: XCTestCase {
         XCTAssertEqual(grouped.last?.toolCalls.map(\.id), ["a", "b"])
     }
 
+    private func plainMessage(index: Int) -> ChatMessage {
+        ChatMessage(
+            id: "msg_\(index)",
+            role: index.isMultiple(of: 2) ? .user : .assistant,
+            text: "Message \(index)",
+            createdAt: Date(timeIntervalSince1970: TimeInterval(index * 60)),
+            toolCalls: [],
+            attachments: [],
+            isLoading: false,
+            status: .complete,
+            processingProfileID: nil,
+            errorTraceback: nil
+        )
+    }
+
+    func testVisibleMessagesCapToRecentWindow() {
+        let model = makeViewModel(conversationID: "web_conv_window")
+        let total = ChatViewModel.initialDisplayedMessageCount + 15
+        model.messages = (0..<total).map(plainMessage(index:))
+
+        let visible = model.visibleGroupedMessages
+        XCTAssertEqual(visible.count, ChatViewModel.initialDisplayedMessageCount)
+        XCTAssertTrue(model.hasEarlierMessages)
+        // The window is the most-recent suffix: newest is shown, oldest is hidden.
+        XCTAssertEqual(visible.last?.id, "msg_\(total - 1)")
+        XCTAssertEqual(visible.first?.id, "msg_\(total - ChatViewModel.initialDisplayedMessageCount)")
+    }
+
+    func testShowEarlierMessagesWidensWindowToWholeThread() {
+        let model = makeViewModel(conversationID: "web_conv_window")
+        let total = ChatViewModel.initialDisplayedMessageCount + 15
+        model.messages = (0..<total).map(plainMessage(index:))
+
+        let initialVisible = model.visibleGroupedMessages.count
+        model.showEarlierMessages()
+        XCTAssertGreaterThan(model.visibleGroupedMessages.count, initialVisible)
+
+        // Widening enough reveals the whole thread and clears the earlier flag.
+        while model.hasEarlierMessages {
+            model.showEarlierMessages()
+        }
+        XCTAssertEqual(model.visibleGroupedMessages.count, total)
+        XCTAssertEqual(model.visibleGroupedMessages.first?.id, "msg_0")
+    }
+
+    func testShortThreadShowsEverythingWithoutEarlierControl() {
+        let model = makeViewModel(conversationID: "web_conv_short")
+        model.messages = (0..<3).map(plainMessage(index:))
+
+        XCTAssertEqual(model.visibleGroupedMessages.count, 3)
+        XCTAssertFalse(model.hasEarlierMessages)
+    }
+
+    func testStartingNewConversationResetsTheWindow() {
+        let model = makeViewModel(conversationID: "web_conv_window")
+        model.messages = (0..<(ChatViewModel.initialDisplayedMessageCount + 15)).map(plainMessage(index:))
+        model.showEarlierMessages()
+        XCTAssertGreaterThan(model.displayedMessageLimit, ChatViewModel.initialDisplayedMessageCount)
+
+        model.startNewConversation()
+
+        XCTAssertEqual(model.displayedMessageLimit, ChatViewModel.initialDisplayedMessageCount)
+    }
+
     func testBackNavigationClearsSelectionButKeepsActiveConversation() async throws {
         ChatMockBackendURLProtocol.respond { request in
             let path = request.url?.path ?? ""

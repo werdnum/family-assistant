@@ -196,7 +196,15 @@ private struct ChatThreadView: View {
                         }
                         .padding(.top, 80)
                     }
-                    ForEach(viewModel.groupedMessages) { message in
+                    if viewModel.hasEarlierMessages {
+                        Button("Load earlier messages") {
+                            viewModel.showEarlierMessages()
+                        }
+                        .font(.subheadline)
+                        .padding(.vertical, 4)
+                        .accessibilityIdentifier("chat-load-earlier")
+                    }
+                    ForEach(viewModel.visibleGroupedMessages) { message in
                         MessageBubble(message: message, viewModel: viewModel)
                             .id(message.id)
                             .accessibilityIdentifier("chat-message-\(message.id)")
@@ -214,11 +222,11 @@ private struct ChatThreadView: View {
                 // returning from a backgrounded scene where the list was skipped),
                 // in which case the last-message onChange below never fires. Land
                 // at the bottom so the latest message is visible.
-                if let lastID = viewModel.groupedMessages.last?.id {
+                if let lastID = viewModel.visibleGroupedMessages.last?.id {
                     proxy.scrollTo(lastID, anchor: .bottom)
                 }
             }
-            .onChange(of: viewModel.groupedMessages.last?.id) { _, newValue in
+            .onChange(of: viewModel.visibleGroupedMessages.last?.id) { _, newValue in
                 if let lastID = newValue {
                     withAnimation(.easeOut(duration: 0.2)) {
                         proxy.scrollTo(lastID, anchor: .bottom)
