@@ -161,45 +161,70 @@ private struct ConversationRow: View {
 
 private struct ChatThreadView: View {
     var viewModel: ChatViewModel
+    @Environment(\.scenePhase) private var scenePhase
 
     var body: some View {
         VStack(spacing: 0) {
             PendingConfirmationsBanner(viewModel: viewModel)
-            ScrollViewReader { proxy in
-                ScrollView {
-                    LazyVStack(spacing: 14) {
-                        if viewModel.messages.isEmpty && !viewModel.isLoadingMessages {
-                            ContentUnavailableView {
-                                Label("Ask Family Assistant", systemImage: "sparkles")
-                            } description: {
-                                Text("Start with a message or attach a file.")
-                            }
-                            .padding(.top, 80)
-                        }
-                        ForEach(viewModel.groupedMessages) { message in
-                            MessageBubble(message: message, viewModel: viewModel)
-                                .id(message.id)
-                                .accessibilityIdentifier("chat-message-\(message.id)")
-                        }
-                    }
-                    .padding()
-                }
-                .overlay {
-                    if viewModel.isLoadingMessages && viewModel.messages.isEmpty {
-                        ProgressView("Loading messages...")
-                    }
-                }
-                .onChange(of: viewModel.groupedMessages.last?.id) { _, newValue in
-                    if let lastID = newValue {
-                        withAnimation(.easeOut(duration: 0.2)) {
-                            proxy.scrollTo(lastID, anchor: .bottom)
-                        }
-                    }
-                }
+            if scenePhase == .background {
+                // Skip the chat-thread layout while the scene is backgrounded. A
+                // background launch (push / state restoration / snapshot) connects
+                // this scene offscreen; laying out a long thread there overruns the
+                // ~10s scene-update watchdog and the app is killed with 0x8BADF00D.
+                // The real list renders when the scene becomes active. See
+                // docs/design/ios-chat-layout-watchdog-crash.md.
+                Color.clear
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else {
+                messageScrollArea
             }
 
             Divider()
             ChatComposerView(viewModel: viewModel)
+        }
+    }
+
+    private var messageScrollArea: some View {
+        ScrollViewReader { proxy in
+            ScrollView {
+                LazyVStack(spacing: 14) {
+                    if viewModel.messages.isEmpty && !viewModel.isLoadingMessages {
+                        ContentUnavailableView {
+                            Label("Ask Family Assistant", systemImage: "sparkles")
+                        } description: {
+                            Text("Start with a message or attach a file.")
+                        }
+                        .padding(.top, 80)
+                    }
+                    ForEach(viewModel.groupedMessages) { message in
+                        MessageBubble(message: message, viewModel: viewModel)
+                            .id(message.id)
+                            .accessibilityIdentifier("chat-message-\(message.id)")
+                    }
+                }
+                .padding()
+            }
+            .overlay {
+                if viewModel.isLoadingMessages && viewModel.messages.isEmpty {
+                    ProgressView("Loading messages...")
+                }
+            }
+            .onAppear {
+                // The thread can mount already populated (restored thread, or
+                // returning from a backgrounded scene where the list was skipped),
+                // in which case the last-message onChange below never fires. Land
+                // at the bottom so the latest message is visible.
+                if let lastID = viewModel.groupedMessages.last?.id {
+                    proxy.scrollTo(lastID, anchor: .bottom)
+                }
+            }
+            .onChange(of: viewModel.groupedMessages.last?.id) { _, newValue in
+                if let lastID = newValue {
+                    withAnimation(.easeOut(duration: 0.2)) {
+                        proxy.scrollTo(lastID, anchor: .bottom)
+                    }
+                }
+            }
         }
     }
 }
