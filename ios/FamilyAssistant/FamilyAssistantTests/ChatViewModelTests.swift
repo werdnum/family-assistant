@@ -98,6 +98,62 @@ final class ChatViewModelTests: XCTestCase {
         )
     }
 
+    /// `groupedMessages` regroups the whole held thread, so an agentic turn whose
+    /// tool-calling steps landed in the thread as separate `ChatMessage`s — e.g.
+    /// because they arrived across two incremental `mergeNewMessages` fetches —
+    /// still collapses into a single tool bubble for display, while the raw
+    /// `messages` array stays one-to-one with the persisted backend messages.
+    func testGroupedMessagesCollapsesToolBubblesSplitAcrossMerges() {
+        let model = makeViewModel(conversationID: "web_conv_split")
+        func toolStep(id: String, callID: String, minute: Int) -> ChatMessage {
+            ChatMessage(
+                id: id,
+                role: .assistant,
+                text: "",
+                createdAt: Date(timeIntervalSince1970: TimeInterval(minute * 60)),
+                toolCalls: [
+                    ChatToolCall(
+                        id: callID,
+                        name: "search_notes",
+                        argumentsText: "{}",
+                        resultText: "{}",
+                        attachments: [],
+                        status: .complete
+                    ),
+                ],
+                attachments: [],
+                isLoading: false,
+                status: .complete,
+                processingProfileID: nil,
+                errorTraceback: nil
+            )
+        }
+
+        // Two tool-calling steps of one turn that arrived as separate bubbles.
+        model.messages = [
+            ChatMessage(
+                id: "msg_1",
+                role: .user,
+                text: "Find everything",
+                createdAt: Date(timeIntervalSince1970: 0),
+                toolCalls: [],
+                attachments: [],
+                isLoading: false,
+                status: .complete,
+                processingProfileID: nil,
+                errorTraceback: nil
+            ),
+            toolStep(id: "msg_10", callID: "a", minute: 1),
+            toolStep(id: "msg_12", callID: "b", minute: 2),
+        ]
+
+        // Raw thread is untouched (cursor/identity preserved); display collapses.
+        XCTAssertEqual(model.messages.count, 3)
+        let grouped = model.groupedMessages
+        XCTAssertEqual(grouped.map(\.role), [.user, .assistant])
+        XCTAssertEqual(grouped.last?.toolCalls.map(\.id), ["a", "b"])
+    }
+
     func testBackNavigationClearsSelectionButKeepsActiveConversation() async throws {
         ChatMockBackendURLProtocol.respond { request in
             let path = request.url?.path ?? ""
