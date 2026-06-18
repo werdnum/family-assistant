@@ -1925,6 +1925,356 @@ final class ChatViewModelTests: XCTestCase {
         XCTAssertEqual(model.messages.first?.toolCalls.first?.status, .approved)
     }
 
+    func testSendToolCallMidStreamDropSelfHealsViaLiveFollow() async throws {
+        // Reproduces the reported flow with the conversation OPEN (live-follow loop
+        // running): a send streams its first tool call, then the subscribe
+        // connection drops before turn_ended while the turn keeps running durably
+        // server-side. Nothing is persisted yet at the drop, so the recovery reload
+        // surfaces no reply — the "streaming stopped after the first tool call"
+        // symptom. When the turn finishes, the live-follow loop must surface the
+        // durable reply on its own, with NO manual reopen.
+        let turnComplete = AtomicCounter()
+        var streamedTurnID = "turn-tooldrop"
+        ChatMockBackendURLProtocol.respond { request in
+            let path = request.url?.path ?? ""
+            let query = Self.queryItems(from: request)
+            switch (request.httpMethod ?? "GET", path) {
+            case ("POST", "/api/v1/chat/turns"):
+                if let body = (try? Self.jsonObject(from: request)) as? [String: Any],
+                   let postedTurnID = body["turn_id"] as? String {
+                    streamedTurnID = postedTurnID
+                }
+                return .json(
+                    #"{"turn_id":"\#(streamedTurnID)","conversation_id":"web_conv_tooldrop","first_seq":0}"#
+                )
+            case ("POST", "/api/v1/chat/ack"):
+                return .json("{}")
+            case ("GET", "/api/v1/chat/conversations"):
+                return .json(#"{"conversations":[],"count":0}"#)
+            case ("GET", "/api/v1/chat/conversations/web_conv_tooldrop/messages"):
+                // Nothing persists until the turn completes server-side.
+                let rows = turnComplete.value > 0
+                    ? #"{"internal_id":1,"role":"user","content":"Hi","timestamp":"2026-06-08T12:00:00Z"},{"internal_id":2,"role":"assistant","content":"Tool reply","timestamp":"2026-06-08T12:00:01Z"}"#
+                    : ""
+                return .json(
+                    """
+                    {"conversation_id":"web_conv_tooldrop","messages":[\(rows)],"count":0,"total_messages":0,"has_more_before":false,"has_more_after":false}
+                    """
+                )
+            default:
+                if request.httpMethod == "GET", path == "/api/v1/chat/conversations/web_conv_tooldrop/stream" {
+                    if query["follow"] == "true" {
+                        // Live-follow connection: deliver turn_ended once the turn
+                        // completes, otherwise close immediately so the reconnect
+                        // loop keeps polling history via handleLiveReconnect.
+                        if turnComplete.value > 0 {
+                            return .text(
+                                "event: turn_ended\ndata: {\"turn_id\":\"\(streamedTurnID)\",\"status\":\"complete\",\"seq\":2}\n\n"
+                            )
+                        }
+                        return .text("")
+                    }
+                    // Send-and-watch subscribe: stream the first tool call, then drop
+                    // before turn_ended.
+                    return .droppedStream(
+                        """
+                        event: turn_started
+                        data: {"turn_id":"\(streamedTurnID)","seq":0}
+
+                        event: tool_call
+                        data: {"turn_id":"\(streamedTurnID)","seq":1,"tool_call":{"id":"call-1","name":"search_notes","arguments":"{}"}}
+
+                        """
+                    )
+                }
+                return .json(#"{"detail":"unexpected"}"#, statusCode: 404)
+            }
+        }
+
+        var model: ChatViewModel? = makeViewModel(
+            conversationID: "web_conv_tooldrop",
+            liveReconnectInitialDelaySeconds: 0.01,
+            liveReconnectMaxDelaySeconds: 0.01
+        )
+        await model?.selectConversation("web_conv_tooldrop")
+        model?.draftText = "Hi"
+        await model?.sendDraft()
+
+        // The subscribe stream dropped after the tool call. The send path recovers
+        // by reloading history, which does not yet contain the durable reply.
+        try await waitUntil { model?.isStreaming == false }
+        XCTAssertFalse(
+            model?.messages.contains { $0.text == "Tool reply" } ?? true,
+            "The reply is not persisted at the drop, so it cannot have surfaced yet."
+        )
+
+        // The turn finishes server-side. The live-follow loop must surface the reply
+        // without a manual reopen.
+        turnComplete.increment()
+        try await waitUntil(timeout: 8) { model?.messages.contains { $0.text == "Tool reply" } ?? false }
+        XCTAssertTrue(model?.messages.contains { $0.text == "Tool reply" } ?? false)
+
+        // Release so deinit cancels the fast reconnect loop before teardown.
+        model = nil
+    }
+
+    func testSendStreamsPastFirstToolCallToCompletion() async throws {
+        // Directly probes the reported "streaming stops after the first tool call":
+        // a single turn that streams text, a tool call, a tool result, MORE text,
+        // and then turn_ended must render through to completion. Every event shares
+        // one turn_id (the server keeps the whole user message as one turn), so the
+        // client's per-turn filter must not drop the post-tool-call continuation.
+        var streamedTurnID = "turn-tools"
+        ChatMockBackendURLProtocol.respond { request in
+            let path = request.url?.path ?? ""
+            switch (request.httpMethod ?? "GET", path) {
+            case ("POST", "/api/v1/chat/turns"):
+                if let body = (try? Self.jsonObject(from: request)) as? [String: Any],
+                   let postedTurnID = body["turn_id"] as? String {
+                    streamedTurnID = postedTurnID
+                }
+                return .json(
+                    #"{"turn_id":"\#(streamedTurnID)","conversation_id":"web_conv_tools","first_seq":0}"#
+                )
+            case ("POST", "/api/v1/chat/ack"):
+                return .json("{}")
+            case ("GET", "/api/v1/chat/conversations"):
+                return .json(#"{"conversations":[],"count":0}"#)
+            case ("GET", "/api/v1/chat/conversations/web_conv_tools/messages"):
+                return .json(
+                    """
+                    {
+                      "conversation_id":"web_conv_tools",
+                      "messages":[
+                        {"internal_id":1,"role":"user","content":"Hi","timestamp":"2026-06-08T12:00:00Z"},
+                        {"internal_id":2,"role":"assistant","content":"Let me check. Here is what I found.","timestamp":"2026-06-08T12:00:02Z"}
+                      ],
+                      "count":2,
+                      "total_messages":2,
+                      "has_more_before":false,
+                      "has_more_after":false
+                    }
+                    """
+                )
+            default:
+                if request.httpMethod == "GET", path == "/api/v1/chat/conversations/web_conv_tools/stream" {
+                    return .text(
+                        """
+                        event: turn_started
+                        data: {"turn_id":"\(streamedTurnID)","seq":0}
+
+                        event: text
+                        data: {"turn_id":"\(streamedTurnID)","seq":1,"content":"Let me check. "}
+
+                        event: tool_call
+                        data: {"turn_id":"\(streamedTurnID)","seq":2,"tool_call":{"id":"call-1","name":"search_notes","arguments":"{}"}}
+
+                        event: tool_result
+                        data: {"turn_id":"\(streamedTurnID)","seq":3,"tool_call_id":"call-1","result":"found 3 notes"}
+
+                        event: text
+                        data: {"turn_id":"\(streamedTurnID)","seq":4,"content":"Here is what I found."}
+
+                        event: turn_ended
+                        data: {"turn_id":"\(streamedTurnID)","seq":5,"status":"complete"}
+
+                        """
+                    )
+                }
+                return .json(#"{"detail":"unexpected"}"#, statusCode: 404)
+            }
+        }
+
+        let model = makeViewModel(conversationID: "web_conv_tools")
+        model.draftText = "Hi"
+        await model.sendDraft()
+        try await waitUntil { !model.isStreaming }
+
+        // Streaming must have continued past the tool call: the follow-up text after
+        // the tool result is present, the turn completed, and nothing errored.
+        let assistant = try XCTUnwrap(model.messages.last { $0.role == .assistant })
+        XCTAssertTrue(
+            assistant.text.contains("Here is what I found."),
+            "Streaming stopped after the tool call: post-tool-call text never rendered. Got: \(assistant.text)"
+        )
+        XCTAssertEqual(assistant.status, .complete)
+        XCTAssertNil(model.errorMessage)
+    }
+
+    func testSendToolCallMidStreamDropWithoutLiveFollowStaysStuckUntilReopen() async throws {
+        // Same mid-stream tool-call drop, but the send happens with NO live-follow
+        // loop active (sendDraft never starts one; only selectConversation /
+        // startNewConversation do). After the drop the reply that later completes
+        // server-side is never surfaced until the thread is reopened — exactly the
+        // reported "I only see the full conversation if I reopen the app".
+        let turnComplete = AtomicCounter()
+        let messagesFetches = AtomicCounter()
+        var streamedTurnID = "turn-nofollow"
+        ChatMockBackendURLProtocol.respond { request in
+            let path = request.url?.path ?? ""
+            switch (request.httpMethod ?? "GET", path) {
+            case ("POST", "/api/v1/chat/turns"):
+                if let body = (try? Self.jsonObject(from: request)) as? [String: Any],
+                   let postedTurnID = body["turn_id"] as? String {
+                    streamedTurnID = postedTurnID
+                }
+                return .json(
+                    #"{"turn_id":"\#(streamedTurnID)","conversation_id":"web_conv_nofollow","first_seq":0}"#
+                )
+            case ("POST", "/api/v1/chat/ack"):
+                return .json("{}")
+            case ("GET", "/api/v1/chat/conversations"):
+                return .json(#"{"conversations":[],"count":0}"#)
+            case ("GET", "/api/v1/chat/conversations/web_conv_nofollow/messages"):
+                messagesFetches.increment()
+                let rows = turnComplete.value > 0
+                    ? #"{"internal_id":1,"role":"user","content":"Hi","timestamp":"2026-06-08T12:00:00Z"},{"internal_id":2,"role":"assistant","content":"Tool reply","timestamp":"2026-06-08T12:00:01Z"}"#
+                    : ""
+                return .json(
+                    """
+                    {"conversation_id":"web_conv_nofollow","messages":[\(rows)],"count":0,"total_messages":0,"has_more_before":false,"has_more_after":false}
+                    """
+                )
+            default:
+                if request.httpMethod == "GET", path == "/api/v1/chat/conversations/web_conv_nofollow/stream" {
+                    return .droppedStream(
+                        """
+                        event: turn_started
+                        data: {"turn_id":"\(streamedTurnID)","seq":0}
+
+                        event: tool_call
+                        data: {"turn_id":"\(streamedTurnID)","seq":1,"tool_call":{"id":"call-1","name":"search_notes","arguments":"{}"}}
+
+                        """
+                    )
+                }
+                return .json(#"{"detail":"unexpected"}"#, statusCode: 404)
+            }
+        }
+
+        let model = makeViewModel(conversationID: "web_conv_nofollow")
+        model.draftText = "Hi"
+        await model.sendDraft()
+        try await waitUntil { !model.isStreaming }
+        XCTAssertFalse(model.messages.contains { $0.text == "Tool reply" })
+        let fetchesAfterDrop = messagesFetches.value
+
+        // The turn finishes server-side. The deterministic signal that nothing is
+        // watching: with no live-follow loop, no further message fetch is ever
+        // issued, so the durable reply can't surface. Assert on the fetch count
+        // (the only mechanism that could surface it) rather than on content after a
+        // delay. The short settle only gives a hypothetical background reload a
+        // chance to (wrongly) fire so the count assertion can catch it.
+        turnComplete.increment()
+        try await Task.sleep(for: .milliseconds(200))
+        XCTAssertEqual(
+            messagesFetches.value,
+            fetchesAfterDrop,
+            "Without a live-follow loop no message fetch should be issued, so the reply stays out of view."
+        )
+        XCTAssertFalse(model.messages.contains { $0.text == "Tool reply" })
+
+        // Reopening the thread (selectConversation) issues a fetch that recovers it.
+        await model.selectConversation("web_conv_nofollow")
+        try await waitUntil { model.messages.contains { $0.text == "Tool reply" } }
+        XCTAssertTrue(model.messages.contains { $0.text == "Tool reply" })
+        XCTAssertGreaterThan(messagesFetches.value, fetchesAfterDrop)
+    }
+
+    func testStreamDropEmitsDiagnosticBreadcrumb() async throws {
+        // A mid-turn drop must emit a structured breadcrumb to the error log so a
+        // real drop can be diagnosed from /api/diagnostics without a tethered
+        // device. The decisive field is `url_error_code` — it distinguishes an
+        // idle timeout (proxy/buffering) from a connection loss (background /
+        // suspend) from an app-side cancel. With no base URL configured the
+        // reporter persists the payload to its spool, which we decode directly —
+        // deterministic and free of network timing.
+        var streamedTurnID = "turn-breadcrumb"
+        ChatMockBackendURLProtocol.respond { request in
+            let path = request.url?.path ?? ""
+            switch (request.httpMethod ?? "GET", path) {
+            case ("POST", "/api/v1/chat/turns"):
+                if let body = (try? Self.jsonObject(from: request)) as? [String: Any],
+                   let postedTurnID = body["turn_id"] as? String {
+                    streamedTurnID = postedTurnID
+                }
+                return .json(
+                    #"{"turn_id":"\#(streamedTurnID)","conversation_id":"web_conv_breadcrumb","first_seq":0}"#
+                )
+            case ("GET", "/api/v1/chat/conversations"):
+                return .json(#"{"conversations":[],"count":0}"#)
+            case ("GET", "/api/v1/chat/conversations/web_conv_breadcrumb/messages"):
+                return .json(
+                    """
+                    {"conversation_id":"web_conv_breadcrumb","messages":[],"count":0,"total_messages":0,"has_more_before":false,"has_more_after":false}
+                    """
+                )
+            default:
+                if request.httpMethod == "GET", path.hasSuffix("/stream") {
+                    return .droppedStream(
+                        """
+                        event: turn_started
+                        data: {"turn_id":"\(streamedTurnID)","seq":0}
+
+                        """
+                    )
+                }
+                return .json(#"{"detail":"unexpected"}"#, statusCode: 404)
+            }
+        }
+
+        let spoolDirectory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("vm-breadcrumb-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: spoolDirectory) }
+        // No baseURLProvider configured → deliver() persists to the spool.
+        let reporter = ErrorReporter(spoolDirectory: spoolDirectory, dedupeWindow: 0)
+        let authManager = AuthManager()
+        authManager.serverURL = serverURL
+        let model = ChatViewModel(
+            authManager: authManager,
+            conversationID: "web_conv_breadcrumb",
+            errorReporter: reporter
+        )
+        model.draftText = "Hi"
+        await model.sendDraft()
+        try await waitUntil { !model.isStreaming }
+
+        let payload = try await waitForSpooledReport(in: spoolDirectory)
+        let extra = try XCTUnwrap(payload.extraData)
+        XCTAssertEqual(payload.componentName, "Chat.streamDrop")
+        XCTAssertEqual(extra["phase"], "send-subscribe")
+        XCTAssertEqual(extra["outcome"], "interrupted")
+        // The decisive diagnostic field: a connection-loss drop, not a timeout or
+        // an app-side cancel.
+        XCTAssertEqual(extra["url_error_code"], "networkConnectionLost")
+    }
+
+    /// Poll a reporter spool directory until a report lands, then decode it.
+    private func waitForSpooledReport(
+        in directory: URL,
+        timeout: TimeInterval = 4
+    ) async throws -> ErrorReportPayload {
+        let deadline = Date().addingTimeInterval(timeout)
+        while Date() < deadline {
+            let files = (try? FileManager.default.contentsOfDirectory(
+                at: directory,
+                includingPropertiesForKeys: nil
+            )) ?? []
+            if let file = files.first(where: { $0.pathExtension == "json" }),
+               let data = try? Data(contentsOf: file),
+               let payload = try? JSONDecoder().decode(ErrorReportPayload.self, from: data) {
+                return payload
+            }
+            try await Task.sleep(for: .milliseconds(50))
+        }
+        let listing = (try? FileManager.default.contentsOfDirectory(
+            at: directory,
+            includingPropertiesForKeys: nil
+        ))?.map(\.lastPathComponent) ?? ["<dir missing>"]
+        XCTFail("Timed out waiting for a spooled error report. Dir contents: \(listing)")
+        throw ChatAPIError.validation("no spooled report")
+    }
+
     private func makeViewModel(
         conversationID: String?,
         liveReconnectInitialDelaySeconds: Double = 2,
