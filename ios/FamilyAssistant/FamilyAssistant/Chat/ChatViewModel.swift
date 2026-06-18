@@ -1,5 +1,6 @@
 import Foundation
 import Observation
+import os
 
 @MainActor
 @Observable
@@ -35,6 +36,17 @@ final class ChatViewModel {
     }
 
     @ObservationIgnored private let apiClient: ChatAPIClient
+    // Injectable so tests can observe the diagnostic breadcrumbs emitted on a
+    // stream drop without going through the shared singleton.
+    @ObservationIgnored private let errorReporter: ErrorReporter
+    // Diagnostic logger for the SSE streaming paths. Pairs with the
+    // ErrorReporter breadcrumbs emitted on a stream drop: os.Logger is the live
+    // (tethered) view, ErrorReporter persists the same facts to the backend
+    // error log / diagnostics export.
+    @ObservationIgnored private let streamLogger = Logger(
+        subsystem: "com.familyassistant.app",
+        category: "chat-stream"
+    )
     @ObservationIgnored private var streamTask: Task<Void, Never>?
     // Identifies the active send. A superseded (cancelled) streamTask resuming
     // across an await must not clobber the turn that replaced it, so its tail
@@ -108,11 +120,13 @@ final class ChatViewModel {
         initialPrompt: String? = nil,
         liveReconnectInitialDelaySeconds: Double = 2,
         liveReconnectMaxDelaySeconds: Double = 30,
-        streamTextFlushInterval: Duration = .milliseconds(50)
+        streamTextFlushInterval: Duration = .milliseconds(50),
+        errorReporter: ErrorReporter = .shared
     ) {
         self.liveReconnectInitialDelaySeconds = liveReconnectInitialDelaySeconds
         self.liveReconnectMaxDelaySeconds = liveReconnectMaxDelaySeconds
         self.streamTextFlushInterval = streamTextFlushInterval
+        self.errorReporter = errorReporter
         apiClient = ChatAPIClient(authManager: authManager)
         selectedProfileID = UserDefaults.standard.string(forKey: Keys.selectedProfileID) ?? "default_assistant"
         if let initialPrompt, !initialPrompt.isEmpty {
@@ -196,7 +210,7 @@ final class ChatViewModel {
             errorMessage = nil
         } catch {
             errorMessage = error.localizedDescription
-            ErrorReporter.shared.report(error, component: "Chat.conversations")
+            errorReporter.report(error, component: "Chat.conversations")
         }
         isLoadingConversations = false
     }
@@ -216,7 +230,7 @@ final class ChatViewModel {
             errorMessage = nil
         } catch {
             errorMessage = error.localizedDescription
-            ErrorReporter.shared.report(error, component: "Chat.recentConversations")
+            errorReporter.report(error, component: "Chat.recentConversations")
         }
     }
 
@@ -282,7 +296,7 @@ final class ChatViewModel {
             errorMessage = nil
         } catch {
             errorMessage = error.localizedDescription
-            ErrorReporter.shared.report(error, component: "Chat.messages")
+            errorReporter.report(error, component: "Chat.messages")
         }
         isLoadingMessages = false
     }
@@ -313,7 +327,7 @@ final class ChatViewModel {
             errorMessage = nil
         } catch {
             errorMessage = error.localizedDescription
-            ErrorReporter.shared.report(error, component: "Chat.mergeMessages")
+            errorReporter.report(error, component: "Chat.mergeMessages")
         }
     }
 
@@ -367,7 +381,7 @@ final class ChatViewModel {
             errorMessage = nil
         } catch {
             errorMessage = error.localizedDescription
-            ErrorReporter.shared.report(error, component: "Chat.profiles")
+            errorReporter.report(error, component: "Chat.profiles")
         }
         isLoadingProfiles = false
     }
@@ -577,36 +591,72 @@ final class ChatViewModel {
         assistantMessageID: String,
         lastSeq: inout Int?
     ) async -> TurnSubscriptionOutcome {
+        var diagnostics = ChatStreamDiagnostics()
         do {
             let events = try await apiClient.subscribeToTurn(
                 conversationID: id,
                 fromSeq: fromSeq,
                 ackSeq: ackSeq
             )
-            return try await consumeTurnStream(
+            diagnostics.connectedAt = Date()
+            let outcome = try await consumeTurnStream(
                 events,
                 turnID: turnID,
                 assistantMessageID: assistantMessageID,
-                lastSeq: &lastSeq
+                lastSeq: &lastSeq,
+                diagnostics: &diagnostics
             )
+            // A clean turn_ended is the happy path; only breadcrumb the cases the
+            // recovery layer otherwise swallows silently (the reported symptom).
+            if outcome != .completed {
+                reportStreamOutcome(
+                    phase: "send-subscribe",
+                    outcome: Self.outcomeLabel(outcome),
+                    error: nil,
+                    fromSeq: fromSeq,
+                    diagnostics: diagnostics
+                )
+            }
+            return outcome
         } catch is CancellationError {
+            reportStreamOutcome(
+                phase: "send-subscribe",
+                outcome: "interrupted",
+                error: CancellationError(),
+                fromSeq: fromSeq,
+                diagnostics: diagnostics
+            )
             return .interrupted
         } catch let error as ChatAPIError {
-            if case .server(let statusCode, _) = error {
-                if statusCode == 410 {
-                    return .reloadHistory
-                }
-                if statusCode >= 500 {
-                    // The producer keeps running through a transient server error
-                    // on the subscribe GET; treat it as resumable rather than
-                    // failing the whole turn.
-                    return .dropped
-                }
+            let outcome: TurnSubscriptionOutcome
+            if case .server(let statusCode, _) = error, statusCode == 410 {
+                outcome = .reloadHistory
+            } else if case .server(let statusCode, _) = error, statusCode >= 500 {
+                // The producer keeps running through a transient server error
+                // on the subscribe GET; treat it as resumable rather than
+                // failing the whole turn.
+                outcome = .dropped
+            } else {
+                outcome = .failed(error.localizedDescription)
             }
-            return .failed(error.localizedDescription)
+            reportStreamOutcome(
+                phase: "send-subscribe",
+                outcome: Self.outcomeLabel(outcome),
+                error: error,
+                fromSeq: fromSeq,
+                diagnostics: diagnostics
+            )
+            return outcome
         } catch {
             // A network drop establishing or reading the stream. The turn is
             // durable, so recover by reloading history.
+            reportStreamOutcome(
+                phase: "send-subscribe",
+                outcome: "interrupted",
+                error: error,
+                fromSeq: fromSeq,
+                diagnostics: diagnostics
+            )
             return .interrupted
         }
     }
@@ -617,9 +667,16 @@ final class ChatViewModel {
         _ events: AsyncThrowingStream<ChatStreamEvent, Error>,
         turnID: String,
         assistantMessageID: String,
-        lastSeq: inout Int?
+        lastSeq: inout Int?,
+        diagnostics: inout ChatStreamDiagnostics
     ) async throws -> TurnSubscriptionOutcome {
         for try await event in events {
+            diagnostics.eventCount += 1
+            diagnostics.lastEventAt = Date()
+            diagnostics.lastEventType = event.type
+            if event.type == .toolCall {
+                diagnostics.sawToolCall = true
+            }
             if Task.isCancelled {
                 break
             }
@@ -651,6 +708,7 @@ final class ChatViewModel {
                 } else {
                     lastSeq = seq
                 }
+                diagnostics.lastSeq = lastSeq
                 recordAppliedSeq(seq)
             }
             apply(streamEvent: event, assistantMessageID: assistantMessageID)
@@ -721,7 +779,7 @@ final class ChatViewModel {
             await addAttachment(fileURL: url, mimeType: mimeType, displayName: filename)
         } catch {
             errorMessage = error.localizedDescription
-            ErrorReporter.shared.report(error, component: "Chat.importAttachment")
+            errorReporter.report(error, component: "Chat.importAttachment")
         }
     }
 
@@ -750,7 +808,7 @@ final class ChatViewModel {
                 try await apiClient.deleteAttachment(attachmentID: attachmentID)
             } catch {
                 errorMessage = "Could not remove attachment. \(error.localizedDescription)"
-                ErrorReporter.shared.report(error, component: "Chat.removeAttachment")
+                errorReporter.report(error, component: "Chat.removeAttachment")
                 return
             }
         }
@@ -770,7 +828,7 @@ final class ChatViewModel {
             if let index = pendingConfirmations.firstIndex(where: { $0.requestID == confirmation.requestID }) {
                 pendingConfirmations[index].errorMessage = error.localizedDescription
             }
-            ErrorReporter.shared.report(error, component: "Chat.confirmTool")
+            errorReporter.report(error, component: "Chat.confirmTool")
         }
     }
 
@@ -789,7 +847,7 @@ final class ChatViewModel {
             return try await downloadAttachment(attachment)
         } catch {
             errorMessage = "Could not download attachment. \(error.localizedDescription)"
-            ErrorReporter.shared.report(error, component: "Chat.downloadAttachment")
+            errorReporter.report(error, component: "Chat.downloadAttachment")
             return nil
         }
     }
@@ -848,7 +906,7 @@ final class ChatViewModel {
             errorMessage = nil
         } catch {
             errorMessage = "Could not load pending approvals. \(error.localizedDescription)"
-            ErrorReporter.shared.report(error, component: "Chat.pendingApprovals")
+            errorReporter.report(error, component: "Chat.pendingApprovals")
         }
     }
 
@@ -919,6 +977,10 @@ final class ChatViewModel {
                 } catch {
                     // Connection failed or dropped mid-stream; fall through to
                     // surface the disconnected state and retry after a backoff.
+                    // Breadcrumb the drop (the disconnected-indicator cause) with
+                    // the URLError so we can tell an idle timeout from a connection
+                    // loss from an app-side cancel.
+                    await self?.reportLiveStreamDrop(conversationID: conversationID, error: error)
                 }
 
                 if Task.isCancelled || deliberateStop {
@@ -982,6 +1044,136 @@ final class ChatViewModel {
     private func markLiveUpdatesDisconnectedIfActive() {
         if !Task.isCancelled {
             liveUpdatesConnected = false
+        }
+    }
+
+    /// Emit a breadcrumb when a send-and-watch subscription ends without a clean
+    /// `turn_ended`. Routed to both os.Logger (live, when tethered) and
+    /// ErrorReporter (persisted to the backend error log / diagnostics export,
+    /// survives the app being backgrounded). Diagnoses the reported "streaming
+    /// stops after the first tool call": `url_error_code` distinguishes an idle
+    /// timeout (proxy/buffering) from a connection loss (background/suspend) from
+    /// an app-side cancel, and `saw_tool_call` confirms whether the drop landed
+    /// right after a tool call.
+    private func reportStreamOutcome(
+        phase: String,
+        outcome: String,
+        error: Error?,
+        fromSeq: Int,
+        diagnostics: ChatStreamDiagnostics
+    ) {
+        let now = Date()
+        let sinceConnect = diagnostics.connectedAt.map { now.timeIntervalSince($0) }
+        let sinceLastEvent = diagnostics.lastEventAt.map { now.timeIntervalSince($0) }
+        let (errorCode, errorDomain) = Self.describeStreamError(error)
+
+        var extra: [String: String] = [
+            "phase": phase,
+            "outcome": outcome,
+            "url_error_code": errorCode,
+            "error_domain": errorDomain,
+            "last_event_type": diagnostics.lastEventType?.rawValue ?? "none",
+            "saw_tool_call": diagnostics.sawToolCall ? "true" : "false",
+            "event_count": String(diagnostics.eventCount),
+            "from_seq": String(fromSeq),
+        ]
+        if let last = diagnostics.lastSeq {
+            extra["last_seq"] = String(last)
+        }
+        if let sinceConnect {
+            extra["seconds_since_connect"] = String(format: "%.1f", sinceConnect)
+        }
+        if let sinceLastEvent {
+            extra["seconds_since_last_event"] = String(format: "%.1f", sinceLastEvent)
+        }
+
+        streamLogger.error(
+            """
+            chat stream ended phase=\(phase, privacy: .public) \
+            outcome=\(outcome, privacy: .public) error=\(errorCode, privacy: .public) \
+            sawToolCall=\(diagnostics.sawToolCall, privacy: .public) \
+            events=\(diagnostics.eventCount, privacy: .public) \
+            sinceLastEvent=\(sinceLastEvent.map { String(format: "%.1f", $0) } ?? "n/a", privacy: .public)
+            """
+        )
+
+        errorReporter.report(
+            message: "Chat stream ended (\(outcome)) error=\(errorCode) sawToolCall=\(diagnostics.sawToolCall)",
+            component: "Chat.streamDrop",
+            errorType: .component,
+            extraData: extra
+        )
+    }
+
+    /// Breadcrumb a live-follow stream drop (the disconnected-indicator cause).
+    private func reportLiveStreamDrop(conversationID: String, error: Error) {
+        let (errorCode, errorDomain) = Self.describeStreamError(error)
+        streamLogger.error(
+            """
+            live follow stream dropped error=\(errorCode, privacy: .public) \
+            isStreaming=\(self.isStreaming, privacy: .public)
+            """
+        )
+        errorReporter.report(
+            message: "Live follow stream dropped error=\(errorCode)",
+            component: "Chat.liveStreamDrop",
+            errorType: .component,
+            extraData: [
+                "phase": "live-follow",
+                "url_error_code": errorCode,
+                "error_domain": errorDomain,
+                "is_streaming": isStreaming ? "true" : "false",
+            ]
+        )
+    }
+
+    private static func outcomeLabel(_ outcome: TurnSubscriptionOutcome) -> String {
+        switch outcome {
+        case .completed: "completed"
+        case .dropped: "dropped"
+        case .interrupted: "interrupted"
+        case .reloadHistory: "reloadHistory"
+        case .failed: "failed"
+        }
+    }
+
+    /// A compact (code, domain) description of a stream error for telemetry. The
+    /// URLError code is mapped to its symbolic name so the breadcrumb is readable
+    /// at a glance (timedOut vs networkConnectionLost vs cancelled).
+    private static func describeStreamError(_ error: Error?) -> (code: String, domain: String) {
+        guard let error else {
+            return ("none", "none")
+        }
+        if error is CancellationError {
+            return ("swiftCancellation", "Swift.CancellationError")
+        }
+        if let urlError = error as? URLError {
+            return (urlErrorName(urlError.code), "URLError")
+        }
+        if let apiError = error as? ChatAPIError {
+            if case .server(let statusCode, _) = apiError {
+                return ("http\(statusCode)", "ChatAPIError")
+            }
+            return ("validation", "ChatAPIError")
+        }
+        let nsError = error as NSError
+        return (String(nsError.code), nsError.domain)
+    }
+
+    private static func urlErrorName(_ code: URLError.Code) -> String {
+        switch code {
+        case .timedOut: "timedOut"
+        case .networkConnectionLost: "networkConnectionLost"
+        case .cancelled: "cancelled"
+        case .notConnectedToInternet: "notConnectedToInternet"
+        case .cannotConnectToHost: "cannotConnectToHost"
+        case .cannotFindHost: "cannotFindHost"
+        case .dnsLookupFailed: "dnsLookupFailed"
+        case .secureConnectionFailed: "secureConnectionFailed"
+        case .dataNotAllowed: "dataNotAllowed"
+        case .badServerResponse: "badServerResponse"
+        case .resourceUnavailable: "resourceUnavailable"
+        default: "urlCode\(code.rawValue)"
         }
     }
 
@@ -1130,7 +1322,7 @@ final class ChatViewModel {
             messages[index].text += "\n\n\(message)"
         }
         errorMessage = message
-        ErrorReporter.shared.report(message: message, component: "Chat.stream")
+        errorReporter.report(message: message, component: "Chat.stream")
     }
 
     private func updateToolCall(
@@ -1344,4 +1536,17 @@ final class ChatViewModel {
             return backend.chatAttachment
         }
     }
+}
+
+/// Per-subscription stream telemetry, accumulated while consuming a turn's SSE
+/// events so a drop breadcrumb can report what had been seen before the stream
+/// ended — notably whether a tool call had already arrived (the reported failure
+/// mode) and how long the stream had been quiet before it died.
+private struct ChatStreamDiagnostics {
+    var connectedAt: Date?
+    var lastEventAt: Date?
+    var eventCount = 0
+    var sawToolCall = false
+    var lastEventType: ChatStreamEventType?
+    var lastSeq: Int?
 }
