@@ -671,12 +671,11 @@ final class ChatViewModel {
         diagnostics: inout ChatStreamDiagnostics
     ) async throws -> TurnSubscriptionOutcome {
         for try await event in events {
+            // Connection-level counters reflect real socket activity (any frame,
+            // including heartbeats and other turns), so they track whether bytes
+            // were still flowing before the drop — the idle-timeout signal.
             diagnostics.eventCount += 1
             diagnostics.lastEventAt = Date()
-            diagnostics.lastEventType = event.type
-            if event.type == .toolCall {
-                diagnostics.sawToolCall = true
-            }
             if Task.isCancelled {
                 break
             }
@@ -691,6 +690,13 @@ final class ChatViewModel {
             // ignore a turn started concurrently elsewhere in the conversation.
             if let eventTurnID = event.turnID, eventTurnID != turnID {
                 continue
+            }
+            // Renderable-signal diagnostics are scoped to our turn (after the turn
+            // filter) so a concurrent turn's tool call can't set `saw_tool_call`
+            // for the send we're diagnosing.
+            diagnostics.lastEventType = event.type
+            if event.type == .toolCall {
+                diagnostics.sawToolCall = true
             }
             // Advance the ack/resume cursor ONLY for our own turn's events
             // (`turn_id == turnID`). A seq-bearing event that isn't ours — a
@@ -940,6 +946,7 @@ final class ChatViewModel {
                 // the highest seq this client has actually applied.
                 let ackSeq = self?.highestAppliedSeq ?? -1
                 var deliberateStop = false
+                var streamError: Error?
                 do {
                     let stream = try await client.connectEvents(
                         conversationID: conversationID,
@@ -977,15 +984,18 @@ final class ChatViewModel {
                 } catch {
                     // Connection failed or dropped mid-stream; fall through to
                     // surface the disconnected state and retry after a backoff.
-                    // Breadcrumb the drop (the disconnected-indicator cause) with
-                    // the URLError so we can tell an idle timeout from a connection
-                    // loss from an app-side cancel.
-                    await self?.reportLiveStreamDrop(conversationID: conversationID, error: error)
+                    streamError = error
                 }
 
                 if Task.isCancelled || deliberateStop {
                     break
                 }
+                // Breadcrumb every involuntary disconnect (the disconnected-
+                // indicator cause), whether the stream threw or was closed cleanly
+                // by an idle proxy / server shutdown (a clean EOF finishes the loop
+                // without throwing). The error — or its absence — tells an idle
+                // timeout from a connection loss from a clean server-side close.
+                await self?.reportLiveStreamDrop(conversationID: conversationID, error: streamError)
                 self?.markLiveUpdatesDisconnectedIfActive()
                 try? await Task.sleep(for: .seconds(delay))
                 delay = min(delay * 2, maxDelay)
@@ -1106,8 +1116,13 @@ final class ChatViewModel {
     }
 
     /// Breadcrumb a live-follow stream drop (the disconnected-indicator cause).
-    private func reportLiveStreamDrop(conversationID: String, error: Error) {
-        let (errorCode, errorDomain) = Self.describeStreamError(error)
+    private func reportLiveStreamDrop(conversationID: String, error: Error?) {
+        // A clean EOF (the follow stream finished without throwing — an idle proxy
+        // or server-side shutdown closing the socket) carries no error; record it
+        // distinctly so it is not confused with a connect that never produced one.
+        let (errorCode, errorDomain) = error == nil
+            ? ("cleanEOF", "none")
+            : Self.describeStreamError(error)
         streamLogger.error(
             """
             live follow stream dropped error=\(errorCode, privacy: .public) \

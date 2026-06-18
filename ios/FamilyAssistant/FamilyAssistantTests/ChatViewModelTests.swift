@@ -2108,6 +2108,7 @@ final class ChatViewModelTests: XCTestCase {
         // server-side is never surfaced until the thread is reopened — exactly the
         // reported "I only see the full conversation if I reopen the app".
         let turnComplete = AtomicCounter()
+        let messagesFetches = AtomicCounter()
         var streamedTurnID = "turn-nofollow"
         ChatMockBackendURLProtocol.respond { request in
             let path = request.url?.path ?? ""
@@ -2125,6 +2126,7 @@ final class ChatViewModelTests: XCTestCase {
             case ("GET", "/api/v1/chat/conversations"):
                 return .json(#"{"conversations":[],"count":0}"#)
             case ("GET", "/api/v1/chat/conversations/web_conv_nofollow/messages"):
+                messagesFetches.increment()
                 let rows = turnComplete.value > 0
                     ? #"{"internal_id":1,"role":"user","content":"Hi","timestamp":"2026-06-08T12:00:00Z"},{"internal_id":2,"role":"assistant","content":"Tool reply","timestamp":"2026-06-08T12:00:01Z"}"#
                     : ""
@@ -2155,20 +2157,28 @@ final class ChatViewModelTests: XCTestCase {
         await model.sendDraft()
         try await waitUntil { !model.isStreaming }
         XCTAssertFalse(model.messages.contains { $0.text == "Tool reply" })
+        let fetchesAfterDrop = messagesFetches.value
 
-        // The turn finishes server-side. With no live-follow loop, nothing fetches
-        // the durable reply — it stays stuck out of view.
+        // The turn finishes server-side. The deterministic signal that nothing is
+        // watching: with no live-follow loop, no further message fetch is ever
+        // issued, so the durable reply can't surface. Assert on the fetch count
+        // (the only mechanism that could surface it) rather than on content after a
+        // delay. The short settle only gives a hypothetical background reload a
+        // chance to (wrongly) fire so the count assertion can catch it.
         turnComplete.increment()
-        try await Task.sleep(for: .milliseconds(300))
-        XCTAssertFalse(
-            model.messages.contains { $0.text == "Tool reply" },
-            "Without a live-follow loop the completed reply is never surfaced automatically."
+        try await Task.sleep(for: .milliseconds(200))
+        XCTAssertEqual(
+            messagesFetches.value,
+            fetchesAfterDrop,
+            "Without a live-follow loop no message fetch should be issued, so the reply stays out of view."
         )
+        XCTAssertFalse(model.messages.contains { $0.text == "Tool reply" })
 
-        // Reopening the thread (selectConversation) reloads history and recovers it.
+        // Reopening the thread (selectConversation) issues a fetch that recovers it.
         await model.selectConversation("web_conv_nofollow")
         try await waitUntil { model.messages.contains { $0.text == "Tool reply" } }
         XCTAssertTrue(model.messages.contains { $0.text == "Tool reply" })
+        XCTAssertGreaterThan(messagesFetches.value, fetchesAfterDrop)
     }
 
     func testStreamDropEmitsDiagnosticBreadcrumb() async throws {
