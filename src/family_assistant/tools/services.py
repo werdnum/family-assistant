@@ -200,6 +200,12 @@ async def _completed_delegation_result(
     final_text_reply = run["result_text"]
     response_attachment_ids = run["result_attachment_ids_json"] or []
 
+    delegated_attachments = await _delegated_attachment_refs(
+        exec_context,
+        target_service_id=target_service_id,
+        response_attachment_ids=response_attachment_ids,
+    )
+
     if not final_text_reply:
         logger.info(
             "Delegated service '%s' returned no textual reply.",
@@ -207,14 +213,9 @@ async def _completed_delegation_result(
         )
         return ToolResult(
             text=f"Service '{target_service_id}' processed the request but provided no textual response.",
-            attachments=None,
+            attachments=delegated_attachments,
         )
 
-    delegated_attachments = await _delegated_attachment_refs(
-        exec_context,
-        target_service_id=target_service_id,
-        response_attachment_ids=response_attachment_ids,
-    )
     return ToolResult(text=final_text_reply, attachments=delegated_attachments)
 
 
@@ -251,6 +252,25 @@ def _failed_delegation_result(
     )
 
 
+async def _mark_delegation_delivered_inline(
+    exec_context: ToolExecutionContext, *, delegation_id: str
+) -> None:
+    """Record that a terminal run was delivered to the caller inline.
+
+    The inline result is returned to the model as the tool output rather than
+    posted to the conversation, so ``handed_off_at`` stays NULL and the worker's
+    handed-off-gated notification is skipped. Marking ``notified_at`` here stops
+    the cleanup sweep's ``find_terminal_unnotified`` backstop from re-delivering
+    the same result into the conversation once the run ages past its window.
+    """
+    async with exec_context.db_context.create_isolated_context() as isolated_db:
+        await isolated_db.delegation_runs.mark_notified(
+            delegation_id=delegation_id,
+            result_message_internal_id=None,
+            notified_at=_now(exec_context),
+        )
+
+
 async def _inline_delegation_result(
     exec_context: ToolExecutionContext,
     *,
@@ -266,20 +286,26 @@ async def _inline_delegation_result(
             target_service_id,
             run["delegation_id"],
         )
-        return await _completed_delegation_result(
+        result = await _completed_delegation_result(
             exec_context,
             target_service_id=target_service_id,
             run=run,
         )
-    if run["status"] == "failed":
+    elif run["status"] == "failed":
         logger.error(
             "Delegated service '%s' failed inline for %s: %s",
             target_service_id,
             run["delegation_id"],
             run["error"],
         )
-        return _failed_delegation_result(target_service_id=target_service_id, run=run)
-    return None
+        result = _failed_delegation_result(target_service_id=target_service_id, run=run)
+    else:
+        return None
+
+    await _mark_delegation_delivered_inline(
+        exec_context, delegation_id=run["delegation_id"]
+    )
+    return result
 
 
 def _delegation_reference_text(
@@ -621,7 +647,21 @@ async def delegate_to_service_tool(
                 },
                 max_retries_override=1,
             )
+    except Exception as e:
+        logger.error(
+            f"Failed to delegate request to service '{target_service_id}': {e}",
+            exc_info=True,
+        )
+        return ToolResult(
+            text=f"Error: Failed to delegate task to service '{target_service_id}'. Details: {e}",
+            attachments=None,
+        )
 
+    # The run is durably enqueued: from here it will be executed and delivered by
+    # the worker (or recovered by the cleanup sweep). An error while waiting for an
+    # inline result must therefore NOT be reported as a delegation failure — fall
+    # back to the async reference and let the background run notify the conversation.
+    try:
         run = await _wait_for_delegation_run(
             exec_context,
             delegation_id=delegation_id,
@@ -648,31 +688,42 @@ async def delegate_to_service_tool(
             )
             if inline_result is not None:
                 return inline_result
-
         run_status = run["status"] if run is not None else "queued"
-        return ToolResult(
-            text=_delegation_reference_text(
-                delegation_id=delegation_id,
-                target_service_id=target_service_id,
-                status=run_status,
-            ),
-            attachments=None,
-            data={
-                "delegation_id": delegation_id,
-                "target_service_id": target_service_id,
-                "status": run_status,
-            },
+    except Exception:
+        logger.exception(
+            "Error awaiting inline result for delegation %s; returning async "
+            "reference. Claiming the handoff so the worker delivers the result.",
+            delegation_id,
         )
+        # Best-effort handoff claim so the worker's handed-off-gated notification
+        # delivers the result promptly rather than waiting for the cleanup sweep.
+        try:
+            async with exec_context.db_context.create_isolated_context() as isolated_db:
+                await isolated_db.delegation_runs.mark_handed_off(
+                    delegation_id,
+                    _now(exec_context),
+                )
+        except Exception:
+            logger.exception(
+                "Failed to claim handoff for delegation %s after wait error; the "
+                "cleanup sweep is the backstop.",
+                delegation_id,
+            )
+        run_status = "running"
 
-    except Exception as e:
-        logger.error(
-            f"Failed to delegate request to service '{target_service_id}': {e}",
-            exc_info=True,
-        )
-        return ToolResult(
-            text=f"Error: Failed to delegate task to service '{target_service_id}'. Details: {e}",
-            attachments=None,
-        )
+    return ToolResult(
+        text=_delegation_reference_text(
+            delegation_id=delegation_id,
+            target_service_id=target_service_id,
+            status=run_status,
+        ),
+        attachments=None,
+        data={
+            "delegation_id": delegation_id,
+            "target_service_id": target_service_id,
+            "status": run_status,
+        },
+    )
 
 
 async def get_delegation_status_tool(

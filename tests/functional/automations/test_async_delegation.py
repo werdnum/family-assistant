@@ -24,7 +24,13 @@ from family_assistant.task_worker import (
     DelegationNotificationError,
     TaskWorker,
 )
+
+# The inline-delivery helpers are module-internal but are exercised directly here
+# to cover the tool-side fast path (notified-at marking and empty-text attachment
+# delivery) without standing up a concurrent worker loop.
 from family_assistant.tools.services import (
+    _completed_delegation_result,  # noqa: PLC2701
+    _inline_delegation_result,  # noqa: PLC2701
     delegate_to_service_tool,
     get_delegation_status_tool,
     list_delegations_tool,
@@ -260,6 +266,7 @@ def _tool_context(
     processing_service: ProcessingService,
     chat_interface: ChatInterface | None = None,
     confirmation_ui_managers: dict[str, ConfirmationUIManager] | None = None,
+    attachment_registry: AttachmentRegistry | None = None,
 ) -> ToolExecutionContext:
     return ToolExecutionContext(
         interface_type=TEST_INTERFACE_TYPE,
@@ -272,7 +279,7 @@ def _tool_context(
         clock=SystemClock(),
         home_assistant_client=None,
         event_sources=None,
-        attachment_registry=None,
+        attachment_registry=attachment_registry,
         camera_backend=None,
         timezone=ZoneInfo("UTC"),
         chat_interface=chat_interface,
@@ -835,6 +842,157 @@ async def test_cleanup_recovers_terminal_unnotified_run(
         )
         assert run is not None
         assert run["notified_at"] is not None
+
+
+@pytest.mark.asyncio
+async def test_inline_delivery_marks_run_notified(db_engine: AsyncEngine) -> None:
+    """Delivering a terminal result inline records notified_at.
+
+    The inline result is returned to the model as the tool output rather than
+    posted to the conversation, so handed_off_at stays NULL. Marking notified_at
+    stops the cleanup sweep's find_terminal_unnotified backstop from re-delivering
+    the same result into the conversation once the run ages past its window.
+    """
+    target_service = FakeDelegatableService()
+    processing_service = _source_processing_service(target_service)
+    clock = SystemClock()
+
+    async with DatabaseContext(engine=db_engine) as db_context:
+        await _create_run(db_context, delegation_id="delegation_inline")
+        await db_context.delegation_runs.mark_completed(
+            delegation_id="delegation_inline",
+            result_text="fast inline result",
+            result_attachment_ids=[],
+            completed_at=clock.now(),
+        )
+
+    async with DatabaseContext(engine=db_engine) as db_context:
+        run = await db_context.delegation_runs.get_by_delegation_id("delegation_inline")
+        assert run is not None
+        assert run["notified_at"] is None
+        result = await _inline_delegation_result(
+            _tool_context(db_context, processing_service),
+            target_service_id="target_profile",
+            run=run,
+        )
+        assert result is not None
+        assert result.text == "fast inline result"
+
+    async with DatabaseContext(engine=db_engine) as db_context:
+        marked = await db_context.delegation_runs.get_by_delegation_id(
+            "delegation_inline"
+        )
+        assert marked is not None
+        assert marked["notified_at"] is not None
+        assert marked["handed_off_at"] is None
+
+
+@pytest.mark.asyncio
+async def test_cleanup_does_not_redeliver_inline_delivered_run(
+    db_engine: AsyncEngine,
+) -> None:
+    """An inline-delivered run is not re-delivered by the cleanup sweep.
+
+    Once inline delivery has marked the run notified, find_terminal_unnotified
+    must skip it even after it ages past the completed_at window — otherwise every
+    fast inline delegation would get a duplicate completion notification ~1h later.
+    """
+    target_service = FakeDelegatableService()
+    processing_service = _source_processing_service(target_service)
+    chat_interface = AsyncMock(spec=ChatInterface)
+    chat_interface.send_message.return_value = "external_message_id"
+
+    clock = SystemClock()
+    stale_completed_at = clock.now() - timedelta(hours=2)
+    async with DatabaseContext(engine=db_engine) as db_context:
+        await _create_run(db_context, delegation_id="delegation_inline_aged")
+        await db_context.delegation_runs.mark_completed(
+            delegation_id="delegation_inline_aged",
+            result_text="delivered inline",
+            result_attachment_ids=[],
+            completed_at=stale_completed_at,
+        )
+
+    async with DatabaseContext(engine=db_engine) as db_context:
+        run = await db_context.delegation_runs.get_by_delegation_id(
+            "delegation_inline_aged"
+        )
+        assert run is not None
+        # The caller delivers the terminal result inline, which marks it notified.
+        await _inline_delegation_result(
+            _tool_context(db_context, processing_service),
+            target_service_id="target_profile",
+            run=run,
+        )
+
+    worker = _build_worker(db_engine, processing_service, chat_interface)
+    async with DatabaseContext(engine=db_engine) as db_context:
+        await worker.handle_delegation_run_cleanup(
+            _tool_context(db_context, processing_service, chat_interface),
+            {"running_timeout_seconds": 60.0},
+        )
+
+    chat_interface.send_message.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_inline_result_delivers_attachments_when_text_empty(
+    db_engine: AsyncEngine,
+    tmp_path: Path,
+) -> None:
+    """A completed delegation with attachments but no text still delivers them inline.
+
+    Parity with the async notification path: an empty textual reply must not drop
+    attachments (e.g. a data_visualization delegation that returns only a chart).
+    """
+    attachment_storage = tmp_path / "attachments"
+    attachment_storage.mkdir()
+    attachment_registry = AttachmentRegistry(
+        storage_path=str(attachment_storage),
+        db_engine=db_engine,
+        config=None,
+    )
+    target_service = FakeDelegatableService()
+    processing_service = _source_processing_service(target_service)
+    clock = SystemClock()
+
+    async with DatabaseContext(engine=db_engine) as db_context:
+        stored = await attachment_registry.store_and_register_tool_attachment(
+            file_content=b"chart bytes",
+            filename="chart.png",
+            content_type="image/png",
+            tool_name="data_visualization",
+            description="Generated chart",
+            conversation_id=TEST_CONVERSATION_ID,
+            db_context=db_context,
+        )
+        await _create_run(db_context, delegation_id="delegation_attach_no_text")
+        await db_context.delegation_runs.mark_completed(
+            delegation_id="delegation_attach_no_text",
+            result_text=None,
+            result_attachment_ids=[stored.attachment_id],
+            completed_at=clock.now(),
+        )
+
+    async with DatabaseContext(engine=db_engine) as db_context:
+        run = await db_context.delegation_runs.get_by_delegation_id(
+            "delegation_attach_no_text"
+        )
+        assert run is not None
+        result = await _completed_delegation_result(
+            _tool_context(
+                db_context,
+                processing_service,
+                attachment_registry=attachment_registry,
+            ),
+            target_service_id="target_profile",
+            run=run,
+        )
+
+    assert result.attachments is not None
+    assert len(result.attachments) == 1
+    assert result.attachments[0].attachment_id == stored.attachment_id
+    assert "no textual response" in (result.text or "")
 
 
 @pytest.mark.asyncio
