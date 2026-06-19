@@ -329,26 +329,28 @@ final class ChatViewModelTests: XCTestCase {
     }
 
     func testSendDraftStreamsAssistantTextAndReloadsPersistedMessages() async throws {
+        var streamedTurnID = "turn-send"
         ChatMockBackendURLProtocol.respond { request in
             switch (request.httpMethod ?? "GET", request.url?.path ?? "") {
             case ("POST", "/api/v1/chat/turns"):
                 let payload = try XCTUnwrap(Self.jsonObject(from: request) as? [String: Any])
                 XCTAssertEqual(payload["interface_type"] as? String, "web")
                 XCTAssertEqual(payload["conversation_id"] as? String, "web_conv_send")
+                streamedTurnID = try XCTUnwrap(payload["turn_id"] as? String)
                 return .json(
-                    #"{"turn_id":"turn-send","conversation_id":"web_conv_send","first_seq":0}"#
+                    #"{"turn_id":"\#(streamedTurnID)","conversation_id":"web_conv_send","first_seq":0}"#
                 )
             case ("GET", "/api/v1/chat/conversations/web_conv_send/stream"):
                 return .text(
                     """
                     event: turn_started
-                    data: {"turn_id":"turn-send","seq":0}
+                    data: {"turn_id":"\(streamedTurnID)","seq":0}
 
                     event: text
                     data: {"content":"Streamed"}
 
                     event: turn_ended
-                    data: {"turn_id":"turn-send","status":"complete"}
+                    data: {"turn_id":"\(streamedTurnID)","status":"complete"}
 
                     """
                 )
@@ -491,8 +493,9 @@ final class ChatViewModelTests: XCTestCase {
     func testSendMidTurnDropReloadsHistoryInsteadOfError() async throws {
         // A mobile connection dropping mid-turn (the stream delivers some text
         // then the socket dies before turn_ended) must NOT leave a permanent
-        // error bubble: the turn keeps running durably on the server, so the
-        // client reloads persisted history to surface the saved reply.
+        // error bubble. The client resumes the stream a few times; when every
+        // resume keeps dropping at the same seq (no forward progress) it gives up
+        // and reloads persisted history to surface the durably saved reply.
         var streamedTurnID = "turn-drop"
         ChatMockBackendURLProtocol.respond { request in
             let path = request.url?.path ?? ""
@@ -537,7 +540,13 @@ final class ChatViewModelTests: XCTestCase {
             }
         }
 
-        let model = makeViewModel(conversationID: "web_conv_drop")
+        let model = makeViewModel(
+            conversationID: "web_conv_drop",
+            liveReconnectInitialDelaySeconds: 0.001,
+            liveReconnectMaxDelaySeconds: 0.001,
+            maxConsecutiveStreamResumes: 2,
+            streamResumeLivenessSeconds: 60
+        )
         model.draftText = "Hi"
         await model.sendDraft()
         try await waitUntil { !model.isStreaming }
@@ -629,6 +638,168 @@ final class ChatViewModelTests: XCTestCase {
         // resuming from seq 1 would re-apply the partial text.
         XCTAssertEqual(resumeFromSeq, "2")
         XCTAssertEqual(model.messages.map(\.text), ["Hi", "Resumed reply"])
+        XCTAssertNil(model.errorMessage)
+    }
+
+    func testSendResumesTokenStreamAfterMidTurnInterruption() async throws {
+        // The proxy severs the send-and-watch stream mid-turn — a CLEAN EOF with
+        // no turn_ended (e.g. an Envoy 15s request timeout) right after the first
+        // tool round. The turn keeps running durably, so the client must
+        // resubscribe from the last applied seq and RESUME live streaming to
+        // completion, not strand on the disconnected indicator until turn_ended.
+        let streamRequests = AtomicCounter()
+        var resumeFromSeq: String?
+        var streamedTurnID = "turn-resume"
+        ChatMockBackendURLProtocol.respond { request in
+            let path = request.url?.path ?? ""
+            switch (request.httpMethod ?? "GET", path) {
+            case ("POST", "/api/v1/chat/turns"):
+                if let body = (try? Self.jsonObject(from: request)) as? [String: Any],
+                   let postedTurnID = body["turn_id"] as? String {
+                    streamedTurnID = postedTurnID
+                }
+                return .json(
+                    #"{"turn_id":"\#(streamedTurnID)","conversation_id":"web_conv_resume","first_seq":0}"#
+                )
+            case ("GET", "/api/v1/chat/conversations"):
+                return .json(#"{"conversations":[],"count":0}"#)
+            case ("GET", "/api/v1/chat/conversations/web_conv_resume/messages"):
+                return .json(
+                    """
+                    {
+                      "conversation_id":"web_conv_resume",
+                      "messages":[
+                        {"internal_id":1,"role":"user","content":"Hi","timestamp":"2026-06-08T12:00:00Z"},
+                        {"internal_id":2,"role":"assistant","content":"Looking all good","timestamp":"2026-06-08T12:00:01Z"}
+                      ],
+                      "count":2,
+                      "total_messages":2,
+                      "has_more_before":false,
+                      "has_more_after":false
+                    }
+                    """
+                )
+            default:
+                if request.httpMethod == "GET", path == "/api/v1/chat/conversations/web_conv_resume/stream" {
+                    if streamRequests.increment() == 1 {
+                        // First leg: the first tool round, then a clean EOF with no
+                        // turn_ended — the severed connection.
+                        return .text(
+                            """
+                            event: text
+                            data: {"turn_id":"\(streamedTurnID)","content":"Looking","seq":1}
+
+                            event: tool_call
+                            data: {"turn_id":"\(streamedTurnID)","tool_call":{"id":"call-1","type":"function","function":{"name":"query_database","arguments":"{}"}},"seq":2}
+
+                            event: tool_result
+                            data: {"turn_id":"\(streamedTurnID)","tool_call_id":"call-1","result":"ok","seq":3}
+
+                            """
+                        )
+                    }
+                    resumeFromSeq = Self.queryItems(from: request)["from_seq"]
+                    // Resume leg: the rest of the reply plus turn_ended.
+                    return .text(
+                        """
+                        event: text
+                        data: {"turn_id":"\(streamedTurnID)","content":" all good","seq":4}
+
+                        event: turn_ended
+                        data: {"turn_id":"\(streamedTurnID)","status":"complete","seq":5}
+
+                        """
+                    )
+                }
+                return .json(#"{"detail":"unexpected"}"#, statusCode: 404)
+            }
+        }
+
+        let model = makeViewModel(conversationID: "web_conv_resume")
+        model.draftText = "Hi"
+        await model.sendDraft()
+        try await waitUntil { !model.isStreaming }
+
+        // The clean mid-turn EOF is resumed from just after the last applied seq
+        // (tool_result was seq 3), and streaming continues to turn_ended instead
+        // of stranding — the completed reply surfaces rather than the turn hanging.
+        XCTAssertEqual(streamRequests.value, 2)
+        XCTAssertEqual(resumeFromSeq, "4")
+        XCTAssertEqual(model.messages.map(\.text), ["Hi", "Looking all good"])
+        let assistant = try XCTUnwrap(model.messages.last)
+        XCTAssertEqual(assistant.status, .complete)
+        XCTAssertNil(model.errorMessage)
+    }
+
+    func testSendQuietRunningTurnKeepsResumingUntilItCompletes() async throws {
+        // A healthy but quiet turn — a long tool call running through several proxy
+        // timeouts with no streamed frames — must NOT be abandoned. Each resume
+        // ends with no new seq, but the server holds `follow=false` open only while
+        // a turn is still running, so a held-open resume resets the give-up streak
+        // rather than counting toward it. Here every resume returns an empty
+        // (held-open) stream until the turn finally completes; with a tiny liveness
+        // threshold the real round-trips read as held-open, so the client keeps
+        // resuming well past `maxConsecutiveStreamResumes` and finishes the turn.
+        let streamRequests = AtomicCounter()
+        var streamedTurnID = "turn-quiet"
+        ChatMockBackendURLProtocol.respond { request in
+            let path = request.url?.path ?? ""
+            switch (request.httpMethod ?? "GET", path) {
+            case ("POST", "/api/v1/chat/turns"):
+                if let body = (try? Self.jsonObject(from: request)) as? [String: Any],
+                   let postedTurnID = body["turn_id"] as? String {
+                    streamedTurnID = postedTurnID
+                }
+                return .json(
+                    #"{"turn_id":"\#(streamedTurnID)","conversation_id":"web_conv_quiet","first_seq":0}"#
+                )
+            case ("GET", "/api/v1/chat/conversations"):
+                return .json(#"{"conversations":[],"count":0}"#)
+            case ("GET", "/api/v1/chat/conversations/web_conv_quiet/messages"):
+                return .json(
+                    """
+                    {"conversation_id":"web_conv_quiet","messages":[{"internal_id":1,"role":"user","content":"Hi","timestamp":"2026-06-08T12:00:00Z"},{"internal_id":2,"role":"assistant","content":"Done thinking","timestamp":"2026-06-08T12:00:01Z"}],"count":2,"total_messages":2,"has_more_before":false,"has_more_after":false}
+                    """
+                )
+            default:
+                if request.httpMethod == "GET", path == "/api/v1/chat/conversations/web_conv_quiet/stream" {
+                    // The first four subscribes return an empty, held-open stream (a
+                    // quiet running turn the proxy keeps cutting); the fifth finally
+                    // streams turn_ended.
+                    if streamRequests.increment() < 5 {
+                        return .text("")
+                    }
+                    return .text(
+                        """
+                        event: text
+                        data: {"turn_id":"\(streamedTurnID)","content":"Done thinking","seq":1}
+
+                        event: turn_ended
+                        data: {"turn_id":"\(streamedTurnID)","status":"complete","seq":2}
+
+                        """
+                    )
+                }
+                return .json(#"{"detail":"unexpected"}"#, statusCode: 404)
+            }
+        }
+
+        let model = makeViewModel(
+            conversationID: "web_conv_quiet",
+            liveReconnectInitialDelaySeconds: 0.001,
+            liveReconnectMaxDelaySeconds: 0.001,
+            maxConsecutiveStreamResumes: 1,
+            streamResumeLivenessSeconds: 0.00001
+        )
+        model.draftText = "Hi"
+        await model.sendDraft()
+        try await waitUntil { !model.isStreaming }
+
+        // Despite `maxConsecutiveStreamResumes: 1`, the held-open empty resumes did
+        // not trip the give-up bound — the client kept resuming through all five
+        // subscribes and completed the turn rather than reloading history early.
+        XCTAssertEqual(streamRequests.value, 5)
+        XCTAssertEqual(model.messages.map(\.text), ["Hi", "Done thinking"])
         XCTAssertNil(model.errorMessage)
     }
 
@@ -835,7 +1006,15 @@ final class ChatViewModelTests: XCTestCase {
         }
 
         // Phase 1: send, the stream drops mid-turn before the reply is persisted.
-        var sender: ChatViewModel? = makeViewModel(conversationID: "web_conv_reopen")
+        // Every resume keeps dropping at the same seq, so the client gives up
+        // after a bounded streak and the placeholder is dropped on recovery.
+        var sender: ChatViewModel? = makeViewModel(
+            conversationID: "web_conv_reopen",
+            liveReconnectInitialDelaySeconds: 0.001,
+            liveReconnectMaxDelaySeconds: 0.001,
+            maxConsecutiveStreamResumes: 2,
+            streamResumeLivenessSeconds: 60
+        )
         sender?.draftText = "Hi"
         await sender?.sendDraft()
         try await waitUntil { sender?.isStreaming == false }
@@ -989,9 +1168,10 @@ final class ChatViewModelTests: XCTestCase {
         XCTAssertEqual(assistant.status, .failed)
     }
 
-    func testSendStreamDroppedTwiceStopsAndReloadsHistory() async throws {
-        // Resubscribe at most once: a second stream_dropped must fall through to a
-        // history reload rather than spinning forever reopening the stream.
+    func testSendRepeatedNoProgressDropsGiveUpAndReloadHistory() async throws {
+        // A stream that keeps dropping at the same seq (no new events on resume)
+        // must not reopen forever: after `maxConsecutiveStreamResumes` resumes
+        // with no forward progress the client gives up and reloads history.
         let streamRequests = AtomicCounter()
         var streamedTurnID = "turn-twice"
         ChatMockBackendURLProtocol.respond { request in
@@ -1041,13 +1221,20 @@ final class ChatViewModelTests: XCTestCase {
             }
         }
 
-        let model = makeViewModel(conversationID: "web_conv_twice")
+        let model = makeViewModel(
+            conversationID: "web_conv_twice",
+            liveReconnectInitialDelaySeconds: 0.001,
+            liveReconnectMaxDelaySeconds: 0.001,
+            maxConsecutiveStreamResumes: 2,
+            streamResumeLivenessSeconds: 60
+        )
         model.draftText = "Hi"
         await model.sendDraft()
         try await waitUntil { !model.isStreaming }
 
-        // The first subscribe plus exactly one resubscribe — no third attempt.
-        XCTAssertEqual(streamRequests.value, 2)
+        // The first subscribe plus exactly `maxConsecutiveStreamResumes` (2)
+        // no-progress resumes, then it stops — no further attempts.
+        XCTAssertEqual(streamRequests.value, 3)
         XCTAssertEqual(model.messages.map(\.text), ["Hi", "Reloaded reply"])
         // Recovery is silent — no spurious modal error for a recovered turn.
         XCTAssertNil(model.errorMessage)
@@ -1169,7 +1356,13 @@ final class ChatViewModelTests: XCTestCase {
             }
         }
 
-        let model = makeViewModel(conversationID: "web_conv_noack")
+        let model = makeViewModel(
+            conversationID: "web_conv_noack",
+            liveReconnectInitialDelaySeconds: 0.001,
+            liveReconnectMaxDelaySeconds: 0.001,
+            maxConsecutiveStreamResumes: 2,
+            streamResumeLivenessSeconds: 60
+        )
         model.draftText = "Hi"
         await model.sendDraft()
         try await waitUntil { !model.isStreaming }
@@ -1545,6 +1738,7 @@ final class ChatViewModelTests: XCTestCase {
     func testApplyRouteProcessesEachNewInitialPrompt() async throws {
         var sentPrompts: [String] = []
         var conversationIDs: [String] = []
+        var streamedTurnID = "turn-route"
         ChatMockBackendURLProtocol.respond { request in
             let path = request.url?.path ?? ""
             switch (request.httpMethod ?? "GET", path) {
@@ -1553,9 +1747,10 @@ final class ChatViewModelTests: XCTestCase {
                 sentPrompts.append(try XCTUnwrap(payload["prompt"] as? String))
                 let conversationID = try XCTUnwrap(payload["conversation_id"] as? String)
                 conversationIDs.append(conversationID)
+                streamedTurnID = try XCTUnwrap(payload["turn_id"] as? String)
                 return .json(
                     """
-                    {"turn_id":"turn-route","conversation_id":"\(conversationID)","first_seq":0}
+                    {"turn_id":"\(streamedTurnID)","conversation_id":"\(conversationID)","first_seq":0}
                     """
                 )
             case ("GET", "/api/v1/chat/conversations"):
@@ -1565,7 +1760,7 @@ final class ChatViewModelTests: XCTestCase {
                     return .text(
                         """
                         event: turn_ended
-                        data: {"turn_id":"turn-route","status":"complete"}
+                        data: {"turn_id":"\(streamedTurnID)","status":"complete"}
 
                         """
                     )
@@ -2101,15 +2296,14 @@ final class ChatViewModelTests: XCTestCase {
         XCTAssertNil(model.errorMessage)
     }
 
-    func testSendToolCallMidStreamDropWithoutLiveFollowStaysStuckUntilReopen() async throws {
-        // Same mid-stream tool-call drop, but the send happens with NO live-follow
-        // loop active (sendDraft never starts one; only selectConversation /
-        // startNewConversation do). After the drop the reply that later completes
-        // server-side is never surfaced until the thread is reopened — exactly the
+    func testSendToolCallMidStreamDropSelfHealsViaResume() async throws {
+        // A mid-stream tool-call drop with NO live-follow loop active (sendDraft
+        // never starts one; only selectConversation / startNewConversation do).
+        // The send-and-watch path must resume the stream itself and surface the
+        // completed reply WITHOUT the user reopening the thread — the fix for the
         // reported "I only see the full conversation if I reopen the app".
-        let turnComplete = AtomicCounter()
-        let messagesFetches = AtomicCounter()
-        var streamedTurnID = "turn-nofollow"
+        let streamRequests = AtomicCounter()
+        var streamedTurnID = "turn-selfheal"
         ChatMockBackendURLProtocol.respond { request in
             let path = request.url?.path ?? ""
             switch (request.httpMethod ?? "GET", path) {
@@ -2119,31 +2313,45 @@ final class ChatViewModelTests: XCTestCase {
                     streamedTurnID = postedTurnID
                 }
                 return .json(
-                    #"{"turn_id":"\#(streamedTurnID)","conversation_id":"web_conv_nofollow","first_seq":0}"#
+                    #"{"turn_id":"\#(streamedTurnID)","conversation_id":"web_conv_selfheal","first_seq":0}"#
                 )
             case ("POST", "/api/v1/chat/ack"):
                 return .json("{}")
             case ("GET", "/api/v1/chat/conversations"):
                 return .json(#"{"conversations":[],"count":0}"#)
-            case ("GET", "/api/v1/chat/conversations/web_conv_nofollow/messages"):
-                messagesFetches.increment()
-                let rows = turnComplete.value > 0
-                    ? #"{"internal_id":1,"role":"user","content":"Hi","timestamp":"2026-06-08T12:00:00Z"},{"internal_id":2,"role":"assistant","content":"Tool reply","timestamp":"2026-06-08T12:00:01Z"}"#
-                    : ""
+            case ("GET", "/api/v1/chat/conversations/web_conv_selfheal/messages"):
                 return .json(
                     """
-                    {"conversation_id":"web_conv_nofollow","messages":[\(rows)],"count":0,"total_messages":0,"has_more_before":false,"has_more_after":false}
+                    {"conversation_id":"web_conv_selfheal","messages":[{"internal_id":1,"role":"user","content":"Hi","timestamp":"2026-06-08T12:00:00Z"},{"internal_id":2,"role":"assistant","content":"Tool reply","timestamp":"2026-06-08T12:00:01Z"}],"count":2,"total_messages":2,"has_more_before":false,"has_more_after":false}
                     """
                 )
             default:
-                if request.httpMethod == "GET", path == "/api/v1/chat/conversations/web_conv_nofollow/stream" {
-                    return .droppedStream(
-                        """
-                        event: turn_started
-                        data: {"turn_id":"\(streamedTurnID)","seq":0}
+                if request.httpMethod == "GET", path == "/api/v1/chat/conversations/web_conv_selfheal/stream" {
+                    if streamRequests.increment() == 1 {
+                        // First leg: the tool call, then the socket dies before
+                        // turn_ended.
+                        return .droppedStream(
+                            """
+                            event: turn_started
+                            data: {"turn_id":"\(streamedTurnID)","seq":0}
 
-                        event: tool_call
-                        data: {"turn_id":"\(streamedTurnID)","seq":1,"tool_call":{"id":"call-1","name":"search_notes","arguments":"{}"}}
+                            event: tool_call
+                            data: {"turn_id":"\(streamedTurnID)","seq":1,"tool_call":{"id":"call-1","type":"function","function":{"name":"search_notes","arguments":"{}"}}}
+
+                            """
+                        )
+                    }
+                    // Resume leg: the rest of the turn through turn_ended.
+                    return .text(
+                        """
+                        event: tool_result
+                        data: {"turn_id":"\(streamedTurnID)","tool_call_id":"call-1","result":"ok","seq":2}
+
+                        event: text
+                        data: {"turn_id":"\(streamedTurnID)","content":"Tool reply","seq":3}
+
+                        event: turn_ended
+                        data: {"turn_id":"\(streamedTurnID)","status":"complete","seq":4}
 
                         """
                     )
@@ -2152,33 +2360,20 @@ final class ChatViewModelTests: XCTestCase {
             }
         }
 
-        let model = makeViewModel(conversationID: "web_conv_nofollow")
+        let model = makeViewModel(
+            conversationID: "web_conv_selfheal",
+            liveReconnectInitialDelaySeconds: 0.001,
+            liveReconnectMaxDelaySeconds: 0.001
+        )
         model.draftText = "Hi"
         await model.sendDraft()
         try await waitUntil { !model.isStreaming }
-        XCTAssertFalse(model.messages.contains { $0.text == "Tool reply" })
-        let fetchesAfterDrop = messagesFetches.value
 
-        // The turn finishes server-side. The deterministic signal that nothing is
-        // watching: with no live-follow loop, no further message fetch is ever
-        // issued, so the durable reply can't surface. Assert on the fetch count
-        // (the only mechanism that could surface it) rather than on content after a
-        // delay. The short settle only gives a hypothetical background reload a
-        // chance to (wrongly) fire so the count assertion can catch it.
-        turnComplete.increment()
-        try await Task.sleep(for: .milliseconds(200))
-        XCTAssertEqual(
-            messagesFetches.value,
-            fetchesAfterDrop,
-            "Without a live-follow loop no message fetch should be issued, so the reply stays out of view."
-        )
-        XCTAssertFalse(model.messages.contains { $0.text == "Tool reply" })
-
-        // Reopening the thread (selectConversation) issues a fetch that recovers it.
-        await model.selectConversation("web_conv_nofollow")
-        try await waitUntil { model.messages.contains { $0.text == "Tool reply" } }
+        // The drop self-healed via the send-path resume — a second subscribe
+        // completed the turn and surfaced the reply with no reopen required.
+        XCTAssertEqual(streamRequests.value, 2)
         XCTAssertTrue(model.messages.contains { $0.text == "Tool reply" })
-        XCTAssertGreaterThan(messagesFetches.value, fetchesAfterDrop)
+        XCTAssertNil(model.errorMessage)
     }
 
     func testStreamDropEmitsDiagnosticBreadcrumb() async throws {
@@ -2233,6 +2428,10 @@ final class ChatViewModelTests: XCTestCase {
         let model = ChatViewModel(
             authManager: authManager,
             conversationID: "web_conv_breadcrumb",
+            liveReconnectInitialDelaySeconds: 0.001,
+            liveReconnectMaxDelaySeconds: 0.001,
+            maxConsecutiveStreamResumes: 1,
+            streamResumeLivenessSeconds: 60,
             errorReporter: reporter
         )
         model.draftText = "Hi"
@@ -2279,6 +2478,8 @@ final class ChatViewModelTests: XCTestCase {
         conversationID: String?,
         liveReconnectInitialDelaySeconds: Double = 2,
         liveReconnectMaxDelaySeconds: Double = 30,
+        maxConsecutiveStreamResumes: Int = 5,
+        streamResumeLivenessSeconds: Double = 2,
         streamTextFlushInterval: Duration = .milliseconds(50)
     ) -> ChatViewModel {
         let authManager = AuthManager()
@@ -2289,6 +2490,8 @@ final class ChatViewModelTests: XCTestCase {
             initialPrompt: nil,
             liveReconnectInitialDelaySeconds: liveReconnectInitialDelaySeconds,
             liveReconnectMaxDelaySeconds: liveReconnectMaxDelaySeconds,
+            maxConsecutiveStreamResumes: maxConsecutiveStreamResumes,
+            streamResumeLivenessSeconds: streamResumeLivenessSeconds,
             streamTextFlushInterval: streamTextFlushInterval
         )
     }

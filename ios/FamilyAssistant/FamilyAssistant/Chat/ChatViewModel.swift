@@ -95,6 +95,20 @@ final class ChatViewModel {
     @ObservationIgnored private let liveReconnectInitialDelaySeconds: Double
     @ObservationIgnored private let liveReconnectMaxDelaySeconds: Double
 
+    // While a send is in flight the watch stream is resumed across mid-turn drops
+    // (see `runSendTurn`). This caps the number of *consecutive* resumes that end
+    // immediately with no new events before the client gives up and reloads
+    // history, so an already-gone turn can't reconnect forever. A resume that
+    // applies new events OR is held open by the server (proof the turn is still
+    // running — `follow=false` only blocks while a turn is live) resets the
+    // streak, so a healthy turn — even a quiet one mid tool-call — streams on.
+    @ObservationIgnored private let maxConsecutiveStreamResumes: Int
+    // A resume that stayed connected at least this long without new events was
+    // held open by the server for a still-running turn (it blocks on the live
+    // queue), not an instant drain-and-close of a finished/gone turn — so it must
+    // not count toward the give-up streak above. Injectable for tests.
+    @ObservationIgnored private let streamResumeLivenessSeconds: Double
+
     // Streamed assistant text arrives as many small deltas. Appending each one to
     // `messages` directly would re-render and re-lay-out the whole thread per
     // token; instead deltas are buffered per assistant message and flushed on a
@@ -120,11 +134,15 @@ final class ChatViewModel {
         initialPrompt: String? = nil,
         liveReconnectInitialDelaySeconds: Double = 2,
         liveReconnectMaxDelaySeconds: Double = 30,
+        maxConsecutiveStreamResumes: Int = 5,
+        streamResumeLivenessSeconds: Double = 2,
         streamTextFlushInterval: Duration = .milliseconds(50),
         errorReporter: ErrorReporter = .shared
     ) {
         self.liveReconnectInitialDelaySeconds = liveReconnectInitialDelaySeconds
         self.liveReconnectMaxDelaySeconds = liveReconnectMaxDelaySeconds
+        self.maxConsecutiveStreamResumes = maxConsecutiveStreamResumes
+        self.streamResumeLivenessSeconds = streamResumeLivenessSeconds
         self.streamTextFlushInterval = streamTextFlushInterval
         self.errorReporter = errorReporter
         apiClient = ChatAPIClient(authManager: authManager)
@@ -518,13 +536,42 @@ final class ChatViewModel {
                 assistantMessageID: assistantMessageID,
                 lastSeq: &lastSeq
             )
-            // Resubscribe at most once on a resumable drop, resuming just after
-            // the last applied seq so no events are replayed or missed. The server
-            // replays events with `seq >= from_seq`, so resume from `lastSeq + 1`
-            // (still acking `lastSeq`) — resuming from `lastSeq` would re-apply the
-            // last event's content. A second drop falls through to the interrupted
-            // handling rather than spinning.
-            if outcome == .dropped, !Task.isCancelled, currentStreamToken == streamToken {
+            // Resume the live token stream across mid-turn drops instead of
+            // stranding on the disconnected indicator. The turn keeps running
+            // durably on the server and the hub replays events with
+            // `seq >= from_seq`, so a severed connection — a `stream_dropped`
+            // frame, a transient 5xx, or a bare EOF from a proxy request-timeout
+            // (`.dropped`/`.interrupted`) — is recoverable: resubscribe from just
+            // after the last applied seq (still acking `lastSeq`; resuming from
+            // `lastSeq` would re-apply the last event) and keep streaming.
+            //
+            // The loop continues for the whole life of the turn. A resume only
+            // counts toward giving up when it ends *immediately with no new
+            // events* — an instant drain-and-close, which is how `follow=false`
+            // reports a turn that has finished or rotated out of the hub. A resume
+            // that applies new events, or that the server held open for a while
+            // (it blocks on the live queue only while a turn is still running —
+            // e.g. a quiet, long-running tool call between streamed frames),
+            // resets the streak so a healthy turn is never abandoned mid-flight.
+            // Only after `maxConsecutiveStreamResumes` instant no-progress closes
+            // do we stop and fall back to a history reload. Back off only between
+            // those closes so a healthy resume after a real drop is immediate.
+            var noProgressResumes = 0
+            var resumeDelay = liveReconnectInitialDelaySeconds
+            while outcome == .dropped || outcome == .interrupted {
+                guard !Task.isCancelled, currentStreamToken == streamToken,
+                      noProgressResumes < maxConsecutiveStreamResumes
+                else {
+                    break
+                }
+                if noProgressResumes > 0 {
+                    try? await Task.sleep(for: .seconds(resumeDelay))
+                    guard !Task.isCancelled, currentStreamToken == streamToken else {
+                        return
+                    }
+                }
+                let seqBeforeResume = lastSeq
+                let resumeStartedAt = Date()
                 outcome = await runTurnSubscription(
                     conversationID: id,
                     fromSeq: lastSeq.map { $0 + 1 } ?? start.firstSeq,
@@ -533,6 +580,14 @@ final class ChatViewModel {
                     assistantMessageID: assistantMessageID,
                     lastSeq: &lastSeq
                 )
+                let heldOpen = Date().timeIntervalSince(resumeStartedAt) >= streamResumeLivenessSeconds
+                if lastSeq != seqBeforeResume || heldOpen {
+                    noProgressResumes = 0
+                    resumeDelay = liveReconnectInitialDelaySeconds
+                } else {
+                    noProgressResumes += 1
+                    resumeDelay = min(resumeDelay * 2, liveReconnectMaxDelaySeconds)
+                }
             }
 
             // A superseded send (newer send or conversation switch) must not apply
@@ -1052,7 +1107,11 @@ final class ChatViewModel {
     }
 
     private func markLiveUpdatesDisconnectedIfActive() {
-        if !Task.isCancelled {
+        // Don't surface the disconnected indicator while a send is actively
+        // streaming: the send path owns the live connection then and resumes the
+        // turn across drops on its own (see `runSendTurn`), so a transient
+        // follow-stream drop here is not a user-visible disconnect.
+        if !Task.isCancelled, !isStreaming {
             liveUpdatesConnected = false
         }
     }
