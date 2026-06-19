@@ -184,14 +184,18 @@ private struct ChatThreadView: View {
             Divider()
             ChatComposerView(viewModel: viewModel)
         }
-        .onChange(of: scenePhase) { _, newPhase in
-            // Returning to the foreground: re-establish the live-updates follow
-            // stream and catch up persisted history. A turn that finished while
-            // the app was backgrounded (the follow Task is suspended/torn down by
-            // the OS) would otherwise strand until a manual refresh. With the
-            // SSE-independent catch-up in `reconnectLiveUpdates`, the thread
-            // recovers even if the fresh SSE connect itself fails.
-            if newPhase == .active {
+        .onChange(of: scenePhase) { oldPhase, newPhase in
+            // Returning to the foreground from the BACKGROUND: re-establish the
+            // live-updates follow stream and catch up persisted history. A turn
+            // that finished while the app was backgrounded (the follow Task is
+            // suspended/torn down by the OS) would otherwise strand until a manual
+            // refresh. With the SSE-independent catch-up in `reconnectLiveUpdates`,
+            // the thread recovers even if the fresh SSE connect itself fails.
+            //
+            // Gate on `oldPhase == .background` so a transient `.inactive → .active`
+            // blip (Control Center, the app switcher, a notification banner) does
+            // not needlessly tear down and restart a healthy follow connection.
+            if oldPhase == .background, newPhase == .active {
                 Task { await viewModel.reconnectLiveUpdates() }
             }
         }

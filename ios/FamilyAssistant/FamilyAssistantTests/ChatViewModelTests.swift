@@ -1703,6 +1703,159 @@ final class ChatViewModelTests: XCTestCase {
         model = nil
     }
 
+    func testLiveFollowDoesNotSurfaceErrorOrConfirmationForPassiveTurn() async throws {
+        // Dropping the follow stream's event_types filter (M2) let it carry
+        // `.error` and tool-confirmation frames. Those drive global UI (a modal
+        // "Chat Error" alert, a tool-approval sheet) and must only fire for a turn
+        // THIS device is driving — never for one observed passively on the
+        // always-on follow stream (started elsewhere / by a schedule). They must
+        // be ignored here; only visible reply content renders into a bubble.
+        let controller = HangingStream()
+        ChatMockBackendURLProtocol.respond { request in
+            let path = request.url?.path ?? ""
+            if request.httpMethod == "GET", path.hasSuffix("/messages") {
+                if Self.queryItems(from: request)["after"] == nil {
+                    return .json(
+                        """
+                        {
+                          "conversation_id":"web_conv_passive",
+                          "messages":[
+                            {"internal_id":1,"role":"user","content":"Earlier","timestamp":"2026-06-08T12:00:00Z"}
+                          ],
+                          "count":1,
+                          "total_messages":1,
+                          "has_more_before":false,
+                          "has_more_after":false
+                        }
+                        """
+                    )
+                }
+                return .json(
+                    #"{"conversation_id":"web_conv_passive","messages":[],"count":0,"total_messages":1,"has_more_before":false,"has_more_after":false}"#
+                )
+            }
+            if request.httpMethod == "GET", path == "/api/v1/chat/conversations" {
+                return .json(#"{"conversations":[],"count":0}"#)
+            }
+            if request.httpMethod == "GET", path.hasSuffix("/stream") {
+                // The error and confirmation frames precede the text frame; if the
+                // text renders, both earlier frames were already processed.
+                return .hangingStream(
+                    "event: error\ndata: {\"turn_id\":\"turn-x\",\"error\":\"boom\",\"seq\":5}\n\n"
+                        + "event: tool_confirmation_request\ndata: {\"turn_id\":\"turn-x\",\"request_id\":\"req-1\",\"tool_name\":\"delete_all\",\"seq\":6}\n\n"
+                        + "event: text\ndata: {\"turn_id\":\"turn-x\",\"content\":\"Working\",\"seq\":7}\n\n",
+                    controller: controller
+                )
+            }
+            return .json(#"{"detail":"unexpected"}"#, statusCode: 404)
+        }
+
+        var model: ChatViewModel? = makeViewModel(conversationID: "web_conv_passive")
+        await model?.selectConversation("web_conv_passive")
+
+        // The text after the error/confirmation frames renders live...
+        try await waitUntil { model?.messages.map(\.text) == ["Earlier", "Working"] }
+        // ...proving both earlier frames were processed — and neither popped UI.
+        XCTAssertNil(model?.errorMessage)
+        XCTAssertEqual(model?.pendingConfirmations.isEmpty, true)
+
+        controller.finish()
+        model = nil
+    }
+
+    func testLiveFollowBubbleSurvivesMidTurnCatchUpMerge() async throws {
+        // A still-running follow turn's `local_follow_` bubble must survive a
+        // mid-turn history catch-up merge (which otherwise drops every `local_`
+        // row) so streaming resumes into the SAME bubble after a reconnect rather
+        // than discarding tokens against a stale mapping.
+        let streamConnects = AtomicCounter()
+        let pinged = AtomicCounter()
+        let leg1 = HangingStream()
+        let leg2 = HangingStream()
+        ChatMockBackendURLProtocol.respond { request in
+            let path = request.url?.path ?? ""
+            if request.httpMethod == "GET", path.hasSuffix("/messages") {
+                if Self.queryItems(from: request)["after"] == nil {
+                    return .json(
+                        """
+                        {
+                          "conversation_id":"web_conv_survive",
+                          "messages":[
+                            {"internal_id":1,"role":"user","content":"Earlier","timestamp":"2026-06-08T12:00:00Z"}
+                          ],
+                          "count":1,
+                          "total_messages":1,
+                          "has_more_before":false,
+                          "has_more_after":false
+                        }
+                        """
+                    )
+                }
+                // A new persisted row appears exactly at the mid-turn drop, so the
+                // catch-up merge has a non-empty delta (the path that drops locals).
+                if pinged.value == 0 {
+                    return .json(
+                        #"{"conversation_id":"web_conv_survive","messages":[],"count":0,"total_messages":1,"has_more_before":false,"has_more_after":false}"#
+                    )
+                }
+                return .json(
+                    """
+                    {
+                      "conversation_id":"web_conv_survive",
+                      "messages":[
+                        {"internal_id":2,"role":"user","content":"ping","timestamp":"2026-06-08T12:01:00Z"}
+                      ],
+                      "count":1,
+                      "total_messages":1,
+                      "has_more_before":false,
+                      "has_more_after":false
+                    }
+                    """
+                )
+            }
+            if request.httpMethod == "GET", path == "/api/v1/chat/conversations" {
+                return .json(#"{"conversations":[],"count":0}"#)
+            }
+            if request.httpMethod == "GET", path.hasSuffix("/stream") {
+                let n = streamConnects.increment()
+                return .hangingStream(
+                    n == 1
+                        ? "event: text\ndata: {\"turn_id\":\"turn-x\",\"content\":\"Hello\",\"seq\":5}\n\n"
+                        : "event: text\ndata: {\"turn_id\":\"turn-x\",\"content\":\" world\",\"seq\":6}\n\n",
+                    controller: n == 1 ? leg1 : leg2
+                )
+            }
+            return .json(#"{"detail":"unexpected"}"#, statusCode: 404)
+        }
+
+        var model: ChatViewModel? = makeViewModel(
+            conversationID: "web_conv_survive",
+            liveReconnectInitialDelaySeconds: 0.01,
+            liveReconnectMaxDelaySeconds: 0.01
+        )
+        await model?.selectConversation("web_conv_survive")
+        try await waitUntil { model?.messages.contains { $0.text == "Hello" } == true }
+
+        // A new row persists, then the first follow leg drops without turn_ended,
+        // so the catch-up merge runs with a non-empty delta and drops `local_` rows.
+        pinged.increment()
+        leg1.finish()
+
+        // The running bubble survived the merge and resumed streaming on reconnect:
+        // the SAME bubble now holds "Hello world", not a fresh " world".
+        try await waitUntil {
+            model?.messages.contains { $0.id == "local_follow_turn-x" && $0.text == "Hello world" } == true
+        }
+        XCTAssertEqual(
+            model?.messages.first { $0.id == "local_follow_turn-x" }?.text,
+            "Hello world"
+        )
+        XCTAssertEqual(model?.messages.contains { $0.text == "ping" }, true)
+
+        leg2.finish()
+        model = nil
+    }
+
     func testResendDuringStreamSupersedesWithoutClobbering() async throws {
         // Sending again while the first turn is still streaming must supersede it
         // cleanly: the first (cancelled) task must not flip the new turn's

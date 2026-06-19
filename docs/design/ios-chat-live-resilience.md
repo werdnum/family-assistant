@@ -107,6 +107,21 @@ responses. New red-green coverage:
 - `ios/.../Chat/ChatAPIClient.swift` — `connectEvents` (drop the `event_types` filter for follow).
 - `ios/.../FamilyAssistantTests/ChatViewModelTests.swift` — mock-backend regression tests.
 
+## Known limitations
+
+- **Mid-turn open shows only the tail.** The follow stream subscribes with the default
+  `from_seq = -1` (tail from the current head), so a turn already part-way through generating its
+  reply when you open the conversation streams in only from the connect point — you may see it
+  mid-sentence. The full reply reconciles from persisted history on `turn_ended`. Replaying the
+  in-progress turn from its start would need the running turn's first seq, which `GET …/messages`
+  does not currently expose (only the `active_turns` count). Wiring an active-turn replay cursor
+  through that endpoint is deferred; subscribing from an arbitrary lower seq is unsafe because the
+  hub would replay already-persisted turns and double-render them.
+- **Passive turns don't drive global UI.** `.error` and tool-confirmation frames carried on the
+  follow stream are deliberately ignored — they would otherwise pop a modal "Chat Error" alert or a
+  tool-approval sheet for a turn this device is not driving (started elsewhere / by a schedule). A
+  failed passive turn still surfaces via its `turn_ended` + history reload.
+
 ## What this does NOT change
 
 - The server-side hub, wire protocol, and ack semantics are unchanged; this is a pure client
