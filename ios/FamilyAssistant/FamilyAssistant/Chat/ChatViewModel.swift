@@ -96,11 +96,18 @@ final class ChatViewModel {
     @ObservationIgnored private let liveReconnectMaxDelaySeconds: Double
 
     // While a send is in flight the watch stream is resumed across mid-turn drops
-    // (see `runSendTurn`). This caps the number of *consecutive* resumes that make
-    // no forward progress before the client gives up and reloads history, so a
-    // wedged or already-gone turn can't reconnect forever. Any resume that applies
-    // new events resets the streak, so a healthy turn streams for its whole life.
+    // (see `runSendTurn`). This caps the number of *consecutive* resumes that end
+    // immediately with no new events before the client gives up and reloads
+    // history, so an already-gone turn can't reconnect forever. A resume that
+    // applies new events OR is held open by the server (proof the turn is still
+    // running — `follow=false` only blocks while a turn is live) resets the
+    // streak, so a healthy turn — even a quiet one mid tool-call — streams on.
     @ObservationIgnored private let maxConsecutiveStreamResumes: Int
+    // A resume that stayed connected at least this long without new events was
+    // held open by the server for a still-running turn (it blocks on the live
+    // queue), not an instant drain-and-close of a finished/gone turn — so it must
+    // not count toward the give-up streak above. Injectable for tests.
+    @ObservationIgnored private let streamResumeLivenessSeconds: Double
 
     // Streamed assistant text arrives as many small deltas. Appending each one to
     // `messages` directly would re-render and re-lay-out the whole thread per
@@ -128,12 +135,14 @@ final class ChatViewModel {
         liveReconnectInitialDelaySeconds: Double = 2,
         liveReconnectMaxDelaySeconds: Double = 30,
         maxConsecutiveStreamResumes: Int = 5,
+        streamResumeLivenessSeconds: Double = 2,
         streamTextFlushInterval: Duration = .milliseconds(50),
         errorReporter: ErrorReporter = .shared
     ) {
         self.liveReconnectInitialDelaySeconds = liveReconnectInitialDelaySeconds
         self.liveReconnectMaxDelaySeconds = liveReconnectMaxDelaySeconds
         self.maxConsecutiveStreamResumes = maxConsecutiveStreamResumes
+        self.streamResumeLivenessSeconds = streamResumeLivenessSeconds
         self.streamTextFlushInterval = streamTextFlushInterval
         self.errorReporter = errorReporter
         apiClient = ChatAPIClient(authManager: authManager)
@@ -536,12 +545,17 @@ final class ChatViewModel {
             // after the last applied seq (still acking `lastSeq`; resuming from
             // `lastSeq` would re-apply the last event) and keep streaming.
             //
-            // The loop continues for the whole life of the turn as long as each
-            // resume makes forward progress. A streak of
-            // `maxConsecutiveStreamResumes` resumes that apply nothing new means
-            // the turn is wedged or already gone, so we stop and fall back to a
-            // history reload. Back off only between no-progress resumes so a
-            // healthy resume after a real drop reconnects immediately.
+            // The loop continues for the whole life of the turn. A resume only
+            // counts toward giving up when it ends *immediately with no new
+            // events* — an instant drain-and-close, which is how `follow=false`
+            // reports a turn that has finished or rotated out of the hub. A resume
+            // that applies new events, or that the server held open for a while
+            // (it blocks on the live queue only while a turn is still running —
+            // e.g. a quiet, long-running tool call between streamed frames),
+            // resets the streak so a healthy turn is never abandoned mid-flight.
+            // Only after `maxConsecutiveStreamResumes` instant no-progress closes
+            // do we stop and fall back to a history reload. Back off only between
+            // those closes so a healthy resume after a real drop is immediate.
             var noProgressResumes = 0
             var resumeDelay = liveReconnectInitialDelaySeconds
             while outcome == .dropped || outcome == .interrupted {
@@ -557,6 +571,7 @@ final class ChatViewModel {
                     }
                 }
                 let seqBeforeResume = lastSeq
+                let resumeStartedAt = Date()
                 outcome = await runTurnSubscription(
                     conversationID: id,
                     fromSeq: lastSeq.map { $0 + 1 } ?? start.firstSeq,
@@ -565,7 +580,8 @@ final class ChatViewModel {
                     assistantMessageID: assistantMessageID,
                     lastSeq: &lastSeq
                 )
-                if lastSeq != seqBeforeResume {
+                let heldOpen = Date().timeIntervalSince(resumeStartedAt) >= streamResumeLivenessSeconds
+                if lastSeq != seqBeforeResume || heldOpen {
                     noProgressResumes = 0
                     resumeDelay = liveReconnectInitialDelaySeconds
                 } else {

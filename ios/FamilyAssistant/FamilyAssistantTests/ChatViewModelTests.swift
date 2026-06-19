@@ -544,7 +544,8 @@ final class ChatViewModelTests: XCTestCase {
             conversationID: "web_conv_drop",
             liveReconnectInitialDelaySeconds: 0.001,
             liveReconnectMaxDelaySeconds: 0.001,
-            maxConsecutiveStreamResumes: 2
+            maxConsecutiveStreamResumes: 2,
+            streamResumeLivenessSeconds: 60
         )
         model.draftText = "Hi"
         await model.sendDraft()
@@ -727,6 +728,78 @@ final class ChatViewModelTests: XCTestCase {
         XCTAssertEqual(model.messages.map(\.text), ["Hi", "Looking all good"])
         let assistant = try XCTUnwrap(model.messages.last)
         XCTAssertEqual(assistant.status, .complete)
+        XCTAssertNil(model.errorMessage)
+    }
+
+    func testSendQuietRunningTurnKeepsResumingUntilItCompletes() async throws {
+        // A healthy but quiet turn — a long tool call running through several proxy
+        // timeouts with no streamed frames — must NOT be abandoned. Each resume
+        // ends with no new seq, but the server holds `follow=false` open only while
+        // a turn is still running, so a held-open resume resets the give-up streak
+        // rather than counting toward it. Here every resume returns an empty
+        // (held-open) stream until the turn finally completes; with a tiny liveness
+        // threshold the real round-trips read as held-open, so the client keeps
+        // resuming well past `maxConsecutiveStreamResumes` and finishes the turn.
+        let streamRequests = AtomicCounter()
+        var streamedTurnID = "turn-quiet"
+        ChatMockBackendURLProtocol.respond { request in
+            let path = request.url?.path ?? ""
+            switch (request.httpMethod ?? "GET", path) {
+            case ("POST", "/api/v1/chat/turns"):
+                if let body = (try? Self.jsonObject(from: request)) as? [String: Any],
+                   let postedTurnID = body["turn_id"] as? String {
+                    streamedTurnID = postedTurnID
+                }
+                return .json(
+                    #"{"turn_id":"\#(streamedTurnID)","conversation_id":"web_conv_quiet","first_seq":0}"#
+                )
+            case ("GET", "/api/v1/chat/conversations"):
+                return .json(#"{"conversations":[],"count":0}"#)
+            case ("GET", "/api/v1/chat/conversations/web_conv_quiet/messages"):
+                return .json(
+                    """
+                    {"conversation_id":"web_conv_quiet","messages":[{"internal_id":1,"role":"user","content":"Hi","timestamp":"2026-06-08T12:00:00Z"},{"internal_id":2,"role":"assistant","content":"Done thinking","timestamp":"2026-06-08T12:00:01Z"}],"count":2,"total_messages":2,"has_more_before":false,"has_more_after":false}
+                    """
+                )
+            default:
+                if request.httpMethod == "GET", path == "/api/v1/chat/conversations/web_conv_quiet/stream" {
+                    // The first four subscribes return an empty, held-open stream (a
+                    // quiet running turn the proxy keeps cutting); the fifth finally
+                    // streams turn_ended.
+                    if streamRequests.increment() < 5 {
+                        return .text("")
+                    }
+                    return .text(
+                        """
+                        event: text
+                        data: {"turn_id":"\(streamedTurnID)","content":"Done thinking","seq":1}
+
+                        event: turn_ended
+                        data: {"turn_id":"\(streamedTurnID)","status":"complete","seq":2}
+
+                        """
+                    )
+                }
+                return .json(#"{"detail":"unexpected"}"#, statusCode: 404)
+            }
+        }
+
+        let model = makeViewModel(
+            conversationID: "web_conv_quiet",
+            liveReconnectInitialDelaySeconds: 0.001,
+            liveReconnectMaxDelaySeconds: 0.001,
+            maxConsecutiveStreamResumes: 1,
+            streamResumeLivenessSeconds: 0.00001
+        )
+        model.draftText = "Hi"
+        await model.sendDraft()
+        try await waitUntil { !model.isStreaming }
+
+        // Despite `maxConsecutiveStreamResumes: 1`, the held-open empty resumes did
+        // not trip the give-up bound — the client kept resuming through all five
+        // subscribes and completed the turn rather than reloading history early.
+        XCTAssertEqual(streamRequests.value, 5)
+        XCTAssertEqual(model.messages.map(\.text), ["Hi", "Done thinking"])
         XCTAssertNil(model.errorMessage)
     }
 
@@ -939,7 +1012,8 @@ final class ChatViewModelTests: XCTestCase {
             conversationID: "web_conv_reopen",
             liveReconnectInitialDelaySeconds: 0.001,
             liveReconnectMaxDelaySeconds: 0.001,
-            maxConsecutiveStreamResumes: 2
+            maxConsecutiveStreamResumes: 2,
+            streamResumeLivenessSeconds: 60
         )
         sender?.draftText = "Hi"
         await sender?.sendDraft()
@@ -1151,7 +1225,8 @@ final class ChatViewModelTests: XCTestCase {
             conversationID: "web_conv_twice",
             liveReconnectInitialDelaySeconds: 0.001,
             liveReconnectMaxDelaySeconds: 0.001,
-            maxConsecutiveStreamResumes: 2
+            maxConsecutiveStreamResumes: 2,
+            streamResumeLivenessSeconds: 60
         )
         model.draftText = "Hi"
         await model.sendDraft()
@@ -1285,7 +1360,8 @@ final class ChatViewModelTests: XCTestCase {
             conversationID: "web_conv_noack",
             liveReconnectInitialDelaySeconds: 0.001,
             liveReconnectMaxDelaySeconds: 0.001,
-            maxConsecutiveStreamResumes: 2
+            maxConsecutiveStreamResumes: 2,
+            streamResumeLivenessSeconds: 60
         )
         model.draftText = "Hi"
         await model.sendDraft()
@@ -2355,6 +2431,7 @@ final class ChatViewModelTests: XCTestCase {
             liveReconnectInitialDelaySeconds: 0.001,
             liveReconnectMaxDelaySeconds: 0.001,
             maxConsecutiveStreamResumes: 1,
+            streamResumeLivenessSeconds: 60,
             errorReporter: reporter
         )
         model.draftText = "Hi"
@@ -2402,6 +2479,7 @@ final class ChatViewModelTests: XCTestCase {
         liveReconnectInitialDelaySeconds: Double = 2,
         liveReconnectMaxDelaySeconds: Double = 30,
         maxConsecutiveStreamResumes: Int = 5,
+        streamResumeLivenessSeconds: Double = 2,
         streamTextFlushInterval: Duration = .milliseconds(50)
     ) -> ChatViewModel {
         let authManager = AuthManager()
@@ -2413,6 +2491,7 @@ final class ChatViewModelTests: XCTestCase {
             liveReconnectInitialDelaySeconds: liveReconnectInitialDelaySeconds,
             liveReconnectMaxDelaySeconds: liveReconnectMaxDelaySeconds,
             maxConsecutiveStreamResumes: maxConsecutiveStreamResumes,
+            streamResumeLivenessSeconds: streamResumeLivenessSeconds,
             streamTextFlushInterval: streamTextFlushInterval
         )
     }
