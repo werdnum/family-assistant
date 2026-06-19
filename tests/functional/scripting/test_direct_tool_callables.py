@@ -541,3 +541,86 @@ results  # Return the results
         assert result["echo_exists"] is False
         assert result["add_numbers_exists"] is False
         assert result["tools_count"] == 0
+
+
+class _InScriptProbeToolsProvider:
+    """Tools provider whose single tool records context.in_script when called."""
+
+    def __init__(self) -> None:
+        self.in_script_seen: bool | None = None
+
+    async def get_tool_definitions(self) -> list[ToolDefinition]:
+        return [
+            {
+                "type": "function",
+                "function": {
+                    "name": "probe",
+                    "description": "Record whether the execution context is in-script",
+                    "parameters": {"type": "object", "properties": {}, "required": []},
+                },
+            }
+        ]
+
+    # ast-grep-ignore: no-dict-any - tool definitions match external OpenAI JSON schema
+    def get_raw_tool_definitions(self) -> list[dict[str, Any]]:
+        return [
+            {
+                "type": "function",
+                "function": {
+                    "name": "probe",
+                    "description": "Record whether the execution context is in-script",
+                    "parameters": {"type": "object", "properties": {}, "required": []},
+                },
+            }
+        ]
+
+    async def execute_tool(
+        self,
+        name: str,
+        # ast-grep-ignore: no-dict-any - tool arguments from external LLM tool call
+        arguments: dict[str, Any],
+        context: ToolExecutionContext,
+        call_id: str | None = None,
+    ) -> str:
+        _ = (name, arguments, call_id)
+        self.in_script_seen = context.in_script
+        return "ok"
+
+    async def close(self) -> None:
+        return None
+
+
+@pytest.mark.asyncio
+async def test_engine_marks_context_in_script(db_engine: AsyncEngine) -> None:
+    """MontyEngine.evaluate_async marks the context in_script for every caller.
+
+    The marking lives in the single script entry point, so both the execute_script
+    tool and scheduled automation scripts (which build MontyEngine directly) are
+    covered, and context-sensitive tools such as delegate_to_service behave
+    synchronously inside scripts.
+    """
+    tools_provider = _InScriptProbeToolsProvider()
+
+    async with DatabaseContext(engine=db_engine) as db:
+        context = ToolExecutionContext(
+            interface_type="test",
+            conversation_id="test-123",
+            user_name="Test User",
+            turn_id="turn-1",
+            db_context=db,
+            processing_service=None,
+            clock=None,
+            home_assistant_client=None,
+            event_sources=None,
+            attachment_registry=None,
+            camera_backend=None,
+            timezone=ZoneInfo("UTC"),
+        )
+        assert context.in_script is False
+
+        engine = MontyEngine(
+            tools_provider=tools_provider, default_timezone=ZoneInfo("UTC")
+        )
+        await engine.evaluate_async("probe()", execution_context=context)
+
+    assert tools_provider.in_script_seen is True

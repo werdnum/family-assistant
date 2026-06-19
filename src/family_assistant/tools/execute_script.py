@@ -284,7 +284,10 @@ async def execute_script_tool(
             default_timezone=exec_context.timezone,
         )
 
-        # Execute the script asynchronously
+        # Execute the script asynchronously. MontyEngine.evaluate_async marks the
+        # context as in-script so tools that would otherwise defer their result to a
+        # later conversation message (e.g. delegate_to_service's async handoff) run
+        # synchronously and return their result to the script instead.
         result = await engine.evaluate_async(
             script=script,
             globals_dict=globals,

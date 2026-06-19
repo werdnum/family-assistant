@@ -270,6 +270,7 @@ def _tool_context(
     chat_interface: ChatInterface | None = None,
     confirmation_ui_managers: dict[str, ConfirmationUIManager] | None = None,
     attachment_registry: AttachmentRegistry | None = None,
+    in_script: bool = False,
 ) -> ToolExecutionContext:
     return ToolExecutionContext(
         interface_type=TEST_INTERFACE_TYPE,
@@ -290,6 +291,7 @@ def _tool_context(
         if chat_interface
         else None,
         confirmation_ui_managers=confirmation_ui_managers,
+        in_script=in_script,
     )
 
 
@@ -1017,6 +1019,45 @@ async def test_delegation_runs_synchronously_when_async_disabled(
     async with DatabaseContext(engine=db_engine) as db_context:
         result = await delegate_to_service_tool(
             exec_context=_tool_context(db_context, processing_service, chat_interface),
+            target_service_id="target_profile",
+            user_request="do it now",
+        )
+
+    assert result.text == "background delegation done"
+    assert len(target_service.calls) == 1
+
+    async with DatabaseContext(engine=db_engine) as db_context:
+        runs = await db_context.delegation_runs.list_for_conversation(
+            conversation_id=TEST_CONVERSATION_ID,
+            interface_type=TEST_INTERFACE_TYPE,
+            status=None,
+            limit=10,
+        )
+        assert runs == []
+
+
+@pytest.mark.asyncio
+async def test_delegation_runs_synchronously_inside_a_script(
+    db_engine: AsyncEngine,
+) -> None:
+    """Inside a script (in_script=True) delegation runs inline even when async is on.
+
+    A script is synchronous code; an async handoff that posts the result as a later
+    conversation message is useless to it. The result is returned directly and no
+    durable delegation run is created.
+    """
+    target_service = FakeDelegatableService()
+    processing_service = _source_processing_service(target_service)
+    chat_interface = AsyncMock(spec=ChatInterface)
+
+    async with DatabaseContext(engine=db_engine) as db_context:
+        result = await delegate_to_service_tool(
+            exec_context=_tool_context(
+                db_context,
+                processing_service,
+                chat_interface,
+                in_script=True,
+            ),
             target_service_id="target_profile",
             user_request="do it now",
         )
