@@ -344,6 +344,13 @@ class ToolExecutionContext:
     note_registry: NoteRegistry | None = None
     confirmation_result_waiters: ConfirmationResultWaiterRegistry | None = None
     confirmation_ui_managers: dict[str, ConfirmationUIManager] | None = None
+    in_script: bool = False
+    """True when this context is executing inside a script (MontyEngine).
+
+    Tools that would otherwise defer their result to a later conversation message
+    (notably ``delegate_to_service``'s async handoff) must run synchronously and
+    return their result directly so the script can use it.
+    """
 
 
 @dataclass

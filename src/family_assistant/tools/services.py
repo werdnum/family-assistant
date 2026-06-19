@@ -676,7 +676,14 @@ async def delegate_to_service_tool(
                 attachment_content(attachment_id) for attachment_id in attachment_ids
             )
 
-    if not _tools_config(exec_context).async_delegation_enabled:
+    # A script is synchronous code: an async handoff that delivers the result via a
+    # later conversation message is useless to it (and surprising). Run inline so
+    # the script receives the result directly. The global flag is the broader
+    # operator kill switch.
+    if (
+        exec_context.in_script
+        or not _tools_config(exec_context).async_delegation_enabled
+    ):
         return await _synchronous_delegation_result(
             exec_context,
             target_service=target_service,

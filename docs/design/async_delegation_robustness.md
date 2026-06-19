@@ -213,3 +213,15 @@ Implementation notes for whoever maintains this:
   runs from before the flip still drain and get reaped normally.
 - The `delegation_runs` table/migration is unaffected; flipping the flag needs no schema change and
   is reversible at any time.
+
+### Scripts always delegate synchronously
+
+Independently of the flag, `delegate_to_service` **always** runs synchronously when called from
+inside a script (the `execute_script` / MontyEngine path). A script is synchronous code: an async
+handoff that delivers the result as a *later* conversation message is useless to the script (and
+surprised users who scripted a delegation and then saw a stray "Delegated task … completed" chat
+message). The script engine sets `ToolExecutionContext.in_script=True`, and
+`delegate_to_service_tool` takes the synchronous branch whenever `in_script` is set, so the script
+receives the delegated result as the tool's return value with no conversation notification. Async
+handoff remains the default for interactive chat turns (where being notified later is the desired
+behavior).

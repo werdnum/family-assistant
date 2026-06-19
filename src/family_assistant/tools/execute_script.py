@@ -8,6 +8,7 @@ from __future__ import annotations
 import json
 import logging
 import uuid
+from dataclasses import replace
 from typing import TYPE_CHECKING, Any
 
 from family_assistant.scripting.apis.attachments import ScriptAttachment
@@ -284,13 +285,19 @@ async def execute_script_tool(
             default_timezone=exec_context.timezone,
         )
 
-        # Execute the script asynchronously
+        # Execute the script asynchronously. Mark the context as running inside a
+        # script so tools that would otherwise defer their result to a later
+        # conversation message (e.g. delegate_to_service's async handoff) run
+        # synchronously and return their result to the script instead.
+        script_execution_context = (
+            replace(exec_context, in_script=True)
+            if (tools_provider or exec_context.attachment_registry)
+            else None  # Pass context only if we have tools or attachment registry
+        )
         result = await engine.evaluate_async(
             script=script,
             globals_dict=globals,
-            execution_context=exec_context
-            if (tools_provider or exec_context.attachment_registry)
-            else None,  # Pass context if we have tools or attachment registry
+            execution_context=script_execution_context,
         )
 
         # Extract attachment IDs from return value
