@@ -1449,6 +1449,162 @@ final class ChatViewModelTests: XCTestCase {
         model = nil
     }
 
+    func testLiveFollowCatchesUpHistoryWhenStreamConnectKeepsFailing() async throws {
+        // Gap A: when the production front door makes SSE unusable, the follow
+        // stream's `connectEvents` keeps throwing. The only history catch-up
+        // (`mergeNewMessages`) used to be gated behind a *successful* connect, so
+        // a turn that finished while the stream was down never surfaced until a
+        // manual list refresh + reopen (both plain, short HTTP requests the proxy
+        // handles fine). The loop must catch up over plain HTTP on every failed
+        // cycle, so content recovers without the SSE stream ever succeeding.
+        let streamConnects = AtomicCounter()
+        let incrementalMerges = AtomicCounter()
+        ChatMockBackendURLProtocol.respond { request in
+            let path = request.url?.path ?? ""
+            if request.httpMethod == "GET", path.hasSuffix("/messages") {
+                if Self.queryItems(from: request)["after"] == nil {
+                    return .json(
+                        """
+                        {
+                          "conversation_id":"web_conv_catchup",
+                          "messages":[
+                            {"internal_id":1,"role":"user","content":"Earlier","timestamp":"2026-06-08T12:00:00Z"}
+                          ],
+                          "count":1,
+                          "total_messages":1,
+                          "has_more_before":false,
+                          "has_more_after":false
+                        }
+                        """
+                    )
+                }
+                incrementalMerges.increment()
+                return .json(
+                    """
+                    {
+                      "conversation_id":"web_conv_catchup",
+                      "messages":[
+                        {"internal_id":2,"role":"assistant","content":"Reply after drop","timestamp":"2026-06-08T12:05:00Z"}
+                      ],
+                      "count":1,
+                      "total_messages":1,
+                      "has_more_before":false,
+                      "has_more_after":false
+                    }
+                    """
+                )
+            }
+            if request.httpMethod == "GET", path == "/api/v1/chat/conversations" {
+                return .json(#"{"conversations":[],"count":0}"#)
+            }
+            if request.httpMethod == "GET", path.hasSuffix("/stream") {
+                // The front door mangles SSE framing: every connect attempt fails
+                // at the call site (connectEvents validates before yielding).
+                streamConnects.increment()
+                throw URLError(.cannotParseResponse)
+            }
+            return .json(#"{"detail":"unexpected"}"#, statusCode: 404)
+        }
+
+        var model: ChatViewModel? = makeViewModel(
+            conversationID: "web_conv_catchup",
+            liveReconnectInitialDelaySeconds: 0.01,
+            liveReconnectMaxDelaySeconds: 0.01
+        )
+        await model?.selectConversation("web_conv_catchup")
+
+        // The reply surfaces even though no SSE connect ever succeeds.
+        try await waitUntil { model?.messages.map(\.text) == ["Earlier", "Reply after drop"] }
+        XCTAssertEqual(model?.messages.map(\.text), ["Earlier", "Reply after drop"])
+        XCTAssertGreaterThanOrEqual(streamConnects.value, 1)
+        XCTAssertGreaterThanOrEqual(incrementalMerges.value, 1)
+        // Content recovery is decoupled from connection health: the disconnected
+        // indicator is still surfaced, but the thread is no longer stranded.
+        XCTAssertEqual(model?.liveUpdatesConnected, false)
+
+        // Release so deinit cancels the fast reconnect loop before teardown.
+        model = nil
+    }
+
+    func testReconnectLiveUpdatesCatchesUpHistoryAfterForegrounding() async throws {
+        // The foreground hook (scenePhase -> .active) calls reconnectLiveUpdates().
+        // While the app is backgrounded the follow stream is held open but the
+        // app is suspended, so the passive loop — blocked on a healthy hanging
+        // stream — never re-merges. A turn that finishes during that window must
+        // surface on foreground via the explicit reconnect's catch-up, not only
+        // when the stream happens to drop.
+        let turnFinished = AtomicCounter()
+        ChatMockBackendURLProtocol.respond { request in
+            let path = request.url?.path ?? ""
+            if request.httpMethod == "GET", path.hasSuffix("/messages") {
+                if Self.queryItems(from: request)["after"] == nil {
+                    return .json(
+                        """
+                        {
+                          "conversation_id":"web_conv_fg",
+                          "messages":[
+                            {"internal_id":1,"role":"user","content":"Earlier","timestamp":"2026-06-08T12:00:00Z"}
+                          ],
+                          "count":1,
+                          "total_messages":1,
+                          "has_more_before":false,
+                          "has_more_after":false
+                        }
+                        """
+                    )
+                }
+                if turnFinished.value == 0 {
+                    return .json(
+                        #"{"conversation_id":"web_conv_fg","messages":[],"count":0,"total_messages":1,"has_more_before":false,"has_more_after":false}"#
+                    )
+                }
+                return .json(
+                    """
+                    {
+                      "conversation_id":"web_conv_fg",
+                      "messages":[
+                        {"internal_id":2,"role":"assistant","content":"Reply while backgrounded","timestamp":"2026-06-08T12:05:00Z"}
+                      ],
+                      "count":1,
+                      "total_messages":1,
+                      "has_more_before":false,
+                      "has_more_after":false
+                    }
+                    """
+                )
+            }
+            if request.httpMethod == "GET", path == "/api/v1/chat/conversations" {
+                return .json(#"{"conversations":[],"count":0}"#)
+            }
+            if request.httpMethod == "GET", path.hasSuffix("/stream") {
+                // A healthy stream held open with no events: the passive follow
+                // loop blocks here and cannot re-merge on its own. Each request
+                // gets its own controller; teardown/cancel releases it.
+                return .hangingStream("", controller: HangingStream())
+            }
+            return .json(#"{"detail":"unexpected"}"#, statusCode: 404)
+        }
+
+        var model: ChatViewModel? = makeViewModel(conversationID: "web_conv_fg")
+        await model?.selectConversation("web_conv_fg")
+        try await waitUntil { model?.messages.map(\.text) == ["Earlier"] }
+
+        // The turn finishes while we're backgrounded; the held stream delivered
+        // nothing. The passive loop is still blocked on its hanging connection.
+        turnFinished.increment()
+        XCTAssertEqual(model?.messages.map(\.text), ["Earlier"])
+
+        // Foregrounding kicks the explicit reconnect, which catches up history.
+        await model?.reconnectLiveUpdates()
+        try await waitUntil {
+            model?.messages.map(\.text) == ["Earlier", "Reply while backgrounded"]
+        }
+        XCTAssertEqual(model?.messages.map(\.text), ["Earlier", "Reply while backgrounded"])
+
+        // Release so deinit cancels the held stream before teardown.
+        model = nil
+    }
+
     func testResendDuringStreamSupersedesWithoutClobbering() async throws {
         // Sending again while the first turn is still streaming must supersede it
         // cleanly: the first (cancelled) task must not flip the new turn's

@@ -1050,8 +1050,16 @@ final class ChatViewModel {
                 // by an idle proxy / server shutdown (a clean EOF finishes the loop
                 // without throwing). The error — or its absence — tells an idle
                 // timeout from a connection loss from a clean server-side close.
-                await self?.reportLiveStreamDrop(conversationID: conversationID, error: streamError)
+                self?.reportLiveStreamDrop(conversationID: conversationID, error: streamError)
                 self?.markLiveUpdatesDisconnectedIfActive()
+                // Catch up persisted history over plain HTTP on every involuntary
+                // disconnect — not only after a successful (re)connect. When the
+                // front door makes SSE unusable (buffered/severed framing), the
+                // connect above keeps throwing and `handleLiveReconnect` never
+                // runs, so without this a turn that finished while the stream was
+                // down would strand until a manual refresh. A short GET succeeds
+                // precisely when the long-lived SSE does not.
+                await self?.catchUpPersistedHistory(conversationID: conversationID)
                 try? await Task.sleep(for: .seconds(delay))
                 delay = min(delay * 2, maxDelay)
             }
@@ -1064,10 +1072,22 @@ final class ChatViewModel {
         // reconnect after a drop resumes at the new head and misses events
         // published while offline. Message content always comes from persisted
         // history, so a reload closes that gap.
-        if !isStreaming {
-            await mergeNewMessages(conversationID: conversationID)
-            await refreshRecentConversations()
+        await catchUpPersistedHistory(conversationID: conversationID)
+    }
+
+    /// Reconcile persisted history over plain HTTP, independent of the SSE follow
+    /// stream's health. Called both on a successful (re)connect and on every
+    /// involuntary disconnect, so a turn that finishes while the follow stream is
+    /// unusable (a front door that buffers/severs long-lived SSE) still surfaces
+    /// within one backoff interval instead of stranding until a manual refresh.
+    /// Skipped while a send is actively streaming: the send path owns the ack
+    /// cursor and the history merge then (see ``runSendTurn``).
+    private func catchUpPersistedHistory(conversationID: String) async {
+        guard !isStreaming else {
+            return
         }
+        await mergeNewMessages(conversationID: conversationID)
+        await refreshRecentConversations()
     }
 
     /// Handle one follow-stream event. Returns false when the loop should stop.
