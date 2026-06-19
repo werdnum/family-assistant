@@ -1605,6 +1605,104 @@ final class ChatViewModelTests: XCTestCase {
         model = nil
     }
 
+    func testLiveFollowStreamsTokensForTurnStartedElsewhere() async throws {
+        // M2: the always-on follow stream now carries token frames, so a turn
+        // started elsewhere (another device, or after our own send gave up)
+        // streams live into a freshly created assistant bubble instead of only
+        // appearing as a history reload when it ends. On `turn_ended` the live
+        // `local_` bubble reconciles to the persisted reply.
+        let turnFinished = AtomicCounter()
+        let acks = AtomicCounter()
+        let controller = HangingStream()
+        ChatMockBackendURLProtocol.respond { request in
+            let path = request.url?.path ?? ""
+            if request.httpMethod == "GET", path.hasSuffix("/messages") {
+                if Self.queryItems(from: request)["after"] == nil {
+                    return .json(
+                        """
+                        {
+                          "conversation_id":"web_conv_remote",
+                          "messages":[
+                            {"internal_id":1,"role":"user","content":"Earlier","timestamp":"2026-06-08T12:00:00Z"}
+                          ],
+                          "count":1,
+                          "total_messages":1,
+                          "has_more_before":false,
+                          "has_more_after":false
+                        }
+                        """
+                    )
+                }
+                if turnFinished.value == 0 {
+                    return .json(
+                        #"{"conversation_id":"web_conv_remote","messages":[],"count":0,"total_messages":1,"has_more_before":false,"has_more_after":false}"#
+                    )
+                }
+                return .json(
+                    """
+                    {
+                      "conversation_id":"web_conv_remote",
+                      "messages":[
+                        {"internal_id":2,"role":"assistant","content":"Hello world","timestamp":"2026-06-08T12:05:00Z"}
+                      ],
+                      "count":1,
+                      "total_messages":1,
+                      "has_more_before":false,
+                      "has_more_after":false
+                    }
+                    """
+                )
+            }
+            if request.httpMethod == "GET", path == "/api/v1/chat/conversations" {
+                return .json(#"{"conversations":[],"count":0}"#)
+            }
+            if request.httpMethod == "POST", path == "/api/v1/chat/ack" {
+                acks.increment()
+                return .json("{}")
+            }
+            if request.httpMethod == "GET", path.hasSuffix("/stream") {
+                // A turn already running elsewhere: stream its text tokens, then
+                // hold open until the test finishes it with turn_ended. Each frame
+                // is terminated with an explicit blank line so a held partial
+                // chunk can't merge with the later turn_ended frame.
+                return .hangingStream(
+                    "event: text\ndata: {\"turn_id\":\"turn-remote\",\"content\":\"Hello\",\"seq\":5}\n\n"
+                        + "event: text\ndata: {\"turn_id\":\"turn-remote\",\"content\":\" world\",\"seq\":6}\n\n",
+                    controller: controller
+                )
+            }
+            return .json(#"{"detail":"unexpected"}"#, statusCode: 404)
+        }
+
+        var model: ChatViewModel? = makeViewModel(conversationID: "web_conv_remote")
+        await model?.selectConversation("web_conv_remote")
+
+        // Tokens render live into a new assistant bubble before the turn ends —
+        // not via a history reload (the persisted reply doesn't exist yet).
+        try await waitUntil { model?.messages.map(\.text) == ["Earlier", "Hello world"] }
+        XCTAssertEqual(model?.messages.last?.id, "local_follow_turn-remote")
+        XCTAssertEqual(model?.messages.last?.status, .running)
+
+        // The turn ends: history reload reconciles the live bubble to persisted.
+        turnFinished.increment()
+        controller.finish(
+            appending: """
+            event: turn_ended
+            data: {"turn_id":"turn-remote","status":"complete","seq":7}
+
+            """
+        )
+        try await waitUntil { model?.messages.last?.id.hasPrefix("msg_") == true }
+        XCTAssertEqual(model?.messages.map(\.text), ["Earlier", "Hello world"])
+        XCTAssertEqual(model?.messages.last?.status, .complete)
+        // A turn_ended we surfaced live is acked so its disconnect push is
+        // suppressed.
+        try await waitUntil { acks.value >= 1 }
+
+        // Release so deinit cancels the follow loop before teardown.
+        model = nil
+    }
+
     func testResendDuringStreamSupersedesWithoutClobbering() async throws {
         // Sending again while the first turn is still streaming must supersede it
         // cleanly: the first (cancelled) task must not flip the new turn's

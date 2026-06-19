@@ -60,6 +60,19 @@ final class ChatViewModel {
     // server suppresses the disconnect push for events this client has seen.
     // Reset whenever the active conversation changes.
     @ObservationIgnored private var highestAppliedSeq: Int?
+    // Maps a turn id observed live on the always-on follow stream to the local
+    // assistant bubble its tokens render into. Lets a turn started elsewhere
+    // (another device, or after our own send task gave up) stream live into the
+    // right bubble. The `local_` prefixed bubble is reconciled to persisted
+    // history on `turn_ended`. Reset whenever the active conversation changes.
+    @ObservationIgnored private var liveFollowBubbleByTurnID: [String: String] = [:]
+    // Turn ids whose `turn_ended` has already been seen (from either the send
+    // path or the follow stream). The follow stream and a send connection both
+    // carry a turn's tokens out of step, so after a send finishes a stray
+    // late-delivered token for it could otherwise spawn a duplicate live bubble;
+    // skip rendering follow tokens for an already-ended turn. Reset per
+    // conversation.
+    @ObservationIgnored private var endedTurnIDs: Set<String> = []
 
     private enum Keys {
         static let lastConversationID = "lastConversationId"
@@ -270,15 +283,23 @@ final class ChatViewModel {
     func selectConversation(_ id: String, shouldLoadMessages: Bool = true) async {
         cancelStream()
         highestAppliedSeq = nil
+        liveFollowBubbleByTurnID.removeAll()
+        endedTurnIDs.removeAll()
         displayedMessageLimit = Self.initialDisplayedMessageCount
         conversationID = id
         conversationSelection = id
         persistConversationID()
         mobileShowsConversationList = false
-        startLiveEvents()
+        // Load persisted history BEFORE starting the live-events follow loop. The
+        // follow stream now renders live tokens into local bubbles, and
+        // `loadMessages` does a full `messages =` replace — starting the loop
+        // first lets a token bubble render and then be wiped by the history load
+        // (its mapping left dangling). Loading first means live tokens only ever
+        // append onto already-loaded history.
         if shouldLoadMessages {
             await loadMessages(conversationID: id)
         }
+        startLiveEvents()
     }
 
     func startNewConversation() {
@@ -774,6 +795,10 @@ final class ChatViewModel {
             }
             apply(streamEvent: event, assistantMessageID: assistantMessageID)
             if event.type == .turnEnded {
+                // Mark this turn ended so a late, out-of-step copy of one of its
+                // tokens arriving on the always-on follow stream after the send
+                // finishes can't spawn a duplicate live bubble for it.
+                endedTurnIDs.insert(turnID)
                 // A failed turn carries its error on the terminal event; surface
                 // it so the bubble shows the failure rather than an empty reply.
                 if let message = event.errorMessage, !message.isEmpty {
@@ -1005,12 +1030,12 @@ final class ChatViewModel {
                 do {
                     let stream = try await client.connectEvents(
                         conversationID: conversationID,
-                        ackSeq: ackSeq,
-                        // Follow streams only reload persisted history on these;
-                        // the token firehose is ignored, so don't ask for it.
-                        // Lifecycle frames (turn_ended, heartbeat, stream_dropped)
-                        // are always delivered regardless of this filter.
-                        eventTypes: ["message", "turn_ended"]
+                        ackSeq: ackSeq
+                        // No `event_types` filter: the always-on follow stream now
+                        // carries token frames too, so a turn started elsewhere (or
+                        // after our own send task gave up) streams live into a
+                        // bubble via `handleLiveEvent`, not just a history reload on
+                        // completion.
                     )
                     // Call through the weak `self?` at each suspension point
                     // instead of binding a strong `self`: a binding would keep
@@ -1116,14 +1141,73 @@ final class ChatViewModel {
                     Task { try? await client.acknowledge(conversationID: conversationID, ackSeq: seq) }
                 }
             }
+            if event.type == .turnEnded, let turnID = event.turnID {
+                // The history merge above (when not streaming) drops the `local_`
+                // live bubble and appends the persisted reply, so retire the
+                // mapping and record the turn as ended.
+                finalizeLiveFollowBubble(turnID: turnID)
+            }
+        case .text, .toolCall, .toolResult, .attachment, .toolConfirmationRequest, .toolConfirmationResult, .error:
+            applyLiveFollowToken(event)
         case .connected:
             liveUpdatesConnected = true
-        case .heartbeat:
-            break
-        default:
+        case .heartbeat, .turnStarted, .streamDropped:
             break
         }
         return true
+    }
+
+    /// Render a token frame from the always-on follow stream into a per-turn
+    /// assistant bubble, so a turn started elsewhere — another device, or one
+    /// whose local send task already gave up to a history reload — streams live.
+    ///
+    /// Skipped while a local send is in flight (`isStreaming`): the send path owns
+    /// rendering its own turn, and the follow stream carries the same tokens, so
+    /// applying them here too would double-render. Also skipped once a turn has
+    /// ended, so a late out-of-step token can't resurrect a finished turn.
+    private func applyLiveFollowToken(_ event: ChatStreamEvent) {
+        guard !isStreaming, let turnID = event.turnID, !endedTurnIDs.contains(turnID) else {
+            return
+        }
+        let bubbleID = liveFollowBubbleByTurnID[turnID] ?? makeLiveFollowBubble(for: turnID)
+        if let seq = event.seq {
+            recordAppliedSeq(seq)
+        }
+        apply(streamEvent: event, assistantMessageID: bubbleID)
+    }
+
+    /// Create (once) and map a local assistant placeholder bubble for a turn
+    /// observed live on the follow stream. The `local_` prefix means the bubble is
+    /// dropped and replaced by the persisted reply on the next history merge.
+    private func makeLiveFollowBubble(for turnID: String) -> String {
+        let bubbleID = "local_follow_\(turnID)"
+        if !messages.contains(where: { $0.id == bubbleID }) {
+            messages.append(
+                ChatMessage(
+                    id: bubbleID,
+                    role: .assistant,
+                    text: "",
+                    createdAt: Date(),
+                    toolCalls: [],
+                    attachments: [],
+                    isLoading: true,
+                    status: .running,
+                    processingProfileID: selectedProfileID,
+                    errorTraceback: nil
+                )
+            )
+        }
+        liveFollowBubbleByTurnID[turnID] = bubbleID
+        return bubbleID
+    }
+
+    /// Retire a live-rendered turn: record it ended and drop its bubble mapping
+    /// (and any buffered text) now that persisted history owns its content.
+    private func finalizeLiveFollowBubble(turnID: String) {
+        endedTurnIDs.insert(turnID)
+        if let bubbleID = liveFollowBubbleByTurnID.removeValue(forKey: turnID) {
+            pendingTextByMessageID[bubbleID] = nil
+        }
     }
 
     private func markLiveUpdatesDisconnectedIfActive() {
