@@ -20,7 +20,6 @@ and authentication. The producer:
 import asyncio
 import json
 import logging
-from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Any
 
 from family_assistant.llm import LLMStreamEvent
@@ -29,15 +28,7 @@ from family_assistant.llm.messages import (
     MessageAttachmentMetadata,
 )
 from family_assistant.services.confirmation_service import (
-    DURABLE_CONFIRMATION_EXECUTION_WAIT_SECONDS,
-    ConfirmationAuthorizationError,
-    ConfirmationError,
-    ConfirmationNotFoundError,
     ConfirmationService,
-)
-from family_assistant.services.confirmation_wait import (
-    ConfirmationWaitStrategy,
-    wait_for_confirmation_resolution,
 )
 from family_assistant.services.confirmation_waiters import (
     ConfirmationResultWaiterRegistry,
@@ -52,11 +43,11 @@ from family_assistant.tools.types import (
     ToolExecutionContext,
 )
 from family_assistant.utils.text_normalization import StreamingLatexNormalizer
-from family_assistant.web.confirmation_manager import web_confirmation_manager
 from family_assistant.web.conversation_stream_hub import (
     ConversationStreamHub,
     StreamEvent,
 )
+from family_assistant.web.web_confirmation_ui_manager import WebConfirmationUIManager
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncEngine
@@ -140,6 +131,16 @@ async def run_turn_producer(
     chat_interfaces = getattr(app_state, "chat_interfaces", None)
     confirmation_ui_managers = getattr(app_state, "confirmation_ui_managers", None)
 
+    # The durable web confirmation flow lives in WebConfirmationUIManager so the
+    # live streaming turn and background runs (async profile delegation) share a
+    # single implementation. This thin callback only resolves the per-turn
+    # prompt and source message before delegating.
+    web_confirmation_ui_manager = WebConfirmationUIManager(
+        confirmation_service=confirmation_service,
+        confirmation_result_waiters=confirmation_result_waiters,
+        stream_hub=hub,
+    )
+
     async def web_confirmation_callback(
         interface_type: str,
         conversation_id: str,
@@ -150,17 +151,10 @@ async def run_turn_producer(
         timeout_seconds: float,
         context: ToolExecutionContext,
     ) -> ConfirmationOutcome:
-        """Confirmation callback that publishes tool_confirmation_request /
-        tool_confirmation_result events through the hub.
-
-        The durable confirmation record (DB row + waiter registry) lives the
-        same as in the original chat_api implementation; only the user-facing
-        event delivery changes.
-        """
+        """Resolve the prompt/source message and delegate to the web manager."""
         confirmation_prompt = (
             f"Do you want to execute '{tool_name}' with these parameters?"
         )
-
         source_message_internal_id: int | None = None
         if turn_id is not None:
             source_row = (
@@ -171,125 +165,18 @@ async def run_turn_producer(
             if source_row is not None:
                 source_message_internal_id = source_row["internal_id"]
 
-        expires_at = datetime.now(UTC) + timedelta(seconds=timeout_seconds)
-        durable_request = await confirmation_service.create_request(
-            target_user_id=user_id,
+        return await web_confirmation_ui_manager.request_confirmation(
+            conversation_id=conversation_id,
+            interface_type=interface_type,
+            turn_id=turn_id,
+            prompt_text=confirmation_prompt,
             tool_name=tool_name,
             tool_args=tool_args,
+            timeout=timeout_seconds,
+            target_user_id=user_id,
             tool_call_id=call_id,
             source_message_internal_id=source_message_internal_id,
-            confirmation_prompt=confirmation_prompt,
-            expires_at=expires_at,
         )
-        request_id = durable_request["id"]
-        execution_future = confirmation_result_waiters.register(request_id)
-
-        async def get_durable_status() -> str | None:
-            try:
-                refreshed = await confirmation_service.get_for_user(
-                    request_id=request_id, user_id=user_id
-                )
-            except ConfirmationNotFoundError:
-                return "missing"
-            except ConfirmationAuthorizationError:
-                return "unauthorized"
-            except ConfirmationError:
-                return "error"
-            return refreshed["status"]
-
-        async def wait_for_execution_result() -> ConfirmationOutcome:
-            try:
-                return await asyncio.wait_for(
-                    asyncio.shield(execution_future),
-                    timeout=DURABLE_CONFIRMATION_EXECUTION_WAIT_SECONDS,
-                )
-            except TimeoutError:
-                return ConfirmationOutcome(
-                    kind="failed",
-                    result=(
-                        f"Error executing approved tool '{tool_name}': "
-                        "background execution did not complete in time."
-                    ),
-                )
-
-        async def publish_result(*, approved: bool) -> None:
-            await hub.publish(
-                conversation_id,
-                "tool_confirmation_result",
-                turn_id=turn_id,
-                payload={"request_id": request_id, "approved": approved},
-            )
-
-        async def on_decision(decision_outcome: ConfirmationOutcome) -> None:
-            if decision_outcome.kind == "timed_out":
-                await confirmation_service.mark_expired(now=datetime.now(UTC))
-            if decision_outcome.kind != "approved":
-                await publish_result(approved=False)
-
-        async def on_execution_done(execution_outcome: ConfirmationOutcome) -> None:
-            await publish_result(
-                approved=execution_outcome.kind in {"completed", "failed"}
-            )
-
-        async def on_resolved_approved() -> None:
-            await publish_result(approved=True)
-            web_confirmation_manager.remove_confirmation(request_id)
-
-        async def on_resolved_rejected() -> None:
-            await publish_result(approved=False)
-
-        async def on_resolved_failed() -> None:
-            await publish_result(approved=False)
-
-        async def on_timed_out() -> None:
-            await confirmation_service.mark_expired(now=datetime.now(UTC))
-            await publish_result(approved=False)
-
-        try:
-            decision_future = await web_confirmation_manager.request_confirmation(
-                request_id=request_id,
-                conversation_id=conversation_id,
-                interface_type=interface_type,
-                tool_name=tool_name,
-                tool_args=tool_args,
-                confirmation_prompt=confirmation_prompt,
-                timeout_seconds=timeout_seconds,
-            )
-
-            await hub.publish(
-                conversation_id,
-                "tool_confirmation_request",
-                turn_id=turn_id,
-                payload={
-                    "request_id": request_id,
-                    "tool_name": tool_name,
-                    "tool_call_id": call_id,
-                    "confirmation_prompt": confirmation_prompt,
-                    "timeout_seconds": timeout_seconds,
-                    "args": tool_args,
-                },
-            )
-
-            return await wait_for_confirmation_resolution(
-                ConfirmationWaitStrategy(
-                    decision=decision_future,
-                    execution=execution_future,
-                    durable=True,
-                    get_durable_status=get_durable_status,
-                    wait_for_execution_result=wait_for_execution_result,
-                    on_decision=on_decision,
-                    on_execution_done=on_execution_done,
-                    on_decision_approved=on_resolved_approved,
-                    on_resolved_approved=on_resolved_approved,
-                    on_resolved_rejected=on_resolved_rejected,
-                    on_resolved_failed=on_resolved_failed,
-                    on_timed_out=on_timed_out,
-                ),
-                timeout_seconds=timeout_seconds,
-            )
-        finally:
-            web_confirmation_manager.remove_confirmation(request_id)
-            confirmation_result_waiters.unregister(request_id, execution_future)
 
     try:
         async with get_db_context(app_state.database_engine) as stream_db_context:

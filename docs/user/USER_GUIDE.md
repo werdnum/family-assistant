@@ -588,6 +588,14 @@ various tasks with dark mode support and mobile optimization.
     ![Automations Page](../../screenshots/desktop/automations.png) *The Automations page for
     managing event and schedule-based automations*
 
+- **Long-Running Profile Delegation:** For tasks better handled by a specialized assistant profile
+  (for example browsing, research, visualization, or complex planning), the assistant may delegate
+  the work. Fast delegated work is returned inline. If it takes longer, the assistant gives you a
+  `delegation_...` reference and keeps the main conversation available. When the delegated profile
+  finishes, the same conversation receives a completion message with the result. You can ask for the
+  status of that delegation reference later. This is separate from spawned worker tasks, which are
+  isolated coding or computing jobs and use worker task IDs instead.
+
 - **Push Notifications:** The assistant can notify you even when the app isn't open.
 
   - **Browser (PWA):** Install the web app to your device and allow notifications to receive browser
@@ -596,7 +604,8 @@ various tasks with dark mode support and mobile optimization.
     delivered through the system.
   - **When you're notified:** a new assistant reply arrives in a web conversation, a confirmation is
     waiting for your approval, a background task fails after retrying, or a spawned worker task
-    finishes. Notifications are sent to every device you've registered.
+    finishes. Long-running delegated profile tasks also notify the conversation when they complete.
+    Notifications are sent to every device you've registered.
   - **Closing the app mid-reply:** If you send a message and then close or background the app (web
     or iOS) before the assistant finishes, processing keeps running on the server. When it
     completes, the reply is delivered as a push notification — tap it to jump back to the

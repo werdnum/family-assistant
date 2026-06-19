@@ -47,6 +47,21 @@ MessageHistoryScope = Literal["current_conversation", "same_user", "all_accessib
 MessageHistorySearchMode = Literal["structured", "semantic", "hybrid"]
 
 
+def _subconversation_filter(
+    subconversation_id: str | None,
+) -> ColumnElement[bool] | None:
+    """Build the subconversation scope filter, or ``None`` for no filter.
+
+    ``"*"`` matches every subconversation (no filter); ``None`` restricts to the
+    main conversation (``IS NULL``); any other value matches that subconversation.
+    """
+    if subconversation_id == "*":
+        return None
+    if subconversation_id is None:
+        return message_history_table.c.subconversation_id.is_(None)
+    return message_history_table.c.subconversation_id == subconversation_id
+
+
 @dataclass(frozen=True, slots=True)
 class MessageHistoryQuery:
     """Structured query input for message history retrieval."""
@@ -576,14 +591,9 @@ class MessageHistoryRepository(BaseRepository):
                     == query.processing_profile_id
                 )
 
-        if query.subconversation_id != "*":
-            if query.subconversation_id is None:
-                conditions.append(message_history_table.c.subconversation_id.is_(None))
-            else:
-                conditions.append(
-                    message_history_table.c.subconversation_id
-                    == query.subconversation_id
-                )
+        subconversation_condition = _subconversation_filter(query.subconversation_id)
+        if subconversation_condition is not None:
+            conditions.append(subconversation_condition)
 
         if include_text_query and query.query:
             if self._db.engine.dialect.name == "postgresql":
@@ -1663,6 +1673,7 @@ class MessageHistoryRepository(BaseRepository):
         after: datetime,
         interface_type: str | None = None,
         limit: int = 100,
+        subconversation_id: str | None = None,
     ) -> list[LLMMessage]:
         """
         Get messages created after a specific timestamp.
@@ -1674,6 +1685,8 @@ class MessageHistoryRepository(BaseRepository):
             after: Get messages created after this timestamp
             interface_type: Optional filter by interface type
             limit: Maximum number of messages to return (default 100)
+            subconversation_id: Filter by subconversation. None means main conversation
+                only; "*" includes all subconversations.
 
         Returns:
             List of typed LLMMessage objects in chronological order (oldest first)
@@ -1685,6 +1698,9 @@ class MessageHistoryRepository(BaseRepository):
 
         if interface_type:
             conditions.append(message_history_table.c.interface_type == interface_type)
+        subconversation_condition = _subconversation_filter(subconversation_id)
+        if subconversation_condition is not None:
+            conditions.append(subconversation_condition)
 
         stmt = (
             select(message_history_table)
@@ -1705,6 +1721,7 @@ class MessageHistoryRepository(BaseRepository):
         after: datetime,
         interface_type: str | None = None,
         limit: int = 100,
+        subconversation_id: str | None = None,
     ) -> list[MessageHistoryRow]:
         """
         Get messages created after a specific timestamp as dicts with database fields.
@@ -1716,6 +1733,8 @@ class MessageHistoryRepository(BaseRepository):
             after: Get messages created after this timestamp
             interface_type: Optional filter by interface type
             limit: Maximum number of messages to return (default 100)
+            subconversation_id: Filter by subconversation. None means main conversation
+                only; "*" includes all subconversations.
 
         Returns:
             List of MessageHistoryRow in chronological order (oldest first)
@@ -1727,6 +1746,9 @@ class MessageHistoryRepository(BaseRepository):
 
         if interface_type:
             conditions.append(message_history_table.c.interface_type == interface_type)
+        subconversation_condition = _subconversation_filter(subconversation_id)
+        if subconversation_condition is not None:
+            conditions.append(subconversation_condition)
 
         stmt = (
             select(message_history_table)

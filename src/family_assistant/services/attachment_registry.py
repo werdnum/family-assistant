@@ -419,6 +419,30 @@ class AttachmentRegistry:
 
         return AttachmentMetadata.from_row(cast("AttachmentRowDict", row))
 
+    async def get_attachments(
+        self,
+        db_context: DatabaseContext,
+        attachment_ids: list[str],
+    ) -> dict[str, AttachmentMetadata]:
+        """Fetch metadata for multiple attachments in a single query.
+
+        Returns a mapping of attachment_id to metadata; ids without a row are
+        omitted from the result.
+        """
+        if not attachment_ids:
+            return {}
+
+        query = select(attachment_metadata_table).where(
+            attachment_metadata_table.c.attachment_id.in_(attachment_ids)
+        )
+        rows = await db_context.fetch_all(query)
+        return {
+            row["attachment_id"]: AttachmentMetadata.from_row(
+                cast("AttachmentRowDict", row)
+            )
+            for row in rows
+        }
+
     async def list_attachments(
         self,
         db_context: DatabaseContext,

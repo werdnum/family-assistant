@@ -377,6 +377,8 @@ default_profile_settings:
             - "modify_calendar_event"
             - "delete_calendar_event"
             - "delegate_to_service"
+            - "get_delegation_status"
+            - "list_delegations"
             - "query_recent_events"
             - "render_home_assistant_template"
             - "get_camera_snapshot"
@@ -575,6 +577,8 @@ service_profiles:
         - match:
             names:
               - "delegate_to_service"
+              - "get_delegation_status"
+              - "list_delegations"
           decision: "allow"
           priority: 10
     slash_commands:
@@ -1153,6 +1157,8 @@ service_profiles:
               - "modify_calendar_event"
               - "delete_calendar_event"
               - "delegate_to_service"
+              - "get_delegation_status"
+              - "list_delegations"
               - "query_recent_events"
               - "render_home_assistant_template"
               - "get_camera_snapshot"
@@ -1345,6 +1351,8 @@ service_profiles:
               - "modify_calendar_event"
               - "delete_calendar_event"
               - "delegate_to_service"
+              - "get_delegation_status"
+              - "list_delegations"
               - "query_recent_events"
               - "render_home_assistant_template"
               - "get_camera_snapshot"

@@ -87,6 +87,7 @@ class RecordingConfirmationService:
         source_message_internal_id: int | None,
         confirmation_prompt: str,
         expires_at: datetime,
+        decision_only: bool = False,
     ) -> dict[str, object]:
         _ = (
             target_user_id,
@@ -96,6 +97,7 @@ class RecordingConfirmationService:
             source_message_internal_id,
             confirmation_prompt,
             expires_at,
+            decision_only,
         )
         return {"id": self.created_request_id}
 

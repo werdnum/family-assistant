@@ -32,6 +32,7 @@ if TYPE_CHECKING:
     from family_assistant.storage.repositories import (
         AutomationsRepository,
         ConfirmationRequestsRepository,
+        DelegationRunsRepository,
         EmailRepository,
         ErrorLogsRepository,
         EventsRepository,
@@ -164,6 +165,7 @@ class DatabaseContext:
         self._tasks = None
         self._message_history = None
         self._email = None
+        self._delegation_runs = None
         self._confirmation_requests = None
         self._error_logs = None
         self._events = None
@@ -433,6 +435,17 @@ class DatabaseContext:
 
             self._email = EmailRepository(self)
         return self._email
+
+    @property
+    def delegation_runs(self) -> "DelegationRunsRepository":
+        """Get the delegation runs repository instance."""
+        if self._delegation_runs is None:
+            from family_assistant.storage.repositories import (  # noqa: PLC0415
+                DelegationRunsRepository,
+            )
+
+            self._delegation_runs = DelegationRunsRepository(self)
+        return self._delegation_runs
 
     @property
     def confirmation_requests(self) -> "ConfirmationRequestsRepository":

@@ -87,6 +87,7 @@ class ConfirmationUIManager(Protocol):
         target_user_id: str | None = None,
         tool_call_id: str | None = None,
         source_message_internal_id: int | None = None,
+        wait_for_durable_execution: bool = True,
     ) -> ConfirmationOutcome:
         """
         Requests confirmation from the user via the UI.

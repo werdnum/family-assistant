@@ -219,6 +219,7 @@ class TelegramService:
         target_user_id: str | None = None,
         tool_call_id: str | None = None,
         source_message_internal_id: int | None = None,
+        wait_for_durable_execution: bool = True,
     ) -> ConfirmationOutcome:
         """Public method to request confirmation, called by policy enforcement."""
         # Delegate directly to the confirmation manager
@@ -234,6 +235,7 @@ class TelegramService:
                 target_user_id=target_user_id,
                 tool_call_id=tool_call_id,
                 source_message_internal_id=source_message_internal_id,
+                wait_for_durable_execution=wait_for_durable_execution,
             )
         else:
             logger.error(

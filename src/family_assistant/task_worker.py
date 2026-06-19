@@ -24,13 +24,19 @@ from opentelemetry.trace import StatusCode
 from sqlalchemy import select
 
 # Removed storage import - using repository pattern
-from family_assistant.llm.messages import MessageAttachmentMetadata, SystemMessage
+from family_assistant.llm.messages import (
+    AssistantMessage,
+    MessageAttachmentMetadata,
+    SystemMessage,
+)
 from family_assistant.scripting import (
     MontyEngine,
     ScriptError,
     ScriptTimeoutError,
 )
 from family_assistant.scripting.config import ScriptConfig
+from family_assistant.storage.delegation_runs import TERMINAL_DELEGATION_STATUSES
+from family_assistant.tools.services import short_error_summary
 from family_assistant.tools.types import CalendarConfig, EventSourcesById
 
 if TYPE_CHECKING:
@@ -42,6 +48,8 @@ if TYPE_CHECKING:
     from family_assistant.embeddings import EmbeddingGenerator
     from family_assistant.events.indexing_source import IndexingSource
     from family_assistant.interfaces import ChatInterface
+    from family_assistant.llm.content_parts import ContentPartDict
+    from family_assistant.processing.types import RequestConfirmationCallback
     from family_assistant.scripting.monty_engine import WakeRequest
     from family_assistant.services.confirmation_waiters import (
         ConfirmationResultWaiterRegistry,
@@ -50,9 +58,11 @@ if TYPE_CHECKING:
     from family_assistant.storage.repositories.confirmation_requests import (
         ConfirmationRequestRow,
     )
+    from family_assistant.storage.repositories.delegation_runs import DelegationRunDict
     from family_assistant.storage.types import MessageHistoryRow, TaskDict
     from family_assistant.telegram.protocols import ConfirmationUIManager
     from family_assistant.tools import ToolsProvider
+    from family_assistant.web.conversation_stream_hub import ConversationStreamHub
 
 # handle_index_email is now a method of EmailIndexer and registered in __main__.py
 from family_assistant.processing import ProcessingService
@@ -72,6 +82,7 @@ from family_assistant.storage.tasks import (
     unregister_worker_wake_event,
 )
 from family_assistant.tools import ToolExecutionContext
+from family_assistant.tools.confirmation import TOOL_CONFIRMATION_RENDERERS
 from family_assistant.tools.stored_scripts import AUTOMATION_RUNTIME_GLOBALS
 from family_assistant.tools.types import (
     ConfirmationOutcome,
@@ -176,8 +187,45 @@ class ConfirmationToolExecutionPayload(TypedDict, total=False):
     confirmation_request_id: str
 
 
+class DelegatedProfileRunPayload(TypedDict):
+    """Payload for delegated_profile_run tasks."""
+
+    delegation_id: str
+    interface_type: str
+    conversation_id: str
+    user_name: str
+
+
+class DelegationRunCleanupPayload(TypedDict, total=False):
+    """Payload for delegation_run_cleanup tasks."""
+
+    running_timeout_seconds: float
+
+
+# Delegation runs left "running" longer than this are considered stranded (a
+# crash or exhausted retries) and are failed + notified by the reaper. It must
+# comfortably exceed the handler timeout plus retry backoff so it never reaps a
+# run that is still legitimately executing.
+DELEGATION_RUN_STALE_SECONDS = 3600.0
+
+# Interfaces whose clients read the conversation from durable message history
+# (web SSE / polling, native iOS, the non-streaming API) rather than receiving
+# a pushed chat message. Terminal delegation notifications for these are stored
+# in history + push-notified + stream-tickled, never sent via a ChatInterface
+# (which for these would be NullChatInterface and silently drop the result).
+_HISTORY_NOTIFICATION_INTERFACES = frozenset({"web", "api", "ios"})
+
+
 class ConfirmationNotificationError(RuntimeError):
     """Raised when a confirmation result notification cannot be delivered."""
+
+
+class DelegationNotificationError(RuntimeError):
+    """Raised when a terminal delegation notification cannot be delivered.
+
+    Rolls back the isolated notification transaction so ``notified_at`` stays
+    NULL and the run is retried instead of being recorded as delivered.
+    """
 
 
 async def _handle_schedule_automation_recurrence(
@@ -653,6 +701,7 @@ class TaskWorker:
         confirmation_result_waiters: ConfirmationResultWaiterRegistry | None = None,
         confirmation_ui_managers: dict[str, ConfirmationUIManager] | None = None,
         notification_dispatcher: Notifier | None = None,
+        stream_hub: ConversationStreamHub | None = None,
     ) -> None:
         """Initializes the TaskWorker with its dependencies."""
         self.processing_service = processing_service
@@ -661,6 +710,10 @@ class TaskWorker:
         self.confirmation_result_waiters = confirmation_result_waiters
         self.confirmation_ui_managers = confirmation_ui_managers
         self.notification_dispatcher = notification_dispatcher
+        self.stream_hub = stream_hub
+        # Strong references to in-flight stream-hub publish tasks scheduled from
+        # on_commit hooks, so the event loop doesn't garbage-collect them mid-flight.
+        self._hub_publish_tasks: set[asyncio.Task[object]] = set()
         # Use provided shutdown_event_instance or create a new instance-specific event
         # Don't use the module-level shutdown_event as it persists across test runs
         self.shutdown_event = (
@@ -728,6 +781,535 @@ class TaskWorker:
     ) -> dict[str, Callable[[ToolExecutionContext, Any], Awaitable[None]]]:
         """Return the current task handlers dictionary for this worker."""
         return self.task_handlers
+
+    async def handle_delegated_profile_run(
+        self,
+        exec_context: ToolExecutionContext,
+        payload: DelegatedProfileRunPayload,
+    ) -> None:
+        """Execute a durable asynchronous profile delegation run."""
+        delegation_id = payload.get("delegation_id")
+        if not delegation_id:
+            raise ValueError("delegated_profile_run payload missing delegation_id")
+
+        clock = exec_context.clock or self.clock
+        run = await exec_context.db_context.delegation_runs.get_by_delegation_id(
+            delegation_id
+        )
+        if run is None:
+            raise ValueError(f"Delegation run '{delegation_id}' not found")
+
+        if run["status"] in TERMINAL_DELEGATION_STATUSES:
+            # A terminal run is re-entered only when a prior attempt's
+            # notification delivery failed; retry it (keyed on notified_at).
+            if run["notified_at"] is None:
+                await self._notify_delegation_if_needed(exec_context, run)
+            else:
+                logger.info(
+                    "Delegation run %s already terminal (%s) and notified.",
+                    delegation_id,
+                    run["status"],
+                )
+            return
+
+        if run["status"] == "running":
+            # A previous attempt marked the run running but did not finish (crash
+            # or handler timeout). The delegated turn has non-idempotent external
+            # side effects, so fail it rather than re-execute.
+            logger.warning(
+                "Delegation run %s was already running on entry; a prior attempt "
+                "was interrupted. Failing without re-executing to avoid duplicate "
+                "side effects.",
+                delegation_id,
+            )
+            await self._fail_delegation_run(
+                exec_context,
+                delegation_id=delegation_id,
+                error=(
+                    "The delegated run was interrupted before completion and "
+                    "cannot be safely retried."
+                ),
+            )
+            return
+
+        processing_service = exec_context.processing_service
+        registry = (
+            processing_service.processing_services_registry
+            if processing_service is not None
+            else None
+        )
+        target_service = registry.get(run["target_service_id"]) if registry else None
+        if target_service is None:
+            await self._fail_delegation_run(
+                exec_context,
+                delegation_id=delegation_id,
+                error=f"Target service profile '{run['target_service_id']}' not found.",
+            )
+            return
+
+        allowed_sources = target_service.service_config.allowed_delegation_sources
+        if (
+            allowed_sources is not None
+            and run["source_profile_id"] not in allowed_sources
+        ):
+            await self._fail_delegation_run(
+                exec_context,
+                delegation_id=delegation_id,
+                error=(
+                    f"Profile '{run['source_profile_id']}' is no longer permitted "
+                    f"to delegate to '{run['target_service_id']}'."
+                ),
+            )
+            return
+
+        # Commit the running transition in its own transaction so the waiting
+        # caller sees it and no row lock is held across the long delegated turn.
+        async with exec_context.db_context.create_isolated_context() as isolated_db:
+            started = await isolated_db.delegation_runs.mark_running(
+                delegation_id,
+                clock.now(),
+            )
+        if started is None:
+            # The conditional mark_running matched no row: the run is no longer
+            # queued — the stale-run reaper failed it, or a sibling worker
+            # claimed it first — so do not (re-)execute the delegated turn here.
+            logger.warning(
+                "Delegation run %s was no longer queued when claiming it for "
+                "execution (reaper or sibling worker raced); skipping.",
+                delegation_id,
+            )
+            return
+
+        try:
+            content_parts = cast(
+                "list[ContentPartDict]",
+                run["content_parts_json"],
+            )
+            chat_interface = self._chat_interface_for_interface(
+                exec_context,
+                run["interface_type"],
+            )
+            request_confirmation_callback = (
+                self._build_delegation_confirmation_callback(exec_context, run)
+            )
+            async with exec_context.db_context.create_isolated_context() as run_db:
+                result = await target_service.handle_chat_interaction(
+                    db_context=run_db,
+                    interface_type=run["interface_type"],
+                    conversation_id=run["conversation_id"],
+                    trigger_content_parts=content_parts,
+                    trigger_interface_message_id=None,
+                    user_name=run["user_name"] or exec_context.user_name,
+                    user_id=run["user_id"],
+                    replied_to_interface_id=None,
+                    chat_interface=chat_interface,
+                    chat_interfaces=exec_context.chat_interfaces,
+                    confirmation_ui_managers=exec_context.confirmation_ui_managers,
+                    request_confirmation_callback=request_confirmation_callback,
+                    subconversation_id=run["subconversation_id"],
+                )
+        except Exception:
+            # A timeout cancellation (CancelledError) is intentionally NOT caught
+            # here: it propagates so the task is retried, and the retry's
+            # "running" entry guard fails the run without re-executing. The
+            # stale-run reaper is the backstop if no retry occurs.
+            error = traceback.format_exc()
+            logger.error(
+                "Delegated profile run %s raised during execution.",
+                delegation_id,
+                exc_info=True,
+            )
+            await self._fail_delegation_run(
+                exec_context,
+                delegation_id=delegation_id,
+                error=error,
+            )
+            return
+
+        completed_at = clock.now()
+        async with exec_context.db_context.create_isolated_context() as isolated_db:
+            if result.error_traceback:
+                terminal_run = await isolated_db.delegation_runs.mark_failed(
+                    delegation_id=delegation_id,
+                    error=result.error_traceback,
+                    completed_at=completed_at,
+                )
+            else:
+                terminal_run = await isolated_db.delegation_runs.mark_completed(
+                    delegation_id=delegation_id,
+                    result_text=result.text_reply,
+                    result_attachment_ids=result.attachment_ids or [],
+                    completed_at=completed_at,
+                )
+        if terminal_run is None:
+            raise ValueError(f"Delegation run '{delegation_id}' disappeared")
+        await self._notify_delegation_if_needed(exec_context, terminal_run)
+
+    async def handle_delegation_run_cleanup(
+        self,
+        exec_context: ToolExecutionContext,
+        payload: DelegationRunCleanupPayload,
+    ) -> None:
+        """Fail and notify delegation runs stranded ``queued`` or ``running``.
+
+        Backstop for the rare case where a run's owning task never retries (e.g.
+        the process was killed): the retry "running" entry guard normally fails
+        an interrupted run quickly, but a run with no further attempts — or one
+        lost while still ``queued`` — would otherwise stay non-terminal forever.
+        """
+        clock = exec_context.clock or self.clock
+        now = clock.now()
+        running_timeout_seconds = payload.get(
+            "running_timeout_seconds", DELEGATION_RUN_STALE_SECONDS
+        )
+        created_before = now - timedelta(seconds=running_timeout_seconds)
+        async with exec_context.db_context.create_isolated_context() as isolated_db:
+            reaped = await isolated_db.delegation_runs.reap_stale(
+                now=now,
+                created_before=created_before,
+                error=(
+                    "The delegated run did not complete within the allowed time "
+                    "and was marked failed."
+                ),
+            )
+        if reaped:
+            logger.warning(
+                "Reaped %d stale delegation run(s) older than %.0fs.",
+                len(reaped),
+                running_timeout_seconds,
+            )
+        # A reaped run has no live caller waiting to deliver inline, so notify
+        # unconditionally even if it was never handed off.
+        for run in reaped:
+            await self._force_notify_delegation(exec_context, run)
+
+        # Recover terminal runs whose completion notification was never
+        # delivered. Two cases reap_stale (queued/running only) cannot reach:
+        # a caller that crashed after the run finished but before delivering
+        # inline or claiming the handoff leaves a terminal run with
+        # handed_off_at NULL that the worker's gated notify skipped; and a
+        # force-notify whose delivery failed leaves a terminal run notified_at
+        # NULL with no owning task left to retry it. The completed_at gate keeps
+        # this from racing a live inline caller within its short handoff window.
+        async with exec_context.db_context.create_isolated_context() as isolated_db:
+            unnotified = await isolated_db.delegation_runs.find_terminal_unnotified(
+                completed_before=created_before
+            )
+        if unnotified:
+            logger.warning(
+                "Recovering %d terminal delegation run(s) left unnotified.",
+                len(unnotified),
+            )
+        for run in unnotified:
+            await self._force_notify_delegation(exec_context, run)
+
+    async def _force_notify_delegation(
+        self,
+        exec_context: ToolExecutionContext,
+        run: DelegationRunDict,
+    ) -> None:
+        """Force-notify a terminal run, isolating per-run delivery failures.
+
+        A delivery failure for one run must not abort the rest of a cleanup
+        batch. The run stays terminal with ``notified_at`` NULL, so the next
+        cleanup pass re-attempts it via ``find_terminal_unnotified`` rather than
+        stranding it (or its siblings).
+        """
+        try:
+            await self._notify_delegation_if_needed(exec_context, run, force=True)
+        except DelegationNotificationError:
+            logger.warning(
+                "Could not deliver delegation notification for %s; leaving it "
+                "unnotified for a later retry.",
+                run["delegation_id"],
+                exc_info=True,
+            )
+
+    def _build_delegation_confirmation_callback(
+        self,
+        exec_context: ToolExecutionContext,
+        run: DelegationRunDict,
+    ) -> RequestConfirmationCallback | None:
+        """Build a confirmation callback for a delegated profile background run."""
+        confirmation_ui_managers = (
+            exec_context.confirmation_ui_managers or self.confirmation_ui_managers
+        )
+        if confirmation_ui_managers is None:
+            return None
+
+        confirmation_manager = confirmation_ui_managers.get(run["interface_type"])
+        if confirmation_manager is None:
+            logger.info(
+                "Delegation run %s has no confirmation manager for interface %s.",
+                run["delegation_id"],
+                run["interface_type"],
+            )
+            return None
+
+        async def request_confirmation(
+            interface_type: str,
+            conversation_id: str,
+            turn_id: str | None,
+            tool_name: str,
+            call_id: str,
+            # ast-grep-ignore: no-dict-any - confirmation callback protocol carries arbitrary tool arguments
+            tool_args: dict[str, Any],
+            timeout_seconds: float,
+            context: ToolExecutionContext,
+        ) -> ConfirmationOutcome:
+            _ = interface_type
+            _ = conversation_id
+            renderer = TOOL_CONFIRMATION_RENDERERS.get(tool_name)
+            if renderer:
+                prompt_text = await renderer(tool_args, context)
+            else:
+                prompt_text = f"Confirm execution of tool: {tool_name}"
+
+            display_turn_id = run["source_turn_id"] or turn_id
+            execution_turn_id = turn_id
+            source_message_internal_id = None
+            if execution_turn_id is not None:
+                source_row = (
+                    await context.db_context.message_history.get_user_row_by_turn_id(
+                        execution_turn_id
+                    )
+                )
+                if source_row is not None:
+                    source_message_internal_id = source_row["internal_id"]
+
+            return await confirmation_manager.request_confirmation(
+                conversation_id=run["conversation_id"],
+                interface_type=run["interface_type"],
+                turn_id=display_turn_id,
+                prompt_text=prompt_text,
+                tool_name=tool_name,
+                tool_args=tool_args,
+                timeout=timeout_seconds,
+                target_user_id=run["user_id"],
+                tool_call_id=call_id,
+                source_message_internal_id=source_message_internal_id,
+                wait_for_durable_execution=False,
+            )
+
+        return request_confirmation
+
+    async def _fail_delegation_run(
+        self,
+        exec_context: ToolExecutionContext,
+        *,
+        delegation_id: str,
+        error: str,
+    ) -> None:
+        """Mark a delegation run failed (committed immediately) and notify."""
+        clock = exec_context.clock or self.clock
+        async with exec_context.db_context.create_isolated_context() as isolated_db:
+            run = await isolated_db.delegation_runs.mark_failed(
+                delegation_id=delegation_id,
+                error=error,
+                completed_at=clock.now(),
+            )
+        if run is not None:
+            await self._notify_delegation_if_needed(exec_context, run)
+
+    def _chat_interface_for_interface(
+        self,
+        exec_context: ToolExecutionContext,
+        interface_type: str,
+    ) -> ChatInterface | None:
+        """Select the chat interface for a delegated run's original interface."""
+        if (
+            exec_context.chat_interfaces
+            and interface_type in exec_context.chat_interfaces
+        ):
+            return exec_context.chat_interfaces[interface_type]
+        return exec_context.chat_interface
+
+    async def _notify_delegation_if_needed(
+        self,
+        exec_context: ToolExecutionContext,
+        run: DelegationRunDict,
+        *,
+        force: bool = False,
+    ) -> None:
+        """Record and deliver a terminal delegation notification when needed.
+
+        The worker delivers the terminal result only when the caller handed off
+        (``handed_off_at`` set). If the caller is still — or was — waiting
+        inline, it delivers the result itself, so the worker must not also
+        notify. The notification (history row + delivery + ``mark_notified``) is
+        committed in its own transaction so it is durable and idempotent: a
+        delivery that fails leaves ``notified_at`` NULL and is retried.
+        """
+        if run["notified_at"] is not None:
+            return
+        # Normally the worker only notifies once the caller handed off (otherwise
+        # the caller delivers inline). The reaper sets force=True because a
+        # reaped run has no live caller waiting to deliver the result.
+        if not force and run["handed_off_at"] is None:
+            return
+
+        clock = exec_context.clock or self.clock
+        message_text = self._delegation_notification_text(run)
+        attachments = self._delegation_notification_attachments(run)
+        async with exec_context.db_context.create_isolated_context() as isolated_db:
+            message_internal_id = await isolated_db.message_history.add_message(
+                AssistantMessage(content=message_text),
+                interface_type=run["interface_type"],
+                conversation_id=run["conversation_id"],
+                timestamp=clock.now(),
+                attachments=attachments,
+            )
+
+            if run["interface_type"] in _HISTORY_NOTIFICATION_INTERFACES:
+                await self._push_notify_delegation_completion(
+                    isolated_db,
+                    run,
+                    message_text,
+                )
+                self._tickle_stream_hub_on_commit(
+                    isolated_db,
+                    run["conversation_id"],
+                )
+            else:
+                chat_interface = self._chat_interface_for_interface(
+                    exec_context,
+                    run["interface_type"],
+                )
+                if chat_interface is None:
+                    raise RuntimeError(
+                        f"No chat interface available for {run['interface_type']}"
+                    )
+                sent_message_id = await chat_interface.send_message(
+                    conversation_id=run["conversation_id"],
+                    text=message_text,
+                    parse_mode=None,
+                    attachment_ids=run["result_attachment_ids_json"] or None,
+                )
+                if sent_message_id is None:
+                    # Delivery failed (invalid chat, Bot API error, ...). Roll back
+                    # this isolated transaction so the message-history row is undone
+                    # and notified_at stays NULL; the run is retried via the
+                    # terminal-on-entry re-notification path rather than being
+                    # recorded as delivered.
+                    raise DelegationNotificationError(
+                        f"Failed to deliver delegation notification for "
+                        f"{run['delegation_id']} via {run['interface_type']}."
+                    )
+                if message_internal_id is not None:
+                    await isolated_db.message_history.update_interface_id(
+                        internal_id=message_internal_id,
+                        interface_message_id=sent_message_id,
+                    )
+
+            await isolated_db.delegation_runs.mark_notified(
+                delegation_id=run["delegation_id"],
+                result_message_internal_id=message_internal_id,
+                notified_at=clock.now(),
+            )
+
+    def _delegation_notification_text(self, run: DelegationRunDict) -> str:
+        """Build concise terminal notification text for a delegation run."""
+        if run["status"] == "completed":
+            result_text = (
+                run["result_text"]
+                or "The delegated profile completed without a textual response."
+            )
+            return (
+                f"Delegated task {run['delegation_id']} completed via "
+                f"{run['target_service_id']}.\n\n{result_text}"
+            )
+        error_summary = (
+            short_error_summary(run["error"])
+            or "The delegated profile failed during processing."
+        )
+        return (
+            f"Delegated task {run['delegation_id']} failed via "
+            f"{run['target_service_id']}.\n\n{error_summary}"
+        )
+
+    def _delegation_notification_attachments(
+        self,
+        run: DelegationRunDict,
+    ) -> list[MessageAttachmentMetadata] | None:
+        """Return message attachment references for a completed delegation result."""
+        attachment_ids = run["result_attachment_ids_json"] or []
+        if not attachment_ids:
+            return None
+        return [
+            {
+                "type": "attachment_reference",
+                "attachment_id": attachment_id,
+            }
+            for attachment_id in attachment_ids
+        ]
+
+    async def _push_notify_delegation_completion(
+        self,
+        db_context: DatabaseContext,
+        run: DelegationRunDict,
+        message_text: str,
+    ) -> None:
+        """Send push notification for a web delegation completion."""
+        if self.notification_dispatcher is None:
+            return
+        try:
+            await notify_conversation(
+                self.notification_dispatcher,
+                db_context,
+                interface_type=run["interface_type"],
+                conversation_id=run["conversation_id"],
+                title="Delegated task finished",
+                body=message_text[:100],
+                metadata=NotificationMetadata(
+                    category=MESSAGE_CATEGORY,
+                    conversation_id=run["conversation_id"],
+                ),
+            )
+        except Exception:
+            logger.warning(
+                "Failed to send delegation completion push notification",
+                exc_info=True,
+            )
+
+    def _tickle_stream_hub_on_commit(
+        self,
+        db_context: DatabaseContext,
+        conversation_id: str,
+    ) -> None:
+        """Nudge open web follow-streams to reload once the message commits.
+
+        The delegation completion message is saved inside the task worker's
+        transaction; web clients with an open conversation stream learn about
+        it via a content-free ``message`` event on the ConversationStreamHub
+        (they then refetch history). This mirrors WebChatInterface's post-commit
+        hub tickle for messages written outside the streaming turn path.
+
+        ``hub.publish`` is async but must run only after the surrounding
+        transaction commits, so the new row is visible to a refetch. It is
+        scheduled from an ``on_commit`` hook onto the running loop; a strong
+        reference is held until the publish completes.
+        """
+        if self.stream_hub is None:
+            return
+        hub = self.stream_hub
+        loop = asyncio.get_running_loop()
+
+        def _schedule_publish() -> None:
+            task = loop.create_task(
+                hub.publish(
+                    conversation_id,
+                    "message",
+                    turn_id=None,
+                    payload={
+                        "conversation_id": conversation_id,
+                        "new_messages": True,
+                    },
+                )
+            )
+            self._hub_publish_tasks.add(task)
+            task.add_done_callback(self._hub_publish_tasks.discard)
+
+        db_context.on_commit(_schedule_publish)
 
     async def _handle_recurrence(
         self,
@@ -1270,7 +1852,9 @@ class TaskWorker:
                 # Split task processing into separate transactions for better isolation
                 # Transaction 1: Dequeue task (commits immediately)
                 task = None
-                async with get_db_context(engine=self.engine) as dequeue_context:
+                async with get_db_context(
+                    engine=self.engine,
+                ) as dequeue_context:
                     logger.debug(
                         "Polling for tasks on DB context: %s",
                         dequeue_context.engine.url,
@@ -1300,7 +1884,7 @@ class TaskWorker:
                     try:  # Inner try for task processing
                         # Transaction 2: Process task and update status (commits immediately)
                         async with get_db_context(
-                            engine=self.engine
+                            engine=self.engine,
                         ) as process_context:
                             await self._process_task(
                                 process_context, task, wake_up_event

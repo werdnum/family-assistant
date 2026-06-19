@@ -96,7 +96,7 @@ class _RacingConfirmationRequestsRepository:
         request_id: str,
         resolving_user_id: str,
         resolving_interface: str,
-        execution_task_id: str,
+        execution_task_id: str | None,
         now: datetime,
     ) -> ConfirmationRequestRow | None:
         if self._race_mode == "reject_before_approve":
@@ -209,6 +209,7 @@ async def _create_request(
     *,
     target_user_id: str = "user-1",
     expires_at: datetime | None = None,
+    decision_only: bool = False,
 ) -> str:
     request = await _service(db_engine).create_request(
         target_user_id=target_user_id,
@@ -218,6 +219,7 @@ async def _create_request(
         source_message_internal_id=None,
         confirmation_prompt="Create calendar event: Flight",
         expires_at=expires_at or datetime.now(UTC) + timedelta(hours=1),
+        decision_only=decision_only,
     )
     return request["id"]
 
@@ -299,6 +301,95 @@ async def test_approval_enqueues_execution_task_atomically(
     assert tasks[0]["task_id"] == expected_task_id
     assert tasks[0]["payload"] == {"confirmation_request_id": request_id}
     assert tasks[0]["max_retries"] == 0
+
+
+@pytest.mark.asyncio
+async def test_decision_only_approval_does_not_enqueue_execution_task(
+    db_engine: AsyncEngine,
+) -> None:
+    service = _service(db_engine)
+    request_id = await _create_request(db_engine)
+
+    approved = await service.approve_without_enqueueing_execution(
+        request_id=request_id,
+        approving_user_id="user-1",
+        approving_interface="web",
+    )
+
+    assert approved["status"] == "approved"
+    assert approved["resolved_by_user_id"] == "user-1"
+    assert approved["resolved_via_interface"] == "web"
+    assert approved["execution_task_id"] is None
+
+    async with DatabaseContext(engine=db_engine) as db:
+        tasks = await db.tasks.get_all(
+            task_type=CONFIRMATION_TOOL_EXECUTION_TASK_TYPE,
+        )
+
+    assert tasks == []
+
+
+@pytest.mark.asyncio
+async def test_durable_decision_only_approval_does_not_enqueue_execution_task(
+    db_engine: AsyncEngine,
+) -> None:
+    service = _service(db_engine)
+    request = await service.create_request(
+        target_user_id="user-1",
+        tool_name="calendar.create_event",
+        tool_args={"title": "Flight", "start": "2026-05-01T09:00:00-07:00"},
+        tool_call_id="call-1",
+        source_message_internal_id=None,
+        confirmation_prompt="Create calendar event: Flight",
+        expires_at=datetime.now(UTC) + timedelta(hours=1),
+        decision_only=True,
+    )
+
+    approved = await service.approve_and_enqueue_execution(
+        request_id=request["id"],
+        approving_user_id="user-1",
+        approving_interface="web",
+    )
+
+    assert approved["status"] == "approved"
+    assert approved["decision_only"] is True
+    assert approved["execution_task_id"] is None
+
+    async with DatabaseContext(engine=db_engine) as db:
+        tasks = await db.tasks.get_all(
+            task_type=CONFIRMATION_TOOL_EXECUTION_TASK_TYPE,
+        )
+
+    assert tasks == []
+
+
+@pytest.mark.asyncio
+async def test_durable_decision_only_flag_suppresses_enqueue(
+    db_engine: AsyncEngine,
+) -> None:
+    """A decision_only request never enqueues execution, even via the enqueue path.
+
+    The decision-only mode is recorded durably on the request, so an approval
+    handled by a process/restart that lost the in-memory waiter — and therefore
+    falls through to approve_and_enqueue_execution — must still not enqueue a
+    confirmation_tool_execution task (which would run the tool outside the
+    delegated turn that is resuming inline).
+    """
+    request_id = await _create_request(db_engine, decision_only=True)
+
+    approved = await _service(db_engine).approve_and_enqueue_execution(
+        request_id=request_id,
+        approving_user_id="user-1",
+        approving_interface="web",
+    )
+
+    assert approved["status"] == "approved"
+    assert approved["execution_task_id"] is None
+    async with DatabaseContext(engine=db_engine) as db:
+        tasks = await db.tasks.get_all(
+            task_type=CONFIRMATION_TOOL_EXECUTION_TASK_TYPE,
+        )
+    assert tasks == []
 
 
 @pytest.mark.asyncio

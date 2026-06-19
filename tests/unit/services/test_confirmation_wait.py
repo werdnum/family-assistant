@@ -174,6 +174,23 @@ async def test_poll_approved_resolves_externally() -> None:
 
 
 @pytest.mark.asyncio
+async def test_poll_approved_without_execution_future_resolves_externally() -> None:
+    builder = _RecordingStrategyBuilder(
+        durable=True,
+        execution=None,
+        statuses=["approved"],
+        execution_result=ConfirmationOutcome(kind="approved"),
+    )
+
+    outcome = await wait_for_confirmation_resolution(
+        builder.strategy, timeout_seconds=5.0
+    )
+
+    assert outcome == ConfirmationOutcome(kind="approved")
+    assert builder.calls == ["on_resolved_approved", "wait_for_execution_result"]
+
+
+@pytest.mark.asyncio
 async def test_poll_rejected_resolves_externally() -> None:
     execution: asyncio.Future[ConfirmationOutcome] = (
         asyncio.get_running_loop().create_future()
@@ -281,4 +298,23 @@ async def test_deadline_with_approved_status_resolves() -> None:
     )
 
     assert outcome == ConfirmationOutcome(kind="completed", result="late")
+    assert builder.calls == ["on_resolved_approved", "wait_for_execution_result"]
+
+
+@pytest.mark.asyncio
+async def test_deadline_with_approved_status_without_execution_future_resolves() -> (
+    None
+):
+    builder = _RecordingStrategyBuilder(
+        durable=True,
+        execution=None,
+        statuses=["approved"],
+        execution_result=ConfirmationOutcome(kind="approved"),
+    )
+
+    outcome = await wait_for_confirmation_resolution(
+        builder.strategy, timeout_seconds=-1.0
+    )
+
+    assert outcome == ConfirmationOutcome(kind="approved")
     assert builder.calls == ["on_resolved_approved", "wait_for_execution_result"]

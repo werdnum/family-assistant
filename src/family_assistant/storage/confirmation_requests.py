@@ -2,6 +2,7 @@
 
 from sqlalchemy import (
     JSON,
+    Boolean,
     CheckConstraint,
     Column,
     DateTime,
@@ -52,6 +53,17 @@ confirmation_requests_table = Table(
     Column("resolved_by_user_id", String(255), nullable=True),
     Column("resolved_via_interface", String(50), nullable=True),
     Column("execution_task_id", String(255), nullable=True, unique=True),
+    # When True, approval resumes a caller that executes the tool inline (e.g. a
+    # delegated run waiting on the decision) rather than enqueueing a
+    # confirmation_tool_execution task. Stored durably so the approval endpoint
+    # makes the right enqueue decision even across a restart or a different
+    # process from the one that created the in-memory waiter.
+    Column(
+        "decision_only",
+        Boolean,
+        nullable=False,
+        server_default="false",
+    ),
     CheckConstraint(
         "status IN ('pending', 'approved', 'rejected', 'expired')",
         name="ck_confirmation_requests_status",

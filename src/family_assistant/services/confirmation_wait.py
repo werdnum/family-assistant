@@ -124,9 +124,7 @@ async def wait_for_confirmation_resolution(
             return execution_outcome
 
         durable_status = await strategy.get_durable_status()
-        if durable_status == "approved" and (
-            not strategy.durable or execution_future is not None
-        ):
+        if durable_status == "approved":
             await strategy.on_resolved_approved()
             return await strategy.wait_for_execution_result()
         if durable_status == "rejected":
@@ -140,9 +138,7 @@ async def wait_for_confirmation_resolution(
             )
 
     final_status = await strategy.get_durable_status()
-    if final_status == "approved" and (
-        not strategy.durable or execution_future is not None
-    ):
+    if final_status == "approved":
         await strategy.on_resolved_approved()
         return await strategy.wait_for_execution_result()
     if final_status == "rejected":

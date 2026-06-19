@@ -127,6 +127,7 @@ from family_assistant.tools.worker import reconcile_stale_tasks
 from family_assistant.utils.logging_handler import setup_error_logging
 from family_assistant.utils.scraping import PlaywrightScraper
 from family_assistant.web.app_creator import configure_app_auth, create_app
+from family_assistant.web.web_confirmation_ui_manager import WebConfirmationUIManager
 
 from .telegram.service import TelegramService
 
@@ -604,6 +605,18 @@ class Assistant:
         self.fastapi_app.state.confirmation_service = self.confirmation_service
         self.fastapi_app.state.confirmation_result_waiters = (
             self.confirmation_result_waiters
+        )
+        # Register a durable web confirmation manager so confirmations work for
+        # background runs (e.g. async profile delegation) on the web interface,
+        # not just inside a live streaming turn.
+        self.fastapi_app.state.confirmation_ui_managers["web"] = (
+            WebConfirmationUIManager(
+                confirmation_service=self.confirmation_service,
+                confirmation_result_waiters=self.confirmation_result_waiters,
+                stream_hub=getattr(
+                    self.fastapi_app.state, "conversation_stream_hub", None
+                ),
+            )
         )
         outbound_email_client = None
         email_config = self.config.email_intake
@@ -1574,6 +1587,21 @@ class Assistant:
                 except Exception as e:
                     logger.info(f"Worker task cleanup task setup: {e}")
 
+                # Upsert the stale delegation run reaper (runs hourly so a
+                # stranded run that never retried is surfaced reasonably soon).
+                try:
+                    await db_ctx.tasks.enqueue(
+                        task_id="system_delegation_run_cleanup_hourly",
+                        task_type="delegation_run_cleanup",
+                        payload={},
+                        scheduled_at=datetime.now(UTC),
+                        recurrence_rule="FREQ=HOURLY;BYMINUTE=0",
+                        max_retries_override=5,
+                    )
+                    logger.info("Delegation run cleanup task scheduled (hourly)")
+                except Exception as e:
+                    logger.info(f"Delegation run cleanup task setup: {e}")
+
                 # Upsert the completed automation cleanup task
                 try:
                     await db_ctx.tasks.enqueue(
@@ -1673,6 +1701,7 @@ class Assistant:
             confirmation_result_waiters=self.confirmation_result_waiters,
             confirmation_ui_managers=self.fastapi_app.state.confirmation_ui_managers,
             notification_dispatcher=self.notification_dispatcher,
+            stream_hub=self.fastapi_app.state.conversation_stream_hub,
         )
         worker.register_task_handler("log_message", task_wrapper_handle_log_message)
         if self.document_indexer:
@@ -1691,6 +1720,14 @@ class Assistant:
                 "index_note", self.notes_indexer.handle_index_note
             )
         worker.register_task_handler("llm_callback", handle_llm_callback)
+        worker.register_task_handler(
+            "delegated_profile_run",
+            worker.handle_delegated_profile_run,
+        )
+        worker.register_task_handler(
+            "delegation_run_cleanup",
+            worker.handle_delegation_run_cleanup,
+        )
         worker.register_task_handler(
             "embed_and_store_batch", handle_embed_and_store_batch
         )
