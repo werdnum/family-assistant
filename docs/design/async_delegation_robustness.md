@@ -187,3 +187,29 @@ robustness pass:
   `ConfirmationUIManager`, so a delegated run on `a2a`/`asterisk` cannot run confirmation-gated
   tools. A general fix would assert at startup that every delegation-capable interface has a manager
   rather than registering them one at a time.
+
+## Operational kill switch (`async_delegation_enabled`)
+
+Async profile delegation can be turned off at runtime via the per-profile
+`tools_config.async_delegation_enabled` flag (default `true`). Set it to `false` (typically under
+`default_profile_settings.tools_config` so it applies everywhere) to revert `delegate_to_service` to
+the pre-async, **synchronous** behavior:
+
+- The target profile runs in-process within the `delegate_to_service` tool call and its result is
+  returned directly to the model. No durable `delegation_runs` row is created, no
+  `delegated_profile_run` task is enqueued, and there is no handoff, completion notification, or
+  reaper involvement.
+- `get_delegation_status` / `list_delegations` return a short message explaining that async
+  delegation is disabled (there are no references to look up).
+- The trade-off is the original limitation that motivated the async work: a slow delegated request
+  blocks the tool call (and thus the originating turn) until it finishes.
+
+Implementation notes for whoever maintains this:
+
+- The flag is checked only inside `delegate_to_service_tool` (and the two status tools). The worker
+  handlers (`delegated_profile_run`, `delegation_run_cleanup`) and the hourly cleanup task stay
+  registered/scheduled unconditionally — with the flag off no new runs are created, so they are
+  harmless no-ops. This keeps the switch a single, well-contained branch and lets in-flight async
+  runs from before the flip still drain and get reaped normally.
+- The `delegation_runs` table/migration is unaffected; flipping the flag needs no schema change and
+  is reversible at any time.

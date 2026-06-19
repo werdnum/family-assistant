@@ -243,11 +243,14 @@ class AttachmentVisibilityChatInterface:
 
 def _source_processing_service(
     target_service: FakeDelegatableService,
+    *,
+    async_delegation_enabled: bool = True,
 ) -> ProcessingService:
     source_service = SimpleNamespace(
         service_config=SimpleNamespace(
             id="source_profile",
             tools_config=ToolsConfig(
+                async_delegation_enabled=async_delegation_enabled,
                 delegate_handoff_after_seconds=15.0,
                 delegate_status_poll_seconds=0.05,
             ),
@@ -993,6 +996,66 @@ async def test_inline_result_delivers_attachments_when_text_empty(
     assert len(result.attachments) == 1
     assert result.attachments[0].attachment_id == stored.attachment_id
     assert "no textual response" in (result.text or "")
+
+
+@pytest.mark.asyncio
+async def test_delegation_runs_synchronously_when_async_disabled(
+    db_engine: AsyncEngine,
+) -> None:
+    """With async_delegation_enabled=False the target runs inline.
+
+    The kill switch reverts to the pre-async behavior: the result is returned
+    directly from the tool call and no durable delegation run is created, so no
+    worker handoff, notification, or reaper machinery is involved.
+    """
+    target_service = FakeDelegatableService()
+    processing_service = _source_processing_service(
+        target_service, async_delegation_enabled=False
+    )
+    chat_interface = AsyncMock(spec=ChatInterface)
+
+    async with DatabaseContext(engine=db_engine) as db_context:
+        result = await delegate_to_service_tool(
+            exec_context=_tool_context(db_context, processing_service, chat_interface),
+            target_service_id="target_profile",
+            user_request="do it now",
+        )
+
+    assert result.text == "background delegation done"
+    assert len(target_service.calls) == 1
+
+    async with DatabaseContext(engine=db_engine) as db_context:
+        runs = await db_context.delegation_runs.list_for_conversation(
+            conversation_id=TEST_CONVERSATION_ID,
+            interface_type=TEST_INTERFACE_TYPE,
+            status=None,
+            limit=10,
+        )
+        assert runs == []
+
+
+@pytest.mark.asyncio
+async def test_status_tools_report_disabled_when_async_off(
+    db_engine: AsyncEngine,
+) -> None:
+    """get_delegation_status/list_delegations explain that async delegation is off."""
+    target_service = FakeDelegatableService()
+    processing_service = _source_processing_service(
+        target_service, async_delegation_enabled=False
+    )
+
+    async with DatabaseContext(engine=db_engine) as db_context:
+        status_result = await get_delegation_status_tool(
+            _tool_context(db_context, processing_service),
+            delegation_id="delegation_anything",
+        )
+        list_result = await list_delegations_tool(
+            _tool_context(db_context, processing_service),
+        )
+
+    assert "disabled" in (status_result.text or "")
+    assert "disabled" in (list_result.text or "")
+    assert list_result.data == []
 
 
 @pytest.mark.asyncio

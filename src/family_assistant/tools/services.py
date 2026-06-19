@@ -219,6 +219,86 @@ async def _completed_delegation_result(
     return ToolResult(text=final_text_reply, attachments=delegated_attachments)
 
 
+async def _synchronous_delegation_result(
+    exec_context: ToolExecutionContext,
+    *,
+    target_service: Any,  # noqa: ANN401 - target is a registry-resolved processing service
+    target_service_id: str,
+    content_parts: list[ContentPartDict],
+) -> ToolResult:
+    """Run a delegated request inline and return its result as a tool result.
+
+    This is the pre-async (synchronous) delegation path, kept behind the
+    ``async_delegation_enabled`` flag so async profile delegation can be disabled
+    at runtime: the target profile runs in-process within this tool call, with no
+    durable delegation run, worker handoff, or completion notification.
+    """
+    subconversation_id = str(uuid.uuid4())
+    logger.info(
+        "Delegating request to service profile '%s' synchronously with %d content "
+        "parts (subconversation_id=%s)",
+        target_service_id,
+        len(content_parts),
+        subconversation_id,
+    )
+    try:
+        result = await target_service.handle_chat_interaction(
+            db_context=exec_context.db_context,
+            interface_type=exec_context.interface_type,
+            conversation_id=exec_context.conversation_id,
+            trigger_content_parts=content_parts,
+            trigger_interface_message_id=None,
+            user_name=exec_context.user_name,
+            replied_to_interface_id=None,
+            chat_interface=exec_context.chat_interface,
+            chat_interfaces=exec_context.chat_interfaces,
+            confirmation_ui_managers=exec_context.confirmation_ui_managers,
+            request_confirmation_callback=exec_context.request_confirmation_callback,
+            subconversation_id=subconversation_id,
+        )
+    except Exception as e:
+        logger.error(
+            f"Failed to delegate request to service '{target_service_id}': {e}",
+            exc_info=True,
+        )
+        return ToolResult(
+            text=f"Error: Failed to delegate task to service '{target_service_id}'. Details: {e}",
+            attachments=None,
+        )
+
+    if result.error_traceback:
+        logger.error(
+            "Delegated service '%s' returned an error: %s",
+            target_service_id,
+            result.error_traceback,
+        )
+        detail = (
+            short_error_summary(result.error_traceback)
+            or "An error occurred during processing."
+        )
+        return ToolResult(
+            text=f"Error from '{target_service_id}' service: {detail}",
+            attachments=None,
+        )
+
+    final_text_reply = result.text_reply
+    delegated_attachments = await _delegated_attachment_refs(
+        exec_context,
+        target_service_id=target_service_id,
+        response_attachment_ids=result.attachment_ids or [],
+    )
+    if not final_text_reply:
+        logger.info(
+            "Delegated service '%s' returned no textual reply.",
+            target_service_id,
+        )
+        return ToolResult(
+            text=f"Service '{target_service_id}' processed the request but provided no textual response.",
+            attachments=delegated_attachments,
+        )
+    return ToolResult(text=final_text_reply, attachments=delegated_attachments)
+
+
 def short_error_summary(error: str | None) -> str | None:
     """Return the last non-blank line of an error, or ``None`` if there is none.
 
@@ -596,6 +676,14 @@ async def delegate_to_service_tool(
                 attachment_content(attachment_id) for attachment_id in attachment_ids
             )
 
+    if not _tools_config(exec_context).async_delegation_enabled:
+        return await _synchronous_delegation_result(
+            exec_context,
+            target_service=target_service,
+            target_service_id=target_service_id,
+            content_parts=content_parts,
+        )
+
     if delivery_hint not in {"auto", "background"}:
         return ToolResult(
             text="Error: delivery_hint must be 'auto' or 'background'.",
@@ -731,6 +819,15 @@ async def get_delegation_status_tool(
     delegation_id: str,
 ) -> ToolResult:
     """Return status for an asynchronous profile delegation."""
+    if not _tools_config(exec_context).async_delegation_enabled:
+        return ToolResult(
+            text=(
+                "Async profile delegation is disabled; delegations run synchronously "
+                "and return their result directly, so there are no delegation "
+                "references to look up."
+            ),
+            attachments=None,
+        )
     run = await exec_context.db_context.delegation_runs.get_by_delegation_id(
         delegation_id
     )
@@ -756,6 +853,14 @@ async def list_delegations_tool(
     limit: int = 10,
 ) -> ToolResult:
     """List recent asynchronous profile delegations for the current conversation."""
+    if not _tools_config(exec_context).async_delegation_enabled:
+        return ToolResult(
+            text=(
+                "Async profile delegation is disabled; delegations run synchronously "
+                "and leave no delegation records to list."
+            ),
+            data=[],
+        )
     runs = await exec_context.db_context.delegation_runs.list_for_conversation(
         conversation_id=exec_context.conversation_id,
         interface_type=exec_context.interface_type,
