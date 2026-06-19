@@ -14,6 +14,7 @@ import mimetypes
 import re
 import uuid
 from collections.abc import Callable
+from dataclasses import replace
 from datetime import tzinfo
 from functools import partial
 from typing import TYPE_CHECKING, Any, TypedDict
@@ -148,6 +149,14 @@ class MontyEngine:
         natively without sync/async bridging - async functions are awaited
         directly when Monty pauses at their call sites.
         """
+        # Mark the context as running inside a script so tools that would otherwise
+        # defer their result to a later conversation message (e.g.
+        # delegate_to_service's async handoff) run synchronously and return their
+        # result to the script. Done here, the single script entry point, so every
+        # caller (the execute_script tool and scheduled automation scripts) is
+        # covered uniformly.
+        if execution_context is not None and not execution_context.in_script:
+            execution_context = replace(execution_context, in_script=True)
         try:
             result = await asyncio.wait_for(
                 self._evaluate_async_impl(script, globals_dict, execution_context),
