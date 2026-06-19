@@ -615,7 +615,13 @@ various tasks with dark mode support and mobile optimization.
     flaky network, switching apps, or backgrounding), the app reconnects and continues the same
     reply where it can, or quietly reloads the finished reply from history when it returns — you
     won't be left with a stuck "thinking" bubble or a spurious error for a reply that actually
-    succeeded.
+    succeeded. This self-heals on its own: even on a network that is hostile to live streaming, the
+    iOS app keeps catching up the conversation in the background and refreshes again when you bring
+    it to the foreground, so you no longer have to pull-to-refresh the conversation list to see a
+    reply that finished while you were away.
+  - **Opening a conversation while a reply is in progress:** If a turn is already running when you
+    open a conversation on iOS — for example one you started on another device — the reply now
+    streams in live as it's generated, instead of only appearing once it finishes.
 
 ## 8. Tips for Best Results
 
