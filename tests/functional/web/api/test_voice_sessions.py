@@ -57,6 +57,10 @@ async def test_voice_session_persists_as_listable_conversation(
             ("assistant", "it's sunny"),
             ("user", "thanks"),
         ]
+        # Each user line opens a new turn that its assistant reply shares, so the
+        # transcript groups into distinct turns rather than one collapsed turn.
+        assert messages[0]["turn_id"] == messages[1]["turn_id"]
+        assert messages[2]["turn_id"] != messages[0]["turn_id"]
 
 
 @pytest.mark.asyncio

@@ -264,10 +264,10 @@ final class VoiceSessionViewModel {
         audioPumpTask?.cancel()
         audioPumpTask = nil
         audio.stop()
-        let session = self.session
-        Task { try? await session?.endAudioStream() }
+        // close() cancels the socket, which signals end-of-session to the server;
+        // a separate audioStreamEnd frame would race close() and never be sent.
         session?.close()
-        self.session = nil
+        session = nil
         eventTask?.cancel()
         eventTask = nil
     }

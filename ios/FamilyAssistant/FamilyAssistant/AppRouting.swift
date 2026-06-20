@@ -120,7 +120,12 @@ final class AppRouter {
         case .documents:
             documentsPath = Self.isDocumentsRoot(url) ? [] : [WebRoute(path: url.pathAndQuery)]
         case .more:
-            morePath = [.web(WebRoute(path: url.pathAndQuery))]
+            // Voice is a native screen; route the /voice path to it instead of
+            // the (now removed) web page, so deep links and cross-tab link follows
+            // open the same native experience as the More-list row.
+            morePath = url.normalizedPath == "/voice"
+                ? [.voice]
+                : [.web(WebRoute(path: url.pathAndQuery))]
         }
         selectedTab = tab
         return true

@@ -1809,16 +1809,20 @@ async def api_chat_save_voice_session(
         )
 
     conversation_id = payload.conversation_id or f"web_conv_{uuid.uuid4().hex}"
-    turn_id = str(uuid.uuid4())
     base_time = datetime.now(UTC)
 
+    # One turn id per logical exchange: a user line opens a new turn that the
+    # assistant lines following it belong to, mirroring how text chat groups a
+    # prompt with its reply. A single id for the whole session would collapse the
+    # transcript into one turn in turn-grouped history views.
+    turn_id = str(uuid.uuid4())
     saved = 0
     for index, turn in enumerate(payload.turns):
-        message = (
-            UserMessage(content=turn.text)
-            if turn.role == "user"
-            else AssistantMessage(content=turn.text)
-        )
+        if turn.role == "user":
+            turn_id = str(uuid.uuid4())
+            message: UserMessage | AssistantMessage = UserMessage(content=turn.text)
+        else:
+            message = AssistantMessage(content=turn.text)
         # Strictly increasing timestamps keep the transcript ordered when the
         # conversation is read back (history is ordered by timestamp).
         timestamp = base_time + timedelta(milliseconds=index)
