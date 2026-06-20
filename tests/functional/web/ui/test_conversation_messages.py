@@ -176,6 +176,121 @@ async def test_get_conversation_messages_excludes_delegated_subconversations(
 
 
 @pytest.mark.asyncio
+async def test_get_conversation_messages_exposes_turn_id(
+    web_only_assistant: Assistant,
+    db_engine: AsyncEngine,
+) -> None:
+    """The messages endpoint surfaces turn_id, null for non-turn writes.
+
+    Clients (e.g. iOS live-follow) reconcile optimistic bubbles to persisted
+    rows by turn_id, so a turn-produced row must carry it while a plain write
+    (no turn) reports null.
+    """
+    conv_id = f"test_conv_turn_id_{uuid.uuid4().hex[:8]}"
+    timestamp = datetime(2026, 1, 1, 12, 0, 0, tzinfo=UTC)
+
+    async with get_db_context(db_engine) as db_context:
+        await db_context.message_history.add_message(
+            UserMessage(content="Turn-produced request"),
+            interface_type="web",
+            conversation_id=conv_id,
+            timestamp=timestamp,
+            turn_id="turn-abc",
+            user_id="test_user",
+        )
+        await db_context.message_history.add_message(
+            AssistantMessage(content="Non-turn note save"),
+            interface_type="web",
+            conversation_id=conv_id,
+            timestamp=timestamp,
+            user_id="test_user",
+        )
+
+    assert web_only_assistant.fastapi_app is not None
+    transport = httpx.ASGITransport(app=web_only_assistant.fastapi_app)
+    async with httpx.AsyncClient(
+        transport=transport, base_url="http://testserver"
+    ) as client:
+        # Exercise both retrieval branches: the default paginated path and the
+        # legacy `limit=0` (get_all_grouped) path that the iOS full load hits.
+        for query_string in ("", "?limit=0"):
+            response = await client.get(
+                f"/api/v1/chat/conversations/{conv_id}/messages{query_string}"
+            )
+            assert response.status_code == 200
+            data = response.json()
+
+            turn_ids_by_content = {
+                message["content"]: message["turn_id"] for message in data["messages"]
+            }
+            assert turn_ids_by_content["Turn-produced request"] == "turn-abc"
+            assert turn_ids_by_content["Non-turn note save"] is None
+
+
+@pytest.mark.asyncio
+async def test_get_conversation_messages_turn_reply_carries_turn_id(
+    web_only_assistant: Assistant,
+    mock_llm_client: RuleBasedMockLLMClient,
+) -> None:
+    """A real turn's assistant reply row reports its turn_id.
+
+    This is the row iOS reconciles its optimistic/live-follow bubble against,
+    so the user message and assistant reply produced by one turn must share a
+    single non-null turn_id end to end.
+    """
+    conv_id = f"test_conv_turn_reply_{uuid.uuid4().hex[:8]}"
+
+    mock_llm_client.rules = [
+        (lambda kwargs: True, lambda kwargs: LLMOutput(content="Reply from the turn")),
+    ]
+
+    assert web_only_assistant.fastapi_app is not None
+    transport = httpx.ASGITransport(app=web_only_assistant.fastapi_app)
+    async with httpx.AsyncClient(
+        transport=transport, base_url="http://testserver"
+    ) as client:
+        send_response = await client.post(
+            "/api/v1/chat/send_message",
+            json={
+                "prompt": "Drive a turn",
+                "conversation_id": conv_id,
+                "interface_type": "web",
+            },
+        )
+        assert send_response.status_code == 200
+        turn_id = send_response.json()["turn_id"]
+        assert turn_id
+
+        result_data: dict = {}
+
+        async def get_messages_with_both_roles() -> bool:
+            nonlocal result_data
+            resp = await client.get(f"/api/v1/chat/conversations/{conv_id}/messages")
+            if resp.status_code == 200:
+                result_data = resp.json()
+                messages = result_data.get("messages", [])
+                has_user = any(m["role"] == "user" for m in messages)
+                has_assistant = any(m["role"] == "assistant" for m in messages)
+                return has_user and has_assistant
+            return False
+
+        await wait_for_condition(
+            get_messages_with_both_roles,
+            timeout=30.0,
+            description="both user and assistant messages not visible",
+        )
+
+        messages = result_data["messages"]
+        user_msg = next(m for m in messages if m["role"] == "user")
+        assistant_msg = next(m for m in messages if m["role"] == "assistant")
+
+        # The assistant reply (the reconciliation target) carries the turn_id,
+        # and the user message shares it: both rows belong to the same turn.
+        assert assistant_msg["turn_id"] == turn_id
+        assert user_msg["turn_id"] == turn_id
+
+
+@pytest.mark.asyncio
 async def test_get_conversation_messages_cross_interface_retrieval(
     web_only_assistant: Assistant,
     mock_llm_client: RuleBasedMockLLMClient,
