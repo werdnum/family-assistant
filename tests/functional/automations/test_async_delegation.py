@@ -11,7 +11,11 @@ from zoneinfo import ZoneInfo
 import pytest
 from sqlalchemy import select, update
 
-from family_assistant.a2a.client import A2AClientError, A2APermanentError
+from family_assistant.a2a.client import (
+    A2AClientError,
+    A2APermanentError,
+    A2ATaskNotFoundError,
+)
 from family_assistant.config_models import ToolsConfig
 from family_assistant.interfaces import ChatInterface
 from family_assistant.llm.messages import AssistantMessage, UserMessage
@@ -1337,6 +1341,7 @@ class FakePollableService:
         poll_results: list[ChatInteractionResult | object] | None = None,
         submit_terminal: ChatInteractionResult | None = None,
         submit_error: BaseException | None = None,
+        submit_errors: list[BaseException | None] | None = None,
     ) -> None:
         self.service_config = SimpleNamespace(
             id="target_profile",
@@ -1345,6 +1350,10 @@ class FakePollableService:
         self._poll_results = list(poll_results or [])
         self._submit_terminal = submit_terminal
         self._submit_error = submit_error
+        # A per-call sequence of submit outcomes (None = success) lets a test make
+        # the first submit fail and a later re-submit land; falls back to the
+        # single submit_error (applied to every call) when not provided.
+        self._submit_errors = list(submit_errors) if submit_errors is not None else None
         self.submitted: list[tuple[str, str | None, str]] = []
         self.cancelled: list[str] = []
         self.inline_calls = 0
@@ -1368,8 +1377,11 @@ class FakePollableService:
     ) -> RemoteSubmission:
         _ = content_parts
         self.submitted.append((conversation_id, subconversation_id, task_id))
-        if self._submit_error is not None:
-            raise self._submit_error
+        error = self._submit_error
+        if self._submit_errors is not None:
+            error = self._submit_errors.pop(0) if self._submit_errors else None
+        if error is not None:
+            raise error
         # Echo the caller-supplied task id, as a real remote does.
         return RemoteSubmission(
             remote_task_id=task_id,
@@ -1792,7 +1804,7 @@ async def test_pollable_delegation_poll_permanent_error_fails_fast(
     db_engine: AsyncEngine,
 ) -> None:
     target = FakePollableService(
-        poll_results=[A2APermanentError("remote has no such task")]
+        poll_results=[A2APermanentError("bad auth / protocol error")]
     )
     processing_service = _source_processing_service(
         cast("FakeDelegatableService", target)
@@ -1819,4 +1831,114 @@ async def test_pollable_delegation_poll_permanent_error_fails_fast(
         run = await db_context.delegation_runs.get_by_delegation_id(delegation_id)
         assert run is not None
         assert run["status"] == "failed"
+    chat_interface.send_message.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_pollable_delegation_poll_not_found_resubmits(
+    db_engine: AsyncEngine,
+) -> None:
+    # The remote reports its task is not found (the original submit may never have
+    # landed, or the remote lost it). Rather than failing, the worker re-submits
+    # idempotently with the stored id to (re)create the task and keeps polling.
+    target = FakePollableService(poll_results=[A2ATaskNotFoundError("task not found")])
+    processing_service = _source_processing_service(
+        cast("FakeDelegatableService", target)
+    )
+    chat_interface = AsyncMock(spec=ChatInterface)
+    chat_interface.send_message.return_value = "external_message_id"
+
+    delegation_id = await _start_background_delegation(
+        db_engine, processing_service, chat_interface
+    )
+    worker = _build_worker(db_engine, processing_service, chat_interface)
+    async with DatabaseContext(engine=db_engine) as db_context:
+        await worker.handle_delegated_profile_run(
+            _tool_context(db_context, processing_service, chat_interface),
+            _delegation_payload(delegation_id),
+        )
+    assert len(target.submitted) == 1
+    stored_task_id = target.submitted[0][2]
+
+    async with DatabaseContext(engine=db_engine) as db_context:
+        await worker.handle_delegation_poll(
+            _tool_context(db_context, processing_service, chat_interface),
+            _delegation_payload(delegation_id),
+        )
+        run = await db_context.delegation_runs.get_by_delegation_id(delegation_id)
+        assert run is not None
+        assert run["status"] == "awaiting_remote"
+    # The poll re-submitted with the same (stored) remote task id, then enqueued
+    # a fresh poll — it did not fail the run.
+    assert len(target.submitted) == 2
+    assert target.submitted[1][2] == stored_task_id
+    async with DatabaseContext(engine=db_engine) as db_context:
+        # The re-submit scheduled a fresh poll, so polling continues rather than
+        # the run being failed.
+        polls = await db_context.tasks.get_all(task_type="delegation_poll")
+        assert len(polls) >= 1
+    chat_interface.send_message.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_pollable_delegation_recovers_when_submit_never_landed(
+    db_engine: AsyncEngine,
+) -> None:
+    # The full recovery chain Codex flagged: the original message/send fails
+    # transiently before it reaches the remote (so the task is never created).
+    # The scheduled poll finds it not-found and re-submits; the re-submit lands
+    # and the run polls through to completion — a momentary outage during submit
+    # must not become a permanent failure.
+    target = FakePollableService(
+        submit_errors=[A2AClientError("connection reset"), None],
+        poll_results=[
+            A2ATaskNotFoundError("task not found"),
+            ChatInteractionResult.success(text_reply="recovered after resubmit"),
+        ],
+    )
+    processing_service = _source_processing_service(
+        cast("FakeDelegatableService", target)
+    )
+    chat_interface = AsyncMock(spec=ChatInterface)
+    chat_interface.send_message.return_value = "external_message_id"
+
+    delegation_id = await _start_background_delegation(
+        db_engine, processing_service, chat_interface
+    )
+    worker = _build_worker(db_engine, processing_service, chat_interface)
+    # Submit fails transiently -> awaiting_remote + poll enqueued (not failed).
+    async with DatabaseContext(engine=db_engine) as db_context:
+        await worker.handle_delegated_profile_run(
+            _tool_context(db_context, processing_service, chat_interface),
+            _delegation_payload(delegation_id),
+        )
+        run = await db_context.delegation_runs.get_by_delegation_id(delegation_id)
+        assert run is not None
+        assert run["status"] == "awaiting_remote"
+    assert len(target.submitted) == 1
+    stored_task_id = target.submitted[0][2]
+
+    # Poll finds the task missing -> re-submit (now lands) -> still working.
+    async with DatabaseContext(engine=db_engine) as db_context:
+        await worker.handle_delegation_poll(
+            _tool_context(db_context, processing_service, chat_interface),
+            _delegation_payload(delegation_id),
+        )
+        run = await db_context.delegation_runs.get_by_delegation_id(delegation_id)
+        assert run is not None
+        assert run["status"] == "awaiting_remote"
+    assert len(target.submitted) == 2
+    assert target.submitted[1][2] == stored_task_id
+    chat_interface.send_message.assert_not_awaited()
+
+    # Next poll: the recreated task is terminal -> finalize and notify.
+    async with DatabaseContext(engine=db_engine) as db_context:
+        await worker.handle_delegation_poll(
+            _tool_context(db_context, processing_service, chat_interface),
+            _delegation_payload(delegation_id),
+        )
+        run = await db_context.delegation_runs.get_by_delegation_id(delegation_id)
+        assert run is not None
+        assert run["status"] == "completed"
+        assert run["result_text"] == "recovered after resubmit"
     chat_interface.send_message.assert_awaited_once()

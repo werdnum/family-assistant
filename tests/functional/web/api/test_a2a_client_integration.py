@@ -17,7 +17,11 @@ import pytest
 import pytest_asyncio
 from httpx import ASGITransport, AsyncClient
 
-from family_assistant.a2a.client import A2AClientError, A2AClientWrapper
+from family_assistant.a2a.client import (
+    A2AClientError,
+    A2AClientWrapper,
+    A2ATaskNotFoundError,
+)
 from family_assistant.a2a.remote_service import RemoteA2AService
 from family_assistant.a2a.result_converter import a2a_task_to_chat_result
 from family_assistant.delegation_security import DelegationSecurityLevel
@@ -370,6 +374,17 @@ class TestRemoteA2AServiceAsync:
             submission.remote_task_id, submission.remote_context_id
         )
         assert isinstance(result, ChatInteractionResult)
+
+    @pytest.mark.asyncio
+    async def test_poll_async_unknown_task_raises_not_found(
+        self,
+        remote_service: RemoteA2AService,
+    ) -> None:
+        # A real tasks/get for an id the server never created returns the A2A
+        # task-not-found error, which the client surfaces as A2ATaskNotFoundError
+        # — the worker's cue to re-submit rather than fail the delegation.
+        with pytest.raises(A2ATaskNotFoundError):
+            await remote_service.poll_async("a2a-never-created", None)
 
     @pytest.mark.postgres
     @pytest.mark.asyncio

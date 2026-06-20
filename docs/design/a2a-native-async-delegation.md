@@ -148,6 +148,29 @@ task queue (scheduling, retries, recovery) with no global scan, and each run's c
 independent. A recurring `delegation_run_cleanup`-style sweep remains as the **backstop** only (see
 *Reaper*), catching runs whose poll task was somehow lost.
 
+### Error classification (submit & poll)
+
+The client (`A2AClientWrapper._call_jsonrpc`) sorts every failure into three buckets so the worker
+knows whether to fail fast, keep polling, or re-submit:
+
+- **`A2AClientError` (transient)** — transport errors (timeout, connection reset) and HTTP 5xx. The
+  request may have reached the remote (response lost) or the remote may recover. On submit the run
+  stays `awaiting_remote` and a poll is scheduled; on poll it reschedules. The wall-clock cap bounds
+  the retry window.
+- **`A2APermanentError` (deterministic)** — HTTP 4xx (bad auth / bad request) and non-recoverable
+  JSON-RPC errors. Retrying will not help, so the worker fails the run immediately with the real
+  error rather than waiting out the cap.
+- **`A2ATaskNotFoundError` (a subclass of `A2APermanentError`)** — HTTP 404 or the A2A
+  task-not-found JSON-RPC code (`-32001`). Reachable when the original `message/send` failed
+  transiently and **never landed** (so the remote task was never created), or the remote lost it.
+  Rather than failing, the poll handler **re-submits** idempotently with the stored `remote_task_id`
+  (the FA server is idempotent on it, so this re-creates a missing task or returns an existing one),
+  then keeps polling. This closes the gap where a momentary outage *during submit* would otherwise
+  become a permanent failure: the post-submit poll hits not-found and recovers.
+
+Submit and re-submit share one classifier (`_handle_submit_failure`): transient → poll, permanent →
+fail fast. The not-found → re-submit loop is bounded by the same wall-clock cap as ordinary polling.
+
 ### Re-attach on restart (fixes gap #3)
 
 Because `remote_task_id` is persisted and the run sits in `awaiting_remote` (not `running`), restart

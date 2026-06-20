@@ -75,9 +75,21 @@ class A2APermanentError(A2AClientError):
     """A deterministic A2A failure that will not succeed on retry.
 
     A definitive negative response from the remote — HTTP 4xx (bad auth / bad
-    request) or a JSON-RPC error (e.g. task not found). The worker fails the
-    delegation fast with this rather than polling until the cap.
+    request) or a JSON-RPC error. The worker fails the delegation fast with this
+    rather than polling until the cap.
     """
+
+
+class A2ATaskNotFoundError(A2APermanentError):
+    """The remote reports no such task (HTTP 404 or JSON-RPC task-not-found).
+
+    Distinct because, for a run whose submit may not have landed, this is a cue
+    to (idempotently) re-submit with the stored task id rather than fail.
+    """
+
+
+# JSON-RPC error code the A2A spec / FA server use for an unknown task id.
+_TASK_NOT_FOUND_CODE = -32001
 
 
 class A2AClientWrapper:
@@ -305,19 +317,24 @@ class A2AClientWrapper:
             ) from exc
         if response.status_code != 200:
             # 4xx is a deterministic client error (auth, bad request); 5xx is a
-            # transient server error that may recover.
+            # transient server error that may recover. A 404 specifically means
+            # the remote has no such task — a cue to re-submit, not to fail.
             message = f"A2A {method} returned HTTP {response.status_code} from {url}"
+            if response.status_code == 404:
+                raise A2ATaskNotFoundError(message)
             if 400 <= response.status_code < 500:
                 raise A2APermanentError(message)
             raise A2AClientError(message)
         payload = response.json()
         error = payload.get("error")
         if error:
-            # The remote answered with a definitive JSON-RPC error (e.g. task not
-            # found, invalid params) — deterministic.
-            raise A2APermanentError(
-                f"A2A {method} error {error.get('code')}: {error.get('message')}"
-            )
+            # The remote answered with a definitive JSON-RPC error — deterministic.
+            # A task-not-found code is distinguished so the worker can re-submit a
+            # run whose original message/send may never have landed.
+            message = f"A2A {method} error {error.get('code')}: {error.get('message')}"
+            if error.get("code") == _TASK_NOT_FOUND_CODE:
+                raise A2ATaskNotFoundError(message)
+            raise A2APermanentError(message)
         result = payload.get("result")
         if result is None:
             raise A2AClientError(f"A2A {method} returned no result")
