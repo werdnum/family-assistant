@@ -1336,6 +1336,7 @@ class FakePollableService:
         *,
         poll_results: list[ChatInteractionResult | object] | None = None,
         submit_terminal: ChatInteractionResult | None = None,
+        submit_error: BaseException | None = None,
     ) -> None:
         self.service_config = SimpleNamespace(
             id="target_profile",
@@ -1343,6 +1344,7 @@ class FakePollableService:
         )
         self._poll_results = list(poll_results or [])
         self._submit_terminal = submit_terminal
+        self._submit_error = submit_error
         self.submitted: list[tuple[str, str | None, str]] = []
         self.cancelled: list[str] = []
         self.inline_calls = 0
@@ -1366,6 +1368,8 @@ class FakePollableService:
     ) -> RemoteSubmission:
         _ = content_parts
         self.submitted.append((conversation_id, subconversation_id, task_id))
+        if self._submit_error is not None:
+            raise self._submit_error
         # Echo the caller-supplied task id, as a real remote does.
         return RemoteSubmission(
             remote_task_id=task_id,
@@ -1497,6 +1501,82 @@ async def test_pollable_delegation_retry_resubmits_idempotently(
         run = await db_context.delegation_runs.get_by_delegation_id(delegation_id)
         assert run is not None
         assert run["status"] == "awaiting_remote"
+
+
+@pytest.mark.asyncio
+async def test_pollable_delegation_submit_error_stays_awaiting_and_polls(
+    db_engine: AsyncEngine,
+) -> None:
+    # An ambiguous submit error (request may have reached the remote) must keep
+    # the run awaiting_remote and schedule a poll, not terminal-fail it.
+    target = FakePollableService(submit_error=A2AClientError("response lost"))
+    processing_service = _source_processing_service(
+        cast("FakeDelegatableService", target)
+    )
+    chat_interface = AsyncMock(spec=ChatInterface)
+    chat_interface.send_message.return_value = "external_message_id"
+
+    delegation_id = await _start_background_delegation(
+        db_engine, processing_service, chat_interface
+    )
+    worker = _build_worker(db_engine, processing_service, chat_interface)
+    async with DatabaseContext(engine=db_engine) as db_context:
+        await worker.handle_delegated_profile_run(
+            _tool_context(db_context, processing_service, chat_interface),
+            _delegation_payload(delegation_id),
+        )
+
+    assert len(target.submitted) == 1
+    async with DatabaseContext(engine=db_engine) as db_context:
+        run = await db_context.delegation_runs.get_by_delegation_id(delegation_id)
+        assert run is not None
+        assert run["status"] == "awaiting_remote"
+        polls = await db_context.tasks.get_all(task_type="delegation_poll")
+        assert len(polls) == 1
+    chat_interface.send_message.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_cleanup_reenqueues_lost_poll_for_young_run(
+    db_engine: AsyncEngine,
+) -> None:
+    # A young awaiting_remote run whose poll task was lost gets a fresh poll from
+    # the cleanup pass rather than waiting for the cap.
+    target = FakePollableService()
+    processing_service = _source_processing_service(
+        cast("FakeDelegatableService", target)
+    )
+    chat_interface = AsyncMock(spec=ChatInterface)
+    chat_interface.send_message.return_value = "external_message_id"
+
+    delegation_id = await _start_background_delegation(
+        db_engine, processing_service, chat_interface
+    )
+    # Claim awaiting_remote directly (no poll enqueued = a "lost" poll).
+    async with DatabaseContext(engine=db_engine) as db_context:
+        await db_context.delegation_runs.mark_awaiting_remote(
+            delegation_id,
+            remote_task_id="rt-lost",
+            remote_context_id=None,
+            started_at=SystemClock().now(),
+        )
+        polls_before = await db_context.tasks.get_all(task_type="delegation_poll")
+        assert polls_before == []
+
+    worker = _build_worker(db_engine, processing_service, chat_interface)
+    async with DatabaseContext(engine=db_engine) as db_context:
+        await worker.handle_delegation_run_cleanup(
+            _tool_context(db_context, processing_service, chat_interface),
+            {},
+        )
+
+    async with DatabaseContext(engine=db_engine) as db_context:
+        polls = await db_context.tasks.get_all(task_type="delegation_poll")
+        assert len(polls) == 1
+        run = await db_context.delegation_runs.get_by_delegation_id(delegation_id)
+        assert run is not None
+        assert run["status"] == "awaiting_remote"
+    chat_interface.send_message.assert_not_awaited()
 
 
 @pytest.mark.asyncio

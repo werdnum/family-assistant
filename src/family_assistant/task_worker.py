@@ -1093,16 +1093,18 @@ class TaskWorker:
                 task_id=remote_task_id,
             )
         except Exception:
-            error = traceback.format_exc()
-            logger.error(
-                "Async submit for delegation %s failed; failing the run (the poll "
-                "would otherwise retry a task the remote may never have created).",
+            # Ambiguous: the request may have reached the remote even though the
+            # response was lost. The id is already persisted, so keep the run
+            # awaiting_remote and let a poll reconcile (find the task if it was
+            # created, else retry and eventually fail at the cap) rather than
+            # terminal-failing and abandoning a possibly-live remote task.
+            logger.warning(
+                "Async submit for delegation %s failed; scheduling a poll to "
+                "reconcile (the remote task may exist).",
                 delegation_id,
                 exc_info=True,
             )
-            await self._fail_delegation_run(
-                exec_context, delegation_id=delegation_id, error=error
-            )
+            await self._enqueue_delegation_poll(exec_context, awaiting)
             return
 
         await self._after_submission(
@@ -1394,13 +1396,27 @@ class TaskWorker:
         *,
         now: datetime,
     ) -> None:
-        """Give up on awaiting_remote runs past the wall-clock cap.
+        """Advance or give up on awaiting_remote runs.
 
-        Backstop for a lost poll task: cancel the remote, fail, and notify.
-        Runs still within the cap are left for their own poll to advance.
+        A run still within its cap whose poll task was lost (failed / exhausted
+        retries) gets a fresh poll re-enqueued so it is not stuck until the cap.
+        A run past its cap is failed (CAS) + the remote cancelled + notified.
         """
         async with exec_context.db_context.create_isolated_context() as isolated_db:
             awaiting = await isolated_db.delegation_runs.list_awaiting_remote()
+            # Delegation ids that already have a live (pending/processing) poll
+            # task, so we re-enqueue only genuinely lost polls (no multiplication).
+            live_poll_tasks = await isolated_db.tasks.get_all(
+                task_type=DELEGATION_POLL_TASK_TYPE, status="pending", limit=500
+            )
+            live_poll_tasks += await isolated_db.tasks.get_all(
+                task_type=DELEGATION_POLL_TASK_TYPE, status="processing", limit=500
+            )
+        polled_ids: set[str] = set()
+        for task in live_poll_tasks:
+            payload = task.get("payload")
+            if payload and "delegation_id" in payload:
+                polled_ids.add(payload["delegation_id"])
         processing_service = exec_context.processing_service
         registry = (
             processing_service.processing_services_registry
@@ -1418,6 +1434,12 @@ class TaskWorker:
             )
             started_at = _as_aware_utc(run["started_at"] or run["created_at"])
             if now - started_at <= timedelta(seconds=cap_seconds):
+                if run["delegation_id"] not in polled_ids:
+                    logger.warning(
+                        "Re-enqueuing a lost poll for awaiting_remote delegation %s.",
+                        run["delegation_id"],
+                    )
+                    await self._enqueue_delegation_poll(exec_context, run)
                 continue
             # Fail FIRST via the non-terminal CAS so we never clobber a terminal
             # result a live poll has just written; only if we won the transition
