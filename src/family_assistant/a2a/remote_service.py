@@ -73,11 +73,7 @@ class RemoteA2AService:
             ChatInteractionResult as CIR,
         )
 
-        context_id = (
-            f"{subconversation_id}:{self._service_config.id}"
-            if subconversation_id
-            else f"{conversation_id}:{self._service_config.id}"
-        )
+        context_id = self._context_id(conversation_id, subconversation_id)
 
         logger.info(
             "Delegating to remote A2A agent '%s' (context_id=%s)",

@@ -183,20 +183,22 @@ class DelegationRunsRepository(BaseRepository):
         remote_context_id: str | None,
         started_at: datetime,
     ) -> DelegationRunDict | None:
-        """Move a ``queued`` run to ``awaiting_remote`` and store remote IDs.
+        """Move a ``running`` run to ``awaiting_remote`` and store remote IDs.
 
-        Used by the submit-then-poll A2A path instead of ``mark_running``:
-        ``awaiting_remote`` is deliberately distinct from ``running`` so the
-        worker's "running" entry-guard (which fails an interrupted run without
-        retry) does not apply — a poll can safely re-attach to the remote task
-        after a restart. Conditioned on the row still being ``queued`` so a
-        reaped or sibling-claimed run is not resurrected. Returns ``None`` when
-        the row is no longer ``queued`` or is absent.
+        The submit-then-poll A2A path first claims the run ``queued -> running``
+        (via ``mark_running``) so a crash mid-submit is caught by the worker's
+        "running" entry-guard (fail-without-resubmit, no duplicate remote task),
+        exactly like the inline path. This call then transitions
+        ``running -> awaiting_remote`` once the remote task id is known —
+        ``awaiting_remote`` is deliberately distinct from ``running`` so a poll
+        can re-attach after a restart. Conditioned on the row still being
+        ``running`` so a reaped or sibling-claimed run is not resurrected.
+        Returns ``None`` when the row is no longer ``running`` or is absent.
         """
         stmt = (
             update(delegation_runs_table)
             .where(delegation_runs_table.c.delegation_id == delegation_id)
-            .where(delegation_runs_table.c.status == "queued")
+            .where(delegation_runs_table.c.status == "running")
             .values(
                 status="awaiting_remote",
                 remote_task_id=remote_task_id,

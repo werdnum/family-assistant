@@ -1040,14 +1040,31 @@ class TaskWorker:
     ) -> None:
         """Submit a queued run to a remote (pollable) target and hand off to poll.
 
-        Submits without blocking, stores the remote task id, transitions the run
-        to ``awaiting_remote``, and enqueues the first poll. If the remote
-        returned a terminal task on submit (a synchronous remote), the run is
-        finalized inline instead.
+        Claims ``queued -> running`` before submitting so a crash mid-submit is
+        caught by the "running" entry-guard on retry (no duplicate remote task),
+        then transitions ``running -> awaiting_remote`` with the remote task id
+        and enqueues the first poll — or finalizes inline if a synchronous remote
+        returned a terminal task on submit.
         """
         delegation_id = run["delegation_id"]
         clock = exec_context.clock or self.clock
         content_parts = cast("list[ContentPartDict]", run["content_parts_json"])
+
+        # Claim queued -> running first (guards retries against duplicate submit).
+        async with exec_context.db_context.create_isolated_context() as isolated_db:
+            claimed = await isolated_db.delegation_runs.mark_running(
+                delegation_id, clock.now()
+            )
+        if claimed is None:
+            # No longer queued — the reaper failed it or a sibling worker claimed
+            # it first. Do not submit.
+            logger.warning(
+                "Delegation run %s was no longer queued when claiming it for "
+                "async submit (reaper or sibling worker raced); skipping.",
+                delegation_id,
+            )
+            return
+
         try:
             submission = await target_service.submit_async(
                 content_parts,
@@ -1065,17 +1082,17 @@ class TaskWorker:
             return
 
         async with exec_context.db_context.create_isolated_context() as isolated_db:
-            started = await isolated_db.delegation_runs.mark_awaiting_remote(
+            awaiting = await isolated_db.delegation_runs.mark_awaiting_remote(
                 delegation_id,
                 remote_task_id=submission.remote_task_id,
                 remote_context_id=submission.remote_context_id,
                 started_at=clock.now(),
             )
-        if started is None:
-            # The run is no longer queued (reaper failed it or a sibling claimed
-            # it). Cancel the remote task we just created so it is not orphaned.
+        if awaiting is None:
+            # The run left 'running' between the claim and here (e.g. the stale
+            # reaper failed it mid-submit). Cancel the orphaned remote task.
             logger.warning(
-                "Delegation run %s was no longer queued after async submit; "
+                "Delegation run %s was no longer running after async submit; "
                 "cancelling the orphaned remote task.",
                 delegation_id,
             )
@@ -1090,7 +1107,7 @@ class TaskWorker:
             return
 
         await self._enqueue_delegation_poll(
-            exec_context, started, delay_seconds=_poll_interval_for(target_service)
+            exec_context, awaiting, delay_seconds=_poll_interval_for(target_service)
         )
 
     async def _enqueue_delegation_poll(

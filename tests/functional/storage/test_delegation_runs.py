@@ -41,10 +41,12 @@ class TestDelegationRunsAsyncRemote:
         assert run["poll_attempts"] == 0
 
     @pytest.mark.asyncio
-    async def test_mark_awaiting_remote_from_queued(
+    async def test_mark_awaiting_remote_from_running(
         self, db_context: DatabaseContext
     ) -> None:
         await db_context.delegation_runs.create_run(_make_run("d1", "t1"))
+        # The submit-then-poll path claims queued -> running before submitting.
+        await db_context.delegation_runs.mark_running("d1", datetime.now(UTC))
         updated = await db_context.delegation_runs.mark_awaiting_remote(
             "d1",
             remote_task_id="remote-task-99",
@@ -58,10 +60,20 @@ class TestDelegationRunsAsyncRemote:
         assert updated["started_at"] is not None
 
     @pytest.mark.asyncio
-    async def test_mark_awaiting_remote_is_guarded_on_queued(
+    async def test_mark_awaiting_remote_is_guarded_on_running(
         self, db_context: DatabaseContext
     ) -> None:
         await db_context.delegation_runs.create_run(_make_run("d1", "t1"))
+        # Still 'queued' (not claimed): the running-guarded transition is a no-op.
+        not_claimed = await db_context.delegation_runs.mark_awaiting_remote(
+            "d1",
+            remote_task_id="rt-0",
+            remote_context_id=None,
+            started_at=datetime.now(UTC),
+        )
+        assert not_claimed is None
+
+        await db_context.delegation_runs.mark_running("d1", datetime.now(UTC))
         first = await db_context.delegation_runs.mark_awaiting_remote(
             "d1",
             remote_task_id="rt-1",
@@ -69,7 +81,7 @@ class TestDelegationRunsAsyncRemote:
             started_at=datetime.now(UTC),
         )
         assert first is not None
-        # A second attempt no longer matches status == 'queued'.
+        # A second attempt no longer matches status == 'running'.
         second = await db_context.delegation_runs.mark_awaiting_remote(
             "d1",
             remote_task_id="rt-2",
@@ -92,6 +104,7 @@ class TestDelegationRunsAsyncRemote:
     async def test_list_awaiting_remote(self, db_context: DatabaseContext) -> None:
         await db_context.delegation_runs.create_run(_make_run("d1", "t1"))
         await db_context.delegation_runs.create_run(_make_run("d2", "t2"))
+        await db_context.delegation_runs.mark_running("d1", datetime.now(UTC))
         await db_context.delegation_runs.mark_awaiting_remote(
             "d1",
             remote_task_id="rt-1",
