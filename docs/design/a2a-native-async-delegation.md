@@ -345,6 +345,9 @@ The existing SDK-based `send_message` stays for the synchronous delegation path 
 
 - Poll via `tasks/get` (not `resubscribe`) for v1 — restart-safe, no held connection. The async
   server makes a real `tasks/get` available in the loopback.
-- Defaults: `poll_interval_seconds = 10`, light backoff to 60 s; `max_async_seconds = 3600`.
+- Config (`remote_a2a` profile): `poll_interval_seconds` (default 10 s, light backoff to 60 s) and
+  `max_async_seconds` (the wall-clock cap). `max_async_seconds` defaults to the profile's
+  `timeout_seconds` so an existing remote keeps its effective cap; raise it explicitly to let async
+  delegation outlast a single HTTP timeout.
 - No user-facing `cancel_delegation` tool in v1 (cancellation is internal: reaper/cap); revisit with
   the `input_required` continuation work.

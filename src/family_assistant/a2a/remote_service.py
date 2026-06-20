@@ -104,26 +104,39 @@ class RemoteA2AService:
         base = subconversation_id or conversation_id
         return f"{base}:{self._service_config.id}"
 
+    def remote_context_id(
+        self, conversation_id: str, subconversation_id: str | None
+    ) -> str | None:
+        """Deterministic A2A context id, known before submit."""
+        return self._context_id(conversation_id, subconversation_id)
+
     async def submit_async(
         self,
         content_parts: list[ContentPartDict],
         *,
         conversation_id: str,
         subconversation_id: str | None,
+        task_id: str,
     ) -> RemoteSubmission:
-        """Submit to the remote agent without blocking; return its task id.
+        """Submit to the remote agent without blocking, using a caller-supplied id.
 
-        If the remote returned a terminal task on submit (a synchronous agent
-        that ignored ``blocking=false``), the converted result is returned in
+        The caller pre-generates and persists ``task_id`` before calling this, so
+        a crash mid-submit cannot orphan the remote task. If the remote returned
+        a terminal task on submit (a synchronous agent that ignored
+        ``blocking=false``), the converted result is returned in
         ``terminal_result`` so the caller can complete without polling.
         """
         context_id = self._context_id(conversation_id, subconversation_id)
         logger.info(
-            "Submitting async request to remote A2A agent '%s' (context_id=%s)",
+            "Submitting async request to remote A2A agent '%s' (context_id=%s, "
+            "task_id=%s)",
             self._service_config.id,
             context_id,
+            task_id,
         )
-        task = await self._client.submit(content_parts, context_id=context_id)
+        task = await self._client.submit(
+            content_parts, context_id=context_id, task_id=task_id
+        )
         terminal_result = None if _is_pending(task) else a2a_task_to_chat_result(task)
         return RemoteSubmission(
             remote_task_id=task.id,

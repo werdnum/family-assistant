@@ -184,6 +184,13 @@ class RemoteA2AConfig(BaseModel):
     auth: RemoteA2AAuthConfig = Field(default_factory=RemoteA2AAuthConfig)
     timeout_seconds: float = 300.0
     skills_description: str | None = None
+    # Async (submit-then-poll) delegation tuning. poll_interval_seconds is the
+    # base cadence for polling an in-flight remote task; max_async_seconds is the
+    # total wall-clock cap before the delegation is cancelled + failed. When
+    # max_async_seconds is unset it defaults to timeout_seconds, preserving the
+    # effective cap configured for the (previously blocking) remote.
+    poll_interval_seconds: float = 10.0
+    max_async_seconds: float | None = None
 
 
 class BrowserHandoffConfig(BaseModel):

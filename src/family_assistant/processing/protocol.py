@@ -94,12 +94,19 @@ class PollableDelegationService(Protocol):
     @property
     def service_config(self) -> ProcessingServiceConfig | RemoteServiceConfig: ...
 
+    def remote_context_id(
+        self, conversation_id: str, subconversation_id: str | None
+    ) -> str | None:
+        """Deterministic remote context id for a delegation, known before submit."""
+        ...
+
     async def submit_async(
         self,
         content_parts: list[ContentPartDict],
         *,
         conversation_id: str,
         subconversation_id: str | None,
+        task_id: str,
     ) -> RemoteSubmission: ...
 
     async def poll_async(

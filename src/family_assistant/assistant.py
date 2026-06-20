@@ -1349,6 +1349,14 @@ class Assistant:
             timeout=remote_config.timeout_seconds,
         )
 
+        # Preserve the configured timeout as the async wall-clock cap unless an
+        # explicit max_async_seconds is set (async delegation may legitimately
+        # outlast a single HTTP timeout, but defaulting to it keeps prior caps).
+        max_async_seconds = (
+            remote_config.max_async_seconds
+            if remote_config.max_async_seconds is not None
+            else remote_config.timeout_seconds
+        )
         service_config = RemoteServiceConfig(
             id=profile_conf.id,
             description=profile_conf.description
@@ -1357,6 +1365,8 @@ class Assistant:
             delegation_security_level=profile_conf.processing_config.delegation_security_level,
             allowed_delegation_sources=profile_conf.processing_config.allowed_delegation_sources,
             confirmation_timeout_seconds=profile_conf.tools_config.confirmation_timeout_seconds,
+            poll_interval_seconds=remote_config.poll_interval_seconds,
+            max_async_seconds=max_async_seconds,
         )
 
         service = RemoteA2AService(

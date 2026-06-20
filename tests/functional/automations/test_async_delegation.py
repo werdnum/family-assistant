@@ -1343,7 +1343,7 @@ class FakePollableService:
         )
         self._poll_results = list(poll_results or [])
         self._submit_terminal = submit_terminal
-        self.submitted: list[tuple[str, str | None]] = []
+        self.submitted: list[tuple[str, str | None, str]] = []
         self.cancelled: list[str] = []
         self.inline_calls = 0
 
@@ -1351,18 +1351,27 @@ class FakePollableService:
         self.inline_calls += 1
         raise AssertionError("a pollable target must not run inline")
 
+    def remote_context_id(
+        self, conversation_id: str, subconversation_id: str | None
+    ) -> str | None:
+        return f"{subconversation_id or conversation_id}:remote"
+
     async def submit_async(
         self,
         content_parts: object,
         *,
         conversation_id: str,
         subconversation_id: str | None,
+        task_id: str,
     ) -> RemoteSubmission:
         _ = content_parts
-        self.submitted.append((conversation_id, subconversation_id))
+        self.submitted.append((conversation_id, subconversation_id, task_id))
+        # Echo the caller-supplied task id, as a real remote does.
         return RemoteSubmission(
-            remote_task_id="remote-task-1",
-            remote_context_id="remote-ctx-1",
+            remote_task_id=task_id,
+            remote_context_id=self.remote_context_id(
+                conversation_id, subconversation_id
+            ),
             terminal_result=self._submit_terminal,
         )
 
@@ -1438,11 +1447,15 @@ async def test_pollable_delegation_submits_and_enqueues_poll(
 
     assert len(target.submitted) == 1
     assert target.inline_calls == 0
+    # The worker pre-generates the remote task id, persists it, then submits
+    # with it — so the stored id and the id passed to submit_async match.
+    submitted_task_id = target.submitted[0][2]
+    assert submitted_task_id.startswith("a2a-")
     async with DatabaseContext(engine=db_engine) as db_context:
         run = await db_context.delegation_runs.get_by_delegation_id(delegation_id)
         assert run is not None
         assert run["status"] == "awaiting_remote"
-        assert run["remote_task_id"] == "remote-task-1"
+        assert run["remote_task_id"] == submitted_task_id
         polls = await db_context.tasks.get_all(task_type="delegation_poll")
         assert len(polls) == 1
     chat_interface.send_message.assert_not_awaited()
@@ -1567,7 +1580,7 @@ async def test_reap_stale_awaiting_remote_cancels_and_fails(
             {},
         )
 
-    assert target.cancelled == ["remote-task-1"]
+    assert target.cancelled == [target.submitted[0][2]]
     async with DatabaseContext(engine=db_engine) as db_context:
         run = await db_context.delegation_runs.get_by_delegation_id(delegation_id)
         assert run is not None
