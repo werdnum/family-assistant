@@ -11,7 +11,7 @@ from zoneinfo import ZoneInfo
 import pytest
 from sqlalchemy import select, update
 
-from family_assistant.a2a.client import A2AClientError
+from family_assistant.a2a.client import A2AClientError, A2APermanentError
 from family_assistant.config_models import ToolsConfig
 from family_assistant.interfaces import ChatInterface
 from family_assistant.llm.messages import AssistantMessage, UserMessage
@@ -1504,14 +1504,12 @@ async def test_pollable_delegation_retry_resubmits_idempotently(
 
 
 @pytest.mark.asyncio
-async def test_pollable_delegation_ambiguous_submit_error_recovers_via_poll(
+async def test_pollable_delegation_transient_submit_error_recovers_via_poll(
     db_engine: AsyncEngine,
 ) -> None:
-    # Submit errored but a probe finds the remote task (the request landed and
-    # the response was lost): keep the run awaiting_remote and schedule a poll.
-    target = FakePollableService(
-        submit_error=A2AClientError("response lost"), poll_results=[PENDING]
-    )
+    # A transient submit error (the request may have landed but the response was
+    # lost): keep the run awaiting_remote and schedule a poll to reconcile.
+    target = FakePollableService(submit_error=A2AClientError("response lost"))
     processing_service = _source_processing_service(
         cast("FakeDelegatableService", target)
     )
@@ -1542,13 +1540,9 @@ async def test_pollable_delegation_ambiguous_submit_error_recovers_via_poll(
 async def test_pollable_delegation_deterministic_submit_error_fails_fast(
     db_engine: AsyncEngine,
 ) -> None:
-    # Submit errored and a probe also fails (no remote task exists — a
-    # deterministic failure like bad auth): fail fast with the error instead of
-    # polling until the cap.
-    target = FakePollableService(
-        submit_error=A2AClientError("bad auth"),
-        poll_results=[A2AClientError("task not found")],
-    )
+    # A deterministic submit error (bad auth / protocol error): fail fast with
+    # the real error instead of polling until the cap.
+    target = FakePollableService(submit_error=A2APermanentError("bad auth"))
     processing_service = _source_processing_service(
         cast("FakeDelegatableService", target)
     )
@@ -1797,7 +1791,9 @@ async def test_pollable_delegation_poll_transient_error_reschedules(
 async def test_pollable_delegation_poll_permanent_error_fails_fast(
     db_engine: AsyncEngine,
 ) -> None:
-    target = FakePollableService(poll_results=[ValueError("result conversion bug")])
+    target = FakePollableService(
+        poll_results=[A2APermanentError("remote has no such task")]
+    )
     processing_service = _source_processing_service(
         cast("FakeDelegatableService", target)
     )

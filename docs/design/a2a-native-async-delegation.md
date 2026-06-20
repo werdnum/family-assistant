@@ -2,10 +2,12 @@
 
 ## Status
 
-Implemented (two-sided async; see the addendum). The server-side `a2a_tasks` stale-row reaper
-(`a2a_task_cleanup`, hourly) fails background-send rows left non-terminal by a server restart, so a
-polling client fails fast instead of waiting out its cap; it is time-based (correct across multiple
-server instances).
+Implemented (two-sided async; see the addendum). A background send lost to a server restart leaves
+its `a2a_tasks` row non-terminal; the delegating client recovers it via its `max_async_seconds` cap
+(poll → cap → `tasks/cancel`, which marks the row `canceled` — protected from a late overwrite by
+`update_task_status`'s terminal-CAS guard). An age-based server-side reaper was deliberately not
+added: it cannot distinguish a legitimately long-running send from a lost one without a heartbeat,
+and would false-fail the former (permanently, given the CAS guard).
 
 ## Background
 

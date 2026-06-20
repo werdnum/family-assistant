@@ -24,7 +24,7 @@ from opentelemetry.trace import StatusCode
 from sqlalchemy import select
 
 # Removed storage import - using repository pattern
-from family_assistant.a2a.client import A2AClientError
+from family_assistant.a2a.client import A2AClientError, A2APermanentError
 from family_assistant.llm.messages import (
     AssistantMessage,
     MessageAttachmentMetadata,
@@ -218,18 +218,6 @@ class DelegationPollPayload(TypedDict):
     interface_type: str
     conversation_id: str
     user_name: str
-
-
-class A2ATaskCleanupPayload(TypedDict, total=False):
-    """Payload for a2a_task_cleanup tasks."""
-
-    stale_seconds: float
-
-
-# A2A server task rows left non-terminal longer than this are considered stuck
-# (a server restart lost the in-memory background send) and are failed by the
-# reaper, so a polling client fails fast rather than waiting out its own cap.
-A2A_TASK_STALE_SECONDS = 3600.0
 
 
 # Task type for the per-run, self-rescheduling poll of an awaiting_remote
@@ -1104,63 +1092,51 @@ class TaskWorker:
                 subconversation_id=run["subconversation_id"],
                 task_id=remote_task_id,
             )
+        except A2APermanentError:
+            # Deterministic failure (bad auth / protocol error): retrying or
+            # polling will not help. Fail fast with the real error instead of
+            # waiting out the cap.
+            error = traceback.format_exc()
+            logger.error(
+                "Async submit for delegation %s failed permanently.",
+                delegation_id,
+                exc_info=True,
+            )
+            await self._fail_delegation_run(
+                exec_context, delegation_id=delegation_id, error=error
+            )
+            return
+        except A2AClientError:
+            # Transient transport failure: the request may have reached the
+            # remote (response lost) or the remote may recover. The run already
+            # carries a stable remote task id, so keep it awaiting and let a poll
+            # reconcile (find the task, retry, or fail at the cap).
+            logger.warning(
+                "Async submit for delegation %s failed transiently; scheduling a "
+                "poll to reconcile.",
+                delegation_id,
+                exc_info=True,
+            )
+            await self._enqueue_delegation_poll(
+                exec_context, awaiting, delay_seconds=_poll_interval_for(target_service)
+            )
+            return
         except Exception:
-            await self._recover_or_fail_failed_submit(
-                exec_context, awaiting, target_service, remote_context_id
+            # Unexpected (e.g. a code/conversion bug): retrying will not help.
+            error = traceback.format_exc()
+            logger.error(
+                "Async submit for delegation %s raised unexpectedly.",
+                delegation_id,
+                exc_info=True,
+            )
+            await self._fail_delegation_run(
+                exec_context, delegation_id=delegation_id, error=error
             )
             return
 
         await self._after_submission(
             exec_context, awaiting, target_service, submission, remote_task_id
         )
-
-    async def _recover_or_fail_failed_submit(
-        self,
-        exec_context: ToolExecutionContext,
-        run: DelegationRunDict,
-        target_service: PollableDelegationService,
-        remote_context_id: str | None,
-    ) -> None:
-        """Decide what to do after ``submit_async`` raised.
-
-        Probe the remote: a deterministic failure (bad auth, protocol error,
-        request never sent) leaves no task, so fail fast with the real error
-        rather than polling until the cap; an ambiguous transport failure (the
-        request landed but the response was lost) leaves the task running, so
-        recover via the normal poll/finalize path.
-        """
-        delegation_id = run["delegation_id"]
-        remote_task_id = run["remote_task_id"]
-        submit_error = traceback.format_exc()
-        try:
-            probe = await target_service.poll_async(
-                remote_task_id or "", remote_context_id
-            )
-        except Exception:
-            # No remote task exists (or the remote is unreachable): the submit
-            # truly failed. Surface the real error instead of a later timeout.
-            logger.error(
-                "Async submit for delegation %s failed and the remote task does "
-                "not exist; failing with the submit error.",
-                delegation_id,
-                exc_info=True,
-            )
-            await self._fail_delegation_run(
-                exec_context, delegation_id=delegation_id, error=submit_error
-            )
-            return
-        # The task exists despite the submit error (lost response) — recover.
-        logger.warning(
-            "Async submit for delegation %s errored but the remote task exists; "
-            "recovering via poll.",
-            delegation_id,
-        )
-        if probe is PENDING:
-            await self._enqueue_delegation_poll(
-                exec_context, run, delay_seconds=_poll_interval_for(target_service)
-            )
-        else:
-            await self._finalize_delegation_run(exec_context, delegation_id, probe)
 
     async def _resubmit_awaiting_remote(
         self,
@@ -1338,6 +1314,19 @@ class TaskWorker:
             result = await target_service.poll_async(
                 remote_task_id, run["remote_context_id"]
             )
+        except A2APermanentError:
+            # Definitive negative (e.g. the remote has no such task): the task
+            # will never complete. Fail with the real error.
+            error = traceback.format_exc()
+            logger.error(
+                "Polling remote delegation %s hit a permanent error.",
+                delegation_id,
+                exc_info=True,
+            )
+            await self._fail_delegation_run(
+                exec_context, delegation_id=delegation_id, error=error
+            )
+            return
         except A2AClientError:
             # Transient transport error; reschedule and let the wall-clock cap
             # eventually give up if it persists.
@@ -1440,31 +1429,6 @@ class TaskWorker:
             )
         for run in unnotified:
             await self._force_notify_delegation(exec_context, run)
-
-    async def handle_a2a_task_cleanup(
-        self,
-        exec_context: ToolExecutionContext,
-        payload: A2ATaskCleanupPayload,
-    ) -> None:
-        """Fail A2A server task rows stuck non-terminal past a TTL.
-
-        Backstop for a non-blocking background send lost to a server restart;
-        time-based so it is correct across multiple server instances.
-        """
-        clock = exec_context.clock or self.clock
-        now = clock.now()
-        stale_seconds = payload.get("stale_seconds", A2A_TASK_STALE_SECONDS)
-        stale_before = now - timedelta(seconds=stale_seconds)
-        async with exec_context.db_context.create_isolated_context() as isolated_db:
-            failed = await isolated_db.a2a_tasks.fail_stale_active(
-                now=now, stale_before=stale_before
-            )
-        if failed:
-            logger.warning(
-                "Failed %d stale A2A task row(s) older than %.0fs.",
-                failed,
-                stale_seconds,
-            )
 
     async def _reap_stale_awaiting_remote(
         self,

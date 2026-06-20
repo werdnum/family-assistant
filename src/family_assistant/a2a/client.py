@@ -63,7 +63,21 @@ TERMINAL_TASK_STATES = {
 
 
 class A2AClientError(Exception):
-    """Base error for A2A client operations."""
+    """Base error for A2A client operations.
+
+    Treated as *transient* by the delegation worker (network/timeout/5xx): the
+    request may have landed, or the remote may recover, so the run is kept
+    awaiting and polled/retried.
+    """
+
+
+class A2APermanentError(A2AClientError):
+    """A deterministic A2A failure that will not succeed on retry.
+
+    A definitive negative response from the remote — HTTP 4xx (bad auth / bad
+    request) or a JSON-RPC error (e.g. task not found). The worker fails the
+    delegation fast with this rather than polling until the cap.
+    """
 
 
 class A2AClientWrapper:
@@ -284,17 +298,24 @@ class A2AClientWrapper:
         try:
             response = await client.post(url, json=body)
         except httpx.HTTPError as exc:
+            # Transport error (timeout / connection): the request may or may not
+            # have reached the remote — transient.
             raise A2AClientError(
                 f"A2A {method} request to {url} failed: {exc}"
             ) from exc
         if response.status_code != 200:
-            raise A2AClientError(
-                f"A2A {method} returned HTTP {response.status_code} from {url}"
-            )
+            # 4xx is a deterministic client error (auth, bad request); 5xx is a
+            # transient server error that may recover.
+            message = f"A2A {method} returned HTTP {response.status_code} from {url}"
+            if 400 <= response.status_code < 500:
+                raise A2APermanentError(message)
+            raise A2AClientError(message)
         payload = response.json()
         error = payload.get("error")
         if error:
-            raise A2AClientError(
+            # The remote answered with a definitive JSON-RPC error (e.g. task not
+            # found, invalid params) — deterministic.
+            raise A2APermanentError(
                 f"A2A {method} error {error.get('code')}: {error.get('message')}"
             )
         result = payload.get("result")
