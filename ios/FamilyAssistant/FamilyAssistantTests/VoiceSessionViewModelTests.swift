@@ -215,21 +215,23 @@ final class VoiceSessionViewModelTests: XCTestCase {
         let model = makeModel()
         await model.start()
         XCTAssertTrue(session.connected)
+        XCTAssertTrue(audio.started)
         XCTAssertEqual(model.phase, .connecting)
 
         session.emit(.setupComplete)
-        try await waitUntil { model.phase == .active && self.audio.started }
+        try await waitUntil { model.phase == .active }
     }
 
-    func testMicrophoneCaptureIsDeferredUntilSetupComplete() async throws {
+    func testMicrophoneForwardingIsDeferredUntilSetupComplete() async throws {
         let model = makeModel()
         await model.start()
-        // Connected, but no microphone/audio until the Live API acknowledges setup.
-        XCTAssertTrue(session.connected)
-        XCTAssertFalse(audio.started)
+        // The engine runs so assistant playback is ready, but captured microphone
+        // audio is not forwarded until the Live API acknowledges setup.
+        XCTAssertTrue(audio.started)
+        XCTAssertNil(audio.onCapturedAudio)
 
         session.emit(.setupComplete)
-        try await waitUntil { self.audio.started }
+        try await waitUntil { self.audio.onCapturedAudio != nil }
         XCTAssertEqual(model.phase, .active)
     }
 
@@ -305,7 +307,7 @@ final class VoiceSessionViewModelTests: XCTestCase {
         let model = makeModel()
         await model.start()
         session.emit(.setupComplete)
-        try await waitUntil { self.audio.started }
+        try await waitUntil { self.audio.onCapturedAudio != nil }
 
         let d1 = Data([0x01])
         let d2 = Data([0x02])
@@ -339,10 +341,20 @@ final class VoiceSessionViewModelTests: XCTestCase {
         XCTAssertTrue(reportedErrors.isEmpty)
     }
 
-    func testGoAwayEndsSession() async throws {
+    func testGoAwayDoesNotEndUntilSocketCloses() async throws {
         let model = makeModel()
         await model.start()
+        session.emit(.setupComplete)
+        try await waitUntil { model.phase == .active }
+
+        // goAway is a warning, not the close: the in-flight turn keeps going.
         session.emit(.goAway(timeLeft: "1s"))
+        await Task.yield()
+        XCTAssertEqual(model.phase, .active)
+        XCTAssertFalse(session.closed)
+
+        // The subsequent socket close drives a clean finish.
+        session.finish(withError: nil)
         try await waitUntil { model.phase == .finished }
         XCTAssertTrue(session.closed)
     }

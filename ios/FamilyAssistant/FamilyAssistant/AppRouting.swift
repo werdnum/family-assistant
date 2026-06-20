@@ -80,6 +80,10 @@ enum MoreRoute: Equatable, Hashable {
     case settings
     /// Native voice-conversation screen (replaces the web `/voice` page).
     case voice
+
+    /// The catalog/deep-link path that resolves to the native ``voice`` screen
+    /// instead of a web page. Single source of truth for that decision.
+    static let voicePath = "/voice"
 }
 
 @Observable
@@ -123,7 +127,7 @@ final class AppRouter {
             // Voice is a native screen; route the /voice path to it instead of
             // the (now removed) web page, so deep links and cross-tab link follows
             // open the same native experience as the More-list row.
-            morePath = url.normalizedPath == "/voice"
+            morePath = url.normalizedPath == MoreRoute.voicePath
                 ? [.voice]
                 : [.web(WebRoute(path: url.pathAndQuery))]
         }

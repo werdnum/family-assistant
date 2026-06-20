@@ -75,7 +75,6 @@ final class VoiceSessionViewModel {
     private var audioOut: AsyncStream<Data>.Continuation?
     private var didStart = false
     private var didPersist = false
-    private var audioStarted = false
 
     init(
         tokenProvider: VoiceTokenProviding,
@@ -152,19 +151,10 @@ final class VoiceSessionViewModel {
             return
         }
 
-        // Start the session-duration cap now so a handshake that never completes
-        // still ends. Microphone capture is deferred until `setupComplete` (see
-        // beginAudio) so no realtime audio is sent before the Live API is ready.
-        startTimeout(token: token)
-    }
-
-    /// Open the microphone and begin streaming, once the Live API has acknowledged
-    /// setup. The Gemini Live protocol expects clients to wait for
-    /// `setupComplete` before sending realtime input, so capture starts here
-    /// rather than immediately after `connect()`.
-    private func beginAudio() async {
-        guard !audioStarted, !isTerminal, let session else { return }
-        audioStarted = true
+        // Start the audio engine now so assistant playback is ready immediately,
+        // but do NOT forward microphone audio yet: the Live API expects clients to
+        // wait for `setupComplete` before sending realtime input, so the capture
+        // pump is started from the setupComplete handler.
         do {
             try await audio.start()
         } catch {
@@ -173,9 +163,13 @@ final class VoiceSessionViewModel {
         }
         guard !isTerminal else {
             audio.stop()
+            session.close()
             return
         }
-        startAudioPump(session: session)
+
+        // Start the session-duration cap now so a handshake that never completes
+        // still ends.
+        startTimeout(token: token)
     }
 
     /// End the session at the user's request.
@@ -201,7 +195,8 @@ final class VoiceSessionViewModel {
         case .setupComplete:
             if phase == .connecting {
                 phase = .active
-                Task { await self.beginAudio() }
+                // The Live API is ready; begin forwarding captured microphone audio.
+                startAudioPump(session: session)
             }
         case .audio(let data):
             isAssistantSpeaking = true
@@ -220,26 +215,28 @@ final class VoiceSessionViewModel {
         case .toolCallCancellation(let ids):
             cancelToolCalls(ids)
         case .goAway:
-            end()
+            // goAway warns that the server will close soon; it is not the close
+            // itself. Let the in-flight turn finish — the subsequent socket close
+            // drives teardown via handleDisconnect — rather than cutting it short.
+            break
         }
     }
 
     private func handleToolCalls(_ calls: [GeminiFunctionCall], session: VoiceLiveSession) {
         let runner = VoiceToolRunner(executor: toolExecutor)
         for call in calls {
-            let id = call.id
+            // Track every task — synthesizing a key for an id-less call — so
+            // teardown can cancel it and a toolCallCancellation can suppress its
+            // (now stale) response. An untracked task would outlive the session,
+            // retaining it and trying to respond on a closed socket.
+            let key = call.id ?? UUID().uuidString
             let task = Task { [weak self] in
+                defer { self?.toolTasks[key] = nil }
                 let response = await runner.run([call]).first
-                guard let self, let response, !Task.isCancelled else { return }
-                if let id { self.toolTasks[id] = nil }
+                guard let response, !Task.isCancelled else { return }
                 try? await session.sendToolResponses([response])
             }
-            // Track by id so a later toolCallCancellation can cancel the work and
-            // suppress its (now stale) response. Calls without an id can't be
-            // individually cancelled, but Gemini always supplies one.
-            if let id {
-                toolTasks[id] = task
-            }
+            toolTasks[key] = task
         }
     }
 
@@ -315,6 +312,7 @@ final class VoiceSessionViewModel {
 
     private func teardown() {
         persistTranscriptIfNeeded()
+        isAssistantSpeaking = false
         for task in toolTasks.values {
             task.cancel()
         }

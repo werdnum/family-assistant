@@ -55,13 +55,26 @@ enum VoiceAudioError: LocalizedError {
 /// Assistant audio (24 kHz) is scheduled on a player node; ``flushPlayback()``
 /// drops queued audio for instant barge-in.
 final class VoiceAudioEngine: VoiceAudioIO {
-    var onCapturedAudio: (@Sendable (Data) -> Void)?
+    /// State the input tap touches on the realtime audio thread. The tap, the
+    /// MainActor (start/stop/setMuted), and the view model (onCapturedAudio) all
+    /// mutate these, so they live behind a lock — reading a bare `converter` or
+    /// closure reference on the audio thread while the MainActor reassigns it is a
+    /// data race that can crash.
+    private struct TapState {
+        var muted = false
+        var converter: StreamingPCMConverter?
+        var onCaptured: (@Sendable (Data) -> Void)?
+    }
+
+    var onCapturedAudio: (@Sendable (Data) -> Void)? {
+        get { tapState.withLock { $0.onCaptured } }
+        set { tapState.withLock { $0.onCaptured = newValue } }
+    }
 
     private let engine = AVAudioEngine()
     private let playerNode = AVAudioPlayerNode()
     private let playbackFormat: AVAudioFormat
-    private let muted = OSAllocatedUnfairLock(initialState: false)
-    private var converter: StreamingPCMConverter?
+    private let tapState = OSAllocatedUnfairLock(initialState: TapState())
     private var isRunning = false
     private var observers: [NSObjectProtocol] = []
 
@@ -81,14 +94,18 @@ final class VoiceAudioEngine: VoiceAudioIO {
             guard let converter = StreamingPCMConverter(inputFormat: inputFormat) else {
                 throw VoiceAudioError.converterUnavailable
             }
-            self.converter = converter
+            tapState.withLock { $0.converter = converter }
 
             engine.attach(playerNode)
             engine.connect(playerNode, to: engine.mainMixerNode, format: playbackFormat)
 
             input.installTap(onBus: 0, bufferSize: 2048, format: inputFormat) { [weak self] buffer, _ in
-                guard let self, !self.muted.withLock({ $0 }) else { return }
-                if let data = self.converter?.convertToData(buffer), let callback = self.onCapturedAudio {
+                guard let self else { return }
+                let (muted, converter, callback) = self.tapState.withLock {
+                    ($0.muted, $0.converter, $0.onCaptured)
+                }
+                guard !muted, let converter, let callback else { return }
+                if let data = converter.convertToData(buffer) {
                     callback(data)
                 }
             }
@@ -124,7 +141,7 @@ final class VoiceAudioEngine: VoiceAudioIO {
         if playerNode.engine != nil {
             engine.detach(playerNode)
         }
-        converter = nil
+        tapState.withLock { $0.converter = nil }
         try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
     }
 
@@ -149,7 +166,7 @@ final class VoiceAudioEngine: VoiceAudioIO {
     }
 
     func setMuted(_ muted: Bool) {
-        self.muted.withLock { $0 = muted }
+        tapState.withLock { $0.muted = muted }
     }
 
     // MARK: - Interruptions & resets

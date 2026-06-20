@@ -103,7 +103,7 @@ struct ChatAPIClient {
         request.httpBody = try JSONEncoder().encode(EphemeralTokenRequestBody(profileID: profileID))
         let (data, response) = try await urlSession.data(for: request)
         try validate(response: response, data: data)
-        return try JSONDecoder().decode(EphemeralToken.self, from: data)
+        return try JSONDecoder.chatDecoder.decode(EphemeralToken.self, from: data)
     }
 
     /// Persist a completed voice session as its own conversation.
@@ -125,7 +125,7 @@ struct ChatAPIClient {
         )
         let (data, response) = try await urlSession.data(for: request)
         try validate(response: response, data: data)
-        return try JSONDecoder().decode(VoiceSessionResponseBody.self, from: data).conversationID
+        return try JSONDecoder.chatDecoder.decode(VoiceSessionResponseBody.self, from: data).conversationID
     }
 
     /// Execute a tool by name on behalf of a Gemini voice function call.
@@ -146,7 +146,7 @@ struct ChatAPIClient {
         request.httpBody = try JSONEncoder().encode(ToolExecuteBody(arguments: argumentsObject))
         let (data, response) = try await urlSession.data(for: request)
         try validate(response: response, data: data)
-        return try JSONDecoder().decode(JSONValue.self, from: data)
+        return try JSONDecoder.chatDecoder.decode(JSONValue.self, from: data)
     }
 
     /// Sends a prompt and waits for the assistant's full reply.

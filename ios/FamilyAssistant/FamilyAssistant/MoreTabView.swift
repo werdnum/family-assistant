@@ -95,7 +95,7 @@ struct MoreTabView: View {
 
     /// Voice is a native screen; every other catalog entry is web-backed.
     private func route(for destination: MoreDestination) -> MoreRoute {
-        if destination.path == "/voice" {
+        if destination.path == MoreRoute.voicePath {
             return .voice
         }
         return .web(WebRoute(path: destination.path, title: destination.title))
