@@ -11,6 +11,7 @@ from zoneinfo import ZoneInfo
 import pytest
 from sqlalchemy import select, update
 
+from family_assistant.a2a.client import A2AClientError
 from family_assistant.config_models import ToolsConfig
 from family_assistant.interfaces import ChatInterface
 from family_assistant.llm.messages import AssistantMessage, UserMessage
@@ -1369,7 +1370,12 @@ class FakePollableService:
         self, remote_task_id: str, remote_context_id: str | None
     ) -> ChatInteractionResult | object:
         _ = (remote_task_id, remote_context_id)
-        return self._poll_results.pop(0)
+        item = self._poll_results.pop(0)
+        # An injected exception lets a test exercise transient vs permanent
+        # poll-error handling.
+        if isinstance(item, BaseException):
+            raise item
+        return item
 
     async def cancel_async(self, remote_task_id: str) -> None:
         self.cancelled.append(remote_task_id)
@@ -1563,6 +1569,88 @@ async def test_reap_stale_awaiting_remote_cancels_and_fails(
 
     assert target.cancelled == ["remote-task-1"]
     async with DatabaseContext(engine=db_engine) as db_context:
+        run = await db_context.delegation_runs.get_by_delegation_id(delegation_id)
+        assert run is not None
+        assert run["status"] == "failed"
+    chat_interface.send_message.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_pollable_delegation_poll_transient_error_reschedules(
+    db_engine: AsyncEngine,
+) -> None:
+    target = FakePollableService(
+        poll_results=[
+            A2AClientError("network blip"),
+            ChatInteractionResult.success(text_reply="recovered"),
+        ]
+    )
+    processing_service = _source_processing_service(
+        cast("FakeDelegatableService", target)
+    )
+    chat_interface = AsyncMock(spec=ChatInterface)
+    chat_interface.send_message.return_value = "external_message_id"
+
+    delegation_id = await _start_background_delegation(
+        db_engine, processing_service, chat_interface
+    )
+    worker = _build_worker(db_engine, processing_service, chat_interface)
+    async with DatabaseContext(engine=db_engine) as db_context:
+        await worker.handle_delegated_profile_run(
+            _tool_context(db_context, processing_service, chat_interface),
+            _delegation_payload(delegation_id),
+        )
+
+    poll_payload = _delegation_payload(delegation_id)
+    # Transient A2AClientError -> stays awaiting_remote and reschedules.
+    async with DatabaseContext(engine=db_engine) as db_context:
+        await worker.handle_delegation_poll(
+            _tool_context(db_context, processing_service, chat_interface),
+            poll_payload,
+        )
+        run = await db_context.delegation_runs.get_by_delegation_id(delegation_id)
+        assert run is not None
+        assert run["status"] == "awaiting_remote"
+    chat_interface.send_message.assert_not_awaited()
+
+    # Next poll succeeds -> completed.
+    async with DatabaseContext(engine=db_engine) as db_context:
+        await worker.handle_delegation_poll(
+            _tool_context(db_context, processing_service, chat_interface),
+            poll_payload,
+        )
+        run = await db_context.delegation_runs.get_by_delegation_id(delegation_id)
+        assert run is not None
+        assert run["status"] == "completed"
+
+
+@pytest.mark.asyncio
+async def test_pollable_delegation_poll_permanent_error_fails_fast(
+    db_engine: AsyncEngine,
+) -> None:
+    target = FakePollableService(poll_results=[ValueError("result conversion bug")])
+    processing_service = _source_processing_service(
+        cast("FakeDelegatableService", target)
+    )
+    chat_interface = AsyncMock(spec=ChatInterface)
+    chat_interface.send_message.return_value = "external_message_id"
+
+    delegation_id = await _start_background_delegation(
+        db_engine, processing_service, chat_interface
+    )
+    worker = _build_worker(db_engine, processing_service, chat_interface)
+    async with DatabaseContext(engine=db_engine) as db_context:
+        await worker.handle_delegated_profile_run(
+            _tool_context(db_context, processing_service, chat_interface),
+            _delegation_payload(delegation_id),
+        )
+
+    # A non-transport error fails the run immediately rather than looping to cap.
+    async with DatabaseContext(engine=db_engine) as db_context:
+        await worker.handle_delegation_poll(
+            _tool_context(db_context, processing_service, chat_interface),
+            _delegation_payload(delegation_id),
+        )
         run = await db_context.delegation_runs.get_by_delegation_id(delegation_id)
         assert run is not None
         assert run["status"] == "failed"

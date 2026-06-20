@@ -24,6 +24,7 @@ from opentelemetry.trace import StatusCode
 from sqlalchemy import select
 
 # Removed storage import - using repository pattern
+from family_assistant.a2a.client import A2AClientError
 from family_assistant.llm.messages import (
     AssistantMessage,
     MessageAttachmentMetadata,
@@ -1210,15 +1211,29 @@ class TaskWorker:
             result = await target_service.poll_async(
                 remote_task_id, run["remote_context_id"]
             )
-        except Exception:
-            # A transient poll error is not terminal; reschedule and let the
-            # wall-clock cap above eventually give up if it persists.
+        except A2AClientError:
+            # Transient transport error; reschedule and let the wall-clock cap
+            # eventually give up if it persists.
             logger.warning(
                 "Polling remote delegation %s failed transiently; rescheduling.",
                 delegation_id,
                 exc_info=True,
             )
             result = PENDING
+        except Exception:
+            # A non-transport error (e.g. result conversion or a code bug) will
+            # not resolve by retrying; fail the run with the actual error instead
+            # of masking it as a timeout once the cap expires.
+            error = traceback.format_exc()
+            logger.error(
+                "Polling remote delegation %s raised a non-transient error.",
+                delegation_id,
+                exc_info=True,
+            )
+            await self._fail_delegation_run(
+                exec_context, delegation_id=delegation_id, error=error
+            )
+            return
 
         if result is PENDING:
             attempts = await exec_context.db_context.delegation_runs.bump_poll_attempt(
@@ -1330,11 +1345,11 @@ class TaskWorker:
             started_at = _as_aware_utc(run["started_at"] or run["created_at"])
             if now - started_at <= timedelta(seconds=cap_seconds):
                 continue
-            remote_task_id = run["remote_task_id"]
-            if isinstance(target_service, PollableDelegationService) and remote_task_id:
-                await target_service.cancel_async(remote_task_id)
+            # Conditionally fail (CAS on awaiting_remote) FIRST so we never clobber
+            # a terminal result a live poll has just written; only if we won the
+            # transition do we cancel the remote and notify.
             async with exec_context.db_context.create_isolated_context() as isolated_db:
-                failed = await isolated_db.delegation_runs.mark_failed(
+                failed = await isolated_db.delegation_runs.fail_if_awaiting_remote(
                     delegation_id=run["delegation_id"],
                     error=(
                         "The remote profile did not finish within the allowed "
@@ -1342,8 +1357,13 @@ class TaskWorker:
                     ),
                     completed_at=now,
                 )
-            if failed is not None:
-                await self._force_notify_delegation(exec_context, failed)
+            if failed is None:
+                # A poll finalized this run between the snapshot and now.
+                continue
+            remote_task_id = run["remote_task_id"]
+            if isinstance(target_service, PollableDelegationService) and remote_task_id:
+                await target_service.cancel_async(remote_task_id)
+            await self._force_notify_delegation(exec_context, failed)
 
     async def _force_notify_delegation(
         self,

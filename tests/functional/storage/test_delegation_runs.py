@@ -91,6 +91,48 @@ class TestDelegationRunsAsyncRemote:
         assert second is None
 
     @pytest.mark.asyncio
+    async def test_fail_if_awaiting_remote_is_conditional(
+        self, db_context: DatabaseContext
+    ) -> None:
+        await db_context.delegation_runs.create_run(_make_run("d1", "t1"))
+        await db_context.delegation_runs.mark_running("d1", datetime.now(UTC))
+        await db_context.delegation_runs.mark_awaiting_remote(
+            "d1",
+            remote_task_id="rt-1",
+            remote_context_id=None,
+            started_at=datetime.now(UTC),
+        )
+        # Wins while still awaiting_remote.
+        failed = await db_context.delegation_runs.fail_if_awaiting_remote(
+            delegation_id="d1", error="timed out", completed_at=datetime.now(UTC)
+        )
+        assert failed is not None
+        assert failed["status"] == "failed"
+
+        # Simulate a run a poll already completed: the CAS must not clobber it.
+        await db_context.delegation_runs.create_run(_make_run("d2", "t2"))
+        await db_context.delegation_runs.mark_running("d2", datetime.now(UTC))
+        await db_context.delegation_runs.mark_awaiting_remote(
+            "d2",
+            remote_task_id="rt-2",
+            remote_context_id=None,
+            started_at=datetime.now(UTC),
+        )
+        await db_context.delegation_runs.mark_completed(
+            delegation_id="d2",
+            result_text="done",
+            result_attachment_ids=[],
+            completed_at=datetime.now(UTC),
+        )
+        not_failed = await db_context.delegation_runs.fail_if_awaiting_remote(
+            delegation_id="d2", error="timed out", completed_at=datetime.now(UTC)
+        )
+        assert not_failed is None
+        run = await db_context.delegation_runs.get_by_delegation_id("d2")
+        assert run is not None
+        assert run["status"] == "completed"
+
+    @pytest.mark.asyncio
     async def test_bump_poll_attempt(self, db_context: DatabaseContext) -> None:
         await db_context.delegation_runs.create_run(_make_run("d1", "t1"))
         now = datetime.now(UTC)

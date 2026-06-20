@@ -305,6 +305,38 @@ class DelegationRunsRepository(BaseRepository):
             completed_at=completed_at,
         )
 
+    async def fail_if_awaiting_remote(
+        self,
+        *,
+        delegation_id: str,
+        error: str,
+        completed_at: datetime,
+    ) -> DelegationRunDict | None:
+        """Fail a run only while it is still ``awaiting_remote`` (atomic CAS).
+
+        Used by the cleanup reaper so a concurrent ``delegation_poll`` that has
+        just converted the same remote task to a terminal result is never
+        overwritten with a timeout/cancel failure. Returns the updated row when
+        this caller won the transition, else ``None``.
+        """
+        stmt = (
+            update(delegation_runs_table)
+            .where(delegation_runs_table.c.delegation_id == delegation_id)
+            .where(delegation_runs_table.c.status == "awaiting_remote")
+            .values(
+                status="failed",
+                error=error,
+                completed_at=completed_at,
+                updated_at=datetime.now(UTC),
+            )
+            .returning(delegation_runs_table)
+        )
+        result = await self._execute_with_logging(
+            "fail_awaiting_remote_delegation", stmt
+        )
+        row = result.mappings().one_or_none()
+        return self._row_to_dict(dict(row)) if row is not None else None
+
     async def mark_notified(
         self,
         *,

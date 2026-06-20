@@ -287,18 +287,8 @@ async def _handle_send_message(
             "Message contained no processable content parts",
         )
 
-    # Create task record
     user_id = str(current_user.get("user_identifier", "a2a_user"))
     history_entry = message.model_dump(exclude_none=True)
-
-    await db_context.a2a_tasks.create_task(
-        task_id=task_id,
-        profile_id=profile_id,
-        conversation_id=conversation_id,
-        context_id=context_id,
-        status=TaskState.working,
-        history_json=[history_entry],
-    )
 
     chat_interfaces = getattr(request.app.state, "chat_interfaces", None)
     confirmation_ui_managers = getattr(
@@ -309,6 +299,21 @@ async def _handle_send_message(
     base_url = str(request.base_url).rstrip("/")
 
     if not _send_is_blocking(send_params):
+        # Commit the 'working' row in its own transaction BEFORE spawning the
+        # background task: that task runs on a separate db connection and, on
+        # Postgres, cannot see the request transaction (not committed until this
+        # handler returns). Without this its update_task_status would silently
+        # no-op and the row would be stuck 'working'. Mirrors the streaming path.
+        db_engine: AsyncEngine = request.app.state.database_engine
+        async with get_db_context(db_engine) as committed_db:
+            await committed_db.a2a_tasks.create_task(
+                task_id=task_id,
+                profile_id=profile_id,
+                conversation_id=conversation_id,
+                context_id=context_id,
+                status=TaskState.working,
+                history_json=[history_entry],
+            )
         return _start_background_send(
             request_id,
             request=request,
@@ -325,6 +330,14 @@ async def _handle_send_message(
             base_url=base_url,
         )
 
+    await db_context.a2a_tasks.create_task(
+        task_id=task_id,
+        profile_id=profile_id,
+        conversation_id=conversation_id,
+        context_id=context_id,
+        status=TaskState.working,
+        history_json=[history_entry],
+    )
     task = await _execute_and_persist_send(
         db_context=db_context,
         service=service,

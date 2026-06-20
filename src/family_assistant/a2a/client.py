@@ -230,6 +230,12 @@ class A2AClientWrapper:
             "message/send",
             params.model_dump(by_alias=True, exclude_none=True),
         )
+        # message/send may return a Message (immediate reply) instead of a Task;
+        # treat it as a completed task, like the streaming send_message path.
+        if result.get("kind") == "message":
+            return self._message_to_completed_task(
+                Message.model_validate(result), context_id
+            )
         return Task.model_validate(result)
 
     async def get_task(self, task_id: str) -> Task:
