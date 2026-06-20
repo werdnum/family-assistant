@@ -341,13 +341,31 @@ final class ChatViewModel {
         isLoadingMessages = true
         do {
             let backendMessages = try await apiClient.getMessages(conversationID: id)
-            messages = Self.renderMessages(from: backendMessages)
+            var rendered = Self.renderMessages(from: backendMessages)
+            // Preserve still-running live-follow bubbles across a full reload: their
+            // reply isn't persisted yet, so a plain `messages =` replace would wipe
+            // a streaming bubble and leave its mapping dangling. Append them last —
+            // they are the in-progress replies, newer than any persisted row.
+            let liveBubbles = runningLiveFollowBubbles()
+            let renderedIDs = Set(rendered.map(\.id))
+            rendered.append(contentsOf: liveBubbles.filter { !renderedIDs.contains($0.id) })
+            messages = rendered
             errorMessage = nil
         } catch {
             errorMessage = error.localizedDescription
             errorReporter.report(error, component: "Chat.messages")
         }
         isLoadingMessages = false
+    }
+
+    /// The currently-held bubbles for follow turns that are still streaming (still
+    /// mapped in `liveFollowBubbleByTurnID`). A full reload or a delta merge holds
+    /// these back to the end of the thread so a freshly fetched older row (e.g. the
+    /// running turn's own user prompt) can't sort after the live reply, and so the
+    /// streaming bubble survives a mid-turn history catch-up.
+    private func runningLiveFollowBubbles() -> [ChatMessage] {
+        let ids = Set(liveFollowBubbleByTurnID.values)
+        return messages.filter { ids.contains($0.id) }
     }
 
     /// Reconcile the held thread with newly persisted messages without refetching
@@ -368,18 +386,19 @@ final class ChatViewModel {
             }
             let rendered = Self.renderMessages(from: delta)
             // Drop optimistic local placeholders now that persisted copies exist,
-            // then append any rendered messages not already present. Live-follow
-            // bubbles for turns that are STILL running (still mapped in
-            // liveFollowBubbleByTurnID) are preserved: their reply isn't persisted
-            // yet, so dropping them here would strand a running turn — and leave a
-            // dangling mapping — until it ends. A retired follow bubble is already
-            // unmapped (see finalizeLiveFollowBubble), so it is dropped here.
-            let runningFollowBubbleIDs = Set(liveFollowBubbleByTurnID.values)
-            var merged = messages.filter {
-                !$0.id.hasPrefix("local_") || runningFollowBubbleIDs.contains($0.id)
-            }
+            // then append the fetched delta. Still-running live-follow bubbles are
+            // held back and re-appended LAST: their reply isn't persisted yet, so
+            // dropping them would strand a running turn (and dangle its mapping),
+            // and leaving them in place would let a freshly fetched older row (e.g.
+            // the running turn's own user prompt) render after the live reply. A
+            // retired follow bubble is already unmapped (see
+            // finalizeLiveFollowBubble), so it is dropped here.
+            let liveBubbles = runningLiveFollowBubbles()
+            var merged = messages.filter { !$0.id.hasPrefix("local_") }
             let existingIDs = Set(merged.map(\.id))
             merged.append(contentsOf: rendered.filter { !existingIDs.contains($0.id) })
+            let mergedIDs = Set(merged.map(\.id))
+            merged.append(contentsOf: liveBubbles.filter { !mergedIDs.contains($0.id) })
             messages = merged
             errorMessage = nil
         } catch {
@@ -1029,6 +1048,15 @@ final class ChatViewModel {
         cameFromBackground && isNowActive
     }
 
+    /// The seq the follow loop should resume from on a (re)connect: just after the
+    /// highest seq this client has applied, so a mid-turn reconnect replays the
+    /// frames produced during the drop into the live bubble instead of tailing
+    /// from the head and skipping them until `turn_ended`. Falls back to -1 (tail)
+    /// before anything has been applied.
+    private func followResumeFromSeq() -> Int {
+        highestAppliedSeq.map { $0 + 1 } ?? -1
+    }
+
     private func startLiveEvents() {
         liveEventsTask?.cancel()
         guard let conversationID else {
@@ -1049,15 +1077,24 @@ final class ChatViewModel {
             // indicator until a manual tap. The loop exits only on cancellation
             // (conversation change, logout/deinit) or a deliberate stop.
             var delay = initialDelay
+            // After a 410 (the hub buffer rotated past our resume cursor) tail from
+            // the head on the next attempt instead of re-requesting the gone seq
+            // forever; the history reload below covers the missed events.
+            var tailFromHeadNext = false
             while !Task.isCancelled {
-                // Re-read the ack cursor each attempt so a reconnect resumes from
-                // the highest seq this client has actually applied.
+                // Re-read the cursor each attempt: `ackSeq` marks everything applied
+                // as delivered (push suppression); `fromSeq` resumes the replay just
+                // past it so a mid-turn reconnect doesn't skip frames produced during
+                // the drop.
                 let ackSeq = self?.highestAppliedSeq ?? -1
+                let fromSeq = tailFromHeadNext ? -1 : (self?.followResumeFromSeq() ?? -1)
+                tailFromHeadNext = false
                 var deliberateStop = false
                 var streamError: Error?
                 do {
                     let stream = try await client.connectEvents(
                         conversationID: conversationID,
+                        fromSeq: fromSeq,
                         ackSeq: ackSeq
                         // No `event_types` filter: the always-on follow stream now
                         // carries token frames too, so a turn started elsewhere (or
@@ -1093,6 +1130,12 @@ final class ChatViewModel {
                     // Connection failed or dropped mid-stream; fall through to
                     // surface the disconnected state and retry after a backoff.
                     streamError = error
+                    // A 410 means the resume cursor rotated out of the hub buffer.
+                    // Tail from the head next attempt (re-requesting the gone seq
+                    // would 410 forever); the catch-up reload below fills the gap.
+                    if case ChatAPIError.server(let statusCode, _) = error, statusCode == 410 {
+                        tailFromHeadNext = true
+                    }
                 }
 
                 if Task.isCancelled || deliberateStop {
