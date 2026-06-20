@@ -7,6 +7,7 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		213AE766AAD6238AEA08C2A9 /* PCMConverter.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0B274147B0BE9AA6A6ADDF78 /* PCMConverter.swift */; };
 		24D4DDC9D7378629E9037704 /* GeminiLiveClientTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5DE4D0615E3C63C4C9EE2206 /* GeminiLiveClientTests.swift */; };
 		2ABFDD16D062601B9E6B3852 /* GeminiLiveCodec.swift in Sources */ = {isa = PBXBuildFile; fileRef = 099C971A1946B0E892D9358A /* GeminiLiveCodec.swift */; };
 		3ED19B4DB96F7326A74A511D /* EphemeralTokenTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0E3A27173FF16F5E7DBC2003 /* EphemeralTokenTests.swift */; };
@@ -58,9 +59,11 @@
 		A20012 /* AppIntentsTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B20013 /* AppIntentsTests.swift */; };
 		A20020 /* ErrorReporterTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B20020 /* ErrorReporterTests.swift */; };
 		A30001 /* FamilyAssistantUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B30002 /* FamilyAssistantUITests.swift */; };
+		B3D6F3BE9BB984B403AEE52E /* PCMConverterTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 34957746CE7E5DA61AC5149A /* PCMConverterTests.swift */; };
 		B7AAF73E52D328506FAA7F4F /* GeminiLiveCodecTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = E436E5C30F0972F78B8B2990 /* GeminiLiveCodecTests.swift */; };
 		D0F574A4B1DB1233913FABAD /* GeminiLiveModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = D44CE4F8F09FB4DC3FBEB26F /* GeminiLiveModels.swift */; };
 		DD63882BED34E2B8AC4AE7EA /* VoiceJSONValue.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6D663DEDC405191D0833C9B6 /* VoiceJSONValue.swift */; };
+		EF5CFF1C03B3F01CCD627054 /* VoiceAudioEngine.swift in Sources */ = {isa = PBXBuildFile; fileRef = 191DF8A54918B2F460735453 /* VoiceAudioEngine.swift */; };
 		EF8E1CBADFFFEADB737479EA /* GeminiLiveSocket.swift in Sources */ = {isa = PBXBuildFile; fileRef = 37DEFCC58E07BF48CF532F9D /* GeminiLiveSocket.swift */; };
 		FD6DA9F02EC2DD763450746B /* GeminiLiveClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0AC88843A54F47BA1012348A /* GeminiLiveClient.swift */; };
 /* End PBXBuildFile section */
@@ -85,7 +88,10 @@
 /* Begin PBXFileReference section */
 		099C971A1946B0E892D9358A /* GeminiLiveCodec.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = GeminiLiveCodec.swift; sourceTree = "<group>"; };
 		0AC88843A54F47BA1012348A /* GeminiLiveClient.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = GeminiLiveClient.swift; sourceTree = "<group>"; };
+		0B274147B0BE9AA6A6ADDF78 /* PCMConverter.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = PCMConverter.swift; sourceTree = "<group>"; };
 		0E3A27173FF16F5E7DBC2003 /* EphemeralTokenTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = EphemeralTokenTests.swift; sourceTree = "<group>"; };
+		191DF8A54918B2F460735453 /* VoiceAudioEngine.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = VoiceAudioEngine.swift; sourceTree = "<group>"; };
+		34957746CE7E5DA61AC5149A /* PCMConverterTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = PCMConverterTests.swift; sourceTree = "<group>"; };
 		37DEFCC58E07BF48CF532F9D /* GeminiLiveSocket.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = GeminiLiveSocket.swift; sourceTree = "<group>"; };
 		5DE4D0615E3C63C4C9EE2206 /* GeminiLiveClientTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = GeminiLiveClientTests.swift; sourceTree = "<group>"; };
 		6D663DEDC405191D0833C9B6 /* VoiceJSONValue.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = VoiceJSONValue.swift; sourceTree = "<group>"; };
@@ -179,6 +185,8 @@
 				37DEFCC58E07BF48CF532F9D /* GeminiLiveSocket.swift */,
 				0AC88843A54F47BA1012348A /* GeminiLiveClient.swift */,
 				6D663DEDC405191D0833C9B6 /* VoiceJSONValue.swift */,
+				0B274147B0BE9AA6A6ADDF78 /* PCMConverter.swift */,
+				191DF8A54918B2F460735453 /* VoiceAudioEngine.swift */,
 			);
 			name = Voice;
 			path = Voice;
@@ -330,6 +338,7 @@
 				E436E5C30F0972F78B8B2990 /* GeminiLiveCodecTests.swift */,
 				5DE4D0615E3C63C4C9EE2206 /* GeminiLiveClientTests.swift */,
 				0E3A27173FF16F5E7DBC2003 /* EphemeralTokenTests.swift */,
+				34957746CE7E5DA61AC5149A /* PCMConverterTests.swift */,
 			);
 			path = FamilyAssistantTests;
 			sourceTree = "<group>";
@@ -514,6 +523,8 @@
 				EF8E1CBADFFFEADB737479EA /* GeminiLiveSocket.swift in Sources */,
 				FD6DA9F02EC2DD763450746B /* GeminiLiveClient.swift in Sources */,
 				DD63882BED34E2B8AC4AE7EA /* VoiceJSONValue.swift in Sources */,
+				213AE766AAD6238AEA08C2A9 /* PCMConverter.swift in Sources */,
+				EF5CFF1C03B3F01CCD627054 /* VoiceAudioEngine.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -537,6 +548,7 @@
 				B7AAF73E52D328506FAA7F4F /* GeminiLiveCodecTests.swift in Sources */,
 				24D4DDC9D7378629E9037704 /* GeminiLiveClientTests.swift in Sources */,
 				3ED19B4DB96F7326A74A511D /* EphemeralTokenTests.swift in Sources */,
+				B3D6F3BE9BB984B403AEE52E /* PCMConverterTests.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
