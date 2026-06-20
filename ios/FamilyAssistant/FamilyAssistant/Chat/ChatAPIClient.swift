@@ -89,6 +89,23 @@ struct ChatAPIClient {
         return try JSONDecoder.chatDecoder.decode(ChatProfilesResponse.self, from: data)
     }
 
+    /// Mint a single-use Gemini Live ephemeral token for native voice mode.
+    ///
+    /// POSTs `/api/gemini/ephemeral-token`. The returned token authorizes a direct
+    /// WebSocket to Gemini and carries the context-injected system instruction,
+    /// confirmation-filtered tools, and live session config.
+    func fetchEphemeralToken(profileID: String?) async throws -> EphemeralToken {
+        var request = try await authManager.authorizedRequest(
+            url: apiURL("/api/gemini/ephemeral-token"),
+            method: "POST"
+        )
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.httpBody = try JSONEncoder().encode(EphemeralTokenRequestBody(profileID: profileID))
+        let (data, response) = try await urlSession.data(for: request)
+        try validate(response: response, data: data)
+        return try JSONDecoder().decode(EphemeralToken.self, from: data)
+    }
+
     /// Sends a prompt and waits for the assistant's full reply.
     ///
     /// Unlike the two-step ``startTurn(turnID:prompt:conversationID:profileID:attachments:)``
@@ -478,6 +495,14 @@ struct ChatTurnStart {
     let conversationID: String
     let firstSeq: Int
     let alreadyComplete: Bool
+}
+
+private struct EphemeralTokenRequestBody: Encodable {
+    let profileID: String?
+
+    enum CodingKeys: String, CodingKey {
+        case profileID = "profile_id"
+    }
 }
 
 private struct ChatSendMessageRequest: Encodable {

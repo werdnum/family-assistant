@@ -7,6 +7,9 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		24D4DDC9D7378629E9037704 /* GeminiLiveClientTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5DE4D0615E3C63C4C9EE2206 /* GeminiLiveClientTests.swift */; };
+		2ABFDD16D062601B9E6B3852 /* GeminiLiveCodec.swift in Sources */ = {isa = PBXBuildFile; fileRef = 099C971A1946B0E892D9358A /* GeminiLiveCodec.swift */; };
+		3ED19B4DB96F7326A74A511D /* EphemeralTokenTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0E3A27173FF16F5E7DBC2003 /* EphemeralTokenTests.swift */; };
 		A10001 /* FamilyAssistantApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10001 /* FamilyAssistantApp.swift */; };
 		A10002 /* ContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10002 /* ContentView.swift */; };
 		A10003 /* KeychainHelper.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10003 /* KeychainHelper.swift */; };
@@ -28,6 +31,8 @@
 		A10021 /* SSEParser.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10024 /* SSEParser.swift */; };
 		A10022 /* ChatViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10025 /* ChatViewModel.swift */; };
 		A10023 /* ChatViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10026 /* ChatViews.swift */; };
+		A10024 /* Markdown in Frameworks */ = {isa = PBXBuildFile; productRef = H10002 /* Markdown */; };
+		A10025 /* ConfirmationModalView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10027 /* ConfirmationModalView.swift */; };
 		A10030 /* RootTabView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10030 /* RootTabView.swift */; };
 		A10031 /* WebDestinationView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10031 /* WebDestinationView.swift */; };
 		A10032 /* MoreTabView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10032 /* MoreTabView.swift */; };
@@ -38,9 +43,7 @@
 		A10044 /* OpenConversationIntent.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10044 /* OpenConversationIntent.swift */; };
 		A10045 /* AssistantReplySnippet.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10045 /* AssistantReplySnippet.swift */; };
 		A10046 /* FamilyAssistantAppShortcuts.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10046 /* FamilyAssistantAppShortcuts.swift */; };
-		A10025 /* ConfirmationModalView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10027 /* ConfirmationModalView.swift */; };
 		A10050 /* ErrorReporter.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10050 /* ErrorReporter.swift */; };
-		A10024 /* Markdown in Frameworks */ = {isa = PBXBuildFile; productRef = H10002 /* Markdown */; };
 		A20001 /* RouteTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B20002 /* RouteTests.swift */; };
 		A20002 /* NotesModelTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B20003 /* NotesModelTests.swift */; };
 		A20003 /* NotesAPIClientTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B20004 /* NotesAPIClientTests.swift */; };
@@ -51,10 +54,15 @@
 		A20008 /* ChatViewModelTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B20009 /* ChatViewModelTests.swift */; };
 		A20009 /* MarkdownRendererTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B20010 /* MarkdownRendererTests.swift */; };
 		A20010 /* ToolRenderingTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B20011 /* ToolRenderingTests.swift */; };
-		A20012 /* AppIntentsTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B20013 /* AppIntentsTests.swift */; };
 		A20011 /* ConfirmationModalModelTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B20012 /* ConfirmationModalModelTests.swift */; };
+		A20012 /* AppIntentsTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B20013 /* AppIntentsTests.swift */; };
 		A20020 /* ErrorReporterTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B20020 /* ErrorReporterTests.swift */; };
 		A30001 /* FamilyAssistantUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B30002 /* FamilyAssistantUITests.swift */; };
+		B7AAF73E52D328506FAA7F4F /* GeminiLiveCodecTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = E436E5C30F0972F78B8B2990 /* GeminiLiveCodecTests.swift */; };
+		D0F574A4B1DB1233913FABAD /* GeminiLiveModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = D44CE4F8F09FB4DC3FBEB26F /* GeminiLiveModels.swift */; };
+		DD63882BED34E2B8AC4AE7EA /* VoiceJSONValue.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6D663DEDC405191D0833C9B6 /* VoiceJSONValue.swift */; };
+		EF8E1CBADFFFEADB737479EA /* GeminiLiveSocket.swift in Sources */ = {isa = PBXBuildFile; fileRef = 37DEFCC58E07BF48CF532F9D /* GeminiLiveSocket.swift */; };
+		FD6DA9F02EC2DD763450746B /* GeminiLiveClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0AC88843A54F47BA1012348A /* GeminiLiveClient.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -75,6 +83,12 @@
 /* End PBXContainerItemProxy section */
 
 /* Begin PBXFileReference section */
+		099C971A1946B0E892D9358A /* GeminiLiveCodec.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = GeminiLiveCodec.swift; sourceTree = "<group>"; };
+		0AC88843A54F47BA1012348A /* GeminiLiveClient.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = GeminiLiveClient.swift; sourceTree = "<group>"; };
+		0E3A27173FF16F5E7DBC2003 /* EphemeralTokenTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = EphemeralTokenTests.swift; sourceTree = "<group>"; };
+		37DEFCC58E07BF48CF532F9D /* GeminiLiveSocket.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = GeminiLiveSocket.swift; sourceTree = "<group>"; };
+		5DE4D0615E3C63C4C9EE2206 /* GeminiLiveClientTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = GeminiLiveClientTests.swift; sourceTree = "<group>"; };
+		6D663DEDC405191D0833C9B6 /* VoiceJSONValue.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = VoiceJSONValue.swift; sourceTree = "<group>"; };
 		B10001 /* FamilyAssistantApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FamilyAssistantApp.swift; sourceTree = "<group>"; };
 		B10002 /* ContentView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContentView.swift; sourceTree = "<group>"; };
 		B10003 /* KeychainHelper.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KeychainHelper.swift; sourceTree = "<group>"; };
@@ -99,6 +113,7 @@
 		B10024 /* SSEParser.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SSEParser.swift; sourceTree = "<group>"; };
 		B10025 /* ChatViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatViewModel.swift; sourceTree = "<group>"; };
 		B10026 /* ChatViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatViews.swift; sourceTree = "<group>"; };
+		B10027 /* ConfirmationModalView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ConfirmationModalView.swift; sourceTree = "<group>"; };
 		B10030 /* RootTabView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RootTabView.swift; sourceTree = "<group>"; };
 		B10031 /* WebDestinationView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WebDestinationView.swift; sourceTree = "<group>"; };
 		B10032 /* MoreTabView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MoreTabView.swift; sourceTree = "<group>"; };
@@ -109,7 +124,6 @@
 		B10044 /* OpenConversationIntent.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OpenConversationIntent.swift; sourceTree = "<group>"; };
 		B10045 /* AssistantReplySnippet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AssistantReplySnippet.swift; sourceTree = "<group>"; };
 		B10046 /* FamilyAssistantAppShortcuts.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FamilyAssistantAppShortcuts.swift; sourceTree = "<group>"; };
-		B10027 /* ConfirmationModalView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ConfirmationModalView.swift; sourceTree = "<group>"; };
 		B10050 /* ErrorReporter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ErrorReporter.swift; sourceTree = "<group>"; };
 		B20001 /* FamilyAssistantTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = FamilyAssistantTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		B20002 /* RouteTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RouteTests.swift; sourceTree = "<group>"; };
@@ -122,11 +136,13 @@
 		B20009 /* ChatViewModelTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatViewModelTests.swift; sourceTree = "<group>"; };
 		B20010 /* MarkdownRendererTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MarkdownRendererTests.swift; sourceTree = "<group>"; };
 		B20011 /* ToolRenderingTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ToolRenderingTests.swift; sourceTree = "<group>"; };
-		B20013 /* AppIntentsTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppIntentsTests.swift; sourceTree = "<group>"; };
 		B20012 /* ConfirmationModalModelTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ConfirmationModalModelTests.swift; sourceTree = "<group>"; };
+		B20013 /* AppIntentsTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppIntentsTests.swift; sourceTree = "<group>"; };
 		B20020 /* ErrorReporterTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ErrorReporterTests.swift; sourceTree = "<group>"; };
 		B30001 /* FamilyAssistantUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = FamilyAssistantUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		B30002 /* FamilyAssistantUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FamilyAssistantUITests.swift; sourceTree = "<group>"; };
+		D44CE4F8F09FB4DC3FBEB26F /* GeminiLiveModels.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = GeminiLiveModels.swift; sourceTree = "<group>"; };
+		E436E5C30F0972F78B8B2990 /* GeminiLiveCodecTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = GeminiLiveCodecTests.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -155,6 +171,19 @@
 /* End PBXFrameworksBuildPhase section */
 
 /* Begin PBXGroup section */
+		2FC8B65BEA93F1F3A1A0192B /* Voice */ = {
+			isa = PBXGroup;
+			children = (
+				D44CE4F8F09FB4DC3FBEB26F /* GeminiLiveModels.swift */,
+				099C971A1946B0E892D9358A /* GeminiLiveCodec.swift */,
+				37DEFCC58E07BF48CF532F9D /* GeminiLiveSocket.swift */,
+				0AC88843A54F47BA1012348A /* GeminiLiveClient.swift */,
+				6D663DEDC405191D0833C9B6 /* VoiceJSONValue.swift */,
+			);
+			name = Voice;
+			path = Voice;
+			sourceTree = "<group>";
+		};
 		D10001 = {
 			isa = PBXGroup;
 			children = (
@@ -184,6 +213,7 @@
 				B10008 /* Assets.xcassets */,
 				B10009 /* Info.plist */,
 				B10013 /* FamilyAssistant.entitlements */,
+				2FC8B65BEA93F1F3A1A0192B /* Voice */,
 			);
 			path = FamilyAssistant;
 			sourceTree = "<group>";
@@ -205,6 +235,16 @@
 				B10031 /* WebDestinationView.swift */,
 			);
 			path = WebView;
+			sourceTree = "<group>";
+		};
+		D10005 /* Products */ = {
+			isa = PBXGroup;
+			children = (
+				B10010 /* FamilyAssistant.app */,
+				B20001 /* FamilyAssistantTests.xctest */,
+				B30001 /* FamilyAssistantUITests.xctest */,
+			);
+			name = Products;
 			sourceTree = "<group>";
 		};
 		D10006 /* Notifications */ = {
@@ -237,14 +277,6 @@
 			path = UITesting;
 			sourceTree = "<group>";
 		};
-		D10011 /* ErrorReporting */ = {
-			isa = PBXGroup;
-			children = (
-				B10050 /* ErrorReporter.swift */,
-			);
-			path = ErrorReporting;
-			sourceTree = "<group>";
-		};
 		D10009 /* Chat */ = {
 			isa = PBXGroup;
 			children = (
@@ -271,14 +303,12 @@
 			path = Intents;
 			sourceTree = "<group>";
 		};
-		D10005 /* Products */ = {
+		D10011 /* ErrorReporting */ = {
 			isa = PBXGroup;
 			children = (
-				B10010 /* FamilyAssistant.app */,
-				B20001 /* FamilyAssistantTests.xctest */,
-				B30001 /* FamilyAssistantUITests.xctest */,
+				B10050 /* ErrorReporter.swift */,
 			);
-			name = Products;
+			path = ErrorReporting;
 			sourceTree = "<group>";
 		};
 		D20001 /* FamilyAssistantTests */ = {
@@ -297,6 +327,9 @@
 				B20013 /* AppIntentsTests.swift */,
 				B20012 /* ConfirmationModalModelTests.swift */,
 				B20020 /* ErrorReporterTests.swift */,
+				E436E5C30F0972F78B8B2990 /* GeminiLiveCodecTests.swift */,
+				5DE4D0615E3C63C4C9EE2206 /* GeminiLiveClientTests.swift */,
+				0E3A27173FF16F5E7DBC2003 /* EphemeralTokenTests.swift */,
 			);
 			path = FamilyAssistantTests;
 			sourceTree = "<group>";
@@ -476,6 +509,11 @@
 				A10046 /* FamilyAssistantAppShortcuts.swift in Sources */,
 				A10025 /* ConfirmationModalView.swift in Sources */,
 				A10050 /* ErrorReporter.swift in Sources */,
+				D0F574A4B1DB1233913FABAD /* GeminiLiveModels.swift in Sources */,
+				2ABFDD16D062601B9E6B3852 /* GeminiLiveCodec.swift in Sources */,
+				EF8E1CBADFFFEADB737479EA /* GeminiLiveSocket.swift in Sources */,
+				FD6DA9F02EC2DD763450746B /* GeminiLiveClient.swift in Sources */,
+				DD63882BED34E2B8AC4AE7EA /* VoiceJSONValue.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -496,6 +534,9 @@
 				A20012 /* AppIntentsTests.swift in Sources */,
 				A20011 /* ConfirmationModalModelTests.swift in Sources */,
 				A20020 /* ErrorReporterTests.swift in Sources */,
+				B7AAF73E52D328506FAA7F4F /* GeminiLiveCodecTests.swift in Sources */,
+				24D4DDC9D7378629E9037704 /* GeminiLiveClientTests.swift in Sources */,
+				3ED19B4DB96F7326A74A511D /* EphemeralTokenTests.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -645,9 +686,9 @@
 		F10006 /* Debug */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
+				APS_ENVIRONMENT = development;
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
-				APS_ENVIRONMENT = development;
 				CODE_SIGN_ENTITLEMENTS = FamilyAssistant/FamilyAssistant.entitlements;
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
@@ -676,9 +717,9 @@
 		F10007 /* Release */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
+				APS_ENVIRONMENT = production;
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
-				APS_ENVIRONMENT = production;
 				CODE_SIGN_ENTITLEMENTS = FamilyAssistant/FamilyAssistant.entitlements;
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
