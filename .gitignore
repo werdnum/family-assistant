@@ -24,6 +24,8 @@ dev_family_assistant.db*
 
 # Build artifacts
 src/family_assistant/static/dist/
+# Lock file used to serialize the frontend build across pytest-xdist workers
+src/family_assistant/static/.frontend-build.lock
 
 # CI artifacts - test results and debugging files
 ci-artifacts/
