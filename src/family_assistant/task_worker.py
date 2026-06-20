@@ -1011,7 +1011,10 @@ class TaskWorker:
     ) -> None:
         """Persist a delegation run's terminal result and notify if needed.
 
-        Shared by the inline (local) path and the poll (remote) path.
+        Shared by the inline (local) path and the poll (remote) path. The
+        terminal transition is an atomic CAS on non-terminal status, so a poll
+        that finishes after the cleanup reaper already failed the same run loses
+        the race (``None``) and does not resurrect/overwrite it or double-notify.
         """
         clock = exec_context.clock or self.clock
         completed_at = clock.now()
@@ -1030,7 +1033,13 @@ class TaskWorker:
                     completed_at=completed_at,
                 )
         if terminal_run is None:
-            raise ValueError(f"Delegation run '{delegation_id}' disappeared")
+            # Already terminal (a concurrent reaper/poll won) or gone; the winner
+            # delivers the notification.
+            logger.info(
+                "Delegation run %s was already terminal when finalizing; skipping.",
+                delegation_id,
+            )
+            return
         await self._notify_delegation_if_needed(exec_context, terminal_run)
 
     async def _submit_pollable_delegation(
@@ -1345,11 +1354,11 @@ class TaskWorker:
             started_at = _as_aware_utc(run["started_at"] or run["created_at"])
             if now - started_at <= timedelta(seconds=cap_seconds):
                 continue
-            # Conditionally fail (CAS on awaiting_remote) FIRST so we never clobber
-            # a terminal result a live poll has just written; only if we won the
-            # transition do we cancel the remote and notify.
+            # Fail FIRST via the non-terminal CAS so we never clobber a terminal
+            # result a live poll has just written; only if we won the transition
+            # do we cancel the remote and notify.
             async with exec_context.db_context.create_isolated_context() as isolated_db:
-                failed = await isolated_db.delegation_runs.fail_if_awaiting_remote(
+                failed = await isolated_db.delegation_runs.mark_failed(
                     delegation_id=run["delegation_id"],
                     error=(
                         "The remote profile did not finish within the allowed "

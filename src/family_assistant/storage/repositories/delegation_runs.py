@@ -281,8 +281,14 @@ class DelegationRunsRepository(BaseRepository):
         result_attachment_ids: list[str],
         completed_at: datetime,
     ) -> DelegationRunDict | None:
-        """Mark a delegation run completed and store its result."""
-        return await self._update_run(
+        """Mark a non-terminal delegation run completed (atomic CAS).
+
+        Conditioned on the run still being non-terminal so a concurrent finalizer
+        (the cleanup reaper, or a racing poll) cannot be overwritten and an
+        already-terminal run cannot be resurrected. Returns the updated row when
+        this caller won the transition, else ``None``.
+        """
+        return await self._terminate(
             delegation_id,
             status="completed",
             result_text=result_text,
@@ -297,43 +303,34 @@ class DelegationRunsRepository(BaseRepository):
         error: str,
         completed_at: datetime,
     ) -> DelegationRunDict | None:
-        """Mark a delegation run failed and store the error."""
-        return await self._update_run(
+        """Mark a non-terminal delegation run failed (atomic CAS).
+
+        Conditioned on the run still being non-terminal (see ``mark_completed``).
+        Returns the updated row when this caller won the transition, else ``None``.
+        """
+        return await self._terminate(
             delegation_id,
             status="failed",
             error=error,
             completed_at=completed_at,
         )
 
-    async def fail_if_awaiting_remote(
-        self,
-        *,
-        delegation_id: str,
-        error: str,
-        completed_at: datetime,
+    async def _terminate(
+        self, delegation_id: str, **values: object
     ) -> DelegationRunDict | None:
-        """Fail a run only while it is still ``awaiting_remote`` (atomic CAS).
-
-        Used by the cleanup reaper so a concurrent ``delegation_poll`` that has
-        just converted the same remote task to a terminal result is never
-        overwritten with a timeout/cancel failure. Returns the updated row when
-        this caller won the transition, else ``None``.
-        """
+        """Transition a non-terminal run to a terminal status (atomic CAS)."""
         stmt = (
             update(delegation_runs_table)
             .where(delegation_runs_table.c.delegation_id == delegation_id)
-            .where(delegation_runs_table.c.status == "awaiting_remote")
-            .values(
-                status="failed",
-                error=error,
-                completed_at=completed_at,
-                updated_at=datetime.now(UTC),
+            .where(
+                delegation_runs_table.c.status.notin_(
+                    list(TERMINAL_DELEGATION_STATUSES)
+                )
             )
+            .values(**values, updated_at=datetime.now(UTC))
             .returning(delegation_runs_table)
         )
-        result = await self._execute_with_logging(
-            "fail_awaiting_remote_delegation", stmt
-        )
+        result = await self._execute_with_logging("terminate_delegation_run", stmt)
         row = result.mappings().one_or_none()
         return self._row_to_dict(dict(row)) if row is not None else None
 
