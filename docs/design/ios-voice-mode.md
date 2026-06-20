@@ -1,6 +1,6 @@
 # Native iOS Voice Mode
 
-Status: Proposed (planning)
+Status: Implemented (in-app screen; CallKit/CarPlay remain a fast-follow, Milestone 7)
 
 This document plans a native voice-conversation screen for the iOS app, replacing the current
 web-backed `/voice` destination with a first-class native experience. It supersedes the
