@@ -106,6 +106,27 @@ struct ChatAPIClient {
         return try JSONDecoder().decode(EphemeralToken.self, from: data)
     }
 
+    /// Execute a tool by name on behalf of a Gemini voice function call.
+    ///
+    /// POSTs `/api/tools/execute/{name}` with `{"arguments": ...}` and returns the
+    /// tool's raw JSON result. Non-2xx responses throw ``ChatAPIError`` so the
+    /// caller can relay a structured error back to the model.
+    func executeTool(name: String, arguments: JSONValue) async throws -> JSONValue {
+        var request = try await authManager.authorizedRequest(
+            url: apiURL("/api/tools/execute/\(Self.encodedPathComponent(name))"),
+            method: "POST"
+        )
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        let argumentsObject: JSONValue = {
+            if case .object = arguments { return arguments }
+            return .object([:])
+        }()
+        request.httpBody = try JSONEncoder().encode(ToolExecuteBody(arguments: argumentsObject))
+        let (data, response) = try await urlSession.data(for: request)
+        try validate(response: response, data: data)
+        return try JSONDecoder().decode(JSONValue.self, from: data)
+    }
+
     /// Sends a prompt and waits for the assistant's full reply.
     ///
     /// Unlike the two-step ``startTurn(turnID:prompt:conversationID:profileID:attachments:)``
@@ -503,6 +524,10 @@ private struct EphemeralTokenRequestBody: Encodable {
     enum CodingKeys: String, CodingKey {
         case profileID = "profile_id"
     }
+}
+
+private struct ToolExecuteBody: Encodable {
+    let arguments: JSONValue
 }
 
 private struct ChatSendMessageRequest: Encodable {
