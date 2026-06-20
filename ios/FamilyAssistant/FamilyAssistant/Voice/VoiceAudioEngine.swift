@@ -63,6 +63,7 @@ final class VoiceAudioEngine: VoiceAudioIO {
     private let muted = OSAllocatedUnfairLock(initialState: false)
     private var converter: StreamingPCMConverter?
     private var isRunning = false
+    private var observers: [NSObjectProtocol] = []
 
     init() {
         playbackFormat = VoiceAudioFormat.pcm16(sampleRate: VoiceAudioFormat.outputSampleRate)
@@ -95,11 +96,13 @@ final class VoiceAudioEngine: VoiceAudioIO {
         try engine.start()
         playerNode.play()
         isRunning = true
+        registerSessionObservers()
     }
 
     func stop() {
         guard isRunning else { return }
         isRunning = false
+        removeSessionObservers()
         engine.inputNode.removeTap(onBus: 0)
         playerNode.stop()
         engine.stop()
@@ -130,6 +133,66 @@ final class VoiceAudioEngine: VoiceAudioIO {
 
     func setMuted(_ muted: Bool) {
         self.muted.withLock { $0 = muted }
+    }
+
+    // MARK: - Interruptions & resets
+
+    private func registerSessionObservers() {
+        let center = NotificationCenter.default
+        let session = AVAudioSession.sharedInstance()
+        observers.append(center.addObserver(
+            forName: AVAudioSession.interruptionNotification,
+            object: session,
+            queue: .main
+        ) { [weak self] note in
+            self?.handleInterruption(note)
+        })
+        observers.append(center.addObserver(
+            forName: AVAudioSession.mediaServicesWereResetNotification,
+            object: session,
+            queue: .main
+        ) { [weak self] _ in
+            self?.handleMediaServicesReset()
+        })
+    }
+
+    private func removeSessionObservers() {
+        observers.forEach(NotificationCenter.default.removeObserver(_:))
+        observers.removeAll()
+    }
+
+    private func handleInterruption(_ notification: Notification) {
+        guard isRunning,
+              let info = notification.userInfo,
+              let raw = info[AVAudioSessionInterruptionTypeKey] as? UInt,
+              let type = AVAudioSession.InterruptionType(rawValue: raw)
+        else {
+            return
+        }
+        switch type {
+        case .began:
+            // The system took the audio route (call/Siri); pause and wait.
+            engine.pause()
+        case .ended:
+            let options = (info[AVAudioSessionInterruptionOptionKey] as? UInt)
+                .map(AVAudioSession.InterruptionOptions.init(rawValue:))
+            if options?.contains(.shouldResume) == true {
+                try? AVAudioSession.sharedInstance().setActive(true, options: [])
+                try? engine.start()
+                playerNode.play()
+            }
+        @unknown default:
+            break
+        }
+    }
+
+    private func handleMediaServicesReset() {
+        guard isRunning else { return }
+        // The media server restarted, invalidating the engine. Best-effort
+        // reactivation; a full rebuild happens on the next session.
+        try? AVAudioSession.sharedInstance().setActive(true, options: [])
+        try? engine.start()
+        playerNode.play()
     }
 
     private func configureSession() throws {
