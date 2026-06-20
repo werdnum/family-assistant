@@ -7,6 +7,8 @@ Uses the project's own A2A server as the remote endpoint via ASGITransport
 
 from __future__ import annotations
 
+import asyncio
+import contextlib
 import uuid
 from typing import TYPE_CHECKING
 from unittest.mock import AsyncMock
@@ -20,6 +22,7 @@ from family_assistant.a2a.remote_service import RemoteA2AService
 from family_assistant.a2a.result_converter import a2a_task_to_chat_result
 from family_assistant.delegation_security import DelegationSecurityLevel
 from family_assistant.llm.content_parts import text_content
+from family_assistant.processing import PENDING, ChatInteractionResult
 from family_assistant.processing.types import RemoteServiceConfig
 from tests.mocks.mock_llm import LLMOutput as MockLLMOutput
 
@@ -149,6 +152,64 @@ class TestA2AClientIntegration:
         assert task1.id != task2.id
 
 
+class TestA2AClientAsyncMethods:
+    """Client submit/get_task/cancel_task against the real FA A2A server."""
+
+    @pytest.mark.asyncio
+    async def test_submit_returns_working_then_get_task_completes(
+        self,
+        a2a_client_wrapper: A2AClientWrapper,
+        app_fixture: FastAPI,
+        api_mock_llm_client: RuleBasedMockLLMClient,
+    ) -> None:
+        api_mock_llm_client.default_response = MockLLMOutput(content="async done")
+
+        task = await a2a_client_wrapper.submit(
+            [text_content("do it")], context_id="async-ctx"
+        )
+        # The async server returns a non-terminal task without blocking.
+        assert task.status.state.value == "working"
+        assert task.context_id == "async-ctx"
+
+        background = app_fixture.state.a2a_background_tasks.get(task.id)
+        if background is not None:
+            await background
+
+        polled = await a2a_client_wrapper.get_task(task.id)
+        assert polled.status.state.value == "completed"
+        result = a2a_task_to_chat_result(polled)
+        assert "async done" in result.text_reply
+
+    @pytest.mark.postgres
+    @pytest.mark.asyncio
+    async def test_cancel_task_cancels_in_flight(
+        self,
+        a2a_client_wrapper: A2AClientWrapper,
+        app_fixture: FastAPI,
+        api_mock_llm_client: RuleBasedMockLLMClient,
+    ) -> None:
+        # Postgres-only for the same reason as the server-side cancel test:
+        # hard-cancelling the in-flight task tears down its DB connection, which
+        # the production pool isolates but SQLite's shared StaticPool cannot.
+        release = asyncio.Event()
+        api_mock_llm_client.response_gate = release
+
+        task = await a2a_client_wrapper.submit([text_content("slow")])
+        assert task.status.state.value == "working"
+
+        canceled = await a2a_client_wrapper.cancel_task(task.id)
+        assert canceled.status.state.value == "canceled"
+
+        background = app_fixture.state.a2a_background_tasks.get(task.id)
+        if background is not None:
+            with contextlib.suppress(asyncio.CancelledError):
+                await background
+        release.set()
+
+        polled = await a2a_client_wrapper.get_task(task.id)
+        assert polled.status.state.value == "canceled"
+
+
 class TestRemoteA2AServiceIntegration:
     """Test RemoteA2AService handle_chat_interaction against the real A2A server."""
 
@@ -237,6 +298,110 @@ class TestRemoteA2AServiceIntegration:
         config = remote_service.service_config
         assert config.id == "remote_test_profile"
         assert config.delegation_security_level == DelegationSecurityLevel.UNRESTRICTED
+
+
+class TestRemoteA2AServiceAsync:
+    """RemoteA2AService submit_async/poll_async/cancel_async against the server."""
+
+    @pytest.mark.asyncio
+    async def test_submit_async_and_poll_to_completion(
+        self,
+        remote_service: RemoteA2AService,
+        app_fixture: FastAPI,
+        api_mock_llm_client: RuleBasedMockLLMClient,
+    ) -> None:
+        api_mock_llm_client.default_response = MockLLMOutput(content="remote async")
+
+        submission = await remote_service.submit_async(
+            [text_content("go")],
+            conversation_id="conv-async",
+            subconversation_id="sub-async",
+        )
+        assert submission.remote_task_id
+        # The async server returns a non-terminal task, so no inline result yet.
+        assert submission.terminal_result is None
+
+        background = app_fixture.state.a2a_background_tasks.get(
+            submission.remote_task_id
+        )
+        if background is not None:
+            await background
+
+        result = await remote_service.poll_async(
+            submission.remote_task_id, submission.remote_context_id
+        )
+        assert isinstance(result, ChatInteractionResult)
+        assert not result.has_error
+        assert "remote async" in result.text_reply
+
+    @pytest.mark.asyncio
+    async def test_poll_async_pending_while_in_flight(
+        self,
+        remote_service: RemoteA2AService,
+        app_fixture: FastAPI,
+        api_mock_llm_client: RuleBasedMockLLMClient,
+    ) -> None:
+        # Gate the LLM so the remote task stays non-terminal across the poll.
+        # No cancellation here, so this is safe on SQLite (the parked background
+        # task does not hold the shared connection).
+        release = asyncio.Event()
+        api_mock_llm_client.response_gate = release
+
+        submission = await remote_service.submit_async(
+            [text_content("slow")],
+            conversation_id="conv-pending",
+            subconversation_id=None,
+        )
+        pending = await remote_service.poll_async(
+            submission.remote_task_id, submission.remote_context_id
+        )
+        assert pending is PENDING
+
+        release.set()
+        background = app_fixture.state.a2a_background_tasks.get(
+            submission.remote_task_id
+        )
+        if background is not None:
+            await background
+
+        result = await remote_service.poll_async(
+            submission.remote_task_id, submission.remote_context_id
+        )
+        assert isinstance(result, ChatInteractionResult)
+
+    @pytest.mark.postgres
+    @pytest.mark.asyncio
+    async def test_cancel_async_cancels_remote(
+        self,
+        remote_service: RemoteA2AService,
+        app_fixture: FastAPI,
+        api_mock_llm_client: RuleBasedMockLLMClient,
+    ) -> None:
+        # Postgres-only: cancellation tears down the background task's DB
+        # connection (see the server-side cancel test).
+        release = asyncio.Event()
+        api_mock_llm_client.response_gate = release
+
+        submission = await remote_service.submit_async(
+            [text_content("slow")],
+            conversation_id="conv-cancel",
+            subconversation_id=None,
+        )
+        await remote_service.cancel_async(submission.remote_task_id)
+
+        background = app_fixture.state.a2a_background_tasks.get(
+            submission.remote_task_id
+        )
+        if background is not None:
+            with contextlib.suppress(asyncio.CancelledError):
+                await background
+        release.set()
+
+        result = await remote_service.poll_async(
+            submission.remote_task_id, submission.remote_context_id
+        )
+        assert isinstance(result, ChatInteractionResult)
+        assert result.has_error
 
 
 class TestA2AClientConnectionErrors:

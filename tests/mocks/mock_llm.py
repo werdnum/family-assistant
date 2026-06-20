@@ -71,6 +71,7 @@ class RuleBasedMockLLMClient(BaseLLMClient, LLMInterface):
         default_response: LLMOutput | None = None,
         model_name: str = "mock-llm-model",
         structured_rules: list[StructuredRule] | None = None,
+        response_gate: asyncio.Event | None = None,
     ) -> None:
         """
         Initializes the mock client with rules.
@@ -85,10 +86,19 @@ class RuleBasedMockLLMClient(BaseLLMClient, LLMInterface):
             structured_rules: Optional list of rules for generate_structured method.
                               Each rule is a tuple of (matcher_function, response_generator).
                               The response_generator should return a Pydantic model instance.
+            response_gate: Optional asyncio.Event the test injects to hold replies
+                           in flight. generate_response awaits it before producing
+                           a reply; the test calls set() to release. Defaults to
+                           None (no gating).
         """
         self.rules: list[Rule] = list(rules)
         self.structured_rules: list[StructuredRule] = list(structured_rules or [])
         self.model = model_name  # For getattr(llm_client, "model", "unknown")
+        # Optional injected gate: when provided, generate_response awaits this
+        # event before producing a reply, letting a test hold a response "in
+        # flight" (e.g. to observe a non-terminal task or cancel mid-run) using
+        # the fake's own API rather than monkeypatching it.
+        self.response_gate: asyncio.Event | None = response_gate
         if default_response is None:
             self.default_response = LLMOutput(
                 content="Sorry, no matching rule was found for this input in the mock.",
@@ -133,6 +143,10 @@ class RuleBasedMockLLMClient(BaseLLMClient, LLMInterface):
         """
         # Validate user input before processing
         self._validate_user_input(messages)
+
+        # Hold the response in flight until released, if a gate is configured.
+        if self.response_gate is not None:
+            await self.response_gate.wait()
 
         # Pass typed messages directly to matchers
         # Matchers can access fields via .attribute or dict-style .get()

@@ -14,6 +14,7 @@ from sqlalchemy import select, update
 from family_assistant.config_models import ToolsConfig
 from family_assistant.interfaces import ChatInterface
 from family_assistant.llm.messages import AssistantMessage, UserMessage
+from family_assistant.processing import PENDING, RemoteSubmission
 from family_assistant.processing.types import ChatInteractionResult
 from family_assistant.services.attachment_registry import AttachmentRegistry
 from family_assistant.storage import message_history_table
@@ -1317,3 +1318,252 @@ async def test_get_messages_after_defaults_to_main_conversation_only(
         "main message",
         "delegated scratch message",
     ]
+
+
+class FakePollableService:
+    """Minimal pollable (remote) target for submit-then-poll worker tests.
+
+    Implements the PollableDelegationService protocol with deterministic,
+    in-memory submit/poll/cancel behaviour — a fake, not a mock: no patching,
+    the worker drives it through the real protocol.
+    """
+
+    kind = "remote"
+
+    def __init__(
+        self,
+        *,
+        poll_results: list[ChatInteractionResult | object] | None = None,
+        submit_terminal: ChatInteractionResult | None = None,
+    ) -> None:
+        self.service_config = SimpleNamespace(
+            id="target_profile",
+            allowed_delegation_sources=["source_profile"],
+        )
+        self._poll_results = list(poll_results or [])
+        self._submit_terminal = submit_terminal
+        self.submitted: list[tuple[str, str | None]] = []
+        self.cancelled: list[str] = []
+        self.inline_calls = 0
+
+    async def handle_chat_interaction(self, **kwargs: Any) -> ChatInteractionResult:  # noqa: ANN401
+        self.inline_calls += 1
+        raise AssertionError("a pollable target must not run inline")
+
+    async def submit_async(
+        self,
+        content_parts: object,
+        *,
+        conversation_id: str,
+        subconversation_id: str | None,
+    ) -> RemoteSubmission:
+        _ = content_parts
+        self.submitted.append((conversation_id, subconversation_id))
+        return RemoteSubmission(
+            remote_task_id="remote-task-1",
+            remote_context_id="remote-ctx-1",
+            terminal_result=self._submit_terminal,
+        )
+
+    async def poll_async(
+        self, remote_task_id: str, remote_context_id: str | None
+    ) -> ChatInteractionResult | object:
+        _ = (remote_task_id, remote_context_id)
+        return self._poll_results.pop(0)
+
+    async def cancel_async(self, remote_task_id: str) -> None:
+        self.cancelled.append(remote_task_id)
+
+
+def _delegation_payload(delegation_id: str) -> DelegatedProfileRunPayload:
+    return {
+        "delegation_id": delegation_id,
+        "interface_type": TEST_INTERFACE_TYPE,
+        "conversation_id": TEST_CONVERSATION_ID,
+        "user_name": TEST_USER_NAME,
+    }
+
+
+async def _start_background_delegation(
+    db_engine: AsyncEngine,
+    processing_service: ProcessingService,
+    chat_interface: ChatInterface,
+) -> str:
+    """Run delegate_to_service in background mode; return the delegation id."""
+    async with DatabaseContext(engine=db_engine) as db_context:
+        await db_context.message_history.add_message(
+            UserMessage(content="delegate"),
+            interface_type=TEST_INTERFACE_TYPE,
+            conversation_id=TEST_CONVERSATION_ID,
+            timestamp=SystemClock().now(),
+            turn_id="turn_async_delegation",
+            user_id="async-delegation-user",
+        )
+        result = await delegate_to_service_tool(
+            exec_context=_tool_context(db_context, processing_service, chat_interface),
+            target_service_id="target_profile",
+            user_request="do this remotely",
+            delivery_hint="background",
+        )
+    assert isinstance(result.data, dict)
+    return cast("str", result.data["delegation_id"])
+
+
+@pytest.mark.asyncio
+async def test_pollable_delegation_submits_and_enqueues_poll(
+    db_engine: AsyncEngine,
+) -> None:
+    target = FakePollableService()
+    processing_service = _source_processing_service(
+        cast("FakeDelegatableService", target)
+    )
+    chat_interface = AsyncMock(spec=ChatInterface)
+    chat_interface.send_message.return_value = "external_message_id"
+
+    delegation_id = await _start_background_delegation(
+        db_engine, processing_service, chat_interface
+    )
+    worker = _build_worker(db_engine, processing_service, chat_interface)
+    async with DatabaseContext(engine=db_engine) as db_context:
+        await worker.handle_delegated_profile_run(
+            _tool_context(db_context, processing_service, chat_interface),
+            _delegation_payload(delegation_id),
+        )
+
+    assert len(target.submitted) == 1
+    assert target.inline_calls == 0
+    async with DatabaseContext(engine=db_engine) as db_context:
+        run = await db_context.delegation_runs.get_by_delegation_id(delegation_id)
+        assert run is not None
+        assert run["status"] == "awaiting_remote"
+        assert run["remote_task_id"] == "remote-task-1"
+        polls = await db_context.tasks.get_all(task_type="delegation_poll")
+        assert len(polls) == 1
+    chat_interface.send_message.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_pollable_delegation_polls_to_completion(
+    db_engine: AsyncEngine,
+) -> None:
+    target = FakePollableService(
+        poll_results=[
+            PENDING,
+            ChatInteractionResult.success(text_reply="remote done"),
+        ]
+    )
+    processing_service = _source_processing_service(
+        cast("FakeDelegatableService", target)
+    )
+    chat_interface = AsyncMock(spec=ChatInterface)
+    chat_interface.send_message.return_value = "external_message_id"
+
+    delegation_id = await _start_background_delegation(
+        db_engine, processing_service, chat_interface
+    )
+    worker = _build_worker(db_engine, processing_service, chat_interface)
+    async with DatabaseContext(engine=db_engine) as db_context:
+        await worker.handle_delegated_profile_run(
+            _tool_context(db_context, processing_service, chat_interface),
+            _delegation_payload(delegation_id),
+        )
+
+    poll_payload = _delegation_payload(delegation_id)
+    # First poll: still pending -> reschedules, bumps the attempt counter.
+    async with DatabaseContext(engine=db_engine) as db_context:
+        await worker.handle_delegation_poll(
+            _tool_context(db_context, processing_service, chat_interface),
+            poll_payload,
+        )
+        run = await db_context.delegation_runs.get_by_delegation_id(delegation_id)
+        assert run is not None
+        assert run["status"] == "awaiting_remote"
+        assert run["poll_attempts"] == 1
+    chat_interface.send_message.assert_not_awaited()
+
+    # Second poll: terminal -> finalize and notify.
+    async with DatabaseContext(engine=db_engine) as db_context:
+        await worker.handle_delegation_poll(
+            _tool_context(db_context, processing_service, chat_interface),
+            poll_payload,
+        )
+        run = await db_context.delegation_runs.get_by_delegation_id(delegation_id)
+        assert run is not None
+        assert run["status"] == "completed"
+        assert run["result_text"] == "remote done"
+    chat_interface.send_message.assert_awaited_once()
+    assert "remote done" in chat_interface.send_message.await_args.kwargs["text"]
+
+
+@pytest.mark.asyncio
+async def test_pollable_delegation_synchronous_remote_completes_on_submit(
+    db_engine: AsyncEngine,
+) -> None:
+    target = FakePollableService(
+        submit_terminal=ChatInteractionResult.success(text_reply="sync remote done")
+    )
+    processing_service = _source_processing_service(
+        cast("FakeDelegatableService", target)
+    )
+    chat_interface = AsyncMock(spec=ChatInterface)
+    chat_interface.send_message.return_value = "external_message_id"
+
+    delegation_id = await _start_background_delegation(
+        db_engine, processing_service, chat_interface
+    )
+    worker = _build_worker(db_engine, processing_service, chat_interface)
+    async with DatabaseContext(engine=db_engine) as db_context:
+        await worker.handle_delegated_profile_run(
+            _tool_context(db_context, processing_service, chat_interface),
+            _delegation_payload(delegation_id),
+        )
+
+    async with DatabaseContext(engine=db_engine) as db_context:
+        run = await db_context.delegation_runs.get_by_delegation_id(delegation_id)
+        assert run is not None
+        assert run["status"] == "completed"
+        assert run["result_text"] == "sync remote done"
+        polls = await db_context.tasks.get_all(task_type="delegation_poll")
+        assert polls == []
+    chat_interface.send_message.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_reap_stale_awaiting_remote_cancels_and_fails(
+    db_engine: AsyncEngine,
+) -> None:
+    target = FakePollableService()
+    processing_service = _source_processing_service(
+        cast("FakeDelegatableService", target)
+    )
+    chat_interface = AsyncMock(spec=ChatInterface)
+    chat_interface.send_message.return_value = "external_message_id"
+
+    delegation_id = await _start_background_delegation(
+        db_engine, processing_service, chat_interface
+    )
+    worker = _build_worker(db_engine, processing_service, chat_interface)
+    async with DatabaseContext(engine=db_engine) as db_context:
+        await worker.handle_delegated_profile_run(
+            _tool_context(db_context, processing_service, chat_interface),
+            _delegation_payload(delegation_id),
+        )
+        # Age the run past the wall-clock cap so the reaper gives up on it.
+        await db_context.execute_with_retry(
+            update(delegation_runs_table)
+            .where(delegation_runs_table.c.delegation_id == delegation_id)
+            .values(started_at=SystemClock().now() - timedelta(hours=2))
+        )
+
+    async with DatabaseContext(engine=db_engine) as db_context:
+        await worker.handle_delegation_run_cleanup(
+            _tool_context(db_context, processing_service, chat_interface),
+            {},
+        )
+
+    assert target.cancelled == ["remote-task-1"]
+    async with DatabaseContext(engine=db_engine) as db_context:
+        run = await db_context.delegation_runs.get_by_delegation_id(delegation_id)
+        assert run is not None
+        assert run["status"] == "failed"
+    chat_interface.send_message.assert_awaited_once()

@@ -334,20 +334,10 @@ class TestAsyncSendMessage:
         # its DB connection. The production pool gives that task its own
         # connection; SQLite's shared StaticPool connection would be closed for
         # the whole engine, which is a test-harness artifact, not a real bug.
-        # Gate the LLM so the background task stays in flight until released,
+        # Gate the fake LLM so the background task stays in flight until released,
         # giving tasks/cancel a running task to interrupt.
         release = asyncio.Event()
-        original = api_mock_llm_client.generate_response
-
-        async def gated_generate_response(
-            messages: object,
-            tools: object = None,
-            tool_choice: object = "auto",
-        ) -> object:
-            await release.wait()
-            return await original(messages, tools, tool_choice)  # type: ignore[arg-type]  # object-typed shim forwards verbatim to the real mock method
-
-        api_mock_llm_client.generate_response = gated_generate_response  # type: ignore[method-assign,assignment]  # swapping the mock's bound method for an in-flight gate is the point of this test double
+        api_mock_llm_client.response_gate = release
 
         task_id = str(uuid.uuid4())
         send = await a2a_client.post(
