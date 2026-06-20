@@ -1,0 +1,96 @@
+# Self-hosted (VPS / local) variant of the Family Assistant TestFlight / App
+# Review sandbox. Stands up Postgres + the app + a self-contained Dex OIDC
+# provider, all locked to a single demo account.
+#
+# IMPORTANT — OIDC URL reachability:
+#   The OIDC issuer/discovery URL must resolve to the SAME address from both
+#   the user's browser (redirect) and the app container (token exchange), and
+#   it must match Dex's configured issuer exactly. The reliable way to satisfy
+#   this is to put both services behind your own reverse proxy with real
+#   HTTPS hostnames and set APP_BASE_URL / DEX_ISSUER to those public URLs.
+#   A host-level reverse proxy should forward to the published host ports
+#   127.0.0.1:8000 (app) and 127.0.0.1:5556 (dex). Only if the proxy itself runs
+#   inside this compose network would it use the service names app:8000 / dex:5556.
+#
+# Copy .env.example to .env and fill it in before running:
+#   docker compose --env-file .env up --build
+
+services:
+  postgres:
+    image: pgvector/pgvector:pg16
+    environment:
+      POSTGRES_USER: assistant
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set in .env}
+      POSTGRES_DB: family_assistant
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U assistant -d family_assistant"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  dex:
+    build:
+      context: ./dex
+    environment:
+      PORT: "5556"
+      DEX_ISSUER: ${DEX_ISSUER:?public https URL of the dex service}
+      APP_BASE_URL: ${APP_BASE_URL:?public https URL of the app service}
+      OIDC_CLIENT_ID: ${OIDC_CLIENT_ID:-family-assistant-sandbox}
+      OIDC_CLIENT_SECRET: ${OIDC_CLIENT_SECRET:?shared OIDC client secret}
+      DEMO_EMAIL: ${DEMO_EMAIL:?demo account email}
+      DEMO_PASSWORD_HASH: ${DEMO_PASSWORD_HASH:?bcrypt hash of demo password}
+    ports:
+      # Bind to localhost only: the reverse proxy (which terminates TLS) forwards
+      # here. Publishing on all interfaces would expose the plain-HTTP backend.
+      - "127.0.0.1:5556:5556"
+
+  app:
+    build:
+      context: ../..
+      dockerfile: Dockerfile
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      # SQLAlchemy's async engine needs the asyncpg driver scheme (plain
+      # postgresql:// resolves to a sync driver and fails at startup).
+      DATABASE_URL: postgresql+asyncpg://assistant:${POSTGRES_PASSWORD}@postgres:5432/family_assistant
+      SESSION_SECRET_KEY: ${SESSION_SECRET_KEY:?random session secret}
+      TIMEZONE: UTC
+      OIDC_CLIENT_ID: ${OIDC_CLIENT_ID:-family-assistant-sandbox}
+      OIDC_CLIENT_SECRET: ${OIDC_CLIENT_SECRET:?shared OIDC client secret}
+      OIDC_DISCOVERY_URL: ${DEX_ISSUER}/.well-known/openid-configuration
+      ALLOWED_OIDC_EMAILS: ${DEMO_EMAIL}
+      # --- LLM: OpenRouter via the OpenAI-compatible API ("OpenAI provider with
+      # a custom base URL"). The whole sandbox runs on one cheap model; see
+      # config.yaml, which pins every profile to it with provider "openai". ---
+      OPENAI_API_KEY: ${OPENROUTER_API_KEY:?quota-capped OpenRouter key}
+      OPENAI_BASE_URL: https://openrouter.ai/api/v1
+      LLM_MODEL: deepseek/deepseek-v4-flash
+      # --- Embeddings: same OpenRouter endpoint via the OpenAI-compatible
+      # embedding provider (PR #909). EMBEDDING_API_KEY is omitted because it
+      # falls back to OPENAI_API_KEY (the OpenRouter key set above). ---
+      EMBEDDING_PROVIDER: openai
+      EMBEDDING_BASE_URL: https://openrouter.ai/api/v1
+      EMBEDDING_MODEL: openai/text-embedding-3-small
+      EMBEDDING_DIMENSIONS: "1536"
+      # Disable the bundled MCP servers (need API keys, slow startup). A non-empty
+      # MCP_CONFIG_PATH replaces the default mcp_config with zero servers.
+      MCP_CONFIG_PATH: /app/deploy/testflight-sandbox/mcp-empty.json
+      DOCUMENT_STORAGE_PATH: /data/documents
+      ATTACHMENT_STORAGE_PATH: /data/attachments
+      CHAT_ATTACHMENT_STORAGE_PATH: /data/chat_attachments
+    volumes:
+      # Sandbox config overrides (cost cap, integrations off).
+      - ./config.yaml:/app/config.yaml:ro
+      - appdata:/data
+    ports:
+      # Localhost only; the TLS-terminating reverse proxy forwards here.
+      - "127.0.0.1:8000:8000"
+
+volumes:
+  pgdata:
+  appdata:
+

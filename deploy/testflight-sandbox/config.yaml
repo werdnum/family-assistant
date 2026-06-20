@@ -1,0 +1,94 @@
+# Family Assistant config overrides for the TestFlight / App Review sandbox.
+#
+# This is deep-merged on top of the shipped defaults.yaml. It is mounted into
+# the app container by docker-compose.yaml, and baked into the image on Render
+# (see deploy/testflight-sandbox/app/Dockerfile + render.yaml).
+#
+# Goal: run the WHOLE sandbox on a single, cheap OpenRouter model so a reviewer
+# can exercise the full agentic feature set without burning a real provider key.
+#
+# How the routing works:
+#   * Chat: every profile is pinned to "deepseek/deepseek-v4-flash" with
+#     provider "openai". The OpenAI client is pointed at OpenRouter via the
+#     OPENAI_BASE_URL env var (see docker-compose.yaml / render.yaml), so this is
+#     literally "the OpenAI provider with a custom base URL". provider must be
+#     set explicitly because "deepseek/..." is not auto-detected.
+#   * Embeddings: openai/text-embedding-3-small through the same OpenRouter
+#     endpoint, configured entirely via env vars (EMBEDDING_PROVIDER=openai etc.;
+#     see docker-compose.yaml). Requires the OpenAI-compatible embedding provider
+#     from PR #909.
+#
+# Why deepseek/deepseek-v4-flash: cheapest output ($0.18/1M) among reputable
+# tool-calling models on OpenRouter, with the best agentic-tool-use benchmarks in
+# its price tier (tau2-bench 95.6, GPQA-D 86.7). It tool-calls reliably, which is
+# what the demo needs. The OpenRouter key should be a dedicated, quota-capped key.
+
+default_profile_settings:
+  processing_config:
+    # Replace the shipped google/openai retry_config with the single cheap model.
+    # null here clears the inherited retry_config so the simple llm_model+provider
+    # path is used. This covers every profile that does not pin its own model
+    # (default_assistant, email_intake, reminder, browser_profile,
+    # data_visualization, telephone, telephone_external).
+    retry_config: null
+    provider: "openai"
+    llm_model: "deepseek/deepseek-v4-flash"
+    # Cap the per-request reasoning/tool-call budget to bound API cost.
+    max_iterations: 8
+
+# Profiles that pin their own model in defaults.yaml must be overridden by id
+# (service_profiles is merged by id, so unlisted profiles are preserved). Each is
+# collapsed onto the single cheap model.
+service_profiles:
+  - id: "browser_visual_profile"
+    processing_config:
+      provider: "openai"
+      llm_model: "deepseek/deepseek-v4-flash"
+      retry_config: null
+  - id: "research"
+    processing_config:
+      provider: "openai"
+      llm_model: "deepseek/deepseek-v4-flash"
+  - id: "research_max"
+    processing_config:
+      provider: "openai"
+      llm_model: "deepseek/deepseek-v4-flash"
+  - id: "event_handler"
+    processing_config:
+      provider: "openai"
+      llm_model: "deepseek/deepseek-v4-flash"
+  - id: "automation_creation"
+    processing_config:
+      provider: "openai"
+      llm_model: "deepseek/deepseek-v4-flash"
+  - id: "artist"
+    processing_config:
+      provider: "openai"
+      llm_model: "deepseek/deepseek-v4-flash"
+  - id: "complex_tasks"
+    processing_config:
+      provider: "openai"
+      llm_model: "deepseek/deepseek-v4-flash"
+      # Keep the cost cap even for the "complex" profile in the sandbox.
+      max_iterations: 8
+  - id: "engineer"
+    processing_config:
+      provider: "openai"
+      llm_model: "deepseek/deepseek-v4-flash"
+  # camera_analyst pins its model via retry_config, which takes precedence over
+  # llm_model/provider. Override the retry_config itself: single cheap primary,
+  # no fallback.
+  - id: "camera_analyst"
+    processing_config:
+      retry_config:
+        primary:
+          provider: "openai"
+          model: "deepseek/deepseek-v4-flash"
+        fallback: null
+
+email_intake:
+  # The email webhook is the main untrusted-input channel. It is inert without
+  # a Mailgun signing key, but we also hard-disable actions and require
+  # authenticated senders as defence in depth.
+  enable_actions: false
+  require_authenticated_sender: true
