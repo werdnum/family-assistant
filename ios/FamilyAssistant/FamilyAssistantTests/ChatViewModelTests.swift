@@ -2232,6 +2232,141 @@ final class ChatViewModelTests: XCTestCase {
         model = nil
     }
 
+    func testConcurrentConversationSwitchDoesNotClobberWithStaleLoad() async throws {
+        // updateSelection spawns `Task { await selectConversation(id) }`, so two
+        // quick taps run two selectConversation calls that do NOT cancel each
+        // other. If the first's loadMessages is still in flight when the second
+        // finishes, the first's resumed full-reload must NOT assign its (stale)
+        // thread over the conversation the user actually landed on.
+        let aLoadFetch = AtomicCounter()
+        let aHistory = HangingStream()
+        ChatMockBackendURLProtocol.respond { request in
+            let path = request.url?.path ?? ""
+            if request.httpMethod == "GET", path.hasSuffix("/conversations/conv_a/messages") {
+                // Hang A's initial load so it is still pending when B finishes.
+                aLoadFetch.increment()
+                return .hangingStream("", controller: aHistory)
+            }
+            if request.httpMethod == "GET", path.hasSuffix("/conversations/conv_b/messages") {
+                return .json(
+                    #"{"conversation_id":"conv_b","messages":[{"internal_id":9,"role":"assistant","content":"BReply","timestamp":"2026-06-08T13:00:00Z"}],"count":1,"total_messages":1,"has_more_before":false,"has_more_after":false}"#
+                )
+            }
+            if request.httpMethod == "GET", path == "/api/v1/chat/conversations" {
+                return .json(#"{"conversations":[],"count":0}"#)
+            }
+            if request.httpMethod == "GET", path.hasSuffix("/stream") {
+                return .hangingStream("", controller: HangingStream())
+            }
+            return .json(#"{"detail":"unexpected"}"#, statusCode: 404)
+        }
+
+        var model: ChatViewModel? = makeViewModel(conversationID: nil)
+        // Tap A: its load hangs.
+        let selectA = Task { await model?.selectConversation("conv_a") }
+        try await waitUntil { aLoadFetch.value >= 1 }
+        // Tap B before A finished loading: B loads cleanly.
+        let selectB = Task { await model?.selectConversation("conv_b") }
+        try await waitUntil { model?.messages.contains { $0.text == "BReply" } == true }
+
+        // A's load now resumes with its (stale) thread; the guard must drop it.
+        aHistory.finish(
+            appending: #"{"conversation_id":"conv_a","messages":[{"internal_id":1,"role":"user","content":"AStale","timestamp":"2026-06-08T12:00:00Z"}],"count":1,"total_messages":1,"has_more_before":false,"has_more_after":false}"#
+        )
+        _ = await selectA.value
+        _ = await selectB.value
+
+        // Bounded settle: without the guard A's resumed load replaces messages with
+        // ["AStale"] within a few ms; with it the load returns early.
+        let deadline = Date().addingTimeInterval(1.0)
+        while Date() < deadline, model?.messages.contains(where: { $0.text == "AStale" }) == false {
+            try await Task.sleep(for: .milliseconds(20))
+        }
+        XCTAssertFalse(model?.messages.contains { $0.text == "AStale" } == true)
+        XCTAssertEqual(model?.messages.map(\.text), ["BReply"])
+
+        model = nil
+    }
+
+    func testSendGiveUpSuppressesDuplicateFollowRender() async throws {
+        // When a send exhausts its resumes and recovers via history reload (no
+        // turn_ended), the turn is marked ended so the always-on follow loop does
+        // NOT also render its tail into a separate local_follow_ bubble — which
+        // would duplicate the reply the reload surfaced as a msg_ row.
+        let postedTurnID = AtomicString()
+        let liveFollow = HangingStream()
+        ChatMockBackendURLProtocol.respond { request in
+            let path = request.url?.path ?? ""
+            if request.httpMethod == "POST", path == "/api/v1/chat/turns" {
+                if let body = (try? Self.jsonObject(from: request)) as? [String: Any],
+                   let turnID = body["turn_id"] as? String {
+                    postedTurnID.set(turnID)
+                }
+                return .json(
+                    #"{"turn_id":"ignored","conversation_id":"web_conv_giveup","first_seq":0}"#
+                )
+            }
+            if request.httpMethod == "GET", path.hasSuffix("/messages") {
+                return .json(
+                    #"{"conversation_id":"web_conv_giveup","messages":[{"internal_id":1,"role":"user","content":"Hi","timestamp":"2026-06-08T12:00:00Z"},{"internal_id":2,"role":"assistant","content":"Partial reply","timestamp":"2026-06-08T12:00:01Z"}],"count":2,"total_messages":2,"has_more_before":false,"has_more_after":false}"#
+                )
+            }
+            if request.httpMethod == "GET", path == "/api/v1/chat/conversations" {
+                return .json(#"{"conversations":[],"count":0}"#)
+            }
+            if request.httpMethod == "POST", path == "/api/v1/chat/ack" {
+                return .json("{}")
+            }
+            if request.httpMethod == "GET", path.hasSuffix("/stream") {
+                let follow = Self.queryItems(from: request)["follow"] == "true"
+                if follow {
+                    // The always-on live-follow stream: held open until the test
+                    // delivers a tail token after the send has given up.
+                    return .hangingStream("", controller: liveFollow)
+                }
+                // The send subscription keeps dropping with no turn_ended.
+                return .droppedStream(
+                    "event: text\ndata: {\"content\":\"Partial\",\"seq\":1}\n\n"
+                )
+            }
+            return .json(#"{"detail":"unexpected"}"#, statusCode: 404)
+        }
+
+        var model: ChatViewModel? = makeViewModel(
+            conversationID: "web_conv_giveup",
+            liveReconnectInitialDelaySeconds: 0.001,
+            liveReconnectMaxDelaySeconds: 0.001,
+            maxConsecutiveStreamResumes: 1,
+            streamResumeLivenessSeconds: 60
+        )
+        await model?.selectConversation("web_conv_giveup")
+        model?.draftText = "Hi"
+        await model?.sendDraft()
+
+        // The send gives up and reloads history (the partial reply is a msg_ row).
+        try await waitUntil {
+            model?.isStreaming == false && model?.messages.contains { $0.text == "Partial reply" } == true
+        }
+
+        // Deliver a follow-stream tail token for the SAME turn after the give-up.
+        let turnID = try XCTUnwrap(postedTurnID.value)
+        liveFollow.finish(
+            appending: "event: text\ndata: {\"turn_id\":\"\(turnID)\",\"content\":\" tail\",\"seq\":9}\n\n"
+        )
+
+        // Bounded settle: the suppressed turn must never spawn a local_follow bubble.
+        let deadline = Date().addingTimeInterval(1.0)
+        while Date() < deadline,
+              model?.messages.contains(where: { $0.id == "local_follow_\(turnID)" }) == false {
+            try await Task.sleep(for: .milliseconds(20))
+        }
+        XCTAssertFalse(model?.messages.contains { $0.id == "local_follow_\(turnID)" } == true)
+        XCTAssertEqual(model?.messages.map(\.text), ["Hi", "Partial reply"])
+
+        liveFollow.finish()
+        model = nil
+    }
+
     func testResendDuringStreamSupersedesWithoutClobbering() async throws {
         // Sending again while the first turn is still streaming must supersede it
         // cleanly: the first (cancelled) task must not flip the new turn's
@@ -3354,5 +3489,20 @@ private final class AtomicCounter: @unchecked Sendable {
 
     var value: Int {
         lock.withLock { count }
+    }
+}
+
+/// Lock-guarded optional string for capturing a value (e.g. a client-generated
+/// turn id) off the URLProtocol loading thread.
+private final class AtomicString: @unchecked Sendable {
+    private let lock = NSLock()
+    private var stored: String?
+
+    func set(_ value: String?) {
+        lock.withLock { stored = value }
+    }
+
+    var value: String? {
+        lock.withLock { stored }
     }
 }

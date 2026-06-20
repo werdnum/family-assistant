@@ -121,6 +121,23 @@ responses. New red-green coverage:
   follow stream are deliberately ignored — they would otherwise pop a modal "Chat Error" alert or a
   tool-approval sheet for a turn this device is not driving (started elsewhere / by a schedule). A
   failed passive turn still surfaces via its `turn_ended` + history reload.
+- **Live-bubble ↔ persisted-row reconciliation is imprecise.** The `GET …/messages` payload does
+  **not** carry a `turn_id` per row, so a finished `local_follow_<turnID>` bubble cannot be matched
+  to its specific persisted reply. Reconciliation therefore relies on the heuristic "drop all
+  `local_` rows and re-append the persisted delta" in the next merge. Two narrow persistence-lag
+  races remain: if `turn_ended` fires before the reply is queryable (an empty delta) and the follow
+  stream then stays open and perfectly quiet, the completed in-memory bubble shows the correct
+  streamed text but isn't reconciled to the canonical `msg_` row until the next merge (a
+  drop/reconnect/foreground/next-turn); and if a non-empty delta arrives that contains some *other*
+  newly-persisted row but not this turn's reply yet, the bubble can briefly disappear until a later
+  merge fetches it. The streamed content is correct in both cases; only the local↔persisted swap
+  lags. The clean fix is to expose `turn_id` in the messages payload and reconcile by it — a backend
+  change tracked as a follow-up.
+- **Concurrent-turn ordering uses creation time.** When two turns overlap in one conversation, live
+  bubbles are ordered by their `createdAt` (first-token wall-clock) rather than forced last, so an
+  older still-running turn keeps its place above a newer finished one. This is correct on the real
+  timeline; it is not unit-tested because a mock's fixed past timestamps don't interleave with a
+  live bubble's real-`Date()` creation time.
 
 ## What this does NOT change
 
