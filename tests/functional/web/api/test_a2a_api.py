@@ -322,6 +322,39 @@ class TestAsyncSendMessage:
         assert completed["status"]["state"] == "completed"
         assert completed["artifacts"]
 
+    @pytest.mark.asyncio
+    async def test_resending_same_task_id_is_idempotent(
+        self,
+        a2a_client: AsyncClient,
+        app_fixture: FastAPI,
+        api_mock_llm_client: RuleBasedMockLLMClient,
+    ) -> None:
+        api_mock_llm_client.default_response = MockLLMOutput(content="once only")
+        task_id = str(uuid.uuid4())
+        params = {
+            "message": _a2a_message("Hello", task_id=task_id),
+            "configuration": {"blocking": False},
+        }
+
+        first = await a2a_client.post(
+            "/api/a2a", json=_jsonrpc("message/send", params=params)
+        )
+        assert first.json()["result"]["status"]["state"] == "working"
+        background = app_fixture.state.a2a_background_tasks.get(task_id)
+        if background is not None:
+            await background
+        calls_after_first = len(api_mock_llm_client.get_calls())
+
+        # Re-sending the same task id returns the existing (completed) task and
+        # does not re-process it (no second LLM call, no duplicate background run).
+        second = await a2a_client.post(
+            "/api/a2a", json=_jsonrpc("message/send", params=params)
+        )
+        result = second.json()["result"]
+        assert result["id"] == task_id
+        assert result["status"]["state"] == "completed"
+        assert len(api_mock_llm_client.get_calls()) == calls_after_first
+
     @pytest.mark.postgres
     @pytest.mark.asyncio
     async def test_blocking_false_cancel_interrupts_in_flight_task(

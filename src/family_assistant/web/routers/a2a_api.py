@@ -287,6 +287,15 @@ async def _handle_send_message(
             "Message contained no processable content parts",
         )
 
+    # Idempotency: a client (e.g. a delegating worker recovering from a crash)
+    # may re-send the same task_id. Return the existing task's current state
+    # rather than creating a duplicate or re-processing it.
+    existing = await db_context.a2a_tasks.get_task(task_id)
+    if existing is not None:
+        return _jsonrpc_result(
+            request_id, _row_to_task(existing).model_dump(exclude_none=True)
+        )
+
     user_id = str(current_user.get("user_identifier", "a2a_user"))
     history_entry = message.model_dump(exclude_none=True)
 

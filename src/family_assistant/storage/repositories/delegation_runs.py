@@ -213,6 +213,24 @@ class DelegationRunsRepository(BaseRepository):
         row = result.mappings().one_or_none()
         return self._row_to_dict(dict(row)) if row is not None else None
 
+    async def update_remote_task(
+        self,
+        delegation_id: str,
+        *,
+        remote_task_id: str,
+        remote_context_id: str | None,
+    ) -> DelegationRunDict | None:
+        """Record the actual remote task id once known.
+
+        Used when a remote did not honor the caller-supplied (pre-generated)
+        task id, so polling and cancellation target the real task.
+        """
+        return await self._update_run(
+            delegation_id,
+            remote_task_id=remote_task_id,
+            remote_context_id=remote_context_id,
+        )
+
     async def bump_poll_attempt(self, delegation_id: str, now: datetime) -> int | None:
         """Increment and return the poll attempt counter for a run.
 

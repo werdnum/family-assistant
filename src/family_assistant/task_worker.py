@@ -30,7 +30,11 @@ from family_assistant.llm.messages import (
     MessageAttachmentMetadata,
     SystemMessage,
 )
-from family_assistant.processing import PENDING, PollableDelegationService
+from family_assistant.processing import (
+    PENDING,
+    PollableDelegationService,
+    RemoteSubmission,
+)
 from family_assistant.scripting import (
     MontyEngine,
     ScriptError,
@@ -889,18 +893,6 @@ class TaskWorker:
             )
             return
 
-        if run["status"] == "awaiting_remote":
-            # A prior delegated_profile_run attempt already submitted to the
-            # remote agent (this task retried). Do not re-submit; make sure a
-            # poll is scheduled and return.
-            logger.info(
-                "Delegation run %s already awaiting remote on entry; scheduling "
-                "a poll instead of re-submitting.",
-                delegation_id,
-            )
-            await self._enqueue_delegation_poll(exec_context, run)
-            return
-
         processing_service = exec_context.processing_service
         registry = (
             processing_service.processing_services_registry
@@ -934,7 +926,16 @@ class TaskWorker:
         if isinstance(target_service, PollableDelegationService):
             # Remote (pollable) target: submit without blocking and hand off to
             # the self-rescheduling poll task instead of running the turn inline.
-            await self._submit_pollable_delegation(exec_context, run, target_service)
+            if run["status"] == "awaiting_remote":
+                # A retry of a run that already claimed awaiting_remote: re-submit
+                # idempotently (the remote task id is stable and the server is
+                # idempotent on it), recovering a crash that happened before the
+                # first submit reached the remote.
+                await self._resubmit_awaiting_remote(exec_context, run, target_service)
+            else:
+                await self._submit_pollable_delegation(
+                    exec_context, run, target_service
+                )
             return
 
         # Commit the running transition in its own transaction so the waiting
@@ -1104,15 +1105,84 @@ class TaskWorker:
             )
             return
 
+        await self._after_submission(
+            exec_context, awaiting, target_service, submission, remote_task_id
+        )
+
+    async def _resubmit_awaiting_remote(
+        self,
+        exec_context: ToolExecutionContext,
+        run: DelegationRunDict,
+        target_service: PollableDelegationService,
+    ) -> None:
+        """Idempotently re-submit an ``awaiting_remote`` run on a retry.
+
+        Recovers a crash that happened after the run was claimed but before the
+        first submit reached the remote. The remote task id is stable and the
+        server is idempotent on it, so this either creates the task (recovery) or
+        returns its current state — never a duplicate.
+        """
+        delegation_id = run["delegation_id"]
+        remote_task_id = run["remote_task_id"]
+        if not remote_task_id:
+            await self._fail_delegation_run(
+                exec_context,
+                delegation_id=delegation_id,
+                error="Awaiting-remote delegation run is missing its remote task id.",
+            )
+            return
+        content_parts = cast("list[ContentPartDict]", run["content_parts_json"])
+        try:
+            submission = await target_service.submit_async(
+                content_parts,
+                conversation_id=run["conversation_id"],
+                subconversation_id=run["subconversation_id"],
+                task_id=remote_task_id,
+            )
+        except Exception:
+            # Re-submit failed transiently; schedule a poll so the run still
+            # advances (the remote task may already exist from the first attempt).
+            logger.warning(
+                "Re-submit for awaiting_remote delegation %s failed; scheduling a "
+                "poll.",
+                delegation_id,
+                exc_info=True,
+            )
+            await self._enqueue_delegation_poll(exec_context, run)
+            return
+        await self._after_submission(
+            exec_context, run, target_service, submission, remote_task_id
+        )
+
+    async def _after_submission(
+        self,
+        exec_context: ToolExecutionContext,
+        run: DelegationRunDict,
+        target_service: PollableDelegationService,
+        submission: RemoteSubmission,
+        expected_task_id: str,
+    ) -> None:
+        """Record the real remote id, then finalize inline or enqueue the poll."""
+        delegation_id = run["delegation_id"]
+        if submission.remote_task_id != expected_task_id:
+            # The remote did not honor our supplied task id; record the actual
+            # one so polling/cancel target the right task.
+            async with exec_context.db_context.create_isolated_context() as isolated_db:
+                await isolated_db.delegation_runs.update_remote_task(
+                    delegation_id,
+                    remote_task_id=submission.remote_task_id,
+                    remote_context_id=submission.remote_context_id,
+                )
+
         if submission.terminal_result is not None:
-            # Synchronous remote returned a terminal task on submit; no polling.
+            # The remote returned a terminal task on submit; no polling needed.
             await self._finalize_delegation_run(
                 exec_context, delegation_id, submission.terminal_result
             )
             return
 
         await self._enqueue_delegation_poll(
-            exec_context, awaiting, delay_seconds=_poll_interval_for(target_service)
+            exec_context, run, delay_seconds=_poll_interval_for(target_service)
         )
 
     async def _enqueue_delegation_poll(

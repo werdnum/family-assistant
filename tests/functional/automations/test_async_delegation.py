@@ -1462,6 +1462,44 @@ async def test_pollable_delegation_submits_and_enqueues_poll(
 
 
 @pytest.mark.asyncio
+async def test_pollable_delegation_retry_resubmits_idempotently(
+    db_engine: AsyncEngine,
+) -> None:
+    target = FakePollableService()
+    processing_service = _source_processing_service(
+        cast("FakeDelegatableService", target)
+    )
+    chat_interface = AsyncMock(spec=ChatInterface)
+    chat_interface.send_message.return_value = "external_message_id"
+
+    delegation_id = await _start_background_delegation(
+        db_engine, processing_service, chat_interface
+    )
+    worker = _build_worker(db_engine, processing_service, chat_interface)
+    async with DatabaseContext(engine=db_engine) as db_context:
+        await worker.handle_delegated_profile_run(
+            _tool_context(db_context, processing_service, chat_interface),
+            _delegation_payload(delegation_id),
+        )
+    assert len(target.submitted) == 1
+
+    # A delegated_profile_run retry of an awaiting_remote run re-submits with the
+    # same (stored) remote task id — recovering a crash before the first submit
+    # reached the remote — rather than only polling.
+    async with DatabaseContext(engine=db_engine) as db_context:
+        await worker.handle_delegated_profile_run(
+            _tool_context(db_context, processing_service, chat_interface),
+            _delegation_payload(delegation_id),
+        )
+    assert len(target.submitted) == 2
+    assert target.submitted[0][2] == target.submitted[1][2]
+    async with DatabaseContext(engine=db_engine) as db_context:
+        run = await db_context.delegation_runs.get_by_delegation_id(delegation_id)
+        assert run is not None
+        assert run["status"] == "awaiting_remote"
+
+
+@pytest.mark.asyncio
 async def test_pollable_delegation_polls_to_completion(
     db_engine: AsyncEngine,
 ) -> None:
