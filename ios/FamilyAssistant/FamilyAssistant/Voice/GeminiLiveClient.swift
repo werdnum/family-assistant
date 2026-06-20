@@ -101,7 +101,10 @@ final class GeminiLiveClient {
         do {
             while !Task.isCancelled {
                 let data = try await socket.receive()
-                for event in (try? GeminiLiveCodec.decodeServerMessage(data)) ?? [] {
+                // A frame that fails to decode is a protocol violation, not noise:
+                // let it throw so the session ends with lastError set rather than
+                // hanging while the UI waits for events that will never arrive.
+                for event in try GeminiLiveCodec.decodeServerMessage(data) {
                     continuation.yield(event)
                 }
             }

@@ -201,6 +201,19 @@ final class GeminiLiveClientTests: XCTestCase {
         collector.stop()
     }
 
+    func testMalformedFrameFinishesStreamWithError() async throws {
+        let socket = FakeGeminiLiveSocket()
+        let client = GeminiLiveClient(host: "h", socketFactory: { _ in socket })
+        let collector = EventCollector()
+        collector.start(client)
+
+        try await client.connect(token: makeToken())
+        socket.push("this is not valid json {")
+
+        try await waitUntil { client.lastError != nil }
+        collector.stop()
+    }
+
     func testCloseIsIdempotent() async throws {
         let socket = FakeGeminiLiveSocket()
         let client = GeminiLiveClient(host: "h", socketFactory: { _ in socket })

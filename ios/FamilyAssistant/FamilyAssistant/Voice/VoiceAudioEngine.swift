@@ -74,26 +74,35 @@ final class VoiceAudioEngine: VoiceAudioIO {
         guard !isRunning else { return }
         try configureSession()
 
-        let input = engine.inputNode
-        try? input.setVoiceProcessingEnabled(true)
-        let inputFormat = input.outputFormat(forBus: 0)
-        guard let converter = StreamingPCMConverter(inputFormat: inputFormat) else {
-            throw VoiceAudioError.converterUnavailable
-        }
-        self.converter = converter
-
-        engine.attach(playerNode)
-        engine.connect(playerNode, to: engine.mainMixerNode, format: playbackFormat)
-
-        input.installTap(onBus: 0, bufferSize: 2048, format: inputFormat) { [weak self] buffer, _ in
-            guard let self, !self.muted.withLock({ $0 }) else { return }
-            if let data = self.converter?.convertToData(buffer), let callback = self.onCapturedAudio {
-                callback(data)
+        do {
+            let input = engine.inputNode
+            try? input.setVoiceProcessingEnabled(true)
+            let inputFormat = input.outputFormat(forBus: 0)
+            guard let converter = StreamingPCMConverter(inputFormat: inputFormat) else {
+                throw VoiceAudioError.converterUnavailable
             }
+            self.converter = converter
+
+            engine.attach(playerNode)
+            engine.connect(playerNode, to: engine.mainMixerNode, format: playbackFormat)
+
+            input.installTap(onBus: 0, bufferSize: 2048, format: inputFormat) { [weak self] buffer, _ in
+                guard let self, !self.muted.withLock({ $0 }) else { return }
+                if let data = self.converter?.convertToData(buffer), let callback = self.onCapturedAudio {
+                    callback(data)
+                }
+            }
+
+            engine.prepare()
+            try engine.start()
+        } catch {
+            // Unwind any partial setup (activated session, attached player,
+            // installed tap) so a later attempt starts from a clean state instead
+            // of failing on an already-installed tap or a still-active session.
+            teardownGraph()
+            throw error
         }
 
-        engine.prepare()
-        try engine.start()
         playerNode.play()
         isRunning = true
         registerSessionObservers()
@@ -103,10 +112,18 @@ final class VoiceAudioEngine: VoiceAudioIO {
         guard isRunning else { return }
         isRunning = false
         removeSessionObservers()
+        teardownGraph()
+    }
+
+    /// Tear down the engine graph and audio session. Safe to call on a partially
+    /// constructed graph (each step is a no-op if that step never happened).
+    private func teardownGraph() {
         engine.inputNode.removeTap(onBus: 0)
         playerNode.stop()
         engine.stop()
-        engine.detach(playerNode)
+        if playerNode.engine != nil {
+            engine.detach(playerNode)
+        }
         converter = nil
         try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
     }

@@ -71,6 +71,7 @@ final class VoiceSessionViewModel {
     private var eventTask: Task<Void, Never>?
     private var audioPumpTask: Task<Void, Never>?
     private var timeoutTask: Task<Void, Never>?
+    private var toolTasks: [String: Task<Void, Never>] = [:]
     private var audioOut: AsyncStream<Data>.Continuation?
     private var didStart = false
     private var didPersist = false
@@ -216,8 +217,8 @@ final class VoiceSessionViewModel {
             audio.flushPlayback()
         case .toolCall(let calls):
             handleToolCalls(calls, session: session)
-        case .toolCallCancellation:
-            break
+        case .toolCallCancellation(let ids):
+            cancelToolCalls(ids)
         case .goAway:
             end()
         }
@@ -225,9 +226,27 @@ final class VoiceSessionViewModel {
 
     private func handleToolCalls(_ calls: [GeminiFunctionCall], session: VoiceLiveSession) {
         let runner = VoiceToolRunner(executor: toolExecutor)
-        Task {
-            let responses = await runner.run(calls)
-            try? await session.sendToolResponses(responses)
+        for call in calls {
+            let id = call.id
+            let task = Task { [weak self] in
+                let response = await runner.run([call]).first
+                guard let self, let response, !Task.isCancelled else { return }
+                if let id { self.toolTasks[id] = nil }
+                try? await session.sendToolResponses([response])
+            }
+            // Track by id so a later toolCallCancellation can cancel the work and
+            // suppress its (now stale) response. Calls without an id can't be
+            // individually cancelled, but Gemini always supplies one.
+            if let id {
+                toolTasks[id] = task
+            }
+        }
+    }
+
+    private func cancelToolCalls(_ ids: [String]) {
+        for id in ids {
+            toolTasks[id]?.cancel()
+            toolTasks[id] = nil
         }
     }
 
@@ -278,19 +297,28 @@ final class VoiceSessionViewModel {
     }
 
     /// Persist the conversation transcript as its own conversation, once, on the
-    /// first terminal transition. Best-effort: a save failure must not surface as
-    /// a session error.
+    /// first terminal transition. The save runs after the screen is dismissed, so
+    /// a failure can't be shown inline — it is reported so the only copy of the
+    /// transcript isn't lost without a trace.
     private func persistTranscriptIfNeeded() {
         guard !didPersist, !transcript.isEmpty, let transcriptStore else { return }
         didPersist = true
         let turns = transcript.entries
-        Task {
-            try? await transcriptStore.saveVoiceSession(turns: turns, conversationID: nil)
+        Task { [weak self] in
+            do {
+                _ = try await transcriptStore.saveVoiceSession(turns: turns, conversationID: nil)
+            } catch {
+                self?.reportError(error)
+            }
         }
     }
 
     private func teardown() {
         persistTranscriptIfNeeded()
+        for task in toolTasks.values {
+            task.cancel()
+        }
+        toolTasks.removeAll()
         timeoutTask?.cancel()
         timeoutTask = nil
         audio.onCapturedAudio = nil

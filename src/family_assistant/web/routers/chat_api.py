@@ -1786,6 +1786,7 @@ async def debug_test_stream() -> StreamingResponse:
 @chat_api_router.post("/v1/chat/voice-sessions")
 async def api_chat_save_voice_session(
     payload: VoiceSessionRequest,
+    request: Request,
     current_user: Annotated[dict, Depends(get_current_user)],
     db_context: Annotated[DatabaseContext, Depends(get_db)],
 ) -> VoiceSessionResponse:
@@ -1808,7 +1809,17 @@ async def api_chat_save_voice_session(
             detail="A voice session must contain at least one turn.",
         )
 
-    conversation_id = payload.conversation_id or f"web_conv_{uuid.uuid4().hex}"
+    if payload.conversation_id:
+        # A client-supplied id must already belong to the caller (or be unused).
+        # Otherwise appending the caller's user messages would make a foreign
+        # conversation multi-owner and break the sole-owner predicate that gates
+        # the real owner's list/reads. Raises 404 on mismatch, like other paths.
+        await _ensure_user_owns_conversation(
+            request, current_user, payload.conversation_id, allow_new=True
+        )
+        conversation_id = payload.conversation_id
+    else:
+        conversation_id = f"web_conv_{uuid.uuid4().hex}"
     base_time = datetime.now(UTC)
 
     # One turn id per logical exchange: a user line opens a new turn that the

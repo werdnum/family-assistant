@@ -121,8 +121,10 @@ private final class FakeToolExecutor: VoiceToolExecuting {
 
 @MainActor
 private final class FakeTranscriptStore: VoiceTranscriptStoring {
+    var error: Error?
     private(set) var saved: [[VoiceTranscriptEntry]] = []
     func saveVoiceSession(turns: [VoiceTranscriptEntry], conversationID: String?) async throws -> String {
+        if let error { throw error }
         saved.append(turns)
         return "web_conv_test"
     }
@@ -376,5 +378,41 @@ final class VoiceSessionViewModelTests: XCTestCase {
         await model.start()
         model.end()
         XCTAssertTrue(store.saved.isEmpty)
+    }
+
+    func testFailedTranscriptSaveIsReported() async throws {
+        store.error = SampleError()
+        let model = makeModel()
+        await model.start()
+        session.emit(.inputTranscription("hi"))
+        try await waitUntil { model.transcript.entries.isEmpty == false }
+
+        model.end()
+        try await waitUntil { self.reportedErrors.isEmpty == false }
+    }
+
+    func testToolCallCancellationSuppressesResponse() async throws {
+        var toolStarted = false
+        var toolReturned = false
+        var gate: CheckedContinuation<Void, Never>?
+        toolExecutor.handler = { _, _ in
+            toolStarted = true
+            await withCheckedContinuation { gate = $0 }
+            toolReturned = true
+            return .object([:])
+        }
+        let model = makeModel()
+        await model.start()
+
+        session.emit(.toolCall([GeminiFunctionCall(id: "c1", name: "noop", args: .object([:]))]))
+        try await waitUntil { toolStarted }
+
+        // Cancel while the tool is in flight, then let it finish.
+        session.emit(.toolCallCancellation(["c1"]))
+        gate?.resume()
+        try await waitUntil { toolReturned }
+        await Task.yield()
+
+        XCTAssertTrue(session.sentToolResponses.isEmpty)
     }
 }
