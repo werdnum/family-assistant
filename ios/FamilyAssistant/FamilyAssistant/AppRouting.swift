@@ -78,6 +78,8 @@ struct WebRoute: Equatable, Hashable {
 enum MoreRoute: Equatable, Hashable {
     case web(WebRoute)
     case settings
+    /// Native voice-conversation screen (replaces the web `/voice` page).
+    case voice
 }
 
 @Observable
