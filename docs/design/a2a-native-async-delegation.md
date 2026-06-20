@@ -2,7 +2,10 @@
 
 ## Status
 
-Proposed.
+Implemented (two-sided async; see the addendum). Deferred to a follow-up: a recurring reaper for
+server-side `a2a_tasks` rows left `working` by a hard crash — graceful shutdown already cancels
+in-flight background sends, and a delegating client recovers via its max-async cap, so a stuck
+server-side row is a bounded storage artifact rather than a correctness issue.
 
 ## Background
 
