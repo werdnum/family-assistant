@@ -18,6 +18,7 @@ import httpx
 import pytest
 import pytest_asyncio
 from fastapi import FastAPI
+from filelock import FileLock
 from httpx import ASGITransport, AsyncClient
 from playwright.async_api import Page, async_playwright
 from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
@@ -161,7 +162,16 @@ def api_socket_and_port() -> Generator[tuple[int, socket.socket]]:
 
 @pytest.fixture(scope="session", autouse=True)
 def build_frontend_assets() -> None:
-    """Build frontend assets before running web tests."""
+    """Build frontend assets before running web tests.
+
+    Under pytest-xdist every worker runs this session-scoped fixture in its own
+    session, so without coordination multiple workers invoke ``npm run build``
+    into the same ``dist/`` directory concurrently. vite-plugin-pwa's
+    injectManifest step is not concurrency-safe on a shared output directory and
+    fails with "Unable to find a place to inject the manifest". We serialize the
+    build across workers with a cross-process file lock; the timestamp check then
+    short-circuits for every worker after the first produces a fresh build.
+    """
     frontend_dir = Path(__file__).parent.parent.parent.parent / "frontend"
     dist_dir = frontend_dir.parent / "src" / "family_assistant" / "static" / "dist"
 
@@ -196,82 +206,89 @@ def build_frontend_assets() -> None:
     print("\n=== Building frontend assets ===")
     print(f"Frontend directory: {frontend_dir}")
 
-    # Check if npm is available
-    try:
-        result = subprocess.run(
-            ["npm", "--version"], capture_output=True, text=True, check=True
-        )
-        print(f"npm version: {result.stdout.strip()}")
-    except (subprocess.CalledProcessError, FileNotFoundError):
-        pytest.fail("npm is not available - required for building frontend assets")
+    # Serialize the build across pytest-xdist workers. The lock lives in the
+    # static/ directory (the stable parent of dist/, which the build itself may
+    # recreate). Once the first worker builds, the timestamp check inside the
+    # lock makes every subsequent worker skip the build.
+    lock_path = dist_dir.parent / ".frontend-build.lock"
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
+    with FileLock(str(lock_path)):
+        # Check if npm is available
+        try:
+            result = subprocess.run(
+                ["npm", "--version"], capture_output=True, text=True, check=True
+            )
+            print(f"npm version: {result.stdout.strip()}")
+        except (subprocess.CalledProcessError, FileNotFoundError):
+            pytest.fail("npm is not available - required for building frontend assets")
 
-    # Check if node_modules exists
-    if not (frontend_dir / "node_modules").exists():
-        print("node_modules not found. Running npm install...")
-        # Don't capture output to avoid hanging on large output
-        result = subprocess.run(
-            ["npm", "install"],
-            cwd=str(frontend_dir),
-            check=True,
-        )
-        if result.returncode != 0:
-            pytest.fail("npm install failed")
+        # Check if node_modules exists
+        if not (frontend_dir / "node_modules").exists():
+            print("node_modules not found. Running npm install...")
+            # Don't capture output to avoid hanging on large output
+            result = subprocess.run(
+                ["npm", "install"],
+                cwd=str(frontend_dir),
+                check=True,
+            )
+            if result.returncode != 0:
+                pytest.fail("npm install failed")
 
-    # Check if we need to rebuild (comprehensive timestamp check)
-    need_rebuild = True
-    if dist_dir.exists() and any(dist_dir.iterdir()):
-        # Check if source files are newer than build
-        # Include all relevant file types that could affect the build
-        src_files = (
-            list(frontend_dir.glob("src/**/*.js"))
-            + list(frontend_dir.glob("src/**/*.jsx"))
-            + list(frontend_dir.glob("src/**/*.ts"))
-            + list(frontend_dir.glob("src/**/*.tsx"))
-            + list(frontend_dir.glob("src/**/*.css"))
-            + list(frontend_dir.glob("*.json"))  # package.json, tsconfig.json, etc.
-            + list(frontend_dir.glob("*.config.js"))  # vite.config.js, etc.
-            + list(frontend_dir.glob("*.html"))  # HTML entry points
-        )
-        # Also check the vite_pages.py file since route changes affect the build
-        vite_pages_file = (
-            Path(__file__).parent.parent.parent.parent
-            / "src"
-            / "family_assistant"
-            / "web"
-            / "routers"
-            / "vite_pages.py"
-        )
-        if vite_pages_file.exists():
-            src_files.append(vite_pages_file)
+        # Check if we need to rebuild (comprehensive timestamp check)
+        need_rebuild = True
+        if dist_dir.exists() and any(dist_dir.iterdir()):
+            # Check if source files are newer than build
+            # Include all relevant file types that could affect the build
+            src_files = (
+                list(frontend_dir.glob("src/**/*.js"))
+                + list(frontend_dir.glob("src/**/*.jsx"))
+                + list(frontend_dir.glob("src/**/*.ts"))
+                + list(frontend_dir.glob("src/**/*.tsx"))
+                + list(frontend_dir.glob("src/**/*.css"))
+                + list(frontend_dir.glob("*.json"))  # package.json, tsconfig.json
+                + list(frontend_dir.glob("*.config.js"))  # vite.config.js, etc.
+                + list(frontend_dir.glob("*.html"))  # HTML entry points
+            )
+            # Also check the vite_pages.py file since route changes affect the build
+            vite_pages_file = (
+                Path(__file__).parent.parent.parent.parent
+                / "src"
+                / "family_assistant"
+                / "web"
+                / "routers"
+                / "vite_pages.py"
+            )
+            if vite_pages_file.exists():
+                src_files.append(vite_pages_file)
 
-        if src_files:
-            newest_src = max(f.stat().st_mtime for f in src_files if f.exists())
-            oldest_dist = min(f.stat().st_mtime for f in dist_dir.iterdir())
-            if oldest_dist > newest_src:
-                print("Frontend assets are up to date, skipping build")
-                need_rebuild = False
-            else:
-                print("Source files have been modified, rebuilding assets")
-                print(f"  Newest source: {newest_src}")
-                print(f"  Oldest dist: {oldest_dist}")
+            if src_files:
+                newest_src = max(f.stat().st_mtime for f in src_files if f.exists())
+                oldest_dist = min(f.stat().st_mtime for f in dist_dir.iterdir())
+                if oldest_dist > newest_src:
+                    print("Frontend assets are up to date, skipping build")
+                    need_rebuild = False
+                else:
+                    print("Source files have been modified, rebuilding assets")
+                    print(f"  Newest source: {newest_src}")
+                    print(f"  Oldest dist: {oldest_dist}")
 
-    if need_rebuild:
-        print("Building frontend assets...")
-        # Don't capture output to avoid hanging on large output
-        result = subprocess.run(
-            ["npm", "run", "build"],
-            cwd=str(frontend_dir),
-            check=True,
-        )
+        if need_rebuild:
+            print("Building frontend assets...")
+            # Don't capture output to avoid hanging on large output
+            result = subprocess.run(
+                ["npm", "run", "build"],
+                cwd=str(frontend_dir),
+                check=True,
+            )
 
-        if result.returncode != 0:
-            pytest.fail("Failed to build frontend assets")
+            if result.returncode != 0:
+                pytest.fail("Failed to build frontend assets")
 
-        print("✓ Frontend assets built successfully")
+            print("✓ Frontend assets built successfully")
 
-    # Verify dist directory exists
-    if not dist_dir.exists() or not any(dist_dir.iterdir()):
-        pytest.fail(f"No built assets found in {dist_dir}")
+        # Verify dist directory exists
+        if not dist_dir.exists() or not any(dist_dir.iterdir()):
+            pytest.fail(f"No built assets found in {dist_dir}")
 
 
 # ==================================================================================
