@@ -261,3 +261,87 @@ remote delegations may run long and will still be delivered. Update
    reintroduces a held connection. Recommendation: poll for v1, leave `resubscribe` as an
    optimization.
 3. Do we want a user-facing `cancel_delegation` tool now, or defer with gap #5?
+
+______________________________________________________________________
+
+## Addendum: two-sided architecture (supersedes the single-sided plan above)
+
+The plan above is **client-side only** — and during implementation we confirmed that is not enough.
+FA's own A2A server (`web/routers/a2a_api.py`) processes both `message/send` and `message/stream`
+**synchronously**: it creates the `a2a_tasks` row as `working`, runs `handle_chat_interaction`
+*inline*, then returns the already-terminal task in the same response. A synchronous server can
+never hand back a non-terminal task to poll, so:
+
+- The client's submit-then-poll only avoids blocking when the **remote** server backgrounds the
+  task. Against a synchronous server, "submit" blocks for the whole run.
+- The loopback test (FA client → FA server) can never exercise the poll path, because FA's server
+  completes before `message/send` returns.
+
+So native async delegation has **two sides**, and we implement both.
+
+### Server side — async task processing (spec `blocking` flag)
+
+The A2A spec's `MessageSendConfiguration.blocking` controls this exactly. We honour it in
+`_handle_send_message`:
+
+- `blocking == true` (default, absent) → **unchanged** synchronous behaviour. All nine existing
+  `TestSendMessage` tests keep passing; no behaviour change for current callers.
+- `blocking == false` → create the `a2a_tasks` row as `working`, spawn a background asyncio task
+  that runs `handle_chat_interaction` on its **own** `db_context` and transitions the row to
+  terminal, and **return the `working` task immediately**. `tasks/get` then reflects live state and
+  `tasks/cancel` interrupts the background task.
+
+Background-task lifecycle (mirrors the existing `a2a_cancel_events` pattern):
+
+- Strong references held in a new `app.state.a2a_background_tasks: dict[str, asyncio.Task]` so the
+  task is not GC'd (asyncio holds only weak refs); the task removes itself on completion.
+- `tasks/cancel` sets the existing `cancel_events[task_id]` **and** cancels the asyncio task; the
+  handler maps `CancelledError` → `canceled` row (respecting `update_task_status`'s
+  `status != "canceled"` guard).
+- App shutdown cancels all tracked background tasks.
+- A reaper for `a2a_tasks` rows stuck `working` past a TTL (none exists today; `cleanup_old_tasks`
+  is implemented but never wired). Mirrors the delegation-run reaper.
+
+The streaming path (`message/stream`) is left as-is — it already emits `working` then `completed`
+over SSE and supports cooperative cancel; the synchronous `send_message` client path keeps using it.
+
+### Client side — non-blocking submit via non-streaming `message/send`
+
+`A2AClientWrapper.send_message` always streams (`ClientConfig(streaming=True)`), which blocks. For
+async we add **direct JSON-RPC** methods on the wrapper (full control, no SDK streaming ambiguity,
+trivially testable over `ASGITransport`):
+
+- `submit(content_parts, *, context_id) -> Task` — one-shot `message/send` with
+  `configuration.blocking=false`; returns the (typically `working`) task. If a synchronous remote
+  ignores `blocking` and returns terminal, the caller handles it as instant-complete.
+- `get_task(task_id) -> Task` — one-shot `tasks/get`.
+- `cancel_task(task_id) -> Task` — one-shot `tasks/cancel`.
+
+The existing SDK-based `send_message` stays for the synchronous delegation path (backward compat).
+
+### Revised milestone order (implementation)
+
+1. **Server async** — `blocking=false` background processing + task tracking + cancel + `a2a_tasks`
+   reaper. Tests: `blocking=false` → `working` → poll `tasks/get` → `completed`; cancel mid-flight →
+   `canceled`. Existing sync tests untouched.
+2. **Client async methods** — `submit`/`get_task`/`cancel_task` direct JSON-RPC on the wrapper. Unit
+   \+ loopback tests (incl. the non-terminal-then-terminal poll sequence the async server now makes
+   possible).
+3. **Schema + repo** — `remote_task_id`, `remote_context_id`, `poll_attempts`, `awaiting_remote`
+   status, repo methods. Both engines.
+4. **`RemoteA2AService` + protocol** — `submit_async`/`poll_async`/`cancel_async`,
+   `PollableDelegationService`, `Pending` sentinel. Loopback tests.
+5. **Worker + reaper** — branch `handle_delegated_profile_run` on the pollable capability; add
+   `handle_delegation_poll`; register it; extend `handle_delegation_run_cleanup` for
+   `awaiting_remote`. **End-to-end async delegation over the loopback** (submit → working×N →
+   completed → posted to conversation; restart re-attach; cancel-on-cap).
+6. **Config + docs** — `RemoteServiceConfig.max_async_seconds` / `poll_interval_seconds` + defaults;
+   USER_GUIDE; delegation tool description / prompt; cross-references.
+
+### Decisions locked in (from the open questions)
+
+- Poll via `tasks/get` (not `resubscribe`) for v1 — restart-safe, no held connection. The async
+  server makes a real `tasks/get` available in the loopback.
+- Defaults: `poll_interval_seconds = 10`, light backoff to 60 s; `max_async_seconds = 3600`.
+- No user-facing `cancel_delegation` tool in v1 (cancellation is internal: reaper/cap); revisit with
+  the `input_required` continuation work.
