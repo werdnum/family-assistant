@@ -59,11 +59,7 @@ struct MoreTabView: View {
                 ForEach(MoreCatalog.sections) { section in
                     Section(section.title) {
                         ForEach(section.destinations) { destination in
-                            NavigationLink(
-                                value: MoreRoute.web(
-                                    WebRoute(path: destination.path, title: destination.title)
-                                )
-                            ) {
+                            NavigationLink(value: route(for: destination)) {
                                 Label(destination.title, systemImage: destination.systemImage)
                             }
                         }
@@ -90,9 +86,19 @@ struct MoreTabView: View {
                     )
                 case .settings:
                     SettingsView(onLogout: onLogout)
+                case .voice:
+                    VoiceView()
                 }
             }
         }
+    }
+
+    /// Voice is a native screen; every other catalog entry is web-backed.
+    private func route(for destination: MoreDestination) -> MoreRoute {
+        if destination.path == MoreRoute.voicePath {
+            return .voice
+        }
+        return .web(WebRoute(path: destination.path, title: destination.title))
     }
 }
 

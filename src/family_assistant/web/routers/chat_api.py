@@ -19,6 +19,7 @@ from family_assistant.llm.messages import (
     ContentPartDict,
     MessageAttachmentMetadata,
     MessageReasoningInfo,
+    UserMessage,
     attachment_content,
     image_url_content,
     text_content,
@@ -65,6 +66,8 @@ from family_assistant.web.models import (
     ChatMessageResponse,
     ChatPromptRequest,
     ToolCallResponseItem,
+    VoiceSessionRequest,
+    VoiceSessionResponse,
 )
 from family_assistant.web.turn_producer import (
     format_sse_event,
@@ -1778,6 +1781,73 @@ async def debug_test_stream() -> StreamingResponse:
             "Access-Control-Allow-Origin": "*",
         },
     )
+
+
+@chat_api_router.post("/v1/chat/voice-sessions")
+async def api_chat_save_voice_session(
+    payload: VoiceSessionRequest,
+    request: Request,
+    current_user: Annotated[dict, Depends(get_current_user)],
+    db_context: Annotated[DatabaseContext, Depends(get_db)],
+) -> VoiceSessionResponse:
+    """Persist a completed native-voice conversation as its own chat conversation.
+
+    The native voice screen talks directly to Gemini Live; nothing is written to
+    chat history during the call. On a clean end, the client posts the accumulated
+    input/output transcripts here. We write them as ``web`` messages under a fresh
+    conversation id (with the caller's ``user_id`` so the ownership predicate that
+    gates the conversation list and reads recognizes them), so the session shows up
+    in the conversation list and can be continued in text.
+    """
+    raw_user_id = current_user.get("user_identifier")
+    if not isinstance(raw_user_id, str) or not raw_user_id:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED)
+
+    if not payload.turns:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="A voice session must contain at least one turn.",
+        )
+
+    if payload.conversation_id:
+        # A client-supplied id must already belong to the caller (or be unused).
+        # Otherwise appending the caller's user messages would make a foreign
+        # conversation multi-owner and break the sole-owner predicate that gates
+        # the real owner's list/reads. Raises 404 on mismatch, like other paths.
+        await _ensure_user_owns_conversation(
+            request, current_user, payload.conversation_id, allow_new=True
+        )
+        conversation_id = payload.conversation_id
+    else:
+        conversation_id = f"web_conv_{uuid.uuid4().hex}"
+    base_time = datetime.now(UTC)
+
+    # One turn id per logical exchange: a user line opens a new turn that the
+    # assistant lines following it belong to, mirroring how text chat groups a
+    # prompt with its reply. A single id for the whole session would collapse the
+    # transcript into one turn in turn-grouped history views.
+    turn_id = str(uuid.uuid4())
+    saved = 0
+    for index, turn in enumerate(payload.turns):
+        if turn.role == "user":
+            turn_id = str(uuid.uuid4())
+            message: UserMessage | AssistantMessage = UserMessage(content=turn.text)
+        else:
+            message = AssistantMessage(content=turn.text)
+        # Strictly increasing timestamps keep the transcript ordered when the
+        # conversation is read back (history is ordered by timestamp).
+        timestamp = base_time + timedelta(milliseconds=index)
+        await db_context.message_history.add_message(
+            message,
+            interface_type="web",
+            conversation_id=conversation_id,
+            timestamp=timestamp,
+            turn_id=turn_id,
+            user_id=raw_user_id,
+        )
+        saved += 1
+
+    return VoiceSessionResponse(conversation_id=conversation_id, message_count=saved)
 
 
 @chat_api_router.post("/v1/chat/confirm_tool")

@@ -158,6 +158,7 @@ dev = [
     "aiosqlite",
     "assertpy>=1.1", # Add assertpy
     "ast-grep-cli>=0.39.0", # For code pattern matching and transformations
+    "filelock>=3.12", # Serialize the frontend build across pytest-xdist workers
     "pytest-mock",
     "types-aiofiles",
     "types-assertpy", # Added
