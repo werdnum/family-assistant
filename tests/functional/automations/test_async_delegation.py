@@ -331,7 +331,8 @@ async def test_delegate_to_service_background_reference_and_completion_notificat
 
     assert source_message_internal_id is not None
     assert result.text is not None
-    assert "Delegation is still running" in result.text
+    assert "running in the background" in result.text
+    assert "do not call get_delegation_status in a loop" in result.text.lower()
     assert isinstance(result.data, dict)
     delegation_id = result.data["delegation_id"]
     assert isinstance(delegation_id, str)
@@ -1097,6 +1098,63 @@ async def test_status_tools_report_disabled_when_async_off(
     assert "disabled" in (status_result.text or "")
     assert "disabled" in (list_result.text or "")
     assert list_result.data == []
+
+
+@pytest.mark.asyncio
+async def test_status_tools_nudge_to_stop_polling_while_pending(
+    db_engine: AsyncEngine,
+) -> None:
+    """A still-running delegation tells the model to wait for the notification, not poll."""
+    target_service = FakeDelegatableService()
+    processing_service = _source_processing_service(target_service)
+
+    async with DatabaseContext(engine=db_engine) as db_context:
+        await _create_run(db_context, delegation_id="delegation_pending")
+
+        status_result = await get_delegation_status_tool(
+            _tool_context(db_context, processing_service),
+            delegation_id="delegation_pending",
+        )
+        list_result = await list_delegations_tool(
+            _tool_context(db_context, processing_service),
+        )
+
+    assert isinstance(status_result.data, dict)
+    assert status_result.data["status"] == "queued"
+    assert "do not poll in a loop" in (status_result.text or "").lower()
+    assert "do not poll in a loop" in (list_result.text or "").lower()
+
+
+@pytest.mark.asyncio
+async def test_status_tools_omit_nudge_once_terminal(
+    db_engine: AsyncEngine,
+) -> None:
+    """Once a delegation is terminal, the status tools drop the stop-polling nudge."""
+    target_service = FakeDelegatableService()
+    processing_service = _source_processing_service(target_service)
+    clock = SystemClock()
+
+    async with DatabaseContext(engine=db_engine) as db_context:
+        await _create_run(db_context, delegation_id="delegation_done")
+        await db_context.delegation_runs.mark_completed(
+            delegation_id="delegation_done",
+            result_text="all finished",
+            result_attachment_ids=[],
+            completed_at=clock.now(),
+        )
+
+        status_result = await get_delegation_status_tool(
+            _tool_context(db_context, processing_service),
+            delegation_id="delegation_done",
+        )
+        list_result = await list_delegations_tool(
+            _tool_context(db_context, processing_service),
+        )
+
+    assert isinstance(status_result.data, dict)
+    assert status_result.data["status"] == "completed"
+    assert "do not poll in a loop" not in (status_result.text or "").lower()
+    assert "do not poll in a loop" not in (list_result.text or "").lower()
 
 
 @pytest.mark.asyncio
