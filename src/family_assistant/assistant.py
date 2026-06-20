@@ -1614,6 +1614,22 @@ class Assistant:
                 except Exception as e:
                     logger.info(f"Delegation run cleanup task setup: {e}")
 
+                # Upsert the stale A2A server-task reaper (runs hourly so a
+                # background send lost to a server restart is failed reasonably
+                # soon rather than sitting non-terminal until a client gives up).
+                try:
+                    await db_ctx.tasks.enqueue(
+                        task_id="system_a2a_task_cleanup_hourly",
+                        task_type="a2a_task_cleanup",
+                        payload={},
+                        scheduled_at=datetime.now(UTC),
+                        recurrence_rule="FREQ=HOURLY;BYMINUTE=0",
+                        max_retries_override=5,
+                    )
+                    logger.info("A2A task cleanup task scheduled (hourly)")
+                except Exception as e:
+                    logger.info(f"A2A task cleanup task setup: {e}")
+
                 # Upsert the completed automation cleanup task
                 try:
                     await db_ctx.tasks.enqueue(
@@ -1743,6 +1759,10 @@ class Assistant:
         worker.register_task_handler(
             "delegation_run_cleanup",
             worker.handle_delegation_run_cleanup,
+        )
+        worker.register_task_handler(
+            "a2a_task_cleanup",
+            worker.handle_a2a_task_cleanup,
         )
         worker.register_task_handler(
             "embed_and_store_batch", handle_embed_and_store_batch

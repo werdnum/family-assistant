@@ -2,10 +2,10 @@
 
 ## Status
 
-Implemented (two-sided async; see the addendum). Deferred to a follow-up: a recurring reaper for
-server-side `a2a_tasks` rows left `working` by a hard crash — graceful shutdown already cancels
-in-flight background sends, and a delegating client recovers via its max-async cap, so a stuck
-server-side row is a bounded storage artifact rather than a correctness issue.
+Implemented (two-sided async; see the addendum). The server-side `a2a_tasks` stale-row reaper
+(`a2a_task_cleanup`, hourly) fails background-send rows left non-terminal by a server restart, so a
+polling client fails fast instead of waiting out its cap; it is time-based (correct across multiple
+server instances).
 
 ## Background
 

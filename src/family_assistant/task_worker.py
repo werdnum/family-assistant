@@ -220,6 +220,18 @@ class DelegationPollPayload(TypedDict):
     user_name: str
 
 
+class A2ATaskCleanupPayload(TypedDict, total=False):
+    """Payload for a2a_task_cleanup tasks."""
+
+    stale_seconds: float
+
+
+# A2A server task rows left non-terminal longer than this are considered stuck
+# (a server restart lost the in-memory background send) and are failed by the
+# reaper, so a polling client fails fast rather than waiting out its own cap.
+A2A_TASK_STALE_SECONDS = 3600.0
+
+
 # Task type for the per-run, self-rescheduling poll of an awaiting_remote
 # delegation (the submit-then-poll A2A path).
 DELEGATION_POLL_TASK_TYPE = "delegation_poll"
@@ -1389,6 +1401,31 @@ class TaskWorker:
             )
         for run in unnotified:
             await self._force_notify_delegation(exec_context, run)
+
+    async def handle_a2a_task_cleanup(
+        self,
+        exec_context: ToolExecutionContext,
+        payload: A2ATaskCleanupPayload,
+    ) -> None:
+        """Fail A2A server task rows stuck non-terminal past a TTL.
+
+        Backstop for a non-blocking background send lost to a server restart;
+        time-based so it is correct across multiple server instances.
+        """
+        clock = exec_context.clock or self.clock
+        now = clock.now()
+        stale_seconds = payload.get("stale_seconds", A2A_TASK_STALE_SECONDS)
+        stale_before = now - timedelta(seconds=stale_seconds)
+        async with exec_context.db_context.create_isolated_context() as isolated_db:
+            failed = await isolated_db.a2a_tasks.fail_stale_active(
+                now=now, stale_before=stale_before
+            )
+        if failed:
+            logger.warning(
+                "Failed %d stale A2A task row(s) older than %.0fs.",
+                failed,
+                stale_seconds,
+            )
 
     async def _reap_stale_awaiting_remote(
         self,

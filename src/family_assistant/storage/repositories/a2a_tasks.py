@@ -169,6 +169,29 @@ class A2ATasksRepository(BaseRepository):
         result = await self._execute_with_logging("cancel_a2a_task", stmt)
         return result.rowcount > 0  # type: ignore[attr-defined]  # CursorResult always has rowcount
 
+    async def fail_stale_active(self, *, now: datetime, stale_before: datetime) -> int:
+        """Fail active (non-terminal) tasks created before ``stale_before``.
+
+        Backstop for a non-blocking background send lost to a server restart: the
+        in-memory task is gone but the row would otherwise sit non-terminal until
+        a polling client gives up at its own cap. Time-based (not in-memory), so
+        it is correct across multiple server instances. Returns the count failed.
+        """
+        stmt = (
+            update(a2a_tasks_table)
+            .where(
+                a2a_tasks_table.c.status.in_([
+                    "submitted",
+                    "working",
+                    "input-required",
+                ]),
+                a2a_tasks_table.c.created_at < stale_before,
+            )
+            .values(status="failed", updated_at=now)
+        )
+        result = await self._execute_with_logging("fail_stale_a2a_tasks", stmt)
+        return result.rowcount  # type: ignore[attr-defined]  # CursorResult always has rowcount
+
     async def cleanup_old_tasks(self, retention_hours: int = 168) -> int:
         """Delete tasks older than the retention period (default 7 days)."""
         cutoff = datetime.now(UTC) - timedelta(hours=retention_hours)

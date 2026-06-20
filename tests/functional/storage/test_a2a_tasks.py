@@ -1,12 +1,15 @@
 """Functional tests for A2A tasks repository."""
 
 from collections.abc import AsyncGenerator
+from datetime import UTC, datetime, timedelta
 
 import pytest
 import pytest_asyncio
+from sqlalchemy import update
 from sqlalchemy.ext.asyncio import AsyncEngine
 
 from family_assistant.storage.context import DatabaseContext
+from family_assistant.storage.repositories.a2a_tasks import a2a_tasks_table
 
 
 @pytest_asyncio.fixture(scope="function")
@@ -64,3 +67,38 @@ class TestA2ATasksRepository:
         row = await db_context.a2a_tasks.get_task("race-test")
         assert row is not None
         assert row["status"] == "canceled"
+
+    @pytest.mark.asyncio
+    async def test_fail_stale_active_only_reaps_old_non_terminal(
+        self, db_context: DatabaseContext
+    ) -> None:
+        now = datetime.now(UTC)
+        # A stale 'working' row (created long ago) — a lost background send.
+        await db_context.a2a_tasks.create_task(
+            task_id="stale", profile_id="p", conversation_id="c", status="working"
+        )
+        await db_context.execute_with_retry(
+            update(a2a_tasks_table)
+            .where(a2a_tasks_table.c.task_id == "stale")
+            .values(created_at=now - timedelta(hours=2))
+        )
+        # A fresh 'working' row and an already-terminal row must be left alone.
+        await db_context.a2a_tasks.create_task(
+            task_id="fresh", profile_id="p", conversation_id="c", status="working"
+        )
+        await db_context.a2a_tasks.create_task(
+            task_id="done", profile_id="p", conversation_id="c", status="working"
+        )
+        await db_context.a2a_tasks.update_task_status("done", status="completed")
+
+        failed = await db_context.a2a_tasks.fail_stale_active(
+            now=now, stale_before=now - timedelta(hours=1)
+        )
+        assert failed == 1
+
+        stale = await db_context.a2a_tasks.get_task("stale")
+        fresh = await db_context.a2a_tasks.get_task("fresh")
+        done = await db_context.a2a_tasks.get_task("done")
+        assert stale is not None and stale["status"] == "failed"
+        assert fresh is not None and fresh["status"] == "working"
+        assert done is not None and done["status"] == "completed"
