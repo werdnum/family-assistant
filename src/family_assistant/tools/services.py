@@ -23,6 +23,7 @@ from family_assistant.tools.types import (
 from family_assistant.utils.clock import SystemClock
 
 if TYPE_CHECKING:
+    from collections.abc import Iterable
     from datetime import datetime
 
     from family_assistant.config_models import ToolsConfig
@@ -392,11 +393,27 @@ def _delegation_reference_text(
     *, delegation_id: str, target_service_id: str, status: str
 ) -> str:
     return (
-        "Delegation is still running.\n"
+        "Delegation handed off and is now running in the background.\n"
         f"Reference: {delegation_id}\n"
         f"Target profile: {target_service_id}\n"
         f"Status: {status}\n"
-        "The conversation will be notified when it finishes."
+        "The result will be delivered to this conversation automatically when it "
+        "finishes — you do NOT need to check on it. Let the user know the work is "
+        "in progress, then end your turn. Do not call get_delegation_status in a "
+        "loop to wait for it; only look it up if the user later asks for an update "
+        "or you need the full error detail for a failed delegation."
+    )
+
+
+_PENDING_DELEGATION_NUDGE = (
+    "This delegation is still running. You will be notified automatically in this "
+    "conversation when it finishes, so do not poll in a loop — end your turn instead."
+)
+
+
+def _has_pending_delegation(summaries: Iterable[DelegationRunSummary]) -> bool:
+    return any(
+        summary["status"] not in TERMINAL_DELEGATION_STATUSES for summary in summaries
     )
 
 
@@ -426,7 +443,7 @@ SERVICE_TOOLS_DEFINITION: list[ToolDefinition] = [
                 "If confirmation required but unavailable, returns 'Error: Confirmation required to delegate to [id], but no confirmation mechanism is available.'. "
                 "If user cancels confirmation, returns 'OK. Delegation to service [id] cancelled by user.'. "
                 "If confirmation times out, returns 'Error: Confirmation timed out for delegating to [id].'. "
-                "If the delegated profile is still running after the handoff deadline, returns an async reference ID and the conversation will be notified when it finishes. "
+                "If the delegated profile is still running after the handoff deadline, returns an async reference ID; the result is then delivered to this conversation automatically when it finishes, so end your turn rather than polling get_delegation_status in a loop. "
                 "On delegation error, returns 'Error: Failed to delegate task to service [id]. Details: [error]' or 'Error from [id] service: [detail]' along with a reference ID you can pass to get_delegation_status for the full error."
             ),
             "parameters": {
@@ -848,8 +865,11 @@ async def get_delegation_status_tool(
         )
 
     summary = exec_context.db_context.delegation_runs.summarize_run(run)
+    text = _format_delegation_summary(summary)
+    if _has_pending_delegation([summary]):
+        text = f"{text}\n\n{_PENDING_DELEGATION_NUDGE}"
     return ToolResult(
-        text=_format_delegation_summary(summary),
+        text=text,
         data=cast("dict[str, Any]", summary),
     )
 
@@ -883,7 +903,10 @@ async def list_delegations_tool(
             text=f"No delegations found for this conversation{status_text}.",
             data=[],
         )
+    text = json.dumps(summaries, indent=2, default=str)
+    if _has_pending_delegation(summaries):
+        text = f"{text}\n\n{_PENDING_DELEGATION_NUDGE}"
     return ToolResult(
-        text=json.dumps(summaries, indent=2, default=str),
+        text=text,
         data=summaries,
     )

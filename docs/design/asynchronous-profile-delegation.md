@@ -200,13 +200,19 @@ The worker loads the full run row from `delegation_runs`.
 7. If still running at the deadline, set `handed_off_at` and return:
 
 ```text
-Delegation is still running.
+Delegation handed off and is now running in the background.
 Reference: delegation_...
 Target profile: research
-The conversation will be notified when it finishes.
+Status: running
+The result will be delivered to this conversation automatically when it finishes — you
+do NOT need to check on it. ... Do not call get_delegation_status in a loop to wait for it ...
 ```
 
-The main assistant then summarizes that status to the user as its normal final response.
+The main assistant then summarizes that status to the user as its normal final response and ends its
+turn — the background result arrives later as a fresh message. The handoff text and the
+system-prompt guidance both steer the model away from polling `get_delegation_status` in a loop;
+`get_delegation_status`/`list_delegations` also append a "do not poll in a loop" nudge while a run
+is still non-terminal.
 
 ### Worker Flow
 
