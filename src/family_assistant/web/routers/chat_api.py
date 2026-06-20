@@ -384,6 +384,15 @@ class ConversationMessage(BaseModel):
     """A single message in a conversation."""
 
     internal_id: int = Field(..., description="Internal database ID")
+    turn_id: str | None = Field(
+        None,
+        description=(
+            "ID of the turn that produced this message. Groups the rows of a "
+            "single turn (user message, assistant reply, tool messages share it). "
+            "Nullable: legacy rows and non-turn writes (e.g. a plain note save) "
+            "have none. Not unique: one turn owns several rows."
+        ),
+    )
     role: str = Field(..., description="Message role (user/assistant/system/tool)")
     content: str | list[dict] | None = Field(
         None, description="Message content (string or list for multimodal)"
@@ -1709,6 +1718,7 @@ async def get_conversation_messages(
         response_messages.append(
             ConversationMessage(
                 internal_id=msg["internal_id"],
+                turn_id=msg.get("turn_id"),
                 role=msg["role"],
                 content=msg.get("content"),
                 timestamp=msg["timestamp"],

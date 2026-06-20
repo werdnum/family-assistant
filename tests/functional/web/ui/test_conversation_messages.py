@@ -176,6 +176,53 @@ async def test_get_conversation_messages_excludes_delegated_subconversations(
 
 
 @pytest.mark.asyncio
+async def test_get_conversation_messages_exposes_turn_id(
+    web_only_assistant: Assistant,
+    db_engine: AsyncEngine,
+) -> None:
+    """The messages endpoint surfaces turn_id, null for non-turn writes.
+
+    Clients (e.g. iOS live-follow) reconcile optimistic bubbles to persisted
+    rows by turn_id, so a turn-produced row must carry it while a plain write
+    (no turn) reports null.
+    """
+    conv_id = f"test_conv_turn_id_{uuid.uuid4().hex[:8]}"
+    timestamp = datetime(2026, 1, 1, 12, 0, 0, tzinfo=UTC)
+
+    async with get_db_context(db_engine) as db_context:
+        await db_context.message_history.add_message(
+            UserMessage(content="Turn-produced request"),
+            interface_type="web",
+            conversation_id=conv_id,
+            timestamp=timestamp,
+            turn_id="turn-abc",
+            user_id="test_user",
+        )
+        await db_context.message_history.add_message(
+            AssistantMessage(content="Non-turn note save"),
+            interface_type="web",
+            conversation_id=conv_id,
+            timestamp=timestamp,
+            user_id="test_user",
+        )
+
+    assert web_only_assistant.fastapi_app is not None
+    transport = httpx.ASGITransport(app=web_only_assistant.fastapi_app)
+    async with httpx.AsyncClient(
+        transport=transport, base_url="http://testserver"
+    ) as client:
+        response = await client.get(f"/api/v1/chat/conversations/{conv_id}/messages")
+        assert response.status_code == 200
+        data = response.json()
+
+        turn_ids_by_content = {
+            message["content"]: message["turn_id"] for message in data["messages"]
+        }
+        assert turn_ids_by_content["Turn-produced request"] == "turn-abc"
+        assert turn_ids_by_content["Non-turn note save"] is None
+
+
+@pytest.mark.asyncio
 async def test_get_conversation_messages_cross_interface_retrieval(
     web_only_assistant: Assistant,
     mock_llm_client: RuleBasedMockLLMClient,
