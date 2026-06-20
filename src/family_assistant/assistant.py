@@ -288,6 +288,7 @@ class Assistant:
         self.embedding_generator: EmbeddingGenerator | None = None
         self.processing_services_registry: dict[str, DelegatableService] = {}
         self.a2a_cancel_events: dict[str, asyncio.Event] = {}
+        self.a2a_background_tasks: dict[str, asyncio.Task[None]] = {}
         self.default_processing_service: ProcessingService | None = None
         self.scraper_instance: PlaywrightScraper | None = None
         self.attachment_registry: AttachmentRegistry | None = None
@@ -1160,6 +1161,7 @@ class Assistant:
 
         self.fastapi_app.state.processing_services = self.processing_services_registry
         self.fastapi_app.state.a2a_cancel_events = self.a2a_cancel_events
+        self.fastapi_app.state.a2a_background_tasks = self.a2a_background_tasks
 
         candidate = self.processing_services_registry.get(default_service_profile_id)
         if candidate is not None and not isinstance(candidate, ProcessingService):
@@ -1858,6 +1860,15 @@ class Assistant:
                 task.cancel()
             await asyncio.gather(*owned_tasks, return_exceptions=True)
             logger.info("Owned background tasks cancelled.")
+
+        # Cancel in-flight non-blocking A2A send tasks so a shutdown does not
+        # leave their a2a_tasks rows stuck in 'working'.
+        a2a_tasks = [t for t in self.a2a_background_tasks.values() if not t.done()]
+        if a2a_tasks:
+            logger.info(f"Cancelling {len(a2a_tasks)} in-flight A2A send tasks...")
+            for task in a2a_tasks:
+                task.cancel()
+            await asyncio.gather(*a2a_tasks, return_exceptions=True)
 
         if self.telegram_service:
             await self.telegram_service.stop_polling()
