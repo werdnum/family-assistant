@@ -359,27 +359,51 @@ final class ChatViewModel {
         isLoadingMessages = false
     }
 
-    /// The currently-held bubbles for follow turns that are still streaming (still
-    /// mapped in `liveFollowBubbleByTurnID`). A full reload or a delta merge keeps
-    /// these so the streaming bubble survives a mid-turn history catch-up.
-    private func runningLiveFollowBubbles() -> [ChatMessage] {
+    /// Bubbles for live-follow turns still held — mapped in
+    /// `liveFollowBubbleByTurnID` because their canonical persisted row hasn't
+    /// arrived yet. Held across a reload/merge so a streaming (or just-finished)
+    /// reply isn't wiped before its persisted row reconciles it.
+    private func heldLiveFollowBubbles() -> [ChatMessage] {
         let ids = Set(liveFollowBubbleByTurnID.values)
         return messages.filter { ids.contains($0.id) }
     }
 
-    /// Combine freshly rendered persisted rows with the still-running live-follow
-    /// bubbles, ordering everything by creation time. A single in-progress reply
-    /// lands last (its bubble was created after every persisted row), and two
-    /// overlapping turns keep their relative order instead of the older one being
-    /// forced after the newer finished one. The index tiebreaker keeps a stable
-    /// order for equal timestamps (preserving backend order).
+    /// Drop the mapping for any live-follow turn whose canonical persisted row has
+    /// now arrived in `persisted`, matched precisely by `turnID`. A
+    /// `local_follow_<turnID>` bubble is the optimistic/live copy of that turn's
+    /// reply; once the persisted row is present it is authoritative, so the local
+    /// copy is released (and dropped by the `local_` filter on assignment). When
+    /// the backend does not tag rows with a turn id (no `turnID` on any persisted
+    /// row — a pre-`turn_id` server), fall back to releasing a turn once it has
+    /// ended, so the optimistic bubble can't be left to duplicate the reply.
+    private func reconcileLiveFollowBubbles(against persisted: [ChatMessage]) {
+        let persistedTurnIDs = Set(persisted.compactMap(\.turnID))
+        let backendTagsTurns = !persistedTurnIDs.isEmpty
+        let reconciled = liveFollowBubbleByTurnID.keys.filter { turnID in
+            persistedTurnIDs.contains(turnID)
+                || (!backendTagsTurns && endedTurnIDs.contains(turnID))
+        }
+        for turnID in reconciled {
+            if let bubbleID = liveFollowBubbleByTurnID.removeValue(forKey: turnID) {
+                pendingTextByMessageID[bubbleID] = nil
+            }
+        }
+    }
+
+    /// Reconcile against the rendered persisted rows, then combine them with the
+    /// still-held live-follow bubbles ordered by creation time. A single
+    /// in-progress reply lands last (its bubble was created after every persisted
+    /// row), and two overlapping turns keep their relative order instead of the
+    /// older one being forced after the newer finished one. The index tiebreaker
+    /// keeps a stable order for equal timestamps (preserving backend order).
     private func withLiveFollowBubbles(_ base: [ChatMessage]) -> [ChatMessage] {
-        let liveBubbles = runningLiveFollowBubbles()
-        guard !liveBubbles.isEmpty else {
+        reconcileLiveFollowBubbles(against: base)
+        let heldBubbles = heldLiveFollowBubbles()
+        guard !heldBubbles.isEmpty else {
             return base
         }
         let baseIDs = Set(base.map(\.id))
-        let combined = base + liveBubbles.filter { !baseIDs.contains($0.id) }
+        let combined = base + heldBubbles.filter { !baseIDs.contains($0.id) }
         return combined.enumerated()
             .sorted { ($0.element.createdAt, $0.offset) < ($1.element.createdAt, $1.offset) }
             .map(\.element)
@@ -1326,23 +1350,22 @@ final class ChatViewModel {
         return bubbleID
     }
 
-    /// Retire a live-rendered turn: flush its buffered text, mark its bubble
-    /// complete (so it stops spinning), then record the turn ended and drop the
-    /// mapping. Completing the bubble here — rather than relying on the history
-    /// merge to drop it — means a turn that ends while a local send is streaming
-    /// (merge skipped) or whose persisted reply isn't queryable yet (empty delta)
-    /// still shows its streamed text instead of stranding as a stuck spinner. A
-    /// later merge reconciles the `local_` bubble to the persisted reply.
+    /// Finalize a live-rendered turn: flush its buffered text and mark its bubble
+    /// complete (so it stops spinning), and record the turn ended. The bubble is
+    /// left HELD (still mapped): it is reconciled — dropped and replaced by the
+    /// canonical persisted row — only once that row arrives, matched by turn id
+    /// (see ``reconcileLiveFollowBubbles``). Holding it means a turn whose
+    /// persisted reply lags (an empty or unrelated delta at `turn_ended`) keeps
+    /// showing its completed streamed text rather than vanishing or stranding as a
+    /// stuck spinner.
     private func finalizeLiveFollowBubble(turnID: String) {
         endedTurnIDs.insert(turnID)
-        guard let bubbleID = liveFollowBubbleByTurnID.removeValue(forKey: turnID) else {
+        guard let bubbleID = liveFollowBubbleByTurnID[turnID],
+              let index = messages.firstIndex(where: { $0.id == bubbleID })
+        else {
             return
         }
-        let pending = pendingTextByMessageID.removeValue(forKey: bubbleID)
-        guard let index = messages.firstIndex(where: { $0.id == bubbleID }) else {
-            return
-        }
-        if let pending {
+        if let pending = pendingTextByMessageID.removeValue(forKey: bubbleID) {
             messages[index].text += pending
         }
         messages[index].isLoading = false
@@ -1761,7 +1784,8 @@ final class ChatViewModel {
                 isLoading: false,
                 status: backend.errorTraceback == nil ? .complete : .failed,
                 processingProfileID: backend.processingProfileID,
-                errorTraceback: backend.errorTraceback
+                errorTraceback: backend.errorTraceback,
+                turnID: backend.turnID
             )
         }
         return rendered

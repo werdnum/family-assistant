@@ -2367,6 +2367,85 @@ final class ChatViewModelTests: XCTestCase {
         model = nil
     }
 
+    func testLiveFollowReconcilesByTurnIdAndHoldsUntilItsRowPersists() async throws {
+        // With turn_id on persisted rows, a finished follow bubble is held until
+        // ITS canonical row arrives — a merge whose delta carries some OTHER
+        // turn's row must not drop it, and it reconciles precisely once its own
+        // persisted row (matched by turn_id) shows up.
+        let streamConnects = AtomicCounter()
+        let phase = AtomicCounter() // 0: empty; >=1: unrelated row; >=2: this turn's reply
+        let leg1 = HangingStream()
+        ChatMockBackendURLProtocol.respond { request in
+            let path = request.url?.path ?? ""
+            if request.httpMethod == "GET", path.hasSuffix("/messages") {
+                if Self.queryItems(from: request)["after"] == nil {
+                    return .json(
+                        #"{"conversation_id":"web_conv_recon","messages":[{"internal_id":1,"role":"user","content":"Earlier","timestamp":"2026-06-08T12:00:00Z"}],"count":1,"total_messages":1,"has_more_before":false,"has_more_after":false}"#
+                    )
+                }
+                if phase.value >= 2 {
+                    return .json(
+                        #"{"conversation_id":"web_conv_recon","messages":[{"internal_id":3,"role":"assistant","content":"X reply","turn_id":"turn-x","timestamp":"2026-06-08T12:06:00Z"}],"count":1,"total_messages":1,"has_more_before":false,"has_more_after":false}"#
+                    )
+                }
+                if phase.value >= 1 {
+                    return .json(
+                        #"{"conversation_id":"web_conv_recon","messages":[{"internal_id":2,"role":"assistant","content":"Other reply","turn_id":"turn-y","timestamp":"2026-06-08T12:05:00Z"}],"count":1,"total_messages":1,"has_more_before":false,"has_more_after":false}"#
+                    )
+                }
+                return .json(
+                    #"{"conversation_id":"web_conv_recon","messages":[],"count":0,"total_messages":1,"has_more_before":false,"has_more_after":false}"#
+                )
+            }
+            if request.httpMethod == "GET", path == "/api/v1/chat/conversations" {
+                return .json(#"{"conversations":[],"count":0}"#)
+            }
+            if request.httpMethod == "POST", path == "/api/v1/chat/ack" {
+                return .json("{}")
+            }
+            if request.httpMethod == "GET", path.hasSuffix("/stream") {
+                if streamConnects.increment() == 1 {
+                    return .hangingStream(
+                        "event: text\ndata: {\"turn_id\":\"turn-x\",\"content\":\"Hello\",\"seq\":5}\n\n",
+                        controller: leg1
+                    )
+                }
+                // Clean EOF on each later connect so the loop reconnects and
+                // re-runs the catch-up merge as the persisted phases advance.
+                return .text("")
+            }
+            return .json(#"{"detail":"unexpected"}"#, statusCode: 404)
+        }
+
+        var model: ChatViewModel? = makeViewModel(
+            conversationID: "web_conv_recon",
+            liveReconnectInitialDelaySeconds: 0.01,
+            liveReconnectMaxDelaySeconds: 0.01
+        )
+        await model?.selectConversation("web_conv_recon")
+        try await waitUntil { model?.messages.contains { $0.text == "Hello" } == true }
+
+        // turn-x ends; an unrelated turn-y row is now the only thing persisted.
+        phase.increment()
+        leg1.finish(
+            appending: "event: turn_ended\ndata: {\"turn_id\":\"turn-x\",\"status\":\"complete\",\"seq\":6}\n\n"
+        )
+
+        // The completed bubble is HELD: the merge sees turn-y, not turn-x's reply.
+        try await waitUntil { model?.messages.contains { $0.text == "Other reply" } == true }
+        XCTAssertEqual(model?.messages.first { $0.id == "local_follow_turn-x" }?.text, "Hello")
+        XCTAssertEqual(model?.messages.first { $0.id == "local_follow_turn-x" }?.status, .complete)
+        XCTAssertFalse(model?.messages.contains { $0.text == "X reply" } == true)
+
+        // turn-x's own reply now persists; the next catch-up reconciles by turn_id.
+        phase.increment()
+        try await waitUntil { model?.messages.contains { $0.text == "X reply" } == true }
+        XCTAssertFalse(model?.messages.contains { $0.id == "local_follow_turn-x" } == true)
+        XCTAssertEqual(model?.messages.map(\.text), ["Earlier", "Other reply", "X reply"])
+
+        model = nil
+    }
+
     func testResendDuringStreamSupersedesWithoutClobbering() async throws {
         // Sending again while the first turn is still streaming must supersede it
         // cleanly: the first (cancelled) task must not flip the new turn's

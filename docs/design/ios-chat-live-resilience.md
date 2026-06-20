@@ -121,23 +121,26 @@ responses. New red-green coverage:
   follow stream are deliberately ignored — they would otherwise pop a modal "Chat Error" alert or a
   tool-approval sheet for a turn this device is not driving (started elsewhere / by a schedule). A
   failed passive turn still surfaces via its `turn_ended` + history reload.
-- **Live-bubble ↔ persisted-row reconciliation is imprecise.** The `GET …/messages` payload does
-  **not** carry a `turn_id` per row, so a finished `local_follow_<turnID>` bubble cannot be matched
-  to its specific persisted reply. Reconciliation therefore relies on the heuristic "drop all
-  `local_` rows and re-append the persisted delta" in the next merge. Two narrow persistence-lag
-  races remain: if `turn_ended` fires before the reply is queryable (an empty delta) and the follow
-  stream then stays open and perfectly quiet, the completed in-memory bubble shows the correct
-  streamed text but isn't reconciled to the canonical `msg_` row until the next merge (a
-  drop/reconnect/foreground/next-turn); and if a non-empty delta arrives that contains some *other*
-  newly-persisted row but not this turn's reply yet, the bubble can briefly disappear until a later
-  merge fetches it. The streamed content is correct in both cases; only the local↔persisted swap
-  lags. The clean fix is to expose `turn_id` in the messages payload and reconcile by it — a backend
-  change tracked as a follow-up.
 - **Concurrent-turn ordering uses creation time.** When two turns overlap in one conversation, live
   bubbles are ordered by their `createdAt` (first-token wall-clock) rather than forced last, so an
   older still-running turn keeps its place above a newer finished one. This is correct on the real
   timeline; it is not unit-tested because a mock's fixed past timestamps don't interleave with a
   live bubble's real-`Date()` creation time.
+
+## Live-bubble ↔ persisted-row reconciliation (by turn_id)
+
+A finished `local_follow_<turnID>` bubble must be reconciled to its canonical persisted reply. The
+`GET …/messages` payload now carries a `turn_id` per row (see the backend change exposing
+`message_history.turn_id`), so the client reconciles **precisely**: a live bubble is held (kept on
+screen, showing its streamed text) until a persisted row tagged with the *same* `turn_id` arrives in
+a merge, then released and replaced by that row (`reconcileLiveFollowBubbles`). This removes the two
+former persistence-lag races — the bubble is never dropped before its real row exists (so it can't
+briefly vanish on an unrelated delta) and is never left to duplicate it.
+
+**Graceful fallback:** against a server that does not yet tag rows with `turn_id` (no `turnID` on any
+persisted row), the client falls back to the older heuristic — release a bubble once its turn has
+ended — so the optimistic copy still can't permanently duplicate the persisted reply. The lag races
+re-appear only in that fallback (pre-`turn_id` backend) window.
 
 ## What this does NOT change
 
