@@ -1,5 +1,5 @@
 from datetime import datetime
-from typing import TYPE_CHECKING, Any, TypedDict
+from typing import TYPE_CHECKING, Any, Literal, TypedDict
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -263,6 +263,30 @@ class ChatPromptRequest(BaseModel):
             "instead of re-driving the LLM."
         ),
     )
+
+
+class VoiceSessionTurn(BaseModel):
+    """One persisted line of a voice conversation transcript."""
+
+    role: Literal["user", "assistant"]
+    text: str
+
+
+class VoiceSessionRequest(BaseModel):
+    """Persist a completed native-voice conversation as its own chat conversation."""
+
+    conversation_id: str | None = Field(
+        default=None,
+        description="Client-supplied conversation id. Generated when omitted.",
+    )
+    turns: list[VoiceSessionTurn]
+
+
+class VoiceSessionResponse(BaseModel):
+    """Result of persisting a voice session."""
+
+    conversation_id: str
+    message_count: int
 
 
 class ChatMessageResponse(BaseModel):

@@ -124,6 +124,13 @@ final class RouteTests: XCTestCase {
         XCTAssertEqual(router.morePath, [.web(WebRoute(path: "/events"))])
     }
 
+    func testNavigateVoiceGoesToNativeVoiceRoute() throws {
+        let router = AppRouter()
+        XCTAssertTrue(router.navigate(to: try url("/voice"), relativeTo: baseURL))
+        XCTAssertEqual(router.selectedTab, .more)
+        XCTAssertEqual(router.morePath, [.voice])
+    }
+
     func testNavigateForeignOriginReturnsFalse() throws {
         let router = AppRouter()
         let foreign = try XCTUnwrap(URL(string: "https://evil.test/chat"))

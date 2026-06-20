@@ -89,6 +89,66 @@ struct ChatAPIClient {
         return try JSONDecoder.chatDecoder.decode(ChatProfilesResponse.self, from: data)
     }
 
+    /// Mint a single-use Gemini Live ephemeral token for native voice mode.
+    ///
+    /// POSTs `/api/gemini/ephemeral-token`. The returned token authorizes a direct
+    /// WebSocket to Gemini and carries the context-injected system instruction,
+    /// confirmation-filtered tools, and live session config.
+    func fetchEphemeralToken(profileID: String?) async throws -> EphemeralToken {
+        var request = try await authManager.authorizedRequest(
+            url: apiURL("/api/gemini/ephemeral-token"),
+            method: "POST"
+        )
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.httpBody = try JSONEncoder().encode(EphemeralTokenRequestBody(profileID: profileID))
+        let (data, response) = try await urlSession.data(for: request)
+        try validate(response: response, data: data)
+        return try JSONDecoder.chatDecoder.decode(EphemeralToken.self, from: data)
+    }
+
+    /// Persist a completed voice session as its own conversation.
+    ///
+    /// POSTs `/api/v1/chat/voice-sessions` with the accumulated transcript turns.
+    /// Returns the conversation id the backend stored them under.
+    @discardableResult
+    func saveVoiceSession(turns: [VoiceTranscriptEntry], conversationID: String?) async throws -> String {
+        var request = try await authManager.authorizedRequest(
+            url: apiURL("/api/v1/chat/voice-sessions"),
+            method: "POST"
+        )
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.httpBody = try JSONEncoder().encode(
+            VoiceSessionBody(
+                conversationID: conversationID,
+                turns: turns.map { VoiceSessionTurnBody(role: $0.speaker.rawValue, text: $0.text) }
+            )
+        )
+        let (data, response) = try await urlSession.data(for: request)
+        try validate(response: response, data: data)
+        return try JSONDecoder.chatDecoder.decode(VoiceSessionResponseBody.self, from: data).conversationID
+    }
+
+    /// Execute a tool by name on behalf of a Gemini voice function call.
+    ///
+    /// POSTs `/api/tools/execute/{name}` with `{"arguments": ...}` and returns the
+    /// tool's raw JSON result. Non-2xx responses throw ``ChatAPIError`` so the
+    /// caller can relay a structured error back to the model.
+    func executeTool(name: String, arguments: JSONValue) async throws -> JSONValue {
+        var request = try await authManager.authorizedRequest(
+            url: apiURL("/api/tools/execute/\(Self.encodedPathComponent(name))"),
+            method: "POST"
+        )
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        let argumentsObject: JSONValue = {
+            if case .object = arguments { return arguments }
+            return .object([:])
+        }()
+        request.httpBody = try JSONEncoder().encode(ToolExecuteBody(arguments: argumentsObject))
+        let (data, response) = try await urlSession.data(for: request)
+        try validate(response: response, data: data)
+        return try JSONDecoder.chatDecoder.decode(JSONValue.self, from: data)
+    }
+
     /// Sends a prompt and waits for the assistant's full reply.
     ///
     /// Unlike the two-step ``startTurn(turnID:prompt:conversationID:profileID:attachments:)``
@@ -478,6 +538,43 @@ struct ChatTurnStart {
     let conversationID: String
     let firstSeq: Int
     let alreadyComplete: Bool
+}
+
+private struct EphemeralTokenRequestBody: Encodable {
+    let profileID: String?
+
+    enum CodingKeys: String, CodingKey {
+        case profileID = "profile_id"
+    }
+}
+
+private struct ToolExecuteBody: Encodable {
+    let arguments: JSONValue
+}
+
+private struct VoiceSessionTurnBody: Encodable {
+    let role: String
+    let text: String
+}
+
+private struct VoiceSessionBody: Encodable {
+    let conversationID: String?
+    let turns: [VoiceSessionTurnBody]
+
+    enum CodingKeys: String, CodingKey {
+        case conversationID = "conversation_id"
+        case turns
+    }
+}
+
+private struct VoiceSessionResponseBody: Decodable {
+    let conversationID: String
+    let messageCount: Int
+
+    enum CodingKeys: String, CodingKey {
+        case conversationID = "conversation_id"
+        case messageCount = "message_count"
+    }
 }
 
 private struct ChatSendMessageRequest: Encodable {
