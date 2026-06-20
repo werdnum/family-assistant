@@ -1727,6 +1727,10 @@ class Assistant:
             worker.handle_delegated_profile_run,
         )
         worker.register_task_handler(
+            "delegation_poll",
+            worker.handle_delegation_poll,
+        )
+        worker.register_task_handler(
             "delegation_run_cleanup",
             worker.handle_delegation_run_cleanup,
         )

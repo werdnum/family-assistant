@@ -32,9 +32,11 @@ from family_assistant.a2a.converters import content_parts_to_a2a_parts
 from family_assistant.a2a.types import (
     AgentCard,
     Message,
+    MessageSendParams,
     Part,
     Role,
     Task,
+    TaskIdParams,
     TaskQueryParams,
     TaskState,
     TaskStatus,
@@ -188,6 +190,111 @@ class A2AClientWrapper:
             await asyncio.sleep(min(POLL_INTERVAL_SECONDS, remaining))
             latest_task = await a2a_client.get_task(TaskQueryParams(id=latest_task.id))
         return latest_task
+
+    async def submit(
+        self,
+        content_parts: list[ContentPartDict],
+        *,
+        context_id: str | None = None,
+        task_id: str | None = None,
+        metadata: dict[str, object] | None = None,
+    ) -> Task:
+        """Submit a message without blocking and return the task as-is.
+
+        Sends a single non-streaming ``message/send`` with
+        ``configuration.blocking=false``. An async-capable server returns a
+        non-terminal (``working``) task immediately for the caller to poll via
+        :meth:`get_task`; a synchronous server may instead return a terminal
+        task, which the caller can use directly. Unlike :meth:`send_message`,
+        this never blocks waiting for the task to reach a terminal state.
+
+        Raises:
+            A2AClientError: On network errors or protocol errors.
+        """
+        card = await self.discover()
+        a2a_parts = self._convert_and_validate_parts(content_parts)
+        message = Message(
+            role=Role.user,
+            parts=a2a_parts,
+            message_id=str(uuid.uuid4()),
+            context_id=context_id,
+            task_id=task_id,
+            metadata=metadata,
+        )
+        params = MessageSendParams(
+            message=message,
+            configuration=a2a_types.MessageSendConfiguration(blocking=False),
+        )
+        result = await self._call_jsonrpc(
+            card.url,
+            "message/send",
+            params.model_dump(by_alias=True, exclude_none=True),
+        )
+        return Task.model_validate(result)
+
+    async def get_task(self, task_id: str) -> Task:
+        """Fetch the current state of a remote task via ``tasks/get``.
+
+        Raises:
+            A2AClientError: On network errors or protocol errors.
+        """
+        card = await self.discover()
+        params = TaskQueryParams(id=task_id)
+        result = await self._call_jsonrpc(
+            card.url, "tasks/get", params.model_dump(by_alias=True, exclude_none=True)
+        )
+        return Task.model_validate(result)
+
+    async def cancel_task(self, task_id: str) -> Task:
+        """Request cancellation of a remote task via ``tasks/cancel``.
+
+        Raises:
+            A2AClientError: On network errors or protocol errors (including a
+                task that is not cancelable).
+        """
+        card = await self.discover()
+        params = TaskIdParams(id=task_id)
+        result = await self._call_jsonrpc(
+            card.url,
+            "tasks/cancel",
+            params.model_dump(by_alias=True, exclude_none=True),
+        )
+        return Task.model_validate(result)
+
+    async def _call_jsonrpc(
+        self,
+        url: str,
+        method: str,
+        params: dict[str, object],
+    ) -> dict[str, object]:
+        """POST a single JSON-RPC request and return the ``result`` object."""
+        client = self._get_httpx_client()
+        body = {
+            "jsonrpc": "2.0",
+            "id": str(uuid.uuid4()),
+            "method": method,
+            "params": params,
+        }
+        try:
+            response = await client.post(url, json=body)
+        except httpx.HTTPError as exc:
+            raise A2AClientError(
+                f"A2A {method} request to {url} failed: {exc}"
+            ) from exc
+        if response.status_code != 200:
+            raise A2AClientError(
+                f"A2A {method} returned HTTP {response.status_code} from {url}"
+            )
+        payload = response.json()
+        error = payload.get("error")
+        if error:
+            raise A2AClientError(
+                f"A2A {method} error {error.get('code')}: {error.get('message')}"
+            )
+        result = payload.get("result")
+        if result is None:
+            raise A2AClientError(f"A2A {method} returned no result")
+        return result
 
     @staticmethod
     def _is_terminal(task: Task) -> bool:

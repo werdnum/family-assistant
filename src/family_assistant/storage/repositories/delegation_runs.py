@@ -73,6 +73,9 @@ class DelegationRunDict(TypedDict):
     result_message_internal_id: int | None
     error: str | None
     notified_at: datetime | None
+    remote_task_id: str | None
+    remote_context_id: str | None
+    poll_attempts: int
     created_at: datetime
 
 
@@ -171,6 +174,78 @@ class DelegationRunsRepository(BaseRepository):
         result = await self._execute_with_logging("mark_delegation_run_running", stmt)
         row = result.mappings().one_or_none()
         return self._row_to_dict(dict(row)) if row is not None else None
+
+    async def mark_awaiting_remote(
+        self,
+        delegation_id: str,
+        *,
+        remote_task_id: str,
+        remote_context_id: str | None,
+        started_at: datetime,
+    ) -> DelegationRunDict | None:
+        """Move a ``queued`` run to ``awaiting_remote`` and store remote IDs.
+
+        Used by the submit-then-poll A2A path instead of ``mark_running``:
+        ``awaiting_remote`` is deliberately distinct from ``running`` so the
+        worker's "running" entry-guard (which fails an interrupted run without
+        retry) does not apply — a poll can safely re-attach to the remote task
+        after a restart. Conditioned on the row still being ``queued`` so a
+        reaped or sibling-claimed run is not resurrected. Returns ``None`` when
+        the row is no longer ``queued`` or is absent.
+        """
+        stmt = (
+            update(delegation_runs_table)
+            .where(delegation_runs_table.c.delegation_id == delegation_id)
+            .where(delegation_runs_table.c.status == "queued")
+            .values(
+                status="awaiting_remote",
+                remote_task_id=remote_task_id,
+                remote_context_id=remote_context_id,
+                started_at=started_at,
+                updated_at=datetime.now(UTC),
+            )
+            .returning(delegation_runs_table)
+        )
+        result = await self._execute_with_logging(
+            "mark_delegation_run_awaiting_remote", stmt
+        )
+        row = result.mappings().one_or_none()
+        return self._row_to_dict(dict(row)) if row is not None else None
+
+    async def bump_poll_attempt(self, delegation_id: str, now: datetime) -> int | None:
+        """Increment and return the poll attempt counter for a run.
+
+        Returns the new count, or ``None`` if the run is absent.
+        """
+        stmt = (
+            update(delegation_runs_table)
+            .where(delegation_runs_table.c.delegation_id == delegation_id)
+            .values(
+                poll_attempts=delegation_runs_table.c.poll_attempts + 1,
+                updated_at=now,
+            )
+            .returning(delegation_runs_table.c.poll_attempts)
+        )
+        result = await self._execute_with_logging("bump_delegation_poll_attempt", stmt)
+        row = result.one_or_none()
+        return int(row[0]) if row is not None else None
+
+    async def list_awaiting_remote(
+        self, *, limit: int = 100
+    ) -> list[DelegationRunDict]:
+        """Return runs in ``awaiting_remote`` state, oldest first.
+
+        Backstop for the recurring sweep that re-enqueues lost poll tasks.
+        """
+        bounded_limit = min(max(limit, 1), 500)
+        stmt = (
+            select(delegation_runs_table)
+            .where(delegation_runs_table.c.status == "awaiting_remote")
+            .order_by(delegation_runs_table.c.created_at.asc())
+            .limit(bounded_limit)
+        )
+        rows = await self._db.fetch_all(stmt)
+        return [self._row_to_dict(row) for row in rows]
 
     async def mark_handed_off(
         self, delegation_id: str, handed_off_at: datetime
@@ -364,6 +439,9 @@ class DelegationRunsRepository(BaseRepository):
             result_message_internal_id=row.get("result_message_internal_id"),
             error=row.get("error"),
             notified_at=row.get("notified_at"),
+            remote_task_id=row.get("remote_task_id"),
+            remote_context_id=row.get("remote_context_id"),
+            poll_attempts=row.get("poll_attempts") or 0,
             created_at=row["created_at"],
         )
 

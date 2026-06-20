@@ -514,9 +514,9 @@ async def _run_background_send(
         # shutdown. Deliberately do NOT attempt an async DB write while
         # unwinding a cancellation: it is fragile (a re-cancel during shutdown
         # would interrupt it), and for tasks/cancel the terminal state is
-        # already persisted. A shutdown-interrupted row is left 'working' and
-        # reaped by the stale a2a-task cleanup; the delegating client also stops
-        # waiting via its max-async cap.
+        # already persisted. A shutdown-interrupted row is left 'working'; a
+        # delegating client recovers regardless via its max-async cap, which
+        # fails the delegation run and cancels the remote task.
         logger.info("Background A2A send %s cancelled.", task_id)
         raise
     except Exception:
