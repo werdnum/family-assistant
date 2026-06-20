@@ -111,6 +111,27 @@ final class EphemeralTokenTests: XCTestCase {
         }
     }
 
+    func testSaveVoiceSessionPostsTurnsAndReturnsConversationID() async throws {
+        var capturedBody: [String: Any] = [:]
+        ChatMockBackendURLProtocol.respond { request in
+            XCTAssertEqual(request.httpMethod, "POST")
+            XCTAssertEqual(request.url?.path, "/api/v1/chat/voice-sessions")
+            capturedBody = (try? JSONSerialization.jsonObject(with: request.bodyData)) as? [String: Any] ?? [:]
+            return .json(#"{"conversation_id":"web_conv_42","message_count":2}"#)
+        }
+
+        let entries = [
+            VoiceTranscriptEntry(speaker: .user, text: "hi"),
+            VoiceTranscriptEntry(speaker: .assistant, text: "hello"),
+        ]
+        let conversationID = try await makeClient().saveVoiceSession(turns: entries, conversationID: nil)
+
+        XCTAssertEqual(conversationID, "web_conv_42")
+        let turns = try XCTUnwrap(capturedBody["turns"] as? [[String: Any]])
+        XCTAssertEqual(turns.map { $0["role"] as? String }, ["user", "assistant"])
+        XCTAssertEqual(turns.map { $0["text"] as? String }, ["hi", "hello"])
+    }
+
     private func makeClient() -> ChatAPIClient {
         let authManager = AuthManager()
         authManager.serverURL = serverURL

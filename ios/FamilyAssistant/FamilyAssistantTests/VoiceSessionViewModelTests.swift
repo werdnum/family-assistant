@@ -99,6 +99,15 @@ private final class FakeToolExecutor: VoiceToolExecuting {
     }
 }
 
+@MainActor
+private final class FakeTranscriptStore: VoiceTranscriptStoring {
+    private(set) var saved: [[VoiceTranscriptEntry]] = []
+    func saveVoiceSession(turns: [VoiceTranscriptEntry], conversationID: String?) async throws -> String {
+        saved.append(turns)
+        return "web_conv_test"
+    }
+}
+
 private struct SampleError: LocalizedError {
     var errorDescription: String? { "boom" }
 }
@@ -111,6 +120,7 @@ final class VoiceSessionViewModelTests: XCTestCase {
     private var audio: FakeAudioIO!
     private var tokenProvider: FakeTokenProvider!
     private var toolExecutor: FakeToolExecutor!
+    private var store: FakeTranscriptStore!
     private var reportedErrors: [Error] = []
 
     override func setUp() {
@@ -119,6 +129,7 @@ final class VoiceSessionViewModelTests: XCTestCase {
         audio = FakeAudioIO()
         tokenProvider = FakeTokenProvider()
         toolExecutor = FakeToolExecutor()
+        store = FakeTranscriptStore()
         reportedErrors = []
     }
 
@@ -129,6 +140,7 @@ final class VoiceSessionViewModelTests: XCTestCase {
         VoiceSessionViewModel(
             tokenProvider: tokenProvider,
             toolExecutor: toolExecutor,
+            transcriptStore: store,
             audio: audio,
             permission: FakePermission(granted: permissionGranted),
             profileID: nil,
@@ -286,5 +298,25 @@ final class VoiceSessionViewModelTests: XCTestCase {
         await model.start()
         model.isMuted = true
         XCTAssertTrue(audio.muted)
+    }
+
+    func testEndPersistsTranscriptOnce() async throws {
+        let model = makeModel()
+        await model.start()
+        session.emit(.inputTranscription("hi"))
+        session.emit(.outputTranscription("hello"))
+        try await waitUntil { model.transcript.entries.count == 2 }
+
+        model.end()
+        try await waitUntil { self.store.saved.isEmpty == false }
+        XCTAssertEqual(store.saved.count, 1)
+        XCTAssertEqual(store.saved.first?.map(\.text), ["hi", "hello"])
+    }
+
+    func testEmptyTranscriptIsNotPersisted() async {
+        let model = makeModel()
+        await model.start()
+        model.end()
+        XCTAssertTrue(store.saved.isEmpty)
     }
 }

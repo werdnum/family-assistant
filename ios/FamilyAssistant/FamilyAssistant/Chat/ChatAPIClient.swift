@@ -106,6 +106,28 @@ struct ChatAPIClient {
         return try JSONDecoder().decode(EphemeralToken.self, from: data)
     }
 
+    /// Persist a completed voice session as its own conversation.
+    ///
+    /// POSTs `/api/v1/chat/voice-sessions` with the accumulated transcript turns.
+    /// Returns the conversation id the backend stored them under.
+    @discardableResult
+    func saveVoiceSession(turns: [VoiceTranscriptEntry], conversationID: String?) async throws -> String {
+        var request = try await authManager.authorizedRequest(
+            url: apiURL("/api/v1/chat/voice-sessions"),
+            method: "POST"
+        )
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.httpBody = try JSONEncoder().encode(
+            VoiceSessionBody(
+                conversationID: conversationID,
+                turns: turns.map { VoiceSessionTurnBody(role: $0.speaker.rawValue, text: $0.text) }
+            )
+        )
+        let (data, response) = try await urlSession.data(for: request)
+        try validate(response: response, data: data)
+        return try JSONDecoder().decode(VoiceSessionResponseBody.self, from: data).conversationID
+    }
+
     /// Execute a tool by name on behalf of a Gemini voice function call.
     ///
     /// POSTs `/api/tools/execute/{name}` with `{"arguments": ...}` and returns the
@@ -528,6 +550,31 @@ private struct EphemeralTokenRequestBody: Encodable {
 
 private struct ToolExecuteBody: Encodable {
     let arguments: JSONValue
+}
+
+private struct VoiceSessionTurnBody: Encodable {
+    let role: String
+    let text: String
+}
+
+private struct VoiceSessionBody: Encodable {
+    let conversationID: String?
+    let turns: [VoiceSessionTurnBody]
+
+    enum CodingKeys: String, CodingKey {
+        case conversationID = "conversation_id"
+        case turns
+    }
+}
+
+private struct VoiceSessionResponseBody: Decodable {
+    let conversationID: String
+    let messageCount: Int
+
+    enum CodingKeys: String, CodingKey {
+        case conversationID = "conversation_id"
+        case messageCount = "message_count"
+    }
 }
 
 private struct ChatSendMessageRequest: Encodable {

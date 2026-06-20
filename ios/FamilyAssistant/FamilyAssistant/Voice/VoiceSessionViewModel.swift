@@ -23,6 +23,16 @@ protocol VoiceTokenProviding {
 
 extension ChatAPIClient: VoiceTokenProviding {}
 
+/// Persists a finished voice session as its own conversation. Abstracts
+/// ``ChatAPIClient``.
+@MainActor
+protocol VoiceTranscriptStoring {
+    @discardableResult
+    func saveVoiceSession(turns: [VoiceTranscriptEntry], conversationID: String?) async throws -> String
+}
+
+extension ChatAPIClient: VoiceTranscriptStoring {}
+
 /// Orchestrates a native voice conversation: permission → token → connect →
 /// stream audio both ways → tools → teardown. Owns the conversation state the
 /// ``VoiceView`` renders.
@@ -49,6 +59,7 @@ final class VoiceSessionViewModel {
 
     private let tokenProvider: VoiceTokenProviding
     private let toolExecutor: VoiceToolExecuting
+    private let transcriptStore: VoiceTranscriptStoring?
     private let audio: VoiceAudioIO
     private let permission: VoiceMicrophonePermission
     private let sessionFactory: @MainActor () -> VoiceLiveSession
@@ -62,10 +73,12 @@ final class VoiceSessionViewModel {
     private var timeoutTask: Task<Void, Never>?
     private var audioOut: AsyncStream<Data>.Continuation?
     private var didStart = false
+    private var didPersist = false
 
     init(
         tokenProvider: VoiceTokenProviding,
         toolExecutor: VoiceToolExecuting,
+        transcriptStore: VoiceTranscriptStoring? = nil,
         audio: VoiceAudioIO = VoiceAudioEngine(),
         permission: VoiceMicrophonePermission = SystemMicrophonePermission(),
         profileID: String? = nil,
@@ -75,6 +88,7 @@ final class VoiceSessionViewModel {
     ) {
         self.tokenProvider = tokenProvider
         self.toolExecutor = toolExecutor
+        self.transcriptStore = transcriptStore
         self.audio = audio
         self.permission = permission
         self.profileID = profileID
@@ -228,7 +242,20 @@ final class VoiceSessionViewModel {
         teardown()
     }
 
+    /// Persist the conversation transcript as its own conversation, once, on the
+    /// first terminal transition. Best-effort: a save failure must not surface as
+    /// a session error.
+    private func persistTranscriptIfNeeded() {
+        guard !didPersist, !transcript.isEmpty, let transcriptStore else { return }
+        didPersist = true
+        let turns = transcript.entries
+        Task {
+            try? await transcriptStore.saveVoiceSession(turns: turns, conversationID: nil)
+        }
+    }
+
     private func teardown() {
+        persistTranscriptIfNeeded()
         timeoutTask?.cancel()
         timeoutTask = nil
         audio.onCapturedAudio = nil

@@ -29,6 +29,7 @@ struct VoiceView: View {
             let viewModel = VoiceSessionViewModel(
                 tokenProvider: api,
                 toolExecutor: api,
+                transcriptStore: api,
                 profileID: profileID
             )
             model = viewModel
