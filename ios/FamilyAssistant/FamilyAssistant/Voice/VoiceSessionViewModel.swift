@@ -74,6 +74,7 @@ final class VoiceSessionViewModel {
     private var audioOut: AsyncStream<Data>.Continuation?
     private var didStart = false
     private var didPersist = false
+    private var audioStarted = false
 
     init(
         tokenProvider: VoiceTokenProviding,
@@ -108,12 +109,19 @@ final class VoiceSessionViewModel {
     }
 
     /// Begin the session. Safe to call once; subsequent calls are ignored.
+    ///
+    /// Each `await` is followed by an `isTerminal` check: the user can dismiss the
+    /// screen (calling ``end()``) while we are suspended — most likely while the
+    /// system microphone-permission prompt is up — and a closed screen must not go
+    /// on to open a network session or the microphone in the background.
     func start() async {
         guard !didStart else { return }
         didStart = true
 
         phase = .requestingPermission
-        guard await permission.requestAccess() else {
+        let granted = await permission.requestAccess()
+        guard !isTerminal else { return }
+        guard granted else {
             phase = .permissionDenied
             return
         }
@@ -126,6 +134,7 @@ final class VoiceSessionViewModel {
             fail(error)
             return
         }
+        guard !isTerminal else { return }
 
         let session = sessionFactory()
         self.session = session
@@ -133,14 +142,39 @@ final class VoiceSessionViewModel {
 
         do {
             try await session.connect(token: token)
+        } catch {
+            fail(error)
+            return
+        }
+        guard !isTerminal else {
+            session.close()
+            return
+        }
+
+        // Start the session-duration cap now so a handshake that never completes
+        // still ends. Microphone capture is deferred until `setupComplete` (see
+        // beginAudio) so no realtime audio is sent before the Live API is ready.
+        startTimeout(token: token)
+    }
+
+    /// Open the microphone and begin streaming, once the Live API has acknowledged
+    /// setup. The Gemini Live protocol expects clients to wait for
+    /// `setupComplete` before sending realtime input, so capture starts here
+    /// rather than immediately after `connect()`.
+    private func beginAudio() async {
+        guard !audioStarted, !isTerminal, let session else { return }
+        audioStarted = true
+        do {
             try await audio.start()
         } catch {
             fail(error)
             return
         }
-
+        guard !isTerminal else {
+            audio.stop()
+            return
+        }
         startAudioPump(session: session)
-        startTimeout(token: token)
     }
 
     /// End the session at the user's request.
@@ -166,6 +200,7 @@ final class VoiceSessionViewModel {
         case .setupComplete:
             if phase == .connecting {
                 phase = .active
+                Task { await self.beginAudio() }
             }
         case .audio(let data):
             isAssistantSpeaking = true

@@ -68,6 +68,26 @@ private struct FakePermission: VoiceMicrophonePermission {
     func requestAccess() async -> Bool { granted }
 }
 
+/// A permission whose `requestAccess()` suspends until the test resumes it,
+/// modeling the system prompt being on screen while the user dismisses.
+private final class ControllablePermission: VoiceMicrophonePermission, @unchecked Sendable {
+    private(set) var isWaiting = false
+    private var continuation: CheckedContinuation<Bool, Never>?
+
+    func requestAccess() async -> Bool {
+        await withCheckedContinuation { continuation in
+            self.continuation = continuation
+            self.isWaiting = true
+        }
+    }
+
+    func resume(granted: Bool) {
+        isWaiting = false
+        continuation?.resume(returning: granted)
+        continuation = nil
+    }
+}
+
 @MainActor
 private final class FakeTokenProvider: VoiceTokenProviding {
     var error: Error?
@@ -193,11 +213,46 @@ final class VoiceSessionViewModelTests: XCTestCase {
         let model = makeModel()
         await model.start()
         XCTAssertTrue(session.connected)
-        XCTAssertTrue(audio.started)
         XCTAssertEqual(model.phase, .connecting)
 
         session.emit(.setupComplete)
-        try await waitUntil { model.phase == .active }
+        try await waitUntil { model.phase == .active && self.audio.started }
+    }
+
+    func testMicrophoneCaptureIsDeferredUntilSetupComplete() async throws {
+        let model = makeModel()
+        await model.start()
+        // Connected, but no microphone/audio until the Live API acknowledges setup.
+        XCTAssertTrue(session.connected)
+        XCTAssertFalse(audio.started)
+
+        session.emit(.setupComplete)
+        try await waitUntil { self.audio.started }
+        XCTAssertEqual(model.phase, .active)
+    }
+
+    func testDismissDuringPermissionPromptDoesNotStartSession() async throws {
+        let permission = ControllablePermission()
+        let model = VoiceSessionViewModel(
+            tokenProvider: tokenProvider,
+            toolExecutor: toolExecutor,
+            transcriptStore: store,
+            audio: audio,
+            permission: permission,
+            sessionFactory: { [session] in session! },
+            reportError: { [weak self] error in self?.reportedErrors.append(error) }
+        )
+        let startTask = Task { await model.start() }
+        try await waitUntil { permission.isWaiting }
+
+        // User closes the screen while the system prompt is up, then grants.
+        model.end()
+        permission.resume(granted: true)
+        await startTask.value
+
+        XCTAssertEqual(model.phase, .finished)
+        XCTAssertFalse(session.connected)
+        XCTAssertFalse(audio.started)
     }
 
     func testAudioEventEnqueuesAndTracksSpeaking() async throws {
@@ -247,6 +302,9 @@ final class VoiceSessionViewModelTests: XCTestCase {
     func testCapturedAudioIsForwardedInOrder() async throws {
         let model = makeModel()
         await model.start()
+        session.emit(.setupComplete)
+        try await waitUntil { self.audio.started }
+
         let d1 = Data([0x01])
         let d2 = Data([0x02])
         audio.onCapturedAudio?(d1)
