@@ -510,10 +510,9 @@ async def _run_background_send(
 ) -> None:
     """Run a non-blocking send to terminal on its own db context.
 
-    Persists the terminal task. On cancellation (``tasks/cancel`` or shutdown)
-    or unexpected error, records a terminal state — ``update_task_status``'s
-    ``status != "canceled"`` guard lets a prior ``tasks/cancel`` (which set
-    ``canceled``) win over the failure write here.
+    Persists the terminal task. ``update_task_status`` only transitions a
+    non-terminal task, so a prior ``tasks/cancel`` (or the stale-row reaper)
+    that already finalized this row wins over a later write here.
     """
     try:
         async with get_db_context(db_engine) as bg_db:

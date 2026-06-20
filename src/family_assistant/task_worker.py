@@ -1105,23 +1105,62 @@ class TaskWorker:
                 task_id=remote_task_id,
             )
         except Exception:
-            # Ambiguous: the request may have reached the remote even though the
-            # response was lost. The id is already persisted, so keep the run
-            # awaiting_remote and let a poll reconcile (find the task if it was
-            # created, else retry and eventually fail at the cap) rather than
-            # terminal-failing and abandoning a possibly-live remote task.
-            logger.warning(
-                "Async submit for delegation %s failed; scheduling a poll to "
-                "reconcile (the remote task may exist).",
-                delegation_id,
-                exc_info=True,
+            await self._recover_or_fail_failed_submit(
+                exec_context, awaiting, target_service, remote_context_id
             )
-            await self._enqueue_delegation_poll(exec_context, awaiting)
             return
 
         await self._after_submission(
             exec_context, awaiting, target_service, submission, remote_task_id
         )
+
+    async def _recover_or_fail_failed_submit(
+        self,
+        exec_context: ToolExecutionContext,
+        run: DelegationRunDict,
+        target_service: PollableDelegationService,
+        remote_context_id: str | None,
+    ) -> None:
+        """Decide what to do after ``submit_async`` raised.
+
+        Probe the remote: a deterministic failure (bad auth, protocol error,
+        request never sent) leaves no task, so fail fast with the real error
+        rather than polling until the cap; an ambiguous transport failure (the
+        request landed but the response was lost) leaves the task running, so
+        recover via the normal poll/finalize path.
+        """
+        delegation_id = run["delegation_id"]
+        remote_task_id = run["remote_task_id"]
+        submit_error = traceback.format_exc()
+        try:
+            probe = await target_service.poll_async(
+                remote_task_id or "", remote_context_id
+            )
+        except Exception:
+            # No remote task exists (or the remote is unreachable): the submit
+            # truly failed. Surface the real error instead of a later timeout.
+            logger.error(
+                "Async submit for delegation %s failed and the remote task does "
+                "not exist; failing with the submit error.",
+                delegation_id,
+                exc_info=True,
+            )
+            await self._fail_delegation_run(
+                exec_context, delegation_id=delegation_id, error=submit_error
+            )
+            return
+        # The task exists despite the submit error (lost response) — recover.
+        logger.warning(
+            "Async submit for delegation %s errored but the remote task exists; "
+            "recovering via poll.",
+            delegation_id,
+        )
+        if probe is PENDING:
+            await self._enqueue_delegation_poll(
+                exec_context, run, delay_seconds=_poll_interval_for(target_service)
+            )
+        else:
+            await self._finalize_delegation_run(exec_context, delegation_id, probe)
 
     async def _resubmit_awaiting_remote(
         self,

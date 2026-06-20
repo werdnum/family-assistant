@@ -109,6 +109,11 @@ class A2ATasksRepository(BaseRepository):
             return None
         return self._row_to_typed(row)
 
+    # Statuses a task cannot be moved out of: a terminal task must never be
+    # resurrected or overwritten (e.g. a tasks/cancel, or the stale-row reaper,
+    # racing a background send that finishes just afterwards).
+    _TERMINAL_STATUSES = ("completed", "failed", "canceled", "rejected")
+
     async def update_task_status(
         self,
         task_id: str,
@@ -116,7 +121,12 @@ class A2ATasksRepository(BaseRepository):
         artifacts_json: list[dict[str, object]] | None = None,
         history_json: list[dict[str, object]] | None = None,
     ) -> bool:
-        """Update the status and optionally artifacts/history of a task."""
+        """Update a non-terminal task's status and optionally artifacts/history.
+
+        Conditioned on the task not already being terminal (atomic CAS) so a
+        late-finishing background send cannot overwrite a row a tasks/cancel or
+        the reaper already finalized. Returns ``True`` only if a row changed.
+        """
         values: dict[str, object] = {
             "status": status,
         }
@@ -129,7 +139,7 @@ class A2ATasksRepository(BaseRepository):
             update(a2a_tasks_table)
             .where(
                 a2a_tasks_table.c.task_id == task_id,
-                a2a_tasks_table.c.status != "canceled",
+                a2a_tasks_table.c.status.notin_(self._TERMINAL_STATUSES),
             )
             .values(**values)
         )
