@@ -1449,6 +1449,1003 @@ final class ChatViewModelTests: XCTestCase {
         model = nil
     }
 
+    func testLiveFollowCatchesUpHistoryWhenStreamConnectKeepsFailing() async throws {
+        // Gap A: when the production front door makes SSE unusable, the follow
+        // stream's `connectEvents` keeps throwing. The only history catch-up
+        // (`mergeNewMessages`) used to be gated behind a *successful* connect, so
+        // a turn that finished while the stream was down never surfaced until a
+        // manual list refresh + reopen (both plain, short HTTP requests the proxy
+        // handles fine). The loop must catch up over plain HTTP on every failed
+        // cycle, so content recovers without the SSE stream ever succeeding.
+        let streamConnects = AtomicCounter()
+        let incrementalMerges = AtomicCounter()
+        ChatMockBackendURLProtocol.respond { request in
+            let path = request.url?.path ?? ""
+            if request.httpMethod == "GET", path.hasSuffix("/messages") {
+                if Self.queryItems(from: request)["after"] == nil {
+                    return .json(
+                        """
+                        {
+                          "conversation_id":"web_conv_catchup",
+                          "messages":[
+                            {"internal_id":1,"role":"user","content":"Earlier","timestamp":"2026-06-08T12:00:00Z"}
+                          ],
+                          "count":1,
+                          "total_messages":1,
+                          "has_more_before":false,
+                          "has_more_after":false
+                        }
+                        """
+                    )
+                }
+                incrementalMerges.increment()
+                return .json(
+                    """
+                    {
+                      "conversation_id":"web_conv_catchup",
+                      "messages":[
+                        {"internal_id":2,"role":"assistant","content":"Reply after drop","timestamp":"2026-06-08T12:05:00Z"}
+                      ],
+                      "count":1,
+                      "total_messages":1,
+                      "has_more_before":false,
+                      "has_more_after":false
+                    }
+                    """
+                )
+            }
+            if request.httpMethod == "GET", path == "/api/v1/chat/conversations" {
+                return .json(#"{"conversations":[],"count":0}"#)
+            }
+            if request.httpMethod == "GET", path.hasSuffix("/stream") {
+                // The front door mangles SSE framing: every connect attempt fails
+                // at the call site (connectEvents validates before yielding).
+                streamConnects.increment()
+                throw URLError(.cannotParseResponse)
+            }
+            return .json(#"{"detail":"unexpected"}"#, statusCode: 404)
+        }
+
+        var model: ChatViewModel? = makeViewModel(
+            conversationID: "web_conv_catchup",
+            liveReconnectInitialDelaySeconds: 0.01,
+            liveReconnectMaxDelaySeconds: 0.01
+        )
+        await model?.selectConversation("web_conv_catchup")
+
+        // The reply surfaces even though no SSE connect ever succeeds.
+        try await waitUntil { model?.messages.map(\.text) == ["Earlier", "Reply after drop"] }
+        XCTAssertEqual(model?.messages.map(\.text), ["Earlier", "Reply after drop"])
+        XCTAssertGreaterThanOrEqual(streamConnects.value, 1)
+        XCTAssertGreaterThanOrEqual(incrementalMerges.value, 1)
+        // Content recovery is decoupled from connection health: the disconnected
+        // indicator is still surfaced, but the thread is no longer stranded.
+        XCTAssertEqual(model?.liveUpdatesConnected, false)
+
+        // Release so deinit cancels the fast reconnect loop before teardown.
+        model = nil
+    }
+
+    func testReconnectLiveUpdatesCatchesUpHistoryAfterForegrounding() async throws {
+        // The foreground hook (scenePhase -> .active) calls reconnectLiveUpdates().
+        // While the app is backgrounded the follow stream is held open but the
+        // app is suspended, so the passive loop — blocked on a healthy hanging
+        // stream — never re-merges. A turn that finishes during that window must
+        // surface on foreground via the explicit reconnect's catch-up, not only
+        // when the stream happens to drop.
+        let turnFinished = AtomicCounter()
+        ChatMockBackendURLProtocol.respond { request in
+            let path = request.url?.path ?? ""
+            if request.httpMethod == "GET", path.hasSuffix("/messages") {
+                if Self.queryItems(from: request)["after"] == nil {
+                    return .json(
+                        """
+                        {
+                          "conversation_id":"web_conv_fg",
+                          "messages":[
+                            {"internal_id":1,"role":"user","content":"Earlier","timestamp":"2026-06-08T12:00:00Z"}
+                          ],
+                          "count":1,
+                          "total_messages":1,
+                          "has_more_before":false,
+                          "has_more_after":false
+                        }
+                        """
+                    )
+                }
+                if turnFinished.value == 0 {
+                    return .json(
+                        #"{"conversation_id":"web_conv_fg","messages":[],"count":0,"total_messages":1,"has_more_before":false,"has_more_after":false}"#
+                    )
+                }
+                return .json(
+                    """
+                    {
+                      "conversation_id":"web_conv_fg",
+                      "messages":[
+                        {"internal_id":2,"role":"assistant","content":"Reply while backgrounded","timestamp":"2026-06-08T12:05:00Z"}
+                      ],
+                      "count":1,
+                      "total_messages":1,
+                      "has_more_before":false,
+                      "has_more_after":false
+                    }
+                    """
+                )
+            }
+            if request.httpMethod == "GET", path == "/api/v1/chat/conversations" {
+                return .json(#"{"conversations":[],"count":0}"#)
+            }
+            if request.httpMethod == "GET", path.hasSuffix("/stream") {
+                // A healthy stream held open with no events: the passive follow
+                // loop blocks here and cannot re-merge on its own. Each request
+                // gets its own controller; teardown/cancel releases it.
+                return .hangingStream("", controller: HangingStream())
+            }
+            return .json(#"{"detail":"unexpected"}"#, statusCode: 404)
+        }
+
+        var model: ChatViewModel? = makeViewModel(conversationID: "web_conv_fg")
+        await model?.selectConversation("web_conv_fg")
+        try await waitUntil { model?.messages.map(\.text) == ["Earlier"] }
+
+        // The turn finishes while we're backgrounded; the held stream delivered
+        // nothing. The passive loop is still blocked on its hanging connection.
+        turnFinished.increment()
+        XCTAssertEqual(model?.messages.map(\.text), ["Earlier"])
+
+        // Foregrounding kicks the explicit reconnect, which catches up history.
+        await model?.reconnectLiveUpdates()
+        try await waitUntil {
+            model?.messages.map(\.text) == ["Earlier", "Reply while backgrounded"]
+        }
+        XCTAssertEqual(model?.messages.map(\.text), ["Earlier", "Reply while backgrounded"])
+
+        // Release so deinit cancels the held stream before teardown.
+        model = nil
+    }
+
+    func testLiveFollowStreamsTokensForTurnStartedElsewhere() async throws {
+        // M2: the always-on follow stream now carries token frames, so a turn
+        // started elsewhere (another device, or after our own send gave up)
+        // streams live into a freshly created assistant bubble instead of only
+        // appearing as a history reload when it ends. On `turn_ended` the live
+        // `local_` bubble reconciles to the persisted reply.
+        let turnFinished = AtomicCounter()
+        let acks = AtomicCounter()
+        let controller = HangingStream()
+        ChatMockBackendURLProtocol.respond { request in
+            let path = request.url?.path ?? ""
+            if request.httpMethod == "GET", path.hasSuffix("/messages") {
+                if Self.queryItems(from: request)["after"] == nil {
+                    return .json(
+                        """
+                        {
+                          "conversation_id":"web_conv_remote",
+                          "messages":[
+                            {"internal_id":1,"role":"user","content":"Earlier","timestamp":"2026-06-08T12:00:00Z"}
+                          ],
+                          "count":1,
+                          "total_messages":1,
+                          "has_more_before":false,
+                          "has_more_after":false
+                        }
+                        """
+                    )
+                }
+                if turnFinished.value == 0 {
+                    return .json(
+                        #"{"conversation_id":"web_conv_remote","messages":[],"count":0,"total_messages":1,"has_more_before":false,"has_more_after":false}"#
+                    )
+                }
+                return .json(
+                    """
+                    {
+                      "conversation_id":"web_conv_remote",
+                      "messages":[
+                        {"internal_id":2,"role":"assistant","content":"Hello world","timestamp":"2026-06-08T12:05:00Z"}
+                      ],
+                      "count":1,
+                      "total_messages":1,
+                      "has_more_before":false,
+                      "has_more_after":false
+                    }
+                    """
+                )
+            }
+            if request.httpMethod == "GET", path == "/api/v1/chat/conversations" {
+                return .json(#"{"conversations":[],"count":0}"#)
+            }
+            if request.httpMethod == "POST", path == "/api/v1/chat/ack" {
+                acks.increment()
+                return .json("{}")
+            }
+            if request.httpMethod == "GET", path.hasSuffix("/stream") {
+                // A turn already running elsewhere: stream its text tokens, then
+                // hold open until the test finishes it with turn_ended. Each frame
+                // is terminated with an explicit blank line so a held partial
+                // chunk can't merge with the later turn_ended frame.
+                return .hangingStream(
+                    "event: text\ndata: {\"turn_id\":\"turn-remote\",\"content\":\"Hello\",\"seq\":5}\n\n"
+                        + "event: text\ndata: {\"turn_id\":\"turn-remote\",\"content\":\" world\",\"seq\":6}\n\n",
+                    controller: controller
+                )
+            }
+            return .json(#"{"detail":"unexpected"}"#, statusCode: 404)
+        }
+
+        var model: ChatViewModel? = makeViewModel(conversationID: "web_conv_remote")
+        await model?.selectConversation("web_conv_remote")
+
+        // Tokens render live into a new assistant bubble before the turn ends —
+        // not via a history reload (the persisted reply doesn't exist yet).
+        try await waitUntil { model?.messages.map(\.text) == ["Earlier", "Hello world"] }
+        XCTAssertEqual(model?.messages.last?.id, "local_follow_turn-remote")
+        XCTAssertEqual(model?.messages.last?.status, .running)
+
+        // The turn ends: history reload reconciles the live bubble to persisted.
+        turnFinished.increment()
+        controller.finish(
+            appending: """
+            event: turn_ended
+            data: {"turn_id":"turn-remote","status":"complete","seq":7}
+
+            """
+        )
+        try await waitUntil { model?.messages.last?.id.hasPrefix("msg_") == true }
+        XCTAssertEqual(model?.messages.map(\.text), ["Earlier", "Hello world"])
+        XCTAssertEqual(model?.messages.last?.status, .complete)
+        // A turn_ended we surfaced live is acked so its disconnect push is
+        // suppressed.
+        try await waitUntil { acks.value >= 1 }
+
+        // Release so deinit cancels the follow loop before teardown.
+        model = nil
+    }
+
+    func testLiveFollowDoesNotSurfaceErrorOrConfirmationForPassiveTurn() async throws {
+        // Dropping the follow stream's event_types filter (M2) let it carry
+        // `.error` and tool-confirmation frames. Those drive global UI (a modal
+        // "Chat Error" alert, a tool-approval sheet) and must only fire for a turn
+        // THIS device is driving — never for one observed passively on the
+        // always-on follow stream (started elsewhere / by a schedule). They must
+        // be ignored here; only visible reply content renders into a bubble.
+        let controller = HangingStream()
+        ChatMockBackendURLProtocol.respond { request in
+            let path = request.url?.path ?? ""
+            if request.httpMethod == "GET", path.hasSuffix("/messages") {
+                if Self.queryItems(from: request)["after"] == nil {
+                    return .json(
+                        """
+                        {
+                          "conversation_id":"web_conv_passive",
+                          "messages":[
+                            {"internal_id":1,"role":"user","content":"Earlier","timestamp":"2026-06-08T12:00:00Z"}
+                          ],
+                          "count":1,
+                          "total_messages":1,
+                          "has_more_before":false,
+                          "has_more_after":false
+                        }
+                        """
+                    )
+                }
+                return .json(
+                    #"{"conversation_id":"web_conv_passive","messages":[],"count":0,"total_messages":1,"has_more_before":false,"has_more_after":false}"#
+                )
+            }
+            if request.httpMethod == "GET", path == "/api/v1/chat/conversations" {
+                return .json(#"{"conversations":[],"count":0}"#)
+            }
+            if request.httpMethod == "GET", path.hasSuffix("/stream") {
+                // The error and confirmation frames precede the text frame; if the
+                // text renders, both earlier frames were already processed.
+                return .hangingStream(
+                    "event: error\ndata: {\"turn_id\":\"turn-x\",\"error\":\"boom\",\"seq\":5}\n\n"
+                        + "event: tool_confirmation_request\ndata: {\"turn_id\":\"turn-x\",\"request_id\":\"req-1\",\"tool_name\":\"delete_all\",\"seq\":6}\n\n"
+                        + "event: text\ndata: {\"turn_id\":\"turn-x\",\"content\":\"Working\",\"seq\":7}\n\n",
+                    controller: controller
+                )
+            }
+            return .json(#"{"detail":"unexpected"}"#, statusCode: 404)
+        }
+
+        var model: ChatViewModel? = makeViewModel(conversationID: "web_conv_passive")
+        await model?.selectConversation("web_conv_passive")
+
+        // The text after the error/confirmation frames renders live...
+        try await waitUntil { model?.messages.map(\.text) == ["Earlier", "Working"] }
+        // ...proving both earlier frames were processed — and neither popped UI.
+        XCTAssertNil(model?.errorMessage)
+        XCTAssertEqual(model?.pendingConfirmations.isEmpty, true)
+
+        controller.finish()
+        model = nil
+    }
+
+    func testLiveFollowBubbleSurvivesMidTurnCatchUpMerge() async throws {
+        // A still-running follow turn's `local_follow_` bubble must survive a
+        // mid-turn history catch-up merge (which otherwise drops every `local_`
+        // row) so streaming resumes into the SAME bubble after a reconnect rather
+        // than discarding tokens against a stale mapping.
+        let streamConnects = AtomicCounter()
+        let pinged = AtomicCounter()
+        let leg1 = HangingStream()
+        let leg2 = HangingStream()
+        ChatMockBackendURLProtocol.respond { request in
+            let path = request.url?.path ?? ""
+            if request.httpMethod == "GET", path.hasSuffix("/messages") {
+                if Self.queryItems(from: request)["after"] == nil {
+                    return .json(
+                        """
+                        {
+                          "conversation_id":"web_conv_survive",
+                          "messages":[
+                            {"internal_id":1,"role":"user","content":"Earlier","timestamp":"2026-06-08T12:00:00Z"}
+                          ],
+                          "count":1,
+                          "total_messages":1,
+                          "has_more_before":false,
+                          "has_more_after":false
+                        }
+                        """
+                    )
+                }
+                // A new persisted row appears exactly at the mid-turn drop, so the
+                // catch-up merge has a non-empty delta (the path that drops locals).
+                if pinged.value == 0 {
+                    return .json(
+                        #"{"conversation_id":"web_conv_survive","messages":[],"count":0,"total_messages":1,"has_more_before":false,"has_more_after":false}"#
+                    )
+                }
+                return .json(
+                    """
+                    {
+                      "conversation_id":"web_conv_survive",
+                      "messages":[
+                        {"internal_id":2,"role":"user","content":"ping","timestamp":"2026-06-08T12:01:00Z"}
+                      ],
+                      "count":1,
+                      "total_messages":1,
+                      "has_more_before":false,
+                      "has_more_after":false
+                    }
+                    """
+                )
+            }
+            if request.httpMethod == "GET", path == "/api/v1/chat/conversations" {
+                return .json(#"{"conversations":[],"count":0}"#)
+            }
+            if request.httpMethod == "GET", path.hasSuffix("/stream") {
+                let n = streamConnects.increment()
+                return .hangingStream(
+                    n == 1
+                        ? "event: text\ndata: {\"turn_id\":\"turn-x\",\"content\":\"Hello\",\"seq\":5}\n\n"
+                        : "event: text\ndata: {\"turn_id\":\"turn-x\",\"content\":\" world\",\"seq\":6}\n\n",
+                    controller: n == 1 ? leg1 : leg2
+                )
+            }
+            return .json(#"{"detail":"unexpected"}"#, statusCode: 404)
+        }
+
+        var model: ChatViewModel? = makeViewModel(
+            conversationID: "web_conv_survive",
+            liveReconnectInitialDelaySeconds: 0.01,
+            liveReconnectMaxDelaySeconds: 0.01
+        )
+        await model?.selectConversation("web_conv_survive")
+        try await waitUntil { model?.messages.contains { $0.text == "Hello" } == true }
+
+        // A new row persists, then the first follow leg drops without turn_ended,
+        // so the catch-up merge runs with a non-empty delta and drops `local_` rows.
+        pinged.increment()
+        leg1.finish()
+
+        // The running bubble survived the merge and resumed streaming on reconnect:
+        // the SAME bubble now holds "Hello world", not a fresh " world".
+        try await waitUntil {
+            model?.messages.contains { $0.id == "local_follow_turn-x" && $0.text == "Hello world" } == true
+        }
+        XCTAssertEqual(
+            model?.messages.first { $0.id == "local_follow_turn-x" }?.text,
+            "Hello world"
+        )
+        XCTAssertEqual(model?.messages.contains { $0.text == "ping" }, true)
+
+        leg2.finish()
+        model = nil
+    }
+
+    func testLiveFollowBubbleCompletesWhenTurnEndsWithoutPersistedReply() async throws {
+        // On turn_ended the live bubble must stop spinning and keep its streamed
+        // text even when the history merge can't replace it yet — the reply isn't
+        // queryable (persistence lag returns an empty delta). Otherwise the bubble
+        // strands as a stuck .running spinner with no mapping left to reconcile it.
+        let streamConnects = AtomicCounter()
+        let controller = HangingStream()
+        ChatMockBackendURLProtocol.respond { request in
+            let path = request.url?.path ?? ""
+            if request.httpMethod == "GET", path.hasSuffix("/messages") {
+                if Self.queryItems(from: request)["after"] == nil {
+                    return .json(
+                        """
+                        {
+                          "conversation_id":"web_conv_noreply",
+                          "messages":[
+                            {"internal_id":1,"role":"user","content":"Earlier","timestamp":"2026-06-08T12:00:00Z"}
+                          ],
+                          "count":1,
+                          "total_messages":1,
+                          "has_more_before":false,
+                          "has_more_after":false
+                        }
+                        """
+                    )
+                }
+                // The reply never becomes queryable: every catch-up sees an empty
+                // delta, so the merge can never drop/replace the live bubble.
+                return .json(
+                    #"{"conversation_id":"web_conv_noreply","messages":[],"count":0,"total_messages":1,"has_more_before":false,"has_more_after":false}"#
+                )
+            }
+            if request.httpMethod == "GET", path == "/api/v1/chat/conversations" {
+                return .json(#"{"conversations":[],"count":0}"#)
+            }
+            if request.httpMethod == "POST", path == "/api/v1/chat/ack" {
+                return .json("{}")
+            }
+            if request.httpMethod == "GET", path.hasSuffix("/stream") {
+                // First connect streams a token then holds; later reconnects hang
+                // benignly so they don't re-deliver the (now ended) turn's frames.
+                if streamConnects.increment() == 1 {
+                    return .hangingStream(
+                        "event: text\ndata: {\"turn_id\":\"turn-x\",\"content\":\"Hello\",\"seq\":5}\n\n",
+                        controller: controller
+                    )
+                }
+                return .hangingStream("", controller: HangingStream())
+            }
+            return .json(#"{"detail":"unexpected"}"#, statusCode: 404)
+        }
+
+        var model: ChatViewModel? = makeViewModel(
+            conversationID: "web_conv_noreply",
+            liveReconnectInitialDelaySeconds: 0.01,
+            liveReconnectMaxDelaySeconds: 0.01
+        )
+        await model?.selectConversation("web_conv_noreply")
+        try await waitUntil { model?.messages.contains { $0.text == "Hello" } == true }
+
+        // The turn ends, but its reply is not yet queryable (empty delta).
+        controller.finish(
+            appending: """
+            event: turn_ended
+            data: {"turn_id":"turn-x","status":"complete","seq":6}
+
+            """
+        )
+
+        // The bubble completes in place: it stops spinning and keeps "Hello"
+        // instead of stranding as a stuck running placeholder.
+        try await waitUntil {
+            model?.messages.first { $0.id == "local_follow_turn-x" }?.status == .complete
+        }
+        let bubble = model?.messages.first { $0.id == "local_follow_turn-x" }
+        XCTAssertEqual(bubble?.text, "Hello")
+        XCTAssertEqual(bubble?.isLoading, false)
+
+        model = nil
+    }
+
+    func testSwitchingConversationsDoesNotLeakOldFollowStreamCursor() async throws {
+        // The follow loop is cancelled at the top of selectConversation, before the
+        // `await loadMessages` of the new conversation suspends. Otherwise the OLD
+        // conversation's still-live follow loop would deliver an event during that
+        // window and pollute the NEW conversation's reset ack cursor (and merge its
+        // rows). We observe the cursor pollution via the ack_seq the new
+        // conversation's follow stream subscribes with.
+        let oldStream = HangingStream()
+        let newHistory = HangingStream()
+        let contaminatedAck = AtomicCounter()
+        let newStreamConnects = AtomicCounter()
+        let oldConvAcks = AtomicCounter()
+        ChatMockBackendURLProtocol.respond { request in
+            let path = request.url?.path ?? ""
+            let after = Self.queryItems(from: request)["after"]
+            if request.httpMethod == "GET", path.hasSuffix("/conversations/conv_old/messages") {
+                return .json(
+                    #"{"conversation_id":"conv_old","messages":[{"internal_id":1,"role":"user","content":"OldEarlier","timestamp":"2026-06-08T12:00:00Z"}],"count":1,"total_messages":1,"has_more_before":false,"has_more_after":false}"#
+                )
+            }
+            if request.httpMethod == "GET", path.hasSuffix("/conversations/conv_new/messages") {
+                if after == nil {
+                    // Hang the new conversation's history load, holding
+                    // selectConversation open across its suspension point.
+                    return .hangingStream("", controller: newHistory)
+                }
+                return .json(
+                    #"{"conversation_id":"conv_new","messages":[],"count":0,"total_messages":1,"has_more_before":false,"has_more_after":false}"#
+                )
+            }
+            if request.httpMethod == "GET", path == "/api/v1/chat/conversations" {
+                return .json(#"{"conversations":[],"count":0}"#)
+            }
+            if request.httpMethod == "POST", path == "/api/v1/chat/ack" {
+                // An ack for the OLD conversation proves the old loop processed the
+                // leaked turn_ended (and therefore set the shared cursor to 999).
+                if let body = (try? Self.jsonObject(from: request)) as? [String: Any],
+                   body["conversation_id"] as? String == "conv_old" {
+                    oldConvAcks.increment()
+                }
+                return .json("{}")
+            }
+            if request.httpMethod == "GET", path.hasSuffix("/conversations/conv_old/stream") {
+                // The old conversation's follow loop; held open until finished.
+                return .hangingStream("", controller: oldStream)
+            }
+            if request.httpMethod == "GET", path.hasSuffix("/conversations/conv_new/stream") {
+                // If the old loop leaked its turn_ended seq into the shared cursor,
+                // the new conversation subscribes with that polluted ack_seq.
+                newStreamConnects.increment()
+                if Self.queryItems(from: request)["ack_seq"] == "999" {
+                    contaminatedAck.increment()
+                }
+                return .hangingStream("", controller: HangingStream())
+            }
+            return .json(#"{"detail":"unexpected"}"#, statusCode: 404)
+        }
+
+        var model: ChatViewModel? = makeViewModel(conversationID: "conv_old")
+        await model?.selectConversation("conv_old")
+        try await waitUntil { model?.messages.map(\.text) == ["OldEarlier"] }
+
+        // Begin switching to the new conversation; its history load hangs, holding
+        // selectConversation suspended at the `await loadMessages`.
+        let switchTask = Task { await model?.selectConversation("conv_new") }
+        try await waitUntil { model?.conversationID == "conv_new" }
+
+        // While suspended, the OLD stream delivers a turn_ended at a high seq. With
+        // the follow loop cancelled up front this is dropped; otherwise it would
+        // call recordAppliedSeq(999) and pollute the new conversation's cursor.
+        oldStream.finish(
+            appending: """
+            event: turn_ended
+            data: {"turn_id":"turn-old","status":"complete","seq":999}
+
+            """
+        )
+
+        // Sequence the two finishes deterministically: give the old loop a bounded
+        // window to (mis)process the leaked event. Without the fix it processes
+        // turn_ended — setting the cursor to 999 and acking conv_old — within
+        // milliseconds, so we proceed as soon as that ack lands; with the fix the
+        // loop was cancelled before the switch suspended, so no ack ever comes and
+        // we fall through after the bound. This guarantees the regression (unfixed)
+        // path has actually polluted the cursor before the new stream connects.
+        let settleDeadline = Date().addingTimeInterval(1.5)
+        while Date() < settleDeadline, oldConvAcks.value == 0 {
+            try await Task.sleep(for: .milliseconds(20))
+        }
+
+        // Now let the new conversation's history load finish, which lets
+        // selectConversation complete and start the new follow stream.
+        newHistory.finish(
+            appending: #"{"conversation_id":"conv_new","messages":[{"internal_id":9,"role":"assistant","content":"NewReply","timestamp":"2026-06-08T12:10:00Z"}],"count":1,"total_messages":1,"has_more_before":false,"has_more_after":false}"#
+        )
+        _ = await switchTask.value
+
+        // The new conversation loads cleanly, and its follow stream connects — that
+        // connection must NOT carry the old turn's seq (999) as its ack cursor.
+        try await waitUntil { model?.messages.contains { $0.text == "NewReply" } == true }
+        try await waitUntil { newStreamConnects.value >= 1 }
+        XCTAssertEqual(contaminatedAck.value, 0)
+        XCTAssertFalse(model?.messages.contains { $0.text == "OldEarlier" } == true)
+
+        model = nil
+    }
+
+    func testShouldReconnectOnForegroundOnlyFromBackground() {
+        // The scene-phase reconnect must fire only on a real return from the
+        // background, not on a transient .inactive -> .active blip (which would
+        // tear down a healthy follow connection).
+        let model = makeViewModel(conversationID: "web_conv_scene")
+        XCTAssertTrue(model.shouldReconnectOnForeground(cameFromBackground: true, isNowActive: true))
+        XCTAssertFalse(model.shouldReconnectOnForeground(cameFromBackground: false, isNowActive: true))
+        XCTAssertFalse(model.shouldReconnectOnForeground(cameFromBackground: true, isNowActive: false))
+    }
+
+    func testLiveFollowMergeKeepsRunningBubbleAfterNewlyFetchedOlderRow() async throws {
+        // When a follow turn drops mid-stream and the catch-up merge fetches an
+        // older row for that turn (e.g. its own user prompt persisted after our
+        // last held message), the still-running live bubble must stay ordered LAST
+        // — the in-progress reply can't render before the prompt it answers.
+        let streamConnects = AtomicCounter()
+        let promptPersisted = AtomicCounter()
+        let leg1 = HangingStream()
+        ChatMockBackendURLProtocol.respond { request in
+            let path = request.url?.path ?? ""
+            if request.httpMethod == "GET", path.hasSuffix("/messages") {
+                if Self.queryItems(from: request)["after"] == nil {
+                    return .json(
+                        #"{"conversation_id":"web_conv_order","messages":[{"internal_id":1,"role":"user","content":"Earlier","timestamp":"2026-06-08T12:00:00Z"}],"count":1,"total_messages":1,"has_more_before":false,"has_more_after":false}"#
+                    )
+                }
+                if promptPersisted.value == 0 {
+                    return .json(
+                        #"{"conversation_id":"web_conv_order","messages":[],"count":0,"total_messages":1,"has_more_before":false,"has_more_after":false}"#
+                    )
+                }
+                // The running turn's own user prompt, persisted with a timestamp
+                // older than the live reply bubble's creation time.
+                return .json(
+                    #"{"conversation_id":"web_conv_order","messages":[{"internal_id":2,"role":"user","content":"Question","timestamp":"2026-06-08T12:05:00Z"}],"count":1,"total_messages":1,"has_more_before":false,"has_more_after":false}"#
+                )
+            }
+            if request.httpMethod == "GET", path == "/api/v1/chat/conversations" {
+                return .json(#"{"conversations":[],"count":0}"#)
+            }
+            if request.httpMethod == "GET", path.hasSuffix("/stream") {
+                if streamConnects.increment() == 1 {
+                    return .hangingStream(
+                        "event: text\ndata: {\"turn_id\":\"turn-x\",\"content\":\"Reply\",\"seq\":5}\n\n",
+                        controller: leg1
+                    )
+                }
+                return .hangingStream("", controller: HangingStream())
+            }
+            return .json(#"{"detail":"unexpected"}"#, statusCode: 404)
+        }
+
+        var model: ChatViewModel? = makeViewModel(
+            conversationID: "web_conv_order",
+            liveReconnectInitialDelaySeconds: 0.01,
+            liveReconnectMaxDelaySeconds: 0.01
+        )
+        await model?.selectConversation("web_conv_order")
+        try await waitUntil { model?.messages.contains { $0.text == "Reply" } == true }
+
+        // The prompt persists, then the stream drops, triggering the catch-up merge.
+        promptPersisted.increment()
+        leg1.finish()
+
+        // The live reply must come AFTER the freshly fetched prompt, not before it.
+        try await waitUntil { model?.messages.map(\.text) == ["Earlier", "Question", "Reply"] }
+        XCTAssertEqual(model?.messages.map(\.text), ["Earlier", "Question", "Reply"])
+        XCTAssertEqual(model?.messages.last?.id, "local_follow_turn-x")
+
+        model = nil
+    }
+
+    func testLiveFollowBubbleSurvivesEmptyThreadCatchUp() async throws {
+        // A brand-new conversation has no `msg_` rows, so a catch-up merge takes
+        // the full-reload (`loadMessages`) branch. That full `messages =` replace
+        // must still preserve a streaming live bubble, or a drop before the first
+        // reply persists wipes the partial text and dangles the mapping.
+        let streamConnects = AtomicCounter()
+        let leg1 = HangingStream()
+        let leg2 = HangingStream()
+        ChatMockBackendURLProtocol.respond { request in
+            let path = request.url?.path ?? ""
+            if request.httpMethod == "GET", path.hasSuffix("/messages") {
+                // The reply never persists during the test: every load is empty, so
+                // the merge always takes the latestPersistedTimestamp()==nil branch.
+                return .json(
+                    #"{"conversation_id":"web_conv_empty","messages":[],"count":0,"total_messages":0,"has_more_before":false,"has_more_after":false}"#
+                )
+            }
+            if request.httpMethod == "GET", path == "/api/v1/chat/conversations" {
+                return .json(#"{"conversations":[],"count":0}"#)
+            }
+            if request.httpMethod == "GET", path.hasSuffix("/stream") {
+                let n = streamConnects.increment()
+                return .hangingStream(
+                    n == 1
+                        ? "event: text\ndata: {\"turn_id\":\"turn-x\",\"content\":\"Reply\",\"seq\":5}\n\n"
+                        : "event: text\ndata: {\"turn_id\":\"turn-x\",\"content\":\" more\",\"seq\":6}\n\n",
+                    controller: n == 1 ? leg1 : leg2
+                )
+            }
+            return .json(#"{"detail":"unexpected"}"#, statusCode: 404)
+        }
+
+        var model: ChatViewModel? = makeViewModel(
+            conversationID: "web_conv_empty",
+            liveReconnectInitialDelaySeconds: 0.01,
+            liveReconnectMaxDelaySeconds: 0.01
+        )
+        await model?.selectConversation("web_conv_empty")
+        try await waitUntil { model?.messages.contains { $0.text == "Reply" } == true }
+
+        // Drop before any reply persists: the catch-up takes the full-reload branch.
+        leg1.finish()
+
+        // The bubble survives the empty-thread reload and resumes streaming into the
+        // SAME bubble — "Reply more", not a fresh " more".
+        try await waitUntil {
+            model?.messages.first { $0.id == "local_follow_turn-x" }?.text == "Reply more"
+        }
+        XCTAssertEqual(
+            model?.messages.first { $0.id == "local_follow_turn-x" }?.text,
+            "Reply more"
+        )
+
+        leg2.finish()
+        model = nil
+    }
+
+    func testLiveFollowResumesFromLastSeqAndTailsAfter410() async throws {
+        // A follow reconnect during a running turn resumes from highestAppliedSeq+1
+        // so frames produced during the drop aren't skipped. If that resume cursor
+        // has rotated out of the hub buffer (410), the next attempt tails from the
+        // head instead of re-requesting the gone seq forever.
+        let streamConnects = AtomicCounter()
+        let resumedFromSix = AtomicCounter()
+        let tailedAfter410 = AtomicCounter()
+        let leg1 = HangingStream()
+        ChatMockBackendURLProtocol.respond { request in
+            let path = request.url?.path ?? ""
+            if request.httpMethod == "GET", path.hasSuffix("/messages") {
+                return .json(
+                    #"{"conversation_id":"web_conv_resume_seq","messages":[{"internal_id":1,"role":"user","content":"Earlier","timestamp":"2026-06-08T12:00:00Z"}],"count":1,"total_messages":1,"has_more_before":false,"has_more_after":false}"#
+                )
+            }
+            if request.httpMethod == "GET", path == "/api/v1/chat/conversations" {
+                return .json(#"{"conversations":[],"count":0}"#)
+            }
+            if request.httpMethod == "GET", path.hasSuffix("/stream") {
+                let n = streamConnects.increment()
+                let fromSeq = Self.queryItems(from: request)["from_seq"]
+                if n == 1 {
+                    // Initial connect tails from head, then streams a token at seq 5.
+                    return .hangingStream(
+                        "event: text\ndata: {\"turn_id\":\"turn-x\",\"content\":\"Hello\",\"seq\":5}\n\n",
+                        controller: leg1
+                    )
+                }
+                if n == 2 {
+                    // Reconnect resumes from the last applied seq + 1, then 410s.
+                    if fromSeq == "6" { resumedFromSix.increment() }
+                    return .json(#"{"detail":"gone"}"#, statusCode: 410)
+                }
+                // After the 410 the next attempt tails from the head.
+                if fromSeq == "-1" { tailedAfter410.increment() }
+                return .hangingStream("", controller: HangingStream())
+            }
+            return .json(#"{"detail":"unexpected"}"#, statusCode: 404)
+        }
+
+        var model: ChatViewModel? = makeViewModel(
+            conversationID: "web_conv_resume_seq",
+            liveReconnectInitialDelaySeconds: 0.01,
+            liveReconnectMaxDelaySeconds: 0.01
+        )
+        await model?.selectConversation("web_conv_resume_seq")
+        try await waitUntil { model?.messages.contains { $0.text == "Hello" } == true }
+
+        // Drop the first leg; the reconnect should resume from seq 6, get a 410,
+        // then tail from the head on the following attempt.
+        leg1.finish()
+        try await waitUntil { streamConnects.value >= 3 }
+        XCTAssertGreaterThanOrEqual(resumedFromSix.value, 1)
+        XCTAssertGreaterThanOrEqual(tailedAfter410.value, 1)
+
+        model = nil
+    }
+
+    func testConcurrentConversationSwitchDoesNotClobberWithStaleLoad() async throws {
+        // updateSelection spawns `Task { await selectConversation(id) }`, so two
+        // quick taps run two selectConversation calls that do NOT cancel each
+        // other. If the first's loadMessages is still in flight when the second
+        // finishes, the first's resumed full-reload must NOT assign its (stale)
+        // thread over the conversation the user actually landed on.
+        let aLoadFetch = AtomicCounter()
+        let aHistory = HangingStream()
+        ChatMockBackendURLProtocol.respond { request in
+            let path = request.url?.path ?? ""
+            if request.httpMethod == "GET", path.hasSuffix("/conversations/conv_a/messages") {
+                // Hang A's initial load so it is still pending when B finishes.
+                aLoadFetch.increment()
+                return .hangingStream("", controller: aHistory)
+            }
+            if request.httpMethod == "GET", path.hasSuffix("/conversations/conv_b/messages") {
+                return .json(
+                    #"{"conversation_id":"conv_b","messages":[{"internal_id":9,"role":"assistant","content":"BReply","timestamp":"2026-06-08T13:00:00Z"}],"count":1,"total_messages":1,"has_more_before":false,"has_more_after":false}"#
+                )
+            }
+            if request.httpMethod == "GET", path == "/api/v1/chat/conversations" {
+                return .json(#"{"conversations":[],"count":0}"#)
+            }
+            if request.httpMethod == "GET", path.hasSuffix("/stream") {
+                return .hangingStream("", controller: HangingStream())
+            }
+            return .json(#"{"detail":"unexpected"}"#, statusCode: 404)
+        }
+
+        var model: ChatViewModel? = makeViewModel(conversationID: nil)
+        // Tap A: its load hangs.
+        let selectA = Task { await model?.selectConversation("conv_a") }
+        try await waitUntil { aLoadFetch.value >= 1 }
+        // Tap B before A finished loading: B loads cleanly.
+        let selectB = Task { await model?.selectConversation("conv_b") }
+        try await waitUntil { model?.messages.contains { $0.text == "BReply" } == true }
+
+        // A's load now resumes with its (stale) thread; the guard must drop it.
+        aHistory.finish(
+            appending: #"{"conversation_id":"conv_a","messages":[{"internal_id":1,"role":"user","content":"AStale","timestamp":"2026-06-08T12:00:00Z"}],"count":1,"total_messages":1,"has_more_before":false,"has_more_after":false}"#
+        )
+        _ = await selectA.value
+        _ = await selectB.value
+
+        // Bounded settle: without the guard A's resumed load replaces messages with
+        // ["AStale"] within a few ms; with it the load returns early.
+        let deadline = Date().addingTimeInterval(1.0)
+        while Date() < deadline, model?.messages.contains(where: { $0.text == "AStale" }) == false {
+            try await Task.sleep(for: .milliseconds(20))
+        }
+        XCTAssertFalse(model?.messages.contains { $0.text == "AStale" } == true)
+        XCTAssertEqual(model?.messages.map(\.text), ["BReply"])
+
+        model = nil
+    }
+
+    func testSendGiveUpSuppressesDuplicateFollowRender() async throws {
+        // When a send exhausts its resumes and recovers via history reload (no
+        // turn_ended), the turn is marked ended so the always-on follow loop does
+        // NOT also render its tail into a separate local_follow_ bubble — which
+        // would duplicate the reply the reload surfaced as a msg_ row.
+        let postedTurnID = AtomicString()
+        let liveFollow = HangingStream()
+        ChatMockBackendURLProtocol.respond { request in
+            let path = request.url?.path ?? ""
+            if request.httpMethod == "POST", path == "/api/v1/chat/turns" {
+                if let body = (try? Self.jsonObject(from: request)) as? [String: Any],
+                   let turnID = body["turn_id"] as? String {
+                    postedTurnID.set(turnID)
+                }
+                return .json(
+                    #"{"turn_id":"ignored","conversation_id":"web_conv_giveup","first_seq":0}"#
+                )
+            }
+            if request.httpMethod == "GET", path.hasSuffix("/messages") {
+                return .json(
+                    #"{"conversation_id":"web_conv_giveup","messages":[{"internal_id":1,"role":"user","content":"Hi","timestamp":"2026-06-08T12:00:00Z"},{"internal_id":2,"role":"assistant","content":"Partial reply","timestamp":"2026-06-08T12:00:01Z"}],"count":2,"total_messages":2,"has_more_before":false,"has_more_after":false}"#
+                )
+            }
+            if request.httpMethod == "GET", path == "/api/v1/chat/conversations" {
+                return .json(#"{"conversations":[],"count":0}"#)
+            }
+            if request.httpMethod == "POST", path == "/api/v1/chat/ack" {
+                return .json("{}")
+            }
+            if request.httpMethod == "GET", path.hasSuffix("/stream") {
+                let follow = Self.queryItems(from: request)["follow"] == "true"
+                if follow {
+                    // The always-on live-follow stream: held open until the test
+                    // delivers a tail token after the send has given up.
+                    return .hangingStream("", controller: liveFollow)
+                }
+                // The send subscription keeps dropping with no turn_ended.
+                return .droppedStream(
+                    "event: text\ndata: {\"content\":\"Partial\",\"seq\":1}\n\n"
+                )
+            }
+            return .json(#"{"detail":"unexpected"}"#, statusCode: 404)
+        }
+
+        var model: ChatViewModel? = makeViewModel(
+            conversationID: "web_conv_giveup",
+            liveReconnectInitialDelaySeconds: 0.001,
+            liveReconnectMaxDelaySeconds: 0.001,
+            maxConsecutiveStreamResumes: 1,
+            streamResumeLivenessSeconds: 60
+        )
+        await model?.selectConversation("web_conv_giveup")
+        model?.draftText = "Hi"
+        await model?.sendDraft()
+
+        // The send gives up and reloads history (the partial reply is a msg_ row).
+        try await waitUntil {
+            model?.isStreaming == false && model?.messages.contains { $0.text == "Partial reply" } == true
+        }
+
+        // Deliver a follow-stream tail token for the SAME turn after the give-up.
+        let turnID = try XCTUnwrap(postedTurnID.value)
+        liveFollow.finish(
+            appending: "event: text\ndata: {\"turn_id\":\"\(turnID)\",\"content\":\" tail\",\"seq\":9}\n\n"
+        )
+
+        // Bounded settle: the suppressed turn must never spawn a local_follow bubble.
+        let deadline = Date().addingTimeInterval(1.0)
+        while Date() < deadline,
+              model?.messages.contains(where: { $0.id == "local_follow_\(turnID)" }) == false {
+            try await Task.sleep(for: .milliseconds(20))
+        }
+        XCTAssertFalse(model?.messages.contains { $0.id == "local_follow_\(turnID)" } == true)
+        XCTAssertEqual(model?.messages.map(\.text), ["Hi", "Partial reply"])
+
+        liveFollow.finish()
+        model = nil
+    }
+
+    func testLiveFollowReconcilesByTurnIdAndHoldsUntilItsRowPersists() async throws {
+        // With turn_id on persisted rows, a finished follow bubble is held until
+        // ITS canonical row arrives — a merge whose delta carries some OTHER
+        // turn's row must not drop it, and it reconciles precisely once its own
+        // persisted row (matched by turn_id) shows up.
+        let streamConnects = AtomicCounter()
+        let phase = AtomicCounter() // 0: empty; >=1: unrelated row; >=2: this turn's reply
+        let leg1 = HangingStream()
+        ChatMockBackendURLProtocol.respond { request in
+            let path = request.url?.path ?? ""
+            if request.httpMethod == "GET", path.hasSuffix("/messages") {
+                if Self.queryItems(from: request)["after"] == nil {
+                    return .json(
+                        #"{"conversation_id":"web_conv_recon","messages":[{"internal_id":1,"role":"user","content":"Earlier","timestamp":"2026-06-08T12:00:00Z"}],"count":1,"total_messages":1,"has_more_before":false,"has_more_after":false}"#
+                    )
+                }
+                if phase.value >= 2 {
+                    return .json(
+                        #"{"conversation_id":"web_conv_recon","messages":[{"internal_id":3,"role":"assistant","content":"X reply","turn_id":"turn-x","timestamp":"2026-06-08T12:06:00Z"}],"count":1,"total_messages":1,"has_more_before":false,"has_more_after":false}"#
+                    )
+                }
+                if phase.value >= 1 {
+                    return .json(
+                        #"{"conversation_id":"web_conv_recon","messages":[{"internal_id":2,"role":"assistant","content":"Other reply","turn_id":"turn-y","timestamp":"2026-06-08T12:05:00Z"}],"count":1,"total_messages":1,"has_more_before":false,"has_more_after":false}"#
+                    )
+                }
+                return .json(
+                    #"{"conversation_id":"web_conv_recon","messages":[],"count":0,"total_messages":1,"has_more_before":false,"has_more_after":false}"#
+                )
+            }
+            if request.httpMethod == "GET", path == "/api/v1/chat/conversations" {
+                return .json(#"{"conversations":[],"count":0}"#)
+            }
+            if request.httpMethod == "POST", path == "/api/v1/chat/ack" {
+                return .json("{}")
+            }
+            if request.httpMethod == "GET", path.hasSuffix("/stream") {
+                if streamConnects.increment() == 1 {
+                    return .hangingStream(
+                        "event: text\ndata: {\"turn_id\":\"turn-x\",\"content\":\"Hello\",\"seq\":5}\n\n",
+                        controller: leg1
+                    )
+                }
+                // Clean EOF on each later connect so the loop reconnects and
+                // re-runs the catch-up merge as the persisted phases advance.
+                return .text("")
+            }
+            return .json(#"{"detail":"unexpected"}"#, statusCode: 404)
+        }
+
+        var model: ChatViewModel? = makeViewModel(
+            conversationID: "web_conv_recon",
+            liveReconnectInitialDelaySeconds: 0.01,
+            liveReconnectMaxDelaySeconds: 0.01
+        )
+        await model?.selectConversation("web_conv_recon")
+        try await waitUntil { model?.messages.contains { $0.text == "Hello" } == true }
+
+        // turn-x ends; an unrelated turn-y row is now the only thing persisted.
+        phase.increment()
+        leg1.finish(
+            appending: "event: turn_ended\ndata: {\"turn_id\":\"turn-x\",\"status\":\"complete\",\"seq\":6}\n\n"
+        )
+
+        // The completed bubble is HELD: the merge sees turn-y, not turn-x's reply.
+        try await waitUntil { model?.messages.contains { $0.text == "Other reply" } == true }
+        XCTAssertEqual(model?.messages.first { $0.id == "local_follow_turn-x" }?.text, "Hello")
+        XCTAssertEqual(model?.messages.first { $0.id == "local_follow_turn-x" }?.status, .complete)
+        XCTAssertFalse(model?.messages.contains { $0.text == "X reply" } == true)
+
+        // turn-x's own reply now persists; the next catch-up reconciles by turn_id.
+        phase.increment()
+        try await waitUntil { model?.messages.contains { $0.text == "X reply" } == true }
+        XCTAssertFalse(model?.messages.contains { $0.id == "local_follow_turn-x" } == true)
+        XCTAssertEqual(model?.messages.map(\.text), ["Earlier", "Other reply", "X reply"])
+
+        model = nil
+    }
+
     func testResendDuringStreamSupersedesWithoutClobbering() async throws {
         // Sending again while the first turn is still streaming must supersede it
         // cleanly: the first (cancelled) task must not flip the new turn's
@@ -2571,5 +3568,20 @@ private final class AtomicCounter: @unchecked Sendable {
 
     var value: Int {
         lock.withLock { count }
+    }
+}
+
+/// Lock-guarded optional string for capturing a value (e.g. a client-generated
+/// turn id) off the URLProtocol loading thread.
+private final class AtomicString: @unchecked Sendable {
+    private let lock = NSLock()
+    private var stored: String?
+
+    func set(_ value: String?) {
+        lock.withLock { stored = value }
+    }
+
+    var value: String? {
+        lock.withLock { stored }
     }
 }

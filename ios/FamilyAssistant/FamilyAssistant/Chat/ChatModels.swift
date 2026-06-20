@@ -153,6 +153,11 @@ struct ChatMessage: Identifiable, Equatable {
     var status: ChatMessageStatus
     var processingProfileID: String?
     var errorTraceback: String?
+    // The turn that produced this message, when known. Persisted rows carry it
+    // (from the messages API); it lets a live-follow bubble (`local_follow_<turn>`)
+    // be reconciled to its canonical persisted row precisely instead of by
+    // heuristic. Nil for optimistic local bubbles and pre-turn_id backends.
+    var turnID: String? = nil
 }
 
 enum ChatMessageRole: String, Codable, Equatable {
@@ -346,6 +351,7 @@ struct ChatConversationMessagesResponse: Decodable {
 
 struct ChatBackendMessage: Decodable, Equatable {
     let internalID: String
+    let turnID: String?
     let role: ChatMessageRole
     let text: String
     let timestamp: Date
@@ -358,6 +364,7 @@ struct ChatBackendMessage: Decodable, Equatable {
 
     enum CodingKeys: String, CodingKey {
         case internalID = "internal_id"
+        case turnID = "turn_id"
         case role
         case content
         case timestamp
@@ -376,6 +383,7 @@ struct ChatBackendMessage: Decodable, Equatable {
         } else {
             internalID = try container.decode(String.self, forKey: .internalID)
         }
+        turnID = try container.decodeIfPresent(String.self, forKey: .turnID)
         role = try container.decode(ChatMessageRole.self, forKey: .role)
         timestamp = try container.decode(Date.self, forKey: .timestamp)
         toolCalls = try container.decodeIfPresent([ChatBackendToolCall].self, forKey: .toolCalls) ?? []
