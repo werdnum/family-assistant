@@ -27,6 +27,7 @@ from family_assistant.a2a.client import (
     MAX_INLINE_ATTACHMENT_BYTES,
     A2AClientError,
     A2AClientWrapper,
+    A2APermanentError,
 )
 from family_assistant.a2a.result_converter import a2a_task_to_chat_result
 from family_assistant.llm.content_parts import (
@@ -349,6 +350,21 @@ class TestA2AAuthConfig:
         config = A2AAuthConfig(type="none")
         assert config.validate_env_vars() == []
 
+    @pytest.mark.asyncio
+    async def test_bad_auth_config_raises_permanent_error(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # A local misconfiguration (bearer auth whose token_env is unset) must
+        # surface as A2APermanentError so the delegation worker fails fast with
+        # the real auth error instead of polling until the wall-clock cap.
+        monkeypatch.delenv("MISSING_TOKEN", raising=False)
+        wrapper = A2AClientWrapper(
+            agent_url="http://agent.test",
+            auth_config=A2AAuthConfig(type="bearer", token_env="MISSING_TOKEN"),
+        )
+        with pytest.raises(A2APermanentError, match="Auth configuration error"):
+            await wrapper.get_task("a2a-task-1")
+
 
 # --- Client wrapper tests ---
 
@@ -552,7 +568,9 @@ class TestA2AClientWrapper:
             [image_url_content(f"data:image/png;base64,{large_data}")],
         )
         wrapper = A2AClientWrapper(agent_url="http://agent.test")
-        with pytest.raises(A2AClientError, match="exceeds limit"):
+        # Permanent: an oversized attachment is a deterministic local input
+        # error, so the worker must fail fast rather than poll until the cap.
+        with pytest.raises(A2APermanentError, match="exceeds limit"):
             wrapper._convert_and_validate_parts(parts)
 
     @pytest.mark.asyncio

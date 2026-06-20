@@ -116,7 +116,9 @@ class A2AClientWrapper:
             try:
                 auth = self._auth_config.to_httpx_auth() if self._auth_config else None
             except ValueError as exc:
-                raise A2AClientError(f"Auth configuration error: {exc}") from exc
+                # A local misconfiguration (e.g. a missing token_env): deterministic,
+                # so fail fast rather than polling until the cap on every retry.
+                raise A2APermanentError(f"Auth configuration error: {exc}") from exc
             self._httpx_client = httpx.AsyncClient(
                 auth=auth,
                 timeout=httpx.Timeout(self._timeout),
@@ -387,7 +389,10 @@ class A2AClientWrapper:
             return
         byte_len = len(file.bytes) if file.bytes else 0
         if byte_len > MAX_INLINE_ATTACHMENT_BYTES:
-            raise A2AClientError(
+            # A deterministic local input error: the same parts would fail
+            # identically on every retry, so fail fast instead of polling to
+            # the cap on the async delegation path.
+            raise A2APermanentError(
                 f"Inline attachment size ({byte_len} bytes) exceeds "
                 f"limit ({MAX_INLINE_ATTACHMENT_BYTES} bytes). "
                 f"Consider using URI-based file transfer."
