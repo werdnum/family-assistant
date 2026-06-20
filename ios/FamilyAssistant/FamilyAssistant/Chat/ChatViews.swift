@@ -192,10 +192,15 @@ private struct ChatThreadView: View {
             // refresh. With the SSE-independent catch-up in `reconnectLiveUpdates`,
             // the thread recovers even if the fresh SSE connect itself fails.
             //
-            // Gate on `oldPhase == .background` so a transient `.inactive → .active`
-            // blip (Control Center, the app switcher, a notification banner) does
-            // not needlessly tear down and restart a healthy follow connection.
-            if oldPhase == .background, newPhase == .active {
+            // Gate on a real return from the background so a transient
+            // `.inactive → .active` blip (Control Center, the app switcher, a
+            // notification banner) does not needlessly tear down and restart a
+            // healthy follow connection. The decision lives on the view model so
+            // it is unit-testable.
+            if viewModel.shouldReconnectOnForeground(
+                cameFromBackground: oldPhase == .background,
+                isNowActive: newPhase == .active
+            ) {
                 Task { await viewModel.reconnectLiveUpdates() }
             }
         }

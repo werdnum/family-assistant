@@ -1856,6 +1856,204 @@ final class ChatViewModelTests: XCTestCase {
         model = nil
     }
 
+    func testLiveFollowBubbleCompletesWhenTurnEndsWithoutPersistedReply() async throws {
+        // On turn_ended the live bubble must stop spinning and keep its streamed
+        // text even when the history merge can't replace it yet — the reply isn't
+        // queryable (persistence lag returns an empty delta). Otherwise the bubble
+        // strands as a stuck .running spinner with no mapping left to reconcile it.
+        let streamConnects = AtomicCounter()
+        let controller = HangingStream()
+        ChatMockBackendURLProtocol.respond { request in
+            let path = request.url?.path ?? ""
+            if request.httpMethod == "GET", path.hasSuffix("/messages") {
+                if Self.queryItems(from: request)["after"] == nil {
+                    return .json(
+                        """
+                        {
+                          "conversation_id":"web_conv_noreply",
+                          "messages":[
+                            {"internal_id":1,"role":"user","content":"Earlier","timestamp":"2026-06-08T12:00:00Z"}
+                          ],
+                          "count":1,
+                          "total_messages":1,
+                          "has_more_before":false,
+                          "has_more_after":false
+                        }
+                        """
+                    )
+                }
+                // The reply never becomes queryable: every catch-up sees an empty
+                // delta, so the merge can never drop/replace the live bubble.
+                return .json(
+                    #"{"conversation_id":"web_conv_noreply","messages":[],"count":0,"total_messages":1,"has_more_before":false,"has_more_after":false}"#
+                )
+            }
+            if request.httpMethod == "GET", path == "/api/v1/chat/conversations" {
+                return .json(#"{"conversations":[],"count":0}"#)
+            }
+            if request.httpMethod == "POST", path == "/api/v1/chat/ack" {
+                return .json("{}")
+            }
+            if request.httpMethod == "GET", path.hasSuffix("/stream") {
+                // First connect streams a token then holds; later reconnects hang
+                // benignly so they don't re-deliver the (now ended) turn's frames.
+                if streamConnects.increment() == 1 {
+                    return .hangingStream(
+                        "event: text\ndata: {\"turn_id\":\"turn-x\",\"content\":\"Hello\",\"seq\":5}\n\n",
+                        controller: controller
+                    )
+                }
+                return .hangingStream("", controller: HangingStream())
+            }
+            return .json(#"{"detail":"unexpected"}"#, statusCode: 404)
+        }
+
+        var model: ChatViewModel? = makeViewModel(
+            conversationID: "web_conv_noreply",
+            liveReconnectInitialDelaySeconds: 0.01,
+            liveReconnectMaxDelaySeconds: 0.01
+        )
+        await model?.selectConversation("web_conv_noreply")
+        try await waitUntil { model?.messages.contains { $0.text == "Hello" } == true }
+
+        // The turn ends, but its reply is not yet queryable (empty delta).
+        controller.finish(
+            appending: """
+            event: turn_ended
+            data: {"turn_id":"turn-x","status":"complete","seq":6}
+
+            """
+        )
+
+        // The bubble completes in place: it stops spinning and keeps "Hello"
+        // instead of stranding as a stuck running placeholder.
+        try await waitUntil {
+            model?.messages.first { $0.id == "local_follow_turn-x" }?.status == .complete
+        }
+        let bubble = model?.messages.first { $0.id == "local_follow_turn-x" }
+        XCTAssertEqual(bubble?.text, "Hello")
+        XCTAssertEqual(bubble?.isLoading, false)
+
+        model = nil
+    }
+
+    func testSwitchingConversationsDoesNotLeakOldFollowStreamCursor() async throws {
+        // The follow loop is cancelled at the top of selectConversation, before the
+        // `await loadMessages` of the new conversation suspends. Otherwise the OLD
+        // conversation's still-live follow loop would deliver an event during that
+        // window and pollute the NEW conversation's reset ack cursor (and merge its
+        // rows). We observe the cursor pollution via the ack_seq the new
+        // conversation's follow stream subscribes with.
+        let oldStream = HangingStream()
+        let newHistory = HangingStream()
+        let contaminatedAck = AtomicCounter()
+        let newStreamConnects = AtomicCounter()
+        let oldConvAcks = AtomicCounter()
+        ChatMockBackendURLProtocol.respond { request in
+            let path = request.url?.path ?? ""
+            let after = Self.queryItems(from: request)["after"]
+            if request.httpMethod == "GET", path.hasSuffix("/conversations/conv_old/messages") {
+                return .json(
+                    #"{"conversation_id":"conv_old","messages":[{"internal_id":1,"role":"user","content":"OldEarlier","timestamp":"2026-06-08T12:00:00Z"}],"count":1,"total_messages":1,"has_more_before":false,"has_more_after":false}"#
+                )
+            }
+            if request.httpMethod == "GET", path.hasSuffix("/conversations/conv_new/messages") {
+                if after == nil {
+                    // Hang the new conversation's history load, holding
+                    // selectConversation open across its suspension point.
+                    return .hangingStream("", controller: newHistory)
+                }
+                return .json(
+                    #"{"conversation_id":"conv_new","messages":[],"count":0,"total_messages":1,"has_more_before":false,"has_more_after":false}"#
+                )
+            }
+            if request.httpMethod == "GET", path == "/api/v1/chat/conversations" {
+                return .json(#"{"conversations":[],"count":0}"#)
+            }
+            if request.httpMethod == "POST", path == "/api/v1/chat/ack" {
+                // An ack for the OLD conversation proves the old loop processed the
+                // leaked turn_ended (and therefore set the shared cursor to 999).
+                if let body = (try? Self.jsonObject(from: request)) as? [String: Any],
+                   body["conversation_id"] as? String == "conv_old" {
+                    oldConvAcks.increment()
+                }
+                return .json("{}")
+            }
+            if request.httpMethod == "GET", path.hasSuffix("/conversations/conv_old/stream") {
+                // The old conversation's follow loop; held open until finished.
+                return .hangingStream("", controller: oldStream)
+            }
+            if request.httpMethod == "GET", path.hasSuffix("/conversations/conv_new/stream") {
+                // If the old loop leaked its turn_ended seq into the shared cursor,
+                // the new conversation subscribes with that polluted ack_seq.
+                newStreamConnects.increment()
+                if Self.queryItems(from: request)["ack_seq"] == "999" {
+                    contaminatedAck.increment()
+                }
+                return .hangingStream("", controller: HangingStream())
+            }
+            return .json(#"{"detail":"unexpected"}"#, statusCode: 404)
+        }
+
+        var model: ChatViewModel? = makeViewModel(conversationID: "conv_old")
+        await model?.selectConversation("conv_old")
+        try await waitUntil { model?.messages.map(\.text) == ["OldEarlier"] }
+
+        // Begin switching to the new conversation; its history load hangs, holding
+        // selectConversation suspended at the `await loadMessages`.
+        let switchTask = Task { await model?.selectConversation("conv_new") }
+        try await waitUntil { model?.conversationID == "conv_new" }
+
+        // While suspended, the OLD stream delivers a turn_ended at a high seq. With
+        // the follow loop cancelled up front this is dropped; otherwise it would
+        // call recordAppliedSeq(999) and pollute the new conversation's cursor.
+        oldStream.finish(
+            appending: """
+            event: turn_ended
+            data: {"turn_id":"turn-old","status":"complete","seq":999}
+
+            """
+        )
+
+        // Sequence the two finishes deterministically: give the old loop a bounded
+        // window to (mis)process the leaked event. Without the fix it processes
+        // turn_ended — setting the cursor to 999 and acking conv_old — within
+        // milliseconds, so we proceed as soon as that ack lands; with the fix the
+        // loop was cancelled before the switch suspended, so no ack ever comes and
+        // we fall through after the bound. This guarantees the regression (unfixed)
+        // path has actually polluted the cursor before the new stream connects.
+        let settleDeadline = Date().addingTimeInterval(1.5)
+        while Date() < settleDeadline, oldConvAcks.value == 0 {
+            try await Task.sleep(for: .milliseconds(20))
+        }
+
+        // Now let the new conversation's history load finish, which lets
+        // selectConversation complete and start the new follow stream.
+        newHistory.finish(
+            appending: #"{"conversation_id":"conv_new","messages":[{"internal_id":9,"role":"assistant","content":"NewReply","timestamp":"2026-06-08T12:10:00Z"}],"count":1,"total_messages":1,"has_more_before":false,"has_more_after":false}"#
+        )
+        _ = await switchTask.value
+
+        // The new conversation loads cleanly, and its follow stream connects — that
+        // connection must NOT carry the old turn's seq (999) as its ack cursor.
+        try await waitUntil { model?.messages.contains { $0.text == "NewReply" } == true }
+        try await waitUntil { newStreamConnects.value >= 1 }
+        XCTAssertEqual(contaminatedAck.value, 0)
+        XCTAssertFalse(model?.messages.contains { $0.text == "OldEarlier" } == true)
+
+        model = nil
+    }
+
+    func testShouldReconnectOnForegroundOnlyFromBackground() {
+        // The scene-phase reconnect must fire only on a real return from the
+        // background, not on a transient .inactive -> .active blip (which would
+        // tear down a healthy follow connection).
+        let model = makeViewModel(conversationID: "web_conv_scene")
+        XCTAssertTrue(model.shouldReconnectOnForeground(cameFromBackground: true, isNowActive: true))
+        XCTAssertFalse(model.shouldReconnectOnForeground(cameFromBackground: false, isNowActive: true))
+        XCTAssertFalse(model.shouldReconnectOnForeground(cameFromBackground: true, isNowActive: false))
+    }
+
     func testResendDuringStreamSupersedesWithoutClobbering() async throws {
         // Sending again while the first turn is still streaming must supersede it
         // cleanly: the first (cancelled) task must not flip the new turn's

@@ -1019,6 +1019,16 @@ final class ChatViewModel {
         startLiveEvents()
     }
 
+    /// Whether a scene-phase transition should trigger a live-updates reconnect.
+    /// Only a real return from the BACKGROUND should: a transient
+    /// `.inactive → .active` blip (Control Center, the app switcher, a
+    /// notification banner) must not tear down and restart a healthy follow
+    /// connection. Kept SwiftUI-agnostic (booleans) so the gating is unit-testable
+    /// without importing the scene-phase type into the view model.
+    func shouldReconnectOnForeground(cameFromBackground: Bool, isNowActive: Bool) -> Bool {
+        cameFromBackground && isNowActive
+    }
+
     private func startLiveEvents() {
         liveEventsTask?.cancel()
         guard let conversationID else {
