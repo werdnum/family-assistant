@@ -357,6 +357,48 @@ class TestAsyncSendMessage:
 
     @pytest.mark.postgres
     @pytest.mark.asyncio
+    async def test_concurrent_resends_same_task_id_are_idempotent(
+        self,
+        a2a_client: AsyncClient,
+        app_fixture: FastAPI,
+        api_mock_llm_client: RuleBasedMockLLMClient,
+    ) -> None:
+        release = asyncio.Event()
+        api_mock_llm_client.default_response = MockLLMOutput(content="once only")
+        api_mock_llm_client.response_gate = release
+
+        task_id = str(uuid.uuid4())
+        params = {
+            "message": _a2a_message("Hello", task_id=task_id),
+            "configuration": {"blocking": False},
+        }
+
+        async def send(request_id: int) -> dict:
+            resp = await a2a_client.post(
+                "/api/a2a",
+                json=_jsonrpc("message/send", params=params, request_id=request_id),
+            )
+            assert resp.status_code == 200
+            data = resp.json()
+            assert "error" not in data
+            return data["result"]
+
+        first, second = await asyncio.gather(send(1), send(2))
+
+        assert first["id"] == task_id
+        assert second["id"] == task_id
+        assert first["status"]["state"] == "working"
+        assert second["status"]["state"] == "working"
+
+        background = app_fixture.state.a2a_background_tasks.get(task_id)
+        assert background is not None
+        release.set()
+        await background
+
+        assert len(api_mock_llm_client.get_calls()) == 1
+
+    @pytest.mark.postgres
+    @pytest.mark.asyncio
     async def test_blocking_false_cancel_interrupts_in_flight_task(
         self,
         a2a_client: AsyncClient,
