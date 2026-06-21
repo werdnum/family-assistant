@@ -9,6 +9,25 @@ its `a2a_tasks` row non-terminal; the delegating client recovers it via its `max
 added: it cannot distinguish a legitimately long-running send from a lost one without a heartbeat,
 and would false-fail the former (permanently, given the CAS guard).
 
+**Task-id ownership (A2A spec §3.4.2).** The client does **not** pre-generate or send a task id on
+the initial `message/send`; per the spec a client-supplied `taskId` must reference an *existing*
+task, so a compliant remote rejects an unknown one. Instead the submit carries no task id, the
+remote assigns one, and the worker persists the returned id (reconciled via `update_remote_task`).
+The run is claimed `awaiting_remote` with a **NULL** `remote_task_id` *before* submitting (so the
+retry-guard and wall-clock cap apply); a submit whose response is lost leaves the id NULL and the
+next poll re-submits to (re)create the task. The cost is a narrow duplicate-on-recovery window: a
+submit that actually created a remote task but whose response was lost will be re-submitted,
+creating a second task and orphaning the first. This is accepted in exchange for spec compliance
+(and works against any A2A agent, not only the FA server, which previously tolerated client ids by
+being idempotent on them).
+
+To keep that window from widening under concurrency, a NULL-id run is recovered **only** by the
+durable `delegated_profile_run` task's own retry (serialized by the task lock), never by the reaper:
+the reaper re-enqueues a poll only for runs that already carry a remote id, so it cannot re-submit a
+run whose first submit is still in flight. Duplicate poll *loops* for one run (e.g. a re-attaching
+retry plus a surviving poll) are harmless — `tasks/get` is idempotent and the terminal transition is
+CAS-guarded, so only one finalize/notify wins.
+
 ## Background
 
 Asynchronous profile delegation (see
@@ -114,9 +133,12 @@ New repository methods on `DelegationRunsRepository`:
 ### New task type: `delegated_profile_run` (submit) + `delegation_poll`
 
 **Submit (reuse `delegated_profile_run`).** The existing handler grows a branch: if the target is
-`Pollable`, call `submit_async`, persist `remote_task_id`/`remote_context_id`, call
-`mark_awaiting_remote`, enqueue the first `delegation_poll` task scheduled `+poll_interval`, and
-**return** (releasing the worker). If the target is local, the current blocking path runs unchanged.
+`Pollable`, call `mark_awaiting_remote` (NULL `remote_task_id` — see *Task-id ownership* in the
+status note), `submit_async` (no client task id), persist the remote-assigned
+`remote_task_id`/`remote_context_id` via `update_remote_task`, enqueue the first `delegation_poll`
+task scheduled `+poll_interval`, and **return** (releasing the worker). A poll that finds a NULL id
+(submit response lost) or a not-found task re-submits to (re)create the task and reconcile the new
+id. If the target is local, the current blocking path runs unchanged.
 
 **Poll (new `delegation_poll` task).** Per-run, self-rescheduling:
 
@@ -161,23 +183,25 @@ knows whether to fail fast, keep polling, or re-submit:
   JSON-RPC errors. Retrying will not help, so the worker fails the run immediately with the real
   error rather than waiting out the cap.
 - **`A2ATaskNotFoundError` (a subclass of `A2APermanentError`)** — HTTP 404 or the A2A
-  task-not-found JSON-RPC code (`-32001`). Reachable when the original `message/send` failed
-  transiently and **never landed** (so the remote task was never created), or the remote lost it.
-  Rather than failing, the poll handler **re-submits** idempotently with the stored `remote_task_id`
-  (the FA server is idempotent on it, so this re-creates a missing task or returns an existing one),
-  then keeps polling. This closes the gap where a momentary outage *during submit* would otherwise
-  become a permanent failure: the post-submit poll hits not-found and recovers.
+  task-not-found JSON-RPC code (`-32001`). Reachable when the remote lost the task (e.g. a restart).
+  Rather than failing, the poll handler **re-submits** (no client task id, so the remote assigns a
+  fresh one which is reconciled in) and keeps polling. The same path serves a poll that finds a NULL
+  `remote_task_id` (a first submit whose response was lost). This closes the gap where a momentary
+  outage *around submit* would otherwise become a permanent failure. Each re-submit bumps the
+  poll-attempt counter and reschedules with backoff so a persistently-missing remote paces down
+  rather than spinning at the base interval.
 
 Submit and re-submit share one classifier (`_handle_submit_failure`): transient → poll, permanent →
-fail fast. The not-found → re-submit loop is bounded by the same wall-clock cap as ordinary polling.
+fail fast. The re-submit loop is bounded by the same wall-clock cap as ordinary polling.
 
 ### Re-attach on restart (fixes gap #3)
 
-Because `remote_task_id` is persisted and the run sits in `awaiting_remote` (not `running`), restart
-recovery is automatic: the durable `delegation_poll` task is picked up by any worker and calls
-`tasks/get` against the stored remote task id. Nothing re-executes the remote side. If the poll task
-itself was lost, the reaper backstop re-enqueues a poll (not a fail) for `awaiting_remote` runs that
-are young, and only fails+cancels ones past the wall-clock cap.
+Because the remote-assigned `remote_task_id` is persisted and the run sits in `awaiting_remote` (not
+`running`), restart recovery is automatic: the durable `delegation_poll` task is picked up by any
+worker and calls `tasks/get` against the stored remote task id. Nothing re-executes the remote side.
+A run still at a NULL id (submit response lost before the id was persisted) is recovered by the poll
+re-submitting. If the poll task itself was lost, the reaper backstop re-enqueues a poll (not a fail)
+for `awaiting_remote` runs that are young, and only fails+cancels ones past the wall-clock cap.
 
 ### Cancellation (fixes gap #4)
 

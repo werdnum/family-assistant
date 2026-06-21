@@ -931,11 +931,22 @@ class TaskWorker:
             # Remote (pollable) target: submit without blocking and hand off to
             # the self-rescheduling poll task instead of running the turn inline.
             if run["status"] == "awaiting_remote":
-                # A retry of a run that already claimed awaiting_remote: re-submit
-                # idempotently (the remote task id is stable and the server is
-                # idempotent on it), recovering a crash that happened before the
-                # first submit reached the remote.
-                await self._resubmit_awaiting_remote(exec_context, run, target_service)
+                # A retry of a run that already claimed awaiting_remote.
+                if run["remote_task_id"]:
+                    # We already learned the remote-assigned id, so re-attach by
+                    # enqueuing a poll rather than re-submitting (which would
+                    # create a duplicate remote task).
+                    await self._enqueue_delegation_poll(
+                        exec_context,
+                        run,
+                        delay_seconds=_poll_interval_for(target_service),
+                    )
+                else:
+                    # No remote id yet — the first submit's response was lost;
+                    # re-submit to (re)create the task and learn its id.
+                    await self._resubmit_awaiting_remote(
+                        exec_context, run, target_service
+                    )
             else:
                 await self._submit_pollable_delegation(
                     exec_context, run, target_service
@@ -1055,27 +1066,28 @@ class TaskWorker:
     ) -> None:
         """Submit a queued run to a remote (pollable) target and hand off to poll.
 
-        Pre-generates the remote task id and claims ``queued -> awaiting_remote``
-        with it BEFORE submitting, so a crash any time after the claim is
-        recoverable: the run already carries the id (the remote task is never
-        orphaned), the ``awaiting_remote`` retry-guard prevents a duplicate
-        submit, and a poll re-attaches (or the reaper cancels + fails past the
-        cap). Finalizes inline if a synchronous remote returned a terminal task
-        on submit.
+        Claims ``queued -> awaiting_remote`` (with a NULL remote task id, since
+        the remote assigns the id) BEFORE submitting, so the retry-guard prevents
+        a duplicate concurrent submit and the wall-clock cap starts. Per A2A spec
+        §3.4.2 the submit carries no client task id; the remote-assigned id from
+        the response is reconciled into the run. A submit whose response is lost
+        leaves the run ``awaiting_remote`` with a NULL id, which the next poll
+        recovers by re-submitting. Finalizes inline if a synchronous remote
+        returned a terminal task on submit.
         """
         delegation_id = run["delegation_id"]
         clock = exec_context.clock or self.clock
         content_parts = cast("list[ContentPartDict]", run["content_parts_json"])
 
-        remote_task_id = f"a2a-{uuid.uuid4().hex}"
         remote_context_id = target_service.remote_context_id(
             run["conversation_id"], run["subconversation_id"]
         )
-        # Claim queued -> awaiting_remote WITH the pre-generated id before submit.
+        # Claim queued -> awaiting_remote (NULL id) before submit; the real id is
+        # reconciled from the submit response in _after_submission.
         async with exec_context.db_context.create_isolated_context() as isolated_db:
             awaiting = await isolated_db.delegation_runs.mark_awaiting_remote(
                 delegation_id,
-                remote_task_id=remote_task_id,
+                remote_task_id=None,
                 remote_context_id=remote_context_id,
                 started_at=clock.now(),
             )
@@ -1094,7 +1106,6 @@ class TaskWorker:
                 content_parts,
                 conversation_id=run["conversation_id"],
                 subconversation_id=run["subconversation_id"],
-                task_id=remote_task_id,
             )
         except Exception as exc:
             await self._handle_submit_failure(
@@ -1102,9 +1113,7 @@ class TaskWorker:
             )
             return
 
-        await self._after_submission(
-            exec_context, awaiting, target_service, submission, remote_task_id
-        )
+        await self._after_submission(exec_context, awaiting, target_service, submission)
 
     async def _handle_submit_failure(
         self,
@@ -1153,6 +1162,40 @@ class TaskWorker:
             error="".join(traceback.format_exception(exc)),
         )
 
+    async def _resubmit_with_backoff(
+        self,
+        exec_context: ToolExecutionContext,
+        run: DelegationRunDict,
+        target_service: PollableDelegationService,
+        clock: Clock,
+        reason: str,
+    ) -> None:
+        """Re-submit an ``awaiting_remote`` run, paced with poll backoff.
+
+        Shared by the poll handler's lost-response (NULL id) and not-found
+        branches: bump the attempt counter so repeated recoveries back off
+        instead of spinning at the flat base interval, then re-submit (which
+        reconciles the new remote id and reschedules a poll).
+        """
+        delegation_id = run["delegation_id"]
+        # Bump in its own committed transaction so the delegation_runs row lock is
+        # released before the re-submit's reconcile (update_remote_task) touches
+        # the same row from a separate isolated context — otherwise the two
+        # contend on the row and block on PostgreSQL.
+        async with exec_context.db_context.create_isolated_context() as isolated_db:
+            attempts = await isolated_db.delegation_runs.bump_poll_attempt(
+                delegation_id, clock.now()
+            )
+        logger.warning("Re-submitting remote delegation %s: %s.", delegation_id, reason)
+        await self._resubmit_awaiting_remote(
+            exec_context,
+            run,
+            target_service,
+            poll_delay_seconds=_delegation_poll_backoff(
+                attempts or 1, _poll_interval_for(target_service)
+            ),
+        )
+
     async def _resubmit_awaiting_remote(
         self,
         exec_context: ToolExecutionContext,
@@ -1161,31 +1204,23 @@ class TaskWorker:
         *,
         poll_delay_seconds: float | None = None,
     ) -> None:
-        """Idempotently re-submit an ``awaiting_remote`` run on a retry.
+        """Re-submit an ``awaiting_remote`` run, creating a fresh remote task.
 
-        Recovers a crash that happened after the run was claimed but before the
-        first submit reached the remote. The remote task id is stable and the
-        server is idempotent on it, so this either creates the task (recovery) or
-        returns its current state — never a duplicate. ``poll_delay_seconds``
+        Recovers a run whose submit response was lost (NULL id) or whose remote
+        task the remote no longer has (poll returned not-found). Per A2A spec
+        §3.4.2 the re-submit carries no client task id, so the remote assigns a
+        new id which is reconciled in. This abandons any orphaned earlier task
+        and is the accepted narrow duplicate-on-recovery window (a remote that
+        actually created a task from a lost-response submit). ``poll_delay_seconds``
         overrides the next poll's delay (used to apply backoff on a not-found
         re-submit).
         """
-        delegation_id = run["delegation_id"]
-        remote_task_id = run["remote_task_id"]
-        if not remote_task_id:
-            await self._fail_delegation_run(
-                exec_context,
-                delegation_id=delegation_id,
-                error="Awaiting-remote delegation run is missing its remote task id.",
-            )
-            return
         content_parts = cast("list[ContentPartDict]", run["content_parts_json"])
         try:
             submission = await target_service.submit_async(
                 content_parts,
                 conversation_id=run["conversation_id"],
                 subconversation_id=run["subconversation_id"],
-                task_id=remote_task_id,
             )
         except Exception as exc:
             await self._handle_submit_failure(
@@ -1201,7 +1236,6 @@ class TaskWorker:
             run,
             target_service,
             submission,
-            remote_task_id,
             poll_delay_seconds=poll_delay_seconds,
         )
 
@@ -1211,20 +1245,19 @@ class TaskWorker:
         run: DelegationRunDict,
         target_service: PollableDelegationService,
         submission: RemoteSubmission,
-        expected_task_id: str,
         *,
         poll_delay_seconds: float | None = None,
     ) -> None:
-        """Record the real remote id, then finalize inline or enqueue the poll.
+        """Record the remote-assigned id, then finalize inline or enqueue a poll.
 
         ``poll_delay_seconds`` overrides the next poll's delay; it lets a
         not-found re-submit reschedule with backoff instead of the flat base
         interval used after a first submit.
         """
         delegation_id = run["delegation_id"]
-        if submission.remote_task_id != expected_task_id:
-            # The remote did not honor our supplied task id; record the actual
-            # one so polling/cancel target the right task.
+        # Persist the remote-assigned id (the run was claimed with a NULL id, or
+        # a re-submit produced a new one) so polling/cancel target the real task.
+        if submission.remote_task_id != run["remote_task_id"]:
             async with exec_context.db_context.create_isolated_context() as isolated_db:
                 await isolated_db.delegation_runs.update_remote_task(
                     delegation_id,
@@ -1320,19 +1353,12 @@ class TaskWorker:
             )
             return
 
-        remote_task_id = run["remote_task_id"]
-        if not remote_task_id:
-            await self._fail_delegation_run(
-                exec_context,
-                delegation_id=delegation_id,
-                error="Awaiting-remote delegation run is missing its remote task id.",
-            )
-            return
-
         max_async_seconds = _max_async_for(target_service)
         started_at = _as_aware_utc(run["started_at"] or run["created_at"])
         if clock.now() - started_at > timedelta(seconds=max_async_seconds):
-            await target_service.cancel_async(remote_task_id)
+            remote_task_id = run["remote_task_id"]
+            if remote_task_id:
+                await target_service.cancel_async(remote_task_id)
             await self._fail_delegation_run(
                 exec_context,
                 delegation_id=delegation_id,
@@ -1343,33 +1369,35 @@ class TaskWorker:
             )
             return
 
+        remote_task_id = run["remote_task_id"]
+        if not remote_task_id:
+            # No remote id yet: the first submit's response was lost (we never
+            # learned the remote-assigned id). Re-submit to (re)create the task
+            # and learn its id rather than failing — bounded by the cap above.
+            await self._resubmit_with_backoff(
+                exec_context,
+                run,
+                target_service,
+                clock,
+                "its submit response was lost (no remote task id)",
+            )
+            return
+
         try:
             result = await target_service.poll_async(
                 remote_task_id, run["remote_context_id"]
             )
         except A2ATaskNotFoundError:
-            # The remote has no such task. This is reachable when the original
-            # message/send failed transiently and never landed (so the task was
-            # never created), or the remote lost it. Re-submit idempotently with
-            # the stored id to (re)create it rather than failing — the wall-clock
-            # cap above bounds this if the remote stays unreachable. Bump the
-            # attempt counter and reschedule with backoff so a remote that keeps
-            # returning not-found does not spin at the flat base interval.
-            attempts = await exec_context.db_context.delegation_runs.bump_poll_attempt(
-                delegation_id, clock.now()
-            )
-            logger.warning(
-                "Remote delegation %s reports its task is not found; re-submitting.",
-                delegation_id,
-                exc_info=True,
-            )
-            await self._resubmit_awaiting_remote(
+            # The remote has no such task — it lost the task (e.g. a restart).
+            # Re-submit to recreate it (a new remote-assigned id is reconciled
+            # in) rather than failing; the wall-clock cap above bounds this if
+            # the remote stays unreachable.
+            await self._resubmit_with_backoff(
                 exec_context,
                 run,
                 target_service,
-                poll_delay_seconds=_delegation_poll_backoff(
-                    attempts or 1, _poll_interval_for(target_service)
-                ),
+                clock,
+                "the remote reports its task is not found",
             )
             return
         except A2APermanentError:
@@ -1532,7 +1560,15 @@ class TaskWorker:
             )
             started_at = _as_aware_utc(run["started_at"] or run["created_at"])
             if now - started_at <= timedelta(seconds=cap_seconds):
-                if run["delegation_id"] not in polled_ids:
+                # Only re-attach runs that already have a remote id (a genuinely
+                # lost poll). A NULL-id run is either still mid-first-submit or
+                # crashed before the submit landed; re-enqueuing a poll for it
+                # would re-submit and race the in-flight submit into a duplicate
+                # remote task. Those are recovered instead by the durable
+                # delegated_profile_run task's own retry (which re-submits a
+                # NULL-id run), and a genuinely stuck one is failed by the
+                # past-cap branch below.
+                if run["remote_task_id"] and run["delegation_id"] not in polled_ids:
                     logger.warning(
                         "Re-enqueuing a lost poll for awaiting_remote delegation %s.",
                         run["delegation_id"],

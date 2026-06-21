@@ -1354,11 +1354,19 @@ class FakePollableService:
         # the first submit fail and a later re-submit land; falls back to the
         # single submit_error (applied to every call) when not provided.
         self._submit_errors = list(submit_errors) if submit_errors is not None else None
-        self.submitted: list[tuple[str, str | None, str]] = []
+        self._next_task_seq = 1
+        # Each entry is conversation_id, subconversation_id, assigned_id. The
+        # assigned_id is None for a submit that raised before the remote
+        # assigned an id.
+        self.submitted: list[tuple[str, str | None, str | None]] = []
         self.cancelled: list[str] = []
         self.inline_calls = 0
 
-    async def handle_chat_interaction(self, **kwargs: Any) -> ChatInteractionResult:  # noqa: ANN401
+    async def handle_chat_interaction(self, **kwargs: object) -> ChatInteractionResult:
+        # A pollable target is always driven through submit_async/poll_async; the
+        # kwargs are never inspected here, so object (not Any) types them and the
+        # method just records the (forbidden) inline call.
+        _ = kwargs
         self.inline_calls += 1
         raise AssertionError("a pollable target must not run inline")
 
@@ -1373,18 +1381,22 @@ class FakePollableService:
         *,
         conversation_id: str,
         subconversation_id: str | None,
-        task_id: str,
     ) -> RemoteSubmission:
         _ = content_parts
-        self.submitted.append((conversation_id, subconversation_id, task_id))
         error = self._submit_error
         if self._submit_errors is not None:
             error = self._submit_errors.pop(0) if self._submit_errors else None
         if error is not None:
+            # Record the failed attempt too, so tests can count submit calls.
+            self.submitted.append((conversation_id, subconversation_id, None))
             raise error
-        # Echo the caller-supplied task id, as a real remote does.
+        # Per A2A spec the client sends no task id on create; the remote assigns
+        # one. Mint a fresh server-side id for each successful submit.
+        assigned_id = f"srv-{self._next_task_seq}"
+        self._next_task_seq += 1
+        self.submitted.append((conversation_id, subconversation_id, assigned_id))
         return RemoteSubmission(
-            remote_task_id=task_id,
+            remote_task_id=assigned_id,
             remote_context_id=self.remote_context_id(
                 conversation_id, subconversation_id
             ),
@@ -1463,24 +1475,27 @@ async def test_pollable_delegation_submits_and_enqueues_poll(
 
     assert len(target.submitted) == 1
     assert target.inline_calls == 0
-    # The worker pre-generates the remote task id, persists it, then submits
-    # with it — so the stored id and the id passed to submit_async match.
-    submitted_task_id = target.submitted[0][2]
-    assert submitted_task_id.startswith("a2a-")
+    # The worker submits without a client task id (A2A spec §3.4.2); the remote
+    # assigns one, which the worker reconciles into the run for polling.
+    assigned_task_id = target.submitted[0][2]
+    assert assigned_task_id is not None
     async with DatabaseContext(engine=db_engine) as db_context:
         run = await db_context.delegation_runs.get_by_delegation_id(delegation_id)
         assert run is not None
         assert run["status"] == "awaiting_remote"
-        assert run["remote_task_id"] == submitted_task_id
+        assert run["remote_task_id"] == assigned_task_id
         polls = await db_context.tasks.get_all(task_type="delegation_poll")
         assert len(polls) == 1
     chat_interface.send_message.assert_not_awaited()
 
 
 @pytest.mark.asyncio
-async def test_pollable_delegation_retry_resubmits_idempotently(
+async def test_pollable_delegation_retry_reattaches_without_duplicate_submit(
     db_engine: AsyncEngine,
 ) -> None:
+    # A delegated_profile_run retry of an awaiting_remote run that already learned
+    # its remote id re-attaches by enqueuing a poll, NOT by re-submitting (which
+    # would create a duplicate remote task).
     target = FakePollableService()
     processing_service = _source_processing_service(
         cast("FakeDelegatableService", target)
@@ -1498,21 +1513,66 @@ async def test_pollable_delegation_retry_resubmits_idempotently(
             _delegation_payload(delegation_id),
         )
     assert len(target.submitted) == 1
+    async with DatabaseContext(engine=db_engine) as db_context:
+        run = await db_context.delegation_runs.get_by_delegation_id(delegation_id)
+        assert run is not None
+        stored_id = run["remote_task_id"]
+        assert stored_id is not None
 
-    # A delegated_profile_run retry of an awaiting_remote run re-submits with the
-    # same (stored) remote task id — recovering a crash before the first submit
-    # reached the remote — rather than only polling.
     async with DatabaseContext(engine=db_engine) as db_context:
         await worker.handle_delegated_profile_run(
             _tool_context(db_context, processing_service, chat_interface),
             _delegation_payload(delegation_id),
         )
-    assert len(target.submitted) == 2
-    assert target.submitted[0][2] == target.submitted[1][2]
+    # No second submit: the retry re-attached via a poll, keeping the same id.
+    assert len(target.submitted) == 1
     async with DatabaseContext(engine=db_engine) as db_context:
         run = await db_context.delegation_runs.get_by_delegation_id(delegation_id)
         assert run is not None
         assert run["status"] == "awaiting_remote"
+        assert run["remote_task_id"] == stored_id
+        polls = await db_context.tasks.get_all(task_type="delegation_poll")
+        assert len(polls) >= 1
+
+
+@pytest.mark.asyncio
+async def test_pollable_delegation_retry_resubmits_when_id_unknown(
+    db_engine: AsyncEngine,
+) -> None:
+    # A retry of an awaiting_remote run whose submit response was lost (NULL
+    # remote id) re-submits to (re)create the task and learn its id.
+    target = FakePollableService()
+    processing_service = _source_processing_service(
+        cast("FakeDelegatableService", target)
+    )
+    chat_interface = AsyncMock(spec=ChatInterface)
+    chat_interface.send_message.return_value = "external_message_id"
+
+    delegation_id = await _start_background_delegation(
+        db_engine, processing_service, chat_interface
+    )
+    # Claim awaiting_remote with a NULL id (the submit response was never seen).
+    async with DatabaseContext(engine=db_engine) as db_context:
+        await db_context.delegation_runs.mark_awaiting_remote(
+            delegation_id,
+            remote_task_id=None,
+            remote_context_id=None,
+            started_at=SystemClock().now(),
+        )
+
+    worker = _build_worker(db_engine, processing_service, chat_interface)
+    async with DatabaseContext(engine=db_engine) as db_context:
+        await worker.handle_delegated_profile_run(
+            _tool_context(db_context, processing_service, chat_interface),
+            _delegation_payload(delegation_id),
+        )
+    # The retry re-submitted and reconciled the remote-assigned id.
+    assert len(target.submitted) == 1
+    async with DatabaseContext(engine=db_engine) as db_context:
+        run = await db_context.delegation_runs.get_by_delegation_id(delegation_id)
+        assert run is not None
+        assert run["status"] == "awaiting_remote"
+        assert run["remote_task_id"] == target.submitted[0][2]
 
 
 @pytest.mark.asyncio
@@ -1620,6 +1680,50 @@ async def test_cleanup_reenqueues_lost_poll_for_young_run(
         run = await db_context.delegation_runs.get_by_delegation_id(delegation_id)
         assert run is not None
         assert run["status"] == "awaiting_remote"
+    chat_interface.send_message.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_cleanup_does_not_reenqueue_poll_for_null_id_run(
+    db_engine: AsyncEngine,
+) -> None:
+    # A young awaiting_remote run with a NULL remote id is mid-first-submit (or
+    # crashed before it landed); the reaper must NOT re-enqueue a poll for it,
+    # which would re-submit and race the in-flight submit into a duplicate remote
+    # task. Such runs are recovered by the delegated_profile_run task retry, not
+    # the reaper.
+    target = FakePollableService()
+    processing_service = _source_processing_service(
+        cast("FakeDelegatableService", target)
+    )
+    chat_interface = AsyncMock(spec=ChatInterface)
+    chat_interface.send_message.return_value = "external_message_id"
+
+    delegation_id = await _start_background_delegation(
+        db_engine, processing_service, chat_interface
+    )
+    async with DatabaseContext(engine=db_engine) as db_context:
+        await db_context.delegation_runs.mark_awaiting_remote(
+            delegation_id,
+            remote_task_id=None,
+            remote_context_id=None,
+            started_at=SystemClock().now(),
+        )
+
+    worker = _build_worker(db_engine, processing_service, chat_interface)
+    async with DatabaseContext(engine=db_engine) as db_context:
+        await worker.handle_delegation_run_cleanup(
+            _tool_context(db_context, processing_service, chat_interface),
+            {},
+        )
+
+    async with DatabaseContext(engine=db_engine) as db_context:
+        polls = await db_context.tasks.get_all(task_type="delegation_poll")
+        assert polls == []
+        run = await db_context.delegation_runs.get_by_delegation_id(delegation_id)
+        assert run is not None
+        assert run["status"] == "awaiting_remote"
+    assert target.submitted == []
     chat_interface.send_message.assert_not_awaited()
 
 
@@ -1838,9 +1942,9 @@ async def test_pollable_delegation_poll_permanent_error_fails_fast(
 async def test_pollable_delegation_poll_not_found_resubmits(
     db_engine: AsyncEngine,
 ) -> None:
-    # The remote reports its task is not found (the original submit may never have
-    # landed, or the remote lost it). Rather than failing, the worker re-submits
-    # idempotently with the stored id to (re)create the task and keeps polling.
+    # The remote reports its task is not found (it lost the task, e.g. a restart).
+    # Rather than failing, the worker re-submits (no client id; the remote assigns
+    # a fresh one), reconciles the new id, and keeps polling.
     target = FakePollableService(poll_results=[A2ATaskNotFoundError("task not found")])
     processing_service = _source_processing_service(
         cast("FakeDelegatableService", target)
@@ -1858,7 +1962,7 @@ async def test_pollable_delegation_poll_not_found_resubmits(
             _delegation_payload(delegation_id),
         )
     assert len(target.submitted) == 1
-    stored_task_id = target.submitted[0][2]
+    first_task_id = target.submitted[0][2]
 
     async with DatabaseContext(engine=db_engine) as db_context:
         await worker.handle_delegation_poll(
@@ -1868,13 +1972,17 @@ async def test_pollable_delegation_poll_not_found_resubmits(
         run = await db_context.delegation_runs.get_by_delegation_id(delegation_id)
         assert run is not None
         assert run["status"] == "awaiting_remote"
-    # The poll re-submitted with the same (stored) remote task id, then enqueued
-    # a fresh poll — it did not fail the run.
+    # The poll re-submitted (creating a fresh remote task with a new id) and
+    # enqueued another poll — it did not fail the run.
     assert len(target.submitted) == 2
-    assert target.submitted[1][2] == stored_task_id
+    new_task_id = target.submitted[1][2]
+    assert new_task_id is not None
+    assert new_task_id != first_task_id
     async with DatabaseContext(engine=db_engine) as db_context:
-        # The re-submit scheduled a fresh poll, so polling continues rather than
-        # the run being failed.
+        run = await db_context.delegation_runs.get_by_delegation_id(delegation_id)
+        assert run is not None
+        # The run reconciled the newly-assigned remote id.
+        assert run["remote_task_id"] == new_task_id
         polls = await db_context.tasks.get_all(task_type="delegation_poll")
         assert len(polls) >= 1
     chat_interface.send_message.assert_not_awaited()
@@ -1884,15 +1992,14 @@ async def test_pollable_delegation_poll_not_found_resubmits(
 async def test_pollable_delegation_recovers_when_submit_never_landed(
     db_engine: AsyncEngine,
 ) -> None:
-    # The full recovery chain Codex flagged: the original message/send fails
-    # transiently before it reaches the remote (so the task is never created).
-    # The scheduled poll finds it not-found and re-submits; the re-submit lands
-    # and the run polls through to completion — a momentary outage during submit
-    # must not become a permanent failure.
+    # The full recovery chain Codex flagged: the first message/send fails
+    # transiently, so the run is awaiting_remote with no remote id yet. The
+    # scheduled poll sees the NULL id and re-submits; the re-submit lands and the
+    # run polls through to completion — a momentary outage during submit must not
+    # become a permanent failure.
     target = FakePollableService(
         submit_errors=[A2AClientError("connection reset"), None],
         poll_results=[
-            A2ATaskNotFoundError("task not found"),
             ChatInteractionResult.success(text_reply="recovered after resubmit"),
         ],
     )
@@ -1906,7 +2013,7 @@ async def test_pollable_delegation_recovers_when_submit_never_landed(
         db_engine, processing_service, chat_interface
     )
     worker = _build_worker(db_engine, processing_service, chat_interface)
-    # Submit fails transiently -> awaiting_remote + poll enqueued (not failed).
+    # Submit fails transiently -> awaiting_remote (NULL id) + poll enqueued.
     async with DatabaseContext(engine=db_engine) as db_context:
         await worker.handle_delegated_profile_run(
             _tool_context(db_context, processing_service, chat_interface),
@@ -1915,10 +2022,10 @@ async def test_pollable_delegation_recovers_when_submit_never_landed(
         run = await db_context.delegation_runs.get_by_delegation_id(delegation_id)
         assert run is not None
         assert run["status"] == "awaiting_remote"
+        assert run["remote_task_id"] is None
     assert len(target.submitted) == 1
-    stored_task_id = target.submitted[0][2]
 
-    # Poll finds the task missing -> re-submit (now lands) -> still working.
+    # Poll sees the NULL id -> re-submit (now lands) -> reconcile id -> working.
     async with DatabaseContext(engine=db_engine) as db_context:
         await worker.handle_delegation_poll(
             _tool_context(db_context, processing_service, chat_interface),
@@ -1927,8 +2034,8 @@ async def test_pollable_delegation_recovers_when_submit_never_landed(
         run = await db_context.delegation_runs.get_by_delegation_id(delegation_id)
         assert run is not None
         assert run["status"] == "awaiting_remote"
+        assert run["remote_task_id"] == target.submitted[1][2]
     assert len(target.submitted) == 2
-    assert target.submitted[1][2] == stored_task_id
     chat_interface.send_message.assert_not_awaited()
 
     # Next poll: the recreated task is terminal -> finalize and notify.

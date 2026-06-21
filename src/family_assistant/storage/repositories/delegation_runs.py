@@ -179,20 +179,22 @@ class DelegationRunsRepository(BaseRepository):
         self,
         delegation_id: str,
         *,
-        remote_task_id: str,
+        remote_task_id: str | None,
         remote_context_id: str | None,
         started_at: datetime,
     ) -> DelegationRunDict | None:
         """Claim a ``queued`` run as ``awaiting_remote`` and store remote IDs.
 
-        The submit-then-poll A2A path pre-generates the remote task id and calls
-        this BEFORE submitting, so a crash any time after the claim is
-        recoverable: the run already carries the id (no orphaned remote task),
-        the ``awaiting_remote`` retry-guard prevents a duplicate submit, and a
-        poll re-attaches (or the reaper cancels + fails past the cap).
-        Conditioned on the row still being ``queued`` so a reaped or
-        sibling-claimed run is not resurrected. Returns ``None`` when the row is
-        no longer ``queued`` or is absent.
+        The submit-then-poll A2A path calls this BEFORE submitting (so the
+        ``awaiting_remote`` retry-guard prevents a duplicate concurrent submit
+        and the wall-clock cap starts), with ``remote_task_id=None`` because the
+        remote assigns the id and the caller only learns it from the submit
+        response (then reconciles it via :meth:`update_remote_task`). A run left
+        ``awaiting_remote`` with a NULL id — a submit whose response was lost —
+        is recovered by re-submitting on the next poll. Conditioned on the row
+        still being ``queued`` so a reaped or sibling-claimed run is not
+        resurrected. Returns ``None`` when the row is no longer ``queued`` or is
+        absent.
         """
         stmt = (
             update(delegation_runs_table)
@@ -220,10 +222,11 @@ class DelegationRunsRepository(BaseRepository):
         remote_task_id: str,
         remote_context_id: str | None,
     ) -> DelegationRunDict | None:
-        """Record the actual remote task id once known.
+        """Record the remote-assigned task id once the submit response is known.
 
-        Used when a remote did not honor the caller-supplied (pre-generated)
-        task id, so polling and cancellation target the real task.
+        The submit path claims ``awaiting_remote`` with a NULL id, then calls
+        this with the id the remote assigned so polling and cancellation target
+        the real task.
         """
         return await self._update_run(
             delegation_id,

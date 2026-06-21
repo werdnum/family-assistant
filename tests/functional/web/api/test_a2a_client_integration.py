@@ -320,9 +320,9 @@ class TestRemoteA2AServiceAsync:
             [text_content("go")],
             conversation_id="conv-async",
             subconversation_id="sub-async",
-            task_id="a2a-async-1",
         )
-        assert submission.remote_task_id == "a2a-async-1"
+        # The client sends no task id (A2A §3.4.2); the server assigns one.
+        assert submission.remote_task_id
         # The async server returns a non-terminal task, so no inline result yet.
         assert submission.terminal_result is None
 
@@ -356,7 +356,6 @@ class TestRemoteA2AServiceAsync:
             [text_content("slow")],
             conversation_id="conv-pending",
             subconversation_id=None,
-            task_id="a2a-pending-1",
         )
         pending = await remote_service.poll_async(
             submission.remote_task_id, submission.remote_context_id
@@ -403,7 +402,6 @@ class TestRemoteA2AServiceAsync:
             [text_content("slow")],
             conversation_id="conv-cancel",
             subconversation_id=None,
-            task_id="a2a-cancel-1",
         )
         await remote_service.cancel_async(submission.remote_task_id)
 

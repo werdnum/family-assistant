@@ -106,8 +106,14 @@ class PollableDelegationService(Protocol):
         *,
         conversation_id: str,
         subconversation_id: str | None,
-        task_id: str,
-    ) -> RemoteSubmission: ...
+    ) -> RemoteSubmission:
+        """Submit without a client-supplied task id; the remote assigns one.
+
+        Per A2A spec §3.4.2 a client must not supply a task id when creating a
+        task, so the returned :class:`RemoteSubmission` carries the remote's
+        assigned id for the caller to persist and poll.
+        """
+        ...
 
     async def poll_async(
         self,

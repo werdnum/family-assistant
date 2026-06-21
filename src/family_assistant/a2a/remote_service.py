@@ -116,27 +116,23 @@ class RemoteA2AService:
         *,
         conversation_id: str,
         subconversation_id: str | None,
-        task_id: str,
     ) -> RemoteSubmission:
-        """Submit to the remote agent without blocking, using a caller-supplied id.
+        """Submit to the remote agent without blocking; the remote assigns the id.
 
-        The caller pre-generates and persists ``task_id`` before calling this, so
-        a crash mid-submit cannot orphan the remote task. If the remote returned
-        a terminal task on submit (a synchronous agent that ignored
-        ``blocking=false``), the converted result is returned in
-        ``terminal_result`` so the caller can complete without polling.
+        Per A2A spec §3.4.2 a client must not supply a task id when creating a
+        task (a supplied id must reference an existing one), so this sends no
+        task id and returns the remote-assigned id for the caller to persist and
+        poll. If the remote returned a terminal task on submit (a synchronous
+        agent that ignored ``blocking=false``), the converted result is returned
+        in ``terminal_result`` so the caller can complete without polling.
         """
         context_id = self._context_id(conversation_id, subconversation_id)
         logger.info(
-            "Submitting async request to remote A2A agent '%s' (context_id=%s, "
-            "task_id=%s)",
+            "Submitting async request to remote A2A agent '%s' (context_id=%s)",
             self._service_config.id,
             context_id,
-            task_id,
         )
-        task = await self._client.submit(
-            content_parts, context_id=context_id, task_id=task_id
-        )
+        task = await self._client.submit(content_parts, context_id=context_id)
         terminal_result = None if _is_pending(task) else a2a_task_to_chat_result(task)
         return RemoteSubmission(
             remote_task_id=task.id,
