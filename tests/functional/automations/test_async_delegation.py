@@ -1855,6 +1855,91 @@ async def test_reap_stale_awaiting_remote_cancels_and_fails(
 
 
 @pytest.mark.asyncio
+async def test_late_poll_past_cap_delivers_terminal_result(
+    db_engine: AsyncEngine,
+) -> None:
+    # A poll that fires after the cap (backoff / scheduler delay) but finds the
+    # remote already terminal must DELIVER the result, not fail it as a timeout:
+    # the task may have finished just before the cap.
+    target = FakePollableService(
+        poll_results=[ChatInteractionResult.success(text_reply="finished just in time")]
+    )
+    processing_service = _source_processing_service(
+        cast("FakeDelegatableService", target)
+    )
+    chat_interface = AsyncMock(spec=ChatInterface)
+    chat_interface.send_message.return_value = "external_message_id"
+
+    delegation_id = await _start_background_delegation(
+        db_engine, processing_service, chat_interface
+    )
+    worker = _build_worker(db_engine, processing_service, chat_interface)
+    async with DatabaseContext(engine=db_engine) as db_context:
+        await worker.handle_delegated_profile_run(
+            _tool_context(db_context, processing_service, chat_interface),
+            _delegation_payload(delegation_id),
+        )
+        # Age the run past the cap so the poll fires "late".
+        await db_context.execute_with_retry(
+            update(delegation_runs_table)
+            .where(delegation_runs_table.c.delegation_id == delegation_id)
+            .values(started_at=SystemClock().now() - timedelta(hours=2))
+        )
+
+    async with DatabaseContext(engine=db_engine) as db_context:
+        await worker.handle_delegation_poll(
+            _tool_context(db_context, processing_service, chat_interface),
+            _delegation_payload(delegation_id),
+        )
+        run = await db_context.delegation_runs.get_by_delegation_id(delegation_id)
+        assert run is not None
+        assert run["status"] == "completed"
+        assert run["result_text"] == "finished just in time"
+    # The terminal task was delivered, not cancelled.
+    assert target.cancelled == []
+    chat_interface.send_message.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_late_poll_past_cap_cancels_when_still_pending(
+    db_engine: AsyncEngine,
+) -> None:
+    # A poll past the cap that finds the remote STILL pending cancels + fails it.
+    target = FakePollableService(poll_results=[PENDING])
+    processing_service = _source_processing_service(
+        cast("FakeDelegatableService", target)
+    )
+    chat_interface = AsyncMock(spec=ChatInterface)
+    chat_interface.send_message.return_value = "external_message_id"
+
+    delegation_id = await _start_background_delegation(
+        db_engine, processing_service, chat_interface
+    )
+    worker = _build_worker(db_engine, processing_service, chat_interface)
+    async with DatabaseContext(engine=db_engine) as db_context:
+        await worker.handle_delegated_profile_run(
+            _tool_context(db_context, processing_service, chat_interface),
+            _delegation_payload(delegation_id),
+        )
+        await db_context.execute_with_retry(
+            update(delegation_runs_table)
+            .where(delegation_runs_table.c.delegation_id == delegation_id)
+            .values(started_at=SystemClock().now() - timedelta(hours=2))
+        )
+
+    async with DatabaseContext(engine=db_engine) as db_context:
+        await worker.handle_delegation_poll(
+            _tool_context(db_context, processing_service, chat_interface),
+            _delegation_payload(delegation_id),
+        )
+        run = await db_context.delegation_runs.get_by_delegation_id(delegation_id)
+        assert run is not None
+        assert run["status"] == "failed"
+    assert target.cancelled == [target.submitted[0][2]]
+    chat_interface.send_message.assert_awaited_once()
+
+
+@pytest.mark.asyncio
 async def test_pollable_delegation_poll_transient_error_reschedules(
     db_engine: AsyncEngine,
 ) -> None:

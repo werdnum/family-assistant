@@ -1312,10 +1312,13 @@ class TaskWorker:
     ) -> None:
         """Poll an awaiting_remote delegation once; reschedule or finalize.
 
-        One ``tasks/get`` against the remote: still pending -> reschedule with
-        backoff (or give up + cancel + fail once past the wall-clock cap);
-        terminal -> finalize and notify. Holds a worker only for the single
-        poll, never for the whole remote run.
+        One ``tasks/get`` against the remote: terminal -> finalize and notify;
+        still pending -> reschedule with backoff, or give up + cancel + fail once
+        past the wall-clock cap. The cap is enforced only AFTER polling and only
+        for a still-pending task, so a remote that finished just before a late
+        poll (backoff/scheduler delay can push a poll past the cap) still
+        delivers its result instead of being failed as a timeout. Holds a worker
+        only for the single poll, never for the whole remote run.
         """
         delegation_id = payload.get("delegation_id")
         if not delegation_id:
@@ -1355,25 +1358,23 @@ class TaskWorker:
 
         max_async_seconds = _max_async_for(target_service)
         started_at = _as_aware_utc(run["started_at"] or run["created_at"])
-        if clock.now() - started_at > timedelta(seconds=max_async_seconds):
-            remote_task_id = run["remote_task_id"]
-            if remote_task_id:
-                await target_service.cancel_async(remote_task_id)
-            await self._fail_delegation_run(
-                exec_context,
-                delegation_id=delegation_id,
-                error=(
-                    "The remote profile did not finish within the allowed time "
-                    f"({max_async_seconds:.0f}s) and was cancelled."
-                ),
-            )
-            return
+        past_cap = clock.now() - started_at > timedelta(seconds=max_async_seconds)
+        timed_out_error = (
+            "The remote profile did not finish within the allowed time "
+            f"({max_async_seconds:.0f}s)."
+        )
 
         remote_task_id = run["remote_task_id"]
         if not remote_task_id:
             # No remote id yet: the first submit's response was lost (we never
-            # learned the remote-assigned id). Re-submit to (re)create the task
-            # and learn its id rather than failing — bounded by the cap above.
+            # learned the remote-assigned id). Within the cap, re-submit to
+            # (re)create the task and learn its id; past the cap there is nothing
+            # to poll, so give up.
+            if past_cap:
+                await self._fail_delegation_run(
+                    exec_context, delegation_id=delegation_id, error=timed_out_error
+                )
+                return
             await self._resubmit_with_backoff(
                 exec_context,
                 run,
@@ -1383,15 +1384,24 @@ class TaskWorker:
             )
             return
 
+        # Poll once even when past the cap: the remote may have finished just
+        # before this (late) poll fired, and a completed result must be delivered
+        # rather than discarded as a timeout. The cap is enforced below, only for
+        # a still-pending result.
         try:
             result = await target_service.poll_async(
                 remote_task_id, run["remote_context_id"]
             )
         except A2ATaskNotFoundError:
             # The remote has no such task — it lost the task (e.g. a restart).
-            # Re-submit to recreate it (a new remote-assigned id is reconciled
-            # in) rather than failing; the wall-clock cap above bounds this if
-            # the remote stays unreachable.
+            # Within the cap, re-submit to recreate it (a new remote-assigned id
+            # is reconciled in); past the cap, give up rather than starting fresh
+            # remote work.
+            if past_cap:
+                await self._fail_delegation_run(
+                    exec_context, delegation_id=delegation_id, error=timed_out_error
+                )
+                return
             await self._resubmit_with_backoff(
                 exec_context,
                 run,
@@ -1438,6 +1448,19 @@ class TaskWorker:
             return
 
         if result is PENDING:
+            # Still not terminal: now enforce the wall-clock cap — only a pending
+            # task is cancelled and failed, never one that just finished above.
+            if past_cap:
+                await target_service.cancel_async(remote_task_id)
+                await self._fail_delegation_run(
+                    exec_context,
+                    delegation_id=delegation_id,
+                    error=(
+                        "The remote profile did not finish within the allowed "
+                        f"time ({max_async_seconds:.0f}s) and was cancelled."
+                    ),
+                )
+                return
             attempts = await exec_context.db_context.delegation_runs.bump_poll_attempt(
                 delegation_id, clock.now()
             )
