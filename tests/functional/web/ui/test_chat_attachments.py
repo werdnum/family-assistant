@@ -573,9 +573,9 @@ async def test_attachment_response_error_handling(
     # it raced the post-stream re-render and then fell back to the persisted error
     # message, which is not guaranteed to exist because the mid-stream failure can
     # prevent that error write from committing.
-    last_error_state: dict[str, Any] = {}
+    last_error_state: dict[str, object] = {}
 
-    async def invalid_attachment_error_signal() -> dict[str, Any] | None:
+    async def invalid_attachment_error_signal() -> dict[str, object] | None:
         tool_result_element = page.locator('[data-testid="tool-result"]')
         tool_result_texts: list[str] = []
         for i in range(await tool_result_element.count()):
