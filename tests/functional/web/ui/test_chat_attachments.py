@@ -503,9 +503,9 @@ async def test_attachment_response_error_handling(
                         type="function",
                         function=ToolCallFunction(
                             name="attach_to_response",
-                            arguments=json.dumps({
-                                "attachment_ids": [invalid_attachment_id]
-                            }),
+                            arguments=json.dumps(
+                                {"attachment_ids": [invalid_attachment_id]}
+                            ),
                         ),
                     )
                 ],
@@ -531,16 +531,10 @@ async def test_attachment_response_error_handling(
     )
 
     # Wait for the streaming interaction to finish before asserting the final DOM state.
-    # Invalid attachments can fail in multiple legitimate ways here:
-    # 1. A rendered tool error,
-    # 2. Rendered fallback previews marked "failed to load", or
-    # 3. An explicit error surfaced outside the tool UI.
     await chat_page.wait_for_streaming_complete(timeout=30000)
 
     tool_call_locator = page.locator('[data-ui="tool-call-content"]')
-    tool_call_count = await tool_call_locator.count()
-    tool_call_text = None
-    if tool_call_count > 0:
+    if await tool_call_locator.count() > 0:
         tool_call_element = tool_call_locator.first
         await tool_call_element.wait_for(state="attached", timeout=5000)
         tool_call_text = await tool_call_element.text_content(timeout=2000)
@@ -549,89 +543,118 @@ async def test_attachment_response_error_handling(
         )
         assert tool_call_text is not None and "Attachments" in tool_call_text
 
-    tool_result_element = page.locator('[data-testid="tool-result"]')
-    tool_result_count = await tool_result_element.count()
-    tool_result_texts = []
-    for i in range(tool_result_count):
-        tool_result_text = await tool_result_element.nth(i).text_content(timeout=2000)
-        if tool_result_text:
-            tool_result_texts.append(tool_result_text.lower())
-
-    error_found = any(
-        "error" in text or "failed" in text or "no valid attachments found" in text
-        for text in tool_result_texts
-    )
-
-    attachment_previews = page.locator('[data-testid="attachment-preview"]')
-    preview_count = await attachment_previews.count()
-    preview_texts = []
-    for i in range(preview_count):
-        preview_text = await attachment_previews.nth(i).text_content()
-        preview_texts.append((preview_text or "").lower())
-
-    previews_show_load_failure = preview_count > 0 and all(
-        "failed to load" in text for text in preview_texts
-    )
-
-    assistant_message_elements = page.locator(
-        '[data-testid="assistant-message-content"]'
-    )
-    assistant_message_count = await assistant_message_elements.count()
-    assistant_texts = []
-    for i in range(assistant_message_count):
-        assistant_text = await assistant_message_elements.nth(i).text_content()
-        assistant_texts.append((assistant_text or "").lower())
-
-    assistant_error_found = any(
-        "encountered an error" in text for text in assistant_texts
-    )
-
     conversation_id = await chat_page.get_current_conversation_id()
     assert conversation_id is not None, "Conversation ID should be available"
 
-    history_error_messages: list[ConversationHistoryMessage] = []
-    history_error_found = False
-
-    if not (error_found or previews_show_load_failure or assistant_error_found):
-
-        async def get_history_error_messages() -> list[ConversationHistoryMessage]:
-            response = await page.request.get(
-                f"{web_test_fixture.base_url}/api/v1/chat/conversations/{conversation_id}/messages?limit=0"
-            )
-            assert response.status == 200, (
-                f"Conversation messages API should succeed, got {response.status}"
-            )
-            data = await response.json()
-            return [
-                message
-                for message in data.get("messages", [])
-                if message.get("role") == "error"
-            ]
-
-        # Use a generous timeout consistent with the streaming waits above: the
-        # error message is persisted reliably, but under the heavy CPU
-        # contention of the full test run the persistence round-trip plus this
-        # extra API call can take well over a few seconds.
-        history_error_messages = await wait_for_condition(
-            get_history_error_messages,
-            timeout=30.0,
-            description="persisted conversation error message",
+    async def get_history_error_messages() -> list[ConversationHistoryMessage]:
+        response = await page.request.get(
+            f"{web_test_fixture.base_url}/api/v1/chat/conversations/{conversation_id}/messages?limit=0"
         )
-        history_error_found = True
+        assert response.status == 200, (
+            f"Conversation messages API should succeed, got {response.status}"
+        )
+        data = await response.json()
+        return [
+            message
+            for message in data.get("messages", [])
+            if message.get("role") == "error"
+        ]
 
-    assert (
-        error_found
-        or previews_show_load_failure
-        or assistant_error_found
-        or history_error_found
-    ), (
-        f"Expected invalid attachment UI state: error_found={error_found}, "
-        f"previews_show_load_failure={previews_show_load_failure}, "
-        f"assistant_error_found={assistant_error_found}, "
-        f"history_error_found={history_error_found}, preview_texts={preview_texts}, "
-        f"tool_result_texts={tool_result_texts}, assistant_texts={assistant_texts}, "
-        f"history_error_messages={history_error_messages}"
-    )
+    # Invalid attachments can legitimately surface as an error in several ways, and
+    # the error rendering lands asynchronously after the stream's error event is
+    # processed:
+    # 1. a tool error result,
+    # 2. fallback previews marked "failed to load",
+    # 3. an assistant "encountered an error" message, or
+    # 4. a persisted error-role history message.
+    # That rendering can lag wait_for_streaming_complete (especially under the heavy
+    # CPU contention of the full test run), so poll for any of these signals rather
+    # than taking a single snapshot. A one-shot snapshot was the historical flake:
+    # it raced the post-stream re-render and then fell back to the persisted error
+    # message, which is not guaranteed to exist because the mid-stream failure can
+    # prevent that error write from committing.
+    last_error_state: dict[str, Any] = {}
+
+    async def invalid_attachment_error_signal() -> dict[str, Any] | None:
+        tool_result_element = page.locator('[data-testid="tool-result"]')
+        tool_result_texts: list[str] = []
+        for i in range(await tool_result_element.count()):
+            tool_result_text = await tool_result_element.nth(i).text_content(
+                timeout=2000
+            )
+            if tool_result_text:
+                tool_result_texts.append(tool_result_text.lower())
+
+        attachment_previews = page.locator('[data-testid="attachment-preview"]')
+        preview_count = await attachment_previews.count()
+        preview_texts: list[str] = []
+        for i in range(preview_count):
+            preview_text = await attachment_previews.nth(i).text_content()
+            preview_texts.append((preview_text or "").lower())
+
+        assistant_message_elements = page.locator(
+            '[data-testid="assistant-message-content"]'
+        )
+        assistant_texts: list[str] = []
+        for i in range(await assistant_message_elements.count()):
+            assistant_text = await assistant_message_elements.nth(i).text_content()
+            assistant_texts.append((assistant_text or "").lower())
+
+        error_found = any(
+            "error" in text or "failed" in text or "no valid attachments found" in text
+            for text in tool_result_texts
+        )
+        previews_show_load_failure = preview_count > 0 and all(
+            "failed to load" in text for text in preview_texts
+        )
+        # The assistant surfaces a streaming error in two shapes depending on
+        # whether it had already produced text: a standalone "Sorry, I encountered
+        # an error ..." message, or an "An error also occurred during this response"
+        # suffix appended to the partial answer (see ChatApp handleStreamingComplete).
+        # The invalid-attachment turn produces the latter, so both phrasings must be
+        # recognised here.
+        assistant_error_found = any(
+            "encountered an error" in text or "an error also occurred" in text
+            for text in assistant_texts
+        )
+
+        # The persisted error message is only consulted when no inline signal is
+        # present yet, to avoid an API round-trip on every poll iteration.
+        history_error_messages: list[ConversationHistoryMessage] = []
+        if not (error_found or previews_show_load_failure or assistant_error_found):
+            history_error_messages = await get_history_error_messages()
+
+        last_error_state.update(
+            error_found=error_found,
+            previews_show_load_failure=previews_show_load_failure,
+            assistant_error_found=assistant_error_found,
+            history_error_found=bool(history_error_messages),
+            tool_result_texts=tool_result_texts,
+            preview_texts=preview_texts,
+            assistant_texts=assistant_texts,
+            history_error_messages=history_error_messages,
+        )
+
+        if (
+            error_found
+            or previews_show_load_failure
+            or assistant_error_found
+            or history_error_messages
+        ):
+            return last_error_state
+        return None
+
+    try:
+        await wait_for_condition(
+            invalid_attachment_error_signal,
+            timeout=30.0,
+            description="invalid attachment error signal",
+        )
+    except TimeoutError as exc:
+        raise AssertionError(
+            "Expected invalid attachment UI state but none appeared within 30s: "
+            f"{last_error_state}"
+        ) from exc
 
     print("Error handling test completed - invalid attachment handled appropriately")
 
