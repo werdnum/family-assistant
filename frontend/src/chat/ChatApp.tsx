@@ -418,7 +418,7 @@ const ChatApp: React.FC<ChatAppProps> = ({ profileId = 'default_assistant' }) =>
   const handleStreamingComplete = useCallback(
     ({
       content,
-      toolCalls: streamedToolCalls,
+      toolCalls: _toolCalls,
     }: {
       content: string;
       toolCalls: Array<Record<string, unknown>>;
@@ -427,37 +427,6 @@ const ChatApp: React.FC<ChatAppProps> = ({ profileId = 'default_assistant' }) =>
       const messageId = streamingMessageIdRef.current;
       const toolCallMessageId = toolCallMessageIdRef.current;
       const lastError = lastStreamingErrorRef.current;
-
-      // Reconstruct the tool-call parts from the authoritative list the streaming
-      // hook accumulated (every tool_call + tool_result event for this turn),
-      // rather than trusting whatever survived in the message's live content. A
-      // text delta streamed AFTER the tool result (e.g. a trailing acknowledgement
-      // token) can race the intermediate tool-call setState and drop the
-      // already-rendered tool from the message; rebuilding from the hook's list
-      // here guarantees the finalized message still shows the tool and its
-      // attachments. Falls back to any tool parts still on the message when the
-      // hook reported none.
-      const finalToolParts: MessageContent[] = (streamedToolCalls || []).map((tc) => {
-        const args = parseToolArguments(tc.arguments);
-        const part: MessageContent = {
-          type: 'tool-call' as const,
-          toolCallId: tc.id as string,
-          toolName: tc.name as string,
-          args: args as Record<string, unknown> | undefined,
-          argsText: typeof tc.arguments === 'string' ? tc.arguments : JSON.stringify(tc.arguments),
-        };
-        if (tc.result !== undefined) {
-          part.result = tc.result as string;
-        }
-        if (Array.isArray(tc.attachments)) {
-          part.attachments = [...(tc.attachments as Array<Record<string, unknown>>)];
-        }
-        return part;
-      });
-      const resolveToolParts = (msg: Message): MessageContent[] =>
-        finalToolParts.length > 0
-          ? finalToolParts
-          : (msg.content?.filter((part) => part.type === 'tool-call') ?? []);
 
       if (messageId) {
         const hasContent = Boolean(content);
@@ -474,7 +443,8 @@ const ChatApp: React.FC<ChatAppProps> = ({ profileId = 'default_assistant' }) =>
           setMessages((prev) =>
             prev.map((msg) => {
               if (msg.id === messageId) {
-                const existingToolCalls = resolveToolParts(msg);
+                const existingToolCalls =
+                  msg.content?.filter((part) => part.type === 'tool-call') || [];
                 return {
                   ...msg,
                   content: [{ type: 'text', text: content + errorSuffix }, ...existingToolCalls],
@@ -495,7 +465,8 @@ const ChatApp: React.FC<ChatAppProps> = ({ profileId = 'default_assistant' }) =>
           setMessages((prev) =>
             prev.map((msg) => {
               if (msg.id === messageId) {
-                const existingToolCalls = resolveToolParts(msg);
+                const existingToolCalls =
+                  msg.content?.filter((part) => part.type === 'tool-call') || [];
                 return {
                   ...msg,
                   content: [
@@ -513,23 +484,12 @@ const ChatApp: React.FC<ChatAppProps> = ({ profileId = 'default_assistant' }) =>
             })
           );
         } else if (hasToolCalls) {
-          // No text but has tool calls, no error: restore the authoritative tool
-          // parts (an intermediate streaming update may have dropped them), clear
-          // loading state, and mark complete.
+          // No text but has tool calls, no error: just clear loading state and set complete
           setMessages((prev) =>
             prev.map((msg) => {
               if (msg.id === messageId) {
-                const existingTextContent =
-                  msg.content?.filter(
-                    (part) => part.type === 'text' && part.text !== LOADING_MARKER
-                  ) ?? [];
-                const toolParts = resolveToolParts(msg);
                 return {
                   ...msg,
-                  content:
-                    toolParts.length > 0
-                      ? [...existingTextContent, ...toolParts]
-                      : (msg.content ?? []),
                   status: { type: 'complete' as const },
                   isLoading: false,
                 };
