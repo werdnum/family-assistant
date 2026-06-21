@@ -388,6 +388,37 @@ class TestA2AClientWrapper:
         await wrapper.close()
 
     @pytest.mark.asyncio
+    async def test_discover_4xx_raises_permanent(self, httpx_mock: HTTPXMock) -> None:
+        # A 4xx agent-card fetch (bad agent-card URL / bad auth) is deterministic:
+        # the worker must fail fast, not poll until the cap.
+        wrapper = A2AClientWrapper(agent_url="http://agent.test")
+        httpx_mock.add_response(
+            url="http://agent.test/.well-known/agent-card.json",
+            status_code=403,
+        )
+        with pytest.raises(A2APermanentError):
+            await wrapper.discover()
+        await wrapper.close()
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("status_code", [503, 408, 429])
+    async def test_discover_transient_statuses_are_retryable(
+        self, httpx_mock: HTTPXMock, status_code: int
+    ) -> None:
+        # A 5xx and the retryable 4xx (408 timeout, 429 rate limited) agent-card
+        # fetches are transient: a plain (retryable) A2AClientError, not the
+        # permanent subclass.
+        wrapper = A2AClientWrapper(agent_url="http://agent.test")
+        httpx_mock.add_response(
+            url="http://agent.test/.well-known/agent-card.json",
+            status_code=status_code,
+        )
+        with pytest.raises(A2AClientError) as exc_info:
+            await wrapper.discover()
+        assert not isinstance(exc_info.value, A2APermanentError)
+        await wrapper.close()
+
+    @pytest.mark.asyncio
     async def test_send_message_success(
         self, fake_a2a_agent: type[FakeA2AAgentHandler]
     ) -> None:

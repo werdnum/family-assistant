@@ -531,14 +531,31 @@ async def _run_background_send(
                 base_url=base_url,
             )
     except asyncio.CancelledError:
-        # Cancelled by tasks/cancel (the DB row is already 'canceled') or by
-        # shutdown. Deliberately do NOT attempt an async DB write while
-        # unwinding a cancellation: it is fragile (a re-cancel during shutdown
-        # would interrupt it), and for tasks/cancel the terminal state is
-        # already persisted. A shutdown-interrupted row is left 'working'; a
-        # delegating client recovers regardless via its max-async cap, which
-        # fails the delegation run and cancels the remote task.
+        # Cancelled by tasks/cancel (the DB row is already 'canceled') or by a
+        # graceful shutdown (stop_services cancels in-flight sends, then awaits
+        # them via gather). Persist a terminal 'canceled' state so a
+        # shutdown-interrupted send does not leave the row 'working' forever —
+        # after a restart there is no background work left to finish it, so
+        # tasks/get would otherwise return a non-terminal task indefinitely. The
+        # terminal-state CAS in update_task_status makes this a safe no-op when a
+        # tasks/cancel already finalized the row. The write is awaited inline (not
+        # shielded): the cancellation has already been delivered and caught, so
+        # this completes on the normal single-cancel shutdown path before the
+        # engine is disposed, without orphaning a detached task. A rare second
+        # (forceful) cancel during the write propagates its CancelledError and
+        # leaves the row 'working', recovered by the delegating client's cap.
         logger.info("Background A2A send %s cancelled.", task_id)
+        try:
+            await _mark_a2a_task_terminal(
+                db_engine,
+                task_id,
+                TaskState.canceled,
+                "Interrupted by server shutdown",
+            )
+        except Exception:
+            logger.exception(
+                "Failed to persist canceled state for A2A send %s.", task_id
+            )
         raise
     except Exception:
         logger.exception("Background A2A send %s failed.", task_id)

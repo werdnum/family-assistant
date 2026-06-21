@@ -91,6 +91,10 @@ class A2ATaskNotFoundError(A2APermanentError):
 # JSON-RPC error code the A2A spec / FA server use for an unknown task id.
 _TASK_NOT_FOUND_CODE = -32001
 
+# 4xx HTTP statuses that are transient despite being client-range: request
+# timeout, too early, and rate limited. These retry rather than fail fast.
+_RETRYABLE_4XX = frozenset({408, 425, 429})
+
 
 class A2AClientWrapper:
     """Wraps the a2a-sdk client for Family Assistant integration.
@@ -135,9 +139,14 @@ class A2AClientWrapper:
         try:
             self._agent_card = await resolver.get_agent_card()
         except SdkHTTPError as exc:
-            raise A2AClientError(
-                f"Failed to discover agent at {self._agent_url}: {exc}"
-            ) from exc
+            message = f"Failed to discover agent at {self._agent_url}: {exc}"
+            # A 4xx card fetch is deterministic (bad agent-card URL / bad auth):
+            # fail fast rather than polling to the cap. 5xx / network errors are
+            # transient, as are the retryable 4xx statuses (408 request timeout,
+            # 425 too early, 429 rate limited).
+            if 400 <= exc.status_code < 500 and exc.status_code not in _RETRYABLE_4XX:
+                raise A2APermanentError(message) from exc
+            raise A2AClientError(message) from exc
         logger.info(
             "Discovered A2A agent '%s' at %s with %d skills",
             self._agent_card.name,
@@ -321,10 +330,14 @@ class A2AClientWrapper:
             # 4xx is a deterministic client error (auth, bad request); 5xx is a
             # transient server error that may recover. A 404 specifically means
             # the remote has no such task — a cue to re-submit, not to fail.
+            # Retryable 4xx (timeout / too early / rate limited) stay transient.
             message = f"A2A {method} returned HTTP {response.status_code} from {url}"
             if response.status_code == 404:
                 raise A2ATaskNotFoundError(message)
-            if 400 <= response.status_code < 500:
+            if (
+                400 <= response.status_code < 500
+                and response.status_code not in _RETRYABLE_4XX
+            ):
                 raise A2APermanentError(message)
             raise A2AClientError(message)
         payload = response.json()
