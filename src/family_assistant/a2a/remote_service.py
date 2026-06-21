@@ -153,10 +153,16 @@ class RemoteA2AService:
         return a2a_task_to_chat_result(task)
 
     async def cancel_async(self, remote_task_id: str) -> None:
-        """Best-effort cancellation of the remote task."""
+        """Best-effort cancellation of the remote task.
+
+        Swallows every (non-cancellation) error, not just ``A2AClientError``: a
+        malformed remote response can surface as a JSON/validation error outside
+        the A2A error hierarchy, and a failed cancel must never abort the caller
+        (which then fails the run) or leave it stranded.
+        """
         try:
             await self._client.cancel_task(remote_task_id)
-        except A2AClientError as exc:
+        except Exception as exc:
             logger.warning(
                 "Failed to cancel remote A2A task %s on '%s': %s",
                 remote_task_id,

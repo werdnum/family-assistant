@@ -21,11 +21,14 @@ creating a second task and orphaning the first. This is accepted in exchange for
 (and works against any A2A agent, not only the FA server, which previously tolerated client ids by
 being idempotent on them).
 
-To keep that window from widening under concurrency, a NULL-id run is recovered **only** by the
-durable `delegated_profile_run` task's own retry (serialized by the task lock), never by the reaper:
-the reaper re-enqueues a poll only for runs that already carry a remote id, so it cannot re-submit a
-run whose first submit is still in flight. Duplicate poll *loops* for one run (e.g. a re-attaching
-retry plus a surviving poll) are harmless — `tasks/get` is idempotent and the terminal transition is
+To keep that window from widening under concurrency, the reaper re-submits a NULL-id run only once
+it is past the **submit grace** (`RemoteServiceConfig.timeout_seconds`, the per-HTTP-call timeout):
+past it the first submit has definitely returned, so the run is genuinely stuck (its only poll was
+lost) rather than mid-submit, and re-submitting cannot race an in-flight submit into a duplicate.
+Within the grace a NULL-id run is left to its own enqueued poll (or the durable
+`delegated_profile_run` retry). Runs that already carry a remote id are always re-attached (a lost
+poll just re-polls; no duplicate). Duplicate poll *loops* for one run (e.g. a re-attaching retry
+plus a surviving poll) are harmless — `tasks/get` is idempotent and the terminal transition is
 CAS-guarded, so only one finalize/notify wins.
 
 ## Background

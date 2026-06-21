@@ -340,7 +340,16 @@ class A2AClientWrapper:
             ):
                 raise A2APermanentError(message)
             raise A2AClientError(message)
-        payload = response.json()
+        try:
+            payload = response.json()
+        except ValueError as exc:
+            # A 200 with a non-JSON body (e.g. a proxy / CDN HTML page) is a
+            # transient infrastructure glitch, not a protocol error — keep it in
+            # the A2AClientError hierarchy so the caller retries rather than
+            # crashing with a raw JSONDecodeError.
+            raise A2AClientError(
+                f"A2A {method} returned a non-JSON response from {url}"
+            ) from exc
         error = payload.get("error")
         if error:
             # The remote answered with a definitive JSON-RPC error — deterministic.

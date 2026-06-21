@@ -1367,6 +1367,7 @@ class Assistant:
             confirmation_timeout_seconds=profile_conf.tools_config.confirmation_timeout_seconds,
             poll_interval_seconds=remote_config.poll_interval_seconds,
             max_async_seconds=max_async_seconds,
+            timeout_seconds=remote_config.timeout_seconds,
         )
 
         service = RemoteA2AService(

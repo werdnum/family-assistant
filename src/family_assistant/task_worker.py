@@ -242,6 +242,10 @@ DELEGATION_RUN_STALE_SECONDS = 3600.0
 DELEGATION_POLL_INTERVAL_SECONDS = 10.0
 DELEGATION_POLL_MAX_INTERVAL_SECONDS = 60.0
 DELEGATION_MAX_ASYNC_SECONDS = 3600.0
+# Default grace after which a first submit has returned (mirrors the
+# RemoteServiceConfig.timeout_seconds default); used by the reaper to recover a
+# stuck NULL-id run without racing an in-flight submit.
+DELEGATION_SUBMIT_GRACE_SECONDS = 300.0
 
 
 def _delegation_poll_backoff(attempts: int, base_interval: float) -> float:
@@ -270,6 +274,20 @@ def _max_async_for(target_service: PollableDelegationService) -> float:
         target_service.service_config,
         "max_async_seconds",
         DELEGATION_MAX_ASYNC_SECONDS,
+    )
+
+
+def _submit_grace_for(target_service: PollableDelegationService) -> float:
+    """Time after which a first submit has definitely returned for a target.
+
+    The per-HTTP-call timeout: past it, a run still at a NULL remote id is stuck
+    (its only poll was lost), not mid-submit, so the reaper may safely re-submit
+    it without racing an in-flight submit into a duplicate.
+    """
+    return getattr(
+        target_service.service_config,
+        "timeout_seconds",
+        DELEGATION_SUBMIT_GRACE_SECONDS,
     )
 
 
@@ -1583,15 +1601,24 @@ class TaskWorker:
             )
             started_at = _as_aware_utc(run["started_at"] or run["created_at"])
             if now - started_at <= timedelta(seconds=cap_seconds):
-                # Only re-attach runs that already have a remote id (a genuinely
-                # lost poll). A NULL-id run is either still mid-first-submit or
-                # crashed before the submit landed; re-enqueuing a poll for it
-                # would re-submit and race the in-flight submit into a duplicate
-                # remote task. Those are recovered instead by the durable
-                # delegated_profile_run task's own retry (which re-submits a
-                # NULL-id run), and a genuinely stuck one is failed by the
-                # past-cap branch below.
-                if run["remote_task_id"] and run["delegation_id"] not in polled_ids:
+                if run["delegation_id"] in polled_ids:
+                    # A live poll task already owns this run.
+                    continue
+                grace_seconds = (
+                    _submit_grace_for(target_service)
+                    if isinstance(target_service, PollableDelegationService)
+                    else DELEGATION_SUBMIT_GRACE_SECONDS
+                )
+                # Re-attach a run with a known remote id (a genuinely lost poll),
+                # or a NULL-id run that is past the submit grace — i.e. its first
+                # submit has definitely returned, so it is stuck (its only poll
+                # was lost) rather than mid-submit, and re-submitting cannot race
+                # an in-flight submit into a duplicate. A NULL-id run still within
+                # the grace is likely mid-submit; leave it (its enqueued poll, or
+                # the delegated_profile_run retry, recovers it).
+                if run["remote_task_id"] or now - started_at > timedelta(
+                    seconds=grace_seconds
+                ):
                     logger.warning(
                         "Re-enqueuing a lost poll for awaiting_remote delegation %s.",
                         run["delegation_id"],

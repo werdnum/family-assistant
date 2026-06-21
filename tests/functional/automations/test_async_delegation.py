@@ -1684,14 +1684,12 @@ async def test_cleanup_reenqueues_lost_poll_for_young_run(
 
 
 @pytest.mark.asyncio
-async def test_cleanup_does_not_reenqueue_poll_for_null_id_run(
+async def test_cleanup_does_not_reenqueue_poll_for_null_id_run_within_grace(
     db_engine: AsyncEngine,
 ) -> None:
-    # A young awaiting_remote run with a NULL remote id is mid-first-submit (or
-    # crashed before it landed); the reaper must NOT re-enqueue a poll for it,
-    # which would re-submit and race the in-flight submit into a duplicate remote
-    # task. Such runs are recovered by the delegated_profile_run task retry, not
-    # the reaper.
+    # A NULL-id awaiting_remote run still WITHIN the submit grace is likely
+    # mid-first-submit; the reaper must NOT re-enqueue a poll for it, which would
+    # re-submit and race the in-flight submit into a duplicate remote task.
     target = FakePollableService()
     processing_service = _source_processing_service(
         cast("FakeDelegatableService", target)
@@ -1724,6 +1722,49 @@ async def test_cleanup_does_not_reenqueue_poll_for_null_id_run(
         assert run is not None
         assert run["status"] == "awaiting_remote"
     assert target.submitted == []
+    chat_interface.send_message.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_cleanup_reenqueues_poll_for_null_id_run_past_grace(
+    db_engine: AsyncEngine,
+) -> None:
+    # A NULL-id awaiting_remote run PAST the submit grace (but within the cap) is
+    # stuck — its first submit has returned and its only poll was lost — so the
+    # reaper re-enqueues a poll to recover it rather than leaving it idle to the
+    # cap. The poll then re-submits (NULL id) and reconciles a remote id.
+    target = FakePollableService()
+    processing_service = _source_processing_service(
+        cast("FakeDelegatableService", target)
+    )
+    chat_interface = AsyncMock(spec=ChatInterface)
+    chat_interface.send_message.return_value = "external_message_id"
+
+    delegation_id = await _start_background_delegation(
+        db_engine, processing_service, chat_interface
+    )
+    async with DatabaseContext(engine=db_engine) as db_context:
+        await db_context.delegation_runs.mark_awaiting_remote(
+            delegation_id,
+            remote_task_id=None,
+            remote_context_id=None,
+            # Past the 300s submit grace but well within the 3600s cap.
+            started_at=SystemClock().now() - timedelta(minutes=10),
+        )
+
+    worker = _build_worker(db_engine, processing_service, chat_interface)
+    async with DatabaseContext(engine=db_engine) as db_context:
+        await worker.handle_delegation_run_cleanup(
+            _tool_context(db_context, processing_service, chat_interface),
+            {},
+        )
+
+    async with DatabaseContext(engine=db_engine) as db_context:
+        polls = await db_context.tasks.get_all(task_type="delegation_poll")
+        assert len(polls) == 1
+        run = await db_context.delegation_runs.get_by_delegation_id(delegation_id)
+        assert run is not None
+        assert run["status"] == "awaiting_remote"
     chat_interface.send_message.assert_not_awaited()
 
 
