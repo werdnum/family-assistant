@@ -12,7 +12,8 @@ import json
 import logging
 import uuid
 from collections.abc import AsyncIterator
-from typing import Annotated
+from contextlib import suppress
+from typing import TYPE_CHECKING, Annotated
 
 from fastapi import APIRouter, Depends, Request
 from fastapi.responses import JSONResponse
@@ -52,6 +53,12 @@ from family_assistant.storage.context import DatabaseContext, get_db_context
 from family_assistant.storage.repositories.a2a_tasks import A2ATaskRow
 from family_assistant.web.dependencies import get_current_user, get_db
 
+if TYPE_CHECKING:
+    from sqlalchemy.ext.asyncio import AsyncEngine
+
+    from family_assistant.interfaces import ChatInterface
+    from family_assistant.telegram.protocols import ConfirmationUIManager
+
 logger = logging.getLogger(__name__)
 
 a2a_router = APIRouter()
@@ -71,6 +78,37 @@ def _get_processing_services(request: Request) -> dict[str, DelegatableService]:
 def _get_default_service(request: Request) -> ProcessingService | None:
     """Get the default processing service."""
     return getattr(request.app.state, "processing_service", None)
+
+
+def _get_a2a_cancel_events(request: Request) -> dict[str, asyncio.Event]:
+    """Return the shared cancel-event registry, creating it if absent.
+
+    Production initialises this on app state; the defensive create keeps test
+    harnesses that build a bare app from needing to pre-seed it.
+    """
+    events: dict[str, asyncio.Event] | None = getattr(
+        request.app.state, "a2a_cancel_events", None
+    )
+    if events is None:
+        events = {}
+        request.app.state.a2a_cancel_events = events
+    return events
+
+
+def _get_a2a_background_tasks(request: Request) -> "dict[str, asyncio.Task[None]]":
+    """Return the shared background-send task registry, creating it if absent.
+
+    Strong references to in-flight non-blocking sends are held here so the event
+    loop does not garbage-collect them, and so ``tasks/cancel`` and shutdown can
+    reach them.
+    """
+    tasks: dict[str, asyncio.Task[None]] | None = getattr(
+        request.app.state, "a2a_background_tasks", None
+    )
+    if tasks is None:
+        tasks = {}
+        request.app.state.a2a_background_tasks = tasks
+    return tasks
 
 
 # ===== Agent Card Discovery =====
@@ -189,6 +227,21 @@ async def a2a_jsonrpc(
 # ===== message/send =====
 
 
+def _send_is_blocking(send_params: MessageSendParams) -> bool:
+    """Whether the client asked to block until the task is terminal.
+
+    Per the A2A spec, ``MessageSendConfiguration.blocking`` defaults to true
+    (synchronous) when unset, so an absent configuration preserves the
+    historical synchronous behaviour. ``blocking=false`` opts into background
+    processing: the server returns a non-terminal ``working`` task immediately
+    and the client polls ``tasks/get`` until it is terminal.
+    """
+    config = send_params.configuration
+    if config is None or config.blocking is None:
+        return True
+    return config.blocking
+
+
 async def _handle_send_message(
     request_id: str | int | None,
     params: dict[str, object],
@@ -196,7 +249,14 @@ async def _handle_send_message(
     current_user: dict[str, object],
     db_context: DatabaseContext,
 ) -> JSONResponse:
-    """Handle the message/send JSON-RPC method."""
+    """Handle the message/send JSON-RPC method.
+
+    With ``configuration.blocking`` true (the default) the interaction runs
+    inline and the terminal task is returned in this response. With
+    ``blocking`` false the interaction runs in a background task and a
+    non-terminal ``working`` task is returned immediately; the client then
+    polls ``tasks/get`` (and may ``tasks/cancel``) until the task is terminal.
+    """
     try:
         send_params = MessageSendParams.model_validate(params)
     except ValidationError as e:
@@ -227,9 +287,57 @@ async def _handle_send_message(
             "Message contained no processable content parts",
         )
 
-    # Create task record
+    # Idempotency: a client (e.g. a delegating worker recovering from a crash)
+    # may re-send the same task_id. Return the existing task's current state
+    # rather than creating a duplicate or re-processing it.
+    existing = await db_context.a2a_tasks.get_task(task_id)
+    if existing is not None:
+        return _jsonrpc_result(
+            request_id, _row_to_task(existing).model_dump(exclude_none=True)
+        )
+
     user_id = str(current_user.get("user_identifier", "a2a_user"))
     history_entry = message.model_dump(exclude_none=True)
+
+    chat_interfaces = getattr(request.app.state, "chat_interfaces", None)
+    confirmation_ui_managers = getattr(
+        request.app.state,
+        "confirmation_ui_managers",
+        None,
+    )
+    base_url = str(request.base_url).rstrip("/")
+
+    if not _send_is_blocking(send_params):
+        # Commit the 'working' row in its own transaction BEFORE spawning the
+        # background task: that task runs on a separate db connection and, on
+        # Postgres, cannot see the request transaction (not committed until this
+        # handler returns). Without this its update_task_status would silently
+        # no-op and the row would be stuck 'working'. Mirrors the streaming path.
+        db_engine: AsyncEngine = request.app.state.database_engine
+        async with get_db_context(db_engine) as committed_db:
+            await committed_db.a2a_tasks.create_task(
+                task_id=task_id,
+                profile_id=profile_id,
+                conversation_id=conversation_id,
+                context_id=context_id,
+                status=TaskState.working,
+                history_json=[history_entry],
+            )
+        return _start_background_send(
+            request_id,
+            request=request,
+            service=service,
+            task_id=task_id,
+            context_id=context_id,
+            conversation_id=conversation_id,
+            content_parts=content_parts,
+            message=message,
+            history_entry=history_entry,
+            user_id=user_id,
+            chat_interfaces=chat_interfaces,
+            confirmation_ui_managers=confirmation_ui_managers,
+            base_url=base_url,
+        )
 
     await db_context.a2a_tasks.create_task(
         task_id=task_id,
@@ -239,14 +347,44 @@ async def _handle_send_message(
         status=TaskState.working,
         history_json=[history_entry],
     )
-
-    # Execute the chat interaction
-    chat_interfaces = getattr(request.app.state, "chat_interfaces", None)
-    confirmation_ui_managers = getattr(
-        request.app.state,
-        "confirmation_ui_managers",
-        None,
+    task = await _execute_and_persist_send(
+        db_context=db_context,
+        service=service,
+        task_id=task_id,
+        context_id=context_id,
+        conversation_id=conversation_id,
+        content_parts=content_parts,
+        message=message,
+        history_entry=history_entry,
+        user_id=user_id,
+        chat_interfaces=chat_interfaces,
+        confirmation_ui_managers=confirmation_ui_managers,
+        base_url=base_url,
     )
+    return _jsonrpc_result(request_id, task.model_dump(exclude_none=True))
+
+
+async def _execute_and_persist_send(
+    *,
+    db_context: DatabaseContext,
+    service: DelegatableService,
+    task_id: str,
+    context_id: str,
+    conversation_id: str,
+    content_parts: list[ContentPartDict],
+    message: Message,
+    history_entry: dict[str, object],
+    user_id: str,
+    chat_interfaces: "dict[str, ChatInterface] | None",
+    confirmation_ui_managers: "dict[str, ConfirmationUIManager] | None",
+    base_url: str,
+) -> Task:
+    """Run the chat interaction and persist the terminal task; return it.
+
+    Shared by the synchronous (blocking) send path and the background
+    (non-blocking) send path. Takes its ``db_context`` as a parameter so the
+    background path can supply a fresh, request-independent context.
+    """
     result = await service.handle_chat_interaction(
         db_context=db_context,
         interface_type="a2a",
@@ -259,25 +397,22 @@ async def _handle_send_message(
         confirmation_ui_managers=confirmation_ui_managers,
     )
 
-    # Build response
     if result.has_error:
         artifact = error_to_artifact(result.error_traceback or "Unknown error")
         final_status = TaskState.failed
     else:
-        attachment_urls = _resolve_attachment_urls(request, result.attachment_ids)
+        attachment_urls = _attachment_urls(base_url, result.attachment_ids)
         artifact = chat_result_to_artifact(result, attachment_urls=attachment_urls)
         final_status = TaskState.completed
 
     artifacts = [artifact] if artifact else []
     artifacts_dicts = [a.model_dump(exclude_none=True) for a in artifacts]
 
-    # Build agent response message
     response_parts = (
         content_parts_to_a2a_parts([text_content(result.text_reply or "")])
         if result.text_reply
         else []
     )
-
     agent_message = Message(
         role=Role.agent,
         parts=response_parts or [Part(root=TextPart(text=""))],
@@ -285,7 +420,6 @@ async def _handle_send_message(
         task_id=task_id,
         context_id=context_id,
     )
-
     history = [history_entry, agent_message.model_dump(exclude_none=True)]
 
     await db_context.a2a_tasks.update_task_status(
@@ -295,18 +429,159 @@ async def _handle_send_message(
         history_json=history,
     )
 
-    task = Task(
+    return Task(
         id=task_id,
         context_id=context_id,
-        status=TaskStatus(
-            state=final_status,
-            message=agent_message,
-        ),
+        status=TaskStatus(state=final_status, message=agent_message),
         artifacts=artifacts if artifacts else None,
         history=[message, agent_message],
     )
 
-    return _jsonrpc_result(request_id, task.model_dump(exclude_none=True))
+
+def _start_background_send(
+    request_id: str | int | None,
+    *,
+    request: Request,
+    service: DelegatableService,
+    task_id: str,
+    context_id: str,
+    conversation_id: str,
+    content_parts: list[ContentPartDict],
+    message: Message,
+    history_entry: dict[str, object],
+    user_id: str,
+    chat_interfaces: "dict[str, ChatInterface] | None",
+    confirmation_ui_managers: "dict[str, ConfirmationUIManager] | None",
+    base_url: str,
+) -> JSONResponse:
+    """Spawn background processing and return a non-terminal ``working`` task."""
+    db_engine: AsyncEngine = request.app.state.database_engine
+    cancel_events = _get_a2a_cancel_events(request)
+    background_tasks = _get_a2a_background_tasks(request)
+
+    cancel_event = asyncio.Event()
+    cancel_events[task_id] = cancel_event
+
+    background_tasks[task_id] = asyncio.create_task(
+        _run_background_send(
+            db_engine=db_engine,
+            service=service,
+            task_id=task_id,
+            context_id=context_id,
+            conversation_id=conversation_id,
+            content_parts=content_parts,
+            message=message,
+            history_entry=history_entry,
+            user_id=user_id,
+            chat_interfaces=chat_interfaces,
+            confirmation_ui_managers=confirmation_ui_managers,
+            base_url=base_url,
+            background_tasks=background_tasks,
+            cancel_events=cancel_events,
+        ),
+        name=f"a2a-send-{task_id}",
+    )
+
+    working_task = Task(
+        id=task_id,
+        context_id=context_id,
+        status=TaskStatus(state=TaskState.working),
+        history=[message],
+    )
+    return _jsonrpc_result(request_id, working_task.model_dump(exclude_none=True))
+
+
+async def _run_background_send(
+    *,
+    db_engine: "AsyncEngine",
+    service: DelegatableService,
+    task_id: str,
+    context_id: str,
+    conversation_id: str,
+    content_parts: list[ContentPartDict],
+    message: Message,
+    history_entry: dict[str, object],
+    user_id: str,
+    chat_interfaces: "dict[str, ChatInterface] | None",
+    confirmation_ui_managers: "dict[str, ConfirmationUIManager] | None",
+    base_url: str,
+    background_tasks: "dict[str, asyncio.Task[None]]",
+    cancel_events: dict[str, asyncio.Event],
+) -> None:
+    """Run a non-blocking send to terminal on its own db context.
+
+    Persists the terminal task. ``update_task_status`` only transitions a
+    non-terminal task, so a prior ``tasks/cancel`` (or the stale-row reaper)
+    that already finalized this row wins over a later write here.
+    """
+    try:
+        async with get_db_context(db_engine) as bg_db:
+            await _execute_and_persist_send(
+                db_context=bg_db,
+                service=service,
+                task_id=task_id,
+                context_id=context_id,
+                conversation_id=conversation_id,
+                content_parts=content_parts,
+                message=message,
+                history_entry=history_entry,
+                user_id=user_id,
+                chat_interfaces=chat_interfaces,
+                confirmation_ui_managers=confirmation_ui_managers,
+                base_url=base_url,
+            )
+    except asyncio.CancelledError:
+        # Cancelled by tasks/cancel (the DB row is already 'canceled') or by a
+        # graceful shutdown (stop_services cancels in-flight sends, then awaits
+        # them via gather). Persist a terminal 'canceled' state so a
+        # shutdown-interrupted send does not leave the row 'working' forever —
+        # after a restart there is no background work left to finish it, so
+        # tasks/get would otherwise return a non-terminal task indefinitely. The
+        # terminal-state CAS in update_task_status makes this a safe no-op when a
+        # tasks/cancel already finalized the row. The write is awaited inline (not
+        # shielded): the cancellation has already been delivered and caught, so
+        # this completes on the normal single-cancel shutdown path before the
+        # engine is disposed, without orphaning a detached task. A rare second
+        # (forceful) cancel during the write propagates its CancelledError and
+        # leaves the row 'working', recovered by the delegating client's cap.
+        logger.info("Background A2A send %s cancelled.", task_id)
+        try:
+            await _mark_a2a_task_terminal(
+                db_engine,
+                task_id,
+                TaskState.canceled,
+                "Interrupted by server shutdown",
+            )
+        except Exception:
+            logger.exception(
+                "Failed to persist canceled state for A2A send %s.", task_id
+            )
+        raise
+    except Exception:
+        logger.exception("Background A2A send %s failed.", task_id)
+        with suppress(Exception):
+            await _mark_a2a_task_terminal(
+                db_engine, task_id, TaskState.failed, "Internal error"
+            )
+    finally:
+        background_tasks.pop(task_id, None)
+        cancel_events.pop(task_id, None)
+
+
+async def _mark_a2a_task_terminal(
+    db_engine: "AsyncEngine",
+    task_id: str,
+    status: TaskState,
+    error_text: str,
+) -> None:
+    """Best-effort write of a terminal status for a backgrounded a2a task."""
+    artifact = error_to_artifact(error_text)
+    async with get_db_context(db_engine) as db:
+        await db.a2a_tasks.update_task_status(
+            task_id=task_id,
+            status=status,
+            artifacts_json=[artifact.model_dump(exclude_none=True)] if artifact else [],
+        )
 
 
 # ===== tasks/get =====
@@ -361,17 +636,28 @@ async def _handle_cancel_task(
             f"Task is in state '{row['status']}' and cannot be canceled",
         )
 
-    # Signal cooperative cancellation to any running streaming generator
-    cancel_events: dict[str, asyncio.Event] = request.app.state.a2a_cancel_events
-    cancel_event = cancel_events.get(task_params.id)
-    if cancel_event is not None:
-        cancel_event.set()
-
+    # Read the post-cancel row for the response BEFORE disturbing the background
+    # task: hard-cancelling it tears down its own DB connection, so we finish
+    # this request's DB work first.
     row = await db_context.a2a_tasks.get_task(task_params.id)
     if row is None:
         return _jsonrpc_error(
             request_id, TASK_NOT_FOUND, "Task disappeared after cancel"
         )
+
+    # Signal cooperative cancellation to any running streaming generator, and
+    # hard-cancel a background (non-blocking) send task if one is in flight. The
+    # DB row was already set to ``canceled`` above, so the background task's
+    # terminal write is a guarded no-op and ``canceled`` wins.
+    cancel_events = _get_a2a_cancel_events(request)
+    cancel_event = cancel_events.get(task_params.id)
+    if cancel_event is not None:
+        cancel_event.set()
+
+    background_tasks = _get_a2a_background_tasks(request)
+    background_task = background_tasks.get(task_params.id)
+    if background_task is not None and not background_task.done():
+        background_task.cancel()
 
     task = _row_to_task(row)
     return _jsonrpc_result(request_id, task.model_dump(exclude_none=True))
@@ -687,14 +973,17 @@ async def _stream_message(
 # ===== Helpers =====
 
 
-def _resolve_attachment_urls(
-    request: Request,
+def _attachment_urls(
+    base_url: str,
     attachment_ids: list[str] | None,
 ) -> dict[str, str]:
-    """Build absolute download URLs for attachment IDs."""
+    """Build absolute download URLs for attachment IDs from a base URL.
+
+    Takes a plain ``base_url`` rather than the request so background tasks can
+    build URLs after the originating request has returned.
+    """
     if not attachment_ids:
         return {}
-    base_url = str(request.base_url).rstrip("/")
     return {att_id: f"{base_url}/api/attachments/{att_id}" for att_id in attachment_ids}
 
 

@@ -11,6 +11,7 @@ from family_assistant.storage.base import metadata
 DelegationRunStatus = Literal[
     "queued",
     "running",
+    "awaiting_remote",
     "completed",
     "failed",
 ]
@@ -52,6 +53,11 @@ delegation_runs_table = Table(
     Column("result_message_internal_id", Integer, nullable=True),
     Column("error", Text, nullable=True),
     Column("notified_at", DateTime(timezone=True), nullable=True),
+    # Remote (A2A) task identifiers for the submit-then-poll async path. Null
+    # for local delegations, which have no remote task to poll.
+    Column("remote_task_id", String(255), nullable=True),
+    Column("remote_context_id", String(255), nullable=True),
+    Column("poll_attempts", Integer, nullable=False, server_default="0"),
     Column(
         "created_at",
         DateTime(timezone=True),

@@ -3,6 +3,8 @@
 Validates protocol compliance against the official a2a-sdk types.
 """
 
+import asyncio
+import contextlib
 import json
 import re
 import uuid
@@ -277,6 +279,172 @@ class TestCancelTask:
         data = resp.json()
         assert data["error"] is not None
         assert data["error"]["code"] == -32001  # TASK_NOT_FOUND
+
+
+class TestAsyncSendMessage:
+    """message/send with configuration.blocking=false (background processing)."""
+
+    @pytest.mark.asyncio
+    async def test_blocking_false_returns_working_then_completes(
+        self,
+        a2a_client: AsyncClient,
+        app_fixture: FastAPI,
+        api_mock_llm_client: RuleBasedMockLLMClient,
+    ) -> None:
+        api_mock_llm_client.default_response = MockLLMOutput(content="async reply")
+        task_id = str(uuid.uuid4())
+
+        body = _jsonrpc(
+            "message/send",
+            params={
+                "message": _a2a_message("Hello", task_id=task_id),
+                "configuration": {"blocking": False},
+            },
+        )
+        resp = await a2a_client.post("/api/a2a", json=body)
+        assert resp.status_code == 200, resp.text
+
+        # The response is the non-terminal working task, returned before the
+        # background task runs.
+        task = resp.json()["result"]
+        assert task["id"] == task_id
+        assert task["status"]["state"] == "working"
+
+        # Let the background task finish, then the persisted task is terminal.
+        background = app_fixture.state.a2a_background_tasks.get(task_id)
+        if background is not None:
+            await background
+
+        get_resp = await a2a_client.post(
+            "/api/a2a", json=_jsonrpc("tasks/get", params={"id": task_id})
+        )
+        completed = get_resp.json()["result"]
+        assert completed["status"]["state"] == "completed"
+        assert completed["artifacts"]
+
+    @pytest.mark.asyncio
+    async def test_resending_same_task_id_is_idempotent(
+        self,
+        a2a_client: AsyncClient,
+        app_fixture: FastAPI,
+        api_mock_llm_client: RuleBasedMockLLMClient,
+    ) -> None:
+        api_mock_llm_client.default_response = MockLLMOutput(content="once only")
+        task_id = str(uuid.uuid4())
+        params = {
+            "message": _a2a_message("Hello", task_id=task_id),
+            "configuration": {"blocking": False},
+        }
+
+        first = await a2a_client.post(
+            "/api/a2a", json=_jsonrpc("message/send", params=params)
+        )
+        assert first.json()["result"]["status"]["state"] == "working"
+        background = app_fixture.state.a2a_background_tasks.get(task_id)
+        if background is not None:
+            await background
+        calls_after_first = len(api_mock_llm_client.get_calls())
+
+        # Re-sending the same task id returns the existing (completed) task and
+        # does not re-process it (no second LLM call, no duplicate background run).
+        second = await a2a_client.post(
+            "/api/a2a", json=_jsonrpc("message/send", params=params)
+        )
+        result = second.json()["result"]
+        assert result["id"] == task_id
+        assert result["status"]["state"] == "completed"
+        assert len(api_mock_llm_client.get_calls()) == calls_after_first
+
+    @pytest.mark.postgres
+    @pytest.mark.asyncio
+    async def test_blocking_false_cancel_interrupts_in_flight_task(
+        self,
+        a2a_client: AsyncClient,
+        app_fixture: FastAPI,
+        api_mock_llm_client: RuleBasedMockLLMClient,
+    ) -> None:
+        # Postgres-only: hard-cancelling the in-flight background task tears down
+        # its DB connection. The production pool gives that task its own
+        # connection; SQLite's shared StaticPool connection would be closed for
+        # the whole engine, which is a test-harness artifact, not a real bug.
+        # Gate the fake LLM so the background task stays in flight until released,
+        # giving tasks/cancel a running task to interrupt.
+        release = asyncio.Event()
+        api_mock_llm_client.response_gate = release
+
+        task_id = str(uuid.uuid4())
+        send = await a2a_client.post(
+            "/api/a2a",
+            json=_jsonrpc(
+                "message/send",
+                params={
+                    "message": _a2a_message("slow", task_id=task_id),
+                    "configuration": {"blocking": False},
+                },
+            ),
+        )
+        assert send.json()["result"]["status"]["state"] == "working"
+
+        # The background task is parked on the gate; cancel it.
+        cancel = await a2a_client.post(
+            "/api/a2a", json=_jsonrpc("tasks/cancel", params={"id": task_id})
+        )
+        assert cancel.status_code == 200
+        assert cancel.json()["result"]["status"]["state"] == "canceled"
+
+        background = app_fixture.state.a2a_background_tasks.get(task_id)
+        if background is not None:
+            with contextlib.suppress(asyncio.CancelledError):
+                await background
+        release.set()
+
+        get_resp = await a2a_client.post(
+            "/api/a2a", json=_jsonrpc("tasks/get", params={"id": task_id})
+        )
+        assert get_resp.json()["result"]["status"]["state"] == "canceled"
+
+    @pytest.mark.postgres
+    @pytest.mark.asyncio
+    async def test_blocking_false_shutdown_cancel_persists_terminal(
+        self,
+        a2a_client: AsyncClient,
+        app_fixture: FastAPI,
+        api_mock_llm_client: RuleBasedMockLLMClient,
+    ) -> None:
+        # A graceful shutdown (stop_services) cancels in-flight background sends
+        # DIRECTLY — not via tasks/cancel — so no row was pre-marked canceled. The
+        # handler must still persist a terminal state, otherwise the row is stuck
+        # 'working' forever (after a restart there is no background work to finish
+        # it, so tasks/get would never reach terminal). Postgres-only for the same
+        # connection-teardown reason as the tasks/cancel test above.
+        release = asyncio.Event()
+        api_mock_llm_client.response_gate = release
+
+        task_id = str(uuid.uuid4())
+        send = await a2a_client.post(
+            "/api/a2a",
+            json=_jsonrpc(
+                "message/send",
+                params={
+                    "message": _a2a_message("slow", task_id=task_id),
+                    "configuration": {"blocking": False},
+                },
+            ),
+        )
+        assert send.json()["result"]["status"]["state"] == "working"
+
+        # Simulate shutdown: cancel the background task directly (no tasks/cancel).
+        background = app_fixture.state.a2a_background_tasks.get(task_id)
+        assert background is not None
+        background.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await background
+        release.set()
+
+        get_resp = await a2a_client.post(
+            "/api/a2a", json=_jsonrpc("tasks/get", params={"id": task_id})
+        )
+        assert get_resp.json()["result"]["status"]["state"] == "canceled"
 
 
 class TestUnknownMethod:

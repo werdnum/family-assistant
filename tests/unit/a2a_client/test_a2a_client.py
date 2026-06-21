@@ -27,6 +27,7 @@ from family_assistant.a2a.client import (
     MAX_INLINE_ATTACHMENT_BYTES,
     A2AClientError,
     A2AClientWrapper,
+    A2APermanentError,
 )
 from family_assistant.a2a.result_converter import a2a_task_to_chat_result
 from family_assistant.llm.content_parts import (
@@ -349,6 +350,21 @@ class TestA2AAuthConfig:
         config = A2AAuthConfig(type="none")
         assert config.validate_env_vars() == []
 
+    @pytest.mark.asyncio
+    async def test_bad_auth_config_raises_permanent_error(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # A local misconfiguration (bearer auth whose token_env is unset) must
+        # surface as A2APermanentError so the delegation worker fails fast with
+        # the real auth error instead of polling until the wall-clock cap.
+        monkeypatch.delenv("MISSING_TOKEN", raising=False)
+        wrapper = A2AClientWrapper(
+            agent_url="http://agent.test",
+            auth_config=A2AAuthConfig(type="bearer", token_env="MISSING_TOKEN"),
+        )
+        with pytest.raises(A2APermanentError, match="Auth configuration error"):
+            await wrapper.get_task("a2a-task-1")
+
 
 # --- Client wrapper tests ---
 
@@ -369,6 +385,37 @@ class TestA2AClientWrapper:
         # Second call should use cache (no additional HTTP call)
         card2 = await wrapper.discover()
         assert card2.name == "Test Agent"
+        await wrapper.close()
+
+    @pytest.mark.asyncio
+    async def test_discover_4xx_raises_permanent(self, httpx_mock: HTTPXMock) -> None:
+        # A 4xx agent-card fetch (bad agent-card URL / bad auth) is deterministic:
+        # the worker must fail fast, not poll until the cap.
+        wrapper = A2AClientWrapper(agent_url="http://agent.test")
+        httpx_mock.add_response(
+            url="http://agent.test/.well-known/agent-card.json",
+            status_code=403,
+        )
+        with pytest.raises(A2APermanentError):
+            await wrapper.discover()
+        await wrapper.close()
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("status_code", [503, 408, 429])
+    async def test_discover_transient_statuses_are_retryable(
+        self, httpx_mock: HTTPXMock, status_code: int
+    ) -> None:
+        # A 5xx and the retryable 4xx (408 timeout, 429 rate limited) agent-card
+        # fetches are transient: a plain (retryable) A2AClientError, not the
+        # permanent subclass.
+        wrapper = A2AClientWrapper(agent_url="http://agent.test")
+        httpx_mock.add_response(
+            url="http://agent.test/.well-known/agent-card.json",
+            status_code=status_code,
+        )
+        with pytest.raises(A2AClientError) as exc_info:
+            await wrapper.discover()
+        assert not isinstance(exc_info.value, A2APermanentError)
         await wrapper.close()
 
     @pytest.mark.asyncio
@@ -552,7 +599,9 @@ class TestA2AClientWrapper:
             [image_url_content(f"data:image/png;base64,{large_data}")],
         )
         wrapper = A2AClientWrapper(agent_url="http://agent.test")
-        with pytest.raises(A2AClientError, match="exceeds limit"):
+        # Permanent: an oversized attachment is a deterministic local input
+        # error, so the worker must fail fast rather than poll until the cap.
+        with pytest.raises(A2APermanentError, match="exceeds limit"):
             wrapper._convert_and_validate_parts(parts)
 
     @pytest.mark.asyncio

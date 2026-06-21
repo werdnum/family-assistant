@@ -248,3 +248,11 @@ class RemoteServiceConfig:
     delegation_security_level: DelegationSecurityLevel
     allowed_delegation_sources: list[str] | None = None
     confirmation_timeout_seconds: float = 3600.0
+    # Submit-then-poll tuning for async delegation to this remote (the worker
+    # falls back to its module defaults when these are absent).
+    poll_interval_seconds: float = 10.0
+    max_async_seconds: float = 3600.0
+    # Per-HTTP-call timeout, also the grace after which a first submit has
+    # definitely returned (used by the reaper to recover a stuck NULL-id run
+    # without racing an in-flight submit).
+    timeout_seconds: float = 300.0

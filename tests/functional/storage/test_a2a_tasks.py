@@ -64,3 +64,21 @@ class TestA2ATasksRepository:
         row = await db_context.a2a_tasks.get_task("race-test")
         assert row is not None
         assert row["status"] == "canceled"
+
+    @pytest.mark.asyncio
+    async def test_terminal_status_is_not_overwritten(
+        self, db_context: DatabaseContext
+    ) -> None:
+        """A 'failed' task (e.g. reaped) must not be flipped back by a late send."""
+        await db_context.a2a_tasks.create_task(
+            task_id="reaped", profile_id="p", conversation_id="c", status="working"
+        )
+        await db_context.a2a_tasks.update_task_status("reaped", status="failed")
+        # A background send finishing after the reaper must not resurrect it.
+        updated = await db_context.a2a_tasks.update_task_status(
+            "reaped", status="completed", artifacts_json=[{"name": "late", "parts": []}]
+        )
+        assert updated is False
+        row = await db_context.a2a_tasks.get_task("reaped")
+        assert row is not None
+        assert row["status"] == "failed"

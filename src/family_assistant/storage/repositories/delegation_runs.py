@@ -73,6 +73,9 @@ class DelegationRunDict(TypedDict):
     result_message_internal_id: int | None
     error: str | None
     notified_at: datetime | None
+    remote_task_id: str | None
+    remote_context_id: str | None
+    poll_attempts: int
     created_at: datetime
 
 
@@ -172,6 +175,100 @@ class DelegationRunsRepository(BaseRepository):
         row = result.mappings().one_or_none()
         return self._row_to_dict(dict(row)) if row is not None else None
 
+    async def mark_awaiting_remote(
+        self,
+        delegation_id: str,
+        *,
+        remote_task_id: str | None,
+        remote_context_id: str | None,
+        started_at: datetime,
+    ) -> DelegationRunDict | None:
+        """Claim a ``queued`` run as ``awaiting_remote`` and store remote IDs.
+
+        The submit-then-poll A2A path calls this BEFORE submitting (so the
+        ``awaiting_remote`` retry-guard prevents a duplicate concurrent submit
+        and the wall-clock cap starts), with ``remote_task_id=None`` because the
+        remote assigns the id and the caller only learns it from the submit
+        response (then reconciles it via :meth:`update_remote_task`). A run left
+        ``awaiting_remote`` with a NULL id — a submit whose response was lost —
+        is recovered by re-submitting on the next poll. Conditioned on the row
+        still being ``queued`` so a reaped or sibling-claimed run is not
+        resurrected. Returns ``None`` when the row is no longer ``queued`` or is
+        absent.
+        """
+        stmt = (
+            update(delegation_runs_table)
+            .where(delegation_runs_table.c.delegation_id == delegation_id)
+            .where(delegation_runs_table.c.status == "queued")
+            .values(
+                status="awaiting_remote",
+                remote_task_id=remote_task_id,
+                remote_context_id=remote_context_id,
+                started_at=started_at,
+                updated_at=datetime.now(UTC),
+            )
+            .returning(delegation_runs_table)
+        )
+        result = await self._execute_with_logging(
+            "mark_delegation_run_awaiting_remote", stmt
+        )
+        row = result.mappings().one_or_none()
+        return self._row_to_dict(dict(row)) if row is not None else None
+
+    async def update_remote_task(
+        self,
+        delegation_id: str,
+        *,
+        remote_task_id: str,
+        remote_context_id: str | None,
+    ) -> DelegationRunDict | None:
+        """Record the remote-assigned task id once the submit response is known.
+
+        The submit path claims ``awaiting_remote`` with a NULL id, then calls
+        this with the id the remote assigned so polling and cancellation target
+        the real task.
+        """
+        return await self._update_run(
+            delegation_id,
+            remote_task_id=remote_task_id,
+            remote_context_id=remote_context_id,
+        )
+
+    async def bump_poll_attempt(self, delegation_id: str, now: datetime) -> int | None:
+        """Increment and return the poll attempt counter for a run.
+
+        Returns the new count, or ``None`` if the run is absent.
+        """
+        stmt = (
+            update(delegation_runs_table)
+            .where(delegation_runs_table.c.delegation_id == delegation_id)
+            .values(
+                poll_attempts=delegation_runs_table.c.poll_attempts + 1,
+                updated_at=now,
+            )
+            .returning(delegation_runs_table.c.poll_attempts)
+        )
+        result = await self._execute_with_logging("bump_delegation_poll_attempt", stmt)
+        row = result.one_or_none()
+        return int(row[0]) if row is not None else None
+
+    async def list_awaiting_remote(
+        self, *, limit: int = 100
+    ) -> list[DelegationRunDict]:
+        """Return runs in ``awaiting_remote`` state, oldest first.
+
+        Backstop for the recurring sweep that re-enqueues lost poll tasks.
+        """
+        bounded_limit = min(max(limit, 1), 500)
+        stmt = (
+            select(delegation_runs_table)
+            .where(delegation_runs_table.c.status == "awaiting_remote")
+            .order_by(delegation_runs_table.c.created_at.asc())
+            .limit(bounded_limit)
+        )
+        rows = await self._db.fetch_all(stmt)
+        return [self._row_to_dict(row) for row in rows]
+
     async def mark_handed_off(
         self, delegation_id: str, handed_off_at: datetime
     ) -> bool:
@@ -204,8 +301,14 @@ class DelegationRunsRepository(BaseRepository):
         result_attachment_ids: list[str],
         completed_at: datetime,
     ) -> DelegationRunDict | None:
-        """Mark a delegation run completed and store its result."""
-        return await self._update_run(
+        """Mark a non-terminal delegation run completed (atomic CAS).
+
+        Conditioned on the run still being non-terminal so a concurrent finalizer
+        (the cleanup reaper, or a racing poll) cannot be overwritten and an
+        already-terminal run cannot be resurrected. Returns the updated row when
+        this caller won the transition, else ``None``.
+        """
+        return await self._terminate(
             delegation_id,
             status="completed",
             result_text=result_text,
@@ -220,13 +323,36 @@ class DelegationRunsRepository(BaseRepository):
         error: str,
         completed_at: datetime,
     ) -> DelegationRunDict | None:
-        """Mark a delegation run failed and store the error."""
-        return await self._update_run(
+        """Mark a non-terminal delegation run failed (atomic CAS).
+
+        Conditioned on the run still being non-terminal (see ``mark_completed``).
+        Returns the updated row when this caller won the transition, else ``None``.
+        """
+        return await self._terminate(
             delegation_id,
             status="failed",
             error=error,
             completed_at=completed_at,
         )
+
+    async def _terminate(
+        self, delegation_id: str, **values: object
+    ) -> DelegationRunDict | None:
+        """Transition a non-terminal run to a terminal status (atomic CAS)."""
+        stmt = (
+            update(delegation_runs_table)
+            .where(delegation_runs_table.c.delegation_id == delegation_id)
+            .where(
+                delegation_runs_table.c.status.notin_(
+                    list(TERMINAL_DELEGATION_STATUSES)
+                )
+            )
+            .values(**values, updated_at=datetime.now(UTC))
+            .returning(delegation_runs_table)
+        )
+        result = await self._execute_with_logging("terminate_delegation_run", stmt)
+        row = result.mappings().one_or_none()
+        return self._row_to_dict(dict(row)) if row is not None else None
 
     async def mark_notified(
         self,
@@ -364,6 +490,9 @@ class DelegationRunsRepository(BaseRepository):
             result_message_internal_id=row.get("result_message_internal_id"),
             error=row.get("error"),
             notified_at=row.get("notified_at"),
+            remote_task_id=row.get("remote_task_id"),
+            remote_context_id=row.get("remote_context_id"),
+            poll_attempts=row.get("poll_attempts") or 0,
             created_at=row["created_at"],
         )
 
