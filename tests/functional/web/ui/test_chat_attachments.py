@@ -503,9 +503,9 @@ async def test_attachment_response_error_handling(
                         type="function",
                         function=ToolCallFunction(
                             name="attach_to_response",
-                            arguments=json.dumps(
-                                {"attachment_ids": [invalid_attachment_id]}
-                            ),
+                            arguments=json.dumps({
+                                "attachment_ids": [invalid_attachment_id]
+                            }),
                         ),
                     )
                 ],
