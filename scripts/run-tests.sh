@@ -297,11 +297,11 @@ if [ $SKIP_LINT -eq 0 ]; then
     # Ruff check
     echo -n "${BLUE}  ▸ Running ruff check...${NC}"
     timer_start
-    if ! "${VIRTUAL_ENV:-.venv}"/bin/ruff check --fix --preview --ignore=E501 src tests 2>&1; then
+    if ! "${VIRTUAL_ENV:-.venv}"/bin/ruff check --fix --ignore=E501 src tests 2>&1; then
         timer_end
         echo ""
         echo "${YELLOW}💡 Showing suggested fixes (including unsafe ones):${NC}"
-        "${VIRTUAL_ENV:-.venv}"/bin/ruff check --unsafe-fixes --diff --preview --ignore=E501 src tests
+        "${VIRTUAL_ENV:-.venv}"/bin/ruff check --unsafe-fixes --diff --ignore=E501 src tests
         echo ""
         echo "${RED}❌ ruff check failed. Fix the issues above and try again. Use ruff check --fix --unsafe-fixes to apply.${NC}"
         exit 1
@@ -312,7 +312,7 @@ if [ $SKIP_LINT -eq 0 ]; then
     # Ruff format
     echo -n "${BLUE}  ▸ Running ruff format...${NC}"
     timer_start
-    if ! "${VIRTUAL_ENV:-.venv}"/bin/ruff format --preview src tests 2>&1; then
+    if ! "${VIRTUAL_ENV:-.venv}"/bin/ruff format src tests 2>&1; then
         timer_end
         echo ""
         echo "${RED}❌ ruff format failed${NC}"

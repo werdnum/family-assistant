@@ -95,11 +95,11 @@ if [ ${#PYTHON_FILES[@]} -gt 0 ]; then
     # Ruff check
     echo -n "${BLUE}  ▸ Running ruff check...${NC}"
     timer_start
-    if ! "${VIRTUAL_ENV:-.venv}"/bin/ruff check --fix --preview --ignore=E501 "${PYTHON_FILES[@]}" 2>&1; then
+    if ! "${VIRTUAL_ENV:-.venv}"/bin/ruff check --fix --ignore=E501 "${PYTHON_FILES[@]}" 2>&1; then
         timer_end
         echo ""
         echo "${YELLOW}💡 Showing suggested fixes (including unsafe ones):${NC}"
-        "${VIRTUAL_ENV:-.venv}"/bin/ruff check --unsafe-fixes --diff --preview --ignore=E501 "${PYTHON_FILES[@]}"
+        "${VIRTUAL_ENV:-.venv}"/bin/ruff check --unsafe-fixes --diff --ignore=E501 "${PYTHON_FILES[@]}"
         echo ""
         echo "${RED}❌ ruff check failed. Fix the issues above and try again. Use ruff check --fix --unsafe-fixes to apply.${NC}"
         HAS_ERRORS=1
@@ -112,7 +112,7 @@ if [ ${#PYTHON_FILES[@]} -gt 0 ]; then
     if [ $HAS_ERRORS -eq 0 ]; then
         echo -n "${BLUE}  ▸ Running ruff format...${NC}"
         timer_start
-        if ! "${VIRTUAL_ENV:-.venv}"/bin/ruff format --preview "${PYTHON_FILES[@]}" 2>&1; then
+        if ! "${VIRTUAL_ENV:-.venv}"/bin/ruff format "${PYTHON_FILES[@]}" 2>&1; then
             timer_end
             echo ""
             echo "${RED}❌ ruff format failed${NC}"

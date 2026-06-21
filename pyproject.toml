@@ -249,7 +249,7 @@ shell = "scripts/format-and-lint.sh --fast"
 [tool.poe.tasks.format]
 help = "Format code (ruff format + mdformat)"
 shell = """
-${VIRTUAL_ENV:-.venv}/bin/ruff format --preview src tests && \
+${VIRTUAL_ENV:-.venv}/bin/ruff format src tests && \
 if command -v ${VIRTUAL_ENV:-.venv}/bin/mdformat >/dev/null 2>&1; then \
     find . -name "*.md" \
         -not -path "./.venv/*" \
@@ -370,6 +370,10 @@ strict = false
 
 [tool.ruff]
 extend-exclude = ["alembic/**", "docs/**", ".ast-grep/tests/**"]
+# Enable preview mode here (not via the --preview CLI flag) so every ruff
+# invocation honours it, including the format-on-edit hook plugin which cannot
+# pass CLI flags. This keeps the editor hook consistent with CI and pre-commit.
+preview = true
 
 [tool.ruff.lint]
 select = [

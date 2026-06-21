@@ -495,15 +495,17 @@ that conflict with these tools**:
 
 ### Python Formatting
 
-- **Tool**: `ruff format --preview`
-- **Configuration**: Automatic formatting with preview features enabled
+- **Tool**: `ruff format`
+- **Configuration**: Automatic formatting with preview features enabled (`preview = true` in
+  `[tool.ruff]`)
 - **What it handles**: Indentation, spacing, line breaks, import ordering, quote consistency
 - **Important**: Do NOT flag Python style issues that ruff would automatically fix
 
 ### Python Linting
 
-- **Tool**: `ruff check --fix --preview --ignore=E501`
-- **Configuration**: Auto-fixes enabled, line length (E501) ignored
+- **Tool**: `ruff check --fix --ignore=E501`
+- **Configuration**: Auto-fixes enabled, preview features enabled (`preview = true` in
+  `[tool.ruff]`), line length (E501) ignored
 - **What it handles**: Code style violations, unused imports, common errors
 - **Important**: The reviewer should focus on logic and design issues, not style
 
@@ -523,7 +525,7 @@ that conflict with these tools**:
 
 The project uses pre-commit hooks that run these formatters automatically:
 
-- Python files: `ruff check --fix --preview` and `ruff format --preview`
+- Python files: `ruff check --fix` and `ruff format` (preview enabled via `pyproject.toml`)
 - Markdown files: `mdformat --wrap 100`
 
 ### Review Focus
