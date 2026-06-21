@@ -287,15 +287,6 @@ async def _handle_send_message(
             "Message contained no processable content parts",
         )
 
-    # Idempotency: a client (e.g. a delegating worker recovering from a crash)
-    # may re-send the same task_id. Return the existing task's current state
-    # rather than creating a duplicate or re-processing it.
-    existing = await db_context.a2a_tasks.get_task(task_id)
-    if existing is not None:
-        return _jsonrpc_result(
-            request_id, _row_to_task(existing).model_dump(exclude_none=True)
-        )
-
     user_id = str(current_user.get("user_identifier", "a2a_user"))
     history_entry = message.model_dump(exclude_none=True)
 
@@ -313,15 +304,22 @@ async def _handle_send_message(
         # Postgres, cannot see the request transaction (not committed until this
         # handler returns). Without this its update_task_status would silently
         # no-op and the row would be stuck 'working'. Mirrors the streaming path.
+        # create_task_if_absent also handles concurrent retries with the same
+        # task_id atomically, returning the existing task rather than surfacing
+        # the unique-constraint loser as a JSON-RPC internal error.
         db_engine: AsyncEngine = request.app.state.database_engine
         async with get_db_context(db_engine) as committed_db:
-            await committed_db.a2a_tasks.create_task(
+            existing = await committed_db.a2a_tasks.create_task_if_absent(
                 task_id=task_id,
                 profile_id=profile_id,
                 conversation_id=conversation_id,
                 context_id=context_id,
                 status=TaskState.working,
                 history_json=[history_entry],
+            )
+        if existing is not None:
+            return _jsonrpc_result(
+                request_id, _row_to_task(existing).model_dump(exclude_none=True)
             )
         return _start_background_send(
             request_id,
@@ -339,7 +337,7 @@ async def _handle_send_message(
             base_url=base_url,
         )
 
-    await db_context.a2a_tasks.create_task(
+    existing = await db_context.a2a_tasks.create_task_if_absent(
         task_id=task_id,
         profile_id=profile_id,
         conversation_id=conversation_id,
@@ -347,6 +345,10 @@ async def _handle_send_message(
         status=TaskState.working,
         history_json=[history_entry],
     )
+    if existing is not None:
+        return _jsonrpc_result(
+            request_id, _row_to_task(existing).model_dump(exclude_none=True)
+        )
     task = await _execute_and_persist_send(
         db_context=db_context,
         service=service,

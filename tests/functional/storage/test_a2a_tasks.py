@@ -1,5 +1,6 @@
 """Functional tests for A2A tasks repository."""
 
+import asyncio
 from collections.abc import AsyncGenerator
 
 import pytest
@@ -32,6 +33,55 @@ class TestA2ATasksRepository:
         history = row.get("history_json")
         assert history is not None
         assert len(history) == 1
+
+    @pytest.mark.asyncio
+    async def test_create_task_if_absent_returns_existing(
+        self, db_context: DatabaseContext
+    ) -> None:
+        created = await db_context.a2a_tasks.create_task_if_absent(
+            task_id="dedupe-task",
+            profile_id="profile-a",
+            conversation_id="conv-1",
+            context_id="ctx-1",
+            status="working",
+        )
+        assert created is None
+
+        existing = await db_context.a2a_tasks.create_task_if_absent(
+            task_id="dedupe-task",
+            profile_id="profile-b",
+            conversation_id="conv-2",
+            context_id="ctx-2",
+            status="working",
+        )
+        assert existing is not None
+        assert existing["task_id"] == "dedupe-task"
+        assert existing["profile_id"] == "profile-a"
+        assert existing["conversation_id"] == "conv-1"
+
+    @pytest.mark.postgres
+    @pytest.mark.asyncio
+    async def test_create_task_if_absent_handles_concurrent_duplicates(
+        self, db_engine: AsyncEngine
+    ) -> None:
+        async def create_one(profile_id: str) -> object:
+            async with DatabaseContext(engine=db_engine) as db_context:
+                return await db_context.a2a_tasks.create_task_if_absent(
+                    task_id="concurrent-dedupe-task",
+                    profile_id=profile_id,
+                    conversation_id=f"conv-{profile_id}",
+                    context_id="ctx-1",
+                    status="working",
+                )
+
+        results = await asyncio.gather(create_one("profile-a"), create_one("profile-b"))
+        assert sum(result is None for result in results) == 1
+
+        async with DatabaseContext(engine=db_engine) as db_context:
+            row = await db_context.a2a_tasks.get_task("concurrent-dedupe-task")
+
+        assert row is not None
+        assert row["profile_id"] in {"profile-a", "profile-b"}
 
     @pytest.mark.asyncio
     async def test_cancel_does_not_get_overwritten(

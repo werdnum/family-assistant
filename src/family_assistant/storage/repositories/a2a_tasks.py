@@ -8,7 +8,7 @@ from __future__ import annotations
 import json
 import logging
 from datetime import UTC, datetime, timedelta
-from typing import NotRequired, TypedDict
+from typing import TYPE_CHECKING, NotRequired, TypedDict
 
 from sqlalchemy import (
     JSON,
@@ -23,11 +23,15 @@ from sqlalchemy import (
     select,
     update,
 )
-from sqlalchemy.dialects import postgresql
+from sqlalchemy.dialects import postgresql, sqlite
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.sql import functions as func
 
 from family_assistant.storage.base import metadata
 from family_assistant.storage.repositories.base import BaseRepository
+
+if TYPE_CHECKING:
+    from sqlalchemy.sql.dml import Insert as SqlInsert
 
 logger = logging.getLogger(__name__)
 
@@ -100,6 +104,98 @@ class A2ATasksRepository(BaseRepository):
             history_json=history_json,
         )
         await self._execute_with_logging("create_a2a_task", stmt)
+
+    async def create_task_if_absent(
+        self,
+        task_id: str,
+        profile_id: str,
+        conversation_id: str,
+        context_id: str | None = None,
+        status: str = "submitted",
+        history_json: list[dict[str, object]] | None = None,
+    ) -> A2ATaskRow | None:
+        """Create a task, or return the existing row for a duplicate task ID."""
+        existing = await self.get_task(task_id)
+        if existing is not None:
+            return existing
+
+        if self._db.engine.dialect.name in {"postgresql", "sqlite"}:
+            stmt = self._insert_task_ignoring_conflict(
+                dialect_name=self._db.engine.dialect.name,
+                task_id=task_id,
+                profile_id=profile_id,
+                conversation_id=conversation_id,
+                context_id=context_id,
+                status=status,
+                history_json=history_json,
+            )
+            result = await self._execute_with_logging("create_a2a_task_if_absent", stmt)
+            if result.rowcount > 0:  # type: ignore[attr-defined]  # CursorResult always has rowcount
+                return None
+
+            existing = await self.get_task(task_id)
+            if existing is None:
+                raise RuntimeError(
+                    f"A2A task {task_id!r} insert conflicted but no existing row was found"
+                )
+            return existing
+
+        conn = self._db.conn
+        if conn is None:
+            raise RuntimeError("No active database connection")
+
+        stmt = insert(a2a_tasks_table).values(
+            task_id=task_id,
+            context_id=context_id,
+            profile_id=profile_id,
+            conversation_id=conversation_id,
+            status=status,
+            history_json=history_json,
+        )
+
+        savepoint = await conn.begin_nested()
+        try:
+            await conn.execute(stmt)
+        except IntegrityError:
+            await savepoint.rollback()
+            existing = await self.get_task(task_id)
+            if existing is None:
+                raise
+            return existing
+        except Exception:
+            await savepoint.rollback()
+            raise
+        else:
+            await savepoint.commit()
+            return None
+
+    @staticmethod
+    def _insert_task_ignoring_conflict(
+        *,
+        dialect_name: str,
+        task_id: str,
+        profile_id: str,
+        conversation_id: str,
+        context_id: str | None,
+        status: str,
+        history_json: list[dict[str, object]] | None,
+    ) -> SqlInsert:
+        values = {
+            "task_id": task_id,
+            "context_id": context_id,
+            "profile_id": profile_id,
+            "conversation_id": conversation_id,
+            "status": status,
+            "history_json": history_json,
+        }
+        index_elements = [a2a_tasks_table.c.task_id]
+        if dialect_name == "postgresql":
+            stmt = postgresql.insert(a2a_tasks_table)
+        else:
+            stmt = sqlite.insert(a2a_tasks_table)
+        return stmt.values(**values).on_conflict_do_nothing(
+            index_elements=index_elements
+        )
 
     async def get_task(self, task_id: str) -> A2ATaskRow | None:
         """Get an A2A task by its task ID."""
