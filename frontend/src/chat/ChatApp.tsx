@@ -542,6 +542,28 @@ const ChatApp: React.FC<ChatAppProps> = ({ profileId = 'default_assistant' }) =>
             return msg;
           })
         );
+
+        // Defer a re-commit of the finalized message so @assistant-ui
+        // re-reconciles it from a settled state. Under the concurrent-render
+        // pressure of a streaming turn (text → tool_call → tool_result →
+        // trailing text), the external-store runtime can drop the tool-call
+        // part from the rendered thread even though it is present in `messages`
+        // — the tool (and its attachment preview) momentarily renders and then
+        // vanishes once the trailing text lands. Re-committing the message with
+        // fresh content-part references on the next macrotask, after the burst
+        // of streaming updates has flushed, forces a clean re-render in which
+        // the tool is shown. (Same class of assistant-ui reconciliation race as
+        // the tapClientLookup issue the ThreadErrorBoundary above guards.)
+        const settleMessageId = toolCallMessageId;
+        setTimeout(() => {
+          setMessages((prev) =>
+            prev.map((msg) =>
+              msg.id === settleMessageId && msg.content
+                ? { ...msg, content: msg.content.map((part) => ({ ...part })) }
+                : msg
+            )
+          );
+        }, 0);
       }
 
       // Always clean up refs and refresh conversations
