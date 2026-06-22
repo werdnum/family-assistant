@@ -105,7 +105,7 @@ async def test_delete_note_flow(web_test_fixture: WebTestFixture) -> None:
     notes_page = NotesPage(page, web_test_fixture.base_url)
 
     # Create a note to delete
-    title_to_delete = "Note to Delete"
+    title_to_delete = f"Note to Delete {uuid.uuid4()}"
     await notes_page.add_note(
         title=title_to_delete, content="This note will be deleted"
     )

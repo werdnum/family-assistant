@@ -7,7 +7,7 @@ call, a push notification arrives when the turn finishes, and the full conversat
 after the app is reopened — leaving a stuck "disconnected" (`wifi.slash`) indicator in the meantime.
 
 Root cause is the production HTTP front door buffering / severing long-lived SSE (see
-[[ios-chat-stream-drop-is-proxy-sse-buffering]] in agent memory), **not** an app bug. The backend
+\[[ios-chat-stream-drop-is-proxy-sse-buffering]\] in agent memory), **not** an app bug. The backend
 never voluntarily closes the stream and its 30s heartbeats never reach the client. The durable fix
 is at the proxy (disable SSE buffering); this document covers the **client-side resilience** so the
 app self-heals regardless of a hostile front door.
@@ -23,8 +23,8 @@ list to recover):
 ### Gap A — passive recovery is gated behind a working SSE connection
 
 Every recovery path *other than an active send* runs through the passive live-follow loop
-(`ChatViewModel.startLiveEvents`). That loop only pulls finished-turn content (`mergeNewMessages`,
-a plain `GET …/messages`) **after `connectEvents` successfully opens the follow SSE**
+(`ChatViewModel.startLiveEvents`). That loop only pulls finished-turn content (`mergeNewMessages`, a
+plain `GET …/messages`) **after `connectEvents` successfully opens the follow SSE**
 (`handleLiveReconnect`). When the proxy makes SSE unusable, `connectEvents` keeps throwing
 (`URLError -1017 cannotParseResponse` from mangled framing); the `catch` only sets the disconnected
 indicator and backs off. The plain-HTTP catch-up never runs, so a turn that completed while the
@@ -37,8 +37,8 @@ layout, so a turn that finishes while the app is backgrounded strands until manu
 
 ### Gap B — the live-follow stream carries no tokens
 
-The follow stream subscribes with `event_types=["message","turn_ended"]`, so it never renders
-live tokens. A conversation **opened while a turn is already running** — a turn started on another
+The follow stream subscribes with `event_types=["message","turn_ended"]`, so it never renders live
+tokens. A conversation **opened while a turn is already running** — a turn started on another
 device, or one whose send task already gave up to a history reload — shows nothing live; the reply
 only appears when the turn ends and history reloads. There is no live "assistant is typing"
 continuity outside the single device that started the send.
@@ -49,8 +49,8 @@ continuity outside the single device that started the send.
 
 Make passive recovery independent of SSE health.
 
-1. **SSE-independent history catch-up.** In `startLiveEvents`, on every involuntary disconnect
-   (the `connectEvents` throw / clean-EOF path, before the backoff sleep) run a plain-HTTP
+1. **SSE-independent history catch-up.** In `startLiveEvents`, on every involuntary disconnect (the
+   `connectEvents` throw / clean-EOF path, before the backoff sleep) run a plain-HTTP
    `mergeNewMessages` + `refreshRecentConversations` catch-up (guarded by `!isStreaming`, as the
    reconnect merge already is). Now even a permanently-mangled SSE stream self-heals: a finished
    turn surfaces within one backoff interval, no manual refresh. This is plain HTTP, so it works
@@ -58,8 +58,8 @@ Make passive recovery independent of SSE health.
 
 2. **Catch up on foreground.** When `scenePhase` transitions to `.active`, kick
    `reconnectLiveUpdates()` (which clears the disconnected flag, restarts the follow loop, and —
-   with change 1 — catches up history even if the follow reconnect itself fails). Recovers the
-   "turn finished while backgrounded" case.
+   with change 1 — catches up history even if the follow reconnect itself fails). Recovers the "turn
+   finished while backgrounded" case.
 
 These changes are small, low-risk, and valuable as defense-in-depth even after the proxy is fixed.
 
@@ -76,8 +76,8 @@ single always-on, token-carrying live stream per open conversation.
 2. **`turn_id → assistant bubble` mapping.** Incoming token events carry a `turn_id`. The follow
    consumer maintains a map from `turn_id` to the assistant message bubble it is rendering into,
    creating a placeholder bubble on the first token of a previously-unseen running turn. This lets a
-   conversation opened mid-turn (turn started elsewhere, or after the local send task gave up) stream
-   live into the correct bubble.
+   conversation opened mid-turn (turn started elsewhere, or after the local send task gave up)
+   stream live into the correct bubble.
 
 3. **Collapse the send-path resume loop into the always-on consumer.** "Send" becomes "POST the
    turn, then let the always-on live stream render it" — removing the dual-consumer split and the
@@ -92,12 +92,13 @@ proxy, so it follows Milestone 1.
 iOS unit tests use `ChatMockBackendURLProtocol` (in `ChatViewModelTests.swift`) to script backend
 responses. New red-green coverage:
 
-- **M1:** a follow loop where `connectEvents` always throws but `GET …/messages` has a newly-finished
-  turn → assert the content surfaces with no manual reload and the plain-HTTP merge count ≥ 1.
+- **M1:** a follow loop where `connectEvents` always throws but `GET …/messages` has a
+  newly-finished turn → assert the content surfaces with no manual reload and the plain-HTTP merge
+  count ≥ 1.
 - **M1:** `scenePhase → .active` triggers a history catch-up.
 - **M2:** opening a conversation with a turn already running streams tokens live into a freshly
-  created assistant bubble; a turn started on another device renders live; the unified consumer still
-  acks `turn_ended` and suppresses the disconnect push.
+  created assistant bubble; a turn started on another device renders live; the unified consumer
+  still acks `turn_ended` and suppresses the disconnect push.
 
 ## Key files
 
@@ -137,10 +138,10 @@ a merge, then released and replaced by that row (`reconcileLiveFollowBubbles`). 
 former persistence-lag races — the bubble is never dropped before its real row exists (so it can't
 briefly vanish on an unrelated delta) and is never left to duplicate it.
 
-**Graceful fallback:** against a server that does not yet tag rows with `turn_id` (no `turnID` on any
-persisted row), the client falls back to the older heuristic — release a bubble once its turn has
-ended — so the optimistic copy still can't permanently duplicate the persisted reply. The lag races
-re-appear only in that fallback (pre-`turn_id` backend) window.
+**Graceful fallback:** against a server that does not yet tag rows with `turn_id` (no `turnID` on
+any persisted row), the client falls back to the older heuristic — release a bubble once its turn
+has ended — so the optimistic copy still can't permanently duplicate the persisted reply. The lag
+races re-appear only in that fallback (pre-`turn_id` backend) window.
 
 ## What this does NOT change
 

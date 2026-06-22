@@ -3,8 +3,8 @@
 Status: Implemented (in-app screen; CallKit/CarPlay remain a fast-follow, Milestone 7)
 
 This document plans a native voice-conversation screen for the iOS app, replacing the current
-web-backed `/voice` destination with a first-class native experience. It supersedes the
-placeholder "Phase 3: CallKit + Voice Mode" stub in [ios-app.md](ios-app.md).
+web-backed `/voice` destination with a first-class native experience. It supersedes the placeholder
+"Phase 3: CallKit + Voice Mode" stub in [ios-app.md](ios-app.md).
 
 ## Goals
 
@@ -41,10 +41,10 @@ placeholder "Phase 3: CallKit + Voice Mode" stub in [ios-app.md](ios-app.md).
 Backend:
 
 - `POST /api/gemini/ephemeral-token` (`web/routers/gemini_live_api.py`) → returns
-  `{token, expires_at, model, tools, system_instruction, config{voice, vad, transcription,
-  session.max_duration_minutes, greeting, ...}}`. Token is single-use, ~30 min validity, 15 min
-  session cap. Tools are pre-filtered to exclude confirmation-required tools and pre-converted to
-  Gemini `FunctionDeclaration` format. System instruction already has user context injected.
+  `{token, expires_at, model, tools, system_instruction, config{voice, vad, transcription, session.max_duration_minutes, greeting, ...}}`.
+  Token is single-use, ~30 min validity, 15 min session cap. Tools are pre-filtered to exclude
+  confirmation-required tools and pre-converted to Gemini `FunctionDeclaration` format. System
+  instruction already has user context injected.
 - `GET /api/gemini/status` → availability + feature flags + limits.
 - `POST /api/tools/execute/{tool_name}` (`web/routers/tools_api.py`) with body
   `{"arguments": {...}}` → executes a tool with full backend context and returns its result.
@@ -54,18 +54,19 @@ Backend:
 Web reference implementation (the contract to mirror in Swift) — `frontend/src/voice/`:
 
 - `useGeminiLive.ts`: fetches the token, then
-  `new GoogleGenAI({apiKey: token, httpOptions: {apiVersion: 'v1alpha', baseUrl:
-  'https://generativelanguage.googleapis.com'}})` and `client.live.connect({model, config})`.
-  Tool calls → `POST /api/tools/execute/{name}` → `session.sendToolResponse({functionResponses})`.
+  `new GoogleGenAI({apiKey: token, httpOptions: {apiVersion: 'v1alpha', baseUrl: 'https://generativelanguage.googleapis.com'}})`
+  and `client.live.connect({model, config})`. Tool calls → `POST /api/tools/execute/{name}` →
+  `session.sendToolResponse({functionResponses})`.
 - `useAudioCapture.ts`: mic → **16 kHz mono PCM16**, `audio/pcm;rate=16000`.
 - `useAudioPlayback.ts`: plays Gemini's **24 kHz mono PCM16** with gapless queueing.
 
 iOS app (current state):
 
-- No audio/voice code at all. `MoreTabView` has a web-backed `MoreDestination(title: "Voice",
-  path: "/voice")` — this will be replaced by a native route.
-- Chat: `ChatAPIClient` (REST + SSE), `AuthManager` (PKCE OAuth, Keychain tokens, `authorizedRequest`),
-  `AppRouter` navigation, APNs already wired in `AppDelegate`/`NotificationManager`.
+- No audio/voice code at all. `MoreTabView` has a web-backed
+  `MoreDestination(title: "Voice", path: "/voice")` — this will be replaced by a native route.
+- Chat: `ChatAPIClient` (REST + SSE), `AuthManager` (PKCE OAuth, Keychain tokens,
+  `authorizedRequest`), `AppRouter` navigation, APNs already wired in
+  `AppDelegate`/`NotificationManager`.
 - Deployment target iOS 17, SwiftUI, `@Observable`. App-hosted unit tests (see Testing).
 
 ## Architecture
@@ -94,8 +95,8 @@ iOS app (current state):
   official Swift SDK for the Live API**, so this hand-rolls the BidiGenerateContent JSON protocol
   (the same wire protocol `@google/genai` speaks). Responsibilities: connect with the ephemeral
   token, send the setup message, send realtime audio chunks, receive/parse server messages, surface
-  tool calls, send tool responses, detect `turnComplete`/`interrupted`. Pure protocol — no audio,
-  no UI — so it is unit-testable with a fake socket.
+  tool calls, send tool responses, detect `turnComplete`/`interrupted`. Pure protocol — no audio, no
+  UI — so it is unit-testable with a fake socket.
 - **`VoiceAudioEngine`** — `AVAudioEngine` graph. Capture: `inputNode` tap → `AVAudioConverter` to
   16 kHz mono Int16 → base64 → client. Playback: incoming 24 kHz PCM16 → `AVAudioPlayerNode`
   (scheduled buffers / jitter queue). Uses hardware **acoustic echo cancellation** so the assistant
@@ -104,8 +105,8 @@ iOS app (current state):
   existing `AuthManager.authorizedRequest`, returns results to the client.
 - **`TranscriptRecorder`** — accumulates Gemini input/output transcription segments into an ordered
   list of `(role, text)` turns for persistence.
-- **`VoiceSessionViewModel`** — state machine wiring the above: `idle → requestingToken →
-  connecting → listening ⇄ assistantSpeaking → ending → ended/error`.
+- **`VoiceSessionViewModel`** — state machine wiring the above:
+  `idle → requestingToken → connecting → listening ⇄ assistantSpeaking → ending → ended/error`.
 
 ### Gemini Live wire protocol (to implement in Swift)
 
@@ -116,14 +117,16 @@ presented on a raw connection (query param `access_token=<token>` vs `key=`/head
 what `@google/genai` sends; this is the single biggest unknown and is settled in Milestone 1.
 
 - **Setup (client→server, first frame):** `BidiGenerateContentSetup` with `model`,
-  `generationConfig.responseModalities=["AUDIO"]`, `speechConfig.voiceConfig.prebuiltVoiceConfig.voiceName`
-  (from token `config.voice.name`), `systemInstruction` (token `system_instruction`), `tools`
-  (token `tools`), `inputAudioTranscription`, `outputAudioTranscription`, and `realtimeInputConfig`
-  (VAD from token `config.vad`). Mirror the field set used in `useGeminiLive.ts`.
-- **Realtime audio (client→server):** `realtimeInput.mediaChunks=[{mimeType:"audio/pcm;rate=16000",
-  data:<base64 PCM16>}]`, ~tens-of-ms frames.
-- **Server→client:** `setupComplete`; `serverContent` with `modelTurn.parts[].inlineData`
-  (24 kHz PCM16 audio), `inputTranscription`, `outputTranscription`, `turnComplete`, `interrupted`;
+  `generationConfig.responseModalities=["AUDIO"]`,
+  `speechConfig.voiceConfig.prebuiltVoiceConfig.voiceName` (from token `config.voice.name`),
+  `systemInstruction` (token `system_instruction`), `tools` (token `tools`),
+  `inputAudioTranscription`, `outputAudioTranscription`, and `realtimeInputConfig` (VAD from token
+  `config.vad`). Mirror the field set used in `useGeminiLive.ts`.
+- **Realtime audio (client→server):**
+  `realtimeInput.mediaChunks=[{mimeType:"audio/pcm;rate=16000", data:<base64 PCM16>}]`, ~tens-of-ms
+  frames.
+- **Server→client:** `setupComplete`; `serverContent` with `modelTurn.parts[].inlineData` (24 kHz
+  PCM16 audio), `inputTranscription`, `outputTranscription`, `turnComplete`, `interrupted`;
   `toolCall.functionCalls[]`; `toolCallCancellation`.
 - **Tool response (client→server):** `toolResponse.functionResponses=[{id, name, response}]` after
   calling the backend executor.
@@ -132,10 +135,10 @@ what `@google/genai` sends; this is the single biggest unknown and is settled in
 
 ### Audio session
 
-- `AVAudioSession` category `.playAndRecord`, mode `.voiceChat`, options `[.allowBluetooth,
-  .allowBluetoothA2DP, .defaultToSpeaker]`. `.voiceChat` engages the system **AEC** path; we will
-  use the engine's voice-processing IO so the mic does not pick up assistant playback. (Alternative:
-  `AVAudioEngine.inputNode.setVoiceProcessingEnabled(true)`.)
+- `AVAudioSession` category `.playAndRecord`, mode `.voiceChat`, options
+  `[.allowBluetooth, .allowBluetoothA2DP, .defaultToSpeaker]`. `.voiceChat` engages the system
+  **AEC** path; we will use the engine's voice-processing IO so the mic does not pick up assistant
+  playback. (Alternative: `AVAudioEngine.inputNode.setVoiceProcessingEnabled(true)`.)
 - Handle `AVAudioSession.interruptionNotification` (calls, Siri), `routeChangeNotification`
   (headphones/Bluetooth/CarPlay), and media-services-reset by tearing down and rebuilding the graph.
 - `UIBackgroundModes = ["audio"]` so the session continues when backgrounded/locked. This must be
@@ -143,8 +146,9 @@ what `@google/genai` sends; this is the single biggest unknown and is settled in
 
 ### Permissions / Info.plist / entitlements
 
-- `NSMicrophoneUsageDescription` (required). Request via `AVAudioApplication.requestRecordPermission`
-  (iOS 17). No `NSSpeechRecognitionUsageDescription` needed (transcription is server-side via Gemini).
+- `NSMicrophoneUsageDescription` (required). Request via
+  `AVAudioApplication.requestRecordPermission` (iOS 17). No `NSSpeechRecognitionUsageDescription`
+  needed (transcription is server-side via Gemini).
 - `UIBackgroundModes` += `audio`.
 - No new entitlements for the in-app version. (CarPlay entitlement is a Milestone 7 concern.)
 
@@ -154,15 +158,15 @@ There is **no existing HTTP endpoint that writes a finished transcript**. The ex
 endpoints (`POST /v1/chat/turns`, `POST /v1/chat/send_message`) *execute* a turn through the LLM —
 they re-run the assistant, which is wrong for a conversation that already happened with Gemini.
 
-What does exist is a **storage-layer primitive**: `storage/message_history.add_message_to_history(
-db_context, interface_type, conversation_id, role, content, turn_id, timestamp, ...)`. This writes a
-single message into the `message_history` table that the chat UI reads from. The Asterisk voice path
-already uses exactly this to record voice turns (`interface_type="telephone"`), and `get_conversations`
-/ `get_conversation_messages` read straight from that table.
+What does exist is a **storage-layer primitive**:
+`storage/message_history.add_message_to_history( db_context, interface_type, conversation_id, role, content, turn_id, timestamp, ...)`.
+This writes a single message into the `message_history` table that the chat UI reads from. The
+Asterisk voice path already uses exactly this to record voice turns (`interface_type="telephone"`),
+and `get_conversations` / `get_conversation_messages` read straight from that table.
 
 Plan: add a thin endpoint `POST /api/v1/chat/voice-sessions` that loops the accumulated transcript
-turns through `add_message_to_history` under a fresh `conversation_id` (title prefix "Voice · {date}",
-new `interface_type="voice"`). No LLM re-run, no new storage layer.
+turns through `add_message_to_history` under a fresh `conversation_id` (title prefix "Voice ·
+{date}", new `interface_type="voice"`). No LLM re-run, no new storage layer.
 
 - **Ownership gate (important):** `get_conversations` and per-conversation reads are filtered by an
   identity-aware owner predicate (`_ensure_user_owns_conversation`). The voice rows must be written
@@ -213,10 +217,10 @@ Each milestone is independently testable and committable.
 
 ## Risks / open questions
 
-- **No official Swift Live SDK.** Google ships official `genai` SDKs for Python, JS/TS, Go and Java —
-  but not Swift, and none of them speak the Live API from Swift. The one real library option is the
-  **Firebase AI Logic** Swift SDK (`FirebaseAI`), which does expose a Live/bidirectional model — but
-  it authenticates through a Firebase/Vertex project, not our ephemeral-token →
+- **No official Swift Live SDK.** Google ships official `genai` SDKs for Python, JS/TS, Go and Java
+  — but not Swift, and none of them speak the Live API from Swift. The one real library option is
+  the **Firebase AI Logic** Swift SDK (`FirebaseAI`), which does expose a Live/bidirectional model —
+  but it authenticates through a Firebase/Vertex project, not our ephemeral-token →
   `generativelanguage.googleapis.com` flow. Adopting it would mean a different auth/transport model
   (Firebase project + App Check) and would not reuse `/api/gemini/ephemeral-token`. Community Swift
   packages exist but are immature. **Recommendation: DIY the raw WebSocket** — the protocol is plain

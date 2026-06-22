@@ -4,6 +4,7 @@ import { vi } from 'vitest';
 import { mockLocalStorage, resetLocalStorageMock } from '../../test/mocks/localStorageMock';
 import { renderChatApp } from '../../test/utils/renderChatApp';
 import { waitForMessageSent } from '../../test/utils/waitHelpers';
+import { mergeConsecutiveToolOnlyAssistantMessages } from '../ChatApp';
 
 // Mock window.history for navigation
 Object.defineProperty(window, 'history', {
@@ -385,4 +386,74 @@ describe('ChatApp', () => {
   //   turn_ended for one of them arrives (preventing the clobber of freshly-streamed state)
   // - The full end-to-end behavior is exercised by the Playwright chat tests in
   //   tests/functional/web/ui/ (e.g. test_chat_basic.py, test_chat_stream_error_recovery.py)
+});
+
+describe('mergeConsecutiveToolOnlyAssistantMessages', () => {
+  it('merges adjacent assistant messages that only contain tool calls', () => {
+    const messages = mergeConsecutiveToolOnlyAssistantMessages([
+      {
+        id: 'assistant-tool-1',
+        role: 'assistant',
+        content: [
+          {
+            type: 'tool-call',
+            toolCallId: 'tool-call-1',
+            toolName: 'list_notes',
+            args: {},
+          },
+        ],
+        createdAt: new Date('2026-06-22T22:30:00Z'),
+        status: { type: 'complete' },
+      },
+      {
+        id: 'assistant-tool-2',
+        role: 'assistant',
+        content: [
+          {
+            type: 'tool-call',
+            toolCallId: 'tool-call-2',
+            toolName: 'query_events',
+            args: {},
+          },
+        ],
+        createdAt: new Date('2026-06-22T22:30:01Z'),
+        status: { type: 'complete' },
+      },
+    ]);
+
+    expect(messages).toHaveLength(1);
+    expect(messages[0].content).toHaveLength(2);
+    expect(messages[0].content.map((part) => part.toolCallId)).toEqual([
+      'tool-call-1',
+      'tool-call-2',
+    ]);
+  });
+
+  it('does not merge tool-only messages across text replies', () => {
+    const messages = mergeConsecutiveToolOnlyAssistantMessages([
+      {
+        id: 'assistant-tool-1',
+        role: 'assistant',
+        content: [{ type: 'tool-call', toolCallId: 'tool-call-1', toolName: 'list_notes' }],
+        createdAt: new Date('2026-06-22T22:30:00Z'),
+        status: { type: 'complete' },
+      },
+      {
+        id: 'assistant-text',
+        role: 'assistant',
+        content: [{ type: 'text', text: 'Done.' }],
+        createdAt: new Date('2026-06-22T22:30:01Z'),
+        status: { type: 'complete' },
+      },
+      {
+        id: 'assistant-tool-2',
+        role: 'assistant',
+        content: [{ type: 'tool-call', toolCallId: 'tool-call-2', toolName: 'query_events' }],
+        createdAt: new Date('2026-06-22T22:30:02Z'),
+        status: { type: 'complete' },
+      },
+    ]);
+
+    expect(messages).toHaveLength(3);
+  });
 });

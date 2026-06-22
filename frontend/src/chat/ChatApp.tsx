@@ -88,6 +88,41 @@ function extractMessagePreview(content: BackendConversationMessage['content']): 
   return '';
 }
 
+function isToolOnlyAssistantMessage(message: Message): boolean {
+  return (
+    message.role === 'assistant' &&
+    message.content.length > 0 &&
+    message.content.every((part) => part.type === 'tool-call')
+  );
+}
+
+export function mergeConsecutiveToolOnlyAssistantMessages(messages: Message[]): Message[] {
+  const mergedMessages: Message[] = [];
+
+  for (const message of messages) {
+    const previousMessage = mergedMessages[mergedMessages.length - 1];
+    if (
+      previousMessage &&
+      isToolOnlyAssistantMessage(previousMessage) &&
+      isToolOnlyAssistantMessage(message)
+    ) {
+      mergedMessages[mergedMessages.length - 1] = {
+        ...previousMessage,
+        content: [...previousMessage.content, ...message.content],
+        status:
+          previousMessage.status?.type === 'running' || message.status?.type === 'running'
+            ? { type: 'running' }
+            : { type: 'complete' },
+      };
+      continue;
+    }
+
+    mergedMessages.push(message);
+  }
+
+  return mergedMessages;
+}
+
 function parseConfirmationTimestamp(value: unknown): number | null {
   if (typeof value !== 'string' && typeof value !== 'number') {
     return null;
@@ -904,10 +939,12 @@ const ChatApp: React.FC<ChatAppProps> = ({ profileId = 'default_assistant' }) =>
         });
 
         // Ensure all messages have content as arrays before setting
-        const messagesWithArrayContent = processedMessages.map((msg) => ({
-          ...msg,
-          content: Array.isArray(msg.content) ? msg.content : msg.content ? [msg.content] : [],
-        }));
+        const messagesWithArrayContent = mergeConsecutiveToolOnlyAssistantMessages(
+          processedMessages.map((msg) => ({
+            ...msg,
+            content: Array.isArray(msg.content) ? msg.content : msg.content ? [msg.content] : [],
+          }))
+        );
 
         // In-app notification for out-of-band assistant replies. The hub's
         // live `message`/`turn_ended` events are content-free, so the only

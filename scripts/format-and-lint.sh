@@ -72,10 +72,17 @@ if [ $# -eq 0 ]; then
     if [ -d "frontend" ]; then
         JS_TS_FILES=("frontend")
     fi
-    # Find markdown files in common locations
-    while IFS= read -r -d '' file; do
-        MARKDOWN_FILES+=("$file")
-    done < <(find . -name "*.md" -not -path "./.venv/*" -not -path "./venv/*" -not -path "./.git/*" -not -path "*/node_modules/*" -not -path "./scratch/*" -not -path "./.claude/*" -print0 2>/dev/null)
+    # Find tracked markdown files. This avoids generated or vendored build
+    # output such as ignored iOS DerivedData checkouts.
+    if command -v git >/dev/null 2>&1 && git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+        while IFS= read -r -d '' file; do
+            MARKDOWN_FILES+=("$file")
+        done < <(git ls-files -z -- "*.md" ":(exclude).claude/*")
+    else
+        while IFS= read -r -d '' file; do
+            MARKDOWN_FILES+=("$file")
+        done < <(find . -name "*.md" -not -path "./.venv/*" -not -path "./venv/*" -not -path "./.git/*" -not -path "*/node_modules/*" -not -path "./scratch/*" -not -path "./.claude/*" -not -path "*/build/*" -print0 2>/dev/null)
+    fi
 else
     categorize_files "$@"
 fi

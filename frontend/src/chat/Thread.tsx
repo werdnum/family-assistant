@@ -360,6 +360,30 @@ const EditComposer: React.FC = () => {
   );
 };
 
+export function hasCopyableAssistantContent(content: unknown): boolean {
+  if (typeof content === 'string') {
+    return content.trim().length > 0 && content !== LOADING_MARKER;
+  }
+
+  if (!Array.isArray(content)) {
+    return false;
+  }
+
+  return content.some((part: unknown) => {
+    if (typeof part !== 'object' || part === null) {
+      return false;
+    }
+
+    const typedPart = part as Record<string, unknown>;
+    return (
+      typedPart.type === 'text' &&
+      typeof typedPart.text === 'string' &&
+      typedPart.text.trim().length > 0 &&
+      typedPart.text !== LOADING_MARKER
+    );
+  });
+}
+
 const AssistantMessage: React.FC = () => {
   const message = useMessage();
   const { profiles, error } = useProfiles();
@@ -374,6 +398,7 @@ const AssistantMessage: React.FC = () => {
   // Get profile info for this message
   const profileId = (message as { processing_profile_id?: string })?.processing_profile_id;
   const profile = profileId ? profiles[profileId] : null;
+  const hasCopyableContent = hasCopyableAssistantContent(message?.content);
 
   return (
     <MessagePrimitive.Root
@@ -438,7 +463,7 @@ const AssistantMessage: React.FC = () => {
                   </>
                 )}
               </div>
-              <AssistantActionBar />
+              {hasCopyableContent && <AssistantActionBar />}
             </div>
           </div>
         </div>
@@ -454,7 +479,7 @@ const AssistantActionBar: React.FC = () => {
       autohide="not-last"
       autohideFloat="single-branch"
       data-testid="assistant-action-bar"
-      className="flex items-center gap-1 mt-1 opacity-0 group-hover:opacity-100 transition-opacity duration-200 data-[floating]:absolute data-[floating]:mt-0 data-[floating]:rounded-lg data-[floating]:border data-[floating]:bg-background data-[floating]:p-1 data-[floating]:shadow-sm"
+      className="absolute left-0 top-full z-10 mt-1 flex items-center gap-1 rounded-lg border border-border/50 bg-background/95 p-1 opacity-0 shadow-sm backdrop-blur-sm pointer-events-none transition-opacity duration-200 group-hover:opacity-100 group-hover:pointer-events-auto"
     >
       <ActionBarPrimitive.Copy asChild>
         {/* @ts-expect-error - TooltipIconButton JSX component */}
