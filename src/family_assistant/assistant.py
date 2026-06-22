@@ -85,6 +85,7 @@ from family_assistant.storage.context import (
     get_db_context,
 )
 from family_assistant.task_worker import (
+    SCHEDULE_AUTOMATION_ADVANCE_TASK_TYPE,
     ReindexDocumentPayload,
     TaskWorker,
     handle_completed_automation_cleanup,
@@ -1758,6 +1759,10 @@ class Assistant:
             "system_error_log_cleanup", handle_system_error_log_cleanup
         )
         worker.register_task_handler("script_execution", handle_script_execution)
+        worker.register_task_handler(
+            SCHEDULE_AUTOMATION_ADVANCE_TASK_TYPE,
+            worker.handle_schedule_automation_advance,
+        )
         worker.register_task_handler(
             CONFIRMATION_TOOL_EXECUTION_TASK_TYPE,
             handle_confirmation_tool_execution,

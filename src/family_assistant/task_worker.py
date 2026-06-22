@@ -11,7 +11,7 @@ import random
 import shutil
 import traceback
 import uuid
-from dataclasses import replace
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta  # Added Union
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Required, TypedDict, cast
@@ -21,7 +21,7 @@ from dateutil import rrule
 from dateutil.parser import isoparse
 from opentelemetry import trace
 from opentelemetry.trace import StatusCode
-from sqlalchemy import select
+from sqlalchemy import func, select, update
 
 # Removed storage import - using repository pattern
 from family_assistant.a2a.client import (
@@ -50,7 +50,7 @@ from family_assistant.tools.services import short_error_summary
 from family_assistant.tools.types import CalendarConfig, EventSourcesById
 
 if TYPE_CHECKING:
-    from collections.abc import Awaitable, Callable
+    from collections.abc import Awaitable, Callable, Mapping
     from zoneinfo import ZoneInfo
 
     from sqlalchemy.ext.asyncio import AsyncEngine
@@ -92,6 +92,7 @@ from family_assistant.storage.tasks import (
     enqueue_task,
     notify_other_workers,
     register_worker_wake_event,
+    tasks_table,
     unregister_worker_wake_event,
 )
 from family_assistant.tools import ToolExecutionContext
@@ -188,6 +189,25 @@ class CompletedAutomationCleanupPayload(TypedDict, total=False):
     retention_hours: int
 
 
+class ScheduleAutomationAdvancePayload(TypedDict, total=False):
+    """Payload for retryable schedule automation advancement tasks."""
+
+    automation_id: Required[str]
+    source_task_id: Required[str]
+    execution_time: Required[str]
+    schedule_next: bool
+
+
+@dataclass(frozen=True)
+class ScheduleAutomationAdvanceRequest:
+    """Internal request to enqueue schedule advancement after source commit."""
+
+    automation_id: str
+    source_task_id: str
+    execution_time: datetime
+    schedule_next: bool = True
+
+
 class ReindexDocumentPayload(TypedDict, total=False):
     """Payload for reindex_document tasks."""
 
@@ -227,6 +247,8 @@ class DelegationPollPayload(TypedDict):
 # Task type for the per-run, self-rescheduling poll of an awaiting_remote
 # delegation (the submit-then-poll A2A path).
 DELEGATION_POLL_TASK_TYPE = "delegation_poll"
+SCHEDULE_AUTOMATION_ADVANCE_TASK_TYPE = "schedule_automation_advance"
+SCHEDULE_AUTOMATION_ADVANCE_OUTBOX_KEY = "_schedule_automation_advance"
 
 # Delegation runs left "running" longer than this are considered stranded (a
 # crash or exhausted retries) and are failed + notified by the reaper. It must
@@ -257,6 +279,21 @@ def _delegation_poll_backoff(attempts: int, base_interval: float) -> float:
 def _as_aware_utc(value: datetime) -> datetime:
     """Treat a tz-naive datetime (e.g. read back from SQLite) as UTC."""
     return value if value.tzinfo is not None else value.replace(tzinfo=UTC)
+
+
+class NonRetryableTaskError(RuntimeError):
+    """Raised when task failure handling should skip retries."""
+
+
+def _parse_payload_datetime(value: str, field_name: str) -> datetime:
+    """Parse an ISO datetime payload field as aware UTC."""
+    try:
+        parsed = isoparse(value)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"{field_name} must be an ISO datetime string") from exc
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=UTC)
+    return parsed.astimezone(UTC)
 
 
 def _poll_interval_for(target_service: PollableDelegationService) -> float:
@@ -309,42 +346,6 @@ class DelegationNotificationError(RuntimeError):
     Rolls back the isolated notification transaction so ``notified_at`` stays
     NULL and the run is retried instead of being recorded as delivered.
     """
-
-
-async def _handle_schedule_automation_recurrence(
-    exec_context: ToolExecutionContext,
-    payload: LlmCallbackPayload | ScriptExecutionPayload,
-) -> None:
-    """
-    Handle schedule automation recurrence after successful task execution.
-
-    Checks if the task was triggered by a schedule automation and schedules
-    the next instance via the after_task_execution callback.
-
-    Args:
-        exec_context: Tool execution context with DB access
-        payload: Task payload that may contain automation_id and automation_type
-    """
-    automation_id = payload.get("automation_id")
-    automation_type = payload.get("automation_type")
-
-    if automation_id and automation_type == "schedule":
-        try:
-            clock = exec_context.clock or SystemClock()
-            await exec_context.db_context.schedule_automations.after_task_execution(
-                automation_id=int(automation_id),
-                execution_time=clock.now(),
-                timezone=exec_context.timezone,
-            )
-            logger.info(
-                f"Scheduled next instance for schedule automation {automation_id}"
-            )
-        except Exception as auto_err:
-            logger.error(
-                f"Failed to schedule next instance for automation {automation_id}: {auto_err}",
-                exc_info=True,
-            )
-            # Don't raise - the automation already executed successfully
 
 
 async def _schedule_reminder_follow_up(
@@ -653,6 +654,11 @@ async def handle_llm_callback(
             f"error='{processing_error_traceback}'"
         )
 
+        if processing_error_traceback:
+            logger.error(
+                f"LLM callback had processing errors for {interface_type}:{conversation_id}"
+            )
+
         sent_message_id_str = None
         # Send message if there's text content OR attachments
         if final_llm_content_to_send or response_attachment_ids:
@@ -671,6 +677,44 @@ async def handle_llm_callback(
             logger.warning(
                 f"LLM turn completed for callback in {interface_type}:{conversation_id}, but final message had no content or attachments."
             )
+
+        # Update interface message ID if we sent a message successfully
+        if sent_message_id_str and final_assistant_message_internal_id is not None:
+            try:
+                await db_context.message_history.update_interface_id(
+                    internal_id=final_assistant_message_internal_id,
+                    interface_message_id=sent_message_id_str,
+                )
+            except Exception as e:
+                logger.error(
+                    f"Failed to update interface_message_id for callback response: {e}",
+                    exc_info=True,
+                )
+        elif sent_message_id_str:  # Message sent but no internal_id to update
+            logger.warning(
+                f"Sent LLM callback response to {interface_type}:{conversation_id}, but could not find internal_id ({final_assistant_message_internal_id}) to update its interface_message_id."
+            )
+        elif (
+            final_llm_content_to_send or response_attachment_ids
+        ):  # We expected to send a message but failed
+            logger.error(
+                f"Failed to send LLM callback response to {interface_type}:{conversation_id}"
+            )
+            # Raise an exception to mark the task as failed
+            raise RuntimeError(
+                f"Failed to send LLM callback response to {interface_type}:{conversation_id} via chat interface."
+            )
+
+        if processing_error_traceback:
+            error_message = (
+                f"LLM callback failed. Traceback: {processing_error_traceback}"
+            )
+            if sent_message_id_str:
+                raise NonRetryableTaskError(
+                    f"LLM callback failed after delivering error reply. "
+                    f"Traceback: {processing_error_traceback}"
+                )
+            raise RuntimeError(error_message)
 
         # Schedule follow-up reminder if needed (moved outside of text reply condition)
         logger.info(
@@ -704,50 +748,13 @@ async def handle_llm_callback(
                 f"conditions not met"
             )
 
-        # Update interface message ID if we sent a message successfully
-        if sent_message_id_str and final_assistant_message_internal_id is not None:
-            try:
-                await db_context.message_history.update_interface_id(
-                    internal_id=final_assistant_message_internal_id,
-                    interface_message_id=sent_message_id_str,
-                )
-            except Exception as e:
-                logger.error(
-                    f"Failed to update interface_message_id for callback response: {e}",
-                    exc_info=True,
-                )
-        elif sent_message_id_str:  # Message sent but no internal_id to update
-            logger.warning(
-                f"Sent LLM callback response to {interface_type}:{conversation_id}, but could not find internal_id ({final_assistant_message_internal_id}) to update its interface_message_id."
-            )
-        elif (
-            final_llm_content_to_send or response_attachment_ids
-        ):  # We expected to send a message but failed
-            logger.error(
-                f"Failed to send LLM callback response to {interface_type}:{conversation_id}"
-            )
-            # Raise an exception to mark the task as failed
-            raise RuntimeError(
-                f"Failed to send LLM callback response to {interface_type}:{conversation_id} via chat interface."
-            )
-
-        # Check if we should fail the task due to processing errors
-        if processing_error_traceback:
-            logger.error(
-                f"LLM callback had processing errors for {interface_type}:{conversation_id}"
-            )
-            raise RuntimeError(
-                f"LLM callback failed. Traceback: {processing_error_traceback}"
-            )
-        elif not final_llm_content_to_send and not is_reminder:
+        # Check if we should fail the task due to missing generated content
+        if not final_llm_content_to_send and not is_reminder:
             # For non-reminder callbacks, we expect content to be generated
             logger.error(
                 f"No content generated for non-reminder callback in {interface_type}:{conversation_id}"
             )
             raise RuntimeError("LLM failed to generate response content for callback.")
-
-        # Handle schedule automation recurrence if this was from a schedule automation
-        await _handle_schedule_automation_recurrence(exec_context, payload)
 
     except Exception as e:
         # Catch errors during the generate_llm_response_for_chat call or sending/saving messages
@@ -760,6 +767,7 @@ async def handle_llm_callback(
             exc_info=True,
         )
         # Raise the exception to ensure the task is marked as failed
+        raise
 
 
 class TaskWorker:
@@ -2057,12 +2065,212 @@ class TaskWorker:
             )
             # Don't mark the original task as failed, just log the recurrence error.
 
+    def _schedule_automation_advance_request_for_task(
+        self, task: TaskDict
+    ) -> ScheduleAutomationAdvanceRequest | None:
+        """Build schedule automation advancement work for a terminal source task."""
+        payload = task.get("payload") or {}
+        automation_id = payload.get("automation_id")
+        automation_type = payload.get("automation_type")
+        if not automation_id or automation_type != "schedule":
+            return None
+
+        return ScheduleAutomationAdvanceRequest(
+            automation_id=str(automation_id),
+            source_task_id=task["task_id"],
+            execution_time=self.clock.now(),
+        )
+
+    def _payload_with_schedule_automation_advance_outbox(
+        self,
+        task: TaskDict,
+        request: ScheduleAutomationAdvanceRequest | None,
+    ) -> dict[str, object] | None:
+        """Return task payload with durable schedule advancement outbox attached."""
+        payload = dict(task.get("payload") or {})
+        if request is None:
+            return task.get("payload")
+
+        payload[SCHEDULE_AUTOMATION_ADVANCE_OUTBOX_KEY] = {
+            "automation_id": request.automation_id,
+            "source_task_id": request.source_task_id,
+            "execution_time": request.execution_time.isoformat(),
+            "schedule_next": request.schedule_next,
+        }
+        return payload
+
+    def _advance_request_from_outbox_payload(
+        self,
+        payload: Mapping[str, object] | None,
+    ) -> ScheduleAutomationAdvanceRequest | None:
+        """Parse a persisted schedule advancement outbox payload."""
+        if not payload:
+            return None
+        outbox = payload.get(SCHEDULE_AUTOMATION_ADVANCE_OUTBOX_KEY)
+        if not isinstance(outbox, dict):
+            return None
+        automation_id = outbox.get("automation_id")
+        source_task_id = outbox.get("source_task_id")
+        execution_time = outbox.get("execution_time")
+        schedule_next = outbox.get("schedule_next", True)
+        if (
+            not isinstance(automation_id, str)
+            or not isinstance(source_task_id, str)
+            or not isinstance(execution_time, str)
+            or not isinstance(schedule_next, bool)
+        ):
+            raise ValueError("Invalid persisted schedule automation advance outbox")
+        return ScheduleAutomationAdvanceRequest(
+            automation_id=automation_id,
+            source_task_id=source_task_id,
+            execution_time=_parse_payload_datetime(
+                execution_time,
+                "execution_time",
+            ),
+            schedule_next=schedule_next,
+        )
+
+    async def _enqueue_schedule_automation_advance(
+        self,
+        db_context: DatabaseContext,
+        request: ScheduleAutomationAdvanceRequest,
+    ) -> None:
+        """Persist retryable work to advance a terminal schedule automation task."""
+        await db_context.tasks.enqueue(
+            task_id=f"sched_auto_advance_{request.source_task_id}",
+            task_type=SCHEDULE_AUTOMATION_ADVANCE_TASK_TYPE,
+            payload=ScheduleAutomationAdvancePayload(
+                automation_id=request.automation_id,
+                source_task_id=request.source_task_id,
+                execution_time=request.execution_time.isoformat(),
+                schedule_next=request.schedule_next,
+            ),
+            max_retries_override=5,
+        )
+        logger.info(
+            f"Enqueued schedule automation advancement for automation "
+            f"{request.automation_id} after terminal task {request.source_task_id}"
+        )
+
+    async def _flush_schedule_automation_advance_outbox(
+        self,
+        db_context: DatabaseContext,
+        source_task_id: str,
+    ) -> bool:
+        """Drain one durable schedule advancement outbox into an advance task."""
+        row = await db_context.fetch_one(
+            select(tasks_table).where(tasks_table.c.task_id == source_task_id)
+        )
+        if row is None:
+            logger.warning(
+                f"Cannot flush schedule automation advancement for missing source task {source_task_id}"
+            )
+            return False
+
+        task = cast("TaskDict", dict(row))
+        payload = task.get("payload") or {}
+        request = self._advance_request_from_outbox_payload(payload)
+        if request is None:
+            return False
+
+        await self._enqueue_schedule_automation_advance(db_context, request)
+        updated_payload = dict(payload)
+        updated_payload.pop(SCHEDULE_AUTOMATION_ADVANCE_OUTBOX_KEY, None)
+        await db_context.execute_with_retry(
+            update(tasks_table)
+            .where(tasks_table.c.task_id == source_task_id)
+            .values(payload=updated_payload)
+        )
+        return True
+
+    async def _drain_schedule_automation_advance_outbox(
+        self,
+        db_context: DatabaseContext,
+    ) -> int:
+        """Flush persisted schedule advancement outbox entries from terminal source tasks."""
+        outbox_exists = (
+            func.json_type(
+                tasks_table.c.payload,
+                f"$.{SCHEDULE_AUTOMATION_ADVANCE_OUTBOX_KEY}",
+            ).is_not(None)
+            if db_context.engine.dialect.name == "sqlite"
+            else tasks_table.c.payload[SCHEDULE_AUTOMATION_ADVANCE_OUTBOX_KEY].is_not(
+                None
+            )
+        )
+        rows = await db_context.fetch_all(
+            select(tasks_table)
+            .where(tasks_table.c.status.in_(["done", "failed"]))
+            .where(
+                tasks_table.c.task_type.in_(
+                    ["llm_callback", "script_execution"],
+                )
+            )
+            .where(outbox_exists)
+            .order_by(tasks_table.c.created_at.asc())
+            .limit(20)
+        )
+        flushed_count = 0
+        for row in rows:
+            task = cast("TaskDict", dict(row))
+            payload = task.get("payload") or {}
+            if SCHEDULE_AUTOMATION_ADVANCE_OUTBOX_KEY not in payload:
+                continue
+            if await self._flush_schedule_automation_advance_outbox(
+                db_context,
+                task["task_id"],
+            ):
+                flushed_count += 1
+        return flushed_count
+
+    async def _handle_schedule_automation_task_terminal(
+        self,
+        db_context: DatabaseContext,
+        task: TaskDict,
+    ) -> None:
+        """Persist retryable work to advance a terminal schedule automation task."""
+        request = self._schedule_automation_advance_request_for_task(task)
+        if request is None:
+            return
+        await self._enqueue_schedule_automation_advance(db_context, request)
+
+    async def handle_schedule_automation_advance(
+        self,
+        exec_context: ToolExecutionContext,
+        payload: ScheduleAutomationAdvancePayload,
+    ) -> None:
+        """Advance a schedule automation after one run reaches terminal state."""
+        automation_id = payload.get("automation_id")
+        if not automation_id:
+            raise ValueError(
+                "schedule_automation_advance payload missing automation_id"
+            )
+        execution_time = payload.get("execution_time")
+        if not execution_time:
+            raise ValueError(
+                "schedule_automation_advance payload missing execution_time"
+            )
+        schedule_next = payload.get("schedule_next", True)
+        if not isinstance(schedule_next, bool):
+            raise ValueError("schedule_automation_advance schedule_next must be bool")
+
+        await exec_context.db_context.schedule_automations.after_task_execution(
+            automation_id=int(automation_id),
+            execution_time=_parse_payload_datetime(execution_time, "execution_time"),
+            timezone=exec_context.timezone,
+            schedule_next=schedule_next,
+        )
+        logger.info(
+            f"Advanced schedule automation {automation_id} "
+            f"after terminal task {payload.get('source_task_id', 'unknown')}"
+        )
+
     async def _process_task(
         self,
         db_context: DatabaseContext,
         task: TaskDict,
         wake_up_event: asyncio.Event,
-    ) -> None:
+    ) -> ScheduleAutomationAdvanceRequest | None:
         """Handles the execution, completion marking, and recurrence logic for a dequeued task."""
         logger.info(
             f"PROCESS START: Worker {self.worker_id} processing task {task['task_id']} (type: {task['task_type']})"
@@ -2079,7 +2287,7 @@ class TaskWorker:
                 status="failed",
                 error=f"No handler registered for type {task['task_type']}",
             )
-            return  # Stop processing this task
+            return None  # Stop processing this task
 
         with tracer.start_as_current_span(
             f"task.process.{task['task_type']}",
@@ -2110,7 +2318,7 @@ class TaskWorker:
                             status="failed",
                             error="Missing interface_type or conversation_id in payload for llm_callback",
                         )
-                        return  # Stop processing
+                        return None  # Stop processing
                     final_interface_type = raw_interface_type
                     final_conversation_id = raw_conversation_id
                 else:
@@ -2213,11 +2421,18 @@ class TaskWorker:
                 original_task_id = task.get(
                     "original_task_id", task_id
                 )  # Use task_id if original is missing (first run)
+                advance_request = self._schedule_automation_advance_request_for_task(
+                    task
+                )
 
                 # Mark task as done
                 await db_context.tasks.update_status(
                     task_id=task_id,
                     status="done",
+                    payload=self._payload_with_schedule_automation_advance_outbox(
+                        task,
+                        advance_request,
+                    ),
                 )
                 span.set_attribute("task.status", "success")
                 logger.info(
@@ -2226,19 +2441,20 @@ class TaskWorker:
 
                 # --- Handle Recurrence ---
                 await self._handle_recurrence(db_context, task)
+                return advance_request
 
             except Exception as handler_exc:
                 span.set_status(StatusCode.ERROR, str(handler_exc))
                 span.record_exception(handler_exc)
                 span.set_attribute("task.status", "error")
-                await self._handle_task_failure(db_context, task, handler_exc)
+                return await self._handle_task_failure(db_context, task, handler_exc)
 
     async def _handle_task_failure(
         self,
         db_context: DatabaseContext,
         task: TaskDict,
         handler_exc: Exception,
-    ) -> None:
+    ) -> ScheduleAutomationAdvanceRequest | None:
         """Handles logging, retries, and marking tasks as failed."""
         current_retry = task.get("retry_count", 0)
         max_retries = task.get("max_retries", 3)  # Use DB default if missing somehow
@@ -2256,7 +2472,11 @@ class TaskWorker:
             exc_info=True,
         )
 
-        if current_retry < max_retries:
+        can_retry = current_retry < max_retries and not isinstance(
+            handler_exc, NonRetryableTaskError
+        )
+
+        if can_retry:
             # Calculate exponential backoff with jitter
             backoff_delay = (5 * (2**current_retry)) + random.uniform(0, 2)
             next_attempt_time = self.clock.now() + timedelta(seconds=backoff_delay)
@@ -2276,20 +2496,39 @@ class TaskWorker:
                     f"CRITICAL: Failed to reschedule task {task['task_id']} for retry after handler error. Marking as failed. Error: {reschedule_err}",
                     exc_info=True,
                 )
+                advance_request = self._schedule_automation_advance_request_for_task(
+                    task
+                )
                 await db_context.tasks.update_status(
                     task_id=task["task_id"],
                     status="failed",
                     error=f"Handler Error: {error_str}. Reschedule Failed: {reschedule_err}",
+                    payload=self._payload_with_schedule_automation_advance_outbox(
+                        task,
+                        advance_request,
+                    ),
                 )
+                return advance_request
+            return None
         else:
-            # Handle case where the turn completed but the final assistant message had no content
-            logger.warning(
-                f"Task {task['task_id']} reached max retries ({max_retries}). Marking as failed."
-            )
+            if isinstance(handler_exc, NonRetryableTaskError):
+                logger.warning(
+                    f"Task {task['task_id']} failed with a non-retryable error. Marking as failed."
+                )
+            else:
+                # Handle case where the turn completed but the final assistant message had no content
+                logger.warning(
+                    f"Task {task['task_id']} reached max retries ({max_retries}). Marking as failed."
+                )
+            advance_request = self._schedule_automation_advance_request_for_task(task)
             await db_context.tasks.update_status(
                 task_id=task["task_id"],
                 status="failed",
                 error=error_str,
+                payload=self._payload_with_schedule_automation_advance_outbox(
+                    task,
+                    advance_request,
+                ),
             )
             # Handle recurrence even if task failed (after max retries)
             await self._handle_recurrence(db_context, task)
@@ -2300,6 +2539,7 @@ class TaskWorker:
                 )
             # Push-notify the conversation owner that a background task failed.
             await self._notify_task_failure(db_context, task)
+            return advance_request
 
     async def _notify_task_failure(
         self,
@@ -2492,6 +2732,18 @@ class TaskWorker:
                 if not self.engine:
                     raise RuntimeError("Database engine not initialized")
                 # Split task processing into separate transactions for better isolation
+                async with get_db_context(
+                    engine=self.engine,
+                ) as outbox_context:
+                    drained_count = (
+                        await self._drain_schedule_automation_advance_outbox(
+                            outbox_context
+                        )
+                    )
+                if drained_count > 0:
+                    self._update_last_activity()
+                    continue
+
                 # Transaction 1: Dequeue task (commits immediately)
                 task = None
                 async with get_db_context(
@@ -2528,9 +2780,16 @@ class TaskWorker:
                         async with get_db_context(
                             engine=self.engine,
                         ) as process_context:
-                            await self._process_task(
+                            advance_request = await self._process_task(
                                 process_context, task, wake_up_event
                             )
+                        if advance_request is not None:
+                            async with get_db_context(
+                                engine=self.engine,
+                            ) as advance_context:
+                                await self._flush_schedule_automation_advance_outbox(
+                                    advance_context, advance_request.source_task_id
+                                )
                         self._update_last_activity()  # Update after successful task processing
                         # After successful task processing, immediately continue to check for more tasks
                         # This eliminates unnecessary delays between tasks
@@ -3195,9 +3454,6 @@ async def handle_script_execution(
                     listener_id=listener_id,
                 )
 
-        # Handle schedule automation recurrence if this was from a schedule automation
-        await _handle_schedule_automation_recurrence(exec_context, payload)
-
     except ScriptTimeoutError as e:
         logger.error(
             f"Script timeout for listener {listener_id} after {e.timeout_seconds} seconds: {e}"
@@ -3777,6 +4033,7 @@ async def handle_reindex_document(
 
 
 __all__ = [
+    "SCHEDULE_AUTOMATION_ADVANCE_TASK_TYPE",
     "TaskWorker",
     "handle_log_message",
     "handle_llm_callback",

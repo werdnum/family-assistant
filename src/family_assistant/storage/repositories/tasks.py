@@ -318,6 +318,7 @@ class TasksRepository(BaseRepository):
         task_id: str,
         status: str,
         error: str | None = None,
+        payload: Mapping[str, Any] | None = None,
     ) -> None:
         """
         Updates the status of a task.
@@ -326,10 +327,13 @@ class TasksRepository(BaseRepository):
             task_id: The unique task identifier
             status: New status ('completed', 'failed', etc.')
             error: Optional error message if the task failed
+            payload: Optional replacement payload
         """
-        values = {"status": status}
+        values: dict[str, object] = {"status": status}
         if error is not None:
             values["error"] = error
+        if payload is not None:
+            values["payload"] = payload
 
         stmt = (
             update(tasks_table).where(tasks_table.c.task_id == task_id).values(**values)
