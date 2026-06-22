@@ -14,7 +14,7 @@ you control and hand to Apple.
 | ------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | Private data exposure                      | Brand-new, empty database. Your family's data never touches this instance.                                                                                                                             |
 | Random internet users burning your API key | Every tool/LLM call sits behind OIDC auth. `ALLOWED_OIDC_EMAILS` restricts login to the one demo account — enforced for both the web session (`auth.py`) and the native iOS PKCE flow (`app_auth.py`). |
-| A leaked demo credential running up a bill | Use a **dedicated, quota-capped OpenRouter key** with a hard credit limit. The whole sandbox runs on the cheap `deepseek/deepseek-v4-flash` model, and `config.yaml` caps `max_iterations`.                |
+| A leaked demo credential running up a bill | Use a **dedicated, quota-capped OpenRouter key** with a hard credit limit. The whole sandbox runs on the cheap `deepseek/deepseek-v4-flash` model, and `config.yaml` caps `max_iterations`.            |
 | Untrusted-input attack surface             | Telegram, email intake, Home Assistant, calendars, and push are all left unconfigured (disabled), leaving only the web + iOS surfaces a reviewer needs.                                                |
 
 > Auth note: this sandbox deliberately does **not** set a `users:` mapping. With no users
@@ -27,14 +27,14 @@ Both the LLM and embeddings run through **OpenRouter's OpenAI-compatible API** �
 `openai` provider pointed at `https://openrouter.ai/api/v1` via `OPENAI_BASE_URL`. A single
 quota-capped OpenRouter key powers both:
 
-| Use        | Model                            | Why                                                                                                              |
-| ---------- | -------------------------------- | --------------------------------------------------------------------------------------------------------------- |
-| Chat       | `deepseek/deepseek-v4-flash`     | Cheapest output ($0.18/1M) among reputable tool-calling models, with the best agentic-tool-use benchmarks in its tier — reliable function calling is what the demo needs. |
-| Embeddings | `openai/text-embedding-3-small`  | 1536-dim, cheap, served by OpenRouter on the same key.                                                           |
+| Use        | Model                           | Why                                                                                                                                                                       |
+| ---------- | ------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Chat       | `deepseek/deepseek-v4-flash`    | Cheapest output ($0.18/1M) among reputable tool-calling models, with the best agentic-tool-use benchmarks in its tier — reliable function calling is what the demo needs. |
+| Embeddings | `openai/text-embedding-3-small` | 1536-dim, cheap, served by OpenRouter on the same key.                                                                                                                    |
 
 `config.yaml` pins **every** service profile to the chat model with `provider: openai`, so even the
-research / complex-tasks / automation profiles route to the one cheap model instead of their
-default Gemini/Claude/GPT pins.
+research / complex-tasks / automation profiles route to the one cheap model instead of their default
+Gemini/Claude/GPT pins.
 
 > **Dependency:** the OpenAI-compatible embedding provider comes from PR #909
 > (`feat/openai-compatible-embeddings`). This sandbox must be deployed from a branch that includes
@@ -113,9 +113,9 @@ For a VPS you already run behind a reverse proxy with TLS.
 1. `cp .env.example .env` and fill every value. `APP_BASE_URL` and `DEX_ISSUER` must be the **public
    HTTPS URLs** your reverse proxy serves (see the reachability note at the top of
    `docker-compose.yaml`).
-2. Point your reverse proxy at the published host ports `127.0.0.1:8000` (app) and
-   `127.0.0.1:5556` (dex). (Only a proxy running *inside* the compose network would
-   use the service names `app:8000` / `dex:5556`.)
+2. Point your reverse proxy at the published host ports `127.0.0.1:8000` (app) and `127.0.0.1:5556`
+   (dex). (Only a proxy running *inside* the compose network would use the service names `app:8000`
+   / `dex:5556`.)
 3. Bring it up:
    ```bash
    docker compose --env-file .env up --build -d

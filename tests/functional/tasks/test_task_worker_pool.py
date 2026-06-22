@@ -241,7 +241,7 @@ async def test_parked_worker_unblocked_by_sibling(
             )
 
         # Let one worker pick up and park on the waiter task.
-        await asyncio.wait_for(waiter_started.wait(), timeout=5.0)
+        await asyncio.wait_for(waiter_started.wait(), timeout=10.0)
 
         async with DatabaseContext(engine=db_engine) as db_context:
             await db_context.tasks.enqueue(

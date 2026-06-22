@@ -109,4 +109,5 @@ duplicate test runs.
 `MARKETING_VERSION` (the user-facing `CFBundleShortVersionString`, currently `1.1`) is manually
 controlled — bump it in the Xcode project (`project.pbxproj`, all build configs) when shipping a new
 user-facing version. The build number is assigned automatically by Xcode Cloud (`CI_BUILD_NUMBER`)
-and is not repo-controlled; see [Build numbers: Xcode Cloud owns them](#build-numbers-xcode-cloud-owns-them).
+and is not repo-controlled; see
+[Build numbers: Xcode Cloud owns them](#build-numbers-xcode-cloud-owns-them).
