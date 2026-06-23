@@ -173,6 +173,18 @@ export const AttachToResponseTool: React.FC<AttachToResponseToolProps> = ({
       }
     });
 
+    if (validAttachments.length === 0) {
+      getAttachmentIdsFromArgs().forEach((attachmentId) => {
+        validAttachments.push({
+          id: attachmentId,
+          name: 'Attachment',
+          url: `/api/attachments/${attachmentId}`,
+          mime_type: 'application/octet-stream',
+          size: 0,
+        });
+      });
+    }
+
     return validAttachments;
   };
 

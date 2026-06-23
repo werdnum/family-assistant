@@ -140,6 +140,7 @@ dependencies = [
     "pyjwt[crypto]>=2.10.1",
     "opentelemetry-distro>=0.46b0",
     "opentelemetry-exporter-otlp>=1.25.0",
+    "cryptography>=44.0.1",
 ]
 
 [project.optional-dependencies]

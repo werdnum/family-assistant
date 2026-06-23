@@ -54,6 +54,7 @@ from family_assistant.web.routers.gemini_live_api import gemini_live_router
 from family_assistant.web.routers.health import health_router
 from family_assistant.web.routers.ios_push import router as ios_push_router
 from family_assistant.web.routers.push import router as push_router
+from family_assistant.web.routers.ucp import router as ucp_router
 from family_assistant.web.routers.vite_pages import vite_pages_router
 from family_assistant.web.routers.webhooks import webhooks_router
 from family_assistant.web.template_utils import get_static_asset
@@ -270,6 +271,7 @@ def create_app() -> FastAPI:
     new_app.include_router(
         app_auth_wellknown_router, tags=["Apple App Site Association"]
     )
+    new_app.include_router(ucp_router, tags=["UCP Discovery"])
     new_app.include_router(app_auth_page_router, tags=["App Auth Pages"])
     new_app.include_router(webhooks_router, tags=["Webhooks"])
     new_app.include_router(context_viewer_router, tags=["Context Viewer UI"])

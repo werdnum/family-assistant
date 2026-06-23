@@ -279,6 +279,25 @@ email_intake:
 #   user_dir: "path/to/user/skills"
 #   builtin_dir: "path/to/override/builtin/skills"  # Optional override
 
+# --- Universal Commerce Protocol (UCP) ---
+# Publishes this assistant's platform profile at /.well-known/ucp and configures
+# signing for future shopping/client requests. UCP request signing requires an
+# EC P-256 or P-384 private key plus a key id. Prefer setting private key
+# material through environment variables or a secret-mounted file:
+#   UCP_SIGNING_KEY_ID=platform-2026
+#   UCP_SIGNING_PRIVATE_KEY_PATH=/run/secrets/ucp-signing-key.pem
+ucp_config:
+  enabled: true
+  version: "2026-04-08"
+  profile_path: "/.well-known/ucp"
+  profile_url: null
+  profile_cache_max_age_seconds: 300
+  signing_key_id: null
+  signing_private_key: null
+  signing_private_key_path: null
+  additional_signing_keys: []
+  payment_handlers: {}
+
 # --- Default Service Profile Configuration ---
 # Settings for the primary, default assistant behavior.
 # Tool policy rules applied to *every* profile, regardless of the profile's own
@@ -340,6 +359,9 @@ default_profile_settings:
       - "list_worker_tasks"
       - "cancel_worker_task"
       - "mqtt_publish"
+      - "shopify_add_to_cart"
+      - "shopify_get_cart"
+      - "shopify_transfer_checkout_to_human"
     on_demand_mcp_server_ids:
       - "homeassistant"
   tools_policy:
@@ -399,6 +421,9 @@ default_profile_settings:
             - "list_worker_tasks"
             - "cancel_worker_task"
             - "mqtt_publish"
+            - "shopify_add_to_cart"
+            - "shopify_get_cart"
+            - "shopify_transfer_checkout_to_human"
         decision: "allow"
         priority: 10
       - match:
@@ -572,6 +597,9 @@ service_profiles:
               - "browser_request_handoff"
               - "browser_claim_handback"
               - "attach_to_response"
+              - "shopify_add_to_cart"
+              - "shopify_get_cart"
+              - "shopify_transfer_checkout_to_human"
           decision: "allow"
           priority: 10
         - match:
@@ -1579,4 +1607,3 @@ browser_handoff_config:
 # OpenAI-compatible endpoint, with embedding_base_url (EMBEDDING_BASE_URL) and
 # embedding_api_key (EMBEDDING_API_KEY). For OpenRouter use
 # embedding_base_url=https://openrouter.ai/api/v1. See AGENTS.md "Embedding Providers".
-

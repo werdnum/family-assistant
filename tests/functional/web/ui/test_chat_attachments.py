@@ -201,10 +201,11 @@ async def test_attachment_response_flow(
     await chat_page.wait_for_assistant_response(timeout=30000)
     await chat_page.wait_for_attachments_ready(timeout=30000)
 
-    # Verify that the attach_to_response tool call is shown with attachment display
-    tool_call_element = page.locator('[data-ui="tool-call-content"]')
-    tool_call_text = await tool_call_element.text_content()
-    assert tool_call_text is not None and "Attachments" in tool_call_text
+    # Verify the attachment display is shown to the user.
+    await page.locator('[data-testid="attachment-preview"]').first.wait_for(
+        state="visible",
+        timeout=30000,
+    )
 
     attachment_url = f"{web_test_fixture.base_url}/api/attachments/{attachment_id}"
     response = await page.request.get(attachment_url)
@@ -336,10 +337,11 @@ async def test_attachment_response_with_multiple_attachments(
     await chat_page.wait_for_assistant_response(timeout=30000)
     await chat_page.wait_for_attachments_ready(timeout=30000)
 
-    # Verify that the attach_to_response tool call is shown with attachment display
-    tool_call_element = page.locator('[data-ui="tool-call-content"]')
-    tool_call_text = await tool_call_element.text_content()
-    assert tool_call_text is not None and "Attachments" in tool_call_text
+    # Verify the attachment display is shown to the user.
+    await page.locator('[data-testid="attachment-preview"]').first.wait_for(
+        state="visible",
+        timeout=30000,
+    )
 
     # Verify attachment previews are now available
     try:
@@ -472,7 +474,7 @@ async def test_attachment_response_error_handling(
     # Wait for the streaming interaction to finish before asserting the final DOM state.
     await chat_page.wait_for_streaming_complete(timeout=30000)
 
-    tool_call_locator = page.locator('[data-ui="tool-call-content"]')
+    tool_call_locator = page.locator(chat_page.MESSAGE_TOOL_CALL)
     if await tool_call_locator.count() > 0:
         tool_call_element = tool_call_locator.first
         await tool_call_element.wait_for(state="attached", timeout=5000)
@@ -713,17 +715,14 @@ async def test_tool_attachment_persistence_after_page_reload(
     await chat_page.wait_for_attachments_ready(timeout=30000)
 
     # THE BUG FIX TEST: Verify attachment is still accessible after reload.
-    # The separate attachment flow tests already cover preview rendering in detail.
-    # This test focuses on the persistence invariant that used to break: after a
-    # reload, the conversation still exposes the tool attachment and the attachment
+    # This focuses on the persistence invariant that used to break: after a
+    # reload, the conversation still exposes the attachment and the attachment
     # endpoint no longer 404s.
     try:
-        tool_call_after_reload = page.locator('[data-ui="tool-call-content"]').first
-        await tool_call_after_reload.wait_for(state="attached", timeout=30000)
-        tool_call_text_after_reload = await tool_call_after_reload.text_content()
-        assert (
-            tool_call_text_after_reload and "Attachments" in tool_call_text_after_reload
-        ), "Tool call content should still expose attachments after reload"
+        await page.locator('[data-testid="attachment-preview"]').first.wait_for(
+            state="visible",
+            timeout=30000,
+        )
 
         attachment_url_after_reload = (
             f"{web_test_fixture.base_url}/api/attachments/{attachment_id}"

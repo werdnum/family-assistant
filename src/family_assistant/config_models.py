@@ -954,6 +954,137 @@ class MQTTConfig(BaseModel):
     password: str | None = None
 
 
+class UCPConfigObject(BaseModel):
+    """UCP extension object whose schema is defined by a service or capability."""
+
+    model_config = ConfigDict(extra="allow")
+
+
+class UCPAvailableInstrumentConfig(BaseModel):
+    """Payment instrument advertised by a UCP payment handler."""
+
+    model_config = ConfigDict(extra="allow")
+
+    type: str
+    constraints: UCPConfigObject | None = None
+
+
+class UCPServiceBindingConfig(BaseModel):
+    """UCP service transport binding advertised by this platform."""
+
+    model_config = ConfigDict(extra="forbid", populate_by_name=True)
+
+    version: str = "2026-04-08"
+    spec: str = "https://ucp.dev/2026-04-08/specification/overview"
+    transport: Literal["rest", "mcp", "a2a", "embedded"] = "rest"
+    schema_url: str | None = Field(
+        default="https://ucp.dev/2026-04-08/services/shopping/rest.openapi.json",
+        alias="schema",
+    )
+    endpoint: str | None = None
+    id: str | None = None
+    config: UCPConfigObject | None = None
+
+
+class UCPCapabilityConfig(BaseModel):
+    """UCP capability declaration advertised by this platform."""
+
+    model_config = ConfigDict(extra="forbid", populate_by_name=True)
+
+    version: str = "2026-04-08"
+    spec: str
+    schema_url: str = Field(alias="schema")
+    id: str | None = None
+    config: UCPConfigObject | None = None
+    extends: str | list[str] | None = None
+
+
+class UCPPaymentHandlerConfig(BaseModel):
+    """UCP payment handler declaration advertised by this platform."""
+
+    model_config = ConfigDict(extra="forbid", populate_by_name=True)
+
+    id: str
+    version: str
+    spec: str
+    schema_url: str = Field(alias="schema")
+    available_instruments: list[UCPAvailableInstrumentConfig] | None = None
+    config: UCPConfigObject | None = None
+
+
+class UCPSigningKeyConfig(BaseModel):
+    """Public signing key material to publish in the UCP profile."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    kid: str
+    kty: str = "EC"
+    crv: str
+    x: str
+    y: str
+    use: str = "sig"
+    alg: str
+
+
+class UCPConfig(BaseModel):
+    """Universal Commerce Protocol platform profile and signing configuration."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    enabled: bool = True
+    version: str = "2026-04-08"
+    profile_path: str = "/.well-known/ucp"
+    profile_url: str | None = None
+    profile_cache_max_age_seconds: int = Field(default=300, ge=60)
+    signing_key_id: str | None = None
+    signing_private_key: str | None = None
+    signing_private_key_path: str | None = None
+    additional_signing_keys: list[UCPSigningKeyConfig] = Field(default_factory=list)
+    services: dict[str, list[UCPServiceBindingConfig]] = Field(
+        default_factory=lambda: {
+            "dev.ucp.shopping": [UCPServiceBindingConfig()],
+        }
+    )
+    capabilities: dict[str, list[UCPCapabilityConfig]] = Field(
+        default_factory=lambda: {
+            "dev.ucp.shopping.checkout": [
+                UCPCapabilityConfig(
+                    spec="https://ucp.dev/2026-04-08/specification/checkout",
+                    schema="https://ucp.dev/2026-04-08/schemas/shopping/checkout.json",
+                )
+            ],
+            "dev.ucp.shopping.cart": [
+                UCPCapabilityConfig(
+                    spec="https://ucp.dev/2026-04-08/specification/cart",
+                    schema="https://ucp.dev/2026-04-08/schemas/shopping/cart.json",
+                )
+            ],
+            "dev.ucp.shopping.fulfillment": [
+                UCPCapabilityConfig(
+                    spec="https://ucp.dev/2026-04-08/specification/fulfillment",
+                    schema="https://ucp.dev/2026-04-08/schemas/shopping/fulfillment.json",
+                    extends="dev.ucp.shopping.checkout",
+                )
+            ],
+            "dev.ucp.shopping.order": [
+                UCPCapabilityConfig(
+                    spec="https://ucp.dev/2026-04-08/specification/order",
+                    schema="https://ucp.dev/2026-04-08/schemas/shopping/order.json",
+                )
+            ],
+            "dev.ucp.common.identity_linking": [
+                UCPCapabilityConfig(
+                    spec="https://ucp.dev/2026-04-08/specification/identity-linking",
+                    schema="https://ucp.dev/2026-04-08/schemas/common/identity_linking.json",
+                )
+            ],
+        }
+    )
+    payment_handlers: dict[str, list[UCPPaymentHandlerConfig]] = Field(
+        default_factory=dict
+    )
+
+
 class OIDCConfig(BaseModel):
     """OpenID Connect authentication configuration."""
 
@@ -1138,6 +1269,7 @@ class AppConfig(BaseSettings):
     notes_config: NotesConfig = Field(default_factory=NotesConfig)
     skills_config: SkillsConfig = Field(default_factory=SkillsConfig)
     mqtt_config: MQTTConfig = Field(default_factory=MQTTConfig)
+    ucp_config: UCPConfig = Field(default_factory=UCPConfig)
 
     # LLM parameters (pattern -> parameters mapping)
     # ast-grep-ignore: no-dict-any - LLM params are provider-specific and genuinely arbitrary

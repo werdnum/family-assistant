@@ -162,7 +162,8 @@ You can ask the assistant a wide variety of things:
     available.
 
   - **Built-in skills:** The assistant ships with several built-in skills including browser
-    automation, camera integration, image tools, and scheduling guidance. These work out of the box.
+    automation, camera integration, image tools, scheduling guidance, and shopping/UCP guidance.
+    These work out of the box.
 
   - **Creating your own skills (DB-based):** Ask the assistant to create a skill by providing YAML
     frontmatter with `name` and `description` fields at the top of the note content:
@@ -187,6 +188,14 @@ You can ask the assistant a wide variety of things:
 
   - **Visibility:** Skills support the same visibility labels as regular notes. Add
     `visibility_labels` in the frontmatter to restrict which profiles can see a skill.
+
+- **Shopping and UCP:** For requests like "find me an X online and send me a checkout link," the
+  assistant can load the Shopping skill, use browser/search tools for discovery, build a Shopify/UCP
+  cart, and return the merchant checkout URL for you to complete payment yourself. The server
+  publishes its public UCP platform profile at `/.well-known/ucp`. Checkout handoff requires signed
+  UCP requests; configure `UCP_SIGNING_KEY_ID` and either `UCP_SIGNING_PRIVATE_KEY` or
+  `UCP_SIGNING_PRIVATE_KEY_PATH` with an EC P-256 or P-384 private key. The assistant does not
+  complete checkout or collect payment credentials in chat.
 
 - **Ingest Documents (Files and URLs):**
 

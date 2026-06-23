@@ -126,6 +126,14 @@ ENV_VAR_MAPPINGS: list[EnvVarMapping] = [
     EnvVarMapping("MQTT_BROKER_PORT", "mqtt_config.broker_port", int),
     EnvVarMapping("MQTT_BROKER_USERNAME", "mqtt_config.username"),
     EnvVarMapping("MQTT_BROKER_PASSWORD", "mqtt_config.password"),
+    # Universal Commerce Protocol (UCP)
+    EnvVarMapping("UCP_ENABLED", "ucp_config.enabled", bool),
+    EnvVarMapping("UCP_PROFILE_URL", "ucp_config.profile_url"),
+    EnvVarMapping("UCP_SIGNING_KEY_ID", "ucp_config.signing_key_id"),
+    EnvVarMapping("UCP_SIGNING_PRIVATE_KEY", "ucp_config.signing_private_key"),
+    EnvVarMapping(
+        "UCP_SIGNING_PRIVATE_KEY_PATH", "ucp_config.signing_private_key_path"
+    ),
     # User access control (list types)
     EnvVarMapping("ALLOWED_USER_IDS", "allowed_user_ids", list),
     EnvVarMapping("DEVELOPER_CHAT_ID", "developer_chat_id", int),
@@ -1119,6 +1127,14 @@ def _log_config(
     if "apns" in loggable:
         loggable["apns"] = {
             k: v for k, v in loggable["apns"].items() if k != "auth_key"
+        }
+
+    # Remove UCP private key material
+    if "ucp_config" in loggable:
+        loggable["ucp_config"] = {
+            k: v
+            for k, v in loggable["ucp_config"].items()
+            if k != "signing_private_key"
         }
 
     logger.info(

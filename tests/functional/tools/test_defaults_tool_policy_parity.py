@@ -128,3 +128,50 @@ def test_shipped_profiles_define_effective_tool_policy() -> None:
                 executable_without_confirmation.decision,
                 ToolPolicyDecision,
             )
+
+
+def test_shopify_tools_are_default_on_demand_and_not_confirm_gated() -> None:
+    default_settings, profiles = _load_resolved_profiles()
+    shopping_tool_names = {
+        "shopify_add_to_cart",
+        "shopify_get_cart",
+        "shopify_transfer_checkout_to_human",
+    }
+    descriptors = {
+        descriptor.name: descriptor
+        for descriptor in LOCAL_TOOL_DESCRIPTORS
+        if descriptor.name in shopping_tool_names
+    }
+    assert set(descriptors) == shopping_tool_names
+
+    default_engine = PolicyEngine.from_policy_config(default_settings.tools_policy)
+    assert shopping_tool_names <= set(
+        default_settings.tools_config.on_demand_local_tools
+    )
+    profile_by_id = {profile.id: profile for profile in profiles}
+    assert "shopping_profile" not in profile_by_id
+    browser_profile = profile_by_id["browser_profile"]
+    browser_engine = PolicyEngine.from_policy_config(browser_profile.tools_policy)
+
+    for descriptor in descriptors.values():
+        assert (
+            default_engine.evaluate_for_advertisement(
+                descriptor,
+                can_confirm=True,
+            ).decision
+            == ToolPolicyDecision.ALLOW
+        )
+        assert (
+            browser_engine.evaluate_for_advertisement(
+                descriptor,
+                can_confirm=False,
+            ).decision
+            == ToolPolicyDecision.ALLOW
+        )
+        assert (
+            default_engine.evaluate_for_advertisement(
+                descriptor,
+                can_confirm=False,
+            ).decision
+            == ToolPolicyDecision.ALLOW
+        )
