@@ -13,6 +13,10 @@ from sqlalchemy.ext.asyncio import AsyncEngine
 
 from family_assistant.storage.context import DatabaseContext
 from family_assistant.storage.tasks import tasks_table
+from family_assistant.task_worker import (
+    SCHEDULE_AUTOMATION_ADVANCE_OUTBOX_KEY,
+    SCHEDULE_AUTOMATION_ADVANCE_TASK_TYPE,
+)
 
 
 @pytest_asyncio.fixture(scope="function")
@@ -1033,6 +1037,13 @@ async def _get_all_tasks_for_automation(
     return [dict(row) for row in rows]
 
 
+async def _get_task_by_id(db_context: DatabaseContext, task_id: str) -> dict | None:
+    """Helper to query a task by ID."""
+    stmt = select(tasks_table).where(tasks_table.c.task_id == task_id)
+    row = await db_context.fetch_one(stmt)
+    return dict(row) if row is not None else None
+
+
 class TestTaskQueueSync:
     """Tests for task queue synchronization when automations are modified."""
 
@@ -1071,6 +1082,151 @@ class TestTaskQueueSync:
         all_tasks = await _get_all_tasks_for_automation(db_context, automation_id)
         assert len(all_tasks) == 1
         assert all_tasks[0]["status"] == "cancelled"
+
+    @pytest.mark.asyncio
+    async def test_disable_preserves_pending_schedule_advance_task(
+        self, db_context: DatabaseContext
+    ) -> None:
+        """Disabling cancels future runs without losing terminal stats advancement."""
+        conversation_id = str(uuid.uuid4())
+
+        automation_id = await db_context.schedule_automations.create(
+            name="Daily Task",
+            recurrence_rule="FREQ=DAILY;BYHOUR=9",
+            action_type="wake_llm",
+            action_config={"context": "daily check"},
+            conversation_id=conversation_id,
+            timezone=ZoneInfo("UTC"),
+        )
+
+        pending = await _get_pending_tasks_for_automation(db_context, automation_id)
+        assert len(pending) == 1
+        scheduled_task_id = pending[0]["task_id"]
+        advance_task_id = f"sched_auto_advance_{automation_id}_test"
+        source_outbox_task_id = f"sched_auto_source_{automation_id}_test"
+        source_outbox_payload = {
+            "automation_id": str(automation_id),
+            "automation_type": "schedule",
+            SCHEDULE_AUTOMATION_ADVANCE_OUTBOX_KEY: {
+                "automation_id": str(automation_id),
+                "source_task_id": source_outbox_task_id,
+                "execution_time": datetime(2026, 6, 22, 4, 29, tzinfo=UTC).isoformat(),
+                "schedule_next": True,
+            },
+        }
+        await db_context.tasks.enqueue(
+            task_id=advance_task_id,
+            task_type=SCHEDULE_AUTOMATION_ADVANCE_TASK_TYPE,
+            payload={
+                "automation_id": str(automation_id),
+                "source_task_id": scheduled_task_id,
+                "execution_time": datetime(2026, 6, 22, 4, 28, tzinfo=UTC).isoformat(),
+            },
+        )
+        await db_context.tasks.enqueue(
+            task_id=source_outbox_task_id,
+            task_type="script_execution",
+            payload=source_outbox_payload,
+        )
+        await db_context.tasks.update_status(
+            source_outbox_task_id,
+            "done",
+            payload=source_outbox_payload,
+        )
+
+        await db_context.schedule_automations.update_enabled(
+            automation_id,
+            conversation_id,
+            enabled=False,
+            timezone=ZoneInfo("UTC"),
+        )
+
+        scheduled_task = await _get_task_by_id(db_context, scheduled_task_id)
+        advance_task = await _get_task_by_id(db_context, advance_task_id)
+        source_outbox_task = await _get_task_by_id(db_context, source_outbox_task_id)
+        assert scheduled_task is not None
+        assert advance_task is not None
+        assert source_outbox_task is not None
+        assert scheduled_task["status"] == "cancelled"
+        assert advance_task["status"] == "pending"
+        advance_payload = advance_task["payload"]
+        assert advance_payload is not None
+        assert advance_payload["schedule_next"] is False
+        source_payload = source_outbox_task["payload"]
+        assert source_payload is not None
+        source_outbox = source_payload[SCHEDULE_AUTOMATION_ADVANCE_OUTBOX_KEY]
+        assert source_outbox["schedule_next"] is False
+
+        await db_context.schedule_automations.update_enabled(
+            automation_id,
+            conversation_id,
+            enabled=True,
+            timezone=ZoneInfo("UTC"),
+        )
+        pending = await _get_pending_tasks_for_automation(db_context, automation_id)
+        assert len(pending) == 1
+
+        await db_context.schedule_automations.after_task_execution(
+            automation_id,
+            datetime.fromisoformat(advance_payload["execution_time"]),
+            timezone=ZoneInfo("UTC"),
+            schedule_next=advance_payload["schedule_next"],
+        )
+
+        pending = await _get_pending_tasks_for_automation(db_context, automation_id)
+        assert len(pending) == 1
+        automation = await db_context.schedule_automations.get_by_id(automation_id)
+        assert automation is not None
+        assert automation["execution_count"] == 1
+
+        await db_context.schedule_automations.after_task_execution(
+            automation_id,
+            datetime.fromisoformat(source_outbox["execution_time"]),
+            timezone=ZoneInfo("UTC"),
+            schedule_next=source_outbox["schedule_next"],
+        )
+
+        pending = await _get_pending_tasks_for_automation(db_context, automation_id)
+        assert len(pending) == 1
+        automation = await db_context.schedule_automations.get_by_id(automation_id)
+        assert automation is not None
+        assert automation["execution_count"] == 2
+
+    @pytest.mark.asyncio
+    async def test_stats_only_advance_does_not_rewind_last_execution_at(
+        self, db_context: DatabaseContext
+    ) -> None:
+        """A delayed stats-only advance should not move last_execution_at backward."""
+        conversation_id = str(uuid.uuid4())
+
+        automation_id = await db_context.schedule_automations.create(
+            name="Hourly Task",
+            recurrence_rule="FREQ=HOURLY",
+            action_type="wake_llm",
+            action_config={"context": "hourly check"},
+            conversation_id=conversation_id,
+            timezone=ZoneInfo("UTC"),
+        )
+
+        newer_execution_time = datetime(2026, 6, 23, 5, 0, tzinfo=UTC)
+        older_execution_time = datetime(2026, 6, 23, 4, 0)
+        await db_context.schedule_automations.after_task_execution(
+            automation_id,
+            newer_execution_time,
+            timezone=ZoneInfo("UTC"),
+            schedule_next=False,
+        )
+        await db_context.schedule_automations.after_task_execution(
+            automation_id,
+            older_execution_time,
+            timezone=ZoneInfo("UTC"),
+            schedule_next=False,
+        )
+
+        automation = await db_context.schedule_automations.get_by_id(automation_id)
+        assert automation is not None
+        assert automation["last_execution_at"] == newer_execution_time
+        assert automation["execution_count"] == 2
 
     @pytest.mark.asyncio
     async def test_enable_schedules_new_task(self, db_context: DatabaseContext) -> None:

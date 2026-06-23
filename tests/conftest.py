@@ -54,7 +54,10 @@ from family_assistant.storage.context import DatabaseContext
 # Explicitly import the module defining the tasks table to ensure metadata registration
 # Import vector storage init and context
 from family_assistant.storage.vector import init_vector_db  # Corrected import path
-from family_assistant.task_worker import TaskWorker
+from family_assistant.task_worker import (
+    SCHEDULE_AUTOMATION_ADVANCE_TASK_TYPE,
+    TaskWorker,
+)
 from family_assistant.utils.clock import MockClock
 from family_assistant.web.app_creator import app as fastapi_app
 from tests.helpers import find_free_port
@@ -752,6 +755,10 @@ async def task_worker_manager(
                 "delegation_run_cleanup",
                 worker.handle_delegation_run_cleanup,
             )
+        worker.register_task_handler(
+            SCHEDULE_AUTOMATION_ADVANCE_TASK_TYPE,
+            worker.handle_schedule_automation_advance,
+        )
         worker_task_handle = asyncio.create_task(worker.run(new_task_event_for_worker))
         logger.info("Started background TaskWorker (factory).")
         return worker, new_task_event_for_worker, shutdown_event

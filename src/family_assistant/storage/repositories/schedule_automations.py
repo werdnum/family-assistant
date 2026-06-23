@@ -20,7 +20,12 @@ from family_assistant.storage.types import (
     ScheduleAutomationDict,
     ScheduleExecutionStatsDict,
 )
-from family_assistant.task_worker import LlmCallbackPayload, ScriptExecutionPayload
+from family_assistant.task_worker import (
+    SCHEDULE_AUTOMATION_ADVANCE_OUTBOX_KEY,
+    SCHEDULE_AUTOMATION_ADVANCE_TASK_TYPE,
+    LlmCallbackPayload,
+    ScriptExecutionPayload,
+)
 
 # Sentinel to distinguish "not provided" from "explicitly None"
 _UNSET = object()
@@ -755,6 +760,9 @@ class ScheduleAutomationsRepository(BaseRepository):
             Number of cancelled tasks
         """
         try:
+            await self._mark_pending_advance_tasks_stats_only(automation_id)
+            await self._mark_persisted_advance_outboxes_stats_only(automation_id)
+
             # Find pending tasks with this automation_id in payload
             stmt = (
                 update(tasks_table)
@@ -763,6 +771,7 @@ class ScheduleAutomationsRepository(BaseRepository):
                     tasks_table.c.payload["automation_id"].as_string()
                     == str(automation_id)
                 )
+                .where(tasks_table.c.task_type != SCHEDULE_AUTOMATION_ADVANCE_TASK_TYPE)
                 .values(status="cancelled")
             )
 
@@ -782,6 +791,75 @@ class ScheduleAutomationsRepository(BaseRepository):
                 exc_info=True,
             )
             return 0
+
+    async def _mark_pending_advance_tasks_stats_only(self, automation_id: int) -> int:
+        """Prevent preserved terminal-stat tasks from scheduling a future run."""
+        stmt = (
+            select(tasks_table.c.task_id, tasks_table.c.payload)
+            .where(tasks_table.c.status == "pending")
+            .where(tasks_table.c.task_type == SCHEDULE_AUTOMATION_ADVANCE_TASK_TYPE)
+            .where(
+                tasks_table.c.payload["automation_id"].as_string() == str(automation_id)
+            )
+        )
+        rows = await self._db.fetch_all(stmt)
+        marked_count = 0
+        for row in rows:
+            payload = dict(row["payload"] or {})
+            if payload.get("schedule_next") is False:
+                continue
+            payload["schedule_next"] = False
+            update_stmt = (
+                update(tasks_table)
+                .where(tasks_table.c.task_id == row["task_id"])
+                .values(payload=payload)
+            )
+            await self._db.execute_with_retry(update_stmt)
+            marked_count += 1
+
+        if marked_count > 0:
+            self._logger.info(
+                f"Marked {marked_count} pending schedule advancement tasks "
+                f"as stats-only for automation {automation_id}"
+            )
+        return marked_count
+
+    async def _mark_persisted_advance_outboxes_stats_only(
+        self, automation_id: int
+    ) -> int:
+        """Prevent persisted source-task outboxes from scheduling a future run."""
+        stmt = (
+            select(tasks_table.c.task_id, tasks_table.c.payload)
+            .where(tasks_table.c.status.in_(["done", "failed"]))
+            .where(tasks_table.c.task_type.in_(["llm_callback", "script_execution"]))
+            .where(
+                tasks_table.c.payload["automation_id"].as_string() == str(automation_id)
+            )
+        )
+        rows = await self._db.fetch_all(stmt)
+        marked_count = 0
+        for row in rows:
+            payload = dict(row["payload"] or {})
+            outbox = payload.get(SCHEDULE_AUTOMATION_ADVANCE_OUTBOX_KEY)
+            if not isinstance(outbox, dict) or outbox.get("schedule_next") is False:
+                continue
+            updated_outbox = dict(outbox)
+            updated_outbox["schedule_next"] = False
+            payload[SCHEDULE_AUTOMATION_ADVANCE_OUTBOX_KEY] = updated_outbox
+            update_stmt = (
+                update(tasks_table)
+                .where(tasks_table.c.task_id == row["task_id"])
+                .values(payload=payload)
+            )
+            await self._db.execute_with_retry(update_stmt)
+            marked_count += 1
+
+        if marked_count > 0:
+            self._logger.info(
+                f"Marked {marked_count} persisted schedule advancement outboxes "
+                f"as stats-only for automation {automation_id}"
+            )
+        return marked_count
 
     async def _sync_pending_tasks(
         self,
@@ -886,6 +964,7 @@ class ScheduleAutomationsRepository(BaseRepository):
         execution_time: datetime,
         *,
         timezone: ZoneInfo,
+        schedule_next: bool = True,
     ) -> None:
         """
         Update automation after task execution and schedule next instance.
@@ -894,8 +973,15 @@ class ScheduleAutomationsRepository(BaseRepository):
             automation_id: Automation ID
             execution_time: When the task executed
             timezone: User's timezone for interpreting RRULE times
+            schedule_next: Whether to schedule the next run after recording
+                terminal execution stats
         """
         try:
+            normalized_execution_time = normalize_datetime(execution_time)
+            if normalized_execution_time is None:
+                raise ValueError("execution_time must be a valid datetime")
+            execution_time = normalized_execution_time
+
             # Get the automation
             automation = await self.get_by_id(automation_id)
             if not automation:
@@ -904,17 +990,32 @@ class ScheduleAutomationsRepository(BaseRepository):
                 )
                 return
 
-            # Always update execution stats, regardless of enabled status
-            # The execution happened, so it should be recorded
+            last_execution_at = automation["last_execution_at"]
+            recorded_execution_time = (
+                last_execution_at
+                if last_execution_at is not None and last_execution_at > execution_time
+                else execution_time
+            )
+
+            # Always update execution stats, regardless of enabled status.
+            # The execution happened, so it should be recorded without moving
+            # last_execution_at backward if an older stats-only advance arrives late.
             stmt = (
                 update(schedule_automations_table)
                 .where(schedule_automations_table.c.id == automation_id)
                 .values(
-                    last_execution_at=execution_time,
+                    last_execution_at=recorded_execution_time,
                     execution_count=schedule_automations_table.c.execution_count + 1,
                 )
             )
             await self._db.execute_with_retry(stmt)
+
+            if not schedule_next:
+                self._logger.info(
+                    f"Recorded terminal stats for automation {automation_id} "
+                    "without scheduling next instance"
+                )
+                return
 
             # Check if still enabled before scheduling next instance
             if not automation["enabled"]:
@@ -994,7 +1095,7 @@ class ScheduleAutomationsRepository(BaseRepository):
                 f"Database error in after_task_execution for automation {automation_id}: {e}",
                 exc_info=True,
             )
-            # Don't raise - we don't want task execution failures
+            raise
 
     async def get_execution_stats(
         self,
