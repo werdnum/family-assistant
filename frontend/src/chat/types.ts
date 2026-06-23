@@ -108,6 +108,6 @@ export interface ActiveTurnInfo {
 
 export interface ConversationMessagesResponse {
   messages: BackendConversationMessage[];
-  // In-flight turns for this conversation, when the backend reports them.
+  // Recently retained turn states for this conversation, when the backend has them.
   active_turns?: ActiveTurnInfo[];
 }

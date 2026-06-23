@@ -309,7 +309,8 @@ export const useStreamingResponse = ({
               // the turn we just started: ignore events tagged with a
               // different turn_id (e.g. a turn started concurrently from
               // another tab/device). Connection-level events (heartbeat,
-              // stream_dropped) carry no turn_id and fall through.
+              // stream_dropped, message) carry no turn_id and fall through for
+              // rendering decisions, but they must not advance ackSeq below.
               if (payload.turn_id && payload.turn_id !== effectiveTurnId) {
                 continue;
               }
@@ -318,7 +319,11 @@ export const useStreamingResponse = ({
               // this, so a resume never acknowledges a concurrent turn's
               // turn_ended seq (which would make the backend suppress that turn's
               // disconnect push for a reply this client never handled).
-              if (typeof payload.seq === 'number' && payload.seq > ackSeq) {
+              if (
+                payload.turn_id === effectiveTurnId &&
+                typeof payload.seq === 'number' &&
+                payload.seq > ackSeq
+              ) {
                 ackSeq = payload.seq;
               }
 

@@ -254,15 +254,18 @@ describe('Resumable streaming client', () => {
           if (streamCalls === 1) {
             return sse([
               `event: text\ndata: ${JSON.stringify({ turn_id: ourTurnId, content: 'Mine ', seq: 1 })}\n\n`,
+              // A connection-level update has no turn_id. It advances the replay
+              // cursor, but must not advance ack_seq for this watched turn.
+              `event: message\ndata: ${JSON.stringify({ new_messages: true, seq: 5 })}\n\n`,
               // Another turn's terminal frame with a higher seq — ignored for
               // rendering and ack, but it DOES advance the replay cursor.
-              `event: turn_ended\ndata: ${JSON.stringify({ turn_id: 'other-turn', status: 'complete', seq: 5 })}\n\n`,
+              `event: turn_ended\ndata: ${JSON.stringify({ turn_id: 'other-turn', status: 'complete', seq: 6 })}\n\n`,
             ]);
           }
-          // Our turn's continuation comes after the other turn's seq 5.
+          // Our turn's continuation comes after the other turn's seq 6.
           return sse([
-            `event: text\ndata: ${JSON.stringify({ turn_id: ourTurnId, content: 'done.', seq: 6 })}\n\n`,
-            `event: turn_ended\ndata: ${JSON.stringify({ turn_id: ourTurnId, status: 'complete', seq: 7 })}\n\n`,
+            `event: text\ndata: ${JSON.stringify({ turn_id: ourTurnId, content: 'done.', seq: 7 })}\n\n`,
+            `event: turn_ended\ndata: ${JSON.stringify({ turn_id: ourTurnId, status: 'complete', seq: 8 })}\n\n`,
           ]);
         })
       );
@@ -279,8 +282,9 @@ describe('Resumable streaming client', () => {
         },
         { timeout: 5000 }
       );
-      // Replay cursor advanced past the other turn's seq 5 → resume from 6.
-      expect(fromSeqs[1]).toBe('6');
+      // Replay cursor advanced past the connection-level and other-turn seqs →
+      // resume from 7.
+      expect(fromSeqs[1]).toBe('7');
       expect(ackSeqs[1]).toBe('1');
     },
     { timeout: 30000 }
@@ -573,6 +577,82 @@ describe('Resumable streaming client', () => {
         { timeout: 10000 }
       );
       expect(screen.getByText(/couldn't confirm the reply/i)).toBeInTheDocument();
+    },
+    { timeout: 30000 }
+  );
+
+  it(
+    'accepts a completed tool-only persisted reply as terminal on give-up',
+    async () => {
+      // If the hub still has an explicit completed TurnRecord for this turn,
+      // then a tool-call-only assistant row is durable terminal history, not an
+      // ambiguous partial row.
+      let ourTurnId = '';
+      server.use(
+        captureTurnId((id) => {
+          ourTurnId = id;
+        }, 'web_conv_completed_toolonly'),
+        http.get('/api/v1/chat/conversations/:conversationId/messages', () =>
+          HttpResponse.json({
+            active_turns: [
+              {
+                turn_id: ourTurnId,
+                started_at: '2026-06-09T10:00:00Z',
+                latest_seq: 4,
+                status: 'complete',
+              },
+            ],
+            messages: [
+              {
+                internal_id: 'u1',
+                role: 'user',
+                turn_id: ourTurnId,
+                content: 'Run the tool',
+                timestamp: '2026-06-09T10:00:00Z',
+              },
+              {
+                internal_id: 'a1',
+                role: 'assistant',
+                turn_id: ourTurnId,
+                content: null,
+                tool_calls: [
+                  {
+                    id: 'call_y',
+                    type: 'function',
+                    function: { name: 'search_notes', arguments: '{}' },
+                  },
+                ],
+                timestamp: '2026-06-09T10:00:01Z',
+              },
+              {
+                internal_id: 't1',
+                role: 'tool',
+                turn_id: ourTurnId,
+                content: 'Found 1 note.',
+                tool_call_id: 'call_y',
+                timestamp: '2026-06-09T10:00:02Z',
+              },
+            ],
+          })
+        ),
+        http.get('/api/v1/chat/conversations/:conversationId/stream', () =>
+          sse([`event: stream_dropped\ndata: ${JSON.stringify({ reason: 'server_shutdown' })}\n\n`])
+        )
+      );
+
+      const user = userEvent.setup();
+      await renderChatApp({ waitForReady: true });
+      const input = screen.getByPlaceholderText('Message Family Assistant...');
+      await user.type(input, 'Run the tool');
+      await user.keyboard('{Enter}');
+
+      await waitFor(
+        () => {
+          expect(screen.getByTestId('tool-group')).toBeInTheDocument();
+        },
+        { timeout: 10000 }
+      );
+      expect(screen.queryByText(/couldn't confirm the reply/i)).not.toBeInTheDocument();
     },
     { timeout: 30000 }
   );

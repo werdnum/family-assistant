@@ -87,10 +87,14 @@ type ReloadResult = 'applied' | 'bailed' | 'failed';
 
 /** Whether the reconciled history contains a terminal assistant reply for a
  * turn. A non-empty text row, including persisted error rows rendered as
- * assistant text, counts. Tool-call-only rows do not: they can be persisted
- * before the final reply/error is committed, so they are not proof that a
- * gave-up stream actually reached terminal completion. */
-function hasTerminalReplyForTurn(messages: Message[], turnId: string): boolean {
+ * assistant text, counts. Tool-call-only rows count only when the backend still
+ * has an explicit completed TurnRecord for that turn; otherwise they can be
+ * partial rows persisted before the final reply/error committed. */
+function hasTerminalReplyForTurn(
+  messages: Message[],
+  turnId: string,
+  completedTurnIds: Set<string>
+): boolean {
   return messages.some(
     (msg) =>
       msg.turnId === turnId &&
@@ -98,7 +102,10 @@ function hasTerminalReplyForTurn(messages: Message[], turnId: string): boolean {
       Array.isArray(msg.content) &&
       msg.content.some(
         (part) =>
-          part.type === 'text' && part.text !== LOADING_MARKER && Boolean((part.text ?? '').trim())
+          (part.type === 'text' &&
+            part.text !== LOADING_MARKER &&
+            Boolean((part.text ?? '').trim())) ||
+          (part.type === 'tool-call' && completedTurnIds.has(turnId))
       )
   );
 }
@@ -905,6 +912,11 @@ const ChatApp: React.FC<ChatAppProps> = ({ profileId = 'default_assistant' }) =>
             .filter((turn) => turn.status === 'running')
             .map((turn) => turn.turn_id)
         );
+        const completedTurnIds = new Set(
+          (data.active_turns ?? [])
+            .filter((turn) => turn.status === 'complete')
+            .map((turn) => turn.turn_id)
+        );
 
         const processedMessages: Message[] = [];
         const toolResponses = new Map<string, string>();
@@ -1197,7 +1209,7 @@ const ChatApp: React.FC<ChatAppProps> = ({ profileId = 'default_assistant' }) =>
             // producer failed before committing a row), surface the marker —
             // even for a 410, which we'd otherwise assume succeeded.
             info.markIfNoReply = true;
-          } else if (hasTerminalReplyForTurn(messagesWithArrayContent, turnId)) {
+          } else if (hasTerminalReplyForTurn(messagesWithArrayContent, turnId, completedTurnIds)) {
             // Finished with a real reply — confirmed.
             unconfirmedTurnsRef.current.delete(turnId);
           } else if (info.markIfNoReply) {
