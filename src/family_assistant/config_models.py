@@ -976,9 +976,9 @@ class UCPServiceBindingConfig(BaseModel):
 
     version: str = "2026-04-08"
     spec: str = "https://ucp.dev/2026-04-08/specification/overview"
-    transport: Literal["rest", "mcp", "a2a", "embedded"] = "rest"
+    transport: Literal["rest", "mcp", "a2a", "embedded"] = "mcp"
     schema_url: str | None = Field(
-        default="https://ucp.dev/2026-04-08/services/shopping/rest.openapi.json",
+        default="https://ucp.dev/2026-04-08/services/shopping/mcp.openrpc.json",
         alias="schema",
     )
     endpoint: str | None = None

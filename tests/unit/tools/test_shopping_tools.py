@@ -249,6 +249,30 @@ async def test_shopify_get_cart_raises_for_unusable_cart_message(
         )
 
 
+async def test_shopify_get_cart_raises_when_cart_envelope_is_missing(
+    monkeypatch: MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(shopping.httpx, "AsyncClient", _FakeAsyncClient)
+    _FakeAsyncClient.requests = []
+    _FakeAsyncClient.responses = [
+        httpx.Response(
+            200,
+            json={
+                "jsonrpc": "2.0",
+                "id": "rpc-1",
+                "result": {"structuredContent": {"unexpected": {}}},
+            },
+        )
+    ]
+
+    with pytest.raises(ValueError, match="did not include a cart"):
+        await shopping.shopify_get_cart_tool(
+            _context(AppConfig(server_url="https://assistant.example")),
+            business_url="https://shop.example.com",
+            cart_id="gid://shopify/Cart/cart_abc123",
+        )
+
+
 async def test_shopify_add_to_existing_cart_preserves_supported_cart_state(
     monkeypatch: MonkeyPatch,
 ) -> None:

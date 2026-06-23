@@ -114,6 +114,13 @@ def _profile_url(app_config: AppConfig) -> str:
     return f"{app_config.server_url.rstrip('/')}{app_config.ucp_config.profile_path}"
 
 
+def _validate_https_profile_url(profile_url: str) -> None:
+    parsed_profile_url = urlparse(profile_url)
+    if parsed_profile_url.scheme != "https" or not parsed_profile_url.netloc:
+        msg = "UCP profile URL must be an HTTPS URL for signed requests."
+        raise UCPConfigurationError(msg)
+
+
 def ucp_profile_url(app_config: AppConfig) -> str:
     """Return the public UCP profile URL advertised for this application."""
     return _profile_url(app_config)
@@ -299,8 +306,11 @@ def sign_ucp_request(
         raise UCPConfigurationError(msg)
 
     request_body = _json_body_bytes(body)
+    profile_url = _profile_url(app_config)
+    _validate_https_profile_url(profile_url)
+
     headers = {
-        "UCP-Agent": _format_ucp_agent_header(_profile_url(app_config)),
+        "UCP-Agent": _format_ucp_agent_header(profile_url),
         **(dict(additional_headers or {})),
     }
     if request_body is not None:

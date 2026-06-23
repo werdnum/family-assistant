@@ -3,11 +3,16 @@ from __future__ import annotations
 import base64
 from typing import Any, cast
 
+import pytest
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import ec
 
 from family_assistant.config_models import AppConfig, UCPConfig
-from family_assistant.services.ucp import build_ucp_profile, sign_ucp_request
+from family_assistant.services.ucp import (
+    UCPConfigurationError,
+    build_ucp_profile,
+    sign_ucp_request,
+)
 
 
 def _private_key_pem() -> str:
@@ -32,6 +37,9 @@ def test_build_ucp_profile_publishes_public_jwk_for_signing_key() -> None:
 
     assert profile["ucp"]["version"] == "2026-04-08"
     assert "dev.ucp.shopping" in profile["ucp"]["services"]
+    shopping_service = profile["ucp"]["services"]["dev.ucp.shopping"][0]
+    assert shopping_service["transport"] == "mcp"
+    assert shopping_service["schema"].endswith("/shopping/mcp.openrpc.json")
     assert "dev.ucp.shopping.cart" in profile["ucp"]["capabilities"]
     assert "dev.ucp.shopping.checkout" in profile["ucp"]["capabilities"]
     assert profile["signing_keys"][0]["kid"] == "platform-2026"
@@ -95,3 +103,21 @@ def test_sign_ucp_get_request_omits_body_headers_and_idempotency_key() -> None:
     assert "Content-Type" not in request.headers
     assert "Idempotency-Key" not in request.headers
     assert request.body is None
+
+
+def test_sign_ucp_request_rejects_non_https_profile_url() -> None:
+    config = AppConfig(
+        server_url="http://localhost:8000",
+        ucp_config=UCPConfig(
+            signing_key_id="platform-2026",
+            signing_private_key=_private_key_pem(),
+        ),
+    )
+
+    with pytest.raises(UCPConfigurationError, match="profile URL must be an HTTPS"):
+        sign_ucp_request(
+            config,
+            method="POST",
+            url="https://merchant.example/api/ucp/mcp",
+            body={"jsonrpc": "2.0"},
+        )

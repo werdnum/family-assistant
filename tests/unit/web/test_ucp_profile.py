@@ -23,4 +23,5 @@ async def test_ucp_profile_endpoint_is_public_and_cacheable() -> None:
     body = response.json()
     assert body["ucp"]["version"] == "2026-04-08"
     assert "dev.ucp.shopping" in body["ucp"]["services"]
+    assert body["ucp"]["services"]["dev.ucp.shopping"][0]["transport"] == "mcp"
     assert body["signing_keys"] == []

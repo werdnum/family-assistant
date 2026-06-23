@@ -344,7 +344,8 @@ def _cart_from_response(response_data: dict[str, object]) -> dict[str, object]:
     structured = _structured_content(response_data)
     cart = structured.get("cart")
     if not isinstance(cart, dict):
-        return {}
+        msg = "Shopify UCP response did not include a cart."
+        raise ValueError(msg)
     failure_text = _cart_failure_text(cart)
     if failure_text is not None or not isinstance(cart.get("id"), str):
         msg = failure_text or "Shopify cart response did not include a cart ID."
