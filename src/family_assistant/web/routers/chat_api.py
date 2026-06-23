@@ -436,16 +436,16 @@ class ConversationMessagesResponse(BaseModel):
     active_turns: list["ActiveTurnInfo"] = Field(
         default_factory=list,
         description=(
-            "Currently in-flight turns for this conversation. The web/iOS UI "
-            "uses this on page load / app foreground to know whether to render "
-            "an 'assistant is still thinking' placeholder and resume the SSE "
-            "stream."
+            "Recently retained turn state for this conversation. Running turns "
+            "let the web/iOS UI render an 'assistant is still thinking' "
+            "placeholder and resume SSE; completed turns let a reconnecting "
+            "client distinguish durable tool-only replies from partial rows."
         ),
     )
 
 
 class ActiveTurnInfo(BaseModel):
-    """Snapshot of an in-flight turn surfaced via /messages and 410 responses."""
+    """Snapshot of retained turn state surfaced via /messages and 410 responses."""
 
     turn_id: str = Field(..., description="Turn identifier")
     started_at: datetime = Field(..., description="When the turn was registered")
@@ -642,14 +642,14 @@ def _serialize_active_turn(turn: TurnRecord) -> ActiveTurnInfo:
     )
 
 
-def _running_active_turns(
+def _owned_turns(
     hub: ConversationStreamHub, conversation_id: str, user_id: str
 ) -> list[ActiveTurnInfo]:
-    """Return ActiveTurnInfo for every running turn the user owns."""
+    """Return retained turn state for every turn the user owns."""
     return [
         _serialize_active_turn(turn)
         for turn in hub.active_turns(conversation_id)
-        if turn.user_id == user_id and turn.status == "running"
+        if turn.user_id == user_id
     ]
 
 
@@ -1000,7 +1000,7 @@ async def api_chat_conversation_stream(
                 "min_available_seq": exc.min_available_seq,
                 "active_turns": [
                     info.model_dump(mode="json")
-                    for info in _running_active_turns(hub, conversation_id, user_id)
+                    for info in _owned_turns(hub, conversation_id, user_id)
                 ],
             },
         )
@@ -1744,7 +1744,7 @@ async def get_conversation_messages(
     )
 
     hub = _get_hub(request)
-    active_turns = _running_active_turns(hub, conversation_id, user_id)
+    active_turns = _owned_turns(hub, conversation_id, user_id)
 
     return ConversationMessagesResponse(
         conversation_id=conversation_id,
