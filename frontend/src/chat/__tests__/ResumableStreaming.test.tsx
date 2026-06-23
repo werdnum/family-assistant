@@ -506,11 +506,12 @@ describe('Resumable streaming client', () => {
   );
 
   it(
-    'treats a tool-only persisted reply as terminal on give-up (no error)',
+    'does not treat a tool-only persisted row as terminal on give-up',
     async () => {
-      // A turn can legitimately end with an assistant row that has only tool
-      // calls (no text). After a give-up reconcile, that row must count as
-      // terminal — same as the live completion path — not trigger the error.
+      // Tool-call assistant rows can be persisted before the final reply/error
+      // commits. After a give-up reconcile, that row is not proof that the turn
+      // reached terminal completion — keep the turn unconfirmed instead of
+      // silently accepting a tool-only bubble as the final reply.
       let ourTurnId = '';
       server.use(
         captureTurnId((id) => {
@@ -571,7 +572,7 @@ describe('Resumable streaming client', () => {
         },
         { timeout: 10000 }
       );
-      expect(screen.queryByText(/couldn't confirm the reply/i)).not.toBeInTheDocument();
+      expect(screen.getByText(/couldn't confirm the reply/i)).toBeInTheDocument();
     },
     { timeout: 30000 }
   );

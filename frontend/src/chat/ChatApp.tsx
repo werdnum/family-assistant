@@ -86,9 +86,10 @@ export const reconcilePollTuning = { intervalMs: 4000, maxPolls: 30 };
 type ReloadResult = 'applied' | 'bailed' | 'failed';
 
 /** Whether the reconciled history contains a terminal assistant reply for a
- * turn. An assistant row with a tool call, non-empty text, or (a persisted error
- * row, which renders as assistant text) all count — matching the live completion
- * path. The optimistic LOADING_MARKER placeholder does not. */
+ * turn. A non-empty text row, including persisted error rows rendered as
+ * assistant text, counts. Tool-call-only rows do not: they can be persisted
+ * before the final reply/error is committed, so they are not proof that a
+ * gave-up stream actually reached terminal completion. */
 function hasTerminalReplyForTurn(messages: Message[], turnId: string): boolean {
   return messages.some(
     (msg) =>
@@ -97,10 +98,7 @@ function hasTerminalReplyForTurn(messages: Message[], turnId: string): boolean {
       Array.isArray(msg.content) &&
       msg.content.some(
         (part) =>
-          part.type === 'tool-call' ||
-          (part.type === 'text' &&
-            part.text !== LOADING_MARKER &&
-            Boolean((part.text ?? '').trim()))
+          part.type === 'text' && part.text !== LOADING_MARKER && Boolean((part.text ?? '').trim())
       )
   );
 }
