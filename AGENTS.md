@@ -712,7 +712,9 @@ Once you've implemented a change, you ALWAYS go through the following algorithm:
 3. Run all tests plausibly impacted by your change.
 4. Run `poe test` after major changes for final verification - this is what runs in CI and it runs
    all tests and linters. `poe test` is the gold standard, but it doesn't need to be run every
-   single time you push a small fix.
+   single time you push a small fix. CI runs the full suite on every push regardless, so it remains
+   the backstop that must pass before a PR can merge - skipping a local `poe test` defers
+   verification to CI, it does not skip it.
 
 When long-running verification commands such as `poe test` are active, do not provide play-by-play
 progress updates. Let the command run and report only when action is needed or when it finishes.
