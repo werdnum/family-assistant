@@ -1,4 +1,4 @@
-import { screen, waitFor } from '@testing-library/react';
+import { act, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { HttpResponse, http } from 'msw';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
@@ -854,6 +854,19 @@ describe('Resumable streaming client', () => {
       let conversationId = '';
       let streamCalls = 0;
       let messagesCalls = 0;
+      let reconcileInterval: TimerHandler | null = null;
+      const originalSetInterval = window.setInterval.bind(window);
+      const setIntervalSpy = vi.spyOn(window, 'setInterval').mockImplementation(((
+        handler: TimerHandler,
+        timeout?: number,
+        ...args: unknown[]
+      ) => {
+        if (timeout === reconcilePollTuning.intervalMs) {
+          reconcileInterval = handler;
+          return 0 as unknown as ReturnType<typeof window.setInterval>;
+        }
+        return originalSetInterval(handler, timeout, ...args);
+      }) as typeof window.setInterval);
 
       try {
         server.use(
@@ -916,9 +929,17 @@ describe('Resumable streaming client', () => {
         await secondStreamStarted.promise;
         releaseFirstReload.resolve();
 
-        await new Promise((resolve) => setTimeout(resolve, 100));
+        await waitFor(() => {
+          expect(reconcileInterval).toBeTypeOf('function');
+        });
+        act(() => {
+          if (typeof reconcileInterval === 'function') {
+            reconcileInterval();
+          }
+        });
         expect(screen.queryByText(/couldn't confirm the reply/i)).not.toBeInTheDocument();
       } finally {
+        setIntervalSpy.mockRestore();
         releaseFirstReload.resolve();
         Object.assign(reconcilePollTuning, originalTuning);
       }

@@ -343,15 +343,20 @@ async def test_attachment_response_with_multiple_attachments(
 
     # Verify attachment previews are now available
     try:
-        # The wait_for_attachments_ready should have already ensured these exist
-        await page.locator('[data-testid="attachment-preview"]').first.wait_for(
-            state="visible",
-            timeout=30000,
-        )
-        attachment_previews = page.locator('[data-testid="attachment-preview"]')
-        preview_count = await attachment_previews.count()
-        assert preview_count > 0, (
-            "Attachment previews should be available after wait_for_attachments_ready"
+
+        async def attachment_preview_count() -> int:
+            await chat_page.expand_tool_groups()
+            attachment_previews = page.locator('[data-testid="attachment-preview"]')
+            count = await attachment_previews.count()
+            if count == 0:
+                return 0
+            await attachment_previews.first.wait_for(state="visible", timeout=2000)
+            return count
+
+        preview_count = await wait_for_condition(
+            attachment_preview_count,
+            timeout=30.0,
+            description="attachment previews after wait_for_attachments_ready",
         )
     except Exception:
         # If attachment previews not found, get console errors to help debug
