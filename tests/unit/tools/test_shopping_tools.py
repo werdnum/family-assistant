@@ -6,6 +6,7 @@ from types import SimpleNamespace
 from typing import TYPE_CHECKING, cast
 
 import httpx
+import pytest
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import ec
 
@@ -36,7 +37,7 @@ class _RecordedRequest:
 
 class _FakeAsyncClient:
     requests: list[_RecordedRequest] = []
-    response_json: dict[str, object] = {}
+    responses: list[httpx.Response] = []
 
     def __init__(self, **_kwargs: object) -> None:
         pass
@@ -56,7 +57,10 @@ class _FakeAsyncClient:
     ) -> httpx.Response:
         body = json.loads((content or b"{}").decode("utf-8"))
         self.requests.append(_RecordedRequest(url=url, headers=headers, body=body))
-        return httpx.Response(200, json=self.response_json)
+        if not self.responses:
+            msg = "No fake Shopify response configured."
+            raise AssertionError(msg)
+        return self.responses.pop(0)
 
 
 def _context(app_config: AppConfig) -> ToolExecutionContext:
@@ -101,7 +105,7 @@ async def test_shopify_add_to_cart_creates_unsigned_cart_request(
 ) -> None:
     monkeypatch.setattr(shopping.httpx, "AsyncClient", _FakeAsyncClient)
     _FakeAsyncClient.requests = []
-    _FakeAsyncClient.response_json = _cart_response()
+    _FakeAsyncClient.responses = [httpx.Response(200, json=_cart_response())]
 
     result = await shopping.shopify_add_to_cart_tool(
         _context(AppConfig(server_url="https://assistant.example")),
@@ -136,7 +140,7 @@ async def test_shopify_transfer_checkout_to_human_returns_signed_continue_url(
 ) -> None:
     monkeypatch.setattr(shopping.httpx, "AsyncClient", _FakeAsyncClient)
     _FakeAsyncClient.requests = []
-    _FakeAsyncClient.response_json = _checkout_response()
+    _FakeAsyncClient.responses = [httpx.Response(200, json=_checkout_response())]
     app_config = AppConfig(
         server_url="https://assistant.example",
         ucp_config=UCPConfig(
@@ -159,3 +163,147 @@ async def test_shopify_transfer_checkout_to_human_returns_signed_continue_url(
     assert params["name"] == "create_checkout"
     arguments = cast("dict[str, object]", params["arguments"])
     assert arguments["cart_id"] == "gid://shopify/Cart/cart_abc123"
+
+
+async def test_shopify_tool_raises_for_json_rpc_error(
+    monkeypatch: MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(shopping.httpx, "AsyncClient", _FakeAsyncClient)
+    _FakeAsyncClient.requests = []
+    _FakeAsyncClient.responses = [
+        httpx.Response(
+            200,
+            json={
+                "jsonrpc": "2.0",
+                "id": "rpc-1",
+                "error": {
+                    "code": -32000,
+                    "message": "Unauthorized",
+                    "data": {
+                        "code": "signature_invalid",
+                        "content": "Signature verification failed",
+                    },
+                },
+            },
+        )
+    ]
+
+    with pytest.raises(ValueError, match="Signature verification failed"):
+        await shopping.shopify_get_cart_tool(
+            _context(AppConfig(server_url="https://assistant.example")),
+            business_url="https://shop.example.com",
+            cart_id="gid://shopify/Cart/cart_abc123",
+        )
+
+
+async def test_shopify_tool_raises_for_http_error_with_json_body(
+    monkeypatch: MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(shopping.httpx, "AsyncClient", _FakeAsyncClient)
+    _FakeAsyncClient.requests = []
+    _FakeAsyncClient.responses = [
+        httpx.Response(429, json={"jsonrpc": "2.0", "id": "rpc-1", "result": {}})
+    ]
+
+    with pytest.raises(ValueError, match="HTTP error 429"):
+        await shopping.shopify_get_cart_tool(
+            _context(AppConfig(server_url="https://assistant.example")),
+            business_url="https://shop.example.com",
+            cart_id="gid://shopify/Cart/cart_abc123",
+        )
+
+
+async def test_shopify_get_cart_raises_for_unusable_cart_message(
+    monkeypatch: MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(shopping.httpx, "AsyncClient", _FakeAsyncClient)
+    _FakeAsyncClient.requests = []
+    _FakeAsyncClient.responses = [
+        httpx.Response(
+            200,
+            json={
+                "jsonrpc": "2.0",
+                "id": "rpc-1",
+                "result": {
+                    "structuredContent": {
+                        "cart": {
+                            "messages": [
+                                {
+                                    "type": "error",
+                                    "code": "cart_not_found",
+                                    "content": "Cart was not found or has expired",
+                                }
+                            ]
+                        }
+                    }
+                },
+            },
+        )
+    ]
+
+    with pytest.raises(ValueError, match="Cart was not found or has expired"):
+        await shopping.shopify_get_cart_tool(
+            _context(AppConfig(server_url="https://assistant.example")),
+            business_url="https://shop.example.com",
+            cart_id="gid://shopify/Cart/missing",
+        )
+
+
+async def test_shopify_add_to_existing_cart_preserves_supported_cart_state(
+    monkeypatch: MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(shopping.httpx, "AsyncClient", _FakeAsyncClient)
+    _FakeAsyncClient.requests = []
+    existing_cart = {
+        "jsonrpc": "2.0",
+        "id": "rpc-1",
+        "result": {
+            "structuredContent": {
+                "cart": {
+                    "id": "gid://shopify/Cart/cart_abc123",
+                    "line_items": [
+                        {
+                            "quantity": 1,
+                            "item": {"id": "gid://shopify/ProductVariant/existing"},
+                        }
+                    ],
+                    "context": {"address_country": "US"},
+                    "buyer": {"identity_token": "buyer-token"},
+                    "signals": {"attribute_preferences": ["durable"]},
+                    "continue_url": "https://shop.example.com/cart/c/cart_abc123",
+                }
+            }
+        },
+    }
+    updated_cart = _cart_response()
+    _FakeAsyncClient.responses = [
+        httpx.Response(200, json=existing_cart),
+        httpx.Response(200, json=updated_cart),
+    ]
+
+    await shopping.shopify_add_to_cart_tool(
+        _context(AppConfig(server_url="https://assistant.example")),
+        business_url="https://shop.example.com",
+        cart_id="gid://shopify/Cart/cart_abc123",
+        line_items=[
+            {
+                "variant_id": "gid://shopify/ProductVariant/new",
+                "quantity": 2,
+            }
+        ],
+    )
+
+    update_request = _FakeAsyncClient.requests[1]
+    params = cast("dict[str, object]", update_request.body["params"])
+    arguments = cast("dict[str, object]", params["arguments"])
+    cart_payload = cast("dict[str, object]", arguments["cart"])
+    assert cart_payload["context"] == {"address_country": "US"}
+    assert cart_payload["buyer"] == {"identity_token": "buyer-token"}
+    assert cart_payload["signals"] == {"attribute_preferences": ["durable"]}
+    assert cart_payload["line_items"] == [
+        {
+            "quantity": 1,
+            "item": {"id": "gid://shopify/ProductVariant/existing"},
+        },
+        {"quantity": 2, "item": {"id": "gid://shopify/ProductVariant/new"}},
+    ]

@@ -204,6 +204,34 @@ def _json_bytes(body: object) -> bytes:
     return json.dumps(body, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
 
 
+def _json_rpc_error_text(error: dict[object, object]) -> str:
+    message = error.get("message")
+    data = error.get("data")
+    if isinstance(data, dict):
+        content = data.get("content")
+        code = data.get("code")
+        if isinstance(content, str) and content:
+            if isinstance(code, str) and code:
+                return f"{content} ({code})"
+            return content
+    if isinstance(message, str) and message:
+        return message
+    return "Shopify UCP request failed."
+
+
+def _raise_for_shopify_failure(
+    response: httpx.Response, response_data: dict[object, object]
+) -> None:
+    error = response_data.get("error")
+    if isinstance(error, dict):
+        msg = f"Shopify UCP JSON-RPC error: {_json_rpc_error_text(error)}"
+        raise ValueError(msg)
+
+    if response.is_error:
+        msg = f"Shopify UCP HTTP error {response.status_code}."
+        raise ValueError(msg)
+
+
 async def _post_shopify_tool_call(
     app_config: AppConfig,
     *,
@@ -257,6 +285,7 @@ async def _post_shopify_tool_call(
     if not isinstance(response_data, dict):
         msg = "Shopify UCP response JSON must be an object."
         raise ValueError(msg)
+    _raise_for_shopify_failure(response, response_data)
 
     return {
         "status_code": response.status_code,
@@ -280,10 +309,47 @@ def _structured_content(response_data: dict[str, object]) -> dict[str, object]:
     return structured if isinstance(structured, dict) else {}
 
 
+def _message_text(message: dict[object, object]) -> str:
+    content = message.get("content")
+    code = message.get("code")
+    if isinstance(content, str) and content:
+        if isinstance(code, str) and code:
+            return f"{content} ({code})"
+        return content
+    if isinstance(code, str) and code:
+        return code
+    return "Merchant returned an unusable cart response."
+
+
+def _cart_failure_text(cart: dict[str, object]) -> str | None:
+    ucp = cart.get("ucp")
+    if isinstance(ucp, dict):
+        status = ucp.get("status")
+        if isinstance(status, str) and status.lower() in {"error", "failed"}:
+            return f"Merchant returned cart status {status}."
+
+    messages = cart.get("messages")
+    if isinstance(messages, list):
+        for message in messages:
+            if not isinstance(message, dict):
+                continue
+            message_type = message.get("type")
+            severity = message.get("severity")
+            if message_type == "error" or severity == "unrecoverable":
+                return _message_text(message)
+    return None
+
+
 def _cart_from_response(response_data: dict[str, object]) -> dict[str, object]:
     structured = _structured_content(response_data)
     cart = structured.get("cart")
-    return cart if isinstance(cart, dict) else {}
+    if not isinstance(cart, dict):
+        return {}
+    failure_text = _cart_failure_text(cart)
+    if failure_text is not None or not isinstance(cart.get("id"), str):
+        msg = failure_text or "Shopify cart response did not include a cart ID."
+        raise ValueError(msg)
+    return cart
 
 
 def _checkout_from_response(response_data: dict[str, object]) -> dict[str, object]:
@@ -332,6 +398,29 @@ def _merge_cart_line_items(
     return merged
 
 
+def _cart_update_payload(
+    existing_cart: dict[str, object],
+    new_line_items: list[dict[str, object]],
+    context: dict[str, object] | None,
+) -> dict[str, object]:
+    payload: dict[str, object] = {
+        "line_items": _merge_cart_line_items(existing_cart, new_line_items)
+    }
+
+    existing_context = existing_cart.get("context")
+    if context is not None:
+        payload["context"] = context
+    elif isinstance(existing_context, dict):
+        payload["context"] = existing_context
+
+    for field in ("buyer", "signals"):
+        existing_value = existing_cart.get(field)
+        if isinstance(existing_value, dict):
+            payload[field] = existing_value
+
+    return payload
+
+
 def _cart_result_text(cart: dict[str, object]) -> str:
     cart_id = cart.get("id")
     continue_url = cart.get("continue_url")
@@ -361,14 +450,7 @@ async def shopify_add_to_cart_tool(
             arguments={"id": cart_id},
         )
         existing_cart = _cart_from_response(current)
-        cart_payload: dict[str, object] = {
-            "line_items": _merge_cart_line_items(existing_cart, normalized_items)
-        }
-        existing_context = existing_cart.get("context")
-        if context is not None:
-            cart_payload["context"] = context
-        elif isinstance(existing_context, dict):
-            cart_payload["context"] = existing_context
+        cart_payload = _cart_update_payload(existing_cart, normalized_items, context)
         response_data = await _post_shopify_tool_call(
             app_config,
             business_url=business_url,
@@ -376,7 +458,7 @@ async def shopify_add_to_cart_tool(
             arguments={"id": cart_id, "cart": cart_payload},
         )
     else:
-        cart_payload = {"line_items": normalized_items}
+        cart_payload: dict[str, object] = {"line_items": normalized_items}
         if context is not None:
             cart_payload["context"] = context
         response_data = await _post_shopify_tool_call(
