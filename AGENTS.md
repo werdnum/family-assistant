@@ -672,11 +672,11 @@ access, input validation, and defense-in-depth approaches.
 - IMPORTANT: You NEVER leave tests broken. We do not commit changes that cause tests to break. You
   NEVER make excuses like saying that test failures are 'unrelated' or 'separate issues'. You ALWAYS
   fix ALL test failures, even if you don't think you caused them.
-- **Assumption about test failures**: You are responsible for fixing all test failures, even if you
-  believe they are pre-existing. Since the project never commits with failing tests, any failure you
-  encounter should be treated as a result of your changes. If you suspect a test is flaky, you may
-  try re-running `poe test` to confirm, but you must ultimately resolve all failures before
-  committing.
+- **Assumption about test failures**: You are responsible for fixing test failures in or near the
+  code you changed, even if you believe they are pre-existing. The project does not commit with
+  failing tests, so treat a failure anywhere near your change as a result of your changes and
+  resolve it before committing. For flakiness in areas completely unrelated to your change, see the
+  flaky-test guidance under "Debugging and Change Verification" below.
 - **Hook bypassing**: NEVER attempt to bypass pre-commit hooks, PreToolUse hooks, or any other
   verification hooks (e.g., using `--no-verify`, `--no-gpg-sign`) without explicit permission from
   the user. These hooks exist to enforce quality standards and prevent broken code from being
@@ -709,15 +709,23 @@ Once you've implemented a change, you ALWAYS go through the following algorithm:
 
 1. Run scripts/format-and-lint.sh to check for linter errors.
 2. Make sure that you have tests covering the new functionality, and that they pass.
-3. Run a broad subset of tests related to your fixes.
-4. Run `poe test` for final verification - this is what runs in CI and it runs all tests and
-   linters.
+3. Run all tests plausibly impacted by your change.
+4. Run `poe test` after major changes for final verification - this is what runs in CI and it runs
+   all tests and linters. `poe test` is the gold standard, but it doesn't need to be run every
+   single time you push a small fix. CI runs the full suite on every push regardless, so it remains
+   the backstop that must pass before a PR can merge - skipping a local `poe test` defers
+   verification to CI, it does not skip it.
 
 When long-running verification commands such as `poe test` are active, do not provide play-by-play
 progress updates. Let the command run and report only when action is needed or when it finishes.
 
-You NEVER push new changes or make a PR if `poe test` does not pass. We do not merge PRs with
-failing tests or linter errors.
+Flaky tests can be addressed as follows: flakiness anywhere near the modified code should be
+addressed even if it expands the scope of the PR somewhat. Flakiness in areas completely unrelated
+to the modified code can be ignored if the test passes on rerun - though if it's persistent you can
+mark the test `@flaky` and/or file a GitHub issue for the flakiness.
+
+You NEVER push new changes or make a PR with failing tests or linter errors that are caused by your
+change. We do not merge PRs with failing tests or linter errors.
 
 ### Planning Guidelines
 
