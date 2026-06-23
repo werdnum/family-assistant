@@ -182,9 +182,7 @@ def build_ucp_profile(app_config: AppConfig) -> dict[str, object]:
                     for entry in entries
                 ]
                 for name, entries in ucp_config.payment_handlers.items()
-            }
-            if ucp_config.payment_handlers
-            else None,
+            },
         }),
         "signing_keys": signing_keys,
     }

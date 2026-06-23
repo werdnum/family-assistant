@@ -6,6 +6,7 @@ from typing import Any, cast
 import pytest
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import ec
+from pydantic import ValidationError
 
 from family_assistant.config_models import AppConfig, UCPConfig
 from family_assistant.services.ucp import (
@@ -37,6 +38,7 @@ def test_build_ucp_profile_publishes_public_jwk_for_signing_key() -> None:
 
     assert profile["ucp"]["version"] == "2026-04-08"
     assert "dev.ucp.shopping" in profile["ucp"]["services"]
+    assert profile["ucp"]["payment_handlers"] == {}
     shopping_service = profile["ucp"]["services"]["dev.ucp.shopping"][0]
     assert shopping_service["transport"] == "mcp"
     assert shopping_service["schema"].endswith("/shopping/mcp.openrpc.json")
@@ -121,3 +123,17 @@ def test_sign_ucp_request_rejects_non_https_profile_url() -> None:
             url="https://merchant.example/api/ucp/mcp",
             body={"jsonrpc": "2.0"},
         )
+
+
+def test_ucp_config_rejects_custom_profile_path_without_profile_url() -> None:
+    with pytest.raises(ValidationError, match="profile_url is required"):
+        UCPConfig(profile_path="/custom/ucp")
+
+
+def test_ucp_config_allows_custom_profile_path_with_profile_url() -> None:
+    config = UCPConfig(
+        profile_path="/custom/ucp",
+        profile_url="https://assistant.example/custom/ucp",
+    )
+
+    assert config.profile_path == "/custom/ucp"

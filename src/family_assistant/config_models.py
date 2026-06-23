@@ -1084,6 +1084,16 @@ class UCPConfig(BaseModel):
         default_factory=dict
     )
 
+    @model_validator(mode="after")
+    def require_served_or_absolute_profile_url(self) -> UCPConfig:
+        if self.profile_url is None and self.profile_path != "/.well-known/ucp":
+            msg = (
+                "ucp_config.profile_url is required when ucp_config.profile_path "
+                "is not /.well-known/ucp"
+            )
+            raise ValueError(msg)
+        return self
+
 
 class OIDCConfig(BaseModel):
     """OpenID Connect authentication configuration."""
