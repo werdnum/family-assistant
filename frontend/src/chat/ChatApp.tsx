@@ -160,6 +160,55 @@ function surfaceUnconfirmedMarker(
   return [...messages, errorMessage];
 }
 
+/** Keep a visible loading assistant row for turns that history still reports as
+ * running but has not persisted any assistant row for yet. */
+function preserveRunningLoadingMessages(
+  reloadedMessages: Message[],
+  previousMessages: Message[],
+  runningTurnIds: Set<string>
+): Message[] {
+  let next = reloadedMessages;
+  for (const turnId of runningTurnIds) {
+    const hasAssistantRow = next.some((msg) => msg.turnId === turnId && msg.role === 'assistant');
+    if (hasAssistantRow) {
+      continue;
+    }
+    const previousLoading = previousMessages.find(
+      (msg) =>
+        msg.turnId === turnId &&
+        msg.role === 'assistant' &&
+        Array.isArray(msg.content) &&
+        msg.content.some((part) => part.type === 'text' && part.text === LOADING_MARKER)
+    );
+    const loadingMessage =
+      previousLoading ??
+      ({
+        id: `msg_loading_${turnId}`,
+        role: 'assistant',
+        turnId,
+        content: [{ type: 'text', text: LOADING_MARKER }],
+        isLoading: true,
+        createdAt: new Date(),
+      } satisfies Message);
+    let insertAfterIndex = -1;
+    for (let index = 0; index < next.length; index += 1) {
+      if (next[index]?.turnId === turnId) {
+        insertAfterIndex = index;
+      }
+    }
+    if (insertAfterIndex === -1) {
+      next = [...next, loadingMessage];
+    } else {
+      next = [
+        ...next.slice(0, insertAfterIndex + 1),
+        loadingMessage,
+        ...next.slice(insertAfterIndex + 1),
+      ];
+    }
+  }
+  return next;
+}
+
 /** Extract plain text from a backend message's content for a notification
  * preview. Content is either a string or an array of parts; only `text` parts
  * contribute (image/tool parts have no preview text). */
@@ -1192,6 +1241,7 @@ const ChatApp: React.FC<ChatAppProps> = ({ profileId = 'default_assistant' }) =>
         // the follow stream's reload) replaces the marker, and a marker a reload
         // would otherwise wipe is re-appended.
         let hasRunningUnconfirmed = false;
+        const runningUnconfirmedTurnIds = new Set<string>();
         for (const [turnId, info] of unconfirmedTurnsRef.current) {
           if (info.convId !== convId) {
             continue;
@@ -1209,6 +1259,7 @@ const ChatApp: React.FC<ChatAppProps> = ({ profileId = 'default_assistant' }) =>
             // producer failed before committing a row), surface the marker —
             // even for a 410, which we'd otherwise assume succeeded.
             info.markIfNoReply = true;
+            runningUnconfirmedTurnIds.add(turnId);
           } else if (hasTerminalReplyForTurn(messagesWithArrayContent, turnId, completedTurnIds)) {
             // Finished with a real reply — confirmed.
             unconfirmedTurnsRef.current.delete(turnId);
@@ -1229,7 +1280,17 @@ const ChatApp: React.FC<ChatAppProps> = ({ profileId = 'default_assistant' }) =>
           hasRunningUnconfirmed ? convId : prev === convId ? null : prev
         );
 
-        setMessages(messagesWithArrayContent);
+        if (runningUnconfirmedTurnIds.size > 0) {
+          setMessages((prev) =>
+            preserveRunningLoadingMessages(
+              messagesWithArrayContent,
+              prev,
+              runningUnconfirmedTurnIds
+            )
+          );
+        } else {
+          setMessages(messagesWithArrayContent);
+        }
         return 'applied' as const;
       }
       // A non-OK response is a genuine reconcile failure, not a supersession.

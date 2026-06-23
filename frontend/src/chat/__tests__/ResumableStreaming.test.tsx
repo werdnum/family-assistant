@@ -733,6 +733,63 @@ describe('Resumable streaming client', () => {
   );
 
   it(
+    'keeps the loading bubble when a still-running reconcile has no assistant row',
+    async () => {
+      let ourTurnId = '';
+      let messagesCalls = 0;
+      server.use(
+        captureTurnId((id) => {
+          ourTurnId = id;
+        }, 'web_conv_still_running_no_reply'),
+        http.get('/api/v1/chat/conversations/:conversationId/messages', () => {
+          messagesCalls += 1;
+          return HttpResponse.json({
+            active_turns: [
+              { turn_id: ourTurnId, started_at: '2026-06-09T10:00:00Z', status: 'running' },
+            ],
+            messages: [
+              {
+                internal_id: 'u1',
+                role: 'user',
+                turn_id: ourTurnId,
+                content: 'Reconciled quiet tool',
+                timestamp: '2026-06-09T10:00:00Z',
+              },
+            ],
+          });
+        }),
+        http.get('/api/v1/chat/conversations/:conversationId/stream', () =>
+          sse([`event: stream_dropped\ndata: ${JSON.stringify({ reason: 'server_shutdown' })}\n\n`])
+        )
+      );
+
+      const user = userEvent.setup();
+      await renderChatApp({ waitForReady: true });
+      const input = screen.getByPlaceholderText('Message Family Assistant...');
+      await user.type(input, 'Run the quiet tool');
+      await user.keyboard('{Enter}');
+
+      await waitFor(
+        () => {
+          expect(messagesCalls).toBeGreaterThan(0);
+        },
+        { timeout: 10000 }
+      );
+      await waitFor(
+        () => {
+          expect(screen.getByText('Reconciled quiet tool')).toBeInTheDocument();
+        },
+        { timeout: 10000 }
+      );
+      await waitFor(() => {
+        expect(document.querySelectorAll('.animate-bounce').length).toBeGreaterThan(0);
+      });
+      expect(screen.queryByText(/couldn't confirm the reply/i)).not.toBeInTheDocument();
+    },
+    { timeout: 30000 }
+  );
+
+  it(
     'reconciles a still-running give-up turn via the fallback poll',
     async () => {
       // A give-up while the turn is still running relies on a later reload to
