@@ -165,6 +165,84 @@ async def test_shopify_transfer_checkout_to_human_returns_signed_continue_url(
     assert arguments["cart_id"] == "gid://shopify/Cart/cart_abc123"
 
 
+async def test_shopify_transfer_checkout_to_human_rejects_cart_error_outcome(
+    monkeypatch: MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(shopping.httpx, "AsyncClient", _FakeAsyncClient)
+    _FakeAsyncClient.requests = []
+    _FakeAsyncClient.responses = [
+        httpx.Response(
+            200,
+            json={
+                "jsonrpc": "2.0",
+                "id": "rpc-1",
+                "result": {
+                    "structuredContent": {
+                        "messages": [
+                            {
+                                "type": "error",
+                                "code": "cart_not_found",
+                                "content": "Cart was not found or has expired",
+                            }
+                        ],
+                        "continue_url": "https://shop.example.com/checkouts/fallback",
+                    }
+                },
+            },
+        )
+    ]
+    app_config = AppConfig(
+        server_url="https://assistant.example",
+        ucp_config=UCPConfig(
+            signing_key_id="platform-2026",
+            signing_private_key=_private_key_pem(),
+        ),
+    )
+
+    with pytest.raises(ValueError, match="Cart was not found or has expired"):
+        await shopping.shopify_transfer_checkout_to_human_tool(
+            _context(app_config),
+            business_url="https://shop.example.com",
+            cart_id="gid://shopify/Cart/missing",
+        )
+
+
+async def test_shopify_transfer_checkout_to_human_requires_checkout_id(
+    monkeypatch: MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(shopping.httpx, "AsyncClient", _FakeAsyncClient)
+    _FakeAsyncClient.requests = []
+    _FakeAsyncClient.responses = [
+        httpx.Response(
+            200,
+            json={
+                "jsonrpc": "2.0",
+                "id": "rpc-1",
+                "result": {
+                    "structuredContent": {
+                        "status": "requires_escalation",
+                        "continue_url": "https://shop.example.com/checkouts/fallback",
+                    }
+                },
+            },
+        )
+    ]
+    app_config = AppConfig(
+        server_url="https://assistant.example",
+        ucp_config=UCPConfig(
+            signing_key_id="platform-2026",
+            signing_private_key=_private_key_pem(),
+        ),
+    )
+
+    with pytest.raises(ValueError, match="checkout ID"):
+        await shopping.shopify_transfer_checkout_to_human_tool(
+            _context(app_config),
+            business_url="https://shop.example.com",
+            cart_id="gid://shopify/Cart/cart_abc123",
+        )
+
+
 async def test_shopify_tool_raises_for_json_rpc_error(
     monkeypatch: MonkeyPatch,
 ) -> None:

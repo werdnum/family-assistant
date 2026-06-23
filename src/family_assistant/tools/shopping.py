@@ -309,7 +309,11 @@ def _structured_content(response_data: dict[str, object]) -> dict[str, object]:
     return structured if isinstance(structured, dict) else {}
 
 
-def _message_text(message: dict[object, object]) -> str:
+def _message_text(
+    message: dict[object, object],
+    *,
+    default: str = "Merchant returned an unusable response.",
+) -> str:
     content = message.get("content")
     code = message.get("code")
     if isinstance(content, str) and content:
@@ -318,7 +322,7 @@ def _message_text(message: dict[object, object]) -> str:
         return content
     if isinstance(code, str) and code:
         return code
-    return "Merchant returned an unusable cart response."
+    return default
 
 
 def _cart_failure_text(cart: dict[str, object]) -> str | None:
@@ -336,7 +340,10 @@ def _cart_failure_text(cart: dict[str, object]) -> str | None:
             message_type = message.get("type")
             severity = message.get("severity")
             if message_type == "error" or severity == "unrecoverable":
-                return _message_text(message)
+                return _message_text(
+                    message,
+                    default="Merchant returned an unusable cart response.",
+                )
     return None
 
 
@@ -355,6 +362,34 @@ def _cart_from_response(response_data: dict[str, object]) -> dict[str, object]:
 
 def _checkout_from_response(response_data: dict[str, object]) -> dict[str, object]:
     return _structured_content(response_data)
+
+
+def _checkout_failure_text(checkout: dict[str, object]) -> str | None:
+    status = checkout.get("status")
+    if isinstance(status, str) and status.lower() in {"canceled", "error", "failed"}:
+        return f"Merchant returned checkout status {status}."
+
+    messages = checkout.get("messages")
+    if not isinstance(messages, list):
+        return None
+
+    checkout_has_id = isinstance(checkout.get("id"), str)
+    for message in messages:
+        if not isinstance(message, dict):
+            continue
+        code = message.get("code")
+        severity = message.get("severity")
+        message_type = message.get("type")
+        if (
+            code in {"invalid_cart_id", "cart_not_found"}
+            or severity == "unrecoverable"
+            or (message_type == "error" and not checkout_has_id)
+        ):
+            return _message_text(
+                message,
+                default="Merchant returned an unusable checkout response.",
+            )
+    return None
 
 
 def _merge_cart_line_items(
@@ -508,15 +543,22 @@ async def shopify_transfer_checkout_to_human_tool(
     continue_url = checkout.get("continue_url")
     checkout_id = checkout.get("id")
     status = checkout.get("status")
+    failure_text = _checkout_failure_text(checkout)
+    if failure_text is not None:
+        raise ValueError(failure_text)
+    if not isinstance(checkout_id, str) or not checkout_id:
+        msg = "Shopify checkout response did not include a checkout ID."
+        raise ValueError(msg)
+    if not isinstance(status, str) or not status:
+        msg = "Shopify checkout response did not include a checkout status."
+        raise ValueError(msg)
     if not isinstance(continue_url, str) or not continue_url:
         msg = "Shopify checkout response did not include a continue_url."
         raise ValueError(msg)
 
     details = [f"Checkout link: {continue_url}"]
-    if isinstance(status, str):
-        details.append(f"Status: {status}")
-    if isinstance(checkout_id, str):
-        details.append(f"Checkout ID: {checkout_id}")
+    details.append(f"Status: {status}")
+    details.append(f"Checkout ID: {checkout_id}")
     details.append("The buyer must complete payment on the merchant checkout page.")
 
     return ToolResult(text="\n".join(details), data=response_data)
