@@ -141,6 +141,94 @@ describe.sequential('Streaming Error Recovery', () => {
   );
 
   it(
+    'resumes after a drop following tool calls and shows the reply (no error)',
+    async () => {
+      // The production bug: an SSE stream delivered a tool call then dropped
+      // before the final text (a proxy-cut connection). The turn keeps running
+      // server-side and the hub retains its events, so the client RESUMES from
+      // the last applied seq and streams the final text + turn_ended to
+      // completion — the reply appears with no spurious "error after running
+      // tools" and no history-reload guesswork.
+      let streamCalls = 0;
+      const fromSeqs: Array<string | null> = [];
+      const toolCall = {
+        id: 'call_sched',
+        type: 'function' as const,
+        function: { name: 'schedule_future_callback', arguments: '{}' },
+      };
+      const encoder = new TextEncoder();
+
+      server.use(
+        http.get('/api/v1/chat/conversations/:conversationId/stream', ({ request }) => {
+          fromSeqs.push(new URL(request.url).searchParams.get('from_seq'));
+          streamCalls += 1;
+          if (streamCalls === 1) {
+            // Tool call + result (seq 1, 2), then drop without turn_ended.
+            return new HttpResponse(
+              new ReadableStream({
+                start(controller) {
+                  controller.enqueue(
+                    encoder.encode(`data: ${JSON.stringify({ tool_call: toolCall, seq: 1 })}\n\n`)
+                  );
+                  controller.enqueue(
+                    encoder.encode(
+                      `data: ${JSON.stringify({ tool_call_id: 'call_sched', result: 'OK. Scheduled.', seq: 2 })}\n\n`
+                    )
+                  );
+                  controller.close();
+                },
+              }),
+              { headers: { 'Content-Type': 'text/event-stream' } }
+            );
+          }
+          // Resume delivers the final text (seq 3) and turn_ended (seq 4).
+          return new HttpResponse(
+            new ReadableStream({
+              start(controller) {
+                controller.enqueue(
+                  encoder.encode(
+                    `data: ${JSON.stringify({ content: "I've scheduled that callback for you.", seq: 3 })}\n\n`
+                  )
+                );
+                controller.enqueue(
+                  encoder.encode(
+                    `event: turn_ended\ndata: ${JSON.stringify({ status: 'complete', seq: 4 })}\n\n`
+                  )
+                );
+                controller.close();
+              },
+            }),
+            { headers: { 'Content-Type': 'text/event-stream' } }
+          );
+        })
+      );
+
+      const user = userEvent.setup();
+      await renderChatApp({ waitForReady: true });
+
+      const messageInput = screen.getByPlaceholderText('Message Family Assistant...');
+      await user.type(messageInput, 'Schedule the decommission message');
+      await user.keyboard('{Enter}');
+
+      // The resumed stream surfaces the final reply.
+      await waitFor(
+        () => {
+          expect(screen.getByText("I've scheduled that callback for you.")).toBeInTheDocument();
+        },
+        { timeout: 5000 }
+      );
+      // No spurious error, and the resume came from just past the last seq (2+1).
+      expect(
+        screen.queryByText(/encountered an error after running tools/)
+      ).not.toBeInTheDocument();
+      expect(screen.queryByText(/connection was interrupted/i)).not.toBeInTheDocument();
+      expect(streamCalls).toBe(2);
+      expect(fromSeqs[1]).toBe('3');
+    },
+    { timeout: 30000 }
+  );
+
+  it(
     'preserves tool calls when an error occurs mid-stream',
     async () => {
       // Simulate: tool call → error → done (with text content to finalize)

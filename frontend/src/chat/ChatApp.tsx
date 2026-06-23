@@ -71,6 +71,90 @@ class ThreadErrorBoundary extends Component<{ children: ReactNode }, ThreadError
 
 const LIVE_CONFIRMATION_POLL_RACE_GRACE_MS = 30000;
 
+// Fallback reconcile for a turn that gave up while still running server-side. The
+// always-on follow stream is the primary completion signal, but it tails
+// future-only and may not be connected, so re-poll history until the turn
+// resolves. Bounded so a turn wedged "running" server-side can't poll forever.
+// Exported (mutable) so tests can shrink the interval instead of waiting on it.
+export const reconcilePollTuning = { intervalMs: 4000, maxPolls: 30 };
+
+// Outcome of a history reload. The interrupted-stream give-up path distinguishes
+// these: 'applied' has authoritative messages to judge a turn against; 'failed'
+// (non-OK / fetch error) couldn't reconcile, so an unconfirmed-reply error must
+// still surface; 'bailed' (a stream is active for the conversation, or the fetch
+// was superseded) means another path will reconcile — stay silent.
+type ReloadResult = 'applied' | 'bailed' | 'failed';
+
+/** Whether the reconciled history contains a terminal assistant reply for a
+ * turn. An assistant row with a tool call, non-empty text, or (a persisted error
+ * row, which renders as assistant text) all count — matching the live completion
+ * path. The optimistic LOADING_MARKER placeholder does not. */
+function hasTerminalReplyForTurn(messages: Message[], turnId: string): boolean {
+  return messages.some(
+    (msg) =>
+      msg.turnId === turnId &&
+      msg.role === 'assistant' &&
+      Array.isArray(msg.content) &&
+      msg.content.some(
+        (part) =>
+          part.type === 'tool-call' ||
+          (part.type === 'text' &&
+            part.text !== LOADING_MARKER &&
+            Boolean((part.text ?? '').trim()))
+      )
+  );
+}
+
+/** The "couldn't confirm the reply" placeholder shown for a turn that gave up
+ * (or got a 410) and has no persisted reply. Re-derived on every reconcile, so a
+ * later reply replaces it and a reload can't silently erase it. */
+function buildUnconfirmedReplyError(conversationId: string, turnId: string): Message {
+  const diagnosticsUrl = getDiagnosticsUrl({ conversationId });
+  return {
+    id: `msg_unconfirmed_${generateUUID()}`,
+    role: 'assistant',
+    turnId,
+    content: [
+      {
+        type: 'text',
+        text: `Sorry, I couldn't confirm the reply finished. Please try again. [View diagnostics](${diagnosticsUrl}) for debugging details.`,
+      },
+    ],
+    createdAt: new Date(),
+    status: { type: 'complete' },
+  };
+}
+
+/** Place a turn's "couldn't confirm" marker into a message list: replace the
+ * turn's stranded LOADING_MARKER spinner in place (so the user doesn't see a
+ * spinner alongside the marker), else append. Deduped per turn. Does NOT treat
+ * optimistic partial content (a streamed tool call / partial text) as a finished
+ * reply — a give-up means turn_ended never arrived, so the partial is not proof.
+ * Returns `messages` unchanged when a marker for the turn is already present. */
+function surfaceUnconfirmedMarker(
+  messages: Message[],
+  conversationId: string,
+  turnId: string
+): Message[] {
+  if (messages.some((msg) => msg.turnId === turnId && msg.id.startsWith('msg_unconfirmed_'))) {
+    return messages;
+  }
+  const errorMessage = buildUnconfirmedReplyError(conversationId, turnId);
+  const spinnerIndex = messages.findIndex(
+    (msg) =>
+      msg.turnId === turnId &&
+      msg.role === 'assistant' &&
+      Array.isArray(msg.content) &&
+      msg.content.some((part) => part.type === 'text' && part.text === LOADING_MARKER)
+  );
+  if (spinnerIndex !== -1) {
+    const next = [...messages];
+    next[spinnerIndex] = errorMessage;
+    return next;
+  }
+  return [...messages, errorMessage];
+}
+
 /** Extract plain text from a backend message's content for a notification
  * preview. Content is either a string or an array of parts; only `text` parts
  * contribute (image/tool parts have no preview text). */
@@ -191,6 +275,10 @@ const ChatApp: React.FC<ChatAppProps> = ({ profileId = 'default_assistant' }) =>
   const [isLoading, setIsLoading] = useState<boolean>(false);
   const [sidebarOpen, setSidebarOpen] = useState<boolean>(window.innerWidth > 768);
   const [conversationId, setConversationId] = useState<string | null>(null);
+  // Set to a conversation id while it has a turn that gave up but is still running
+  // server-side, to drive the fallback reconcile poll. Cleared once the turn
+  // resolves (reply lands or it finishes with none).
+  const [pendingReconcileConvId, setPendingReconcileConvId] = useState<string | null>(null);
   const [conversations, setConversations] = useState<Conversation[]>([]);
   const [conversationsLoading, setConversationsLoading] = useState<boolean>(true);
   const [profilesLoading, setProfilesLoading] = useState<boolean>(true);
@@ -217,6 +305,18 @@ const ChatApp: React.FC<ChatAppProps> = ({ profileId = 'default_assistant' }) =>
   // when a turn_ended event for our own turn arrives (we already hold the freshest
   // state locally from streaming; reloading risks clobbering it).
   const selfTurnIdsRef = useRef<Set<string>>(new Set());
+  // Turns that gave up — or got a 410 — without a confirmed reply, keyed by
+  // turnId. `convId` scopes the marker to its own thread; `markIfNoReply`
+  // distinguishes a true give-up (surface the "couldn't confirm" marker when the
+  // turn finishes with no reply) from a 410 reconcile (assume the durably-
+  // persisted reply will appear; never mark). The history reconcile
+  // (loadConversationMessages) re-derives the marker from this map on EVERY
+  // reload — clearing a turn once its reply lands and re-appending while a
+  // gave-up turn is finished with none — so a later reply replaces the marker and
+  // no reload can silently erase it.
+  const unconfirmedTurnsRef = useRef<Map<string, { convId: string; markIfNoReply: boolean }>>(
+    new Map()
+  );
   // The hub `message`/`turn_ended` events are content-free, so the in-app
   // notification must be derived from reloaded history. We keep the latest
   // assistant message internal_id seen per conversation so a background reload
@@ -663,13 +763,90 @@ const ChatApp: React.FC<ChatAppProps> = ({ profileId = 'default_assistant' }) =>
   // loadConversationMessages is referenced via a ref because it is declared
   // after this hook, and the streaming hook must be initialized before it.
   const loadConversationMessagesRef =
-    useRef<(convId: string, background?: boolean) => Promise<void>>(null);
-  const handleReloadHistory = useCallback((reloadConversationId: string) => {
-    activeStreamConversationIdRef.current = null;
-    setTimeout(() => {
-      void loadConversationMessagesRef.current?.(reloadConversationId, true);
-    }, 0);
-  }, []);
+    useRef<(convId: string, background?: boolean) => Promise<ReloadResult>>(null);
+  const handleReloadHistory = useCallback(
+    (
+      reloadConversationId: string,
+      options?: { errorIfNoReply?: boolean; turnId?: string; errorOnFailedReload?: boolean }
+    ) => {
+      activeStreamConversationIdRef.current = null;
+      // A bounded resume that gave up — or a 410 — no longer holds the turn's
+      // freshest state from the stream. Mark the turn unconfirmed (keyed by
+      // conversation) so the history reconcile derives/clears its "couldn't
+      // confirm" marker, and drop the follow-stream self-skip so the turn's
+      // eventual turn_ended triggers a reload (which self-heals the marker)
+      // instead of being swallowed as "our own turn".
+      if (options?.errorIfNoReply && options.turnId) {
+        // errorOnFailedReload marks a TRUE give-up (resume loop exhausted): mark
+        // the turn when it can't be confirmed. A 410 reconcile omits it (its
+        // reply is durably persisted), so it polls-if-running / shows-if-replied
+        // but never surfaces a marker.
+        unconfirmedTurnsRef.current.set(options.turnId, {
+          convId: reloadConversationId,
+          markIfNoReply: !!options.errorOnFailedReload,
+        });
+        selfTurnIdsRef.current.delete(options.turnId);
+      }
+      setTimeout(() => {
+        void (async () => {
+          const result = await loadConversationMessagesRef.current?.(reloadConversationId, true);
+          // 'applied' reconciled and re-derived the marker. 'bailed' means a
+          // stream was active for this conversation (e.g. the user fired another
+          // send during this reconcile), so the re-derive never ran — drive the
+          // fallback poll to retry until that stream clears and the marker is
+          // derived, otherwise the give-up could be silently swallowed. 'failed'
+          // (only a true give-up, errorOnFailedReload) has no server truth, so
+          // surface the marker on the current optimistic state now; the turn
+          // stays unconfirmed and self-heals on the next successful reload. (A 410
+          // omits errorOnFailedReload — its reply is durably persisted — so a
+          // transient /messages failure there stays silent and self-heals.)
+          if (options?.errorIfNoReply && options.turnId && result === 'bailed') {
+            setPendingReconcileConvId(reloadConversationId);
+            return;
+          }
+          if (
+            !options?.errorIfNoReply ||
+            !options.turnId ||
+            result !== 'failed' ||
+            !options.errorOnFailedReload
+          ) {
+            return;
+          }
+          const turnId = options.turnId;
+          setMessages((prev) => surfaceUnconfirmedMarker(prev, reloadConversationId, turnId));
+        })();
+      }, 0);
+    },
+    []
+  );
+
+  // Does the server still report THIS turn running? The resume loop asks before
+  // counting a held-open-but-silent leg as liveness, since the backend holds the
+  // conversation stream open while ANY of the user's turns runs (e.g. a
+  // concurrent tab), not just ours. limit=1 keeps the payload tiny — active_turns
+  // is returned independent of message pagination. On a non-OK/failed check we
+  // return false (NOT live): an unverifiable held-open leg must count toward
+  // give-up rather than reset the streak forever (a persistently-failing check
+  // would otherwise let a concurrent turn hold us spinning). Giving up is safe —
+  // the give-up reconcile re-checks active_turns and the fallback poll still
+  // recovers a genuinely-running turn's reply.
+  const handleCheckTurnActive = useCallback(
+    async (convId: string, turnId: string): Promise<boolean> => {
+      try {
+        const response = await fetch(`/api/v1/chat/conversations/${convId}/messages?limit=1`);
+        if (!response.ok) {
+          return false;
+        }
+        const data = (await response.json()) as ConversationMessagesResponse;
+        return (data.active_turns ?? []).some(
+          (turn) => turn.turn_id === turnId && turn.status === 'running'
+        );
+      } catch {
+        return false;
+      }
+    },
+    []
+  );
 
   // Initialize streaming hook
   const { sendStreamingMessage, cancelStream, isStreaming } = useStreamingResponse({
@@ -680,6 +857,7 @@ const ChatApp: React.FC<ChatAppProps> = ({ profileId = 'default_assistant' }) =>
     onToolCall: handleStreamingToolCall,
     onToolConfirmationRequest: handleConfirmationRequest,
     onToolConfirmationResult: handleConfirmationResult,
+    onCheckTurnActive: handleCheckTurnActive,
   }) as {
     sendStreamingMessage: (params: {
       prompt: string;
@@ -716,8 +894,19 @@ const ChatApp: React.FC<ChatAppProps> = ({ profileId = 'default_assistant' }) =>
       if (response.ok) {
         const data = (await response.json()) as ConversationMessagesResponse;
         if (streamWasActiveAtRequestStart || activeStreamConversationIdRef.current === convId) {
-          return;
+          // A stream is active for this conversation — its own completion will
+          // reconcile. Don't clobber it, and treat this as a supersession.
+          return 'bailed' as const;
         }
+
+        // Turns the server still reports as running, so the unconfirmed-reply
+        // reconcile below can tell an in-flight turn (partial rows, reply still
+        // coming) from a finished one whose rows are authoritative.
+        const runningTurnIds = new Set(
+          (data.active_turns ?? [])
+            .filter((turn) => turn.status === 'running')
+            .map((turn) => turn.turn_id)
+        );
 
         const processedMessages: Message[] = [];
         const toolResponses = new Map<string, string>();
@@ -763,6 +952,7 @@ const ChatApp: React.FC<ChatAppProps> = ({ profileId = 'default_assistant' }) =>
             processedMessages.push({
               id: `msg_${msg.internal_id}`,
               role: 'assistant',
+              turnId: msg.turn_id ?? undefined,
               content: [{ type: 'text', text: errorText }],
               createdAt: new Date(msg.timestamp),
               status: { type: 'complete' },
@@ -868,6 +1058,7 @@ const ChatApp: React.FC<ChatAppProps> = ({ profileId = 'default_assistant' }) =>
             processedMessages.push({
               id: `msg_${msg.internal_id}`,
               role: 'assistant',
+              turnId: msg.turn_id ?? undefined,
               content: content,
               createdAt: new Date(msg.timestamp),
               status: { type: 'complete' },
@@ -931,6 +1122,7 @@ const ChatApp: React.FC<ChatAppProps> = ({ profileId = 'default_assistant' }) =>
           processedMessages.push({
             id: `msg_${msg.internal_id}`,
             role: msg.role,
+            turnId: msg.turn_id ?? undefined,
             content: messageContent.length > 0 ? messageContent : [{ type: 'text', text: '' }],
             createdAt: new Date(msg.timestamp),
             attachments: attachments.length > 0 ? attachments : undefined,
@@ -981,13 +1173,65 @@ const ChatApp: React.FC<ChatAppProps> = ({ profileId = 'default_assistant' }) =>
           }
         }
 
+        // Re-derive "couldn't confirm the reply" markers from this authoritative
+        // history. For every turn that gave up (or 410'd) without a confirmed
+        // reply IN THIS conversation: clear it once its reply has landed, or
+        // append the marker while it is finished with no reply. A still-running
+        // turn keeps no marker — its reply is still coming. Running this on every
+        // reload makes the marker self-healing: a reply that arrives later (via
+        // the follow stream's reload) replaces the marker, and a marker a reload
+        // would otherwise wipe is re-appended.
+        let hasRunningUnconfirmed = false;
+        for (const [turnId, info] of unconfirmedTurnsRef.current) {
+          if (info.convId !== convId) {
+            continue;
+          }
+          if (runningTurnIds.has(turnId)) {
+            // STILL RUNNING wins before any terminal-reply judging: a partial
+            // assistant row (a tool call / partial text persisted mid-turn) is
+            // NOT the final reply while the server reports the turn running. No
+            // marker; keep polling. The always-on follow stream is the primary
+            // completion signal, but it tails future-only and may be
+            // disconnected, so the fallback re-poll guarantees we reconcile.
+            hasRunningUnconfirmed = true;
+            // Once we've OBSERVED the turn running, its completion is now our
+            // responsibility: if it later finishes with no persisted reply (the
+            // producer failed before committing a row), surface the marker —
+            // even for a 410, which we'd otherwise assume succeeded.
+            info.markIfNoReply = true;
+          } else if (hasTerminalReplyForTurn(messagesWithArrayContent, turnId)) {
+            // Finished with a real reply — confirmed.
+            unconfirmedTurnsRef.current.delete(turnId);
+          } else if (info.markIfNoReply) {
+            // A true give-up finished with no reply — surface the marker.
+            messagesWithArrayContent.push(buildUnconfirmedReplyError(convId, turnId));
+          } else {
+            // A 410 reconcile finished with no reply: the reply was durably
+            // persisted before eviction (and may just be lagging) — assume
+            // success, no marker, like already_complete. Clear it.
+            unconfirmedTurnsRef.current.delete(turnId);
+          }
+        }
+        // Drive the fallback reconcile poll (below) only while THIS conversation
+        // has a still-running unconfirmed turn. Leave another conversation's
+        // pending flag untouched.
+        setPendingReconcileConvId((prev) =>
+          hasRunningUnconfirmed ? convId : prev === convId ? null : prev
+        );
+
         setMessages(messagesWithArrayContent);
+        return 'applied' as const;
       }
+      // A non-OK response is a genuine reconcile failure, not a supersession.
+      return 'failed' as const;
     } catch (error) {
-      // Don't log error if request was aborted (component unmounting)
-      if (error instanceof Error && error.name !== 'AbortError') {
-        console.error('Error loading conversation:', error);
+      // An AbortError means a newer load superseded this one (bailed); any other
+      // error is a genuine fetch failure.
+      if (error instanceof Error && error.name === 'AbortError') {
+        return 'bailed' as const;
       }
+      console.error('Error loading conversation:', error);
+      return 'failed' as const;
     } finally {
       if (!background) {
         setIsLoading(false);
@@ -995,6 +1239,45 @@ const ChatApp: React.FC<ChatAppProps> = ({ profileId = 'default_assistant' }) =>
     }
   }, []);
   loadConversationMessagesRef.current = loadConversationMessages;
+
+  // Fallback reconcile poll: while the open conversation has a turn that gave up
+  // but is still running server-side, re-poll history so its eventual completion
+  // is reconciled even if the always-on follow stream missed the turn_ended (it
+  // tails future-only and may be disconnected). Each poll re-derives the marker
+  // and clears `pendingReconcileConvId` once the turn resolves, which tears the
+  // interval down. Bounded by reconcilePollTuning.maxPolls so a wedged turn can't poll
+  // forever.
+  useEffect(() => {
+    if (!pendingReconcileConvId || pendingReconcileConvId !== conversationId) {
+      return;
+    }
+    const convId = pendingReconcileConvId;
+    let polls = 0;
+    const intervalId = setInterval(() => {
+      polls += 1;
+      if (polls > reconcilePollTuning.maxPolls) {
+        clearInterval(intervalId);
+        // Don't abandon the user on a perpetual spinner: if the turn is still
+        // unresolved after the poll budget (and the follow stream also missed
+        // completion), surface a provisional marker and clear the pending state.
+        // It self-heals — a later reload replaces it with the reply, or (if the
+        // turn really is still running) removes it and resumes polling.
+        setMessages((prev) => {
+          let next = prev;
+          for (const [turnId, info] of unconfirmedTurnsRef.current) {
+            if (info.convId === convId && info.markIfNoReply) {
+              next = surfaceUnconfirmedMarker(next, convId, turnId);
+            }
+          }
+          return next;
+        });
+        setPendingReconcileConvId((prev) => (prev === convId ? null : prev));
+        return;
+      }
+      void loadConversationMessagesRef.current?.(convId, true);
+    }, reconcilePollTuning.intervalMs);
+    return () => clearInterval(intervalId);
+  }, [pendingReconcileConvId, conversationId]);
 
   // Handle conversation selection (defined early for use in notification callback)
   const handleConversationSelect = useCallback(
@@ -1203,9 +1486,15 @@ const ChatApp: React.FC<ChatAppProps> = ({ profileId = 'default_assistant' }) =>
         };
       });
 
+      // Tag the optimistic bubbles with this turn's id so an interrupted-stream
+      // give-up can identify THIS turn's stranded loading bubble (e.g. to replace
+      // a no-content spinner with an error) without touching a concurrent turn's
+      // live spinner. effectiveTurnId in the hook is this same id.
+      const turnId = generateUUID();
       const userMessage: Message = {
         id: `msg_${Date.now()}`,
         role: 'user',
+        turnId,
         content: message.content.map((c) => ({ type: 'text' as const, text: c.text })),
         createdAt: new Date(),
         attachments: processedAttachments,
@@ -1215,6 +1504,7 @@ const ChatApp: React.FC<ChatAppProps> = ({ profileId = 'default_assistant' }) =>
       const loadingAssistantMessage: Message = {
         id: assistantMessageId,
         role: 'assistant',
+        turnId,
         content: [{ type: 'text', text: LOADING_MARKER }],
         isLoading: true,
         createdAt: new Date(),
@@ -1223,7 +1513,6 @@ const ChatApp: React.FC<ChatAppProps> = ({ profileId = 'default_assistant' }) =>
       setMessages((prev) => [...prev, userMessage, loadingAssistantMessage]);
 
       const targetConversationId = conversationId || `web_conv_${generateUUID()}`;
-      const turnId = generateUUID();
       streamingMessageIdRef.current = assistantMessageId;
       activeStreamConversationIdRef.current = targetConversationId;
       lastStreamingErrorRef.current = null;

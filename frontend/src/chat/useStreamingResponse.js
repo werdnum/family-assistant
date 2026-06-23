@@ -2,6 +2,30 @@ import { useCallback, useRef, useState } from 'react';
 
 import { conversationStreamUrl, redirectToLogin } from './conversationStream';
 
+// Resume tuning for a dropped/interrupted reply stream. The producer keeps
+// running server-side and the hub replays events from any seq, so a drop is
+// resumed rather than failed. Give-up is liveness-aware: only an instant
+// drain-and-close that applies nothing counts toward the bound, so a long,
+// quiet tool call (held open by the server) streams to completion.
+//
+// Exported as a mutable object so tests can shrink the timings (e.g. set
+// livenessMs to 0) and exercise the give-up/liveness logic without sleeping
+// past real wall-clock thresholds. Production code never mutates it.
+//
+// - initialDelayMs / maxDelayMs: exponential backoff between no-progress closes.
+// - livenessMs: a resume held open at least this long proves the turn is still
+//   running (follow=false blocks only while live; the edge proxy caps a live
+//   connection well above this), so it doesn't count as a no-progress attempt.
+//   An instant empty close (a finished/evicted turn) stays well under it.
+// - maxNoProgressResumes: consecutive instant no-progress resumes before giving
+//   up and reconciling from persisted history.
+export const streamResumeTuning = {
+  initialDelayMs: 250,
+  maxDelayMs: 1000,
+  livenessMs: 1500,
+  maxNoProgressResumes: 4,
+};
+
 /**
  * Hook for handling streaming responses from the chat API
  * @param {Object} options - Hook options
@@ -11,7 +35,8 @@ import { conversationStreamUrl, redirectToLogin } from './conversationStream';
  * @param {Function} options.onToolConfirmationResult - Callback when tool confirmation result is received
  * @param {Function} options.onError - Callback when an error occurs (receives Error object)
  * @param {Function} options.onComplete - Callback when stream completes (receives { content, toolCalls })
- * @param {Function} options.onReloadHistory - Callback to reload persisted history (receives conversationId). Used when the reply is durably complete but not replayable from the live stream (already_complete) or when a dropped stream can't be resumed.
+ * @param {Function} options.onReloadHistory - Callback to reload persisted history (receives conversationId, options). Used when the reply is durably complete but not replayable from the live stream (already_complete/410) or when a bounded resume gives up. Pass `{ errorIfNoReply: true }` on a give-up with no durable completion signal so the caller surfaces an error if the reconciled turn has no terminal reply.
+ * @param {Function} options.onCheckTurnActive - Async (conversationId, turnId) => boolean: whether the server still reports this turn running. Used so a held-open resume leg held open by a concurrent turn doesn't reset the give-up streak.
  * @returns {Object} { sendStreamingMessage, cancelStream, isStreaming }
  */
 export const useStreamingResponse = ({
@@ -22,6 +47,12 @@ export const useStreamingResponse = ({
   onError = () => {},
   onComplete = () => {},
   onReloadHistory = () => {},
+  // Async (conversationId, turnId) => boolean: does the server still report THIS
+  // turn running? Used to decide whether a held-open resume leg that delivered
+  // nothing for our turn is real liveness or a concurrent turn holding the shared
+  // conversation stream open. The default keeps the prior held-open-is-liveness
+  // behavior when no checker is wired.
+  onCheckTurnActive = () => true,
 } = {}) => {
   const [isStreaming, setIsStreaming] = useState(false);
   const abortControllerRef = useRef(null);
@@ -40,12 +71,13 @@ export const useStreamingResponse = ({
 
       let currentMessage = '';
       const toolCalls = [];
-      // Highest seq applied from this conversation's stream. Used to resubscribe
-      // (?from_seq=) after a dropped stream and as the ack_seq once the turn ends.
+      // REPLAY cursor: highest seq seen on the conversation stream (ANY turn).
+      // Drives ?from_seq= on resume, so it tracks the conversation-wide buffer
+      // head and a resume isn't evicted (410) by a concurrent turn's events.
       let lastSeq = -1;
-      // Detail of the most recent failed (5xx) subscribe attempt, surfaced if
-      // every retry is exhausted.
-      let lastSubscribeErrorDetail = null;
+      // ACK cursor: highest seq of OUR turn only. Sent as ack_seq so a resume
+      // never acknowledges a concurrent turn's turn_ended seq.
+      let ackSeq = -1;
       // Set once we observe the terminal turn_ended for our turn. If the stream
       // closes without it, the message is interrupted (not cleanly complete).
       let turnEnded = false;
@@ -138,16 +170,27 @@ export const useStreamingResponse = ({
         const consumeStream = async (fromSeq) => {
           const streamUrl = conversationStreamUrl(resolvedConversationId, {
             fromSeq,
-            ackSeq: lastSeq,
+            ackSeq,
           });
 
-          const response = await fetch(streamUrl, {
-            method: 'GET',
-            headers: {
-              Accept: 'text/event-stream',
-            },
-            signal: abortControllerRef.current.signal,
-          });
+          let response;
+          try {
+            response = await fetch(streamUrl, {
+              method: 'GET',
+              headers: {
+                Accept: 'text/event-stream',
+              },
+              signal: abortControllerRef.current.signal,
+            });
+          } catch (fetchError) {
+            if (fetchError?.name === 'AbortError') {
+              throw fetchError;
+            }
+            // A network error establishing the subscription (DNS, refused,
+            // proxy reset before headers). The producer keeps running, so treat
+            // it as resumable rather than failing the whole turn.
+            return 'subscribe_failed';
+          }
 
           if (!response.ok) {
             if (response.status === 401) {
@@ -156,10 +199,17 @@ export const useStreamingResponse = ({
             }
             if (response.status === 410) {
               // The turn's events have rotated out of the hub buffer (or the
-              // conversation was evicted). There's nothing to replay, but the
-              // reply is durably persisted — reload history to surface it
-              // rather than showing an error for a turn that likely succeeded.
-              onReloadHistory(resolvedConversationId);
+              // conversation was evicted). There's nothing to replay. Usually the
+              // reply is durably persisted, so reloading history surfaces it. But
+              // a 410 can also fire while the turn is STILL running (its early
+              // events were evicted), so reconcile through the unconfirmed-reply
+              // path (errorIfNoReply + turnId): if active_turns shows it running
+              // we wait for its turn_ended, if a reply is persisted we show it,
+              // and only a finished turn with no reply surfaces the marker.
+              onReloadHistory(resolvedConversationId, {
+                errorIfNoReply: true,
+                turnId: effectiveTurnId,
+              });
               return 'completed';
             }
             const errorData = await response.json().catch(() => ({}));
@@ -167,9 +217,8 @@ export const useStreamingResponse = ({
             if (response.status >= 500) {
               // A transient server error on the subscribe GET doesn't stop the
               // turn — the producer keeps running and the hub retains the
-              // events for replay. Report it as retryable so the caller can
-              // resubscribe instead of declaring the whole turn failed.
-              lastSubscribeErrorDetail = detail;
+              // events for replay. Report it as resumable so the caller resumes
+              // instead of declaring the whole turn failed.
               return 'subscribe_failed';
             }
             throw new Error(detail);
@@ -184,7 +233,20 @@ export const useStreamingResponse = ({
           let buffer = '';
 
           while (true) {
-            const { done, value } = await reader.read();
+            let readResult;
+            try {
+              readResult = await reader.read();
+            } catch (readError) {
+              if (readError?.name === 'AbortError') {
+                throw readError;
+              }
+              // A proxy reset / network drop errors the read instead of yielding
+              // a clean EOF or a stream_dropped frame. Treat it as a resumable
+              // interruption so the loop resumes from lastSeq + 1 rather than
+              // surfacing a spurious error for a turn that is still running.
+              return 'interrupted';
+            }
+            const { done, value } = readResult;
             if (done) {
               break;
             }
@@ -231,8 +293,13 @@ export const useStreamingResponse = ({
                 return 'dropped';
               }
 
-              // Track the highest seq we've applied so we can resume after a
-              // drop and ack the right position at turn_ended.
+              // REPLAY cursor: highest seq seen on the stream, for ANY turn.
+              // Resume continues from lastSeq + 1, so it must track the
+              // conversation-wide buffer head — advancing it for ignored
+              // concurrent-turn events too. Otherwise our from_seq stays pinned
+              // behind those seqs and the bounded buffer can evict it, making the
+              // next resume 410 and treat this (possibly still-running) turn as
+              // gone. Re-skipping the other turn's events below is cheap.
               if (typeof payload.seq === 'number' && payload.seq > lastSeq) {
                 lastSeq = payload.seq;
               }
@@ -245,6 +312,14 @@ export const useStreamingResponse = ({
               // stream_dropped) carry no turn_id and fall through.
               if (payload.turn_id && payload.turn_id !== effectiveTurnId) {
                 continue;
+              }
+
+              // ACK cursor: highest seq of OUR turn only. ack_seq is sent from
+              // this, so a resume never acknowledges a concurrent turn's
+              // turn_ended seq (which would make the backend suppress that turn's
+              // disconnect push for a reply this client never handled).
+              if (typeof payload.seq === 'number' && payload.seq > ackSeq) {
+                ackSeq = payload.seq;
               }
 
               // The turn_ended event terminates this turn's stream. Done is
@@ -395,36 +470,101 @@ export const useStreamingResponse = ({
           return turnEnded ? 'completed' : 'interrupted';
         };
 
-        // Subscribe to the turn's event stream, retrying briefly on transient
-        // server errors (5xx). The producer keeps running whether or not this
-        // subscriber is connected, so failing the whole turn over one failed
-        // subscribe would show a spurious error for a reply that completes
-        // normally. This mirrors the follow stream's reconnect-on-error
-        // behavior. `firstSeq` seeds the very first subscription; retries
-        // resume from the last applied seq.
+        // `firstSeq` seeds the very first subscription. The hub replays events
+        // with seq >= from_seq, so a resume uses lastSeq + 1 to continue just
+        // past the last applied event without re-applying it.
+        const resumeFromLastSeq = () => consumeStream(lastSeq >= 0 ? lastSeq + 1 : (firstSeq ?? 0));
+
+        // Subscribe, then RESUME the stream on any non-clean exit (a proxy-cut
+        // EOF, a hub stream_dropped, or a transient 5xx subscribe). The producer
+        // keeps running server-side regardless of this subscriber and the hub
+        // retains the events, so resuming continues the live token stream (the
+        // final text and turn_ended) exactly where it left off — a drop after
+        // tool calls finishes cleanly instead of surfacing a spurious error.
+        //
+        // Give-up is liveness-aware: a resume that applies a new seq OR is held
+        // open for at least the liveness window is proof the turn is still
+        // running, so it resets the no-progress streak. Only an instant
+        // drain-and-close that applies nothing — how follow=false reports a
+        // finished or evicted turn — counts toward the bound. This keeps a long,
+        // quiet tool call streaming to completion while still bounding a
+        // truly-gone turn. Modeled on the iOS client's resume loop.
+        //
+        // A held-open leg therefore keeps the loop alive indefinitely while the
+        // server still reports the turn as running (follow=false closes promptly
+        // once no turn is running, so a finished/crashed producer yields instant
+        // closes and is bounded). The bubble's spinner honestly reflects "still
+        // working", and the user can cancel — preferred over giving up on a slow
+        // legitimate tool call.
         let outcome = await consumeStream(firstSeq ?? 0);
-        for (let retry = 0; outcome === 'subscribe_failed' && retry < 2; retry++) {
-          await new Promise((resolve) => setTimeout(resolve, 250 * (retry + 1)));
-          outcome = await consumeStream(lastSeq >= 0 ? lastSeq : (firstSeq ?? 0));
-        }
-        if (outcome === 'subscribe_failed') {
-          throw new Error(lastSubscribeErrorDetail || 'Failed to subscribe to the reply stream.');
-        }
-        // Resubscribe at most once on a dropped stream (queue overflow / server
-        // shutdown). A single bounded retry resumes from the last applied seq;
-        // if it drops again, fall through to the interrupted handling rather
-        // than spinning.
-        if (outcome === 'dropped') {
-          outcome = await consumeStream(lastSeq >= 0 ? lastSeq : (firstSeq ?? 0));
+        let noProgressResumes = 0;
+        let resumeDelayMs = streamResumeTuning.initialDelayMs;
+        while (
+          !turnEnded &&
+          (outcome === 'dropped' || outcome === 'interrupted' || outcome === 'subscribe_failed') &&
+          noProgressResumes < streamResumeTuning.maxNoProgressResumes
+        ) {
+          if (noProgressResumes > 0) {
+            await new Promise((resolve) => setTimeout(resolve, resumeDelayMs));
+            if (abortControllerRef.current?.signal.aborted) {
+              return;
+            }
+          }
+          const ackBeforeResume = ackSeq;
+          const resumeStartedAt = Date.now();
+          outcome = await resumeFromLastSeq();
+          // Progress is measured by OUR turn's ack cursor, not the conversation
+          // -wide lastSeq: events from a concurrent turn (another tab) advance
+          // lastSeq but are not proof THIS turn is alive.
+          const ourTurnProgressed = ackSeq !== ackBeforeResume;
+          // A leg that subscribed (got 200) and stayed open past the liveness
+          // window proves the conversation's stream is live — but the backend
+          // holds a non-follow stream open while ANY of the user's turns in the
+          // conversation is running, not just ours. So a held-open leg that
+          // delivered nothing for OUR turn is ambiguous: our own quiet (long tool
+          // call) turn, or a concurrent turn in another tab. Only count it as
+          // liveness if the server still reports OUR turn running; otherwise this
+          // is a gone turn that must progress toward give-up rather than spin
+          // until the unrelated turn finishes. (A slow 5xx subscribe_failed is
+          // never liveness — it must keep counting toward give-up.)
+          const heldOpen =
+            outcome !== 'subscribe_failed' &&
+            Date.now() - resumeStartedAt >= streamResumeTuning.livenessMs;
+          let stillLive = ourTurnProgressed;
+          if (!stillLive && heldOpen) {
+            stillLive = await onCheckTurnActive(resolvedConversationId, effectiveTurnId);
+          }
+          if (stillLive) {
+            noProgressResumes = 0;
+            resumeDelayMs = streamResumeTuning.initialDelayMs;
+          } else {
+            noProgressResumes += 1;
+            resumeDelayMs = Math.min(resumeDelayMs * 2, streamResumeTuning.maxDelayMs);
+          }
         }
 
-        // A dropped-then-dropped (or stream that closed mid-turn) means we
-        // never saw turn_ended. The reply may still have been persisted, so
-        // reload history rather than leaving the assistant bubble stuck
-        // loading, and surface that the live render was interrupted.
-        if (outcome !== 'completed' && !turnEnded) {
-          onReloadHistory(resolvedConversationId);
-          onError(new Error('The connection was interrupted before the reply finished.'));
+        // Bounded resume gave up without observing turn_ended. We have NO
+        // durable proof the reply was committed: a dropped/interrupted give-up
+        // (stream_dropped is also emitted on server shutdown / queue overflow
+        // before turn_ended) and a persistent 5xx subscribe are both ambiguous.
+        // So reconcile from persisted history and have the caller surface an
+        // error IF the reconciled turn produced no terminal reply — showing the
+        // reply when it did persist, an error when it did not, never silently
+        // clearing the bubble. (Durable signals — turn_ended status=complete via
+        // the loop exit, status=failed / explicit error events, 410, and
+        // already_complete — are all handled before reaching here, and reconcile
+        // without this flag where appropriate.)
+        if (!turnEnded && outcome !== 'completed') {
+          // A true give-up: the resume loop was exhausted. errorOnFailedReload
+          // tells the client to surface the "couldn't confirm" marker even if the
+          // reconcile fetch itself fails — we have tried hard and the optimistic
+          // partial (if any) is not proof the reply finished. (A 410 reconcile,
+          // by contrast, did NOT exhaust the loop and routes without this flag.)
+          onReloadHistory(resolvedConversationId, {
+            errorIfNoReply: true,
+            turnId: effectiveTurnId,
+            errorOnFailedReload: true,
+          });
         }
       } catch (error) {
         if (error.name !== 'AbortError') {
@@ -444,6 +584,7 @@ export const useStreamingResponse = ({
       onError,
       onComplete,
       onReloadHistory,
+      onCheckTurnActive,
     ]
   );
 

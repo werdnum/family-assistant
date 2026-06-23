@@ -24,6 +24,9 @@ export interface Message {
   id: string;
   role: 'user' | 'assistant' | 'system';
   content: MessageContent[];
+  // The turn that produced this message (when known from persisted history).
+  // Used to match a reconciled reply to a specific turn.
+  turnId?: string;
   createdAt: Date;
   isLoading?: boolean;
   status?: {
@@ -86,6 +89,7 @@ export interface BackendMessageMetadata extends Record<string, unknown> {
 export interface BackendConversationMessage extends Record<string, unknown> {
   internal_id: string;
   role: 'user' | 'assistant' | 'system' | 'tool' | 'error';
+  turn_id?: string | null;
   timestamp: string;
   content?: string | BackendContentPart[];
   attachments?: BackendAttachment[];
@@ -94,6 +98,16 @@ export interface BackendConversationMessage extends Record<string, unknown> {
   tool_call_id?: string;
 }
 
+export interface ActiveTurnInfo {
+  turn_id: string;
+  started_at?: string;
+  latest_seq?: number;
+  // 'running' | 'complete' | 'failed'
+  status: string;
+}
+
 export interface ConversationMessagesResponse {
   messages: BackendConversationMessage[];
+  // In-flight turns for this conversation, when the backend reports them.
+  active_turns?: ActiveTurnInfo[];
 }
